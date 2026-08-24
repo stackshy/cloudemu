@@ -17,6 +17,27 @@ Azure's `notification` service · portable interface `driver.Notification` · [A
 | `Unsubscribe` |  |
 | `UpdateTopic` | UpdateTopic replaces the mutable fields (display name, tags) of an |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AzureNotificationHubs
+
+AzureNotificationHubs is the Azure-only Notification Hubs surface: namespace
+
+| Operation | Description |
+| --- | --- |
+| `CreateRegistration` |  |
+| `DeleteRegistration` |  |
+| `DeleteSASRule` |  |
+| `GetNamespaceMeta` |  |
+| `GetRegistration` |  |
+| `GetSASRule` |  |
+| `ListRegistrations` |  |
+| `ListSASRules` |  |
+| `PutSASRule` |  |
+| `SetNamespaceMeta` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

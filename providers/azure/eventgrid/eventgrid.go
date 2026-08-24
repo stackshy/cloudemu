@@ -118,6 +118,7 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 		State:     activeTopicState,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		Tags:      tags,
+		Region:    cfg.Region,
 	}
 
 	bd := &busData{
@@ -532,6 +533,9 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	}
 	if !cfg.Scope.IsZero() {
 		bd.info.Scope = cfg.Scope
+	}
+	if cfg.Region != "" {
+		bd.info.Region = cfg.Region
 	}
 
 	m.buses.Set(cfg.Name, bd)

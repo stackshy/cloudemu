@@ -30,12 +30,22 @@ type putMetricDataInput struct {
 	MetricData []putMetricDatumCBR `cbor:"MetricData"`
 }
 
+type statisticSetCBR struct {
+	SampleCount float64 `cbor:"SampleCount"`
+	Sum         float64 `cbor:"Sum"`
+	Minimum     float64 `cbor:"Minimum"`
+	Maximum     float64 `cbor:"Maximum"`
+}
+
 type putMetricDatumCBR struct {
-	MetricName string         `cbor:"MetricName"`
-	Value      float64        `cbor:"Value"`
-	Unit       string         `cbor:"Unit,omitempty"`
-	Timestamp  *time.Time     `cbor:"Timestamp,omitempty"`
-	Dimensions []dimensionCBR `cbor:"Dimensions,omitempty"`
+	MetricName      string           `cbor:"MetricName"`
+	Value           float64          `cbor:"Value"`
+	Unit            string           `cbor:"Unit,omitempty"`
+	Timestamp       *time.Time       `cbor:"Timestamp,omitempty"`
+	Dimensions      []dimensionCBR   `cbor:"Dimensions,omitempty"`
+	StatisticValues *statisticSetCBR `cbor:"StatisticValues,omitempty"`
+	Values          []float64        `cbor:"Values,omitempty"`
+	Counts          []float64        `cbor:"Counts,omitempty"`
 }
 
 type dimensionCBR struct {
@@ -52,7 +62,8 @@ func (h *Handler) putMetricData(w http.ResponseWriter, r *http.Request, body []b
 
 	data := make([]mondriver.MetricDatum, 0, len(in.MetricData))
 
-	for _, d := range in.MetricData {
+	for i := range in.MetricData {
+		d := &in.MetricData[i]
 		// AWS defaults an omitted timestamp to request-receipt time; storing the
 		// Go zero value instead would make the datapoint unqueryable and leave
 		// alarms stuck in INSUFFICIENT_DATA.
@@ -61,14 +72,27 @@ func (h *Handler) putMetricData(w http.ResponseWriter, r *http.Request, body []b
 			ts = *d.Timestamp
 		}
 
-		data = append(data, mondriver.MetricDatum{
+		datum := mondriver.MetricDatum{
 			Namespace:  in.Namespace,
 			MetricName: d.MetricName,
 			Value:      d.Value,
 			Unit:       d.Unit,
 			Dimensions: toDimensionMap(d.Dimensions),
 			Timestamp:  ts,
-		})
+			Values:     d.Values,
+			Counts:     d.Counts,
+		}
+
+		if d.StatisticValues != nil {
+			datum.StatisticValues = &mondriver.StatisticSet{
+				SampleCount: d.StatisticValues.SampleCount,
+				Sum:         d.StatisticValues.Sum,
+				Minimum:     d.StatisticValues.Minimum,
+				Maximum:     d.StatisticValues.Maximum,
+			}
+		}
+
+		data = append(data, datum)
 	}
 
 	if err := h.monitoring.PutMetricData(r.Context(), data); err != nil {
@@ -112,9 +136,12 @@ func (h *Handler) getMetricStatistics(w http.ResponseWriter, r *http.Request, bo
 		return
 	}
 
-	stat := statAverage
-	if len(in.Statistics) > 0 {
-		stat = in.Statistics[0]
+	// Every requested statistic is returned on each datapoint. Callers routinely
+	// ask for several (e.g. Average, Sum, Maximum) in one call and expect all of
+	// them populated, so fall back to Average only when none was requested.
+	stats := in.Statistics
+	if len(stats) == 0 {
+		stats = []string{statAverage}
 	}
 
 	start := time.Time{}
@@ -128,42 +155,52 @@ func (h *Handler) getMetricStatistics(w http.ResponseWriter, r *http.Request, bo
 	}
 
 	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
-		h.getIpamMetricStatistics(w, r, in.MetricName, toDimensionMap(in.Dimensions), stat)
+		h.getIpamMetricStatistics(w, r, in.MetricName, toDimensionMap(in.Dimensions), stats)
 		return
 	}
 
-	input := mondriver.GetMetricInput{
-		Namespace:  in.Namespace,
-		MetricName: in.MetricName,
-		Dimensions: toDimensionMap(in.Dimensions),
-		StartTime:  start,
-		EndTime:    end,
-		Period:     in.Period,
-		Stat:       stat,
-	}
+	dims := toDimensionMap(in.Dimensions)
+	acc := newDatapointAcc()
 
-	result, err := h.monitoring.GetMetricData(r.Context(), input)
-	if err != nil {
-		writeDriverErr(w, err)
-		return
+	for _, stat := range stats {
+		result, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
+			Namespace:  in.Namespace,
+			MetricName: in.MetricName,
+			Dimensions: dims,
+			StartTime:  start,
+			EndTime:    end,
+			Period:     in.Period,
+			Stat:       stat,
+		})
+		if err != nil {
+			writeDriverErr(w, err)
+			return
+		}
+
+		acc.add(result, stat)
 	}
 
 	writeCBORResponse(w, getMetricStatisticsOutput{
 		Label:      in.MetricName,
-		Datapoints: toDatapointsCBR(result, stat),
+		Datapoints: acc.datapoints(),
 	})
 }
 
 // getIpamMetricStatistics returns a single datapoint for a derived AWS/IPAM
-// metric, matched by name and (if supplied) dimensions.
-func (h *Handler) getIpamMetricStatistics(w http.ResponseWriter, r *http.Request, name string, dims map[string]string, stat string) {
+// metric, matched by name and (if supplied) dimensions, populating every
+// requested statistic.
+func (h *Handler) getIpamMetricStatistics(
+	w http.ResponseWriter, r *http.Request, name string, dims map[string]string, stats []string,
+) {
 	for _, mtr := range h.ipam.IpamMetrics(r.Context()) {
 		if mtr.MetricName != name || !dimensionsMatch(mtr.Dimensions, dims) {
 			continue
 		}
 
 		dp := datapointCBR{Timestamp: time.Unix(0, 0).UTC(), Unit: mtr.Unit}
-		setDatapointStat(&dp, stat, mtr.Value)
+		for _, stat := range stats {
+			setDatapointStat(&dp, stat, mtr.Value)
+		}
 
 		writeCBORResponse(w, getMetricStatisticsOutput{Label: name, Datapoints: []datapointCBR{dp}})
 
@@ -171,6 +208,65 @@ func (h *Handler) getIpamMetricStatistics(w http.ResponseWriter, r *http.Request
 	}
 
 	writeCBORResponse(w, getMetricStatisticsOutput{Label: name, Datapoints: nil})
+}
+
+// datapointAcc merges per-statistic MetricDataResults into one datapoint per
+// timestamp, so a multi-statistic GetMetricStatistics call returns each
+// datapoint with all requested statistics populated.
+type datapointAcc struct {
+	byTS  map[int64]*datapointCBR
+	order []int64
+	unit  string
+}
+
+func newDatapointAcc() *datapointAcc {
+	return &datapointAcc{byTS: map[int64]*datapointCBR{}}
+}
+
+// add folds one statistic's result into the accumulator.
+func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat string) {
+	if res == nil {
+		return
+	}
+
+	if a.unit == "" {
+		a.unit = res.Unit
+	}
+
+	for i := range res.Timestamps {
+		ts := res.Timestamps[i].UTC()
+		key := ts.UnixNano()
+
+		dp, ok := a.byTS[key]
+		if !ok {
+			dp = &datapointCBR{Timestamp: ts}
+			a.byTS[key] = dp
+			a.order = append(a.order, key)
+		}
+
+		setDatapointStat(dp, stat, res.Values[i])
+	}
+}
+
+// datapoints returns the merged datapoints in ascending timestamp order, each
+// stamped with the resolved unit.
+func (a *datapointAcc) datapoints() []datapointCBR {
+	unit := a.unit
+	if unit == "" {
+		unit = defaultMetricUnit
+	}
+
+	sort.Slice(a.order, func(i, j int) bool { return a.order[i] < a.order[j] })
+
+	out := make([]datapointCBR, 0, len(a.order))
+
+	for _, key := range a.order {
+		dp := a.byTS[key]
+		dp.Unit = unit
+		out = append(out, *dp)
+	}
+
+	return out
 }
 
 // dimensionsMatch reports whether every requested dimension is present in have.
@@ -409,10 +505,37 @@ type putMetricAlarmInput struct {
 	Tags                    []tagCBR       `cbor:"Tags,omitempty"`
 }
 
+// validComparisonOperators is the closed CloudWatch ComparisonOperator enum. A
+// value outside this set is rejected with a ValidationError, matching AWS,
+// rather than silently stored (which would leave the alarm unable to fire).
+//
+//nolint:gochecknoglobals // fixed lookup table for a closed enum.
+var validComparisonOperators = map[string]bool{
+	"GreaterThanOrEqualToThreshold":            true,
+	"GreaterThanThreshold":                     true,
+	"LessThanThreshold":                        true,
+	"LessThanOrEqualToThreshold":               true,
+	"LessThanLowerOrGreaterThanUpperThreshold": true,
+	"LessThanLowerThreshold":                   true,
+	"GreaterThanUpperThreshold":                true,
+}
+
+// comparisonOperatorValid reports whether op is empty (unset — AWS allows metric-
+// math/anomaly alarms to omit it) or a member of the closed enum.
+func comparisonOperatorValid(op string) bool {
+	return op == "" || validComparisonOperators[op]
+}
+
 func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in putMetricAlarmInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
 		writeCBORError(w, http.StatusBadRequest, "SerializationException", err.Error())
+		return
+	}
+
+	if !comparisonOperatorValid(in.ComparisonOperator) {
+		writeCBORError(w, http.StatusBadRequest, "ValidationError",
+			"Invalid ComparisonOperator: "+in.ComparisonOperator)
 		return
 	}
 
@@ -679,45 +802,6 @@ func toDimensionMap(dims []dimensionCBR) map[string]string {
 		if d.Name != "" {
 			out[d.Name] = d.Value
 		}
-	}
-
-	return out
-}
-
-func toDatapointsCBR(res *mondriver.MetricDataResult, stat string) []datapointCBR {
-	if res == nil {
-		return nil
-	}
-
-	unit := res.Unit
-	if unit == "" {
-		unit = defaultMetricUnit
-	}
-
-	out := make([]datapointCBR, 0, len(res.Timestamps))
-
-	for i := range res.Timestamps {
-		dp := datapointCBR{
-			Timestamp: res.Timestamps[i].UTC(),
-			Unit:      unit,
-		}
-
-		v := res.Values[i]
-
-		switch stat {
-		case statSum:
-			dp.Sum = v
-		case statMinimum:
-			dp.Minimum = v
-		case statMaximum:
-			dp.Maximum = v
-		case statSampleCount:
-			dp.SampleCount = v
-		default:
-			dp.Average = v
-		}
-
-		out = append(out, dp)
 	}
 
 	return out

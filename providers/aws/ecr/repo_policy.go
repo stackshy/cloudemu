@@ -1,10 +1,6 @@
 package ecr
 
-import (
-	"context"
-
-	"github.com/stackshy/cloudemu/v2/errors"
-)
+import "context"
 
 // SetRepositoryPolicy stores a repository's resource (permissions) policy.
 func (m *Mock) SetRepositoryPolicy(_ context.Context, repository, policyText string) (string, error) {
@@ -13,7 +9,7 @@ func (m *Mock) SetRepositoryPolicy(_ context.Context, repository, policyText str
 
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return "", apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	rd.repoPolicy = policyText
@@ -29,11 +25,11 @@ func (m *Mock) GetRepositoryPolicy(_ context.Context, repository string) (string
 
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return "", apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	if rd.repoPolicy == "" {
-		return "", errors.Newf(errors.NotFound, "no repository policy for %q", repository)
+		return "", apiErrf(excRepositoryPolicyNotFound, "no repository policy for %q", repository)
 	}
 
 	return rd.repoPolicy, nil
@@ -46,11 +42,11 @@ func (m *Mock) DeleteRepositoryPolicy(_ context.Context, repository string) (str
 
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return "", apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	if rd.repoPolicy == "" {
-		return "", errors.Newf(errors.NotFound, "no repository policy for %q", repository)
+		return "", apiErrf(excRepositoryPolicyNotFound, "no repository policy for %q", repository)
 	}
 
 	policy := rd.repoPolicy

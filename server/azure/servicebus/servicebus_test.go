@@ -39,6 +39,19 @@ func newTestServer(t *testing.T) (*httptest.Server, *cloudemuHandle) {
 	return srv, &cloudemuHandle{provider: cloud}
 }
 
+// seedNamespace creates the parent namespace so queue/topic operations under it
+// resolve. Real Service Bus rejects child creates under a missing namespace.
+func seedNamespace(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+
+	resp := doRequest(t, srv, http.MethodPut, nsURL()+apiVer, `{"location":"eastus"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("seed namespace = %d", resp.StatusCode)
+	}
+
+	_ = resp.Body.Close()
+}
+
 type cloudemuHandle struct {
 	provider any
 }
@@ -69,6 +82,7 @@ func TestNamespaceLifecycle(t *testing.T) {
 
 func TestQueueLifecycle(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	body := `{"properties":{"maxSizeInMegabytes":1024}}`
 
@@ -116,6 +130,7 @@ func TestQueueLifecycle(t *testing.T) {
 
 func TestQueueIdempotentPut(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	body := `{"properties":{}}`
 
@@ -132,6 +147,7 @@ func TestQueueIdempotentPut(t *testing.T) {
 
 func TestListQueues(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	for _, n := range []string{"a", "b", "c"} {
 		_ = doRequest(t, srv, http.MethodPut, queueURL(n)+apiVer, `{"properties":{}}`)
@@ -156,6 +172,7 @@ func TestListQueues(t *testing.T) {
 
 func TestDataPlaneSendReceive(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	if r := doRequest(t, srv, http.MethodPut, queueURL("loop")+apiVer,
 		`{"properties":{}}`); r.StatusCode != http.StatusOK {
@@ -186,6 +203,7 @@ func TestDataPlaneSendReceive(t *testing.T) {
 
 func TestDataPlaneSendToMissingQueue(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	resp := doRequest(t, srv, http.MethodPost, "/"+nsName+"/no-such/messages", "x")
 	if resp.StatusCode != http.StatusNotFound {

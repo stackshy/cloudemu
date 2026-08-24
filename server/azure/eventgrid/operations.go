@@ -19,9 +19,10 @@ func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	cfg := ebdriver.EventBusConfig{
-		Name:  rp.ResourceName,
-		Tags:  tagsFromPtr(body.Tags),
-		Scope: scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+		Name:   rp.ResourceName,
+		Tags:   tagsFromPtr(body.Tags),
+		Scope:  scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+		Region: body.Location,
 	}
 
 	if _, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err == nil {

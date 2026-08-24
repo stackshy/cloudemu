@@ -349,12 +349,12 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 func (m *Mock) StartImageScan(_ context.Context, repository, reference string) (*driver.ScanResult, error) {
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return nil, apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	img := findImage(rd, reference)
 	if img == nil {
-		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+		return nil, apiErrf(excImageNotFound, "image %q not found in repository %q", reference, repository)
 	}
 
 	scan := generateScanResult(repository, img.detail.Digest, m.opts.Clock.Now())
@@ -371,17 +371,18 @@ func (m *Mock) GetImageScanResults(
 ) (*driver.ScanResult, error) {
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return nil, apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	img := findImage(rd, reference)
 	if img == nil {
-		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+		return nil, apiErrf(excImageNotFound, "image %q not found in repository %q", reference, repository)
 	}
 
 	scan, ok := rd.scans.Get(img.detail.Digest)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "no scan results for image %q in repository %q", reference, repository)
+		return nil, apiErrf(excScanNotFound,
+			"no scan results for image %q in repository %q", reference, repository)
 	}
 
 	result := *scan

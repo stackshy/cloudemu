@@ -28,14 +28,35 @@ type resourceRecordXML struct {
 	Value string `xml:"Value"`
 }
 
+// aliasTargetXML is the Route 53 AliasTarget element (an A/AAAA record that
+// points at another AWS resource instead of carrying a TTL + ResourceRecords).
+type aliasTargetXML struct {
+	HostedZoneId         string `xml:"HostedZoneId"`
+	DNSName              string `xml:"DNSName"`
+	EvaluateTargetHealth bool   `xml:"EvaluateTargetHealth"`
+}
+
+// geoLocationXML is the Route 53 GeoLocation element for geolocation routing.
+type geoLocationXML struct {
+	ContinentCode   string `xml:"ContinentCode,omitempty"`
+	CountryCode     string `xml:"CountryCode,omitempty"`
+	SubdivisionCode string `xml:"SubdivisionCode,omitempty"`
+}
+
 // resourceRecordSetXML is the Route 53 ResourceRecordSet element.
 type resourceRecordSetXML struct {
-	Name            string              `xml:"Name"`
-	Type            string              `xml:"Type"`
-	SetIdentifier   string              `xml:"SetIdentifier,omitempty"`
-	Weight          *int64              `xml:"Weight,omitempty"`
-	TTL             *int64              `xml:"TTL,omitempty"`
-	ResourceRecords []resourceRecordXML `xml:"ResourceRecords>ResourceRecord,omitempty"`
+	Name             string              `xml:"Name"`
+	Type             string              `xml:"Type"`
+	SetIdentifier    string              `xml:"SetIdentifier,omitempty"`
+	Weight           *int64              `xml:"Weight,omitempty"`
+	Region           string              `xml:"Region,omitempty"`
+	Failover         string              `xml:"Failover,omitempty"`
+	GeoLocation      *geoLocationXML     `xml:"GeoLocation,omitempty"`
+	MultiValueAnswer *bool               `xml:"MultiValueAnswer,omitempty"`
+	HealthCheckId    string              `xml:"HealthCheckId,omitempty"`
+	TTL              *int64              `xml:"TTL,omitempty"`
+	ResourceRecords  []resourceRecordXML `xml:"ResourceRecords>ResourceRecord,omitempty"`
+	AliasTarget      *aliasTargetXML     `xml:"AliasTarget,omitempty"`
 }
 
 // --- hosted zone elements ---
@@ -211,26 +232,49 @@ func toHostedZoneXML(info *dnsdriver.ZoneInfo) hostedZoneXML {
 	}
 }
 
-// toRecordSetXML converts a driver record into its Route 53 element.
+// toRecordSetXML converts a driver record into its Route 53 element. An alias
+// record carries an AliasTarget instead of a TTL and ResourceRecords, so those
+// are omitted when AliasTarget is present (matching real Route 53).
 func toRecordSetXML(rec *dnsdriver.RecordInfo) resourceRecordSetXML {
-	ttl := int64(rec.TTL)
-
-	rrs := make([]resourceRecordXML, 0, len(rec.Values))
-	for _, v := range rec.Values {
-		rrs = append(rrs, resourceRecordXML{Value: v})
+	out := resourceRecordSetXML{
+		Name:             rec.Name,
+		Type:             rec.Type,
+		SetIdentifier:    rec.SetID,
+		Region:           rec.Region,
+		Failover:         rec.Failover,
+		HealthCheckId:    rec.HealthCheckID,
+		MultiValueAnswer: rec.MultiValueAnswer,
 	}
 
-	out := resourceRecordSetXML{
-		Name:            rec.Name,
-		Type:            rec.Type,
-		SetIdentifier:   rec.SetID,
-		TTL:             &ttl,
-		ResourceRecords: rrs,
+	if rec.AliasTarget != nil {
+		out.AliasTarget = &aliasTargetXML{
+			HostedZoneId:         rec.AliasTarget.HostedZoneID,
+			DNSName:              rec.AliasTarget.DNSName,
+			EvaluateTargetHealth: rec.AliasTarget.EvaluateTargetHealth,
+		}
+	} else {
+		ttl := int64(rec.TTL)
+		out.TTL = &ttl
+
+		rrs := make([]resourceRecordXML, 0, len(rec.Values))
+		for _, v := range rec.Values {
+			rrs = append(rrs, resourceRecordXML{Value: v})
+		}
+
+		out.ResourceRecords = rrs
 	}
 
 	if rec.Weight != nil {
 		w := int64(*rec.Weight)
 		out.Weight = &w
+	}
+
+	if rec.GeoLocation != nil {
+		out.GeoLocation = &geoLocationXML{
+			ContinentCode:   rec.GeoLocation.ContinentCode,
+			CountryCode:     rec.GeoLocation.CountryCode,
+			SubdivisionCode: rec.GeoLocation.SubdivisionCode,
+		}
 	}
 
 	return out

@@ -1,76 +1,166 @@
 // Package servicebus serves Azure Service Bus ARM control-plane requests
-// (Microsoft.ServiceBus/namespaces[/queues]) plus a raw-HTTP data plane for
-// send/receive against a CloudEmu messagequeue driver.
+// (Microsoft.ServiceBus/namespaces and their queues, topics, subscriptions,
+// rules, and authorization rules) plus a raw-HTTP data plane for
+// send/receive/peek-lock against a CloudEmu messagequeue driver.
 //
-// Real azure-sdk-for-go armservicebus clients drive the ARM control plane
-// (PUT/GET/DELETE namespaces and queues). The data-plane azservicebus SDK
-// uses AMQP exclusively and is out of scope; tests that exercise send/receive
-// hit the REST data plane (POST /{namespace}/{queue}/messages,
-// DELETE /{namespace}/{queue}/messages/head) directly with raw HTTP. This
-// matches Microsoft's older "Send/Receive REST" endpoints documented at
-// https://learn.microsoft.com/rest/api/servicebus/.
+// Real azure-sdk-for-go armservicebus clients drive the ARM control plane.
+// The data-plane azservicebus SDK uses AMQP exclusively and is out of scope;
+// tests that exercise send/receive hit the REST data plane directly with raw
+// HTTP, mirroring Microsoft's "Send/Receive REST" endpoints documented at
+// https://learn.microsoft.com/rest/api/servicebus/. The REST data plane
+// addresses both flat queues (/{queue}/messages...) and topic subscriptions
+// (/{topic}/subscriptions/{sub}/messages...): a publish to a topic fans the
+// message out to every subscription's backing store, and each subscription is
+// received from independently.
 //
-// MVP coverage:
-//
-//	PUT/GET/DELETE  .../namespaces/{ns}                        — namespace lifecycle
-//	GET             .../namespaces                             — list (subscription scope)
-//	PUT/GET/DELETE  .../namespaces/{ns}/queues/{name}          — queue lifecycle
-//	GET             .../namespaces/{ns}/queues                 — list queues in namespace
-//	POST            /{namespace}/{queue}/messages              — send (raw HTTP)
-//	DELETE          /{namespace}/{queue}/messages/head         — receive+ack (raw HTTP)
-//
-// Topics, subscriptions, rules, AMQP, sessions, and DLQ wire formats are
-// deferred to a follow-up.
+// Namespaces own their child entities: queues, topics (which own
+// subscriptions, which own rules) and authorization rules. Every namespace is
+// created with a default RootManageSharedAccessKey authorization rule so a
+// client can obtain a connection string via listKeys. Deleting a namespace
+// cascades to all of its child entities.
 package servicebus
 
 import (
-	"context"
-	"encoding/json"
-	"io"
-	"maps"
 	"net/http"
 	"strings"
+	"sync"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
 	providerName = "Microsoft.ServiceBus"
 	resourceType = "namespaces"
-	subTypeQueue = "queues"
+
+	segQueues     = "queues"
+	segTopics     = "topics"
+	segSubs       = "subscriptions"
+	segRules      = "rules"
+	segAuthRules  = "authorizationRules"
+	actionKeys    = "listKeys"
+	actionRegen   = "regenerateKeys"
+	checkNamePath = "checkNameAvailability"
 
 	maxBodyBytes  = 1 << 20
 	dataPlanePath = "/messages"
+
+	sbHost = ".servicebus.windows.net"
 )
 
 // Handler serves ARM Service Bus + raw-HTTP data-plane requests.
 type Handler struct {
 	mq         mqdriver.MessageQueue
-	namespaces *memstore.Store[namespaceState]
+	mu         sync.RWMutex
+	namespaces *memstore.Store[*namespaceState]
 }
 
-// New returns a Service Bus handler backed by mq.
+// New returns a Service Bus handler backed by mq for message storage.
 func New(mq mqdriver.MessageQueue) *Handler {
-	return &Handler{mq: mq, namespaces: memstore.New[namespaceState]()}
+	return &Handler{mq: mq, namespaces: memstore.New[*namespaceState]()}
 }
 
-// Matches accepts ARM Microsoft.ServiceBus/namespaces[...] paths plus
-// data-plane URLs ending in /messages or /messages/head.
+// sbPath is a parsed Service Bus ARM URL. segs holds the path segments that
+// follow the namespace name (e.g. ["queues","orders"] or
+// ["topics","t","subscriptions","s","rules","r"]). It is kept under the
+// gocritic hugeParam threshold so it can be passed by value across dispatch.
+type sbPath struct {
+	sub       string
+	rg        string
+	namespace string
+	segs      []string
+}
+
+// pathKind classifies a parsed Service Bus path.
+type pathKind int
+
+const (
+	kindResource pathKind = iota
+	kindCheckName
+)
+
+// parseSBPath parses a Service Bus ARM path. ok is false for non-Service-Bus
+// paths and for malformed provider paths.
+func parseSBPath(urlPath string) (sbPath, pathKind, bool) {
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+
+	providerIdx, ok := findProvider(parts)
+	if !ok {
+		return sbPath{}, kindResource, false
+	}
+
+	// Only the segments BEFORE providers carry the ARM scope. The trailing
+	// "subscriptions/{name}" child of a topic must not be mistaken for the
+	// ARM subscription id.
+	sp := parseScope(parts, providerIdx)
+
+	rest := parts[providerIdx+namePairLen:]
+	if len(rest) > 0 && strings.EqualFold(rest[0], checkNamePath) {
+		return sp, kindCheckName, true
+	}
+
+	if len(rest) == 0 || !strings.EqualFold(rest[0], resourceType) {
+		return sbPath{}, kindResource, false
+	}
+
+	if len(rest) >= namePairLen {
+		sp.namespace = rest[1]
+		sp.segs = rest[namePairLen:]
+	}
+
+	return sp, kindResource, true
+}
+
+// namePairLen is the length of a {keyword}/{value} pair such as
+// namespaces/{ns}.
+const namePairLen = 2
+
+// findProvider returns the index of the "providers" segment when it is
+// immediately followed by the Service Bus provider name.
+func findProvider(parts []string) (int, bool) {
+	for i, s := range parts {
+		if !strings.EqualFold(s, "providers") {
+			continue
+		}
+
+		if i+1 < len(parts) && strings.EqualFold(parts[i+1], providerName) {
+			return i, true
+		}
+
+		return 0, false
+	}
+
+	return 0, false
+}
+
+// parseScope reads the subscription and resource group from the segments that
+// precede the providers segment.
+func parseScope(parts []string, providerIdx int) sbPath {
+	sp := sbPath{}
+
+	for i := 0; i+1 < providerIdx; i++ {
+		switch {
+		case strings.EqualFold(parts[i], "subscriptions"):
+			sp.sub = parts[i+1]
+		case strings.EqualFold(parts[i], "resourceGroups"):
+			sp.rg = parts[i+1]
+		}
+	}
+
+	return sp
+}
+
+// Matches accepts Service Bus ARM paths plus data-plane URLs ending in
+// /messages or /messages/head.
 func (*Handler) Matches(r *http.Request) bool {
 	if isDataPlanePath(r.URL.Path) {
 		return true
 	}
 
-	rp, ok := azurearm.ParsePath(r.URL.Path)
-	if !ok {
-		return false
-	}
+	_, _, ok := parseSBPath(r.URL.Path)
 
-	return rp.Provider == providerName && rp.ResourceType == resourceType
+	return ok
 }
 
 // ServeHTTP routes by URL shape.
@@ -80,424 +170,80 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rp, ok := azurearm.ParsePath(r.URL.Path)
+	sp, kind, ok := parseSBPath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
 		return
 	}
 
-	// /providers/Microsoft.ServiceBus/namespaces (subscription-level list)
-	if rp.ResourceName == "" {
-		h.listNamespaces(w, rp)
-		return
+	switch {
+	case kind == kindCheckName:
+		h.checkNameAvailability(w, r)
+	case sp.namespace == "":
+		h.listNamespaces(w, sp)
+	case len(sp.segs) == 0:
+		h.serveNamespace(w, r, sp)
+	default:
+		h.serveChild(w, r, sp)
 	}
+}
 
-	// /namespaces/{ns}/queues[/{name}]
-	if rp.SubResource == subTypeQueue {
-		h.serveQueue(w, r, rp)
-		return
-	}
-
-	if rp.SubResource != "" {
+// serveChild dispatches the child-entity routes under a namespace.
+func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, sp sbPath) {
+	switch {
+	case strings.EqualFold(sp.segs[0], segQueues):
+		h.serveQueue(w, r, sp)
+	case strings.EqualFold(sp.segs[0], segTopics):
+		h.serveTopicTree(w, r, sp)
+	case strings.EqualFold(sp.segs[0], segAuthRules):
+		h.serveAuthRule(w, r, sp)
+	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
-			"unsupported sub-resource: "+rp.SubResource)
-		return
+			"unsupported sub-resource: "+sp.segs[0])
 	}
-
-	h.serveNamespace(w, r, rp)
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) serveNamespace(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	switch r.Method {
-	case http.MethodPut:
-		h.createNamespace(w, r, rp)
-	case http.MethodGet:
-		h.getNamespace(w, r, rp)
-	case http.MethodDelete:
-		h.deleteNamespace(w, rp)
-	default:
+// listChildren renders a namespace-scoped child collection: it enforces GET,
+// resolves the namespace (404 when absent), and paginates whatever collect
+// returns. collect runs under the read lock.
+func (h *Handler) listChildren(w http.ResponseWriter, r *http.Request, sp sbPath,
+	collect func(*namespaceState) []any) {
+	if r.Method != http.MethodGet {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
 	}
+
+	h.mu.RLock()
+
+	ns, ok := h.getNS(sp)
+	if !ok {
+		h.mu.RUnlock()
+		writeNSNotFound(w, sp.namespace)
+
+		return
+	}
+
+	resources := collect(ns)
+	h.mu.RUnlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, paginate(resources))
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) serveQueue(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	if rp.SubResourceName == "" {
-		// Collection: list queues in the namespace.
-		if r.Method != http.MethodGet {
-			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-			return
-		}
+// nsKey normalizes a namespace name to its store key. Service Bus namespace
+// names map 1:1 to a DNS host (<name>.servicebus.windows.net) and real Azure
+// treats them case-insensitively for uniqueness and lookup.
+func nsKey(name string) string { return strings.ToLower(name) }
 
-		h.listQueues(w, r, rp)
-
-		return
+// getNS returns the namespace state if it exists and matches the request scope.
+func (h *Handler) getNS(sp sbPath) (*namespaceState, bool) {
+	ns, ok := h.namespaces.Get(nsKey(sp.namespace))
+	if !ok {
+		return nil, false
 	}
 
-	switch r.Method {
-	case http.MethodPut:
-		h.createQueue(w, r, rp)
-	case http.MethodGet:
-		h.getQueue(w, r, rp)
-	case http.MethodDelete:
-		h.deleteQueue(w, r, rp)
-	default:
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
-// ---------- Namespace control plane ----------
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-
-	var req createNamespaceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
-		return
+	if !strings.EqualFold(ns.Subscription, sp.sub) || !strings.EqualFold(ns.ResourceGroup, sp.rg) {
+		return nil, false
 	}
 
-	location := req.Location
-	if location == "" {
-		location = "eastus"
-	}
-
-	// PUT is create-or-update: store (and thus overwrite) the record so the
-	// request's tags and SKU are applied, mirroring ARM CreateOrUpdate.
-	ns := namespaceState{
-		Name:          rp.ResourceName,
-		Location:      location,
-		Subscription:  rp.Subscription,
-		ResourceGroup: rp.ResourceGroup,
-		Tags:          maps.Clone(req.Tags),
-		SKU:           cloneSKU(req.SKU),
-	}
-	h.namespaces.Set(rp.ResourceName, ns)
-
-	azurearm.WriteJSON(w, http.StatusOK, toNamespaceResource(ns))
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) getNamespace(w http.ResponseWriter, _ *http.Request, rp azurearm.ResourcePath) {
-	ns, ok := h.namespaces.Get(rp.ResourceName)
-	if !ok || !namespaceInScope(ns, rp) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"namespace not found: "+rp.ResourceName)
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, toNamespaceResource(ns))
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) deleteNamespace(w http.ResponseWriter, rp azurearm.ResourcePath) {
-	// Delete only if the namespace actually lives under the path's
-	// subscription/resource group — a wrong-scope delete must not remove it.
-	if ns, ok := h.namespaces.Get(rp.ResourceName); ok && namespaceInScope(ns, rp) {
-		h.namespaces.Delete(rp.ResourceName)
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-// cloneSKU copies the SKU so stored state never aliases the decoded request.
-func cloneSKU(s *sbSKU) *sbSKU {
-	if s == nil {
-		return nil
-	}
-	c := *s
-	return &c
-}
-
-// namespaceInScope reports whether the stored namespace belongs to the
-// subscription and resource group named in the request path. A named-resource
-// path always carries both, so this is an exact match.
-func namespaceInScope(ns namespaceState, rp azurearm.ResourcePath) bool {
-	nsScope := scope.Scope{Subscription: ns.Subscription, ResourceGroup: ns.ResourceGroup}
-	return nsScope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) listNamespaces(w http.ResponseWriter, rp azurearm.ResourcePath) {
-	// The same route serves subscription-level and resource-group-level lists;
-	// filter by whatever the request path carries (an empty resource group
-	// matches every group in the subscription).
-	out := listResponse{Value: []any{}}
-	for _, ns := range h.namespaces.SortedValues() {
-		if !namespaceInScope(ns, rp) {
-			continue
-		}
-		out.Value = append(out.Value, toNamespaceResource(ns))
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, out)
-}
-
-// toNamespaceResource renders stored namespace state as the ARM JSON shape.
-func toNamespaceResource(ns namespaceState) namespaceResource {
-	return namespaceResource{
-		ID: azurearm.BuildResourceID(ns.Subscription, ns.ResourceGroup,
-			providerName, resourceType, ns.Name),
-		Name:     ns.Name,
-		Type:     providerName + "/" + resourceType,
-		Location: ns.Location,
-		Tags:     ns.Tags,
-		Properties: namespaceProperties{
-			ProvisioningState:  "Succeeded",
-			ServiceBusEndpoint: "https://" + ns.Name + ".servicebus.windows.net:443/",
-		},
-		SKU: ns.SKU,
-	}
-}
-
-// ---------- Queue control plane ----------
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-
-	var req createQueueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
-		return
-	}
-
-	cfg := mqdriver.QueueConfig{
-		Name: rp.SubResourceName,
-		FIFO: req.Properties.RequiresSession || strings.HasSuffix(rp.SubResourceName, ".fifo"),
-	}
-
-	info, err := h.mq.CreateQueue(r.Context(), cfg)
-	if err != nil && !cerrors.IsAlreadyExists(err) {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	if info == nil {
-		// Idempotent PUT: re-read the queue.
-		queues, _ := h.mq.ListQueues(r.Context(), "")
-
-		for i := range queues {
-			if queues[i].Name == rp.SubResourceName {
-				info = &queues[i]
-				break
-			}
-		}
-	}
-
-	if info == nil {
-		azurearm.WriteError(w, http.StatusInternalServerError, "InternalError", "queue lookup failed")
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, toQueueResource(rp, info))
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) getQueue(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	queues, err := h.mq.ListQueues(r.Context(), "")
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	for i := range queues {
-		if queues[i].Name == rp.SubResourceName {
-			azurearm.WriteJSON(w, http.StatusOK, toQueueResource(rp, &queues[i]))
-			return
-		}
-	}
-
-	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "queue not found")
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	queues, err := h.mq.ListQueues(r.Context(), "")
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	out := listResponse{Value: make([]any, 0, len(queues))}
-	for i := range queues {
-		out.Value = append(out.Value, toQueueResource(rp, &queues[i]))
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, out)
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) deleteQueue(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	queues, err := h.mq.ListQueues(r.Context(), "")
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	var url string
-
-	for i := range queues {
-		if queues[i].Name == rp.SubResourceName {
-			url = queues[i].URL
-			break
-		}
-	}
-
-	if url == "" {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "queue not found")
-		return
-	}
-
-	if err := h.mq.DeleteQueue(r.Context(), url); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-// ---------- Data plane (raw HTTP send/receive) ----------
-
-func isDataPlanePath(p string) bool {
-	if !strings.HasSuffix(p, dataPlanePath) && !strings.HasSuffix(p, dataPlanePath+"/head") {
-		return false
-	}
-	// The path must NOT be an ARM URL — those start with /subscriptions/.
-	return !strings.HasPrefix(p, "/subscriptions/")
-}
-
-func (h *Handler) serveDataPlane(w http.ResponseWriter, r *http.Request) {
-	queueName, peek := parseDataPlanePath(r.URL.Path)
-	if queueName == "" {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing queue in data-plane path")
-		return
-	}
-
-	queue, err := h.findQueueByName(r.Context(), queueName)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	if peek {
-		h.dataPlaneReceive(w, r, queue.URL)
-		return
-	}
-
-	h.dataPlaneSend(w, r, queue.URL)
-}
-
-func (h *Handler) dataPlaneSend(w http.ResponseWriter, r *http.Request, queueURL string) {
-	if r.Method != http.MethodPost {
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "send requires POST")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		azurearm.WriteError(w, http.StatusRequestEntityTooLarge, "PayloadTooLarge", err.Error())
-		return
-	}
-
-	if _, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
-		QueueURL: queueURL,
-		Body:     string(body),
-	}); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-}
-
-func (h *Handler) dataPlaneReceive(w http.ResponseWriter, r *http.Request, queueURL string) {
-	if r.Method != http.MethodDelete {
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
-			"receive-and-delete requires DELETE")
-		return
-	}
-
-	msgs, err := h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
-		QueueURL:    queueURL,
-		MaxMessages: 1,
-	})
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	if len(msgs) == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	// Service Bus REST returns the message body in the response with the
-	// brokered message envelope as headers; we put both in the body for
-	// simplicity since the modern SDK doesn't use this path.
-	if err := h.mq.DeleteMessage(r.Context(), queueURL, msgs[0].ReceiptHandle); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("BrokerProperties", `{"MessageId":"`+msgs[0].MessageID+`"}`)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(msgs[0].Body))
-}
-
-// parseDataPlanePath returns the queue name and a flag indicating whether
-// the URL targets /messages/head (peek-and-delete) or /messages (send).
-func parseDataPlanePath(p string) (queueName string, peek bool) {
-	trimmed := strings.Trim(p, "/")
-
-	if strings.HasSuffix(trimmed, "messages/head") {
-		peek = true
-		trimmed = strings.TrimSuffix(trimmed, "/messages/head")
-	} else if strings.HasSuffix(trimmed, "messages") {
-		trimmed = strings.TrimSuffix(trimmed, "/messages")
-	} else {
-		return "", false
-	}
-
-	// Trimmed is now either "queue" or "namespace/queue". The driver doesn't
-	// model namespaces — the queue is the last segment regardless.
-	parts := strings.Split(trimmed, "/")
-	if len(parts) == 0 {
-		return "", peek
-	}
-
-	return parts[len(parts)-1], peek
-}
-
-func (h *Handler) findQueueByName(ctx context.Context, name string) (*mqdriver.QueueInfo, error) {
-	queues, err := h.mq.ListQueues(ctx, "")
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range queues {
-		if queues[i].Name == name {
-			return &queues[i], nil
-		}
-	}
-
-	return nil, cerrors.Newf(cerrors.NotFound, "queue %s not found", name)
-}
-
-//nolint:gocritic // rp is a request-scoped value; copying once per response is fine.
-func toQueueResource(rp azurearm.ResourcePath, info *mqdriver.QueueInfo) queueResource {
-	return queueResource{
-		ID: azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
-			providerName, resourceType, rp.ResourceName) + "/queues/" + info.Name,
-		Name: info.Name,
-		Type: providerName + "/" + resourceType + "/" + subTypeQueue,
-		Properties: queueProperties{
-			Status:       "Active",
-			MessageCount: info.ApproxMessageCount,
-		},
-	}
+	return ns, true
 }

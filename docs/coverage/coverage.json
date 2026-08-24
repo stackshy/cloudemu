@@ -2468,12 +2468,28 @@
         "doc": "DeleteContainerGroup removes the group, tearing down any engine-backed"
       },
       {
+        "name": "ExecContainer",
+        "doc": "ExecContainer opens an exec session on one container in the group and"
+      },
+      {
         "name": "GetContainerGroup",
         "doc": "GetContainerGroup returns the recorded group, or a NotFound error."
       },
       {
         "name": "ListContainerGroups",
         "doc": "ListContainerGroups returns the groups visible under filter."
+      },
+      {
+        "name": "RestartContainerGroup",
+        "doc": "RestartContainerGroup restarts all containers in the group. Returns NotFound"
+      },
+      {
+        "name": "StartContainerGroup",
+        "doc": "StartContainerGroup starts all containers in a stopped group, allocating"
+      },
+      {
+        "name": "StopContainerGroup",
+        "doc": "StopContainerGroup stops all containers in the group and deallocates"
       }
     ],
     "providers": {
@@ -6977,6 +6993,44 @@
         "doc": "UpdateTopic replaces the mutable fields (display name, tags) of an"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureNotificationHubs",
+        "doc": "AzureNotificationHubs is the Azure-only Notification Hubs surface: namespace",
+        "operations": [
+          {
+            "name": "CreateRegistration"
+          },
+          {
+            "name": "DeleteRegistration"
+          },
+          {
+            "name": "DeleteSASRule"
+          },
+          {
+            "name": "GetNamespaceMeta"
+          },
+          {
+            "name": "GetRegistration"
+          },
+          {
+            "name": "GetSASRule"
+          },
+          {
+            "name": "ListRegistrations"
+          },
+          {
+            "name": "ListSASRules"
+          },
+          {
+            "name": "PutSASRule"
+          },
+          {
+            "name": "SetNamespaceMeta"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "SNS",
       "azure": "NotificationHubs",
@@ -9241,6 +9295,50 @@
       },
       {
         "name": "PutSecretValue"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "KeyVaultSecrets",
+        "doc": "KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version",
+        "operations": [
+          {
+            "name": "BackupKeyVaultSecret"
+          },
+          {
+            "name": "DeleteKeyVaultSecret"
+          },
+          {
+            "name": "GetDeletedKeyVaultSecret"
+          },
+          {
+            "name": "GetKeyVaultSecret"
+          },
+          {
+            "name": "ListDeletedKeyVaultSecrets"
+          },
+          {
+            "name": "ListKeyVaultSecretVersions"
+          },
+          {
+            "name": "ListKeyVaultSecrets"
+          },
+          {
+            "name": "PurgeDeletedKeyVaultSecret"
+          },
+          {
+            "name": "RecoverDeletedKeyVaultSecret"
+          },
+          {
+            "name": "RestoreKeyVaultSecret"
+          },
+          {
+            "name": "SetKeyVaultSecret"
+          },
+          {
+            "name": "UpdateKeyVaultSecret"
+          }
+        ]
       }
     ],
     "providers": {
