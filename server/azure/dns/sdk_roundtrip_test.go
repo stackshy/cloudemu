@@ -184,8 +184,8 @@ func TestSDKAzureDNSRecordSets(t *testing.T) {
 		t.Fatalf("ARecords = %+v, want [192.0.2.1]", got.Properties.ARecords)
 	}
 
-	if got.Properties.Fqdn == nil || *got.Properties.Fqdn != "www.records.com." {
-		t.Fatalf("fqdn = %v, want www.records.com.", got.Properties.Fqdn)
+	if got.Properties.Fqdn == nil || *got.Properties.Fqdn != "www.records.com" {
+		t.Fatalf("fqdn = %v, want www.records.com (no trailing dot)", got.Properties.Fqdn)
 	}
 
 	var listed []string

@@ -70,3 +70,17 @@ type errorXML struct {
 	Code    string   `xml:"Code"`
 	Message string   `xml:"Message"`
 }
+
+// queryParamRangeErrorXML is the Azure Storage error envelope for an
+// out-of-range query parameter. It extends the base error with the offending
+// parameter's name and value plus the permitted bounds, matching the body real
+// Queue Storage returns for OutOfRangeQueryParameterValue.
+type queryParamRangeErrorXML struct {
+	XMLName             xml.Name `xml:"Error"`
+	Code                string   `xml:"Code"`
+	Message             string   `xml:"Message"`
+	QueryParameterName  string   `xml:"QueryParameterName"`
+	QueryParameterValue string   `xml:"QueryParameterValue"`
+	MinimumAllowed      string   `xml:"MinimumAllowed"`
+	MaximumAllowed      string   `xml:"MaximumAllowed"`
+}
