@@ -56,6 +56,8 @@ type getLogEventsRequest struct {
 	StartTime     int64  `json:"startTime"`
 	EndTime       int64  `json:"endTime"`
 	Limit         int32  `json:"limit"`
+	NextToken     string `json:"nextToken"`
+	StartFromHead *bool  `json:"startFromHead"`
 }
 
 type filterLogEventsRequest struct {
@@ -65,6 +67,7 @@ type filterLogEventsRequest struct {
 	StartTime      int64    `json:"startTime"`
 	EndTime        int64    `json:"endTime"`
 	Limit          int32    `json:"limit"`
+	NextToken      string   `json:"nextToken"`
 }
 
 // --- response envelopes ---
@@ -123,8 +126,18 @@ type filteredLogEvent struct {
 	IngestionTime int64  `json:"ingestionTime"`
 }
 
+// searchedLogStreamJSON is the FilterLogEvents searchedLogStreams element. AWS
+// deprecated the field to an always-empty list on 2020-05-15, so it is never
+// populated; the type exists only to emit the shape the SDK expects.
+type searchedLogStreamJSON struct {
+	LogStreamName      string `json:"logStreamName"`
+	SearchedCompletely bool   `json:"searchedCompletely"`
+}
+
 type filterLogEventsResponse struct {
-	Events []filteredLogEvent `json:"events"`
+	Events             []filteredLogEvent      `json:"events"`
+	SearchedLogStreams []searchedLogStreamJSON `json:"searchedLogStreams"`
+	NextToken          string                  `json:"nextToken,omitempty"`
 }
 
 // epochMillis converts a time to Unix epoch milliseconds, the form the AWS JSON

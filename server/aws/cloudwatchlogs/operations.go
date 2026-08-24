@@ -15,6 +15,32 @@ import (
 // DescribeLogGroups / DescribeLogStreams when the caller omits limit.
 const defaultDescribeLimit = 50
 
+// defaultEventLimit is the page size CloudWatch Logs applies to GetLogEvents /
+// FilterLogEvents when the caller omits limit (AWS caps a page at 10000 events).
+const defaultEventLimit = 10000
+
+// forwardTokenPrefix / backwardTokenPrefix mark the GetLogEvents cursor
+// direction; AWS forward tokens are "f/<...>" and backward tokens "b/<...>".
+const (
+	forwardTokenPrefix  = "f/"
+	backwardTokenPrefix = "b/"
+)
+
+// encodePositionToken renders a slice offset as a direction-prefixed GetLogEvents
+// token (e.g. "f/<base64>").
+func encodePositionToken(prefix string, offset int) string {
+	return prefix + encodeOffsetToken(offset)
+}
+
+// decodePositionToken parses a GetLogEvents forward/backward token back into a
+// slice offset, tolerating either direction prefix.
+func decodePositionToken(tok string) int {
+	tok = strings.TrimPrefix(tok, forwardTokenPrefix)
+	tok = strings.TrimPrefix(tok, backwardTokenPrefix)
+
+	return decodeOffsetToken(tok)
+}
+
 // decodeOffsetToken parses a nextToken produced by encodeOffsetToken back into a
 // slice offset. An empty token means "start from the beginning"; a malformed
 // token is treated as offset 0 so a stray token never wedges pagination.
@@ -223,26 +249,75 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, putLogEventsResponse{NextSequenceToken: "0"})
 }
 
+// getLogEventsWindow picks the [start,end) slice bounds for a GetLogEvents page
+// over an ascending (oldest→newest) event set. A continuation token wins and is
+// direction-aware: a forward token marks the START of the next page, a backward
+// token marks the END (exclusive) of the previous page — so following the
+// backward token yields the older window, not the current one. With no token the
+// AWS default (startFromHead false) returns the tail (latest events first) and
+// startFromHead=true returns the head.
+func getLogEventsWindow(nextToken string, startFromHead *bool, total, size int) (start, end int) {
+	switch {
+	case strings.HasPrefix(nextToken, backwardTokenPrefix):
+		end = decodePositionToken(nextToken)
+		start = end - size
+	case nextToken != "":
+		start = decodePositionToken(nextToken)
+		end = start + size
+	case startFromHead != nil && *startFromHead:
+		start, end = 0, size
+	default:
+		start, end = total-size, total
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if start > total {
+		start = total
+	}
+
+	if end > total {
+		end = total
+	}
+
+	if end < start {
+		end = start
+	}
+
+	return start, end
+}
+
 func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 	var req getLogEventsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
+	// Fetch the full ordered slice (Limit -1 = no cap) and page it here so the
+	// forward / backward tokens can carry a real position across all events.
 	events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{
 		LogGroup:  req.LogGroupName,
 		LogStream: req.LogStreamName,
 		StartTime: millisToTime(req.StartTime),
 		EndTime:   millisToTime(req.EndTime),
-		Limit:     int(req.Limit),
+		Limit:     -1,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := make([]outputLogEvent, 0, len(events))
-	for _, e := range events {
+	size := int(req.Limit)
+	if size <= 0 {
+		size = defaultEventLimit
+	}
+
+	start, end := getLogEventsWindow(req.NextToken, req.StartFromHead, len(events), size)
+
+	out := make([]outputLogEvent, 0, end-start)
+	for _, e := range events[start:end] {
 		out = append(out, outputLogEvent{
 			Timestamp:     epochMillis(e.Timestamp),
 			Message:       e.Message,
@@ -250,11 +325,12 @@ func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Token values are opaque to the SDK; a stable pair terminates paging.
+	// Tokens are never null. When the cursor is at the end, the forward token
+	// equals the one the caller passed in, which is how the SDK paginator stops.
 	wire.WriteJSON(w, getLogEventsResponse{
 		Events:            out,
-		NextForwardToken:  "f/0",
-		NextBackwardToken: "b/0",
+		NextForwardToken:  encodePositionToken(forwardTokenPrefix, end),
+		NextBackwardToken: encodePositionToken(backwardTokenPrefix, start),
 	})
 }
 
@@ -271,21 +347,30 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 		stream = req.LogStreamNames[0]
 	}
 
+	// Fetch every match (Limit -1 = no cap) and page here so a NextToken can be
+	// handed back across all matches.
 	events, err := h.logs.FilterLogEvents(r.Context(), &logdriver.FilterLogEventsInput{
 		LogGroup:      req.LogGroupName,
 		LogStream:     stream,
 		FilterPattern: req.FilterPattern,
 		StartTime:     millisToTime(req.StartTime),
 		EndTime:       millisToTime(req.EndTime),
-		Limit:         int(req.Limit),
+		Limit:         -1,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := make([]filteredLogEvent, 0, len(events))
-	for _, e := range events {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultEventLimit
+	}
+
+	from, to, next := pageBounds(len(events), decodeOffsetToken(req.NextToken), limit)
+
+	out := make([]filteredLogEvent, 0, to-from)
+	for _, e := range events[from:to] {
 		out = append(out, filteredLogEvent{
 			LogStreamName: e.LogStream,
 			Timestamp:     epochMillis(e.Timestamp),
@@ -294,5 +379,11 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	wire.WriteJSON(w, filterLogEventsResponse{Events: out})
+	// searchedLogStreams is an always-empty list on modern AWS (deprecated 2020).
+	resp := filterLogEventsResponse{Events: out, SearchedLogStreams: []searchedLogStreamJSON{}}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
 }

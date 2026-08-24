@@ -2,6 +2,7 @@ package cloudwatch_test
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -256,5 +257,66 @@ func TestSDKListMetricsDimensions(t *testing.T) {
 
 	if len(filtered.Metrics) != 1 || aws.ToString(filtered.Metrics[0].Dimensions[0].Value) != "i-aaa" {
 		t.Fatalf("filtered metrics = %+v, want only i-aaa", filtered.Metrics)
+	}
+}
+
+// TestSDKListMetricsPagination guards that ListMetrics pages at 500 metrics and
+// hands back a NextToken. Without pagination every metric comes back on the
+// first page and NextToken is empty, wedging the SDK paginator.
+func TestSDKListMetricsPagination(t *testing.T) {
+	client, ctx := newCWClient(t)
+
+	// AWS pages ListMetrics at 500; put 501 distinct metrics in one call so the
+	// first page must spill into a second.
+	const total = 501
+
+	// PutMetricData accepts up to 1000 datums per call; send in batches of 100 to
+	// stay well within any single-request limits.
+	const batch = 100
+
+	for start := 0; start < total; start += batch {
+		data := make([]cwtypes.MetricDatum, 0, batch)
+		for i := start; i < start+batch && i < total; i++ {
+			data = append(data, cwtypes.MetricDatum{
+				MetricName: aws.String(fmt.Sprintf("m-%04d", i)),
+				Value:      aws.Float64(1),
+			})
+		}
+
+		if _, err := client.PutMetricData(ctx, &awscw.PutMetricDataInput{
+			Namespace:  aws.String("Paged/Metrics"),
+			MetricData: data,
+		}); err != nil {
+			t.Fatalf("PutMetricData: %v", err)
+		}
+	}
+
+	first, err := client.ListMetrics(ctx, &awscw.ListMetricsInput{Namespace: aws.String("Paged/Metrics")})
+	if err != nil {
+		t.Fatalf("ListMetrics page 1: %v", err)
+	}
+
+	if len(first.Metrics) != 500 {
+		t.Fatalf("page 1 = %d metrics, want 500 (pagination missing?)", len(first.Metrics))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatalf("page 1 NextToken empty, want a token for the 501st metric")
+	}
+
+	second, err := client.ListMetrics(ctx, &awscw.ListMetricsInput{
+		Namespace: aws.String("Paged/Metrics"),
+		NextToken: first.NextToken,
+	})
+	if err != nil {
+		t.Fatalf("ListMetrics page 2: %v", err)
+	}
+
+	if len(second.Metrics) != 1 {
+		t.Fatalf("page 2 = %d metrics, want 1", len(second.Metrics))
+	}
+
+	if aws.ToString(second.NextToken) != "" {
+		t.Fatalf("page 2 NextToken = %q, want empty (pagination finished)", aws.ToString(second.NextToken))
 	}
 }
