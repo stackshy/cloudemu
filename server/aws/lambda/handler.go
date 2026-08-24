@@ -805,7 +805,8 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {
 			RepositoryType: "S3",
 			Location:       "https://cloudemu-mock/" + name,
 		},
-		Tags: info.Tags,
+		Concurrency: h.reservedConcurrency(r.Context(), name),
+		Tags:        info.Tags,
 	})
 }
 
@@ -884,6 +885,11 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	w.Header().Set("Content-Type", contentTypeJSON)
+	// A synchronous (RequestResponse) invocation always reports the version that
+	// ran via X-Amz-Executed-Version. The emulator invokes the unqualified
+	// function, so the executed version is $LATEST. The SDK reads this into
+	// InvokeOutput.ExecutedVersion.
+	w.Header().Set("X-Amz-Executed-Version", latestVersion)
 
 	if out.Error != "" {
 		// Lambda surfaces handler errors via the X-Amz-Function-Error header
@@ -981,6 +987,19 @@ func toConfiguration(info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig) fu
 	}
 
 	return cfg
+}
+
+// reservedConcurrency returns the function's reserved-concurrency envelope for
+// the GetFunction Concurrency field, or nil when no reserved concurrency has
+// been set (GetFunctionConcurrency reports NotFound) — matching AWS, which omits
+// the object until PutFunctionConcurrency has run.
+func (h *Handler) reservedConcurrency(ctx context.Context, name string) *concurrencyEnvelope {
+	cfg, err := h.fn.GetFunctionConcurrency(ctx, name)
+	if err != nil || cfg == nil {
+		return nil
+	}
+
+	return &concurrencyEnvelope{ReservedConcurrentExecutions: cfg.ReservedConcurrentExecutions}
 }
 
 // awsFnConfig returns the AWS-only Lambda settings (VpcConfig/DeadLetterConfig/

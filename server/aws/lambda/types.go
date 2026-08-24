@@ -129,12 +129,20 @@ type addPermissionRequest struct {
 }
 
 // functionResource is the shape returned by GetFunction:
-// {Configuration, Code, Tags}. Code is a placeholder since the driver
-// doesn't persist deployment artifacts.
+// {Configuration, Code, Concurrency, Tags}. Code is a placeholder since the
+// driver doesn't persist deployment artifacts. Concurrency is present only once
+// reserved concurrency has been set via PutFunctionConcurrency, matching AWS.
 type functionResource struct {
 	Configuration functionConfiguration `json:"Configuration"`
 	Code          codeLocation          `json:"Code,omitempty"`
+	Concurrency   *concurrencyEnvelope  `json:"Concurrency,omitempty"`
 	Tags          map[string]string     `json:"Tags,omitempty"`
+}
+
+// concurrencyEnvelope is the GetFunction Concurrency object. Terraform/CDK read
+// reserved_concurrent_executions from it.
+type concurrencyEnvelope struct {
+	ReservedConcurrentExecutions int `json:"ReservedConcurrentExecutions"`
 }
 
 type codeLocation struct {
