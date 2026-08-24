@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,11 +52,40 @@ type Handler struct {
 	// concept with no generic driver method, so the wire handler tracks it.
 	offerMu sync.RWMutex
 	offers  map[string]offerState
+
+	// databases tracks the Cosmos databases that exist. The generic driver has a
+	// flat table namespace with no database grouping, so the wire handler models
+	// the database layer: it records which databases were created and qualifies
+	// every container's driver-table name by its database (see qualify), giving
+	// each database an isolated container namespace.
+	dbMu      sync.RWMutex
+	databases map[string]struct{}
 }
 
 // New returns a Cosmos handler backed by db.
 func New(db dbdriver.Database) *Handler {
-	return &Handler{db: db, offers: make(map[string]offerState)}
+	return &Handler{
+		db:        db,
+		offers:    make(map[string]offerState),
+		databases: make(map[string]struct{}),
+	}
+}
+
+// qualify maps a (database, container) pair onto the flat driver table name that
+// backs it. Cosmos container ids cannot contain '/', so "{db}/{coll}" is an
+// unambiguous, collision-free key: a container in one database is unreachable
+// through another, and deleting a database can find its containers by prefix.
+func qualify(db, coll string) string {
+	return db + "/" + coll
+}
+
+// databaseExists reports whether database db has been created.
+func (h *Handler) databaseExists(db string) bool {
+	h.dbMu.RLock()
+	_, ok := h.databases[db]
+	h.dbMu.RUnlock()
+
+	return ok
 }
 
 // Matches returns true for the Cosmos data plane URLs we serve: the account
@@ -159,46 +189,127 @@ func (*Handler) accountProperties(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, props)
 }
 
-const defaultDBName = "cloudemu"
-
-func (*Handler) databaseCollection(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) databaseCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
-		var body struct {
-			ID string `json:"id"`
-		}
+		// Cosmos overloads POST /dbs: a create (JSON body with an id) or, when the
+		// isquery flag is set, a query the SDK's database pager fires. Drain the
+		// query body but ignore its predicate — we list all databases.
+		if isQuery(r) {
+			_, _ = decodeQueryBody(w, r)
+			h.writeDatabaseList(w)
 
-		if !decodeJSON(w, r, &body) {
 			return
 		}
 
-		// We pretend any database creation succeeds. Items live under tables;
-		// the Cosmos database layer is virtual.
-		writeJSON(w, http.StatusCreated, makeDatabaseResource(body.ID))
+		h.createDatabase(w, r)
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, databasesList{
-			RID: "cloudemu",
-			Databases: []databaseResource{
-				makeDatabaseResource(defaultDBName),
-			},
-			Count: 1,
-		})
+		h.writeDatabaseList(w)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-func (*Handler) databaseResource(w http.ResponseWriter, r *http.Request, db string) {
+func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	if body.ID == "" {
+		writeError(w, http.StatusBadRequest, "BadRequest", "database id required")
+		return
+	}
+
+	h.dbMu.Lock()
+	if _, exists := h.databases[body.ID]; exists {
+		h.dbMu.Unlock()
+		writeError(w, http.StatusConflict, "Conflict",
+			"Database with specified id already exists.")
+
+		return
+	}
+
+	h.databases[body.ID] = struct{}{}
+	h.dbMu.Unlock()
+
+	writeJSON(w, http.StatusCreated, makeDatabaseResource(body.ID))
+}
+
+func (h *Handler) writeDatabaseList(w http.ResponseWriter) {
+	h.dbMu.RLock()
+	names := make([]string, 0, len(h.databases))
+
+	for name := range h.databases {
+		names = append(names, name)
+	}
+
+	h.dbMu.RUnlock()
+	sort.Strings(names)
+
+	list := databasesList{RID: "cloudemu", Databases: make([]databaseResource, 0, len(names))}
+	for _, name := range names {
+		list.Databases = append(list.Databases, makeDatabaseResource(name))
+	}
+
+	list.Count = len(list.Databases)
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (h *Handler) databaseResource(w http.ResponseWriter, r *http.Request, db string) {
 	switch r.Method {
 	case http.MethodGet:
+		if !h.databaseExists(db) {
+			writeError(w, http.StatusNotFound, "NotFound", "database not found")
+			return
+		}
+
 		writeJSON(w, http.StatusOK, makeDatabaseResource(db))
 	case http.MethodDelete:
-		// No-op; the virtual database can't actually be deleted because
-		// tables underneath still belong to the driver.
-		w.WriteHeader(http.StatusNoContent)
+		h.deleteDatabase(w, r, db)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// deleteDatabase removes a database and every container inside it. Because the
+// driver namespace is flat and keyed by qualify(db, coll), the database's
+// containers are exactly the tables whose name starts with "{db}/".
+func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, db string) {
+	if !h.databaseExists(db) {
+		writeError(w, http.StatusNotFound, "NotFound", "database not found")
+		return
+	}
+
+	tables, err := h.db.ListTables(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	prefix := db + "/"
+
+	for _, t := range tables {
+		if !strings.HasPrefix(t, prefix) {
+			continue
+		}
+
+		if derr := h.db.DeleteTable(r.Context(), t); derr != nil {
+			writeErr(w, derr)
+			return
+		}
+
+		h.deleteOffer(t)
+	}
+
+	h.dbMu.Lock()
+	delete(h.databases, db)
+	h.dbMu.Unlock()
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) containerCollection(w http.ResponseWriter, r *http.Request, db string) {
@@ -213,6 +324,11 @@ func (h *Handler) containerCollection(w http.ResponseWriter, r *http.Request, db
 }
 
 func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db string) {
+	if !h.databaseExists(db) {
+		writeError(w, http.StatusNotFound, "NotFound", "database not found")
+		return
+	}
+
 	var body containerResource
 
 	if !decodeJSON(w, r, &body) {
@@ -227,7 +343,7 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db str
 	pkAttr := partitionKeyAttribute(body.PartitionKey)
 
 	cfg := dbdriver.TableConfig{
-		Name:         body.ID,
+		Name:         qualify(db, body.ID),
 		PartitionKey: pkAttr,
 	}
 
@@ -244,12 +360,17 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db str
 		return
 	}
 
-	h.recordOffer(body.ID, r)
+	h.recordOffer(qualify(db, body.ID), r)
 
 	writeJSON(w, http.StatusCreated, makeContainerResource(db, body.ID, body.PartitionKey))
 }
 
 func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db string) {
+	if !h.databaseExists(db) {
+		writeError(w, http.StatusNotFound, "NotFound", "database not found")
+		return
+	}
+
 	tables, err := h.db.ListTables(r.Context())
 	if err != nil {
 		writeErr(w, err)
@@ -257,8 +378,15 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 	}
 
 	out := containersList{RID: "cloudemu"}
+	prefix := db + "/"
 
 	for _, t := range tables {
+		if !strings.HasPrefix(t, prefix) {
+			continue
+		}
+
+		coll := strings.TrimPrefix(t, prefix)
+
 		cfg, derr := h.db.DescribeTable(r.Context(), t)
 		pk := defaultPartitionKey()
 
@@ -267,7 +395,7 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 		}
 
 		out.DocumentCollections = append(out.DocumentCollections,
-			makeContainerResource(db, t, pk))
+			makeContainerResource(db, coll, pk))
 	}
 
 	out.Count = len(out.DocumentCollections)
@@ -276,9 +404,11 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 }
 
 func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, coll string) {
+	table := qualify(db, coll)
+
 	switch r.Method {
 	case http.MethodGet:
-		cfg, err := h.db.DescribeTable(r.Context(), coll)
+		cfg, err := h.db.DescribeTable(r.Context(), table)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -291,12 +421,12 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 
 		writeJSON(w, http.StatusOK, makeContainerResource(db, coll, pk))
 	case http.MethodDelete:
-		if err := h.db.DeleteTable(r.Context(), coll); err != nil {
+		if err := h.db.DeleteTable(r.Context(), table); err != nil {
 			writeErr(w, err)
 			return
 		}
 
-		h.deleteOffer(coll)
+		h.deleteOffer(table)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
@@ -304,24 +434,26 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 }
 
 func (h *Handler) documentCollection(w http.ResponseWriter, r *http.Request, db, coll string) {
+	table := qualify(db, coll)
+
 	switch r.Method {
 	case http.MethodPost:
 		// Cosmos overloads POST /docs for both create and query depending on
 		// the x-ms-documentdb-isquery header.
 		if isQuery(r) {
-			h.queryDocuments(w, r, coll)
+			h.queryDocuments(w, r, table)
 			return
 		}
 
-		h.createDocument(w, r, db, coll)
+		h.createDocument(w, r, table)
 	case http.MethodGet:
-		h.listDocuments(w, r, coll)
+		h.listDocuments(w, r, table)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, _, coll string) {
+func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, coll string) {
 	item, ok := decodeAnyJSON(w, r)
 	if !ok {
 		return
@@ -374,6 +506,7 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll str
 	// Same paging contract as the query path: x-ms-max-item-count is the
 	// page size, x-ms-continuation round-trips the driver page token.
 	limit := 100
+
 	if v := r.Header.Get("X-Ms-Max-Item-Count"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
@@ -444,7 +577,9 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 	writeJSON(w, http.StatusOK, documentsList{RID: "cloudemu", Documents: page, Count: len(page)})
 }
 
-func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, _, coll, id string) {
+func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, db, coll, id string) {
+	coll = qualify(db, coll)
+
 	cfg, derr := h.db.DescribeTable(r.Context(), coll)
 	if derr != nil {
 		writeErr(w, derr)
@@ -581,8 +716,11 @@ func makeDatabaseResource(id string) databaseResource {
 	}
 }
 
-func makeContainerResource(_, id string, pk *partitionKeyDef) containerResource {
-	rid := "rid-" + id
+func makeContainerResource(db, id string, pk *partitionKeyDef) containerResource {
+	// The container's _rid doubles as its offer resource id: the SDK reads _rid
+	// off the container, then queries /offers by it. Qualifying by database keeps
+	// the offer key unique across databases (see recordOffer / qualify).
+	rid := containerRID(qualify(db, id))
 
 	if pk == nil {
 		pk = defaultPartitionKey()

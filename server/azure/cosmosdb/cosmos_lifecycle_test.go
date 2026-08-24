@@ -588,6 +588,11 @@ func TestCosmosTTL(t *testing.T) {
 	cc := env.container(ctx, t, "ttldb", "sessions")
 	drv := env.provider.CosmosDB
 
+	// The container lives in the "ttldb" database, so the wire handler backs it
+	// with a database-qualified driver table (see server/azure/cosmosdb qualify).
+	// Driver-level calls, which bypass the HTTP layer, address it by that name.
+	const drvTable = "ttldb/sessions"
+
 	// Two sessions expiring 5 minutes from the fake "now" (absolute epoch
 	// seconds). Distinct pk values because item identity is pk-only.
 	expires := start.Add(5 * time.Minute).Unix()
@@ -595,11 +600,11 @@ func TestCosmosTTL(t *testing.T) {
 	createDoc(ctx, t, cc, "s2", map[string]any{"id": "s2", "pk": "s2", "user": "bob", "expiresAt": expires})
 
 	// Enable TTL at the driver level and read the config back.
-	if err := drv.UpdateTTL(ctx, "sessions", dbdriver.TTLConfig{Enabled: true, AttributeName: "expiresAt"}); err != nil {
+	if err := drv.UpdateTTL(ctx, drvTable, dbdriver.TTLConfig{Enabled: true, AttributeName: "expiresAt"}); err != nil {
 		t.Fatalf("UpdateTTL: %v", err)
 	}
 
-	ttlCfg, err := drv.DescribeTTL(ctx, "sessions")
+	ttlCfg, err := drv.DescribeTTL(ctx, drvTable)
 	if err != nil {
 		t.Fatalf("DescribeTTL: %v", err)
 	}
@@ -623,7 +628,7 @@ func TestCosmosTTL(t *testing.T) {
 	// Documented quirk: BatchGetItems does NOT check TTL, so the expired s2
 	// (never point-read since expiry) is still returned by a batch get. The key
 	// carries the full (pk, id) identity the container uses.
-	batch, err := drv.BatchGetItems(ctx, "sessions", []map[string]any{{"pk": "s2", "id": "s2"}})
+	batch, err := drv.BatchGetItems(ctx, drvTable, []map[string]any{{"pk": "s2", "id": "s2"}})
 	if err != nil {
 		t.Fatalf("BatchGetItems: %v", err)
 	}
@@ -668,12 +673,17 @@ func TestCosmosChangeFeed(t *testing.T) {
 	cc := env.container(ctx, t, "feeddb", "chats")
 	drv := env.provider.CosmosDB
 
+	// The container is in the "feeddb" database; its flat driver-table name is
+	// database-qualified (see server/azure/cosmosdb qualify), and driver-level
+	// change-feed calls, which bypass the HTTP layer, address it by that name.
+	const drvTable = "feeddb/chats"
+
 	// Feed disabled → FailedPrecondition.
-	if _, err := drv.GetStreamRecords(ctx, "chats", 0, ""); !cerrors.IsFailedPrecondition(err) {
+	if _, err := drv.GetStreamRecords(ctx, drvTable, 0, ""); !cerrors.IsFailedPrecondition(err) {
 		t.Fatalf("GetStreamRecords before enable: err=%v want FailedPrecondition", err)
 	}
 
-	if err := drv.UpdateStreamConfig(ctx, "chats", dbdriver.StreamConfig{
+	if err := drv.UpdateStreamConfig(ctx, drvTable, dbdriver.StreamConfig{
 		Enabled:  true,
 		ViewType: "NEW_AND_OLD_IMAGES",
 	}); err != nil {
@@ -693,7 +703,7 @@ func TestCosmosChangeFeed(t *testing.T) {
 		t.Fatalf("DeleteItem: %v", err)
 	}
 
-	it, err := drv.GetStreamRecords(ctx, "chats", 0, "")
+	it, err := drv.GetStreamRecords(ctx, drvTable, 0, "")
 	if err != nil {
 		t.Fatalf("GetStreamRecords: %v", err)
 	}
@@ -747,7 +757,7 @@ func TestCosmosChangeFeed(t *testing.T) {
 	}
 
 	// Token-based resumption: first page of 2, then the remainder.
-	page1, err := drv.GetStreamRecords(ctx, "chats", 2, "")
+	page1, err := drv.GetStreamRecords(ctx, drvTable, 2, "")
 	if err != nil {
 		t.Fatalf("GetStreamRecords page1: %v", err)
 	}
@@ -756,7 +766,7 @@ func TestCosmosChangeFeed(t *testing.T) {
 		t.Fatalf("page1 records=%d next=%q want 2 records, token \"2\"", len(page1.Records), page1.NextToken)
 	}
 
-	page2, err := drv.GetStreamRecords(ctx, "chats", 2, page1.NextToken)
+	page2, err := drv.GetStreamRecords(ctx, drvTable, 2, page1.NextToken)
 	if err != nil {
 		t.Fatalf("GetStreamRecords page2: %v", err)
 	}

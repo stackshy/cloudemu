@@ -31,12 +31,15 @@ AzureNotificationHubs is the Azure-only Notification Hubs surface: namespace
 | `DeleteRegistration` |  |
 | `DeleteSASRule` |  |
 | `GetNamespaceMeta` |  |
+| `GetPnsCredentials` |  |
 | `GetRegistration` |  |
 | `GetSASRule` |  |
 | `ListRegistrations` |  |
 | `ListSASRules` |  |
 | `PutSASRule` |  |
+| `RegenerateSASKey` | RegenerateSASKey rotates the primary or secondary key of a rule (policyKey |
 | `SetNamespaceMeta` |  |
+| `SetPnsCredentials` | SetPnsCredentials stores a hub's Platform Notification Service credentials |
 
 ## Not in scope
 

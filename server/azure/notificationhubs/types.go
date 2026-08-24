@@ -17,6 +17,9 @@ const (
 	subAuthorizationRules = "AuthorizationRules"
 	subNotificationHubs   = "notificationHubs"
 	actionListKeys        = "listKeys"
+	actionRegenerateKeys  = "regenerateKeys"
+	subDebugSend          = "debugsend"
+	subPnsCredentials     = "pnsCredentials"
 	typeCheckNSAvail      = "checkNamespaceAvailability"
 
 	namespaceTypeValue = "NotificationHub"
