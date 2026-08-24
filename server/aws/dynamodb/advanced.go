@@ -33,6 +33,8 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ReturnValues              string            `json:"ReturnValues"`
 		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
+
+		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -46,7 +48,8 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 	// ConditionExpression, matching real DynamoDB. Gate the mutation on the
 	// condition (evaluated against the current item) before applying actions.
 	if !h.gateCondition(r.Context(), w, req.TableName, key,
-		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		req.ConditionExpression, req.ExpressionAttributeNames, vals,
+		req.ReturnValuesOnConditionCheckFailure) {
 		return
 	}
 
