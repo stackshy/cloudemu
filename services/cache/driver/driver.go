@@ -42,6 +42,14 @@ type CacheInfo struct {
 	SKUCapacity        int
 	ShardCount         int
 	ReplicasPerPrimary int
+
+	// NumCacheNodes / SubnetGroupName are populated by the AWS ElastiCache
+	// backend. NumCacheNodes is the number of nodes in a Memcached cluster (1
+	// for Redis); SubnetGroupName is the cache subnet group the cluster is
+	// placed in, and deleting that group is refused while a cluster references
+	// it. Both are empty/zero for non-AWS providers.
+	NumCacheNodes   int
+	SubnetGroupName string
 }
 
 // CacheConfig describes a cache instance to create.
@@ -63,6 +71,13 @@ type CacheConfig struct {
 	SKUCapacity        int
 	ShardCount         int
 	ReplicasPerPrimary int
+
+	// NumCacheNodes is the requested node count for an AWS Memcached cluster
+	// (1-40); zero means unspecified and the backend defaults it to 1.
+	// SubnetGroupName names the cache subnet group the cluster is placed in.
+	// Both are AWS-only and left zero/empty by other callers.
+	NumCacheNodes   int
+	SubnetGroupName string
 }
 
 // Cache is the interface that cache provider implementations must satisfy.
@@ -148,6 +163,16 @@ type ReplicationGroupConfig struct {
 	SecurityGroupIDs []string
 }
 
+// DeleteReplicationGroupOptions carries the optional delete-time behaviors of
+// ElastiCache DeleteReplicationGroup. FinalSnapshotIdentifier, when set, takes a
+// final snapshot of the group before it is removed; RetainPrimaryCluster, when
+// set, keeps the primary node group as a standalone cache cluster instead of
+// deleting it.
+type DeleteReplicationGroupOptions struct {
+	RetainPrimaryCluster    bool
+	FinalSnapshotIdentifier string
+}
+
 // ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
 // Replication groups are an AWS ElastiCache concept; drivers for other clouds
 // do not model them.
@@ -155,7 +180,7 @@ type ReplicationGroups interface {
 	CreateReplicationGroup(ctx context.Context, cfg ReplicationGroupConfig) (*ReplicationGroup, error)
 	DescribeReplicationGroups(ctx context.Context, ids []string) ([]ReplicationGroup, error)
 	ModifyReplicationGroup(ctx context.Context, id string, numCacheNodes int) (*ReplicationGroup, error)
-	DeleteReplicationGroup(ctx context.Context, id string) error
+	DeleteReplicationGroup(ctx context.Context, id string, opts DeleteReplicationGroupOptions) error
 }
 
 // Snapshot is a point-in-time backup of an ElastiCache cluster or replication

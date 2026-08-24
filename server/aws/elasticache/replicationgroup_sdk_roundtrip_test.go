@@ -108,6 +108,80 @@ func TestReplicationGroupSDKRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDeleteReplicationGroupFinalSnapshot guards that DeleteReplicationGroup
+// with FinalSnapshotIdentifier takes a final snapshot before deletion — real
+// ElastiCache does, and the snapshot then shows up in DescribeSnapshots.
+func TestDeleteReplicationGroupFinalSnapshot(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	if _, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("drg"),
+		ReplicationGroupDescription: aws.String("group to snapshot on delete"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+	}); err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	if _, err := c.DeleteReplicationGroup(ctx, &awselasticache.DeleteReplicationGroupInput{
+		ReplicationGroupId:      aws.String("drg"),
+		FinalSnapshotIdentifier: aws.String("finalsnap"),
+	}); err != nil {
+		t.Fatalf("DeleteReplicationGroup: %v", err)
+	}
+
+	got, err := c.DescribeSnapshots(ctx, &awselasticache.DescribeSnapshotsInput{
+		SnapshotName: aws.String("finalsnap"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeSnapshots: %v", err)
+	}
+
+	if len(got.Snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1 (final snapshot on delete)", len(got.Snapshots))
+	}
+
+	if id := aws.ToString(got.Snapshots[0].ReplicationGroupId); id != "drg" {
+		t.Errorf("snapshot ReplicationGroupId = %q, want drg", id)
+	}
+}
+
+// TestDeleteReplicationGroupRetainPrimary guards that RetainPrimaryCluster keeps
+// the primary node group as a standalone cache cluster instead of tearing it
+// down.
+func TestDeleteReplicationGroupRetainPrimary(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	if _, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("keeprg"),
+		ReplicationGroupDescription: aws.String("retain primary on delete"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+	}); err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	if _, err := c.DeleteReplicationGroup(ctx, &awselasticache.DeleteReplicationGroupInput{
+		ReplicationGroupId:   aws.String("keeprg"),
+		RetainPrimaryCluster: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("DeleteReplicationGroup: %v", err)
+	}
+
+	got, err := c.DescribeCacheClusters(ctx, &awselasticache.DescribeCacheClustersInput{
+		CacheClusterId: aws.String("keeprg"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeCacheClusters: %v", err)
+	}
+
+	if len(got.CacheClusters) != 1 {
+		t.Fatalf("retained clusters = %d, want 1", len(got.CacheClusters))
+	}
+}
+
 // Callers string-match these two codes: AlreadyExists to make a re-run
 // idempotent, NotFoundFault to treat an absent group as already deleted.
 // Losing either turns a safe path into a failure.

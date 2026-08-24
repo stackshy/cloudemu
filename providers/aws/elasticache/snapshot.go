@@ -59,11 +59,19 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 				"CacheClusterNotFound: cache cluster %q not found", cfg.CacheClusterID)
 		}
 
+		if err := checkSnapshotSupported(cd.info.Engine, cd.info.NodeType); err != nil {
+			return err
+		}
+
 		snap.CacheClusterID = cfg.CacheClusterID
 		snap.Engine = cd.info.Engine
 		snap.EngineVersion = cd.info.EngineVersion
 		snap.NodeType = cd.info.NodeType
 		snap.ParameterGroupName = paramGroupName(cd.info.Engine)
+
+		if cd.info.NumCacheNodes > 0 {
+			snap.NumCacheNodes = cd.info.NumCacheNodes
+		}
 	case cfg.ReplicationGroupID != "":
 		rg, ok := m.replicationGroups.Get(cfg.ReplicationGroupID)
 		if !ok {
@@ -80,6 +88,23 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		if rg.PrimaryPort != 0 {
 			snap.Port = rg.PrimaryPort
 		}
+	}
+
+	return nil
+}
+
+// checkSnapshotSupported enforces that snapshots are valid for Valkey/Redis OSS
+// only. Real ElastiCache rejects a snapshot of a Memcached cluster or one
+// running on a cache.t1.micro node with SnapshotFeatureNotSupportedFault.
+func checkSnapshotSupported(engine, nodeType string) error {
+	if engine == engineMemcached {
+		return cerrors.New(cerrors.FailedPrecondition,
+			"SnapshotFeatureNotSupportedFault: snapshots are not supported for Memcached clusters")
+	}
+
+	if nodeType == "cache.t1.micro" {
+		return cerrors.New(cerrors.FailedPrecondition,
+			"SnapshotFeatureNotSupportedFault: snapshots are not supported for cache.t1.micro nodes")
 	}
 
 	return nil

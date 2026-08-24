@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -156,13 +158,34 @@ func (m *Mock) ModifyReplicationGroup(
 	return &rg, nil
 }
 
-// DeleteReplicationGroup deletes a replication group, tearing down the real
-// Redis server backing its primary (if any) via the shared cacheengine helper.
-func (m *Mock) DeleteReplicationGroup(ctx context.Context, id string) error {
+// DeleteReplicationGroup deletes a replication group. When
+// opts.FinalSnapshotIdentifier is set it first takes a final snapshot of the
+// group (which then shows up in DescribeSnapshots, as real ElastiCache does).
+// When opts.RetainPrimaryCluster is set the primary node group is kept as a
+// standalone cache cluster instead of being torn down.
+func (m *Mock) DeleteReplicationGroup(
+	ctx context.Context, id string, opts cachedriver.DeleteReplicationGroupOptions,
+) error {
 	rg, ok := m.replicationGroups.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound,
 			"ReplicationGroupNotFoundFault: replication group %q not found", id)
+	}
+
+	if opts.FinalSnapshotIdentifier != "" {
+		if _, err := m.CreateSnapshot(ctx, cachedriver.SnapshotConfig{
+			SnapshotName:       opts.FinalSnapshotIdentifier,
+			ReplicationGroupID: id,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if opts.RetainPrimaryCluster {
+		m.retainPrimaryCluster(&rg)
+		m.replicationGroups.Delete(id)
+
+		return nil
 	}
 
 	info := cachedriver.CacheInfo{Name: rg.ID, Engine: rg.Engine}
@@ -173,4 +196,28 @@ func (m *Mock) DeleteReplicationGroup(ctx context.Context, id string) error {
 	m.replicationGroups.Delete(id)
 
 	return nil
+}
+
+// retainPrimaryCluster keeps the primary node group of a deleted replication
+// group as a standalone cache cluster, so DescribeCacheClusters still returns
+// it. The backing engine (if any) is handed over untouched.
+func (m *Mock) retainPrimaryCluster(rg *cachedriver.ReplicationGroup) {
+	if m.caches.Has(rg.ID) {
+		return
+	}
+
+	info := cachedriver.CacheInfo{
+		Name:            rg.ID,
+		NodeType:        rg.NodeType,
+		Engine:          rg.Engine,
+		EngineVersion:   rg.EngineVersion,
+		Status:          statusAvailable,
+		Endpoint:        net.JoinHostPort(rg.PrimaryAddress, strconv.Itoa(rg.PrimaryPort)),
+		ARN:             m.cacheARN(rg.ID),
+		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		NumCacheNodes:   1,
+		SubnetGroupName: rg.SubnetGroupName,
+	}
+
+	m.caches.Set(rg.ID, &cacheData{info: info, items: memstore.New[cacheItem]()})
 }

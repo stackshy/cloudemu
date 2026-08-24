@@ -51,6 +51,36 @@ func mustCreateCluster(t *testing.T, c *awselasticache.Client, id string) {
 	}
 }
 
+// TestCreateSnapshotMemcachedUnsupported guards that snapshotting a Memcached
+// cluster is rejected — real ElastiCache snapshots are "valid for Valkey or
+// Redis OSS only" and return SnapshotFeatureNotSupportedFault.
+func TestCreateSnapshotMemcachedUnsupported(t *testing.T) {
+	ctx := context.Background()
+	c := newSnapshotClient(t)
+
+	if _, err := c.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("mcs"),
+		Engine:         aws.String("memcached"),
+		CacheNodeType:  aws.String("cache.t3.micro"),
+		NumCacheNodes:  aws.Int32(1),
+	}); err != nil {
+		t.Fatalf("CreateCacheCluster: %v", err)
+	}
+
+	_, err := c.CreateSnapshot(ctx, &awselasticache.CreateSnapshotInput{
+		SnapshotName:   aws.String("snap-mc"),
+		CacheClusterId: aws.String("mcs"),
+	})
+	if err == nil {
+		t.Fatal("snapshotting a Memcached cluster should fail")
+	}
+
+	var unsupported *ectypes.SnapshotFeatureNotSupportedFault
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("error = %v, want *SnapshotFeatureNotSupportedFault", err)
+	}
+}
+
 func TestCreateSnapshotSDKRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	c := newSnapshotClient(t)

@@ -2,6 +2,7 @@ package elasticache
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -229,17 +230,23 @@ func splitEndpoint(endpoint string) *endpointXML {
 }
 
 // toCacheClusterXML converts a driver CacheInfo into its ElastiCache XML shape.
-// The driver models a single-node cache, so one CacheNode carrying the endpoint
-// is emitted (DescribeCacheClusters populates it only when ShowCacheNodeInfo is
-// set, but including it unconditionally is harmless).
+// A Memcached cluster reports NumCacheNodes nodes (Redis reports 1); a
+// CacheNode carrying the endpoint is emitted per node (DescribeCacheClusters
+// populates them only when ShowCacheNodeInfo is set, but including them
+// unconditionally is harmless).
 func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
+	numNodes := info.NumCacheNodes
+	if numNodes < 1 {
+		numNodes = 1
+	}
+
 	out := cacheClusterXML{
 		CacheClusterID:       info.Name,
 		CacheClusterStatus:   info.Status,
 		CacheNodeType:        info.NodeType,
 		Engine:               info.Engine,
 		EngineVersion:        info.EngineVersion,
-		NumCacheNodes:        1,
+		NumCacheNodes:        numNodes,
 		CacheClusterCreateAt: info.CreatedAt,
 		ARN:                  info.ARN,
 	}
@@ -253,11 +260,17 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 
 	if ep := splitEndpoint(info.Endpoint); ep != nil {
 		out.ConfigurationEndpt = ep
-		out.CacheNodes = &cacheNodesXML{CacheNode: []cacheNodeXML{{
-			CacheNodeID:     "0001",
-			CacheNodeStatus: info.Status,
-			Endpoint:        ep,
-		}}}
+
+		nodes := make([]cacheNodeXML, 0, numNodes)
+		for i := 1; i <= numNodes; i++ {
+			nodes = append(nodes, cacheNodeXML{
+				CacheNodeID:     fmt.Sprintf("%04d", i),
+				CacheNodeStatus: info.Status,
+				Endpoint:        ep,
+			})
+		}
+
+		out.CacheNodes = &cacheNodesXML{CacheNode: nodes}
 	}
 
 	return out

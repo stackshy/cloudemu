@@ -34,12 +34,20 @@ func parseTags(form url.Values) map[string]string {
 func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
+	nodes, err := parseNodeCount("NumCacheNodes", form.Get("NumCacheNodes"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := cachedriver.CacheConfig{
-		Name:          form.Get("CacheClusterId"),
-		NodeType:      form.Get("CacheNodeType"),
-		Engine:        form.Get("Engine"),
-		EngineVersion: form.Get("EngineVersion"),
-		Tags:          parseTags(form),
+		Name:            form.Get("CacheClusterId"),
+		NodeType:        form.Get("CacheNodeType"),
+		Engine:          form.Get("Engine"),
+		EngineVersion:   form.Get("EngineVersion"),
+		NumCacheNodes:   nodes,
+		SubnetGroupName: form.Get("CacheSubnetGroupName"),
+		Tags:            parseTags(form),
 	}
 
 	info, err := h.cache.CreateCache(r.Context(), cfg)
