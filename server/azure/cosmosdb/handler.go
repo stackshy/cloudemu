@@ -17,11 +17,13 @@
 package cosmosdb
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -32,28 +34,49 @@ import (
 const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 5 << 20
+	// idAttr is the Cosmos document id attribute, which also serves as the
+	// driver sort key so a document's identity is (partition key, id).
+	idAttr = "id"
+	// offersPath / offersPathPrefix address the /offers throughput resource.
+	offersPath       = "/offers"
+	offersPathPrefix = "/offers/"
 )
 
 // Handler serves Cosmos DB SQL API requests against a database driver.
 type Handler struct {
 	db dbdriver.Database
+
+	// offers holds the provisioned throughput declared at container-create time,
+	// keyed by the container's resource id ("_rid"). Throughput is a Cosmos-only
+	// concept with no generic driver method, so the wire handler tracks it.
+	offerMu sync.RWMutex
+	offers  map[string]offerState
 }
 
 // New returns a Cosmos handler backed by db.
 func New(db dbdriver.Database) *Handler {
-	return &Handler{db: db}
+	return &Handler{db: db, offers: make(map[string]offerState)}
 }
 
 // Matches returns true for the Cosmos data plane URLs we serve: the account
-// root probe (GET /) and the /dbs/... resource tree.
+// root probe (GET /), the /dbs/... resource tree, and the /offers throughput
+// resource.
 func (*Handler) Matches(r *http.Request) bool {
-	return r.URL.Path == "/" || r.URL.Path == "/dbs" || strings.HasPrefix(r.URL.Path, "/dbs/")
+	p := r.URL.Path
+
+	return p == "/" || p == "/dbs" || strings.HasPrefix(p, "/dbs/") ||
+		p == offersPath || strings.HasPrefix(p, offersPathPrefix)
 }
 
 // ServeHTTP routes the request based on URL path shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" {
 		h.accountProperties(w, r)
+		return
+	}
+
+	if r.URL.Path == offersPath || strings.HasPrefix(r.URL.Path, offersPathPrefix) {
+		h.serveOffers(w, r)
 		return
 	}
 
@@ -105,7 +128,7 @@ func (*Handler) accountProperties(w http.ResponseWriter, r *http.Request) {
 	endpoint := scheme + "://" + r.Host + "/"
 
 	props := map[string]any{
-		"id":                           "cloudemu",
+		idAttr:                         "cloudemu",
 		"_rid":                         "cloudemu",
 		"_self":                        "",
 		"_etag":                        `"cloudemu"`,
@@ -201,15 +224,27 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db str
 		return
 	}
 
+	pkAttr := partitionKeyAttribute(body.PartitionKey)
+
 	cfg := dbdriver.TableConfig{
 		Name:         body.ID,
-		PartitionKey: partitionKeyAttribute(body.PartitionKey),
+		PartitionKey: pkAttr,
+	}
+
+	// Cosmos identifies a document by (partition-key value, id). The generic
+	// driver keys an item by PartitionKey (+ SortKey), so we map the document id
+	// onto the sort key to get that composite identity. When the partition key
+	// path is /id the two coincide, so no sort key is needed.
+	if pkAttr != idAttr {
+		cfg.SortKey = idAttr
 	}
 
 	if err := h.db.CreateTable(r.Context(), cfg); err != nil {
 		writeErr(w, err)
 		return
 	}
+
+	h.recordOffer(body.ID, r)
 
 	writeJSON(w, http.StatusCreated, makeContainerResource(db, body.ID, body.PartitionKey))
 }
@@ -261,6 +296,7 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 			return
 		}
 
+		h.deleteOffer(coll)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
@@ -291,8 +327,22 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, _, coll
 		return
 	}
 
-	if _, exists := item["id"]; !exists {
+	if _, exists := item[idAttr]; !exists {
 		writeError(w, http.StatusBadRequest, "BadRequest", "item must contain an id field")
+		return
+	}
+
+	cfg, err := h.db.DescribeTable(r.Context(), coll)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// A plain create (not an upsert) must fail if a document with the same
+	// (partition key, id) already exists, matching real Cosmos's 409 Conflict.
+	if !isUpsert(r) && h.documentExists(r.Context(), coll, cfg, item) {
+		writeError(w, http.StatusConflict, "Conflict",
+			"Resource with specified id or name already exists.")
 		return
 	}
 
@@ -303,6 +353,21 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, _, coll
 
 	addSystemProps(item)
 	writeJSON(w, http.StatusCreated, item)
+}
+
+// documentExists reports whether a document with item's (partition key, id)
+// identity is already stored in coll.
+func (h *Handler) documentExists(
+	ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any,
+) bool {
+	key := map[string]any{idAttr: item[idAttr]}
+	if cfg != nil && cfg.PartitionKey != "" && cfg.PartitionKey != idAttr {
+		key[cfg.PartitionKey] = item[cfg.PartitionKey]
+	}
+
+	_, err := h.db.GetItem(ctx, coll, key)
+
+	return err == nil
 }
 
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll string) {
@@ -380,8 +445,14 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 }
 
 func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, _, coll, id string) {
+	cfg, derr := h.db.DescribeTable(r.Context(), coll)
+	if derr != nil {
+		writeErr(w, derr)
+		return
+	}
+
 	pk := docPartitionKey(r)
-	keyMap := buildKey(coll, pk, id)
+	keyMap := buildKey(cfg.PartitionKey, pk, id)
 
 	switch r.Method {
 	case http.MethodGet:
@@ -400,8 +471,8 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, _, co
 			return
 		}
 
-		if _, exists := item["id"]; !exists {
-			item["id"] = id
+		if _, exists := item[idAttr]; !exists {
+			item[idAttr] = id
 		}
 
 		if err := h.db.PutItem(r.Context(), coll, item); err != nil {
@@ -459,20 +530,30 @@ func docPartitionKey(r *http.Request) string {
 	return fmt.Sprintf("%v", parsed[0])
 }
 
-// buildKey constructs the key map our driver expects to look up a document.
-// The driver uses the partition-key attribute name to find the right item;
-// for items where the table has no explicit partition key we fall back to id.
-func buildKey(_, pk, id string) map[string]any {
-	if pk == "" {
-		return map[string]any{"id": id}
+// buildKey constructs the key map the driver expects to look up a document by
+// its (partition key, id) identity. pkAttr is the container's declared
+// partition-key attribute name (e.g. "pk", "category"); pkVal is the value from
+// the x-ms-documentdb-partitionkey header. When the partition key is /id (or
+// unset) the id alone identifies the document.
+func buildKey(pkAttr, pkVal, id string) map[string]any {
+	key := map[string]any{idAttr: id}
+	if pkAttr != "" && pkAttr != idAttr {
+		key[pkAttr] = pkVal
 	}
 
-	return map[string]any{"id": id, "pk": pk}
+	return key
+}
+
+// isUpsert reports whether a document write carries the Cosmos upsert flag,
+// which turns a create (POST /docs) into a create-or-replace and suppresses the
+// duplicate-id conflict.
+func isUpsert(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("X-Ms-Documentdb-Is-Upsert"), "true")
 }
 
 func partitionKeyAttribute(pk *partitionKeyDef) string {
 	if pk == nil || len(pk.Paths) == 0 {
-		return "id"
+		return idAttr
 	}
 
 	// Cosmos paths look like "/myKey" — strip the leading slash.
@@ -530,7 +611,7 @@ func addSystemProps(item map[string]any) {
 		return
 	}
 
-	id, _ := item["id"].(string)
+	id, _ := item[idAttr].(string)
 
 	if _, ok := item["_rid"]; !ok {
 		item["_rid"] = "rid-" + id
