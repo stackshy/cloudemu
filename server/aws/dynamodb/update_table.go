@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
@@ -29,25 +30,26 @@ type pitrController interface {
 // every throughput/GSI/stream mutation fails.
 func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName             string `json:"TableName"`
-		BillingMode           string `json:"BillingMode"`
+		TableName             string        `json:"TableName"`
+		BillingMode           string        `json:"BillingMode"`
+		AttributeDefinitions  []attrDefJSON `json:"AttributeDefinitions"`
 		ProvisionedThroughput *struct {
 			ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
 			WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
 		} `json:"ProvisionedThroughput"`
-		GlobalSecondaryIndexUpdates []struct {
-			Create *secondaryIndexJSON `json:"Create,omitempty"`
-			Delete *struct {
-				IndexName string `json:"IndexName"`
-			} `json:"Delete,omitempty"`
-		} `json:"GlobalSecondaryIndexUpdates"`
-		StreamSpecification *struct {
+		GlobalSecondaryIndexUpdates []gsiUpdateJSON `json:"GlobalSecondaryIndexUpdates"`
+		StreamSpecification         *struct {
 			StreamEnabled  bool   `json:"StreamEnabled"`
 			StreamViewType string `json:"StreamViewType"`
 		} `json:"StreamSpecification"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := validateGSIUpdates(req.GlobalSecondaryIndexUpdates, req.AttributeDefinitions); err != nil {
+		writeErr(w, err)
 		return
 	}
 
@@ -114,6 +116,62 @@ func (h *Handler) applyThroughput(ctx context.Context, table, billingMode string
 	}
 
 	return updater.UpdateThroughput(ctx, table, billingMode, rcu, wcu)
+}
+
+// attrDefJSON is one AttributeDefinitions entry on an UpdateTable request.
+type attrDefJSON struct {
+	AttributeName string `json:"AttributeName"`
+	AttributeType string `json:"AttributeType"`
+}
+
+// gsiUpdateJSON is one GlobalSecondaryIndexUpdates entry: a GSI Create or Delete.
+type gsiUpdateJSON struct {
+	Create *secondaryIndexJSON `json:"Create,omitempty"`
+	Delete *struct {
+		IndexName string `json:"IndexName"`
+	} `json:"Delete,omitempty"`
+}
+
+// validateGSIUpdates checks every GSI Create in an UpdateTable request against
+// the request's AttributeDefinitions, matching the AWS rule that a new index's
+// key attributes must be declared there.
+func validateGSIUpdates(updates []gsiUpdateJSON, defs []attrDefJSON) error {
+	defined := make(map[string]struct{}, len(defs))
+	for _, ad := range defs {
+		defined[ad.AttributeName] = struct{}{}
+	}
+
+	for i := range updates {
+		if err := validateGSICreateAttrs(updates[i].Create, defined); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateGSICreateAttrs enforces that a GSI added via UpdateTable declares its
+// key attributes in the request's AttributeDefinitions. AWS rejects a missing
+// definition with a ValidationException carrying the wording matched here.
+func validateGSICreateAttrs(create *secondaryIndexJSON, defined map[string]struct{}) error {
+	if create == nil {
+		return nil
+	}
+
+	pk, sk := indexKeys(*create)
+	for _, name := range []string{pk, sk} {
+		if name == "" {
+			continue
+		}
+
+		if _, ok := defined[name]; !ok {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: "+
+					"Some index key attributes are not defined in AttributeDefinitions. Missing attributes: %s", name)
+		}
+	}
+
+	return nil
 }
 
 // applyGSIUpdate creates or deletes one GSI as part of an UpdateTable request.

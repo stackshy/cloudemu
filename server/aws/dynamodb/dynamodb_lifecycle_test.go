@@ -1085,12 +1085,13 @@ func TestDDBStreams(t *testing.T) {
 	assert.Equal(t, []string{"INSERT", "MODIFY", "MODIFY", "REMOVE"}, types)
 	assert.Equal(t, []string{"1", "2", "3", "4"}, seqs)
 
-	// NEW_AND_OLD_IMAGES captures both sides. Wire N values decode to float64.
+	// NEW_AND_OLD_IMAGES captures both sides. Wire N values are preserved as
+	// their exact decimal string (expr.Number) so large numbers round-trip.
 	assert.Nil(t, it.Records[0].OldImage, "INSERT has no old image")
-	assert.EqualValues(t, 1, it.Records[0].NewImage["v"])
-	assert.EqualValues(t, 1, it.Records[1].OldImage["v"])
-	assert.EqualValues(t, 2, it.Records[1].NewImage["v"])
-	assert.EqualValues(t, 3, it.Records[3].OldImage["v"], "REMOVE carries the old image")
+	assert.Equal(t, "1", fmt.Sprintf("%v", it.Records[0].NewImage["v"]))
+	assert.Equal(t, "1", fmt.Sprintf("%v", it.Records[1].OldImage["v"]))
+	assert.Equal(t, "2", fmt.Sprintf("%v", it.Records[1].NewImage["v"]))
+	assert.Equal(t, "3", fmt.Sprintf("%v", it.Records[3].OldImage["v"]), "REMOVE carries the old image")
 	assert.Nil(t, it.Records[3].NewImage, "REMOVE has no new image")
 
 	// Token-based continuation: limit 2, then resume from the returned token.
@@ -1802,12 +1803,14 @@ func TestDDBUpdateTableAddGSI(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
+	// Real AWS rejects an AttributeDefinition not used by any key at CreateTable,
+	// so the GSI key attribute (email) is declared on the UpdateTable request
+	// that adds the index — not up front here.
 	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName:   aws.String("gsiadd"),
 		BillingMode: ddbtypes.BillingModePayPerRequest,
 		AttributeDefinitions: []ddbtypes.AttributeDefinition{
 			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
-			{AttributeName: aws.String("email"), AttributeType: ddbtypes.ScalarAttributeTypeS},
 		},
 		KeySchema: []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
 	})

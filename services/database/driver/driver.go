@@ -371,6 +371,8 @@ func CompareValues(a, b any) int {
 
 func toFloat(v any) (float64, bool) {
 	switch n := v.(type) {
+	case expr.Number:
+		return n.Float()
 	case float64:
 		return n, true
 	case float32:

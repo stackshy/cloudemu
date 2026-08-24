@@ -51,10 +51,11 @@ func fromAttributeValue(v any) any {
 	}
 
 	if n, ok := av["N"]; ok {
+		// DynamoDB Number is a decimal transmitted as a string; keep the exact
+		// string (expr.Number) so values beyond float64 precision round-trip
+		// losslessly. Parsing through float64 here corrupts large ids/counters.
 		if s, ok := n.(string); ok {
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				return f
-			}
+			return expr.Number(s)
 		}
 
 		return n
@@ -223,10 +224,13 @@ func toAttributeValue(v any) map[string]any {
 	}
 }
 
-// toBinaryOrSetValue encodes the binary scalar (B) and the set types (SS/NS/BS),
-// keeping toAttributeValue's own type switch within the complexity budget.
+// toBinaryOrSetValue encodes the exact-decimal Number (N), the binary scalar (B)
+// and the set types (SS/NS/BS), keeping toAttributeValue's own type switch within
+// the complexity budget.
 func toBinaryOrSetValue(v any) (map[string]any, bool) {
 	switch val := v.(type) {
+	case expr.Number:
+		return map[string]any{"N": string(val)}, true
 	case []byte:
 		return map[string]any{"B": base64.StdEncoding.EncodeToString(val)}, true
 	case expr.StringSet:

@@ -63,18 +63,22 @@ func applyAdd(item, orig map[string]any, a pathValue) error {
 // addValue computes the result of ADD: numeric addition (creating the
 // attribute at the value when absent), or set union.
 func addValue(cur any, exists bool, val any) (any, error) {
-	switch v := val.(type) {
-	case float64:
+	if v, ok := toFloat(val); ok {
+		// ADD creates the attribute at the increment when absent (preserving the
+		// original value's type/precision), otherwise adds numerically.
 		if !exists {
-			return v, nil
+			return val, nil
 		}
 
-		base, ok := cur.(float64)
+		base, ok := toFloat(cur)
 		if !ok {
 			return nil, cerrors.New(cerrors.InvalidArgument, "ADD to a non-numeric attribute")
 		}
 
 		return base + v, nil
+	}
+
+	switch val.(type) {
 	case StringSet, NumberSet, BinarySet:
 		if !exists {
 			return val, nil
@@ -132,8 +136,8 @@ func evalArith(o *updArith, item map[string]any) (any, bool) {
 		return nil, false
 	}
 
-	lf, ok1 := lv.(float64)
-	rf, ok2 := rv.(float64)
+	lf, ok1 := toFloat(lv)
+	rf, ok2 := toFloat(rv)
 
 	if !ok1 || !ok2 {
 		return nil, false
