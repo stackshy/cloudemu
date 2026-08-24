@@ -73,6 +73,13 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		ResourceGroup: rp.ResourceGroup,
 	}
 
+	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
+	// updates the VM in place rather than provisioning a duplicate.
+	if existing, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
+		h.updateExisting(w, r, rp, req, existing, cfg)
+		return
+	}
+
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -87,11 +94,39 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(&instances[0], rp, req))
 }
 
+// updateExisting applies an idempotent CreateOrUpdate to an already-provisioned
+// VM. When the driver supports in-place update (AzureVMController) the existing
+// instance's mutable config is overwritten and its ID preserved; otherwise the
+// current instance is returned unchanged so no duplicate is created.
+//
+//nolint:gocritic // rp/req are request-scoped values passed once per request
+func (h *Handler) updateExisting(
+	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	req vmRequest, existing *computedriver.Instance, cfg computedriver.InstanceConfig,
+) {
+	if ctrl, ok := h.compute.(computedriver.AzureVMController); ok {
+		if err := ctrl.UpdateInstance(r.Context(), existing.ID, cfg); err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		updated, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		existing = updated
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(existing, rp, req))
+}
+
 // get handles GET virtualMachines/{name}.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -100,8 +135,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(inst, rp, vmRequest{}))
 }
 
-// list handles GET virtualMachines (within a subscription or resource group).
-// The mock isn't subscription/RG-aware, so all VMs come back.
+// list handles GET virtualMachines. A resource-group-scoped path
+// (.../resourceGroups/{rg}/...) returns only that group's VMs; a
+// subscription-scoped path returns every VM.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
@@ -114,6 +150,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	out := make([]vmResponse, 0, len(instances))
 
 	for i := range instances {
+		if rp.ResourceGroup != "" && instances[i].ResourceGroup != rp.ResourceGroup {
+			continue
+		}
+
 		name := tagOr(instances[i].Tags, armNameTag, instances[i].ID)
 		scope := rp
 		scope.ResourceName = name
@@ -123,12 +163,27 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	azurearm.WriteJSON(w, http.StatusOK, vmListResponse{Value: out})
 }
 
+// instanceView handles GET virtualMachines/{name}/instanceView. It returns the
+// VirtualMachineInstanceView: the provisioning + power state statuses, the VM
+// agent status, and per-disk status the Azure SDK's InstanceView call reads.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) instanceView(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toInstanceView(inst))
+}
+
 // delete handles DELETE virtualMachines/{name}. Returns a 202 Accepted with
 // the async-operation polling header so the SDK's poller terminates cleanly.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -149,11 +204,53 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request, rp azurearm.Reso
 	h.lifecycleAction(w, r, rp, h.compute.StartInstances)
 }
 
-// powerOff handles POST virtualMachines/{name}/powerOff (also serves deallocate).
+// powerOff handles POST virtualMachines/{name}/powerOff. It stops the guest OS
+// while keeping the VM allocated (PowerState/stopped).
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) powerOff(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	h.lifecycleAction(w, r, rp, h.compute.StopInstances)
+	h.powerAction(w, r, rp, func(ctrl computedriver.AzureVMController, id string) error {
+		return ctrl.PowerOff(r.Context(), id)
+	})
+}
+
+// deallocate handles POST virtualMachines/{name}/deallocate. It stops the guest
+// and releases the allocated compute (PowerState/deallocated).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) deallocate(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	h.powerAction(w, r, rp, func(ctrl computedriver.AzureVMController, id string) error {
+		return ctrl.Deallocate(r.Context(), id)
+	})
+}
+
+// powerAction is the shared body for powerOff/deallocate. It invokes the Azure
+// power controller when the driver supports it (preserving the PowerOff vs
+// Deallocate distinction) and otherwise falls back to the generic StopInstances.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) powerAction(
+	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	op func(ctrl computedriver.AzureVMController, id string) error,
+) {
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if ctrl, ok := h.compute.(computedriver.AzureVMController); ok {
+		err = op(ctrl, inst.ID)
+	} else {
+		err = h.compute.StopInstances(r.Context(), []string{inst.ID})
+	}
+
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, rp.SubResource+"-"+rp.ResourceName)
 }
 
 // restart handles POST virtualMachines/{name}/restart.
@@ -172,7 +269,7 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) retrieveBootDiagnosticsData(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	if _, err := findByName(r.Context(), h.compute, rp.ResourceName); err != nil {
+	if _, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -189,7 +286,7 @@ func (h *Handler) retrieveBootDiagnosticsData(w http.ResponseWriter, r *http.Req
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serialConsoleLog(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -231,7 +328,7 @@ func (h *Handler) lifecycleAction(
 	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
 	op func(ctx context.Context, ids []string) error,
 ) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -261,18 +358,25 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, subscription, op
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// findByName looks up a VM by its ARM resource name. Returns NotFound when
-// no instance with that tag exists.
-func findByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.Instance, error) {
+// findByName looks up a VM by its ARM resource name within a resource group.
+// An empty resourceGroup matches across all groups (subscription-scoped lookup).
+// Returns NotFound when no matching instance exists.
+func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.Instance, error) {
 	instances, err := c.DescribeInstances(ctx, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range instances {
-		if tagOr(instances[i].Tags, armNameTag, "") == name {
-			return &instances[i], nil
+		if tagOr(instances[i].Tags, armNameTag, "") != name {
+			continue
 		}
+
+		if resourceGroup != "" && instances[i].ResourceGroup != resourceGroup {
+			continue
+		}
+
+		return &instances[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "virtualMachine %s not found", name)
@@ -361,6 +465,11 @@ func mergeTags(in map[string]string, armName string) map[string]string {
 	return out
 }
 
+// tagOr returns the tag value for key, or fallback when absent. The key
+// parameter is kept for signature parity with the sibling azure compute
+// handlers even though this package only reads the ARM-name tag.
+//
+//nolint:unparam // uniform tag-helper signature across azure compute handlers
 func tagOr(m map[string]string, key, fallback string) string {
 	if v, ok := m[key]; ok {
 		return v
@@ -395,7 +504,7 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 			InstanceView: &instanceView{
 				Statuses: []instanceViewStatus{
 					{Code: "ProvisioningState/succeeded", Level: "Info", DisplayStatus: "Provisioning succeeded"},
-					{Code: "PowerState/" + powerStateFor(inst.State), Level: "Info", DisplayStatus: displayFor(inst.State)},
+					{Code: "PowerState/" + powerCode(inst), Level: "Info", DisplayStatus: powerDisplay(inst)},
 				},
 			},
 		},
@@ -443,6 +552,21 @@ func stripInternalTags(in map[string]string) map[string]string {
 	return out
 }
 
+// powerCode returns the ARM PowerState code suffix for an instance. It prefers
+// the explicit Azure power state (which distinguishes stopped from deallocated)
+// and falls back to a lifecycle-state mapping when unset.
+func powerCode(inst *computedriver.Instance) string {
+	if inst.PowerState != "" {
+		return inst.PowerState
+	}
+
+	return powerStateFor(inst.State)
+}
+
+func powerDisplay(inst *computedriver.Instance) string {
+	return "VM " + powerCode(inst)
+}
+
 func powerStateFor(state string) string {
 	switch state {
 	case stateRunning:
@@ -460,19 +584,30 @@ func powerStateFor(state string) string {
 	}
 }
 
-func displayFor(state string) string {
-	switch state {
-	case stateRunning:
-		return "VM running"
-	case statePending:
-		return "VM starting"
-	case stateStopped:
-		return "VM deallocated"
-	case stateStopping:
-		return "VM deallocating"
-	case stateTerminated:
-		return "VM deleted"
+// toInstanceView builds the VirtualMachineInstanceView response for an instance.
+func toInstanceView(inst *computedriver.Instance) instanceViewResponse {
+	return instanceViewResponse{
+		ComputerName:     tagOr(inst.Tags, armNameTag, ""),
+		OSName:           osNameFor(inst.OSType),
+		VMAgent:          &vmAgentInstanceView{VMAgentVersion: "2.0.0.0"},
+		Disks:            []diskInstanceView{{Name: "osdisk"}},
+		HyperVGeneration: "V1",
+		Statuses: []instanceViewStatus{
+			{Code: "ProvisioningState/succeeded", Level: "Info", DisplayStatus: "Provisioning succeeded"},
+			{Code: "PowerState/" + powerCode(inst), Level: "Info", DisplayStatus: powerDisplay(inst)},
+		},
+	}
+}
+
+// osNameFor renders a plausible OS name from the guest OS family, for the
+// instanceView's osName field. Empty OS type yields an empty name.
+func osNameFor(osType string) string {
+	switch strings.ToLower(osType) {
+	case "windows":
+		return "Windows"
+	case "linux":
+		return "Linux"
 	default:
-		return "VM " + state
+		return osType
 	}
 }

@@ -3,10 +3,16 @@ package virtualmachines
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -22,8 +28,10 @@ import (
 // Compile-time checks that Mock implements driver.Compute and, when a real
 // compute engine is wired, the optional driver.ConsoleReader capability.
 var (
-	_ driver.Compute       = (*Mock)(nil)
-	_ driver.ConsoleReader = (*Mock)(nil)
+	_ driver.Compute           = (*Mock)(nil)
+	_ driver.ConsoleReader     = (*Mock)(nil)
+	_ driver.AzureVMController = (*Mock)(nil)
+	_ driver.KeyPairGenerator  = (*Mock)(nil)
 )
 
 const (
@@ -37,6 +45,9 @@ type lifecycleTransition struct {
 	finalState        string
 	metricValues      []float64
 	errVerb           string
+	// powerState is the Azure power state the instance settles into after the
+	// transition ("running"/"stopped"/"deallocated"). Empty leaves it unchanged.
+	powerState string
 }
 
 var (
@@ -48,18 +59,35 @@ var (
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "start",
+		powerState:        powerStateRunning,
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateStopping,
 		finalState:        compute.StateStopped,
 		metricValues:      zeroMetricValues,
 		errVerb:           "stop",
+		powerState:        powerStateDeallocated,
+	}
+	powerOffTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
+		intermediateState: compute.StateStopping,
+		finalState:        compute.StateStopped,
+		metricValues:      zeroMetricValues,
+		errVerb:           "power off",
+		powerState:        powerStateStopped,
+	}
+	deallocateTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
+		intermediateState: compute.StateStopping,
+		finalState:        compute.StateStopped,
+		metricValues:      zeroMetricValues,
+		errVerb:           "deallocate",
+		powerState:        powerStateDeallocated,
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateRestarting,
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "reboot",
+		powerState:        powerStateRunning,
 	}
 	terminateTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateShuttingDown,
@@ -67,6 +95,15 @@ var (
 		metricValues:      zeroMetricValues,
 		errVerb:           "terminate",
 	}
+)
+
+// Azure power states we track distinctly from the lifecycle state, so a
+// PowerOff'd VM (stopped, still allocated) is reported apart from a Deallocated
+// one (compute released).
+const (
+	powerStateRunning     = "running"
+	powerStateStopped     = "stopped"
+	powerStateDeallocated = "deallocated"
 )
 
 type instanceData struct {
@@ -87,6 +124,8 @@ type instanceData struct {
 	Zones          []string
 	Region         string
 	ResourceGroup  string
+	// PowerState is the Azure power state ("running"/"stopped"/"deallocated").
+	PowerState string
 	// engineBacked is true when a real config.ComputeEngine backs this
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
@@ -217,6 +256,7 @@ func toInstance(d *instanceData) driver.Instance {
 		OSType: d.OSType, Priority: d.Priority, LicenseType: d.LicenseType,
 		Zones:  append([]string(nil), d.Zones...),
 		Region: d.Region, ResourceGroup: d.ResourceGroup,
+		PowerState: d.PowerState,
 	}
 }
 
@@ -267,6 +307,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			Zones:         zones,
 			Region:        cfg.Region,
 			ResourceGroup: cfg.ResourceGroup,
+			PowerState:    powerStateRunning,
 		}
 
 		// Back the instance with a real compute engine when one is configured.
@@ -314,7 +355,7 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 	}
 }
 
-func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
+func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t *lifecycleTransition) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
@@ -329,6 +370,10 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		_ = m.sm.Transition(id, t.finalState)
 		inst.State = t.finalState
 
+		if t.powerState != "" {
+			inst.PowerState = t.powerState
+		}
+
 		m.emitLifecycleMetrics(ctx, id, t.metricValues)
 	}
 
@@ -337,22 +382,78 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 
 // StartInstances starts the specified stopped virtual machine instances.
 func (m *Mock) StartInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, startTransition)
+	return m.transitionInstances(ctx, instanceIDs, &startTransition)
 }
 
 // StopInstances stops the specified running virtual machine instances.
 func (m *Mock) StopInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, stopTransition)
+	return m.transitionInstances(ctx, instanceIDs, &stopTransition)
+}
+
+// PowerOff stops the guest OS of an instance while keeping the VM allocated
+// (Azure PowerState/stopped). Unlike Deallocate, the compute is not released.
+func (m *Mock) PowerOff(ctx context.Context, instanceID string) error {
+	return m.transitionInstances(ctx, []string{instanceID}, &powerOffTransition)
+}
+
+// Deallocate stops the guest OS and releases the allocated compute of an
+// instance (Azure PowerState/deallocated).
+func (m *Mock) Deallocate(ctx context.Context, instanceID string) error {
+	return m.transitionInstances(ctx, []string{instanceID}, &deallocateTransition)
+}
+
+// UpdateInstance overwrites the mutable configuration of an existing instance
+// in place, preserving its ID, launch time, IP, and current power state. It
+// backs the idempotent ARM CreateOrUpdate PUT so a repeated PUT updates the VM
+// rather than provisioning a duplicate.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) UpdateInstance(_ context.Context, instanceID string, cfg driver.InstanceConfig) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if cfg.InstanceType != "" {
+		inst.InstanceType = cfg.InstanceType
+	}
+
+	if cfg.ImageID != "" {
+		inst.ImageID = cfg.ImageID
+	}
+
+	if cfg.SubnetID != "" {
+		inst.SubnetID = cfg.SubnetID
+	}
+
+	if cfg.OSType != "" {
+		inst.OSType = cfg.OSType
+	}
+
+	inst.Priority = cfg.Priority
+	inst.LicenseType = cfg.LicenseType
+
+	if len(cfg.Zones) > 0 {
+		inst.Zones = append([]string(nil), cfg.Zones...)
+	}
+
+	if cfg.Region != "" {
+		inst.Region = cfg.Region
+	}
+
+	inst.Tags = copyTags(cfg.Tags)
+
+	return nil
 }
 
 // RebootInstances reboots the specified running virtual machine instances.
 func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, rebootTransition)
+	return m.transitionInstances(ctx, instanceIDs, &rebootTransition)
 }
 
 // TerminateInstances terminates the specified virtual machine instances.
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
-	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+	if err := m.transitionInstances(ctx, instanceIDs, &terminateTransition); err != nil {
 		return err
 	}
 
@@ -693,6 +794,56 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 	result := *kp
 
 	return &result, nil
+}
+
+// GenerateKeyPair generates a fresh RSA key pair server-side for an existing
+// sshPublicKey resource (Azure generateKeyPair action). It stores the generated
+// public key on the resource and returns both the public key (OpenSSH
+// authorized_keys form) and the private key (PEM PKCS#1) — the one time the
+// private key is disclosed.
+func (m *Mock) GenerateKeyPair(_ context.Context, name string) (*driver.KeyPairInfo, error) {
+	kp, ok := m.keyPairs.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "sshPublicKey %q not found", name)
+	}
+
+	pub, priv, err := generateRSAKeyPair()
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.Internal, "generate key pair: %v", err)
+	}
+
+	kp.PublicKey = pub
+	kp.PrivateKey = priv
+	kp.Fingerprint = "fp-" + name
+	m.keyPairs.Set(name, kp)
+
+	result := *kp
+
+	return &result, nil
+}
+
+// rsaKeyBits is the modulus size Azure uses for generated SSH key pairs.
+const rsaKeyBits = 2048
+
+// generateRSAKeyPair returns a fresh RSA key pair: the public key in OpenSSH
+// authorized_keys form and the private key in PEM (PKCS#1) form.
+func generateRSAKeyPair() (publicKey, privateKey string, err error) {
+	key, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+	if err != nil {
+		return "", "", err
+	}
+
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+
+	sshPub, err := ssh.NewPublicKey(&key.PublicKey)
+	if err != nil {
+		return "", "", err
+	}
+
+	return string(ssh.MarshalAuthorizedKey(sshPub)), string(privPEM), nil
 }
 
 // DeleteKeyPair deletes a key pair by name.

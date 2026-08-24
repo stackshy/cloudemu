@@ -1958,6 +1958,24 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureVMController",
+        "doc": "AzureVMController is an optional Azure-only capability supporting the ARM",
+        "operations": [
+          {
+            "name": "Deallocate",
+            "doc": "Deallocate stops the guest and releases the allocated compute"
+          },
+          {
+            "name": "PowerOff",
+            "doc": "PowerOff stops the guest OS while keeping the VM allocated"
+          },
+          {
+            "name": "UpdateInstance",
+            "doc": "UpdateInstance overwrites the mutable configuration of an existing"
+          }
+        ]
+      },
+      {
         "name": "ConsoleReader",
         "doc": "ConsoleReader is an optional capability a Compute implementation may provide",
         "operations": [
@@ -2002,6 +2020,15 @@
         "operations": [
           {
             "name": "ModifyInstanceMetadataOptions"
+          }
+        ]
+      },
+      {
+        "name": "KeyPairGenerator",
+        "doc": "KeyPairGenerator is an optional Azure-only capability for the ARM",
+        "operations": [
+          {
+            "name": "GenerateKeyPair"
           }
         ]
       },
@@ -9938,6 +9965,56 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureBlobExtensions",
+        "doc": "AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,",
+        "operations": [
+          {
+            "name": "AppendBlock",
+            "doc": "AppendBlock appends a block to the end of an append blob (Append Block,"
+          },
+          {
+            "name": "CommitBlockList",
+            "doc": "CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist)"
+          },
+          {
+            "name": "ContainerMetadata",
+            "doc": "ContainerMetadata returns a container's metadata (Get Container Properties /"
+          },
+          {
+            "name": "CreateAppendBlob",
+            "doc": "CreateAppendBlob creates an empty append blob (Put Blob with"
+          },
+          {
+            "name": "CreateBlobSnapshot",
+            "doc": "CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob,"
+          },
+          {
+            "name": "GetBlobSnapshot",
+            "doc": "GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…)."
+          },
+          {
+            "name": "SetBlobMetadata",
+            "doc": "SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata,"
+          },
+          {
+            "name": "SetBlobProperties",
+            "doc": "SetBlobProperties replaces only a blob's system properties (Set Blob"
+          },
+          {
+            "name": "SetBlobTier",
+            "doc": "SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier),"
+          },
+          {
+            "name": "SetContainerMetadata",
+            "doc": "SetContainerMetadata replaces a container's metadata (Set Container"
+          },
+          {
+            "name": "StageBlock",
+            "doc": "StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob"
+          }
+        ]
+      },
+      {
         "name": "BucketAttributes",
         "doc": "BucketAttributes is an OPTIONAL capability, discovered by type assertion (like",
         "operations": [
@@ -9961,6 +10038,20 @@
           {
             "name": "PutBucketConfig",
             "doc": "PutBucketConfig stores document body under the sub-resource name (e.g."
+          }
+        ]
+      },
+      {
+        "name": "StorageAccountKeys",
+        "doc": "StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "ListStorageAccountKeys",
+            "doc": "ListStorageAccountKeys returns the account's access keys, generating a"
+          },
+          {
+            "name": "RegenerateStorageAccountKey",
+            "doc": "RegenerateStorageAccountKey rotates the value of the named key (key1/key2)"
           }
         ]
       },

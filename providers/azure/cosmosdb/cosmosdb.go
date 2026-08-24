@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +71,8 @@ type Mock struct {
 var _ driver.TableAttributes = (*Mock)(nil)
 
 // SetTableAttributes seeds the Cosmos-account cost attributes for a table.
+//
+//nolint:gocritic // hugeParam: attrs mirrors the optional-capability signature.
 func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -79,6 +82,25 @@ func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) 
 	}
 
 	m.accountAttrs[table] = attrs
+}
+
+// AccountTables returns the names of tables that have been registered as Cosmos
+// DB accounts (i.e. had account attributes seeded through SetTableAttributes),
+// sorted for a deterministic listing. Data-plane containers, which never carry
+// account attributes, are excluded — so an ARM account list returns only real
+// accounts, not the SQL containers sharing this driver.
+func (m *Mock) AccountTables() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.accountAttrs))
+	for name := range m.accountAttrs {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // TableAttributes implements the database TableAttributes optional capability,

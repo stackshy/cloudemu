@@ -47,6 +47,18 @@ const (
 
 	// compList is the value of the ?comp= parameter for list operations.
 	compList = "list"
+
+	// blobTypeBlockBlob is the default Azure blob type.
+	blobTypeBlockBlob = "BlockBlob"
+
+	// comp* are the ?comp= sub-operation selectors on a blob PUT.
+	compBlock       = "block"
+	compBlockList   = "blocklist"
+	compMetadata    = "metadata"
+	compProperties  = "properties"
+	compTier        = "tier"
+	compSnapshot    = "snapshot"
+	compAppendBlock = "appendblock"
 )
 
 // Handler serves Azure Blob Storage REST requests against a storage.Bucket
@@ -115,6 +127,11 @@ func parseBlobPath(path string) (container, blob string) {
 func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container string, q url.Values) {
 	switch r.Method {
 	case http.MethodPut:
+		if q.Get("comp") == compMetadata {
+			h.setContainerMetadata(w, r, container)
+			return
+		}
+
 		h.createContainer(w, r, container)
 	case http.MethodDelete:
 		h.deleteContainer(w, r, container)
@@ -133,12 +150,7 @@ func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container 
 func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob string) {
 	switch r.Method {
 	case http.MethodPut:
-		if r.Header.Get("X-Ms-Copy-Source") != "" {
-			h.copyBlob(w, r, container, blob)
-			return
-		}
-
-		h.putBlob(w, r, container, blob)
+		h.putBlobOp(w, r, container, blob)
 	case http.MethodGet:
 		h.getBlob(w, r, container, blob)
 	case http.MethodHead:
@@ -148,6 +160,58 @@ func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// putBlobOp dispatches a PUT on a blob by its ?comp= sub-operation. Azure
+// overloads PUT: plain Put Blob writes content, but comp=block/blocklist/
+// metadata/properties/tier/snapshot/appendblock each mean something different
+// and must NOT be treated as a content write (doing so corrupts the blob).
+func (h *Handler) putBlobOp(w http.ResponseWriter, r *http.Request, container, blob string) {
+	comp := r.URL.Query().Get("comp")
+
+	ext, hasExt := h.bucket.(storagedriver.AzureBlobExtensions)
+	if comp != "" && hasExt && h.dispatchBlobComp(w, r, ext, container, blob, comp) {
+		return
+	}
+
+	if r.Header.Get("X-Ms-Copy-Source") != "" {
+		h.copyBlob(w, r, container, blob)
+		return
+	}
+
+	if strings.EqualFold(r.Header.Get("x-ms-blob-type"), "AppendBlob") && hasExt {
+		h.createAppendBlob(w, r, ext, container, blob)
+		return
+	}
+
+	h.putBlob(w, r, container, blob)
+}
+
+// dispatchBlobComp routes a PUT comp sub-operation to its handler, returning
+// true when it handled the request and false for an unrecognized comp value.
+func (h *Handler) dispatchBlobComp(
+	w http.ResponseWriter, r *http.Request, ext storagedriver.AzureBlobExtensions, container, blob, comp string,
+) bool {
+	switch comp {
+	case compBlock:
+		h.stageBlock(w, r, ext, container, blob)
+	case compBlockList:
+		h.commitBlockList(w, r, ext, container, blob)
+	case compMetadata:
+		h.setBlobMetadata(w, r, ext, container, blob)
+	case compProperties:
+		h.setBlobProperties(w, r, ext, container, blob)
+	case compTier:
+		h.setBlobTier(w, r, ext, container, blob)
+	case compSnapshot:
+		h.snapshotBlob(w, r, ext, container, blob)
+	case compAppendBlock:
+		h.appendBlock(w, r, ext, container, blob)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
@@ -238,8 +302,8 @@ func (h *Handler) emptyContainer(r *http.Request, container string) error {
 		if len(list.Objects) == 0 {
 			return nil
 		}
-		for _, obj := range list.Objects {
-			err := h.bucket.DeleteObject(r.Context(), container, obj.Key)
+		for i := range list.Objects {
+			err := h.bucket.DeleteObject(r.Context(), container, list.Objects[i].Key)
 			if err != nil && !cerrors.IsNotFound(err) {
 				return err
 			}
@@ -258,6 +322,15 @@ func (h *Handler) getContainerProperties(w http.ResponseWriter, r *http.Request,
 	}
 	w.Header().Set("ETag", containerETag(container, created))
 	w.Header().Set("Last-Modified", httpDate(created))
+
+	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok {
+		if meta, err := ext.ContainerMetadata(r.Context(), container); err == nil {
+			for k, v := range meta {
+				w.Header().Set("x-ms-meta-"+k, v)
+			}
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -291,7 +364,14 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 		NextMarker:    result.NextPageToken,
 	}
 
-	for _, obj := range result.Objects {
+	for i := range result.Objects {
+		obj := &result.Objects[i]
+
+		blobType := obj.BlobType
+		if blobType == "" {
+			blobType = blobTypeBlockBlob
+		}
+
 		out.Blobs.Blobs = append(out.Blobs.Blobs, blobXML{
 			Name: obj.Key,
 			Properties: blobPropsXML{
@@ -299,7 +379,7 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 				ETag:          fmt.Sprintf("%q", obj.ETag),
 				ContentLength: obj.Size,
 				ContentType:   obj.ContentType,
-				BlobType:      "BlockBlob",
+				BlobType:      blobType,
 			},
 		})
 	}
@@ -314,6 +394,10 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 const defaultMaxResults = 5000
 
 func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if h.conditionFailed(w, r, container, blob) {
+		return
+	}
+
 	limited := http.MaxBytesReader(w, r.Body, maxPutBodyBytes)
 
 	data, err := io.ReadAll(limited)
@@ -356,7 +440,79 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 	w.WriteHeader(http.StatusCreated)
 }
 
+// conditionFailed evaluates the If-None-Match / If-Match conditional write
+// headers against the current blob and, if a condition is not met, writes the
+// Azure error and returns true. Real Azure Put Blob returns 409 when
+// If-None-Match:* hits an existing blob (create-if-absent conflict) and 412
+// when If-Match does not match the current ETag.
+func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, container, blob string) bool {
+	ifNoneMatch := r.Header.Get("If-None-Match")
+	ifMatch := r.Header.Get("If-Match")
+
+	if ifNoneMatch == "" && ifMatch == "" {
+		return false
+	}
+
+	var curETag string
+
+	exists := false
+	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
+		exists = true
+		curETag = info.ETag
+	}
+
+	status, code := evalWriteConditions(ifNoneMatch, ifMatch, curETag, exists)
+	if status == 0 {
+		return false
+	}
+
+	writeError(w, status, code, conditionMessage(status))
+
+	return true
+}
+
+// evalWriteConditions evaluates the If-None-Match / If-Match write conditions
+// against the current blob state. It returns the HTTP status and Azure error
+// code to fail with, or (0, "") when the write may proceed.
+func evalWriteConditions(ifNoneMatch, ifMatch, curETag string, exists bool) (status int, code string) {
+	const conditionNotMet = "ConditionNotMet"
+
+	if ifNoneMatch == "*" && exists {
+		return http.StatusConflict, "BlobAlreadyExists"
+	}
+
+	if ifMatch != "" && (!exists || !etagMatches(ifMatch, curETag)) {
+		return http.StatusPreconditionFailed, conditionNotMet
+	}
+
+	if ifNoneMatch != "" && exists && etagMatches(ifNoneMatch, curETag) {
+		return http.StatusPreconditionFailed, conditionNotMet
+	}
+
+	return 0, ""
+}
+
+// conditionMessage maps a conditional-failure status to its Azure message.
+func conditionMessage(status int) string {
+	if status == http.StatusConflict {
+		return "the specified blob already exists"
+	}
+
+	return "the condition specified using HTTP conditional header(s) is not met"
+}
+
+// etagMatches compares a conditional-header ETag (which may be quoted) with a
+// stored raw ETag.
+func etagMatches(header, stored string) bool {
+	return strings.Trim(header, `"`) == strings.Trim(stored, `"`)
+}
+
 func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if snapshot := r.URL.Query().Get("snapshot"); snapshot != "" {
+		h.getBlobSnapshot(w, r, container, blob, snapshot)
+		return
+	}
+
 	obj, err := h.bucket.GetObject(r.Context(), container, blob)
 	if err != nil {
 		writeErr(w, err)
@@ -366,6 +522,27 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 	writeBlobHeaders(w, &obj.Info, int64(len(obj.Data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(obj.Data) //nolint:gosec // raw object bytes
+}
+
+// getBlobSnapshot serves GET /{container}/{blob}?snapshot=… reading an
+// immutable snapshot captured by Snapshot Blob.
+func (h *Handler) getBlobSnapshot(w http.ResponseWriter, r *http.Request, container, blob, snapshot string) {
+	ext, ok := h.bucket.(storagedriver.AzureBlobExtensions)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "snapshots not supported")
+		return
+	}
+
+	obj, err := ext.GetBlobSnapshot(r.Context(), container, blob, snapshot)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.Header().Set("X-Ms-Snapshot", snapshot)
+	writeBlobHeaders(w, &obj.Info, int64(len(obj.Data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(obj.Data) //nolint:gosec // raw snapshot bytes
 }
 
 func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
@@ -384,7 +561,17 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 	w.Header().Set("Last-Modified", httpDate(info.LastModified))
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("X-Ms-Blob-Type", "BlockBlob")
+
+	blobType := info.BlobType
+	if blobType == "" {
+		blobType = blobTypeBlockBlob
+	}
+
+	w.Header().Set("X-Ms-Blob-Type", blobType)
+
+	if info.AccessTier != "" {
+		w.Header().Set("X-Ms-Access-Tier", info.AccessTier)
+	}
 
 	for k, v := range info.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
