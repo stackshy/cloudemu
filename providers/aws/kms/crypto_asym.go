@@ -98,6 +98,8 @@ func publicKeyOf(priv crypto.PrivateKey) crypto.PublicKey {
 // hashForAlg maps a signing/MAC algorithm suffix to its hash.
 func hashForAlg(alg string) (crypto.Hash, func() hash.Hash, error) {
 	switch {
+	case strings.HasSuffix(alg, "_224"):
+		return crypto.SHA224, sha256.New224, nil
 	case strings.HasSuffix(alg, "_256"):
 		return crypto.SHA256, sha256.New, nil
 	case strings.HasSuffix(alg, "_384"):

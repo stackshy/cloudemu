@@ -26,6 +26,10 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 		spec = driver.SpecSymmetricDefault
 	}
 
+	if err := validateSpec(spec); err != nil {
+		return nil, err
+	}
+
 	if err := validateSpecUsage(spec, usage); err != nil {
 		return nil, err
 	}
@@ -62,26 +66,8 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 		kd.meta.PrimaryRegion = m.opts.Region
 	}
 
-	// EXTERNAL-origin keys have no material until it is imported; they start
-	// PendingImport and disabled.
-	switch {
-	case origin == driver.OriginExternal:
-		kd.meta.Enabled = false
-		kd.meta.KeyState = driver.StatePendingImport
-	case isAsymmetricSpec(spec):
-		priv, err := generateAsymmetric(spec)
-		if err != nil {
-			return nil, err
-		}
-
-		kd.privKey = priv
-	default:
-		mat, err := generateMaterial(spec)
-		if err != nil {
-			return nil, err
-		}
-
-		kd.materials = [][]byte{mat}
+	if err := populateKeyMaterial(kd, spec, origin); err != nil {
+		return nil, err
 	}
 
 	m.keys.Set(id, kd)
@@ -89,6 +75,33 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 	out := kd.meta
 
 	return &out, nil
+}
+
+// populateKeyMaterial fills in a new key's material based on its origin and
+// spec. EXTERNAL-origin keys start with no material (PendingImport, disabled);
+// asymmetric specs get a generated private key; everything else gets raw bytes.
+func populateKeyMaterial(kd *keyData, spec, origin string) error {
+	switch {
+	case origin == driver.OriginExternal:
+		kd.meta.Enabled = false
+		kd.meta.KeyState = driver.StatePendingImport
+	case isAsymmetricSpec(spec):
+		priv, err := generateAsymmetric(spec)
+		if err != nil {
+			return err
+		}
+
+		kd.privKey = priv
+	default:
+		mat, err := generateMaterial(spec)
+		if err != nil {
+			return err
+		}
+
+		kd.materials = [][]byte{mat}
+	}
+
+	return nil
 }
 
 // generateMaterial produces raw key bytes for symmetric and HMAC specs.
@@ -99,6 +112,8 @@ func generateMaterial(spec string) ([]byte, error) {
 	switch spec {
 	case driver.SpecSymmetricDefault:
 		size = symmetricKeyBytes
+	case driver.SpecHMAC224:
+		size = 28
 	case driver.SpecHMAC256:
 		size = 32
 	case driver.SpecHMAC384:
@@ -116,6 +131,21 @@ func generateMaterial(spec string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+// validateSpec rejects KeySpec values this backend cannot create, so an
+// unrecognized spec fails at CreateKey with ValidationException rather than
+// producing a key with no usable material (which real KMS never does).
+func validateSpec(spec string) error {
+	switch spec {
+	case driver.SpecSymmetricDefault,
+		driver.SpecRSA2048, driver.SpecRSA3072, driver.SpecRSA4096,
+		driver.SpecECCNISTP256, driver.SpecECCNISTP384, driver.SpecECCNISTP521,
+		driver.SpecHMAC224, driver.SpecHMAC256, driver.SpecHMAC384, driver.SpecHMAC512:
+		return nil
+	default:
+		return errors.Newf(errors.InvalidArgument, "unsupported KeySpec %q", spec)
+	}
 }
 
 // validateSpecUsage rejects spec/usage combinations KMS does not allow.
