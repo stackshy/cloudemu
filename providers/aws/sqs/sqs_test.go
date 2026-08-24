@@ -39,12 +39,19 @@ func TestCreateQueue(t *testing.T) {
 		{name: "empty name", cfg: driver.QueueConfig{}, expectErr: true},
 		{name: "FIFO without suffix", cfg: driver.QueueConfig{Name: "bad", FIFO: true}, expectErr: true},
 		{
-			name: "already exists",
-			cfg:  driver.QueueConfig{Name: "dup"},
+			name: "already exists with different attributes",
+			cfg:  driver.QueueConfig{Name: "dup", VisibilityTimeout: 60},
 			setup: func(m *Mock) {
 				createStdQueue(m, "dup")
 			},
 			expectErr: true,
+		},
+		{
+			name: "idempotent re-create with identical attributes",
+			cfg:  driver.QueueConfig{Name: "idem"},
+			setup: func(m *Mock) {
+				createStdQueue(m, "idem")
+			},
 		},
 	}
 
@@ -168,9 +175,9 @@ func TestDeleteMessage(t *testing.T) {
 		requireNoError(t, err)
 	})
 
-	t.Run("not found", func(t *testing.T) {
+	t.Run("unknown handle is idempotent success", func(t *testing.T) {
 		err := m.DeleteMessage(ctx, q.URL, "invalid-handle")
-		assertError(t, err, true)
+		requireNoError(t, err)
 	})
 
 	t.Run("queue not found", func(t *testing.T) {
