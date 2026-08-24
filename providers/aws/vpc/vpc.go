@@ -21,6 +21,17 @@ const (
 	defaultFlowLogRecordLimit = 10
 )
 
+// VPC IPv4 CIDR netmask bounds. EC2 requires a VPC block between a /16 and a
+// /28; anything outside that range is rejected with InvalidVpcRange.
+const (
+	minVPCNetmask = 16
+	maxVPCNetmask = 28
+	// vpcRangeErrPrefix marks the range error so the wire layer can emit the
+	// resource-specific InvalidVpcRange code (mirrors the InvalidSubnet.* prefix
+	// convention used for subnet CIDR conflicts).
+	vpcRangeErrPrefix = "InvalidVpcRange: "
+)
+
 // Default security group identity. EC2 gives every VPC a group named "default"
 // with this exact description; users can edit its rules but not delete it.
 const (
@@ -251,6 +262,10 @@ func New(opts *config.Options) *Mock {
 func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCInfo, error) {
 	if cfg.CIDRBlock == "" {
 		return nil, errors.Newf(errors.InvalidArgument, "CIDR block is required")
+	}
+
+	if err := validateVPCCIDR(cfg.CIDRBlock); err != nil {
+		return nil, err
 	}
 
 	id := idgen.GenerateID("vpc-")
@@ -562,6 +577,29 @@ func (m *Mock) eniInSubnet(subnetID string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// validateVPCCIDR checks a VPC's IPv4 CIDR the way EC2 does: a malformed value
+// is an InvalidParameterValue, and a syntactically-valid block whose netmask
+// falls outside /16../28 is an InvalidVpcRange. The range error carries the
+// vpcRangeErrPrefix so the wire layer can emit the resource-specific code.
+func validateVPCCIDR(cidr string) error {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return errors.Newf(errors.InvalidArgument, "invalid CIDR block %q", cidr)
+	}
+
+	ones, bits := ipnet.Mask.Size()
+	if bits != net.IPv4len*8 {
+		return errors.Newf(errors.InvalidArgument, "invalid CIDR block %q", cidr)
+	}
+
+	if ones < minVPCNetmask || ones > maxVPCNetmask {
+		return errors.Newf(errors.InvalidArgument,
+			"%sThe block range must be between a /28 netmask and /16 netmask", vpcRangeErrPrefix)
+	}
+
+	return nil
 }
 
 // subnetCIDRConflict reports an existing subnet in the same VPC whose CIDR

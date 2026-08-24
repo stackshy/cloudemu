@@ -505,6 +505,13 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		resp.NextContinuationToken = result.NextPageToken
 	}
 
+	// fetch-owner=true asks S3 to include an <Owner> element for each object;
+	// omitted otherwise (V2 default) so the element stays absent.
+	var owner *aclOwnerXML
+	if q.Get("fetch-owner") == "true" {
+		owner = &aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
+	}
+
 	for i := range result.Objects {
 		obj := &result.Objects[i]
 		resp.Contents = append(resp.Contents, objectXML{
@@ -513,6 +520,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			ETag:         fmt.Sprintf("%q", obj.ETag),
 			Size:         int(obj.Size),
 			StorageClass: "STANDARD",
+			Owner:        owner,
 		})
 	}
 

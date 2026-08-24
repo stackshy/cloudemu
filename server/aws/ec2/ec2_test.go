@@ -202,20 +202,35 @@ func TestInstanceCount(t *testing.T) {
 	cases := []struct {
 		minS, maxS string
 		want       int
+		wantErr    bool
 	}{
-		{"1", "5", 5},   // MaxCount wins
-		{"1", "1", 1},   // equal
-		{"", "3", 3},    // min missing
-		{"2", "", 2},    // max missing — falls back to min
-		{"", "", 1},     // both missing — default 1
-		{"0", "0", 1},   // both zero — default 1
-		{"bad", "2", 2}, // unparsable min, valid max
-		{"2", "bad", 2}, // valid min, unparsable max → min
-		{"10", "3", 3},  // max still wins even if smaller than min
+		{minS: "1", maxS: "5", want: 5},  // MaxCount wins
+		{minS: "1", maxS: "1", want: 1},  // equal
+		{minS: "", maxS: "3", want: 3},   // min missing → defaults to 1
+		{minS: "2", maxS: "", want: 2},   // max missing → falls back to min
+		{minS: "", maxS: "", want: 1},    // both missing → default 1
+		{minS: "0", maxS: "0", wantErr: true}, // min below 1
+		{minS: "5", maxS: "2", wantErr: true}, // min greater than max
+		{minS: "bad", maxS: "2", wantErr: true}, // unparsable min
+		{minS: "2", maxS: "bad", wantErr: true}, // unparsable max
 	}
 
 	for _, tc := range cases {
-		if got := instanceCount(tc.minS, tc.maxS); got != tc.want {
+		got, err := instanceCount(tc.minS, tc.maxS)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("instanceCount(%q,%q) err = nil, want error", tc.minS, tc.maxS)
+			}
+
+			continue
+		}
+
+		if err != nil {
+			t.Errorf("instanceCount(%q,%q) unexpected err: %v", tc.minS, tc.maxS, err)
+			continue
+		}
+
+		if got != tc.want {
 			t.Errorf("instanceCount(%q,%q)=%d want %d", tc.minS, tc.maxS, got, tc.want)
 		}
 	}

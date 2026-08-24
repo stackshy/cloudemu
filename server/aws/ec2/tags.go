@@ -231,6 +231,11 @@ func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "ResourceId")
 	tags := awsquery.FlatTags(r.Form, "Tag")
 
+	if code, msg, ok := validateUserTags(tags); !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+
 	for _, id := range ids {
 		if err := h.tagResource(r.Context(), id, tags); err != nil {
 			writeErrWithNotFound(w, err, tagNotFoundCode(id), "IncorrectState")
@@ -239,6 +244,34 @@ func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	awsquery.WriteXMLResponse(w, tagsResponseXML{Return: true, RequestID: "cloudemu"})
+}
+
+// maxUserTagsPerResource is the ceiling EC2 enforces on user tags per resource;
+// reservedTagPrefix is the "aws:" namespace reserved for AWS-managed tags that a
+// CreateTags call may not write.
+const (
+	maxUserTagsPerResource = 50
+	reservedTagPrefix      = "aws:"
+)
+
+// validateUserTags enforces the CreateTags restrictions real EC2 applies before
+// any tag is written: at most 50 user tags per resource (TagLimitExceeded), and
+// no key or value in the reserved "aws:" namespace (InvalidParameterValue). It
+// returns the wire error code and message plus ok=false when a rule is violated.
+func validateUserTags(tags map[string]string) (code, msg string, ok bool) {
+	if len(tags) > maxUserTagsPerResource {
+		return "TagLimitExceeded",
+			"The maximum number of tags per resource is 50", false
+	}
+
+	for k, v := range tags {
+		if strings.HasPrefix(k, reservedTagPrefix) || strings.HasPrefix(v, reservedTagPrefix) {
+			return "InvalidParameterValue",
+				"Tag keys and values starting with 'aws:' are reserved for internal use", false
+		}
+	}
+
+	return "", "", true
 }
 
 // deleteTags removes tags (by key) from one or more resources.

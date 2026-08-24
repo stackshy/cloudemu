@@ -31,7 +31,13 @@ func TestCreateVPC(t *testing.T) {
 		expectErr bool
 	}{
 		{name: "success", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/16"}},
+		{name: "smallest valid /28", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/28"}},
 		{name: "empty CIDR", cfg: driver.VPCConfig{}, expectErr: true},
+		{name: "malformed CIDR", cfg: driver.VPCConfig{CIDRBlock: "not-a-cidr"}, expectErr: true},
+		{name: "octet out of range", cfg: driver.VPCConfig{CIDRBlock: "300.0.0.0/16"}, expectErr: true},
+		{name: "prefix out of range", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/33"}, expectErr: true},
+		{name: "netmask too broad", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/8"}, expectErr: true},
+		{name: "netmask too narrow", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/29"}, expectErr: true},
 	}
 
 	for _, tc := range tests {
@@ -45,7 +51,7 @@ func TestCreateVPC(t *testing.T) {
 			}
 
 			assertNotEmpty(t, info.ID)
-			assertEqual(t, "10.0.0.0/16", info.CIDRBlock)
+			assertEqual(t, tc.cfg.CIDRBlock, info.CIDRBlock)
 			assertEqual(t, "available", info.State)
 		})
 	}
