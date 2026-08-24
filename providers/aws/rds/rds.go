@@ -19,6 +19,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -111,6 +112,14 @@ type Mock struct {
 	// logged.
 	rootPasswords map[string]string
 
+	// instSettle / snapSettle overlay a "creating"/"rebooting" window over an
+	// instance's or snapshot's stored (available) State on the Describe surface,
+	// keyed by id and guarded by mu. They live beside the stores rather than on
+	// the shared rdsdriver structs (which Azure flexible-server/SQL also use),
+	// keeping settling AWS-internal. Absent = report the stored State directly.
+	instSettle map[string]settle.Window
+	snapSettle map[string]settle.Window
+
 	opts           *config.Options
 	subnetResolver SubnetResolver
 	monitoring     mondriver.Monitoring
@@ -134,8 +143,30 @@ func New(opts *config.Options) *Mock {
 		clusterCreds:       map[string]clusterCred{},
 		groupTags:          map[string]map[string]string{},
 		rootPasswords:      map[string]string{},
+		instSettle:         map[string]settle.Window{},
+		snapSettle:         map[string]settle.Window{},
 		opts:               opts,
 	}
+}
+
+// settleInstanceState overlays the instance's settle window (if any) onto its
+// stored final state. The caller must hold at least m.mu.RLock.
+func (m *Mock) settleInstanceState(id, final string) string {
+	if w, ok := m.instSettle[id]; ok {
+		return w.Observe(m.opts.Clock.Now(), final)
+	}
+
+	return final
+}
+
+// settleSnapshotState overlays the snapshot's settle window (if any) onto its
+// stored final state. The caller must hold at least m.mu.RLock.
+func (m *Mock) settleSnapshotState(id, final string) string {
+	if w, ok := m.snapSettle[id]; ok {
+		return w.Observe(m.opts.Clock.Now(), final)
+	}
+
+	return final
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.
@@ -330,6 +361,10 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 
 	m.emitInstanceMetrics(cfg.ID, cfg.Engine, cpuMetricRunning, connectionsRunning)
 
+	m.mu.RLock()
+	out.State = m.settleInstanceState(cfg.ID, out.State)
+	m.mu.RUnlock()
+
 	return &out, nil
 }
 
@@ -354,6 +389,8 @@ func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance
 
 	inst := m.newInstance(cfg)
 	m.instances.Set(cfg.ID, inst)
+	m.instSettle[cfg.ID] = settle.Pending(rdsdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBInstanceSettle))
 	m.rootPasswords[cfg.ID] = cfg.MasterUserPassword
 
 	if cfg.ClusterID != "" {
@@ -534,7 +571,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
-			out = append(out, cloneInstance(v))
+			c := cloneInstance(v)
+			c.State = m.settleInstanceState(c.ID, c.State)
+			out = append(out, c)
 		}
 
 		return out, nil
@@ -548,7 +587,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 		}
 
-		out = append(out, cloneInstance(inst))
+		c := cloneInstance(inst)
+		c.State = m.settleInstanceState(c.ID, c.State)
+		out = append(out, c)
 	}
 
 	return out, nil
@@ -768,6 +809,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 	m.instances.Delete(id)
 	delete(m.rootPasswords, id)
+	delete(m.instSettle, id)
 
 	return nil
 }
@@ -799,6 +841,10 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 
 	inst.State = rdsdriver.StateAvailable
 	m.instances.Set(id, inst)
+	// The logical state stays available; a fresh "rebooting" window makes Describe
+	// report the available->rebooting->available transient dip under AsyncSettle.
+	m.instSettle[id] = settle.Pending(rdsdriver.StateRebooting, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBRebootSettle))
 
 	m.emitInstanceMetrics(id, inst.Engine, cpuMetricRunning, connectionsRunning)
 
@@ -1081,9 +1127,17 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		Tags:             copyTags(cfg.Tags),
 	}
 
+	now := m.opts.Clock.Now()
 	m.snapshots.Set(cfg.ID, snap)
+	m.snapSettle[cfg.ID] = settle.Pending(rdsdriver.SnapshotCreating, now,
+		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
+	// The source instance briefly reports "backing-up" while the snapshot settles,
+	// matching real RDS; its logical state stays available.
+	m.instSettle[cfg.InstanceID] = settle.Pending(rdsdriver.StateBackingUp, now,
+		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
 
 	out := snap
+	out.State = m.settleSnapshotState(cfg.ID, out.State)
 
 	return &out, nil
 }
@@ -1115,6 +1169,7 @@ func (m *Mock) DescribeSnapshots(
 		}
 
 		snap.Tags = copyTags(snap.Tags)
+		snap.State = m.settleSnapshotState(snap.ID, snap.State)
 		out = append(out, snap)
 	}
 
@@ -1129,6 +1184,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	if !m.snapshots.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "DB snapshot %q not found", id)
 	}
+
+	delete(m.snapSettle, id)
 
 	return nil
 }
