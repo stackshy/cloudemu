@@ -30,6 +30,8 @@ const (
 	stateEnabled     = "Enabled"
 	stateDisabled    = "Disabled"
 	timeFormat       = "2006-01-02T15:04:05Z"
+	// tracingModePassThrough is the AWS Lambda default X-Ray tracing mode.
+	tracingModePassThrough = "PassThrough"
 )
 
 // AWS Lambda create-time defaults applied when the client omits the field:
@@ -135,6 +137,11 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		CodeSHA256:   codeHash(cfg.Code), CodeSize: int64(len(cfg.Code)),
 		Version: latestVersion, RevisionID: newRevisionID(),
+		VpcConfig:        cloneVPCConfig(cfg.VpcConfig),
+		DeadLetterConfig: cloneDeadLetterConfig(cfg.DeadLetterConfig),
+		// AWS always reports a TracingConfig, defaulting to PassThrough when the
+		// client omits it.
+		TracingConfig: tracingConfigOrDefault(cfg.TracingConfig),
 	}
 
 	m.handlersMu.RLock()
@@ -183,6 +190,9 @@ func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo
 	info := fd.info
 	info.Environment = maps.Clone(info.Environment)
 	info.Tags = maps.Clone(info.Tags)
+	info.VpcConfig = cloneVPCConfig(info.VpcConfig)
+	info.DeadLetterConfig = cloneDeadLetterConfig(info.DeadLetterConfig)
+	info.TracingConfig = cloneTracingConfig(info.TracingConfig)
 
 	return &info, nil
 }
@@ -362,6 +372,68 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 	if cfg.Tags != nil {
 		info.Tags = maps.Clone(cfg.Tags)
 	}
+
+	applyAWSConfigUpdates(info, cfg)
+}
+
+// applyAWSConfigUpdates overlays the AWS-only optional settings (VpcConfig,
+// DeadLetterConfig, TracingConfig) supplied in an update onto the function info.
+//
+//nolint:gocritic // hugeParam: config passed by value intentionally for snapshot semantics.
+func applyAWSConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
+	if cfg.VpcConfig != nil {
+		info.VpcConfig = cloneVPCConfig(cfg.VpcConfig)
+	}
+
+	if cfg.DeadLetterConfig != nil {
+		info.DeadLetterConfig = cloneDeadLetterConfig(cfg.DeadLetterConfig)
+	}
+
+	if cfg.TracingConfig != nil {
+		info.TracingConfig = cloneTracingConfig(cfg.TracingConfig)
+	}
+}
+
+func cloneVPCConfig(v *driver.VPCConfig) *driver.VPCConfig {
+	if v == nil {
+		return nil
+	}
+
+	out := &driver.VPCConfig{VpcID: v.VpcID}
+	out.SubnetIDs = append([]string(nil), v.SubnetIDs...)
+	out.SecurityGroupIDs = append([]string(nil), v.SecurityGroupIDs...)
+
+	return out
+}
+
+func cloneDeadLetterConfig(d *driver.DeadLetterConfig) *driver.DeadLetterConfig {
+	if d == nil {
+		return nil
+	}
+
+	out := *d
+
+	return &out
+}
+
+func cloneTracingConfig(t *driver.TracingConfig) *driver.TracingConfig {
+	if t == nil {
+		return nil
+	}
+
+	out := *t
+
+	return &out
+}
+
+// tracingConfigOrDefault returns a copy of t, or the AWS default
+// {Mode: "PassThrough"} when the client supplied no tracing configuration.
+func tracingConfigOrDefault(t *driver.TracingConfig) *driver.TracingConfig {
+	if t == nil || t.Mode == "" {
+		return &driver.TracingConfig{Mode: tracingModePassThrough}
+	}
+
+	return cloneTracingConfig(t)
 }
 
 // codeHash returns the base64-encoded SHA-256 of the deployment package, the

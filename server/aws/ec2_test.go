@@ -1680,11 +1680,12 @@ func TestASGLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	_, err = asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
-		AutoScalingGroupName: aws.String("web-asg"),
-		MinSize:              aws.Int32(1),
-		MaxSize:              aws.Int32(5),
-		DesiredCapacity:      aws.Int32(2),
-		AvailabilityZones:    []string{"us-east-1a", "us-east-1b"},
+		AutoScalingGroupName:    aws.String("web-asg"),
+		MinSize:                 aws.Int32(1),
+		MaxSize:                 aws.Int32(5),
+		DesiredCapacity:         aws.Int32(2),
+		AvailabilityZones:       []string{"us-east-1a", "us-east-1b"},
+		LaunchConfigurationName: aws.String("web-lc"),
 	})
 	require.NoError(t, err)
 
@@ -1734,8 +1735,9 @@ func TestASGScalingPolicy(t *testing.T) {
 	_, err := asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
 		AutoScalingGroupName: aws.String("scale-asg"),
 		MinSize:              aws.Int32(1), MaxSize: aws.Int32(3),
-		DesiredCapacity:   aws.Int32(1),
-		AvailabilityZones: []string{"us-east-1a"},
+		DesiredCapacity:         aws.Int32(1),
+		AvailabilityZones:       []string{"us-east-1a"},
+		LaunchConfigurationName: aws.String("scale-lc"),
 	})
 	require.NoError(t, err)
 

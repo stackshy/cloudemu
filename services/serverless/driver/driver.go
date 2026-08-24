@@ -118,6 +118,25 @@ type ProvisionedConcurrencyConfig struct {
 	Provisioned  int
 }
 
+// VPCConfig is a function's networking configuration (AWS Lambda VpcConfig).
+type VPCConfig struct {
+	SubnetIDs        []string
+	SecurityGroupIDs []string
+	// VpcID is derived by AWS from the subnets and echoed back in the response.
+	VpcID string
+}
+
+// DeadLetterConfig is a function's dead-letter queue target (AWS Lambda).
+type DeadLetterConfig struct {
+	TargetArn string
+}
+
+// TracingConfig is a function's AWS X-Ray tracing configuration. Mode is
+// "Active" or "PassThrough" (the create-time default).
+type TracingConfig struct {
+	Mode string
+}
+
 // FunctionConfig describes a serverless function to create.
 type FunctionConfig struct {
 	Name        string
@@ -135,6 +154,12 @@ type FunctionConfig struct {
 	// Functions; "http" is the functions-framework request/response contract
 	// used by GCP Cloud Functions gen1.
 	Framework string
+	// VpcConfig, DeadLetterConfig and TracingConfig are AWS Lambda function
+	// settings stored at create/update and echoed back by Get. Nil means the
+	// client omitted them. AWS defaults TracingConfig to {Mode: "PassThrough"}.
+	VpcConfig        *VPCConfig
+	DeadLetterConfig *DeadLetterConfig
+	TracingConfig    *TracingConfig
 }
 
 // FunctionInfo describes a serverless function.
@@ -161,6 +186,12 @@ type FunctionInfo struct {
 	Version string
 	// RevisionID changes on every configuration or code update.
 	RevisionID string
+	// VpcConfig, DeadLetterConfig and TracingConfig echo the AWS Lambda settings
+	// supplied at create/update. TracingConfig is always populated (defaulting to
+	// {Mode: "PassThrough"}); the others are nil when never set.
+	VpcConfig        *VPCConfig
+	DeadLetterConfig *DeadLetterConfig
+	TracingConfig    *TracingConfig
 }
 
 // InvokeInput configures a function invocation.

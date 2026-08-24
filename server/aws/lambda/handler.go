@@ -421,13 +421,16 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	cfg := sdrv.FunctionConfig{
-		Name:        name,
-		Runtime:     req.Runtime,
-		Handler:     req.Handler,
-		Role:        req.Role,
-		Description: req.Description,
-		Memory:      req.MemorySize,
-		Timeout:     req.Timeout,
+		Name:             name,
+		Runtime:          req.Runtime,
+		Handler:          req.Handler,
+		Role:             req.Role,
+		Description:      req.Description,
+		Memory:           req.MemorySize,
+		Timeout:          req.Timeout,
+		VpcConfig:        toDriverVPCConfig(req.VpcConfig),
+		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
+		TracingConfig:    toDriverTracing(req.TracingConfig),
 	}
 	if req.Environment != nil {
 		cfg.Environment = req.Environment.Variables
@@ -705,14 +708,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := sdrv.FunctionConfig{
-		Name:        req.FunctionName,
-		Runtime:     req.Runtime,
-		Handler:     req.Handler,
-		Role:        req.Role,
-		Description: req.Description,
-		Memory:      req.MemorySize,
-		Timeout:     req.Timeout,
-		Tags:        req.Tags,
+		Name:             req.FunctionName,
+		Runtime:          req.Runtime,
+		Handler:          req.Handler,
+		Role:             req.Role,
+		Description:      req.Description,
+		Memory:           req.MemorySize,
+		Timeout:          req.Timeout,
+		Tags:             req.Tags,
+		VpcConfig:        toDriverVPCConfig(req.VpcConfig),
+		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
+		TracingConfig:    toDriverTracing(req.TracingConfig),
 	}
 	if req.Environment != nil {
 		cfg.Environment = req.Environment.Variables
@@ -947,7 +953,50 @@ func toConfiguration(info *sdrv.FunctionInfo) functionConfiguration {
 		cfg.Environment = &envEnvelope{Variables: info.Environment}
 	}
 
+	if info.VpcConfig != nil {
+		cfg.VpcConfig = &vpcConfigEnvelope{
+			SubnetIDs:        info.VpcConfig.SubnetIDs,
+			SecurityGroupIDs: info.VpcConfig.SecurityGroupIDs,
+			VpcID:            info.VpcConfig.VpcID,
+		}
+	}
+
+	if info.DeadLetterConfig != nil {
+		cfg.DeadLetterConfig = &deadLetterConfigEnvelope{TargetArn: info.DeadLetterConfig.TargetArn}
+	}
+
+	if info.TracingConfig != nil {
+		cfg.TracingConfig = &tracingConfigEnvelope{Mode: info.TracingConfig.Mode}
+	}
+
 	return cfg
+}
+
+// toDriverVPCConfig maps a wire VpcConfig envelope to the driver type.
+func toDriverVPCConfig(e *vpcConfigEnvelope) *sdrv.VPCConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.VPCConfig{SubnetIDs: e.SubnetIDs, SecurityGroupIDs: e.SecurityGroupIDs}
+}
+
+// toDriverDeadLetter maps a wire DeadLetterConfig envelope to the driver type.
+func toDriverDeadLetter(e *deadLetterConfigEnvelope) *sdrv.DeadLetterConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.DeadLetterConfig{TargetArn: e.TargetArn}
+}
+
+// toDriverTracing maps a wire TracingConfig envelope to the driver type.
+func toDriverTracing(e *tracingConfigEnvelope) *sdrv.TracingConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.TracingConfig{Mode: e.Mode}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

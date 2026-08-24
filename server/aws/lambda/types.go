@@ -5,6 +5,25 @@ type envEnvelope struct {
 	Variables map[string]string `json:"Variables,omitempty"`
 }
 
+// vpcConfigEnvelope is the Lambda VpcConfig request / VpcConfigResponse shape.
+// VpcId is derived and returned by AWS, never accepted on input.
+type vpcConfigEnvelope struct {
+	SubnetIDs        []string `json:"SubnetIds,omitempty"`
+	SecurityGroupIDs []string `json:"SecurityGroupIds,omitempty"`
+	VpcID            string   `json:"VpcId,omitempty"`
+}
+
+// deadLetterConfigEnvelope is the Lambda DeadLetterConfig shape.
+type deadLetterConfigEnvelope struct {
+	TargetArn string `json:"TargetArn,omitempty"`
+}
+
+// tracingConfigEnvelope is the Lambda TracingConfig request / TracingConfigResponse
+// shape. Mode is "Active" or "PassThrough".
+type tracingConfigEnvelope struct {
+	Mode string `json:"Mode,omitempty"`
+}
+
 // functionConfiguration is the response body shared by Create / Get / Update.
 // Field set is the minimum the AWS SDK populates for a function description.
 type functionConfiguration struct {
@@ -20,25 +39,31 @@ type functionConfiguration struct {
 	State        string `json:"State,omitempty"`
 	// LastUpdateStatus is the terminal status of the last create/update ("Successful").
 	// SDK waiters (FunctionUpdatedV2) poll GetFunctionConfiguration for it.
-	LastUpdateStatus string       `json:"LastUpdateStatus,omitempty"`
-	CodeSha256       string       `json:"CodeSha256,omitempty"`
-	CodeSize         int64        `json:"CodeSize,omitempty"`
-	RevisionID       string       `json:"RevisionId,omitempty"`
-	Environment      *envEnvelope `json:"Environment,omitempty"`
-	PackageType      string       `json:"PackageType,omitempty"`
-	Version          string       `json:"Version,omitempty"`
+	LastUpdateStatus string                    `json:"LastUpdateStatus,omitempty"`
+	CodeSha256       string                    `json:"CodeSha256,omitempty"`
+	CodeSize         int64                     `json:"CodeSize,omitempty"`
+	RevisionID       string                    `json:"RevisionId,omitempty"`
+	Environment      *envEnvelope              `json:"Environment,omitempty"`
+	PackageType      string                    `json:"PackageType,omitempty"`
+	Version          string                    `json:"Version,omitempty"`
+	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig,omitempty"`
+	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig,omitempty"`
+	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig,omitempty"`
 }
 
 // updateFunctionConfigurationRequest captures the mutable fields of
 // UpdateFunctionConfiguration (PUT .../{name}/configuration).
 type updateFunctionConfigurationRequest struct {
-	Runtime     string       `json:"Runtime"`
-	Role        string       `json:"Role"`
-	Handler     string       `json:"Handler"`
-	Description string       `json:"Description"`
-	MemorySize  int          `json:"MemorySize"`
-	Timeout     int          `json:"Timeout"`
-	Environment *envEnvelope `json:"Environment"`
+	Runtime          string                    `json:"Runtime"`
+	Role             string                    `json:"Role"`
+	Handler          string                    `json:"Handler"`
+	Description      string                    `json:"Description"`
+	MemorySize       int                       `json:"MemorySize"`
+	Timeout          int                       `json:"Timeout"`
+	Environment      *envEnvelope              `json:"Environment"`
+	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig"`
+	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig"`
+	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
 }
 
 // updateFunctionCodeRequest captures the deployment-package fields of
@@ -123,9 +148,10 @@ type listFunctionsResponse struct {
 
 // createFunctionRequest captures the fields we read from a CreateFunction body.
 // Role/Description are stored and echoed back (Terraform reads Role every plan)
-// though IAM is not evaluated; VPCConfig etc are still ignored — the portable
-// driver doesn't model them. Code.ZipFile is read so a configured FunctionEngine
-// can run the real handler; with no engine it is stored only for the invoke stub.
+// though IAM is not evaluated; VpcConfig/DeadLetterConfig/TracingConfig are also
+// stored and echoed back by Get. Code.ZipFile is read so a configured
+// FunctionEngine can run the real handler; with no engine it is stored only for
+// the invoke stub.
 type createFunctionRequest struct {
 	FunctionName string            `json:"FunctionName"`
 	Runtime      string            `json:"Runtime"`
@@ -140,7 +166,10 @@ type createFunctionRequest struct {
 	Code         *functionCode     `json:"Code"`
 	// Layers is the list of layer version ARNs the function imports. Their code
 	// is overlaid into the deployment package so imports resolve at real invoke.
-	Layers []string `json:"Layers"`
+	Layers           []string                  `json:"Layers"`
+	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig"`
+	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig"`
+	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
 }
 
 // functionCode is the deployment package in a CreateFunction body. The AWS SDK
