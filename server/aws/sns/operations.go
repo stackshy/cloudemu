@@ -166,7 +166,9 @@ func (h *Handler) writeCreateTopic(w http.ResponseWriter, arn string) {
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 
-	if err := h.notif.DeleteTopic(r.Context(), name); err != nil {
+	// DeleteTopic is idempotent in SNS: deleting a topic that does not exist is
+	// not an error, so a NotFound from the provider is swallowed as success.
+	if err := h.notif.DeleteTopic(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 		writeErr(w, err)
 		return
 	}

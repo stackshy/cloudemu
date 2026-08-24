@@ -116,6 +116,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 		Tags:                          req.Tags,
 		DelaySeconds:                  atoiAttr(req.Attributes, "DelaySeconds"),
 		VisibilityTimeout:             atoiAttr(req.Attributes, "VisibilityTimeout"),
+		VisibilityTimeoutSet:          attrPresent(req.Attributes, "VisibilityTimeout"),
 		MaxMessageSize:                atoiAttr(req.Attributes, "MaximumMessageSize"),
 		MessageRetention:              atoiAttr(req.Attributes, "MessageRetentionPeriod"),
 		ReceiveMessageWaitTimeSeconds: atoiAttr(req.Attributes, "ReceiveMessageWaitTimeSeconds"),
@@ -373,11 +374,23 @@ func (h *Handler) changeMessageVisibility(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.mq.ChangeVisibility(r.Context(), req.QueueURL, req.ReceiptHandle, req.VisibilityTimeout); err != nil {
-		writeErr(w, err)
+		writeReceiptErr(w, err)
 		return
 	}
 
 	wire.WriteJSON(w, map[string]any{})
+}
+
+// writeReceiptErr maps a ChangeMessageVisibility failure: an unknown receipt
+// handle on an existing queue surfaces as ReceiptHandleIsInvalid, while a
+// missing queue keeps the standard QueueDoesNotExist mapping.
+func writeReceiptErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ReceiptHandleIsInvalid", err.Error())
+		return
+	}
+
+	writeErr(w, err)
 }
 
 func (h *Handler) changeMessageVisibilityBatch(w http.ResponseWriter, r *http.Request) {
@@ -856,6 +869,14 @@ func (h *Handler) removePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{})
+}
+
+// attrPresent reports whether an attribute was supplied, distinguishing an
+// explicit "0" from an omitted value for defaults resolved in the provider.
+func attrPresent(attrs map[string]string, key string) bool {
+	_, ok := attrs[key]
+
+	return ok
 }
 
 // atoiAttr parses a string attribute as an int, returning 0 when absent or invalid.

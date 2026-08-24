@@ -169,7 +169,15 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	url := fmt.Sprintf("https://sqs.%s.amazonaws.com/%s/%s", m.opts.Region, m.opts.AccountID, cfg.Name)
 	arn := idgen.AWSARN("sqs", m.opts.Region, m.opts.AccountID, cfg.Name)
 
-	if m.queues.Has(url) {
+	// CreateQueue is idempotent: re-creating an existing queue with the exact
+	// same attributes returns the existing URL. QueueNameExists is returned only
+	// when the incoming attributes differ from the stored ones.
+	if existing, ok := m.queues.Get(url); ok {
+		if sameQueueConfig(existing, &cfg) {
+			result := existing.info
+			return &result, nil
+		}
+
 		return nil, errors.Newf(errors.AlreadyExists, "queue %q already exists", cfg.Name)
 	}
 
@@ -178,7 +186,8 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		tags[k] = v
 	}
 
-	visibilityTimeout, maxMessageSize, messageRetention := queueSizeDefaults(&cfg)
+	maxMessageSize, messageRetention := queueSizeDefaults(&cfg)
+	visibilityTimeout := resolveVisibilityTimeout(&cfg)
 
 	info := driver.QueueInfo{
 		URL:                url,
@@ -221,14 +230,21 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	return &result, nil
 }
 
-// queueSizeDefaults resolves the numeric size attributes, applying SQS defaults
-// for any left at zero.
-func queueSizeDefaults(cfg *driver.QueueConfig) (visibility, maxSize, retention int) {
-	visibility = cfg.VisibilityTimeout
-	if visibility == 0 {
-		visibility = defaultVisibilityTimeout
+// resolveVisibilityTimeout applies the SQS default of 30 only when the timeout
+// was left unset. An explicit 0 (VisibilityTimeoutSet, which the wire handler
+// derives from attribute presence) round-trips unchanged; the typed Go API,
+// which cannot express an explicit 0 through a plain int, treats 0 as unset.
+func resolveVisibilityTimeout(cfg *driver.QueueConfig) int {
+	if cfg.VisibilityTimeout == 0 && !cfg.VisibilityTimeoutSet {
+		return defaultVisibilityTimeout
 	}
 
+	return cfg.VisibilityTimeout
+}
+
+// queueSizeDefaults resolves the numeric size attributes that have no valid
+// zero value, applying SQS defaults for any left at zero.
+func queueSizeDefaults(cfg *driver.QueueConfig) (maxSize, retention int) {
 	maxSize = cfg.MaxMessageSize
 	if maxSize == 0 {
 		maxSize = defaultMaxMessageSize
@@ -239,7 +255,26 @@ func queueSizeDefaults(cfg *driver.QueueConfig) (visibility, maxSize, retention 
 		retention = defaultMessageRetention
 	}
 
-	return visibility, maxSize, retention
+	return maxSize, retention
+}
+
+// sameQueueConfig reports whether an existing queue's stored attributes match
+// the incoming CreateQueue config exactly, which is what makes CreateQueue
+// idempotent (identical re-create returns the existing URL).
+func sameQueueConfig(existing *queueData, cfg *driver.QueueConfig) bool {
+	maxSize, retention := queueSizeDefaults(cfg)
+
+	existing.mu.Lock()
+	defer existing.mu.Unlock()
+
+	return existing.info.FIFO == cfg.FIFO &&
+		existing.visibilityTimeout == resolveVisibilityTimeout(cfg) &&
+		existing.maxMessageSize == maxSize &&
+		existing.messageRetention == retention &&
+		existing.delaySeconds == cfg.DelaySeconds &&
+		existing.receiveWaitTime == cfg.ReceiveMessageWaitTimeSeconds &&
+		existing.contentBasedDedup == cfg.ContentBasedDeduplication &&
+		existing.redrivePolicy == cfg.RedrivePolicy
 }
 
 // parseRedrivePolicy resolves an SQS RedrivePolicy JSON document into a
@@ -346,6 +381,11 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
+
+	if qd.maxMessageSize > 0 && len(input.Body) > qd.maxMessageSize {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"One or more parameters are invalid. Reason: Message must be shorter than %d bytes.", qd.maxMessageSize)
+	}
 
 	input.DeduplicationID = effectiveDedupID(qd, &input)
 
@@ -683,7 +723,9 @@ func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) 
 		}
 	}
 
-	return errors.Newf(errors.NotFound, "message with receipt handle %q not found", receiptHandle)
+	// DeleteMessage is idempotent: an old/stale (but well-formed) receipt handle
+	// against an existing queue succeeds without deleting anything.
+	return nil
 }
 
 // ChangeVisibility changes the visibility timeout of a message in the specified queue.
@@ -705,7 +747,10 @@ func (m *Mock) ChangeVisibility(_ context.Context, queueURL, receiptHandle strin
 		}
 	}
 
-	return errors.Newf(errors.NotFound, "message with receipt handle %q not found", receiptHandle)
+	// The queue exists but no in-flight message carries this handle. AWS reports
+	// this as ReceiptHandleIsInvalid, not a missing-queue error; FailedPrecondition
+	// is mapped to that wire code by the SQS handler.
+	return errors.Newf(errors.FailedPrecondition, "receipt handle %q is invalid", receiptHandle)
 }
 
 // SendMessageBatch sends up to 10 messages to the specified SQS queue.
