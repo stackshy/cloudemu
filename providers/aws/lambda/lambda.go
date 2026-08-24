@@ -42,6 +42,17 @@ const (
 	defaultTimeoutSecs = 3
 )
 
+// AWS Lambda create-time range limits. MemorySize must be 128–32768 MB and
+// Timeout must be 1–900 seconds; an out-of-range value is rejected with
+// InvalidParameterValueException. See
+// https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+const (
+	minMemoryMB    = 128
+	maxMemoryMB    = 32768
+	minTimeoutSecs = 1
+	maxTimeoutSecs = 900
+)
+
 type versionData struct {
 	config     driver.FunctionConfig
 	version    string
@@ -131,6 +142,10 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		cfg.Timeout = defaultTimeoutSecs
 	}
 
+	if err := validateFunctionLimits(cfg.Memory, cfg.Timeout); err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
@@ -163,6 +178,23 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	result := info
 
 	return &result, nil
+}
+
+// validateFunctionLimits enforces the AWS MemorySize (128–32768 MB) and Timeout
+// (1–900 s) create-time ranges, returning an InvalidArgument error the wire
+// layer maps to InvalidParameterValueException / HTTP 400.
+func validateFunctionLimits(memory, timeout int) error {
+	if memory < minMemoryMB || memory > maxMemoryMB {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"'memorySize' value %d must be >= %d and <= %d", memory, minMemoryMB, maxMemoryMB)
+	}
+
+	if timeout < minTimeoutSecs || timeout > maxTimeoutSecs {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"'timeout' value %d must be >= %d and <= %d", timeout, minTimeoutSecs, maxTimeoutSecs)
+	}
+
+	return nil
 }
 
 func (m *Mock) DeleteFunction(ctx context.Context, name string) error {

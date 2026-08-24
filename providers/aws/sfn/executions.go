@@ -2,6 +2,7 @@ package sfn
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -38,6 +39,12 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 	sd, err := m.getSM(in.StateMachineArn)
 	if err != nil {
 		return nil, err
+	}
+
+	// AWS rejects a non-JSON execution Input with InvalidExecutionInput. An empty
+	// Input is allowed (it defaults to {}); any non-empty value must be valid JSON.
+	if in.Input != "" && !json.Valid([]byte(in.Input)) {
+		return nil, invalidExecutionInput("The provided JSON input data is not valid.")
 	}
 
 	sd.mu.RLock()
