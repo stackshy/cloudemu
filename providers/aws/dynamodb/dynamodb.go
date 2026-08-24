@@ -473,6 +473,11 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 		return nil, err
 	}
 
+	if err := validateItemSize(updated); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
 	td.items.Set(k, updated)
 	m.recordStreamEvent(td, oldItem, updated, true)
 	m.mu.Unlock()

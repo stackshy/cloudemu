@@ -39,6 +39,61 @@ func TestCreateInstanceRejectsInvalidClass(t *testing.T) {
 	}
 }
 
+func TestModifyInstanceRejectsInvalidClass(t *testing.T) {
+	m := newTestMock()
+
+	if _, err := m.CreateInstance(context.Background(), rdsdriver.InstanceConfig{
+		ID:            "db1",
+		Engine:        "mysql",
+		InstanceClass: "db.t3.micro",
+	}); err != nil {
+		t.Fatalf("create should succeed: %v", err)
+	}
+
+	_, err := m.ModifyInstance(context.Background(), "db1", rdsdriver.ModifyInstanceInput{
+		InstanceClass: "db.bogus.xlarge",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("want InvalidArgument for bad instance class, got %v", err)
+	}
+
+	// The invalid class must not have been applied.
+	insts, _ := m.DescribeInstances(context.Background(), []string{"db1"})
+	if len(insts) != 1 || insts[0].InstanceClass != "db.t3.micro" {
+		t.Fatalf("class should stay db.t3.micro, got %+v", insts)
+	}
+}
+
+func TestModifyInstanceAcceptsValidAndEmptyClass(t *testing.T) {
+	m := newTestMock()
+
+	if _, err := m.CreateInstance(context.Background(), rdsdriver.InstanceConfig{
+		ID:            "db1",
+		Engine:        "mysql",
+		InstanceClass: "db.t3.micro",
+	}); err != nil {
+		t.Fatalf("create should succeed: %v", err)
+	}
+
+	// Empty class means "no change" and must not be rejected.
+	if _, err := m.ModifyInstance(context.Background(), "db1", rdsdriver.ModifyInstanceInput{
+		AllocatedStorage: 50,
+	}); err != nil {
+		t.Fatalf("empty class modify should succeed: %v", err)
+	}
+
+	out, err := m.ModifyInstance(context.Background(), "db1", rdsdriver.ModifyInstanceInput{
+		InstanceClass: "db.r5.large",
+	})
+	if err != nil {
+		t.Fatalf("valid class modify should succeed: %v", err)
+	}
+
+	if out.InstanceClass != "db.r5.large" {
+		t.Fatalf("class = %q, want db.r5.large", out.InstanceClass)
+	}
+}
+
 func TestCreateInstanceAcceptsKnownEnginesAndClasses(t *testing.T) {
 	cases := []struct {
 		engine string

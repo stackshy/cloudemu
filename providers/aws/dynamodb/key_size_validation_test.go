@@ -104,6 +104,39 @@ func TestUpdateItemEmptyKeyRejected(t *testing.T) {
 	}
 }
 
+func TestUpdateItemOversizedRejected(t *testing.T) {
+	m := newTestMock()
+	createSingleKeyTable(m, "t")
+
+	if err := m.PutItem(context.Background(), "t", map[string]any{"pk": "k1"}); err != nil {
+		t.Fatalf("seed put should succeed: %v", err)
+	}
+
+	_, err := m.UpdateItem(context.Background(), driver.UpdateItemInput{
+		Table:            "t",
+		Key:              map[string]any{"pk": "k1"},
+		UpdateExpression: "SET blob = :b",
+		ExprValues:       map[string]any{":b": strings.Repeat("a", maxItemSizeBytes+1)},
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("want InvalidArgument for oversized update result, got %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "maximum allowed size") {
+		t.Fatalf("message = %q, want item-size wording", err.Error())
+	}
+
+	// The oversized update must not have persisted; the item stays as seeded.
+	got, getErr := m.GetItem(context.Background(), "t", map[string]any{"pk": "k1"})
+	if getErr != nil {
+		t.Fatalf("seed item should still be readable: %v", getErr)
+	}
+
+	if _, ok := got["blob"]; ok {
+		t.Fatal("oversized attribute should not have been written")
+	}
+}
+
 func TestTransactWriteEmptyKeyRejected(t *testing.T) {
 	m := newTestMock()
 	createSingleKeyTable(m, "t")

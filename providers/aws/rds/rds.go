@@ -615,6 +615,12 @@ func (m *Mock) ModifyInstance(
 		return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 	}
 
+	// Reject an invalid DBInstanceClass before applying it, mirroring
+	// CreateInstance. An empty class leaves the current one untouched.
+	if err := validateInstanceClass(input.InstanceClass); err != nil {
+		return nil, err
+	}
+
 	// Rotate the master password on the backing engine so the new credential
 	// actually authenticates.
 	if err := m.rotateEnginePassword(ctx, &inst, input.MasterUserPassword); err != nil {
