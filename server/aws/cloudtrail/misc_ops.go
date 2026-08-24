@@ -215,30 +215,82 @@ func (h *Handler) deregisterOrgAdmin(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) lookupEvents(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *struct {
-		NextToken  string `json:"NextToken"`
-		MaxResults int32  `json:"MaxResults"`
+		LookupAttributes []struct {
+			AttributeKey   string `json:"AttributeKey"`
+			AttributeValue string `json:"AttributeValue"`
+		} `json:"LookupAttributes"`
+		StartTime     *float64 `json:"StartTime"`
+		EndTime       *float64 `json:"EndTime"`
+		EventCategory string   `json:"EventCategory"`
+		NextToken     string   `json:"NextToken"`
+		MaxResults    int32    `json:"MaxResults"`
 	},
 	) (any, error) {
-		events, next, err := h.ct.LookupEvents(ctx, ctdriver.LookupInput{NextToken: req.NextToken, MaxResults: req.MaxResults})
+		in := ctdriver.LookupInput{
+			NextToken:     req.NextToken,
+			MaxResults:    req.MaxResults,
+			EventCategory: req.EventCategory,
+		}
+
+		if req.StartTime != nil {
+			in.StartTime = time.Unix(int64(*req.StartTime), 0).UTC()
+		}
+
+		if req.EndTime != nil {
+			in.EndTime = time.Unix(int64(*req.EndTime), 0).UTC()
+		}
+
+		for _, a := range req.LookupAttributes {
+			in.LookupAttributes = append(in.LookupAttributes,
+				ctdriver.LookupAttribute{AttributeKey: a.AttributeKey, AttributeValue: a.AttributeValue})
+		}
+
+		events, next, err := h.ct.LookupEvents(ctx, in)
 		if err != nil {
 			return nil, err
 		}
 
-		type eventJSON struct {
-			EventID   string `json:"EventId,omitempty"`
-			EventName string `json:"EventName,omitempty"`
-		}
-
-		list := make([]eventJSON, 0, len(events))
+		list := make([]lookupEventJSON, 0, len(events))
 		for i := range events {
-			list = append(list, eventJSON{EventID: events[i].EventID, EventName: events[i].EventName})
+			list = append(list, toLookupEventJSON(&events[i]))
 		}
 
 		return struct {
-			Events    []eventJSON `json:"Events"`
-			NextToken string      `json:"NextToken,omitempty"`
+			Events    []lookupEventJSON `json:"Events"`
+			NextToken string            `json:"NextToken,omitempty"`
 		}{Events: list, NextToken: next}, nil
 	})
+}
+
+// lookupEventJSON is the LookupEvents result-event wire shape.
+type lookupEventJSON struct {
+	EventID         string   `json:"EventId,omitempty"`
+	EventName       string   `json:"EventName,omitempty"`
+	ReadOnly        string   `json:"ReadOnly,omitempty"`
+	AccessKeyID     string   `json:"AccessKeyId,omitempty"`
+	EventTime       *float64 `json:"EventTime,omitempty"`
+	EventSource     string   `json:"EventSource,omitempty"`
+	Username        string   `json:"Username,omitempty"`
+	CloudTrailEvent string   `json:"CloudTrailEvent,omitempty"`
+}
+
+func toLookupEventJSON(e *ctdriver.Event) lookupEventJSON {
+	out := lookupEventJSON{
+		EventID:         e.EventID,
+		EventName:       e.EventName,
+		ReadOnly:        e.ReadOnly,
+		AccessKeyID:     e.AccessKeyID,
+		EventSource:     e.EventSource,
+		Username:        e.Username,
+		CloudTrailEvent: e.CloudTrailEvent,
+	}
+
+	if !e.EventTime.IsZero() {
+		secs := float64(e.EventTime.Unix())
+		out.EventTime = &secs
+	}
+
+	return out
 }
 
 func (h *Handler) listPublicKeys(w http.ResponseWriter, r *http.Request) {
