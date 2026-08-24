@@ -78,6 +78,12 @@ func invalidName(msg string) error {
 	return &driver.APIError{Exception: driver.ExInvalidName, Err: errors.New(errors.InvalidArgument, msg)}
 }
 
+// invalidExecutionInput builds an InvalidExecutionInput-tagged error, returned
+// when a StartExecution Input is not valid JSON.
+func invalidExecutionInput(msg string) error {
+	return &driver.APIError{Exception: driver.ExInvalidExecutionInput, Err: errors.New(errors.InvalidArgument, msg)}
+}
+
 // invalidToken builds an InvalidToken-tagged error.
 func invalidToken(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExInvalidToken, Err: errors.Newf(errors.InvalidArgument, format, args...)}
