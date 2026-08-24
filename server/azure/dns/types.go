@@ -2,6 +2,8 @@ package dns
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -16,14 +18,87 @@ const (
 	recordSetTypePrefix = "Microsoft.Network/dnsZones/"
 	defaultZoneLocation = "global"
 	defaultRecordTTL    = 3600
+
+	// Canonical DNS record-type strings, keyed on the upper-cased URL segment.
+	recTypeA     = "A"
+	recTypeAAAA  = "AAAA"
+	recTypeCNAME = "CNAME"
+	recTypeTXT   = "TXT"
+	recTypeNS    = "NS"
+	recTypePTR   = "PTR"
+	recTypeSOA   = "SOA"
+
+	// maxNumberOfRecordSets is the fixed per-zone record-set cap Azure DNS
+	// reports (a read-only property).
+	maxNumberOfRecordSets = 5000
+	// maxNumberOfRecordsPerRecordSet is the fixed per-record-set record cap
+	// Azure DNS reports (read-only).
+	maxNumberOfRecordsPerRecordSet = 20
+
+	// apexRecordName is the relative name Azure uses for a zone's apex records
+	// (the auto-created SOA and NS record sets).
+	apexRecordName = "@"
+	// nsRecordTTL and soaRecordTTL are the TTLs Azure assigns the auto-created
+	// apex NS and SOA record sets.
+	nsRecordTTL  = 172800
+	soaRecordTTL = 3600
+
+	// nameServerShardCount bounds the 1-based shard embedded in a zone's name
+	// servers (ns1-NN...).
+	nameServerShardCount = 99
+
+	// SOA record defaults Azure stamps on the auto-created apex SOA. host and
+	// email are stored per-zone (host = the zone's first name server); the
+	// timing fields are fixed platform defaults.
+	soaEmail       = "azuredns-hostmaster.microsoft.com"
+	soaRefreshTime = 3600
+	soaRetryTime   = 300
+	soaExpireTime  = 2419200
+	soaMinimumTTL  = 300
+	soaSerial      = 1
 )
+
+// nameServerSuffixes are the four authoritative name-server domains Azure DNS
+// delegates a public zone to (ns1-NN.azure-dns.com / .net / .org / .info).
+//
+//nolint:gochecknoglobals // fixed platform constant, read-only lookup table
+var nameServerSuffixes = [...]string{"azure-dns.com", "azure-dns.net", "azure-dns.org", "azure-dns.info"}
+
+// zoneNameServers returns the four authoritative name servers Azure assigns a
+// public zone. Private zones have no name servers. The "NN" shard is derived
+// deterministically from the zone name so a zone always reports the same set.
+func zoneNameServers(zoneName string, private bool) []string {
+	if private {
+		return nil
+	}
+
+	shard := nameServerShard(zoneName)
+
+	out := make([]string, len(nameServerSuffixes))
+	for i, suffix := range nameServerSuffixes {
+		out[i] = fmt.Sprintf("ns%d-%02d.%s", i+1, shard, suffix)
+	}
+
+	return out
+}
+
+// nameServerShard maps a zone name to the 1-99 shard Azure embeds in its name
+// servers (ns1-NN...). Deterministic so repeated reads are stable.
+func nameServerShard(zoneName string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(zoneName))
+
+	return int(h.Sum32()%nameServerShardCount) + 1
+}
 
 // --- zone JSON ---
 
 type zoneProperties struct {
-	ZoneType           string   `json:"zoneType,omitempty"`
-	NumberOfRecordSets int64    `json:"numberOfRecordSets,omitempty"`
-	NameServers        []string `json:"nameServers,omitempty"`
+	ZoneType                       string   `json:"zoneType,omitempty"`
+	MaxNumberOfRecordSets          int64    `json:"maxNumberOfRecordSets,omitempty"`
+	MaxNumberOfRecordsPerRecordSet int64    `json:"maxNumberOfRecordsPerRecordSet,omitempty"`
+	NumberOfRecordSets             int64    `json:"numberOfRecordSets,omitempty"`
+	NameServers                    []string `json:"nameServers,omitempty"`
 }
 
 type zoneJSON struct {
@@ -94,6 +169,16 @@ type ptrRecordJSON struct {
 	Ptrdname string `json:"ptrdname,omitempty"`
 }
 
+type soaRecordJSON struct {
+	Host         string `json:"host,omitempty"`
+	Email        string `json:"email,omitempty"`
+	SerialNumber int64  `json:"serialNumber,omitempty"`
+	RefreshTime  int64  `json:"refreshTime,omitempty"`
+	RetryTime    int64  `json:"retryTime,omitempty"`
+	ExpireTime   int64  `json:"expireTime,omitempty"`
+	MinimumTTL   int64  `json:"minimumTTL,omitempty"`
+}
+
 type recordSetProperties struct {
 	TTL         *int64           `json:"TTL,omitempty"`
 	Fqdn        string           `json:"fqdn,omitempty"`
@@ -103,6 +188,7 @@ type recordSetProperties struct {
 	TxtRecords  []txtRecordJSON  `json:"TXTRecords,omitempty"`
 	NsRecords   []nsRecordJSON   `json:"NSRecords,omitempty"`
 	PtrRecords  []ptrRecordJSON  `json:"PTRRecords,omitempty"`
+	SoaRecord   *soaRecordJSON   `json:"SOARecord,omitempty"`
 }
 
 type recordSetJSON struct {
@@ -133,15 +219,21 @@ func privateFromZoneType(zt string) bool {
 // toZoneJSON converts a driver zone into its ARM element for the given path
 // scope. Azure DNS zones are always "global" location.
 func toZoneJSON(rp *azurearm.ResourcePath, info *dnsdriver.ZoneInfo) zoneJSON {
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeZones, info.Name)
+
 	return zoneJSON{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeZones, info.Name),
+		ID:       id,
 		Name:     info.Name,
 		Type:     zoneResourceType,
 		Location: defaultZoneLocation,
+		Etag:     azurearm.ETag(id),
 		Tags:     info.Tags,
 		Properties: &zoneProperties{
-			ZoneType:           zoneType(info.Private),
-			NumberOfRecordSets: int64(info.RecordCount),
+			ZoneType:                       zoneType(info.Private),
+			MaxNumberOfRecordSets:          maxNumberOfRecordSets,
+			MaxNumberOfRecordsPerRecordSet: maxNumberOfRecordsPerRecordSet,
+			NumberOfRecordSets:             int64(info.RecordCount),
+			NameServers:                    zoneNameServers(info.Name, info.Private),
 		},
 	}
 }
@@ -154,25 +246,29 @@ func recordValues(recordType string, props *recordSetProperties) []string {
 	}
 
 	switch strings.ToUpper(recordType) {
-	case "A":
+	case recTypeA:
 		return mapStrings(props.ARecords, func(a aRecordJSON) string { return a.IPv4Address })
-	case "AAAA":
+	case recTypeAAAA:
 		return mapStrings(props.AaaaRecords, func(a aaaaRecordJSON) string { return a.IPv6Address })
-	case "CNAME":
+	case recTypeCNAME:
 		if props.CnameRecord != nil && props.CnameRecord.Cname != "" {
 			return []string{props.CnameRecord.Cname}
 		}
-	case "TXT":
+	case recTypeTXT:
 		var out []string
 		for _, t := range props.TxtRecords {
 			out = append(out, strings.Join(t.Value, ""))
 		}
 
 		return out
-	case "NS":
+	case recTypeNS:
 		return mapStrings(props.NsRecords, func(n nsRecordJSON) string { return n.Nsdname })
-	case "PTR":
+	case recTypePTR:
 		return mapStrings(props.PtrRecords, func(p ptrRecordJSON) string { return p.Ptrdname })
+	case recTypeSOA:
+		if props.SoaRecord != nil {
+			return []string{props.SoaRecord.Host, props.SoaRecord.Email}
+		}
 	}
 
 	return nil
@@ -185,33 +281,59 @@ func toRecordSetProperties(rec *dnsdriver.RecordInfo) *recordSetProperties {
 	props := &recordSetProperties{TTL: &ttl}
 
 	switch strings.ToUpper(rec.Type) {
-	case "A":
+	case recTypeA:
 		for _, v := range rec.Values {
 			props.ARecords = append(props.ARecords, aRecordJSON{IPv4Address: v})
 		}
-	case "AAAA":
+	case recTypeAAAA:
 		for _, v := range rec.Values {
 			props.AaaaRecords = append(props.AaaaRecords, aaaaRecordJSON{IPv6Address: v})
 		}
-	case "CNAME":
+	case recTypeCNAME:
 		if len(rec.Values) > 0 {
 			props.CnameRecord = &cnameRecordJSON{Cname: rec.Values[0]}
 		}
-	case "TXT":
+	case recTypeTXT:
 		for _, v := range rec.Values {
 			props.TxtRecords = append(props.TxtRecords, txtRecordJSON{Value: chunkTXT(v)})
 		}
-	case "NS":
+	case recTypeNS:
 		for _, v := range rec.Values {
 			props.NsRecords = append(props.NsRecords, nsRecordJSON{Nsdname: v})
 		}
-	case "PTR":
+	case recTypePTR:
 		for _, v := range rec.Values {
 			props.PtrRecords = append(props.PtrRecords, ptrRecordJSON{Ptrdname: v})
 		}
+	case recTypeSOA:
+		props.SoaRecord = toSOARecord(rec.Values)
 	}
 
 	return props
+}
+
+// toSOARecord rebuilds the Azure SOA body from the driver's flat values
+// ([host, email]), filling the timing fields with the platform defaults Azure
+// stamps on the auto-created apex SOA.
+func toSOARecord(values []string) *soaRecordJSON {
+	soa := &soaRecordJSON{
+		Email:        soaEmail,
+		SerialNumber: soaSerial,
+		RefreshTime:  soaRefreshTime,
+		RetryTime:    soaRetryTime,
+		ExpireTime:   soaExpireTime,
+		MinimumTTL:   soaMinimumTTL,
+	}
+
+	if len(values) > 0 {
+		soa.Host = values[0]
+	}
+
+	if len(values) > 1 && values[1] != "" {
+		soa.Email = values[1]
+	}
+
+	return soa
 }
 
 // toRecordSetJSON converts a driver record into its ARM element.
@@ -219,12 +341,27 @@ func toRecordSetJSON(rp *azurearm.ResourcePath, zone string, rec *dnsdriver.Reco
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeZones, zone) +
 		"/" + rec.Type + "/" + rec.Name
 
+	props := toRecordSetProperties(rec)
+	props.Fqdn = recordFqdn(rec.Name, zone)
+
 	return recordSetJSON{
 		ID:         id,
 		Name:       rec.Name,
 		Type:       recordSetTypePrefix + rec.Type,
-		Properties: toRecordSetProperties(rec),
+		Etag:       azurearm.ETag(id),
+		Properties: props,
 	}
+}
+
+// recordFqdn builds the fully-qualified domain name Azure reports for a record
+// set: "<name>.<zone>." for a relative record, and "<zone>." for the apex
+// ("@") record. The trailing dot marks it as fully qualified.
+func recordFqdn(name, zone string) string {
+	if name == "" || name == apexRecordName {
+		return zone + "."
+	}
+
+	return name + "." + zone + "."
 }
 
 // mapStrings projects a typed slice to its string values, dropping empties.
