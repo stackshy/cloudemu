@@ -215,7 +215,7 @@ func (h *Handler) reassign(ctx context.Context, info *netdriver.ElasticIP, priva
 		if previous != "" {
 			// The original target was free a moment ago, so this restores the
 			// binding; nothing better is available if it does not.
-			_, _ = h.net.AssociateAddress(ctx, info.AllocationID, previous)
+			_, _ = h.net.AssociateAddress(ctx, info.AllocationID, netdriver.AssociateAddressInput{InstanceID: previous})
 		}
 
 		return err
@@ -231,7 +231,7 @@ func (h *Handler) assign(ctx context.Context, allocationID, privateIPID string) 
 		return err
 	}
 
-	_, err := h.net.AssociateAddress(ctx, allocationID, privateIPID)
+	_, err := h.net.AssociateAddress(ctx, allocationID, netdriver.AssociateAddressInput{InstanceID: privateIPID})
 
 	return err
 }
@@ -289,7 +289,7 @@ func (h *Handler) release(ctx context.Context, info *netdriver.ElasticIP) error 
 	if err := h.net.ReleaseAddress(ctx, info.AllocationID); err != nil {
 		// The private IP was this address's a moment ago, so this restores the
 		// binding; nothing better is available if it does not.
-		_, _ = h.net.AssociateAddress(ctx, info.AllocationID, info.AssociationID)
+		_, _ = h.net.AssociateAddress(ctx, info.AllocationID, netdriver.AssociateAddressInput{InstanceID: info.AssociationID})
 
 		return err
 	}

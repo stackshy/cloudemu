@@ -562,7 +562,7 @@ func (n *Networking) AssociateAddress(
 	ctx context.Context, allocationID, instanceID string,
 ) (string, error) {
 	out, err := n.do(ctx, "AssociateAddress", allocationID, func() (any, error) {
-		return n.driver.AssociateAddress(ctx, allocationID, instanceID)
+		return n.driver.AssociateAddress(ctx, allocationID, driver.AssociateAddressInput{InstanceID: instanceID})
 	})
 	if err != nil {
 		return "", err
