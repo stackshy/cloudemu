@@ -139,6 +139,13 @@ type AutoScalingGroupConfig struct {
 	HealthCheckGrace  int    // seconds
 	Tags              map[string]string
 	AvailabilityZones []string
+	// LaunchSource records how the group launches instances (AWS). Exactly one of
+	// LaunchConfigurationName or the LaunchTemplate trio is set; both empty means
+	// the group was created from an existing instance or a mixed-instances policy.
+	LaunchConfigurationName string
+	LaunchTemplateName      string
+	LaunchTemplateID        string
+	LaunchTemplateVersion   string
 }
 
 // AutoScalingGroup describes an auto-scaling group.
@@ -154,6 +161,11 @@ type AutoScalingGroup struct {
 	CreatedAt         string
 	Tags              map[string]string
 	AvailabilityZones []string
+	// LaunchSource echoes the group's launch source set at create time (AWS).
+	LaunchConfigurationName string
+	LaunchTemplateName      string
+	LaunchTemplateID        string
+	LaunchTemplateVersion   string
 }
 
 // ScalingPolicy defines when to scale.
