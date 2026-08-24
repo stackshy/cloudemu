@@ -33,6 +33,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		TaskDefinition                string                             `json:"taskDefinition"`
 		DesiredCount                  int                                `json:"desiredCount"`
 		LaunchType                    string                             `json:"launchType"`
+		Role                          string                             `json:"role"`
 		SchedulingStrategy            string                             `json:"schedulingStrategy"`
 		PlatformVersion               string                             `json:"platformVersion"`
 		PropagateTags                 string                             `json:"propagateTags"`
@@ -57,6 +58,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		TaskDefinition:                req.TaskDefinition,
 		DesiredCount:                  req.DesiredCount,
 		LaunchType:                    req.LaunchType,
+		Role:                          req.Role,
 		SchedulingStrategy:            req.SchedulingStrategy,
 		DeploymentController:          deploymentControllerType(req.DeploymentController),
 		PlatformVersion:               req.PlatformVersion,

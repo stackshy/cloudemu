@@ -100,6 +100,12 @@ func (m *Mock) arn(resource string) string {
 	return idgen.AWSARN("ecs", m.opts.Region, m.opts.AccountID, resource)
 }
 
+// rootPrincipalARN is the account-root IAM principal ECS records as a service's
+// createdBy when the request carries no more specific caller identity.
+func (m *Mock) rootPrincipalARN() string {
+	return "arn:aws:iam::" + m.opts.AccountID + ":root"
+}
+
 // hexID returns a 32-character hex id with no dashes, matching the ECS
 // resource-id shape used in task and container-instance ARNs. idgen.GenerateID
 // emits 8 hex digits per call, so four calls yield the 32-char id.

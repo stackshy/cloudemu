@@ -55,10 +55,16 @@ func (h *Handler) putLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"repositoryName":      req.RepositoryName,
 		"lifecyclePolicyText": req.LifecyclePolicyText,
-	})
+	}
+
+	if repo, err := h.registry.GetRepository(r.Context(), req.RepositoryName); err == nil {
+		resp["registryId"] = repo.RegistryID
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
@@ -90,10 +96,18 @@ func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"repositoryName":      req.RepositoryName,
 		"lifecyclePolicyText": text,
-	})
+	}
+
+	// The policy lookup already proved the repository exists, so echo its
+	// registryId (real ECR always returns it).
+	if repo, repoErr := h.registry.GetRepository(r.Context(), req.RepositoryName); repoErr == nil {
+		resp["registryId"] = repo.RegistryID
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func parseLifecyclePolicyText(text string) (crdriver.LifecyclePolicy, error) {

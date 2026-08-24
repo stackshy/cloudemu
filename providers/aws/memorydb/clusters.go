@@ -344,6 +344,14 @@ func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cl
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
+
+	// Create-time tags must be addressable by ListTags(arn), which reads m.tags;
+	// without this they would live only on cluster.Tags and be invisible until a
+	// later TagResource call.
+	if len(cfg.Tags) > 0 {
+		m.tags[cluster.ARN] = copyTags(cfg.Tags)
+	}
+
 	m.linkACLCluster(acl, cfg.Name, true)
 
 	if cfg.MultiRegionClusterName != "" {

@@ -1,6 +1,8 @@
 package eks
 
 import (
+	"crypto/sha1" //nolint:gosec // used only for a deterministic, non-security id
+	"encoding/hex"
 	"math"
 	"net/http"
 	"strconv"
@@ -604,7 +606,28 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 		out.DiskSize = &disk
 	}
 
+	// Real EKS always reports a health block (empty issues when healthy) and a
+	// resources block naming at least one managed Auto Scaling group. The mock
+	// synthesizes both deterministically so Describe is stable across calls.
+	out.Health = &nodegroupHealthJSON{Issues: []nodegroupIssueJSON{}}
+	out.Resources = &nodegroupResourcesJSON{
+		AutoScalingGroups: []autoScalingGroupJSON{{Name: syntheticNodegroupASG(n.ClusterName, n.NodegroupName)}},
+	}
+
 	return out
+}
+
+// syntheticNodegroupASG builds the deterministic Auto Scaling group name EKS
+// provisions for a managed nodegroup ("eks-<nodegroup>-<uuid>"). The uuid-shaped
+// suffix is derived from the cluster+nodegroup so it stays stable across
+// Describe calls without any provider state.
+func syntheticNodegroupASG(clusterName, nodegroupName string) string {
+	sum := sha1.Sum([]byte(clusterName + "/" + nodegroupName)) //nolint:gosec // non-cryptographic deterministic id
+	h := hex.EncodeToString(sum[:])
+
+	uuid := h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+
+	return "eks-" + nodegroupName + "-" + uuid
 }
 
 func toFargateProfileJSON(fp *eksdriver.FargateProfile) fargateProfileJSON {
