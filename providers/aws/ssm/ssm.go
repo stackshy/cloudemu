@@ -95,6 +95,28 @@ func defaultType(t string) string {
 	}
 }
 
+// resolveOverwriteType decides the type of a new version appended to an existing
+// parameter. A type isn't required when updating: omitting it retains the
+// existing type (a SecureString stays SecureString). Specifying a type that
+// differs from the existing one is rejected — real Parameter Store returns
+// HierarchyTypeMismatchException.
+func resolveOverwriteType(existing *paramData, requested string) (string, error) {
+	existingType := defaultType("")
+	if cur, ok := existing.versionByNumber(existing.latest); ok {
+		existingType = cur.typ
+	}
+
+	if requested == "" {
+		return existingType, nil
+	}
+
+	if newType := defaultType(requested); newType == existingType {
+		return newType, nil
+	}
+
+	return "", driver.ErrTypeMismatch
+}
+
 // PutParameter creates a new parameter or, when Overwrite is set, appends a new
 // version to an existing one.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
@@ -123,20 +145,9 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 				"parameter %q already exists; set Overwrite to update it", cfg.Name)
 		}
 
-		// A type isn't required when updating a parameter: omitting it retains
-		// the existing type (a SecureString stays SecureString). Specifying a
-		// type that differs from the existing one is rejected — real Parameter
-		// Store returns HierarchyTypeMismatchException.
-		existingType := defaultType("")
-		if cur, ok := existing.versionByNumber(existing.latest); ok {
-			existingType = cur.typ
-		}
-
-		newType := existingType
-		if cfg.Type != "" {
-			if newType = defaultType(cfg.Type); newType != existingType {
-				return 0, "", driver.ErrTypeMismatch
-			}
+		newType, err := resolveOverwriteType(existing, cfg.Type)
+		if err != nil {
+			return 0, "", err
 		}
 
 		next := existing.latest + 1
