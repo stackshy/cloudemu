@@ -141,6 +141,7 @@ type dbClusterXML struct {
 	DBClusterResourceID string                `xml:"DbClusterResourceId,omitempty"`
 	AllocatedStorage    int                   `xml:"AllocatedStorage,omitempty"`
 	StorageEncrypted    bool                  `xml:"StorageEncrypted"`
+	DeletionProtection  bool                  `xml:"DeletionProtection"`
 	AvailabilityZones   *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
 	ClusterCreateTime   string                `xml:"ClusterCreateTime,omitempty"`
 	DBClusterMembers    *dbClusterMembersXML  `xml:"DBClusterMembers,omitempty"`
@@ -475,6 +476,7 @@ func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {
 		DBClusterResourceID: cluster.DBClusterResourceID,
 		AllocatedStorage:    cluster.AllocatedStorage,
 		StorageEncrypted:    cluster.StorageEncrypted,
+		DeletionProtection:  cluster.DeletionProtection,
 		AvailabilityZones:   toAvailabilityZonesXML(cluster.AvailabilityZones),
 		ClusterCreateTime:   cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		DBClusterMembers:    &members,

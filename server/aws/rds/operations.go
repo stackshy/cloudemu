@@ -257,6 +257,16 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	last := insts[0]
 	last.State = rdsdriver.StateDeleting
 
+	// A deletion-protected instance cannot be deleted; the flag must be cleared
+	// via ModifyDBInstance first. Real RDS rejects with InvalidParameterCombination
+	// and leaves the instance untouched.
+	if last.DeletionProtection {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			"Cannot delete protected DB Instance, please disable deletion protection and try again.")
+
+		return
+	}
+
 	// A standalone instance takes a final snapshot unless SkipFinalSnapshot is
 	// set. When a final snapshot is requested, FinalDBSnapshotIdentifier is
 	// mandatory (InvalidParameterCombination otherwise). Cluster members carry no
@@ -372,6 +382,7 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 		EngineMode:                  form.Get("EngineMode"),
 		StorageEncrypted:            formBool(form.Get("StorageEncrypted")),
 		AllocatedStorage:            formInt(form.Get("AllocatedStorage")),
+		DeletionProtection:          formBool(form.Get("DeletionProtection")),
 		Tags:                        parseRDSTags(form),
 	}
 
@@ -426,6 +437,11 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 		Tags:                        parseRDSTags(form),
 	}
 
+	if v := form.Get("DeletionProtection"); v != "" {
+		b := formBool(v)
+		input.DeletionProtection = &b
+	}
+
 	cluster, err := h.db.ModifyCluster(r.Context(), id, input)
 	if err != nil {
 		writeErr(w, err)
@@ -455,6 +471,34 @@ func (h *Handler) deleteDBCluster(w http.ResponseWriter, r *http.Request) {
 
 	last := clusters[0]
 	last.State = rdsdriver.StateDeleting
+
+	// A deletion-protected cluster cannot be deleted; the flag must be cleared via
+	// ModifyDBCluster first. Real RDS rejects with InvalidParameterCombination.
+	if last.DeletionProtection {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			"Cannot delete protected DB Cluster, please disable deletion protection and try again.")
+
+		return
+	}
+
+	// A cluster takes a final snapshot unless SkipFinalSnapshot is set. When a
+	// final snapshot is requested, FinalDBSnapshotIdentifier is mandatory
+	// (InvalidParameterCombination otherwise), mirroring DeleteDBInstance.
+	if !formBool(r.Form.Get("SkipFinalSnapshot")) {
+		finalID := r.Form.Get("FinalDBSnapshotIdentifier")
+		if finalID == "" {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
+
+			return
+		}
+
+		if _, err := h.db.CreateClusterSnapshot(r.Context(),
+			rdsdriver.ClusterSnapshotConfig{ID: finalID, ClusterID: id}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
 
 	if err := h.db.DeleteCluster(r.Context(), id); err != nil {
 		writeErr(w, err)

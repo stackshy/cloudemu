@@ -930,6 +930,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		DBClusterResourceID:         resourceID("cluster-", cfg.ID),
 		AllocatedStorage:            allocatedStorage,
 		StorageEncrypted:            cfg.StorageEncrypted,
+		DeletionProtection:          cfg.DeletionProtection,
 		AvailabilityZones:           availabilityZones(m.opts.Region),
 		CreatedAt:                   m.opts.Clock.Now().UTC(),
 		Tags:                        copyTags(cfg.Tags),
@@ -1001,6 +1002,10 @@ func (m *Mock) ModifyCluster(
 
 	if input.DBClusterParameterGroupName != "" {
 		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
+	}
+
+	if input.DeletionProtection != nil {
+		cluster.DeletionProtection = *input.DeletionProtection
 	}
 
 	if input.Tags != nil {
