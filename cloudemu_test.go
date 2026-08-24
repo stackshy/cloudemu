@@ -7952,7 +7952,7 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 }
 
 // testKeyPairOperations is a shared helper that tests key pair CRUD operations.
-func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute) {
+func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute, deleteMissingIsIdempotent bool) {
 	t.Helper()
 
 	// Create a key pair
@@ -8056,9 +8056,14 @@ func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Co
 		t.Fatalf("DeleteKeyPair: %v", err)
 	}
 
-	// Delete again should fail
+	// Delete again: AWS DeleteKeyPair is idempotent (returns success for a
+	// missing key), matching real EC2; other providers still error.
 	err = c.DeleteKeyPair(ctx, "test-key")
-	if err == nil {
+	if deleteMissingIsIdempotent {
+		if err != nil {
+			t.Errorf("DeleteKeyPair of a missing key should be idempotent, got %v", err)
+		}
+	} else if err == nil {
 		t.Error("expected error deleting non-existent key pair")
 	}
 
@@ -8076,19 +8081,19 @@ func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Co
 func TestKeyPairAWS(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
-	testKeyPairOperations(t, ctx, p.EC2)
+	testKeyPairOperations(t, ctx, p.EC2, true)
 }
 
 func TestKeyPairAzure(t *testing.T) {
 	ctx := context.Background()
 	p := NewAzure()
-	testKeyPairOperations(t, ctx, p.VirtualMachines)
+	testKeyPairOperations(t, ctx, p.VirtualMachines, false)
 }
 
 func TestKeyPairGCP(t *testing.T) {
 	ctx := context.Background()
 	p := NewGCP()
-	testKeyPairOperations(t, ctx, p.GCE)
+	testKeyPairOperations(t, ctx, p.GCE, false)
 }
 
 // ─── Global Secondary Indexes ───────────────────────────────────────────
