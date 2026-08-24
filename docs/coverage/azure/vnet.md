@@ -292,6 +292,14 @@ PrefixLists is an OPTIONAL AWS capability (type-asserted).
 | `GetManagedPrefixListEntries` |  |
 | `ModifyManagedPrefixList` |  |
 
+### SubnetAttributes
+
+SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
+
+| Operation | Description |
+| --- | --- |
+| `ModifySubnetAttribute` |  |
+
 ### TrafficMirroring
 
 TrafficMirroring is an OPTIONAL AWS capability (type-asserted).

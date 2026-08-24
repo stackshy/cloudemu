@@ -43,7 +43,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | — | — | — | 33 |
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
 | `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | [Monitoring](./oci/monitoring.md) | 12 |
-| `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 20 |
+| `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 23 |
 | `networking` | [VPC](./aws/vpc.md) | [VNet](./azure/vnet.md) | [VPC](./gcp/vpc.md) | [VCN](./oci/vcn.md) | 57 |
 | `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |
 | `opensearch` | [OpenSearch](./aws/opensearch.md) | — | — | — | 96 |

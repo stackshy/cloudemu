@@ -3,6 +3,7 @@ package kms
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 )
@@ -32,6 +33,8 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+
+		sort.Slice(grants, func(i, j int) bool { return grants[i].GrantID < grants[j].GrantID })
 
 		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(grants))
 		if perr != nil {
@@ -74,6 +77,8 @@ func (h *Handler) listRetirableGrants(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+
+		sort.Slice(grants, func(i, j int) bool { return grants[i].GrantID < grants[j].GrantID })
 
 		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(grants))
 		if perr != nil {
@@ -193,6 +198,8 @@ func (h *Handler) listKeyPolicies(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+
+		sort.Strings(names)
 
 		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(names))
 		if perr != nil {

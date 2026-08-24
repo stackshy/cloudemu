@@ -508,6 +508,16 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 		return nil, errors.Newf(errors.NotFound, "vpc %q not found", cfg.VPCID)
 	}
 
+	// Security-group names are unique within a VPC. This invariant lives in the
+	// provider so every run mode (wire server, portable API, typed Go API) shares
+	// it; the wire layer only maps AlreadyExists to the InvalidGroup.Duplicate code.
+	for _, existing := range m.securityGroups.SortedValues() {
+		if existing.VPCID == cfg.VPCID && existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"security group %q already exists in vpc %q", cfg.Name, cfg.VPCID)
+		}
+	}
+
 	id := idgen.GenerateID("sg-")
 	tags := copyTags(cfg.Tags)
 

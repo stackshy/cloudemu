@@ -78,18 +78,9 @@ func (h *Handler) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		Tags:        mergeTagSpecs(awsquery.TagSpecs(r.Form), "security-group"),
 	}
 
-	// Group names must be unique within a VPC — real EC2 answers
-	// InvalidGroup.Duplicate. The driver accepts duplicates, so enforce it
-	// here at the wire layer where the AWS-shaped error code lives.
-	if dup := h.duplicateGroupName(r.Context(), cfg.Name, cfg.VPCID); dup {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidGroup.Duplicate",
-			fmt.Sprintf("The security group '%s' already exists for VPC '%s'", cfg.Name, cfg.VPCID))
-		return
-	}
-
 	info, err := h.vpc.CreateSecurityGroup(r.Context(), cfg)
 	if err != nil {
-		writeSGErr(w, err)
+		writeCreateSGErr(w, err)
 		return
 	}
 
@@ -102,26 +93,16 @@ func (h *Handler) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// duplicateGroupName reports whether a security group with the same name
-// already exists in the same VPC. A blank name or VPC (EC2-Classic) is never
-// treated as a duplicate.
-func (h *Handler) duplicateGroupName(ctx context.Context, name, vpcID string) bool {
-	if name == "" || vpcID == "" {
-		return false
+// writeCreateSGErr maps the provider's per-VPC name-uniqueness violation
+// (surfaced as AlreadyExists) to the CreateSecurityGroup-only
+// InvalidGroup.Duplicate code, falling back to the shared SG error mapping.
+func writeCreateSGErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidGroup.Duplicate", err.Error())
+		return
 	}
 
-	sgs, err := h.vpc.DescribeSecurityGroups(ctx, nil)
-	if err != nil {
-		return false
-	}
-
-	for i := range sgs {
-		if sgs[i].VPCID == vpcID && sgs[i].Name == name {
-			return true
-		}
-	}
-
-	return false
+	writeSGErr(w, err)
 }
 
 func (h *Handler) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {

@@ -63,6 +63,10 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort before paging: the provider returns keys in map-iteration order, so an
+	// unsorted offset Marker could repeat or skip keys across pages.
+	sort.Slice(keys, func(i, j int) bool { return keys[i].KeyID < keys[j].KeyID })
+
 	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(keys))
 	if err != nil {
 		writeErr(w, err)
