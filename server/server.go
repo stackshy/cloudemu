@@ -22,6 +22,10 @@ type Handler interface {
 // implements http.Handler, so httptest.NewServer(srv) works.
 type Server struct {
 	handlers []Handler
+	// observer, when set, is called after a handler serves a request. It is a
+	// generic post-dispatch hook (protocol-agnostic) used, for example, to record
+	// API activity for CloudTrail. Nil by default, so it adds no behavior.
+	observer func(*http.Request)
 }
 
 // New creates a Server preloaded with the given handlers. Additional handlers
@@ -36,12 +40,23 @@ func (s *Server) Register(h Handler) {
 	s.handlers = append(s.handlers, h)
 }
 
+// SetObserver installs a post-dispatch hook called with each request a handler
+// served. It is generic and optional; passing nil disables it.
+func (s *Server) SetObserver(fn func(*http.Request)) {
+	s.observer = fn
+}
+
 // ServeHTTP dispatches to the first handler whose Matches returns true, or
 // responds 501 Not Implemented if no handler matches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, h := range s.handlers {
 		if h.Matches(r) {
 			h.ServeHTTP(w, r)
+
+			if s.observer != nil {
+				s.observer(r)
+			}
+
 			return
 		}
 	}

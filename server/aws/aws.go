@@ -7,6 +7,8 @@
 package aws
 
 import (
+	"net/http"
+
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -637,6 +639,13 @@ func New(d Drivers) *server.Server {
 
 	if d.S3 != nil {
 		srv.Register(s3.New(d.S3))
+	}
+
+	// When the CloudTrail backend can record events, observe every served
+	// request and log a management event so LookupEvents reflects real API
+	// activity. This is the one cross-service hook CloudTrail needs.
+	if rec, ok := d.CloudTrail.(cloudtraildriver.EventRecorder); ok {
+		srv.SetObserver(func(r *http.Request) { recordManagementEvent(rec, r) })
 	}
 
 	return srv

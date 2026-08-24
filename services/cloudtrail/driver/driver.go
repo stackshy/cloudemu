@@ -280,6 +280,14 @@ type PublicKey struct {
 	ValidityEndTime   time.Time
 }
 
+// EventRecorder is an OPTIONAL capability, discovered by type assertion. The
+// wire server calls RecordEvent to feed the management-event log LookupEvents
+// reads, so the emulator's audit trail reflects real API activity. Recording is
+// AWS-specific, so it is kept off the mandatory CloudTrail interface.
+type EventRecorder interface {
+	RecordEvent(e *Event)
+}
+
 // CloudTrail is the interface a CloudTrail backend implements.
 type CloudTrail interface {
 	// Trails.
