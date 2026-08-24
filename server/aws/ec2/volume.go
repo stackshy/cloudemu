@@ -256,6 +256,13 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// A volume already attached to an instance cannot be re-attached; real
+		// EC2 answers VolumeInUse rather than the generic IncorrectState.
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "VolumeInUse:") {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", err.Error())
+			return
+		}
+
 		writeVolumeErr(w, err)
 
 		return

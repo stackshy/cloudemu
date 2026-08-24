@@ -260,3 +260,41 @@ func hasTag(tags []ec2types.Tag, key, value string) bool {
 
 	return false
 }
+
+// TestSnapshotCreateVolumePermissionRoundTrip pins the snapshot-sharing
+// round-trip aws_snapshot_create_volume_permission relies on:
+// ModifySnapshotAttribute(createVolumePermission Add group=all) persists, and
+// DescribeSnapshotAttribute(createVolumePermission) returns the added grant.
+func TestSnapshotCreateVolumePermissionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+	volID := createSnapshotVolume(t, ctx, client)
+
+	snap, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{VolumeId: aws.String(volID)})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	snapID := aws.ToString(snap.SnapshotId)
+
+	if _, err := client.ModifySnapshotAttribute(ctx, &ec2.ModifySnapshotAttributeInput{
+		SnapshotId: aws.String(snapID),
+		Attribute:  ec2types.SnapshotAttributeNameCreateVolumePermission,
+		CreateVolumePermission: &ec2types.CreateVolumePermissionModifications{
+			Add: []ec2types.CreateVolumePermission{{Group: ec2types.PermissionGroupAll}},
+		},
+	}); err != nil {
+		t.Fatalf("ModifySnapshotAttribute: %v", err)
+	}
+
+	desc, err := client.DescribeSnapshotAttribute(ctx, &ec2.DescribeSnapshotAttributeInput{
+		SnapshotId: aws.String(snapID),
+		Attribute:  ec2types.SnapshotAttributeNameCreateVolumePermission,
+	})
+	if err != nil {
+		t.Fatalf("DescribeSnapshotAttribute: %v", err)
+	}
+	if len(desc.CreateVolumePermissions) != 1 ||
+		desc.CreateVolumePermissions[0].Group != ec2types.PermissionGroupAll {
+		t.Fatalf("CreateVolumePermissions = %+v, want one grant group=all", desc.CreateVolumePermissions)
+	}
+}

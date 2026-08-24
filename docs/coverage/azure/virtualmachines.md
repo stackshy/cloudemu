@@ -57,6 +57,23 @@ ConsoleReader is an optional capability a Compute implementation may provide
 | --- | --- |
 | `GetConsoleOutput` |  |
 
+### ImageAttributeModifier
+
+ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI
+
+| Operation | Description |
+| --- | --- |
+| `DescribeImageLaunchPermissions` |  |
+| `ModifyImageAttribute` |  |
+
+### ImageCopier
+
+ImageCopier is an optional AWS-only capability for EC2 CopyImage (aws_ami_copy).
+
+| Operation | Description |
+| --- | --- |
+| `CopyImage` |  |
+
 ### ImageRegistrar
 
 ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
@@ -64,6 +81,14 @@ ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
 | Operation | Description |
 | --- | --- |
 | `RegisterImage` |  |
+
+### InstanceMetadataModifier
+
+InstanceMetadataModifier is an optional AWS-only capability for
+
+| Operation | Description |
+| --- | --- |
+| `ModifyInstanceMetadataOptions` |  |
 
 ### KeyPairImporter
 
@@ -90,6 +115,25 @@ LaunchTemplateVersioner is an AWS-only optional capability implementing launch
 | `CreateLaunchTemplateVersion` | CreateLaunchTemplateVersion appends a new immutable version to a template. |
 | `DescribeLaunchTemplateVersions` | DescribeLaunchTemplateVersions returns a template's versions (filtered, |
 | `GetLaunchTemplateData` | GetLaunchTemplateData synthesizes launch-template data from a running |
+
+### PlacementGroups
+
+PlacementGroups is an optional AWS-only capability for EC2 placement groups
+
+| Operation | Description |
+| --- | --- |
+| `CreatePlacementGroup` |  |
+| `DeletePlacementGroup` |  |
+| `DescribePlacementGroups` |  |
+
+### SnapshotAttributeModifier
+
+SnapshotAttributeModifier is an optional AWS-only capability for the EC2
+
+| Operation | Description |
+| --- | --- |
+| `DescribeSnapshotVolumePermissions` |  |
+| `ModifySnapshotAttribute` |  |
 
 ### SnapshotCopier
 

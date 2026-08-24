@@ -51,6 +51,10 @@ const (
 	stateCreating  = "creating"
 	stateInUse     = "in-use"
 
+	// operationTypeRemove is the ModifySnapshotAttribute / ModifyImageAttribute
+	// OperationType that revokes (rather than grants) a permission.
+	operationTypeRemove = "remove"
+
 	// visibilityHidden and visibilityVisible are the account-level
 	// managed-resource-visibility settings.
 	visibilityHidden  = "hidden"
@@ -175,6 +179,9 @@ type instanceData struct {
 	// monitoring is the CloudWatch detailed-monitoring state
 	// ("disabled"/"enabled"); defaults to "disabled" at launch.
 	monitoring string
+	// metadataOptions is the instance's IMDS configuration, defaulted at launch
+	// and changed by ModifyInstanceMetadataOptions.
+	metadataOptions driver.MetadataOptions
 	// settle overlays a post-launch "pending" window over the stored (running)
 	// State on the Describe surface when AsyncSettle is enabled; zero-value
 	// (default) reports the stored State immediately.
@@ -207,18 +214,22 @@ type Mock struct {
 	// State on the Describe surface, keyed by volume id. It lives beside volumes
 	// rather than on the shared driver.VolumeInfo struct (which azure/gcp also
 	// use), keeping settling AWS-internal. Empty/absent = report State directly.
-	volSettle   *memstore.Store[settle.Window]
-	snapshots   *memstore.Store[*driver.SnapshotInfo]
-	images      *memstore.Store[*driver.ImageInfo]
-	keyPairs    *memstore.Store[*driver.KeyPairInfo]
-	sm          *statemachine.Machine
-	opts        *config.Options
-	ipCounter   atomic.Int64
-	volCounter  atomic.Int64
-	snapCounter atomic.Int64
-	amiCounter  atomic.Int64
-	keyCounter  atomic.Int64
-	monitoring  mondriver.Monitoring
+	volSettle *memstore.Store[settle.Window]
+	snapshots *memstore.Store[*driver.SnapshotInfo]
+	images    *memstore.Store[*driver.ImageInfo]
+	keyPairs  *memstore.Store[*driver.KeyPairInfo]
+	// placementGroups holds EC2 placement groups keyed by group name. Placement
+	// groups are AWS-specific, so this store backs the PlacementGroups capability.
+	placementGroups *memstore.Store[*driver.PlacementGroup]
+	pgCounter       atomic.Int64
+	sm              *statemachine.Machine
+	opts            *config.Options
+	ipCounter       atomic.Int64
+	volCounter      atomic.Int64
+	snapCounter     atomic.Int64
+	amiCounter      atomic.Int64
+	keyCounter      atomic.Int64
+	monitoring      mondriver.Monitoring
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
@@ -314,6 +325,7 @@ func New(opts *config.Options) *Mock {
 		snapshots:        memstore.New[*driver.SnapshotInfo](),
 		images:           memstore.New[*driver.ImageInfo](),
 		keyPairs:         memstore.New[*driver.KeyPairInfo](),
+		placementGroups:  memstore.New[*driver.PlacementGroup](),
 		sm:               statemachine.New(compute.VMTransitions()),
 		opts:             opts,
 
@@ -355,8 +367,67 @@ func toInstance(d *instanceData, hidden bool, now time.Time) driver.Instance {
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
 		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
 		ReservationID: d.reservationID, KeyName: d.keyName, Monitoring: d.monitoring,
-		Operator: operator,
+		Operator: operator, MetadataOptions: d.metadataOptions,
 	}
+}
+
+// defaultMetadataOptions is the IMDS configuration a freshly launched instance
+// carries, matching real EC2 defaults (IMDSv1+v2 optional, one hop, enabled).
+func defaultMetadataOptions() driver.MetadataOptions {
+	return driver.MetadataOptions{
+		State:                   "applied",
+		HTTPTokens:              "optional",
+		HTTPPutResponseHopLimit: 1,
+		HTTPEndpoint:            "enabled",
+		HTTPProtocolIPv6:        "disabled",
+		InstanceMetadataTags:    "disabled",
+	}
+}
+
+// ModifyInstanceMetadataOptions updates an instance's IMDS settings
+// (ec2:ModifyInstanceMetadataOptions). A zero-value field leaves that setting
+// unchanged; it returns the resulting options.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) ModifyInstanceMetadataOptions(
+	_ context.Context, instanceID string, update driver.MetadataOptions,
+) (*driver.MetadataOptions, error) {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	opts := inst.metadataOptions
+	if opts.State == "" {
+		opts = defaultMetadataOptions()
+	}
+
+	if update.HTTPTokens != "" {
+		opts.HTTPTokens = update.HTTPTokens
+	}
+
+	if update.HTTPPutResponseHopLimit != 0 {
+		opts.HTTPPutResponseHopLimit = update.HTTPPutResponseHopLimit
+	}
+
+	if update.HTTPEndpoint != "" {
+		opts.HTTPEndpoint = update.HTTPEndpoint
+	}
+
+	if update.HTTPProtocolIPv6 != "" {
+		opts.HTTPProtocolIPv6 = update.HTTPProtocolIPv6
+	}
+
+	if update.InstanceMetadataTags != "" {
+		opts.InstanceMetadataTags = update.InstanceMetadataTags
+	}
+
+	opts.State = "applied"
+	inst.metadataOptions = opts
+
+	result := opts
+
+	return &result, nil
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
@@ -417,6 +488,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			keyName:         cfg.KeyName,
 			userData:        cfg.UserData,
 			monitoring:      monitoringDisabled,
+			metadataOptions: defaultMetadataOptions(),
 		}
 
 		if cfg.Managed {
@@ -1093,7 +1165,8 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 	}
 
 	if vol.State == stateInUse {
-		return cerrors.Newf(cerrors.FailedPrecondition, "volume %q already attached", volumeID)
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"VolumeInUse: volume %q is attached to instance %q", volumeID, vol.AttachedTo)
 	}
 
 	if _, ok := m.instances.Get(instanceID); !ok {
@@ -1209,6 +1282,85 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 	return describeResources(m.snapshots, ids), nil
 }
 
+// ModifySnapshotAttribute adds or removes createVolumePermission grants on a
+// snapshot (EC2 snapshot sharing). The grants persist so
+// DescribeSnapshotVolumePermissions reads them back.
+//
+//nolint:dupl,gocritic // parallel snapshot/image attribute-modify; hugeParam interface signature is fixed
+func (m *Mock) ModifySnapshotAttribute(_ context.Context, input driver.ModifySnapshotAttributeInput) error {
+	snap, ok := m.snapshots.Get(input.SnapshotID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "snapshot %q not found", input.SnapshotID)
+	}
+
+	grants := make([]driver.SnapshotCreateVolumePermission, 0, len(input.Groups)+len(input.UserIDs))
+	for _, g := range input.Groups {
+		grants = append(grants, driver.SnapshotCreateVolumePermission{Group: g})
+	}
+
+	for _, u := range input.UserIDs {
+		grants = append(grants, driver.SnapshotCreateVolumePermission{UserID: u})
+	}
+
+	if input.OperationType == operationTypeRemove {
+		snap.CreateVolumePermissions = removePermissions(snap.CreateVolumePermissions, grants)
+		return nil
+	}
+
+	snap.CreateVolumePermissions = addPermissions(snap.CreateVolumePermissions, grants)
+
+	return nil
+}
+
+// DescribeSnapshotVolumePermissions returns the snapshot's persisted
+// createVolumePermission grants.
+func (m *Mock) DescribeSnapshotVolumePermissions(
+	_ context.Context, snapshotID string,
+) ([]driver.SnapshotCreateVolumePermission, error) {
+	snap, ok := m.snapshots.Get(snapshotID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "snapshot %q not found", snapshotID)
+	}
+
+	return append([]driver.SnapshotCreateVolumePermission(nil), snap.CreateVolumePermissions...), nil
+}
+
+// addPermissions returns cur with each grant in add that it does not already
+// hold appended. It is shared by snapshot createVolumePermission and image
+// launchPermission (both comparable grant structs).
+func addPermissions[T comparable](cur, add []T) []T {
+	for _, g := range add {
+		if !containsPermission(cur, g) {
+			cur = append(cur, g)
+		}
+	}
+
+	return cur
+}
+
+// removePermissions returns cur with every grant present in remove dropped.
+func removePermissions[T comparable](cur, remove []T) []T {
+	out := cur[:0]
+
+	for _, g := range cur {
+		if !containsPermission(remove, g) {
+			out = append(out, g)
+		}
+	}
+
+	return out
+}
+
+func containsPermission[T comparable](set []T, want T) bool {
+	for _, g := range set {
+		if g == want {
+			return true
+		}
+	}
+
+	return false
+}
+
 // CreateImage creates a machine image from an instance.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
@@ -1281,6 +1433,82 @@ func (m *Mock) DescribeImages(_ context.Context, ids []string) ([]driver.ImageIn
 	}
 
 	return describeResources(m.images, ids), nil
+}
+
+// CopyImage creates a new AMI that is a copy of an existing source AMI
+// (aws_ami_copy). The copy owns a fresh id and (optionally) a new name and
+// description; all other attributes are inherited from the source.
+func (m *Mock) CopyImage(_ context.Context, input driver.CopyImageInput) (*driver.ImageInfo, error) {
+	src, ok := m.images.Get(input.SourceImageID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "image %q not found", input.SourceImageID)
+	}
+
+	id := fmt.Sprintf("ami-%012d", m.amiCounter.Add(1))
+
+	copyImg := *src
+	copyImg.ID = id
+	copyImg.CreatedAt = m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
+	copyImg.OwnerID = awsAccountID
+	copyImg.LaunchPermissions = nil
+	copyImg.Tags = copyTags(input.Tags)
+
+	copyImg.BlockDeviceMappings = append([]driver.ImageBlockDeviceMapping(nil), src.BlockDeviceMappings...)
+
+	if input.Name != "" {
+		copyImg.Name = input.Name
+	}
+
+	if input.Description != "" {
+		copyImg.Description = input.Description
+	}
+
+	m.images.Set(id, &copyImg)
+
+	result := copyImg
+
+	return &result, nil
+}
+
+// ModifyImageAttribute adds or removes launchPermission grants on an AMI (AMI
+// sharing). Grants persist so DescribeImageLaunchPermissions reads them back.
+//
+//nolint:dupl,gocritic // parallel snapshot/image attribute-modify; hugeParam interface signature is fixed
+func (m *Mock) ModifyImageAttribute(_ context.Context, input driver.ModifyImageAttributeInput) error {
+	img, ok := m.images.Get(input.ImageID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "image %q not found", input.ImageID)
+	}
+
+	grants := make([]driver.ImageLaunchPermission, 0, len(input.Groups)+len(input.UserIDs))
+	for _, g := range input.Groups {
+		grants = append(grants, driver.ImageLaunchPermission{Group: g})
+	}
+
+	for _, u := range input.UserIDs {
+		grants = append(grants, driver.ImageLaunchPermission{UserID: u})
+	}
+
+	if input.OperationType == operationTypeRemove {
+		img.LaunchPermissions = removePermissions(img.LaunchPermissions, grants)
+		return nil
+	}
+
+	img.LaunchPermissions = addPermissions(img.LaunchPermissions, grants)
+
+	return nil
+}
+
+// DescribeImageLaunchPermissions returns the AMI's persisted launchPermission grants.
+func (m *Mock) DescribeImageLaunchPermissions(
+	_ context.Context, imageID string,
+) ([]driver.ImageLaunchPermission, error) {
+	img, ok := m.images.Get(imageID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "image %q not found", imageID)
+	}
+
+	return append([]driver.ImageLaunchPermission(nil), img.LaunchPermissions...), nil
 }
 
 // CreateKeyPair creates a new key pair.

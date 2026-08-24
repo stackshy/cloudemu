@@ -33,10 +33,10 @@ type describeFlowLogsResponseXML struct {
 }
 
 type deleteFlowLogsResponseXML struct {
-	XMLName      xml.Name `xml:"DeleteFlowLogsResponse"`
-	Xmlns        string   `xml:"xmlns,attr"`
-	RequestID    string   `xml:"requestId"`
-	Unsuccessful []string `xml:"unsuccessful>item,omitempty"`
+	XMLName      xml.Name              `xml:"DeleteFlowLogsResponse"`
+	Xmlns        string                `xml:"xmlns,attr"`
+	RequestID    string                `xml:"requestId"`
+	Unsuccessful []unsuccessfulItemXML `xml:"unsuccessful>item,omitempty"`
 }
 
 func (h *Handler) createFlowLogs(w http.ResponseWriter, r *http.Request) {
@@ -72,19 +72,28 @@ func (h *Handler) createFlowLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// deleteFlowLogs is idempotent: like real EC2, it always returns HTTP 200 and
+// reports ids it could not delete (including unknown fl-... ids) as entries in
+// the <unsuccessful> set rather than as a top-level error, so a destroy that
+// re-runs over an already-gone flow log still succeeds.
 func (h *Handler) deleteFlowLogs(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "FlowLogId")
 
+	var unsuccessful []unsuccessfulItemXML
+
 	for _, id := range ids {
 		if err := h.vpc.DeleteFlowLog(r.Context(), id); err != nil {
-			writeFlowLogErr(w, err)
-			return
+			item := unsuccessfulItemXML{ResourceID: id}
+			item.Error.Code = "InvalidFlowLogId.NotFound"
+			item.Error.Message = err.Error()
+			unsuccessful = append(unsuccessful, item)
 		}
 	}
 
 	awsquery.WriteXMLResponse(w, deleteFlowLogsResponseXML{
-		Xmlns:     awsquery.Namespace,
-		RequestID: awsquery.RequestID,
+		Xmlns:        awsquery.Namespace,
+		RequestID:    awsquery.RequestID,
+		Unsuccessful: unsuccessful,
 	})
 }
 
