@@ -97,6 +97,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routePrefixLists,
 		h.routeEgressOnlyIGW,
 		h.routeEndpointServices,
+		h.routeVPCEndpoints,
 		h.routeClientVPN,
 		h.routeIPAM,
 		h.routeIPAMResources,
@@ -107,6 +108,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeTrafficMirroring,
 		h.routeNetworkInsights,
 		h.routeVPCBlockPublicAccess,
+		h.routePlacementGroups,
 		h.routeVPC,
 		h.routeTags,
 		h.routeMetadata,
@@ -132,6 +134,8 @@ func (h *Handler) routeSnapshots(w http.ResponseWriter, r *http.Request, action 
 		h.describeSnapshots(w, r)
 	case "ModifySnapshotAttribute":
 		h.modifySnapshotAttribute(w, r)
+	case "DescribeSnapshotAttribute":
+		h.describeSnapshotAttribute(w, r)
 	case "CopySnapshot":
 		h.copySnapshot(w, r)
 	default:
@@ -153,6 +157,10 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 		h.describeImages(w, r)
 	case "DescribeImageAttribute":
 		h.describeImageAttribute(w, r)
+	case "CopyImage":
+		h.copyImage(w, r)
+	case "ModifyImageAttribute":
+		h.modifyImageAttribute(w, r)
 	default:
 		return false
 	}
@@ -521,10 +529,21 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 		h.associateRouteTable(w, r)
 	case "DisassociateRouteTable":
 		h.disassociateRouteTable(w, r)
+	default:
+		return h.routeVPCNetworkInterfaces(w, r, action)
+	}
+
+	return true
+}
+
+func (h *Handler) routeVPCNetworkInterfaces(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
 	case "CreateNetworkInterface":
 		h.createNetworkInterface(w, r)
 	case "DescribeNetworkInterfaces":
 		h.describeNetworkInterfaces(w, r)
+	case "AttachNetworkInterface":
+		h.attachNetworkInterface(w, r)
 	case "DetachNetworkInterface":
 		h.detachNetworkInterface(w, r)
 	case "DeleteNetworkInterface":

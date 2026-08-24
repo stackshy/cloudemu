@@ -2,10 +2,12 @@ package ec2_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	smithy "github.com/aws/smithy-go"
 )
 
 // TestVpcPeeringVpcInfoRoundTrip pins that DescribeVpcPeeringConnections fills
@@ -120,4 +122,24 @@ func mkPeeringVPC(t *testing.T, c *ec2.Client, cidr string) string {
 	}
 
 	return aws.ToString(vpc.Vpc.VpcId)
+}
+
+// TestDescribeVpcPeeringConnectionsUnknownIDNotFound pins that an explicit,
+// well-formed but non-existent pcx- id is InvalidVpcPeeringConnectionID.NotFound,
+// matching the convention DescribeVpcs/DescribeVolumes already follow.
+func TestDescribeVpcPeeringConnectionsUnknownIDNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	_, err := client.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		VpcPeeringConnectionIds: []string{"pcx-00000000000000000"},
+	})
+	if err == nil {
+		t.Fatal("DescribeVpcPeeringConnections(unknown) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidVpcPeeringConnectionID.NotFound" {
+		t.Fatalf("error = %v, want InvalidVpcPeeringConnectionID.NotFound", err)
+	}
 }

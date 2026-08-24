@@ -118,6 +118,39 @@ type ProvisionedConcurrencyConfig struct {
 	Provisioned  int
 }
 
+// VPCConfig is a function's networking configuration (AWS Lambda VpcConfig).
+type VPCConfig struct {
+	SubnetIDs        []string
+	SecurityGroupIDs []string
+	// VpcID is the VPC that AWS resolves from the configured subnets and echoes
+	// back in VpcConfigResponse. This emulator does not model the EC2 subnet->VPC
+	// mapping, so it is left empty unless a caller sets it.
+	VpcID string
+}
+
+// DeadLetterConfig is a function's dead-letter queue target (AWS Lambda).
+type DeadLetterConfig struct {
+	TargetArn string
+}
+
+// TracingConfig is a function's AWS X-Ray tracing configuration. Mode is
+// "Active" or "PassThrough" (the create-time default).
+type TracingConfig struct {
+	Mode string
+}
+
+// AWSFunctionConfig bundles the AWS Lambda-only function settings — VpcConfig,
+// DeadLetterConfig and TracingConfig. These have no Azure Functions or GCP Cloud
+// Functions equivalent, so they are kept off the shared FunctionConfig/
+// FunctionInfo structs and applied/read back through an AWS-only optional
+// interface (type-asserted by the AWS Lambda server handler), the same way
+// Function URLs are exposed.
+type AWSFunctionConfig struct {
+	VPCConfig        *VPCConfig
+	DeadLetterConfig *DeadLetterConfig
+	TracingConfig    *TracingConfig
+}
+
 // FunctionConfig describes a serverless function to create.
 type FunctionConfig struct {
 	Name        string

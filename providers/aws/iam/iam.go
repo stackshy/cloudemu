@@ -32,6 +32,7 @@ type Mock struct {
 	groups           *memstore.Store[*groupData]
 	accessKeys       *memstore.Store[*accessKeyData]
 	instanceProfiles *memstore.Store[*driver.InstanceProfileInfo]
+	mfaDevices       *memstore.Store[*mfaDeviceData]
 
 	mu            sync.RWMutex
 	userPolicies  map[string]map[string]bool // userName -> set of managed policy ARNs
@@ -42,16 +43,19 @@ type Mock struct {
 	userInlinePolicies  map[string]map[string]string // userName -> policyName -> document
 	groupInlinePolicies map[string]map[string]string // groupName -> policyName -> document
 
+	passwordPolicy *driver.PasswordPolicy // nil until UpdateAccountPasswordPolicy is called
+
 	opts *config.Options
 }
 
 type userData struct {
-	Name      string
-	ID        string
-	ARN       string
-	Path      string
-	Tags      map[string]string
-	CreatedAt string
+	Name                string
+	ID                  string
+	ARN                 string
+	Path                string
+	Tags                map[string]string
+	CreatedAt           string
+	permissionsBoundary string // ARN of the permissions-boundary policy, if any
 }
 
 type roleData struct {
@@ -65,6 +69,7 @@ type roleData struct {
 	CreatedAt           string
 	Tags                map[string]string
 	inlinePolicies      map[string]string // policyName -> policy document JSON
+	permissionsBoundary string            // ARN of the permissions-boundary policy, if any
 }
 
 type policyData struct {
@@ -110,6 +115,7 @@ func New(opts *config.Options) *Mock {
 		groups:              memstore.New[*groupData](),
 		accessKeys:          memstore.New[*accessKeyData](),
 		instanceProfiles:    memstore.New[*driver.InstanceProfileInfo](),
+		mfaDevices:          memstore.New[*mfaDeviceData](),
 		userPolicies:        make(map[string]map[string]bool),
 		rolePolicies:        make(map[string]map[string]bool),
 		groupPolicies:       make(map[string]map[string]bool),
@@ -1093,6 +1099,23 @@ func (m *Mock) ListGroupsForUser(
 	return result, nil
 }
 
+// maxAccessKeysPerUser is the AWS quota: an IAM user may hold at most two
+// access keys at a time.
+const maxAccessKeysPerUser = 2
+
+// countAccessKeys returns how many access keys currently belong to userName.
+func (m *Mock) countAccessKeys(userName string) int {
+	count := 0
+
+	for _, ak := range m.accessKeys.All() {
+		if ak.UserName == userName {
+			count++
+		}
+	}
+
+	return count
+}
+
 // CreateAccessKey creates a new access key for the given user.
 func (m *Mock) CreateAccessKey(
 	_ context.Context, cfg driver.AccessKeyConfig,
@@ -1107,6 +1130,13 @@ func (m *Mock) CreateAccessKey(
 		return nil, errors.Newf(
 			errors.NotFound, "user %q not found", cfg.UserName,
 		)
+	}
+
+	// Real IAM caps a user at maxAccessKeysPerUser keys; a further create is
+	// rejected with LimitExceeded (HTTP 409).
+	if m.countAccessKeys(cfg.UserName) >= maxAccessKeysPerUser {
+		return nil, errors.Newf(errors.ResourceExhausted,
+			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
 	}
 
 	keyID := fmt.Sprintf("AKIA%s", idgen.GenerateID(""))

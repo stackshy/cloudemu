@@ -3,6 +3,7 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -213,14 +214,23 @@ func snapshotMatchesFilter(s *computedriver.SnapshotInfo, f awsquery.Filter) boo
 	}
 }
 
-// modifySnapshotAttribute accepts createVolumePermission / productCode changes.
-// The emulator does not model snapshot sharing, so it acknowledges the request
-// without persisting the attribute (Terraform's aws_snapshot_create_volume_
-// permission only needs the 200).
+// modifySnapshotAttribute applies createVolumePermission add/remove grants
+// (snapshot sharing). When the compute driver models the attribute it persists
+// the grants so DescribeSnapshotAttribute reads them back; otherwise the request
+// is acknowledged without persistence.
 func (h *Handler) modifySnapshotAttribute(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.compute.DescribeSnapshots(r.Context(), []string{r.Form.Get("SnapshotId")}); err != nil {
+	snapshotID := r.Form.Get("SnapshotId")
+
+	if _, err := h.compute.DescribeSnapshots(r.Context(), []string{snapshotID}); err != nil {
 		writeSnapshotErr(w, err)
 		return
+	}
+
+	if modifier, ok := h.compute.(computedriver.SnapshotAttributeModifier); ok {
+		if err := applySnapshotPermissionChanges(r, modifier, snapshotID); err != nil {
+			writeSnapshotErr(w, err)
+			return
+		}
 	}
 
 	awsquery.WriteXMLResponse(w, modifySnapshotAttributeResponseXML{
@@ -228,6 +238,106 @@ func (h *Handler) modifySnapshotAttribute(w http.ResponseWriter, r *http.Request
 		RequestID: awsquery.RequestID,
 		Return:    true,
 	})
+}
+
+// applySnapshotPermissionChanges reads the createVolumePermission Add/Remove
+// modifications from the request and persists each non-empty side. It supports
+// both the structured CreateVolumePermission.Add.N.* form the SDK sends and the
+// flat OperationType + UserGroup.N / UserId.N form.
+func applySnapshotPermissionChanges(
+	r *http.Request, modifier computedriver.SnapshotAttributeModifier, snapshotID string,
+) error {
+	addGroups, addUsers := snapshotPermissionGrants(r, "Add")
+	removeGroups, removeUsers := snapshotPermissionGrants(r, "Remove")
+
+	if op := r.Form.Get("OperationType"); op != "" {
+		groups := awsquery.ListStrings(r.Form, "UserGroup")
+		users := awsquery.ListStrings(r.Form, "UserId")
+
+		if op == permissionOpRemove {
+			removeGroups, removeUsers = append(removeGroups, groups...), append(removeUsers, users...)
+		} else {
+			addGroups, addUsers = append(addGroups, groups...), append(addUsers, users...)
+		}
+	}
+
+	if len(addGroups) > 0 || len(addUsers) > 0 {
+		if err := modifier.ModifySnapshotAttribute(r.Context(), computedriver.ModifySnapshotAttributeInput{
+			SnapshotID: snapshotID, OperationType: "add", Groups: addGroups, UserIDs: addUsers,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if len(removeGroups) > 0 || len(removeUsers) > 0 {
+		return modifier.ModifySnapshotAttribute(r.Context(), computedriver.ModifySnapshotAttributeInput{
+			SnapshotID: snapshotID, OperationType: "remove", Groups: removeGroups, UserIDs: removeUsers,
+		})
+	}
+
+	return nil
+}
+
+// snapshotPermissionGrants reads CreateVolumePermission.<side>.N.Group / .UserId.
+func snapshotPermissionGrants(r *http.Request, side string) (groups, users []string) {
+	for _, i := range awsquery.CollectIndices(r.Form, "CreateVolumePermission."+side) {
+		base := "CreateVolumePermission." + side + "." + strconv.Itoa(i)
+		if g := r.Form.Get(base + ".Group"); g != "" {
+			groups = append(groups, g)
+		}
+
+		if u := r.Form.Get(base + ".UserId"); u != "" {
+			users = append(users, u)
+		}
+	}
+
+	return groups, users
+}
+
+type createVolumePermissionXML struct {
+	Group  string `xml:"group,omitempty"`
+	UserID string `xml:"userId,omitempty"`
+}
+
+type describeSnapshotAttributeResponseXML struct {
+	XMLName                 xml.Name                    `xml:"DescribeSnapshotAttributeResponse"`
+	Xmlns                   string                      `xml:"xmlns,attr"`
+	RequestID               string                      `xml:"requestId"`
+	SnapshotID              string                      `xml:"snapshotId"`
+	CreateVolumePermissions []createVolumePermissionXML `xml:"createVolumePermission>item,omitempty"`
+}
+
+// describeSnapshotAttribute returns the createVolumePermission grants persisted
+// by ModifySnapshotAttribute, completing the snapshot-sharing round-trip.
+func (h *Handler) describeSnapshotAttribute(w http.ResponseWriter, r *http.Request) {
+	snapshotID := r.Form.Get("SnapshotId")
+
+	if _, err := h.compute.DescribeSnapshots(r.Context(), []string{snapshotID}); err != nil {
+		writeSnapshotErr(w, err)
+		return
+	}
+
+	resp := describeSnapshotAttributeResponseXML{
+		Xmlns:      awsquery.Namespace,
+		RequestID:  awsquery.RequestID,
+		SnapshotID: snapshotID,
+	}
+
+	if modifier, ok := h.compute.(computedriver.SnapshotAttributeModifier); ok &&
+		r.Form.Get("Attribute") == "createVolumePermission" {
+		perms, err := modifier.DescribeSnapshotVolumePermissions(r.Context(), snapshotID)
+		if err != nil {
+			writeSnapshotErr(w, err)
+			return
+		}
+
+		for _, p := range perms {
+			resp.CreateVolumePermissions = append(resp.CreateVolumePermissions,
+				createVolumePermissionXML{Group: p.Group, UserID: p.UserID})
+		}
+	}
+
+	awsquery.WriteXMLResponse(w, resp)
 }
 
 func toSnapshotXML(s *computedriver.SnapshotInfo) snapshotXML {

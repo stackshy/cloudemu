@@ -98,6 +98,19 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"UntagUser":                      {},
 	"ListUserTags":                   {},
 	"GetAccountAuthorizationDetails": {},
+	"CreateServiceLinkedRole":        {},
+	"PutRolePermissionsBoundary":     {},
+	"DeleteRolePermissionsBoundary":  {},
+	"PutUserPermissionsBoundary":     {},
+	"DeleteUserPermissionsBoundary":  {},
+	"SimulatePrincipalPolicy":        {},
+	"SimulateCustomPolicy":           {},
+	"GetAccountSummary":              {},
+	"GetAccountPasswordPolicy":       {},
+	"UpdateAccountPasswordPolicy":    {},
+	"DeleteAccountPasswordPolicy":    {},
+	"CreateVirtualMFADevice":         {},
+	"ListMFADevices":                 {},
 }
 
 // roleTagManager is the AWS-specific role-tagging surface, asserted against the
@@ -321,6 +334,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listUserTags(w, r)
 	case "GetAccountAuthorizationDetails":
 		h.getAccountAuthorizationDetails(w, r)
+	case "CreateServiceLinkedRole":
+		h.createServiceLinkedRole(w, r)
+	case "PutRolePermissionsBoundary":
+		h.putRolePermissionsBoundary(w, r)
+	case "DeleteRolePermissionsBoundary":
+		h.deleteRolePermissionsBoundary(w, r)
+	case "PutUserPermissionsBoundary":
+		h.putUserPermissionsBoundary(w, r)
+	case "DeleteUserPermissionsBoundary":
+		h.deleteUserPermissionsBoundary(w, r)
+	case "SimulatePrincipalPolicy":
+		h.simulatePrincipalPolicy(w, r)
+	case "SimulateCustomPolicy":
+		h.simulateCustomPolicy(w, r)
+	case "GetAccountSummary":
+		h.getAccountSummary(w, r)
+	case "GetAccountPasswordPolicy":
+		h.getAccountPasswordPolicy(w, r)
+	case "UpdateAccountPasswordPolicy":
+		h.updateAccountPasswordPolicy(w, r)
+	case "DeleteAccountPasswordPolicy":
+		h.deleteAccountPasswordPolicy(w, r)
+	case "CreateVirtualMFADevice":
+		h.createVirtualMFADevice(w, r)
+	case "ListMFADevices":
+		h.listMFADevices(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))

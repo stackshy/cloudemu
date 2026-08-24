@@ -80,9 +80,21 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if boundary := r.Form.Get("PermissionsBoundary"); boundary != "" {
+		if mgr := h.boundaryManager(); mgr != nil {
+			if err := mgr.PutUserPermissionsBoundary(r.Context(), u.Name, boundary); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+
+	out := toUserXML(u)
+	out.PermissionsBoundary = h.userBoundaryXML(r.Context(), u.Name)
+
 	awsquery.WriteXMLResponse(w, createUserResponse{
 		Xmlns:    Namespace,
-		Result:   createUserResult{User: toUserXML(u)},
+		Result:   createUserResult{User: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -121,9 +133,12 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out := toUserXML(u)
+	out.PermissionsBoundary = h.userBoundaryXML(r.Context(), u.Name)
+
 	awsquery.WriteXMLResponse(w, getUserResponse{
 		Xmlns:    Namespace,
-		Result:   getUserResult{User: toUserXML(u)},
+		Result:   getUserResult{User: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -191,9 +206,21 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if boundary := r.Form.Get("PermissionsBoundary"); boundary != "" {
+		if mgr := h.boundaryManager(); mgr != nil {
+			if err := mgr.PutRolePermissionsBoundary(r.Context(), role.Name, boundary); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+
+	out := toRoleXML(role)
+	out.PermissionsBoundary = h.roleBoundaryXML(r.Context(), role.Name)
+
 	awsquery.WriteXMLResponse(w, createRoleResponse{
 		Xmlns:    Namespace,
-		Result:   createRoleResult{Role: toRoleXML(role)},
+		Result:   createRoleResult{Role: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -217,9 +244,12 @@ func (h *Handler) getRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out := toRoleXML(role)
+	out.PermissionsBoundary = h.roleBoundaryXML(r.Context(), role.Name)
+
 	awsquery.WriteXMLResponse(w, getRoleResponse{
 		Xmlns:    Namespace,
-		Result:   getRoleResult{Role: toRoleXML(role)},
+		Result:   getRoleResult{Role: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

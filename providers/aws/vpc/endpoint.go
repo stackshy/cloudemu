@@ -79,9 +79,20 @@ func (m *Mock) DeleteVPCEndpoint(
 
 // DescribeVPCEndpoints returns VPC endpoints matching the
 // given IDs, or all endpoints if ids is empty.
+//
+// An explicitly named vpce- ID that does not exist is NotFound rather than an
+// empty list, matching real EC2 (InvalidVpcEndpointId.NotFound).
 func (m *Mock) DescribeVPCEndpoints(
 	_ context.Context, ids []string,
 ) ([]driver.VPCEndpoint, error) {
+	for _, id := range ids {
+		if !m.endpoints.Has(id) {
+			return nil, errors.Newf(
+				errors.NotFound, "vpc endpoint %q not found", id,
+			)
+		}
+	}
+
 	return describeResources(
 		m.endpoints, ids, toEndpointInfo,
 	), nil

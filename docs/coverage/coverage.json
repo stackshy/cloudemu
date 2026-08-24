@@ -1985,11 +1985,41 @@
         ]
       },
       {
+        "name": "ImageAttributeModifier",
+        "doc": "ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI",
+        "operations": [
+          {
+            "name": "DescribeImageLaunchPermissions"
+          },
+          {
+            "name": "ModifyImageAttribute"
+          }
+        ]
+      },
+      {
+        "name": "ImageCopier",
+        "doc": "ImageCopier is an optional AWS-only capability for EC2 CopyImage (aws_ami_copy).",
+        "operations": [
+          {
+            "name": "CopyImage"
+          }
+        ]
+      },
+      {
         "name": "ImageRegistrar",
         "doc": "ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage",
         "operations": [
           {
             "name": "RegisterImage"
+          }
+        ]
+      },
+      {
+        "name": "InstanceMetadataModifier",
+        "doc": "InstanceMetadataModifier is an optional AWS-only capability for",
+        "operations": [
+          {
+            "name": "ModifyInstanceMetadataOptions"
           }
         ]
       },
@@ -2035,6 +2065,33 @@
           {
             "name": "GetLaunchTemplateData",
             "doc": "GetLaunchTemplateData synthesizes launch-template data from a running"
+          }
+        ]
+      },
+      {
+        "name": "PlacementGroups",
+        "doc": "PlacementGroups is an optional AWS-only capability for EC2 placement groups",
+        "operations": [
+          {
+            "name": "CreatePlacementGroup"
+          },
+          {
+            "name": "DeletePlacementGroup"
+          },
+          {
+            "name": "DescribePlacementGroups"
+          }
+        ]
+      },
+      {
+        "name": "SnapshotAttributeModifier",
+        "doc": "SnapshotAttributeModifier is an optional AWS-only capability for the EC2",
+        "operations": [
+          {
+            "name": "DescribeSnapshotVolumePermissions"
+          },
+          {
+            "name": "ModifySnapshotAttribute"
           }
         ]
       },
@@ -6601,6 +6658,15 @@
         ]
       },
       {
+        "name": "NetworkInterfaceAttacher",
+        "doc": "NetworkInterfaceAttacher is the AWS-specific ENI attach surface",
+        "operations": [
+          {
+            "name": "AttachNetworkInterface"
+          }
+        ]
+      },
+      {
         "name": "NetworkInterfaceCreator",
         "doc": "NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept",
         "operations": [
@@ -9996,6 +10062,15 @@
         ]
       },
       {
+        "name": "ObjectCopier",
+        "doc": "ObjectCopier is an OPTIONAL capability (discovered by type assertion, like",
+        "operations": [
+          {
+            "name": "CopyObjectV2"
+          }
+        ]
+      },
+      {
         "name": "RawBucketConfig",
         "doc": "RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like",
         "operations": [
@@ -10010,6 +10085,15 @@
           {
             "name": "PutBucketConfig",
             "doc": "PutBucketConfig stores document body under the sub-resource name (e.g."
+          }
+        ]
+      },
+      {
+        "name": "RegionalBucket",
+        "doc": "RegionalBucket is an OPTIONAL capability a storage provider implements to",
+        "operations": [
+          {
+            "name": "CreateBucketInRegion"
           }
         ]
       },
