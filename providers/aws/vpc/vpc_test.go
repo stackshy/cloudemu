@@ -922,8 +922,15 @@ func TestCreateNetworkACL(t *testing.T) {
 		assertNotEmpty(t, acl.ID)
 		assertEqual(t, v.ID, acl.VPCID)
 		assertEqual(t, false, acl.IsDefault)
-		// Should have 2 default rules (ingress + egress allow-all).
+		// A fresh custom ACL carries only the two unmodifiable catch-all '*'
+		// DENY entries (rule 32767, ingress + egress) — it denies all traffic
+		// until the caller adds a numbered allow rule, matching real EC2.
 		assertEqual(t, 2, len(acl.Rules))
+		for _, r := range acl.Rules {
+			assertEqual(t, defaultDenyRuleNumber, r.RuleNumber)
+			assertEqual(t, actionDeny, r.Action)
+			assertEqual(t, allTrafficCIDR, r.CIDR)
+		}
 	})
 
 	t.Run("empty VPC ID", func(t *testing.T) {
@@ -944,7 +951,8 @@ func TestAddNetworkACLRule(t *testing.T) {
 	acl, _ := m.CreateNetworkACL(ctx, v.ID, nil)
 
 	t.Run("add rule and verify ordering", func(t *testing.T) {
-		// Add a rule with lower number than default (100).
+		// A fresh custom ACL has the two '*' deny rules; adding rule 50 makes
+		// three, and 50 sorts ahead of the 32767 catch-alls.
 		err := m.AddNetworkACLRule(ctx, acl.ID, &driver.NetworkACLRule{
 			RuleNumber: 50,
 			Protocol:   "tcp",
@@ -976,14 +984,23 @@ func TestRemoveNetworkACLRule(t *testing.T) {
 	v := createTestVPC(m)
 	acl, _ := m.CreateNetworkACL(ctx, v.ID, nil)
 
-	t.Run("remove default ingress rule", func(t *testing.T) {
-		err := m.RemoveNetworkACLRule(ctx, acl.ID, 100, false)
+	t.Run("remove an added rule", func(t *testing.T) {
+		// A fresh custom ACL has only the two '*' deny rules, so add a numbered
+		// ingress rule and then remove it, leaving the two catch-alls.
+		err := m.AddNetworkACLRule(ctx, acl.ID, &driver.NetworkACLRule{
+			RuleNumber: 100, Protocol: "-1", Action: "allow", CIDR: "0.0.0.0/0", Egress: false,
+		})
+		requireNoError(t, err)
+
+		err = m.RemoveNetworkACLRule(ctx, acl.ID, 100, false)
 		requireNoError(t, err)
 
 		acls, _ := m.DescribeNetworkACLs(ctx, []string{acl.ID})
-		assertEqual(t, 1, len(acls[0].Rules))
-		// Only egress rule remains.
-		assertEqual(t, true, acls[0].Rules[0].Egress)
+		assertEqual(t, 2, len(acls[0].Rules))
+		// The two unmodifiable 32767 '*' deny entries remain.
+		for _, r := range acls[0].Rules {
+			assertEqual(t, defaultDenyRuleNumber, r.RuleNumber)
+		}
 	})
 
 	t.Run("remove nonexistent rule", func(t *testing.T) {
@@ -1122,7 +1139,7 @@ func TestElasticIP(t *testing.T) {
 
 	t.Run("associate address", func(t *testing.T) {
 		eips, _ := m.DescribeAddresses(ctx, nil)
-		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, driver.AssociateAddressInput{InstanceID: "i-12345"})
 		requireNoError(t, err)
 		assertNotEmpty(t, assocID)
 
@@ -1157,7 +1174,7 @@ func TestElasticIP(t *testing.T) {
 	})
 
 	t.Run("associate nonexistent allocation", func(t *testing.T) {
-		_, err := m.AssociateAddress(ctx, "eipalloc-nope", "i-12345")
+		_, err := m.AssociateAddress(ctx, "eipalloc-nope", driver.AssociateAddressInput{InstanceID: "i-12345"})
 		assertError(t, err, true)
 	})
 
@@ -1178,6 +1195,47 @@ func TestElasticIP(t *testing.T) {
 		eips, err := m.DescribeAddresses(ctx, []string{"eipalloc-nope"})
 		requireNoError(t, err)
 		assertEqual(t, 0, len(eips))
+	})
+}
+
+func TestAssociateAddressNetworkInterface(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+	sub, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+	eni, _ := m.CreateNetworkInterface(ctx, sub.ID, "test", nil, nil)
+	eip, _ := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+
+	t.Run("bind to ENI with private IP", func(t *testing.T) {
+		assocID, err := m.AssociateAddress(ctx, eip.AllocationID, driver.AssociateAddressInput{
+			NetworkInterfaceID: eni.ID,
+			PrivateIP:          "10.0.1.55",
+		})
+		requireNoError(t, err)
+		assertNotEmpty(t, assocID)
+
+		eips, _ := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		assertEqual(t, 1, len(eips))
+		assertEqual(t, eni.ID, eips[0].NetworkInterfaceID)
+		assertEqual(t, "10.0.1.55", eips[0].PrivateIP)
+	})
+
+	t.Run("disassociate clears ENI fields", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		err := m.DisassociateAddress(ctx, eips[0].AssociationID)
+		requireNoError(t, err)
+
+		eips, _ = m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		assertEqual(t, "", eips[0].NetworkInterfaceID)
+		assertEqual(t, "", eips[0].PrivateIP)
+	})
+
+	t.Run("unknown ENI is not found", func(t *testing.T) {
+		eip2, _ := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		_, err := m.AssociateAddress(ctx, eip2.AllocationID, driver.AssociateAddressInput{
+			NetworkInterfaceID: "eni-nope",
+		})
+		assertError(t, err, true)
 	})
 }
 

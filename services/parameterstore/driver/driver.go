@@ -15,6 +15,18 @@ import (
 // ParameterNotFound.
 var ErrVersionNotFound = errors.New(errors.NotFound, "requested parameter version or label not found")
 
+// ErrTypeMismatch is returned by PutParameter when an Overwrite=true update
+// specifies a Type that differs from the parameter's existing type. Real
+// Parameter Store rejects this with HierarchyTypeMismatchException — you can't
+// change a parameter from, e.g., String to SecureString. It carries the
+// InvalidArgument code so generic handling still treats it as a bad request,
+// while the SDK-compat layer matches it with errors.Is to return the distinct
+// HierarchyTypeMismatchException wire error.
+var ErrTypeMismatch = errors.New(errors.InvalidArgument,
+	"Parameter Store doesn't support changing a parameter type in a hierarchy. "+
+		"For example, you can't change a parameter from a String type to a SecureString type. "+
+		"You must create a new, unique parameter.")
+
 // Parameter types, matching AWS SSM Parameter Store.
 const (
 	// TypeString is a plain single-value string parameter.
