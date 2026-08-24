@@ -91,10 +91,16 @@ func New(opts *config.Options) *Mock {
 	return &Mock{tables: make(map[string]*tableData), opts: opts}
 }
 
+// maxItemSizeBytes is the 400 KB ceiling DynamoDB enforces on a single item
+// (the sum of its attribute names and values). A write exceeding it is a
+// ValidationException.
+const maxItemSizeBytes = 400 * 1024
+
 // validateItemKeys enforces the DynamoDB rule that an item written to a table
-// must carry every primary-key attribute, and that each key attribute's type
-// matches the table's AttributeDefinitions. AWS rejects a violation with a
-// ValidationException carrying the exact wording matched here.
+// must carry every primary-key attribute, that each key attribute's type
+// matches the table's AttributeDefinitions, and that no key attribute holds an
+// empty String/Binary value. AWS rejects a violation with a ValidationException
+// carrying the exact wording matched here.
 func validateItemKeys(cfg driver.TableConfig, item map[string]any) error {
 	for _, keyName := range []string{cfg.PartitionKey, cfg.SortKey} {
 		if keyName == "" {
@@ -107,8 +113,141 @@ func validateItemKeys(cfg driver.TableConfig, item map[string]any) error {
 				"One or more parameter values were invalid: Missing the key %s in the item", keyName)
 		}
 
+		if err := validateKeyNotEmpty(keyName, val); err != nil {
+			return err
+		}
+
 		if err := validateKeyType(cfg, keyName, val); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// validateKeyNotEmpty rejects an empty-string or empty-binary value on a
+// primary-key attribute. A String/Binary attribute may be zero-length only when
+// it is NOT used as a table or index key, so a key with an empty value is the
+// AWS "cannot contain an empty string/binary value" ValidationException.
+func validateKeyNotEmpty(keyName string, val any) error {
+	switch v := val.(type) {
+	case string:
+		if v == "" {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: "+
+					"The AttributeValue for a key attribute cannot contain an empty string value. Key: %s", keyName)
+		}
+	case []byte:
+		if len(v) == 0 {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: "+
+					"The AttributeValue for a key attribute cannot contain an empty binary value. Key: %s", keyName)
+		}
+	}
+
+	return nil
+}
+
+// validateItemSize enforces DynamoDB's 400 KB per-item ceiling. The item size
+// is the sum of each attribute's name length (UTF-8 bytes) and value size. AWS
+// rejects an oversized write with a ValidationException.
+func validateItemSize(item map[string]any) error {
+	total := 0
+	for name, val := range item {
+		total += len(name) + valueSize(val)
+	}
+
+	if total > maxItemSizeBytes {
+		return cerrors.New(cerrors.InvalidArgument, "Item size has exceeded the maximum allowed size")
+	}
+
+	return nil
+}
+
+// elementOverhead is the 1 byte DynamoDB charges per List or Map element, on
+// top of the element's own value size.
+const elementOverhead = 1
+
+// documentContainerOverhead is the flat 3 bytes DynamoDB charges for any List
+// or Map attribute, regardless of its contents.
+const documentContainerOverhead = 3
+
+// numberSetElementSize is a nominal per-number byte cost used when sizing a
+// number set, whose elements are parsed floats with no retained source text.
+const numberSetElementSize = 8
+
+// valueSize approximates the on-the-wire byte size DynamoDB attributes to a
+// value, enough to enforce the 400 KB item ceiling. Scalars count their raw
+// bytes; documents recurse via collectionSize and charge a small per-element
+// overhead.
+func valueSize(val any) int {
+	switch v := val.(type) {
+	case string:
+		return len(v)
+	case expr.Number:
+		return len(string(v))
+	case []byte:
+		return len(v)
+	case bool, nil:
+		return 1
+	default:
+		return collectionSize(val)
+	}
+}
+
+// collectionSize sizes the document and set attribute types, keeping valueSize
+// within the cyclomatic-complexity budget. An unrecognized value falls back to
+// its formatted string length.
+func collectionSize(val any) int {
+	switch v := val.(type) {
+	case []any:
+		total := documentContainerOverhead
+		for _, e := range v {
+			total += valueSize(e) + elementOverhead
+		}
+
+		return total
+	case map[string]any:
+		total := documentContainerOverhead
+		for name, e := range v {
+			total += len(name) + valueSize(e) + elementOverhead
+		}
+
+		return total
+	case expr.StringSet:
+		total := 0
+		for _, s := range v {
+			total += len(s)
+		}
+
+		return total
+	case expr.NumberSet:
+		return len(v) * numberSetElementSize
+	case expr.BinarySet:
+		total := 0
+		for _, b := range v {
+			total += len(b)
+		}
+
+		return total
+	default:
+		return len(fmt.Sprintf("%v", v))
+	}
+}
+
+// validateKeyMapNotEmpty rejects an empty-string/binary value on any key
+// attribute supplied in a Key map (UpdateItem, DeleteItem), matching the same
+// AWS rule PutItem enforces on the full item.
+func validateKeyMapNotEmpty(partitionKey, sortKey string, key map[string]any) error {
+	for _, keyName := range []string{partitionKey, sortKey} {
+		if keyName == "" {
+			continue
+		}
+
+		if val, present := key[keyName]; present {
+			if err := validateKeyNotEmpty(keyName, val); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -253,6 +392,11 @@ func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) err
 		return err
 	}
 
+	if err := validateItemSize(item); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+
 	key := itemKey(td.config, item)
 	oldItem, hadOld := td.items.Get(key)
 	item = maps.Clone(item)
@@ -307,6 +451,11 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", input.Table)
 	}
 
+	if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, input.Key); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
 	k := itemKey(td.config, input.Key)
 	item, ok := td.items.Get(k)
 
@@ -324,6 +473,11 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 
 	updated, err := driver.ApplyUpdate(base, input)
 	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
+	if err := validateItemSize(updated); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
@@ -346,6 +500,11 @@ func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) e
 	if !exists {
 		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, key); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 
 	k := itemKey(td.config, key)
@@ -748,6 +907,18 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 	}
 
 	for _, item := range items {
+		if err := validateItemKeys(td.config, item); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+
+		if err := validateItemSize(item); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+	}
+
+	for _, item := range items {
 		key := itemKey(td.config, item)
 		oldItem, hadOld := td.items.Get(key)
 		item = maps.Clone(item)
@@ -1046,6 +1217,22 @@ func (m *Mock) TransactWriteItems(
 	td, exists := m.tables[table]
 	if !exists {
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	for _, item := range puts {
+		if err := validateItemKeys(td.config, item); err != nil {
+			return err
+		}
+
+		if err := validateItemSize(item); err != nil {
+			return err
+		}
+	}
+
+	for _, key := range deletes {
+		if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, key); err != nil {
+			return err
+		}
 	}
 
 	m.applyTransactPuts(td, puts)

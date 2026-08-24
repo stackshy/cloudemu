@@ -151,6 +151,124 @@ func TestDDBBatchGetOver100(t *testing.T) {
 	assert.Equal(t, "ValidationException", apiErrorCode(t, err))
 }
 
+// TestDDBPutItemEmptyStringPartitionKey: an empty-string value on the partition
+// key is a ValidationException — a String key attribute may not be zero-length.
+func TestDDBPutItemEmptyStringPartitionKey(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "pk_empty", "id", "")
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("pk_empty"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": sAttr(""), "data": sAttr("x")},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+	assert.Contains(t, err.Error(), "cannot contain an empty string value")
+	assert.Contains(t, err.Error(), "Key: id")
+}
+
+// TestDDBPutItemEmptyStringSortKey: an empty-string value on the sort key is
+// rejected the same way as the partition key.
+func TestDDBPutItemEmptyStringSortKey(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "sk_empty", "id", "sk")
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("sk_empty"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": sAttr("a"), "sk": sAttr("")},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+	assert.Contains(t, err.Error(), "cannot contain an empty string value")
+	assert.Contains(t, err.Error(), "Key: sk")
+}
+
+// TestDDBPutItemExceedsMaxSize: an item larger than the 400 KB ceiling is a
+// ValidationException.
+func TestDDBPutItemExceedsMaxSize(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "big_item", "id", "")
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("big_item"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   sAttr("k1"),
+			"blob": sAttr(strings.Repeat("a", 500*1024)),
+		},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+	assert.Contains(t, err.Error(), "maximum allowed size")
+}
+
+// TestDDBPutItemUnderMaxSizeSucceeds: an item comfortably under 400 KB still
+// writes, guarding against an over-eager size check.
+func TestDDBPutItemUnderMaxSizeSucceeds(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "ok_item", "id", "")
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("ok_item"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   sAttr("k1"),
+			"blob": sAttr(strings.Repeat("a", 100*1024)),
+		},
+	})
+
+	require.NoError(t, err)
+}
+
+// TestDDBUpdateItemExceedsMaxSize: an UpdateItem whose SET grows the item past
+// the 400 KB ceiling is a ValidationException naming the maximum allowed size.
+func TestDDBUpdateItemExceedsMaxSize(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "upd_big", "id", "")
+	suiteDDBPut(t, client, "upd_big", map[string]ddbtypes.AttributeValue{"id": sAttr("k1")})
+
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String("upd_big"),
+		Key:                       map[string]ddbtypes.AttributeValue{"id": sAttr("k1")},
+		UpdateExpression:          aws.String("SET blob = :b"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":b": sAttr(strings.Repeat("a", 500*1024))},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+	assert.Contains(t, err.Error(), "maximum allowed size")
+}
+
+// TestDDBUpdateItemUnderMaxSizeSucceeds: an UpdateItem whose result stays under
+// 400 KB is accepted, guarding against an over-eager post-update size check.
+func TestDDBUpdateItemUnderMaxSizeSucceeds(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "upd_ok", "id", "")
+	suiteDDBPut(t, client, "upd_ok", map[string]ddbtypes.AttributeValue{"id": sAttr("k1")})
+
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String("upd_ok"),
+		Key:                       map[string]ddbtypes.AttributeValue{"id": sAttr("k1")},
+		UpdateExpression:          aws.String("SET blob = :b"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":b": sAttr(strings.Repeat("a", 100*1024))},
+	})
+
+	require.NoError(t, err)
+}
+
 // TestDDBUpdateTableAddGSIWithoutAttrDef: creating a GSI via UpdateTable whose
 // key attribute is not supplied in the request AttributeDefinitions is a
 // ValidationException.

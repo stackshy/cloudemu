@@ -347,6 +347,14 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		return nil, cerrors.New(cerrors.InvalidArgument, "Engine is required")
 	}
 
+	if err := validateEngine(cfg.Engine); err != nil {
+		return nil, err
+	}
+
+	if err := validateInstanceClass(cfg.InstanceClass); err != nil {
+		return nil, err
+	}
+
 	inst, plan, err := m.reserveInstance(cfg)
 	if err != nil {
 		return nil, err
@@ -605,6 +613,12 @@ func (m *Mock) ModifyInstance(
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
+	}
+
+	// Reject an invalid DBInstanceClass before applying it, mirroring
+	// CreateInstance. An empty class leaves the current one untouched.
+	if err := validateInstanceClass(input.InstanceClass); err != nil {
+		return nil, err
 	}
 
 	// Rotate the master password on the backing engine so the new credential
