@@ -268,3 +268,197 @@ func TestSDKListMultipartUploadsPagination(t *testing.T) {
 		t.Errorf("page2 uploads = %d keys, want exactly [key-b] (resume strictly after marker)", got)
 	}
 }
+
+// TestSDKListPartsZeroMaxParts asserts ListParts with max-parts=0 does not crash
+// the server when parts exist above the marker. Real S3 returns an empty,
+// truncated page rather than panicking on an empty result slice.
+func TestSDKListPartsZeroMaxParts(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "parts-zero-bucket"
+	const key = "obj"
+	mustCreateBucket(t, client, bucket)
+
+	created, err := client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+
+	uploadID := aws.ToString(created.UploadId)
+
+	for _, n := range []int32{1, 2, 3} {
+		if _, err := client.UploadPart(ctx, &awss3.UploadPartInput{
+			Bucket:     aws.String(bucket),
+			Key:        aws.String(key),
+			UploadId:   aws.String(uploadID),
+			PartNumber: aws.Int32(n),
+			Body:       bytes.NewReader(bytes.Repeat([]byte("A"), 8)),
+		}); err != nil {
+			t.Fatalf("UploadPart %d: %v", n, err)
+		}
+	}
+
+	page, err := client.ListParts(ctx, &awss3.ListPartsInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+		MaxParts: aws.Int32(0),
+	})
+	if err != nil {
+		t.Fatalf("ListParts max-parts=0: %v (must not crash the server)", err)
+	}
+
+	if got := len(page.Parts); got != 0 {
+		t.Errorf("parts = %d, want 0 (max-parts=0 returns an empty page)", got)
+	}
+
+	if !aws.ToBool(page.IsTruncated) {
+		t.Error("IsTruncated = false, want true (parts remain above the marker)")
+	}
+
+	// Resuming (with a real page size) must still return every part.
+	rest, err := client.ListParts(ctx, &awss3.ListPartsInput{
+		Bucket:           aws.String(bucket),
+		Key:              aws.String(key),
+		UploadId:         aws.String(uploadID),
+		MaxParts:         aws.Int32(10),
+		PartNumberMarker: page.NextPartNumberMarker,
+	})
+	if err != nil {
+		t.Fatalf("ListParts resume: %v", err)
+	}
+
+	if got := len(rest.Parts); got != 3 {
+		t.Errorf("resumed parts = %d, want 3 (empty first page must not lose parts)", got)
+	}
+}
+
+// TestSDKListMultipartUploadsPrefix asserts ListMultipartUploads actually filters
+// the returned uploads by the prefix parameter (not merely echoing it), matching
+// real S3, which lists only uploads whose key begins with the prefix.
+func TestSDKListMultipartUploadsPrefix(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "uploads-prefix-bucket"
+	mustCreateBucket(t, client, bucket)
+
+	keys := []string{"photos/a", "photos/b", "videos/c"}
+	for _, k := range keys {
+		if _, err := client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(k),
+		}); err != nil {
+			t.Fatalf("CreateMultipartUpload %s: %v", k, err)
+		}
+	}
+
+	out, err := client.ListMultipartUploads(ctx, &awss3.ListMultipartUploadsInput{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String("photos/"),
+	})
+	if err != nil {
+		t.Fatalf("ListMultipartUploads: %v", err)
+	}
+
+	if aws.ToString(out.Prefix) != "photos/" {
+		t.Errorf("Prefix echoed = %q, want %q", aws.ToString(out.Prefix), "photos/")
+	}
+
+	var gotKeys []string
+	for _, u := range out.Uploads {
+		gotKeys = append(gotKeys, aws.ToString(u.Key))
+	}
+
+	if strings.Join(gotKeys, ",") != "photos/a,photos/b" {
+		t.Errorf("uploads = %v, want [photos/a photos/b] (prefix must actually filter)", gotKeys)
+	}
+}
+
+// TestSDKListObjectVersionsCommonPrefixesPagination asserts a delimited version
+// listing does not re-return a CommonPrefixes entry on a resumed page once the
+// key-marker has advanced past it. Real S3 filters out any CommonPrefix that is
+// not lexicographically greater than the key-marker.
+func TestSDKListObjectVersionsCommonPrefixesPagination(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "versions-cp-bucket"
+	mustCreateBucket(t, client, bucket)
+
+	if _, err := client.PutBucketVersioning(ctx, &awss3.PutBucketVersioningInput{
+		Bucket:                  aws.String(bucket),
+		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled},
+	}); err != nil {
+		t.Fatalf("PutBucketVersioning: %v", err)
+	}
+
+	// "a/x" rolls up into the CommonPrefix "a/"; the bare keys m, n, o are the
+	// versions that get paginated. "a/" sorts before the page-2 key-marker "o".
+	keys := []string{"a/x", "m", "n", "o"}
+	for _, k := range keys {
+		if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(k),
+			Body:   bytes.NewReader([]byte("v-" + k)),
+		}); err != nil {
+			t.Fatalf("PutObject %s: %v", k, err)
+		}
+	}
+
+	page1, err := client.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{
+		Bucket:    aws.String(bucket),
+		Delimiter: aws.String("/"),
+		MaxKeys:   aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("ListObjectVersions page1: %v", err)
+	}
+
+	if !hasCommonPrefix(page1.CommonPrefixes, "a/") {
+		t.Errorf("page1 CommonPrefixes = %v, want to contain %q", commonPrefixStrings(page1.CommonPrefixes), "a/")
+	}
+
+	if !aws.ToBool(page1.IsTruncated) {
+		t.Fatal("page1 IsTruncated = false, want true (versions remain)")
+	}
+
+	page2, err := client.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{
+		Bucket:          aws.String(bucket),
+		Delimiter:       aws.String("/"),
+		MaxKeys:         aws.Int32(2),
+		KeyMarker:       page1.NextKeyMarker,
+		VersionIdMarker: page1.NextVersionIdMarker,
+	})
+	if err != nil {
+		t.Fatalf("ListObjectVersions page2: %v", err)
+	}
+
+	if hasCommonPrefix(page2.CommonPrefixes, "a/") {
+		t.Errorf("page2 CommonPrefixes = %v, must not re-return %q (key-marker %q has advanced past it)",
+			commonPrefixStrings(page2.CommonPrefixes), "a/", aws.ToString(page2.KeyMarker))
+	}
+}
+
+func hasCommonPrefix(prefixes []types.CommonPrefix, want string) bool {
+	for _, p := range prefixes {
+		if aws.ToString(p.Prefix) == want {
+			return true
+		}
+	}
+
+	return false
+}
+
+func commonPrefixStrings(prefixes []types.CommonPrefix) []string {
+	out := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		out = append(out, aws.ToString(p.Prefix))
+	}
+
+	return out
+}

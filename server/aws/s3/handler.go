@@ -1463,9 +1463,15 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key,
 
 		if len(result.Parts) >= maxParts {
 			// A further matching part exists, so the page is truncated; the last
-			// part actually returned is the next request's part-number-marker.
+			// part actually returned is the next request's part-number-marker. With
+			// max-parts=0 no parts are returned, so fall back to the incoming
+			// part-number-marker rather than indexing an empty slice.
 			result.IsTruncated = true
-			result.NextPartNumberMarker = result.Parts[len(result.Parts)-1].PartNumber
+			if len(result.Parts) > 0 {
+				result.NextPartNumberMarker = result.Parts[len(result.Parts)-1].PartNumber
+			} else {
+				result.NextPartNumberMarker = partNumberMarker
+			}
 
 			break
 		}
@@ -1481,10 +1487,11 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key,
 }
 
 // listMultipartUploads lists the in-progress multipart uploads in a bucket. It
-// honors max-uploads, key-marker and upload-id-marker: uploads are ordered by
-// key ascending and then by upload id, and the handler slices the requested
-// page, echoing MaxUploads / KeyMarker / UploadIdMarker and setting IsTruncated
-// / NextKeyMarker / NextUploadIdMarker when more remain, as real S3 does.
+// honors prefix, max-uploads, key-marker and upload-id-marker: uploads are
+// filtered by prefix, ordered by key ascending and then by initiation time, and
+// the handler slices the requested page, echoing Prefix / MaxUploads / KeyMarker
+// / UploadIdMarker and setting IsTruncated / NextKeyMarker / NextUploadIdMarker
+// when more remain, as real S3 does.
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
 	uploads, err := h.bucket.ListMultipartUploads(r.Context(), bucket)
 	if err != nil {
@@ -1495,23 +1502,16 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 	q := r.URL.Query()
 	keyMarker := q.Get("key-marker")
 	uploadIDMarker := q.Get("upload-id-marker")
+	prefix := q.Get("prefix")
 
-	// S3 orders uploads by key, then by upload id; resume comparisons against
-	// upload-id-marker are lexicographic, so sort on the same key here.
-	sort.Slice(uploads, func(i, j int) bool {
-		if uploads[i].Key != uploads[j].Key {
-			return uploads[i].Key < uploads[j].Key
-		}
-
-		return uploads[i].UploadID < uploads[j].UploadID
-	})
-
+	uploads = filterUploadsByPrefix(uploads, prefix)
+	sortMultipartUploads(uploads)
 	uploads = skipToUploadMarker(uploads, keyMarker, uploadIDMarker)
 
 	resp := listMultipartUploadsResult{
 		Xmlns:          xmlns,
 		Bucket:         bucket,
-		Prefix:         q.Get("prefix"),
+		Prefix:         prefix,
 		KeyMarker:      keyMarker,
 		UploadIDMarker: uploadIDMarker,
 		MaxUploads:     parseMaxItems(q.Get("max-uploads")),
@@ -1538,6 +1538,46 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 	}
 
 	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// filterUploadsByPrefix keeps only uploads whose key begins with prefix (an empty
+// prefix keeps them all), matching real S3's prefix parameter: the listing must
+// not include keys outside the prefix it echoes back.
+func filterUploadsByPrefix(uploads []driver.MultipartUpload, prefix string) []driver.MultipartUpload {
+	if prefix == "" {
+		return uploads
+	}
+
+	filtered := uploads[:0]
+
+	for i := range uploads {
+		if strings.HasPrefix(uploads[i].Key, prefix) {
+			filtered = append(filtered, uploads[i])
+		}
+	}
+
+	return filtered
+}
+
+// sortMultipartUploads orders uploads by key ascending, then, for uploads sharing
+// a key, by initiation time ascending (falling back to upload id when the times
+// are equal or unparseable), as real S3 does. Resume comparisons against
+// upload-id-marker stay lexicographic and are handled in skipToUploadMarker.
+func sortMultipartUploads(uploads []driver.MultipartUpload) {
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+
+		ti, ei := time.Parse(time.RFC3339, uploads[i].CreatedAt)
+		tj, ej := time.Parse(time.RFC3339, uploads[j].CreatedAt)
+
+		if ei == nil && ej == nil && !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+
+		return uploads[i].UploadID < uploads[j].UploadID
+	})
 }
 
 // skipToUploadMarker drops the uploads preceding a key-marker/upload-id-marker
@@ -1752,7 +1792,14 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, buc
 		})
 	}
 
+	// A CommonPrefix is echoed only when it is lexicographically greater than
+	// key-marker, so a resumed (truncated) listing does not re-return the same
+	// prefixes on every page. An empty key-marker keeps them all.
 	for _, p := range commonPrefixes {
+		if p <= keyMarker {
+			continue
+		}
+
 		resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
 	}
 
