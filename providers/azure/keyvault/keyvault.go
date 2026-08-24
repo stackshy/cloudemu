@@ -14,10 +14,11 @@ import (
 )
 
 // Compile-time checks that Mock implements the shared Secrets driver and the
-// Azure-specific KeyVaultSecrets surface.
+// Azure-specific KeyVaultSecrets and KeyVaultKeys surfaces.
 var (
 	_ driver.Secrets         = (*Mock)(nil)
 	_ driver.KeyVaultSecrets = (*Mock)(nil)
+	_ driver.KeyVaultKeys    = (*Mock)(nil)
 )
 
 // purgeWindowDays is the soft-delete retention window Key Vault schedules
@@ -49,6 +50,7 @@ type secretData struct {
 // Mock is an in-memory mock implementation of Azure Key Vault.
 type Mock struct {
 	secrets *memstore.Store[*secretData]
+	keys    *memstore.Store[*keyData]
 	opts    *config.Options
 }
 
@@ -56,6 +58,7 @@ type Mock struct {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		secrets: memstore.New[*secretData](),
+		keys:    memstore.New[*keyData](),
 		opts:    opts,
 	}
 }

@@ -447,6 +447,12 @@ func New(d Drivers) http.Handler {
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
 		srv.Register(keyvaultsrv.New(d.KeyVault))
+		// Keys data-plane matches /keys and /deletedkeys — disjoint from the
+		// /secrets surface above and from ARM. Registered only when the backend
+		// implements the KeyVaultKeys surface.
+		if _, ok := d.KeyVault.(secretsdriver.KeyVaultKeys); ok {
+			srv.Register(keyvaultsrv.NewKeys(d.KeyVault))
+		}
 	}
 
 	// Table Storage matches the OData table surface (/Tables, /Tables('name'),
