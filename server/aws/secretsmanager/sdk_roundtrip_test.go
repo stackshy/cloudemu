@@ -91,8 +91,15 @@ func TestSDKSecretLifecycle(t *testing.T) {
 		t.Fatalf("DeleteSecret echoed name %q", aws.ToString(deleted.Name))
 	}
 
-	if _, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("db-password")}); err == nil {
-		t.Fatal("DescribeSecret after delete: want error, got nil")
+	// DescribeSecret keeps working after DeleteSecret and reports DeletedDate;
+	// only a never-created secret is ResourceNotFoundException.
+	descDeleted, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("db-password")})
+	if err != nil {
+		t.Fatalf("DescribeSecret after delete: %v", err)
+	}
+
+	if descDeleted.DeletedDate == nil {
+		t.Fatal("DescribeSecret after delete: DeletedDate not set")
 	}
 }
 

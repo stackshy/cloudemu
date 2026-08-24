@@ -37,6 +37,10 @@ type secretStager interface {
 	GetSecretValueStage(ctx context.Context, name, versionID, stage string) (*secretsdriver.SecretVersion, error)
 	SecretVersionStages(ctx context.Context, name string) (map[string][]string, error)
 	SecretDeletionDate(ctx context.Context, name string) (string, bool)
+	SecretMetadata(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+	DeleteSecretWithOptions(
+		ctx context.Context, name string, recoveryWindow *int64, force bool,
+	) (*secretsdriver.SecretInfo, string, error)
 	RestoreSecret(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
 	RotateSecret(ctx context.Context, name string) (*secretsdriver.SecretVersion, error)
 }

@@ -41,15 +41,34 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request) {
-	var req secretIDRequest
+	var req deleteSecretRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
 	name := resolveSecretID(req.SecretID)
 
-	// Secrets Manager echoes the deleted secret's ARN and name, so capture
-	// them before removal.
+	// The AWS provider honors RecoveryWindowInDays / ForceDeleteWithoutRecovery
+	// and validates them; drivers without the stager surface fall back to a
+	// plain soft delete.
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		h.deleteSecretFallback(w, r, name)
+		return
+	}
+
+	info, date, err := st.DeleteSecretWithOptions(r.Context(), name, req.RecoveryWindowInDays, req.ForceDeleteWithoutRecovery)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, deleteSecretResponse{ARN: info.ResourceID, Name: info.Name, DeletionDate: epochSeconds(date)})
+}
+
+// deleteSecretFallback handles DeleteSecret for drivers that don't implement the
+// AWS stager surface (Azure/GCP), using the portable soft delete.
+func (h *Handler) deleteSecretFallback(w http.ResponseWriter, r *http.Request, name string) {
 	info, err := h.secrets.GetSecret(r.Context(), name)
 	if err != nil {
 		writeErr(w, err)
@@ -61,15 +80,7 @@ func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := deleteSecretResponse{ARN: info.ResourceID, Name: info.Name}
-
-	if st, ok := h.secrets.(secretStager); ok {
-		if date, deleted := st.SecretDeletionDate(r.Context(), name); deleted {
-			out.DeletionDate = epochSeconds(date)
-		}
-	}
-
-	wire.WriteJSON(w, out)
+	wire.WriteJSON(w, deleteSecretResponse{ARN: info.ResourceID, Name: info.Name})
 }
 
 func (h *Handler) describeSecret(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +91,22 @@ func (h *Handler) describeSecret(w http.ResponseWriter, r *http.Request) {
 
 	name := resolveSecretID(req.SecretID)
 
-	info, err := h.secrets.GetSecret(r.Context(), name)
+	// DescribeSecret keeps working for a secret scheduled for deletion (returning
+	// a DeletedDate); only a missing secret is ResourceNotFoundException. Use the
+	// stager's metadata read, which does not error on the soft-deleted state.
+	st, isStager := h.secrets.(secretStager)
+
+	var (
+		info *secretsdriver.SecretInfo
+		err  error
+	)
+
+	if isStager {
+		info, err = st.SecretMetadata(r.Context(), name)
+	} else {
+		info, err = h.secrets.GetSecret(r.Context(), name)
+	}
+
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -88,9 +114,13 @@ func (h *Handler) describeSecret(w http.ResponseWriter, r *http.Request) {
 
 	out := toSecretListEntry(info)
 
-	if st, ok := h.secrets.(secretStager); ok {
+	if isStager {
 		if stages, serr := st.SecretVersionStages(r.Context(), name); serr == nil {
 			out.VersionIDsToStages = stages
+		}
+
+		if date, deleted := st.SecretDeletionDate(r.Context(), name); deleted {
+			out.DeletedDate = epochSeconds(date)
 		}
 	}
 

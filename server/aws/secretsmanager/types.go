@@ -26,6 +26,9 @@ type secretListEntryJSON struct {
 	Tags            []tagJSON `json:"Tags,omitempty"`
 	CreatedDate     float64   `json:"CreatedDate,omitempty"`
 	LastChangedDate float64   `json:"LastChangedDate,omitempty"`
+	// DeletedDate is set only for a secret scheduled for deletion: the date the
+	// secret is scheduled to be removed (delete request + RecoveryWindowInDays).
+	DeletedDate float64 `json:"DeletedDate,omitempty"`
 
 	VersionIDsToStages map[string][]string `json:"VersionIdsToStages,omitempty"`
 }
@@ -48,6 +51,15 @@ type createSecretRequest struct {
 
 type secretIDRequest struct {
 	SecretID string `json:"SecretId"`
+}
+
+type deleteSecretRequest struct {
+	SecretID string `json:"SecretId"`
+	// RecoveryWindowInDays is a pointer so an absent field (nil) is
+	// distinguishable from an explicit 0 — the latter is an invalid value AWS
+	// rejects, while nil applies the default recovery window.
+	RecoveryWindowInDays       *int64 `json:"RecoveryWindowInDays"`
+	ForceDeleteWithoutRecovery bool   `json:"ForceDeleteWithoutRecovery"`
 }
 
 type getSecretValueRequest struct {
