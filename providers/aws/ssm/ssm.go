@@ -123,10 +123,26 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 				"parameter %q already exists; set Overwrite to update it", cfg.Name)
 		}
 
+		// A type isn't required when updating a parameter: omitting it retains
+		// the existing type (a SecureString stays SecureString). Specifying a
+		// type that differs from the existing one is rejected — real Parameter
+		// Store returns HierarchyTypeMismatchException.
+		existingType := defaultType("")
+		if cur, ok := existing.versionByNumber(existing.latest); ok {
+			existingType = cur.typ
+		}
+
+		newType := existingType
+		if cfg.Type != "" {
+			if newType = defaultType(cfg.Type); newType != existingType {
+				return 0, "", driver.ErrTypeMismatch
+			}
+		}
+
 		next := existing.latest + 1
 		existing.versions = append(existing.versions, &version{
 			value:        cfg.Value,
-			typ:          defaultType(cfg.Type),
+			typ:          newType,
 			dataType:     dataType,
 			version:      next,
 			lastModified: now,

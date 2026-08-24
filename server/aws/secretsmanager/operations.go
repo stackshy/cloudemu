@@ -271,7 +271,7 @@ func (h *Handler) getSecretValue(w http.ResponseWriter, r *http.Request) {
 		ARN:           info.ResourceID,
 		Name:          info.Name,
 		VersionID:     ver.VersionID,
-		VersionStages: stagesFor(ver.Current),
+		VersionStages: stagesForVersion(h.versionStages(r, name), ver),
 		CreatedDate:   epochSeconds(ver.CreatedAt),
 	}
 
@@ -297,6 +297,32 @@ func (h *Handler) getVersion(
 	}
 
 	return h.secrets.GetSecretValue(r.Context(), name, versionID)
+}
+
+// versionStages returns the per-version staging labels for a secret when the
+// AWS staging surface is available, so callers report the exact AWSCURRENT/
+// AWSPREVIOUS assignment (and no label at all for deprecated versions). It
+// returns nil for providers without the staging surface, letting callers fall
+// back to the coarse current/previous heuristic.
+func (h *Handler) versionStages(r *http.Request, name string) map[string][]string {
+	if st, ok := h.secrets.(secretStager); ok {
+		if m, err := st.SecretVersionStages(r.Context(), name); err == nil {
+			return m
+		}
+	}
+
+	return nil
+}
+
+// stagesForVersion resolves the staging labels for one version, preferring the
+// exact per-version map when present and falling back to the current/previous
+// heuristic otherwise.
+func stagesForVersion(m map[string][]string, ver *secretsdriver.SecretVersion) []string {
+	if m != nil {
+		return m[ver.VersionID]
+	}
+
+	return stagesFor(ver.Current)
 }
 
 func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
@@ -329,12 +355,12 @@ func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
 		ARN:           info.ResourceID,
 		Name:          info.Name,
 		VersionID:     ver.VersionID,
-		VersionStages: stagesFor(ver.Current),
+		VersionStages: stagesForVersion(h.versionStages(r, name), ver),
 	})
 }
 
 func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
-	var req secretIDRequest
+	var req listSecretVersionIDsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -353,11 +379,21 @@ func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only the current version carries AWSCURRENT and only the immediately
+	// superseded one carries AWSPREVIOUS; older versions are deprecated (no
+	// staging labels) and are omitted unless IncludeDeprecated is set.
+	stageMap := h.versionStages(r, name)
+
 	out := make([]versionJSON, 0, len(versions))
 	for _, v := range versions {
+		stages := stagesForVersion(stageMap, &v)
+		if len(stages) == 0 && !req.IncludeDeprecated {
+			continue
+		}
+
 		out = append(out, versionJSON{
 			VersionID:     v.VersionID,
-			VersionStages: stagesFor(v.Current),
+			VersionStages: stages,
 			CreatedDate:   epochSeconds(v.CreatedAt),
 		})
 	}

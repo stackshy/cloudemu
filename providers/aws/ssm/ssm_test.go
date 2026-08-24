@@ -2,6 +2,7 @@ package ssm_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -49,6 +50,69 @@ func TestPutOverwriteAndHistory(t *testing.T) {
 
 	if len(hist) != 2 || hist[0].Value != "1" || hist[1].Value != "2" {
 		t.Fatalf("history = %+v, want [1 2]", hist)
+	}
+}
+
+func TestPutOverwriteRetainsTypeWhenOmitted(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/secure", Value: "s1", Type: driver.TypeSecureString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	// Overwrite without a Type must keep SecureString.
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/secure", Value: "s2", Overwrite: true,
+	}); err != nil {
+		t.Fatalf("PutParameter(overwrite): %v", err)
+	}
+
+	got, err := m.GetParameter(ctx, "/secure", true)
+	if err != nil {
+		t.Fatalf("GetParameter: %v", err)
+	}
+
+	if got.Type != driver.TypeSecureString {
+		t.Fatalf("Type = %q, want SecureString (retained)", got.Type)
+	}
+
+	if got.Value != "s2" {
+		t.Fatalf("Value = %q, want s2", got.Value)
+	}
+}
+
+func TestPutOverwriteChangingTypeRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/p", Value: "v1", Type: driver.TypeString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	_, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/p", Value: "v2", Type: driver.TypeSecureString, Overwrite: true,
+	})
+	if err == nil {
+		t.Fatal("PutParameter(change type): want error, got nil")
+	}
+
+	if !errors.Is(err, driver.ErrTypeMismatch) {
+		t.Fatalf("want ErrTypeMismatch, got %v", err)
+	}
+
+	// The stored type must be unchanged.
+	got, err := m.GetParameter(ctx, "/p", false)
+	if err != nil {
+		t.Fatalf("GetParameter: %v", err)
+	}
+
+	if got.Type != driver.TypeString {
+		t.Fatalf("Type = %q, want String (unchanged)", got.Type)
 	}
 }
 
