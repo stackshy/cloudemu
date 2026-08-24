@@ -254,9 +254,20 @@ func (m *Mock) DeleteRule(_ context.Context, eventBus, ruleName string) error {
 		return errors.Newf(errors.NotFound, "event bus %q not found", busName)
 	}
 
-	if !bd.rules.Delete(ruleName) {
+	rd, ok := bd.rules.Get(ruleName)
+	if !ok {
 		return errors.Newf(errors.NotFound, "rule %q not found on event bus %q", ruleName, busName)
 	}
+
+	// Real EventBridge refuses to delete a rule that still has targets: the
+	// caller must RemoveTargets first. (Force applies only to managed rules,
+	// which this mock does not model, so it never bypasses this guard.)
+	if rd.targets.Len() > 0 {
+		//nolint:revive // exact AWS ValidationException wording, surfaced verbatim to the SDK
+		return errors.New(errors.InvalidArgument, "Rule can't be deleted since it has targets.")
+	}
+
+	bd.rules.Delete(ruleName)
 
 	return nil
 }
