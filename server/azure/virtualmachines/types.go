@@ -135,3 +135,45 @@ type diskInstanceView struct {
 type vmListResponse struct {
 	Value []vmResponse `json:"value"`
 }
+
+// captureRequest is the body for POST virtualMachines/{name}/capture
+// (armcompute.VirtualMachineCaptureParameters).
+type captureRequest struct {
+	VhdPrefix                string `json:"vhdPrefix"`
+	DestinationContainerName string `json:"destinationContainerName"`
+	OverwriteVhds            bool   `json:"overwriteVhds"`
+}
+
+// captureResponse is the VirtualMachineCaptureResult: an ARM deployment-template
+// envelope whose resources recreate similar VMs from the captured disks.
+type captureResponse struct {
+	Schema         string            `json:"$schema"`
+	ContentVersion string            `json:"contentVersion"`
+	Parameters     map[string]any    `json:"parameters"`
+	Resources      []captureResource `json:"resources"`
+	ID             string            `json:"id"`
+}
+
+type captureResource struct {
+	Type       string               `json:"type"`
+	APIVersion string               `json:"apiVersion"`
+	Properties captureResourceProps `json:"properties"`
+}
+
+type captureResourceProps struct {
+	StorageProfile captureStorageProfile `json:"storageProfile"`
+}
+
+type captureStorageProfile struct {
+	OSDisk captureOSDisk `json:"osDisk"`
+}
+
+type captureOSDisk struct {
+	OSType string      `json:"osType"`
+	Name   string      `json:"name"`
+	Image  *captureVHD `json:"image,omitempty"`
+}
+
+type captureVHD struct {
+	URI string `json:"uri"`
+}

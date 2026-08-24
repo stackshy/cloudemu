@@ -57,6 +57,25 @@ func requiresConfirmation(protocol string) bool {
 	return ok
 }
 
+// validProtocols is the set of delivery protocols SNS Subscribe accepts. Any
+// other value is rejected with InvalidParameter, matching real SNS.
+var validProtocols = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"http":        {},
+	"https":       {},
+	"email":       {},
+	"email-json":  {},
+	"sms":         {},
+	"sqs":         {},
+	"application": {},
+	"lambda":      {},
+	"firehose":    {},
+}
+
+func isValidProtocol(protocol string) bool {
+	_, ok := validProtocols[protocol]
+	return ok
+}
+
 // SQSDeliverer delivers an SNS notification into an SQS queue identified by
 // its ARN. The SQS mock satisfies this, enabling real SNS -> SQS fan-out.
 type SQSDeliverer interface {
@@ -245,6 +264,11 @@ func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*dri
 
 	if cfg.Protocol == "" {
 		return nil, errors.New(errors.InvalidArgument, "protocol is required")
+	}
+
+	if !isValidProtocol(cfg.Protocol) {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"Invalid parameter: Protocol Reason: %s protocol is not supported", cfg.Protocol)
 	}
 
 	if cfg.Endpoint == "" {

@@ -79,6 +79,11 @@ type Instance struct {
 	// PowerOff'd VM (stopped, still allocated) from a Deallocated one, a
 	// distinction the lifecycle State field cannot carry. Empty for AWS/GCP.
 	PowerState string
+	// Generalized is true once the VM has been generalized (Azure Generalize
+	// action): its OS-specific state has been removed so it can be captured
+	// into a reusable image. Empty/false for AWS/GCP and for un-generalized
+	// Azure VMs.
+	Generalized bool
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo
@@ -570,6 +575,35 @@ type AzureVMController interface {
 	// instance in place (preserving its ID and launch time), for idempotent
 	// ARM CreateOrUpdate.
 	UpdateInstance(ctx context.Context, instanceID string, cfg InstanceConfig) error
+	// GeneralizeInstance marks an instance as generalized (Azure Generalize
+	// action), a precondition for capturing it into a reusable image. It is
+	// idempotent: generalizing an already-generalized VM succeeds.
+	GeneralizeInstance(ctx context.Context, instanceID string) error
+}
+
+// AzureDiskAccessor is an optional Azure-only capability for the managed-disk
+// beginGetAccess / endGetAccess actions (DisksClient.BeginGrantAccess /
+// BeginRevokeAccess): a time-bounded SAS URI is issued for exporting or
+// importing the disk's contents, and later revoked. Only the Azure VM mock
+// implements it; the wire handler type-asserts for it, so AWS/GCP are
+// unaffected.
+type AzureDiskAccessor interface {
+	// GrantDiskAccess issues a time-bounded SAS URI granting the requested
+	// access level ("Read"/"Write") to the disk for durationSeconds.
+	GrantDiskAccess(ctx context.Context, volumeID, access string, durationSeconds int) (string, error)
+	// RevokeDiskAccess revokes any SAS access previously granted to the disk.
+	RevokeDiskAccess(ctx context.Context, volumeID string) error
+}
+
+// AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys
+// PATCH Update operation, which updates a key resource's public key and/or tags
+// in place. Only the Azure VM mock implements it; the wire handler type-asserts
+// for it, so AWS/GCP are unaffected.
+type AzureSSHKeyUpdater interface {
+	// UpdateKeyPair updates the public key and/or tags of an existing key pair.
+	// A nil publicKey / tags leaves that field unchanged; a non-nil tags map
+	// replaces the resource's tags.
+	UpdateKeyPair(ctx context.Context, name string, publicKey *string, tags map[string]string) (*KeyPairInfo, error)
 }
 
 // KeyPairGenerator is an optional Azure-only capability for the ARM

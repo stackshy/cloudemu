@@ -23,6 +23,8 @@ const emulatorTenantID = "11111111-1111-1111-1111-111111111111"
 
 // CreateOrUpdateAccessConnector creates or updates an access connector,
 // completing provisioning synchronously (store-and-echo).
+//
+//nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) CreateOrUpdateAccessConnector(
 	_ context.Context, cfg driver.AccessConnectorConfig,
 ) (*driver.AccessConnector, error) {
@@ -49,9 +51,11 @@ func (m *Mock) CreateOrUpdateAccessConnector(
 		return cloneAccessConnector(&updated), nil
 	}
 
+	sub := m.subOrDefault(cfg.Subscription)
 	ac := &driver.AccessConnector{
-		ID:                idgen.AzureID(m.opts.AccountID, cfg.ResourceGroup, providerNamespace, accessConnectorsType, cfg.Name),
+		ID:                idgen.AzureID(sub, cfg.ResourceGroup, providerNamespace, accessConnectorsType, cfg.Name),
 		Name:              cfg.Name,
+		Subscription:      sub,
 		ResourceGroup:     cfg.ResourceGroup,
 		Location:          cfg.Location,
 		Tags:              copyMap(cfg.Tags),

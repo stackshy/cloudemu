@@ -1535,6 +1535,20 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccessKeys",
+        "doc": "AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure",
+        "operations": [
+          {
+            "name": "ListCacheKeys",
+            "doc": "ListCacheKeys returns the cache's current primary and secondary access"
+          },
+          {
+            "name": "RegenerateCacheKey",
+            "doc": "RegenerateCacheKey rotates the requested key (\"Primary\" or \"Secondary\")"
+          }
+        ]
+      },
+      {
         "name": "ReplicationGroups",
         "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
@@ -1958,12 +1972,40 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureDiskAccessor",
+        "doc": "AzureDiskAccessor is an optional Azure-only capability for the managed-disk",
+        "operations": [
+          {
+            "name": "GrantDiskAccess",
+            "doc": "GrantDiskAccess issues a time-bounded SAS URI granting the requested"
+          },
+          {
+            "name": "RevokeDiskAccess",
+            "doc": "RevokeDiskAccess revokes any SAS access previously granted to the disk."
+          }
+        ]
+      },
+      {
+        "name": "AzureSSHKeyUpdater",
+        "doc": "AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys",
+        "operations": [
+          {
+            "name": "UpdateKeyPair",
+            "doc": "UpdateKeyPair updates the public key and/or tags of an existing key pair."
+          }
+        ]
+      },
+      {
         "name": "AzureVMController",
         "doc": "AzureVMController is an optional Azure-only capability supporting the ARM",
         "operations": [
           {
             "name": "Deallocate",
             "doc": "Deallocate stops the guest and releases the allocated compute"
+          },
+          {
+            "name": "GeneralizeInstance",
+            "doc": "GeneralizeInstance marks an instance as generalized (Azure Generalize"
           },
           {
             "name": "PowerOff",

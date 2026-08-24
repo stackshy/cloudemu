@@ -33,9 +33,16 @@ func subKey(resourceGroup, workspace, childType, name string) string {
 	return key(resourceGroup, workspace) + "/" + childType + "/" + name
 }
 
-// subID builds the ARM ID for a workspace sub-resource.
+// subID builds the ARM ID for a workspace sub-resource. The subscription is
+// taken from the parent workspace so a child's id shares its parent's
+// subscription rather than defaulting to the emulator account.
 func (m *Mock) subID(resourceGroup, workspace, childType, name string) string {
-	return idgen.AzureID(m.opts.AccountID, resourceGroup, providerNamespace, resourceType, workspace) +
+	sub := m.opts.AccountID
+	if ws, ok := m.workspaces.Get(key(resourceGroup, workspace)); ok && ws.Subscription != "" {
+		sub = ws.Subscription
+	}
+
+	return idgen.AzureID(sub, resourceGroup, providerNamespace, resourceType, workspace) +
 		"/" + childType + "/" + name
 }
 

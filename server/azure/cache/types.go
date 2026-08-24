@@ -16,6 +16,7 @@ const (
 	// terminates the SDK's poller on the first response.
 	provisioningStateSucceeded = "Succeeded"
 	defaultRedisSSLPort        = 6380
+	defaultRedisPort           = 6379
 	defaultRedisVersion        = "6.0"
 )
 
@@ -44,6 +45,18 @@ type redisProperties struct {
 	// accepted on input (older SDKs still send it) but not emitted — the
 	// response carries the current replicasPerPrimary field.
 	ReplicasPerMaster int `json:"replicasPerMaster,omitempty"`
+
+	// AccessKeys carries the cache's access keys. Real Azure populates it only
+	// on the Create/Update response (never on Get/List), so it is set by the
+	// create-or-update handler and omitted elsewhere.
+	AccessKeys *accessKeysJSON `json:"accessKeys,omitempty"`
+}
+
+// accessKeysJSON mirrors the armredis RedisAccessKeys / AccessKeys shape
+// returned by listKeys, regenerateKey, and the create/update response.
+type accessKeysJSON struct {
+	PrimaryKey   string `json:"primaryKey,omitempty"`
+	SecondaryKey string `json:"secondaryKey,omitempty"`
 }
 
 // redisJSON mirrors the armredis ResourceInfo / CreateParameters resource.
@@ -58,6 +71,12 @@ type redisJSON struct {
 
 type redisListResult struct {
 	Value []redisJSON `json:"value"`
+}
+
+// regenerateKeyRequest is the RegenerateKey request body: keyType selects which
+// access key to rotate ("Primary" or "Secondary").
+type regenerateKeyRequest struct {
+	KeyType string `json:"keyType"`
 }
 
 // skuNameFromNodeType extracts the SKU tier (Basic/Standard/Premium) from the
@@ -111,17 +130,25 @@ func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJS
 		rg = rp.ResourceGroup
 	}
 
+	// Return the region the cache was created in; fall back to the default only
+	// for records that carry no location (e.g. portable-API creations).
+	location := info.Location
+	if location == "" {
+		location = defaultLocation
+	}
+
 	return redisJSON{
 		ID:       azurearm.BuildResourceID(sub, rg, providerName, typeRedis, info.Name),
 		Name:     info.Name,
 		Type:     redisResourceType,
-		Location: defaultLocation,
+		Location: location,
 		Tags:     info.Tags,
 		Properties: &redisProperties{
 			ProvisioningState:  provisioningStateSucceeded,
 			RedisVersion:       defaultRedisVersion,
 			SKU:                skuFromInfo(info),
 			HostName:           host,
+			Port:               defaultRedisPort,
 			SSLPort:            sslPort,
 			ShardCount:         info.ShardCount,
 			ReplicasPerPrimary: info.ReplicasPerPrimary,

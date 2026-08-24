@@ -78,6 +78,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sub-resource actions on a named cache (listKeys, regenerateKey) are POSTs.
+	if rp.SubResource != "" {
+		h.serveAction(w, r, &rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut, http.MethodPatch:
 		// PUT is Redis.BeginCreate; PATCH is Redis.Update (partial update of a
@@ -90,6 +96,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteCache(w, r, &rp)
 	default:
 		writeMethodNotAllowed(w)
+	}
+}
+
+// serveAction routes the POST sub-resource actions on a named cache. Real Azure
+// exposes listKeys and regenerateKey as POST-only action endpoints.
+func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	switch rp.SubResource {
+	case "listKeys":
+		h.listKeys(w, r, rp)
+	case "regenerateKey":
+		h.regenerateKey(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "InvalidResourceType", "unknown action "+rp.SubResource)
 	}
 }
 

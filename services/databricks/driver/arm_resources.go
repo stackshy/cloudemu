@@ -35,6 +35,7 @@ type ManagedIdentity struct {
 type AccessConnector struct {
 	ID                string
 	Name              string
+	Subscription      string
 	ResourceGroup     string
 	Location          string
 	Tags              map[string]string
@@ -46,6 +47,7 @@ type AccessConnector struct {
 // AccessConnectorConfig is the createOrUpdate input for an access connector.
 type AccessConnectorConfig struct {
 	Name          string
+	Subscription  string
 	ResourceGroup string
 	Location      string
 	Tags          map[string]string
