@@ -104,7 +104,10 @@ func TestAzureIAMCompat(t *testing.T) {
 	})
 
 	sess.Op(svc, "ListRoles", func() error {
-		var count int
+		// ListRoleDefinitions returns the built-in roles (Owner/Contributor/
+		// Reader) alongside any custom ones, as real Azure does, so assert the
+		// custom role is present rather than expecting an exact count.
+		var found bool
 
 		pager := roleDefs.NewListPager(scope, nil)
 		for pager.More() {
@@ -113,11 +116,15 @@ func TestAzureIAMCompat(t *testing.T) {
 				return err
 			}
 
-			count += len(page.Value)
+			for _, def := range page.Value {
+				if def != nil && ptrStr(def.Name) == roleID {
+					found = true
+				}
+			}
 		}
 
-		if count != 1 {
-			return fmt.Errorf("ListRoles returned %d definitions, want 1", count)
+		if !found {
+			return fmt.Errorf("ListRoles did not return the custom role %q", roleID)
 		}
 
 		return nil

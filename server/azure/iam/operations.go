@@ -1,6 +1,7 @@
 package iam
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -33,7 +34,7 @@ func (h *Handler) serveRoleDefinitions(w http.ResponseWriter, r *http.Request, s
 			return
 		}
 
-		h.getRoleDefinition(w, r, id)
+		h.getRoleDefinition(w, r, scope, id)
 	case http.MethodDelete:
 		if id == "" {
 			writeARMError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
@@ -56,14 +57,29 @@ func (h *Handler) createOrUpdateRoleDefinition(
 		return
 	}
 
+	// Built-in role GUIDs are reserved and immutable: a PUT that reuses one as
+	// the {id} must not silently create a colliding custom role. Real Azure
+	// rejects the write with 409 RoleDefinitionUpdateConflict, mirroring the
+	// guard roleDefinitionExists relies on for assignments.
+	if _, ok := h.builtins[id]; ok {
+		writeARMError(w, http.StatusConflict, "RoleDefinitionUpdateConflict",
+			"the role definition "+id+" is a built-in role and cannot be modified")
+		return
+	}
+
 	props := in.Properties
 	if props.Type == "" {
 		props.Type = "CustomRole"
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	props.CreatedOn = now
 	props.UpdatedOn = now
+
+	// Preserve the original createdOn across updates: a PUT to an existing role
+	// definition is an update, and real Azure keeps the first-create timestamp
+	// in properties.createdOn while advancing updatedOn. Fresh creates fall back
+	// to "now".
+	props.CreatedOn = h.priorCreatedOn(r.Context(), id, now)
 
 	if len(props.AssignableScopes) == 0 {
 		props.AssignableScopes = []string{scope}
@@ -117,14 +133,40 @@ func (h *Handler) createOrUpdateRoleDefinition(
 		buildRoleDefinitionEnvelope(scope, id, &props))
 }
 
-func (h *Handler) getRoleDefinition(w http.ResponseWriter, r *http.Request, id string) {
+// priorCreatedOn returns the createdOn timestamp of an already-stored role
+// definition with the given id, or fallback when there is no prior definition
+// (or it carried no timestamp). This keeps the first-create timestamp stable
+// across subsequent update PUTs.
+func (h *Handler) priorCreatedOn(ctx context.Context, id, fallback string) string {
+	existing, err := h.iam.GetRole(ctx, id)
+	if err != nil {
+		return fallback
+	}
+
+	prior, perr := decodeRoleProperties(existing.AssumeRolePolicyDoc)
+	if perr != nil || prior.CreatedOn == "" {
+		return fallback
+	}
+
+	return prior.CreatedOn
+}
+
+func (h *Handler) getRoleDefinition(w http.ResponseWriter, r *http.Request, scope, id string) {
+	// Built-in roles resolve by their fixed GUID at any scope, and are echoed
+	// back rooted at the caller's requested scope (real Azure returns the id at
+	// the scope you queried).
+	if props, ok := h.builtins[id]; ok {
+		writeARMJSON(w, http.StatusOK, buildRoleDefinitionEnvelope(scope, id, &props))
+		return
+	}
+
 	role, err := h.iam.GetRole(r.Context(), id)
 	if err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	scope := role.Path
+	scope = role.Path
 
 	props, perr := decodeRoleProperties(role.AssumeRolePolicyDoc)
 	if perr != nil {
@@ -143,7 +185,15 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 		return
 	}
 
-	out := roleDefinitionList{Value: make([]roleDefinitionEnvelope, 0, len(roles))}
+	out := roleDefinitionList{Value: make([]roleDefinitionEnvelope, 0, len(roles)+len(h.builtins))}
+
+	// Built-in roles are assignable at every scope, so they appear in a list at
+	// any scope — rooted at the caller's requested scope, matching real Azure.
+	for id := range h.builtins {
+		props := h.builtins[id]
+		out.Value = append(out.Value,
+			buildRoleDefinitionEnvelope(scope, id, &props))
+	}
 
 	for i := range roles {
 		role := &roles[i]
@@ -167,6 +217,15 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 // matching real Azure semantics (the SDK's RoleDefinitionsClientDeleteResponse
 // carries a RoleDefinition body).
 func (h *Handler) deleteRoleDefinition(w http.ResponseWriter, r *http.Request, id string) {
+	// Built-in roles are platform-managed and cannot be deleted: real Azure
+	// rejects the DELETE with a built-in-protection conflict rather than the
+	// 404 the driver would surface for an unknown custom-role GUID.
+	if _, ok := h.builtins[id]; ok {
+		writeARMError(w, http.StatusConflict, "RoleDefinitionUpdateConflict",
+			"the role definition "+id+" is a built-in role and cannot be deleted")
+		return
+	}
+
 	role, err := h.iam.GetRole(r.Context(), id)
 	if err != nil {
 		writeCErr(w, err)
@@ -250,6 +309,30 @@ func (h *Handler) createRoleAssignment(
 		props.Scope = scope
 	}
 
+	// Referential integrity: the roleDefinitionId must resolve to an existing
+	// role definition (a seeded built-in or a custom one). Real Azure rejects a
+	// dangling reference with 400 RoleDefinitionDoesNotExist.
+	if !h.roleDefinitionExists(r.Context(), props.RoleDefinitionID) {
+		writeARMError(w, http.StatusBadRequest, "RoleDefinitionDoesNotExist",
+			"the role definition referenced by roleDefinitionId does not exist: "+props.RoleDefinitionID)
+		return
+	}
+
+	// Re-creating the same assignment GUID, or creating a different GUID for an
+	// already-assigned (principal, role, scope) triple, both conflict in real
+	// Azure with 409 RoleAssignmentExists.
+	if _, exists := h.assignments.get(id); exists {
+		writeARMError(w, http.StatusConflict, "RoleAssignmentExists",
+			"a role assignment with id "+id+" already exists")
+		return
+	}
+
+	if h.assignments.existsTriple(props.PrincipalID, props.RoleDefinitionID, props.Scope) {
+		writeARMError(w, http.StatusConflict, "RoleAssignmentExists",
+			"the role assignment already exists for this principal, role and scope")
+		return
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	props.CreatedOn = now
 	props.UpdatedOn = now
@@ -311,6 +394,40 @@ func buildRoleDefinitionEnvelope(
 		Type:       typeRoleDefinition,
 		Properties: *props,
 	}
+}
+
+// roleDefinitionExists reports whether roleDefinitionID references a role
+// definition known to this handler — either a seeded built-in or a
+// driver-backed custom role. The id may be relative
+// ("/providers/Microsoft.Authorization/roleDefinitions/{guid}") or fully
+// scope-qualified; only the trailing GUID segment identifies the definition.
+func (h *Handler) roleDefinitionExists(ctx context.Context, roleDefinitionID string) bool {
+	guid := roleDefinitionGUID(roleDefinitionID)
+	if guid == "" {
+		return false
+	}
+
+	if _, ok := h.builtins[guid]; ok {
+		return true
+	}
+
+	if _, err := h.iam.GetRole(ctx, guid); err == nil {
+		return true
+	}
+
+	return false
+}
+
+// roleDefinitionGUID returns the trailing GUID segment of a roleDefinitionId,
+// i.e. everything after the final "/". A bare id with no slash is returned
+// unchanged.
+func roleDefinitionGUID(roleDefinitionID string) string {
+	trimmed := strings.TrimRight(roleDefinitionID, "/")
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		return trimmed[idx+1:]
+	}
+
+	return trimmed
 }
 
 // decodeRoleProperties extracts the properties JSON we stashed in
