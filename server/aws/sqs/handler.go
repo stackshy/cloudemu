@@ -110,6 +110,10 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validateQueueAttributeRanges(w, req.Attributes) {
+		return
+	}
+
 	cfg := mqdriver.QueueConfig{
 		Name:                          req.QueueName,
 		FIFO:                          req.Attributes["FifoQueue"] == attrTrue || strings.HasSuffix(req.QueueName, ".fifo"),
@@ -420,6 +424,15 @@ func (h *Handler) changeMessageVisibilityBatch(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ids := make([]string, len(req.Entries))
+	for i := range req.Entries {
+		ids[i] = req.Entries[i].ID
+	}
+
+	if !validateBatchEntryIDs(w, ids) {
+		return
+	}
+
 	successful := make([]map[string]any, 0, len(req.Entries))
 	failed := make([]map[string]any, 0)
 
@@ -486,6 +499,15 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ids := make([]string, len(req.Entries))
+	for i := range req.Entries {
+		ids[i] = req.Entries[i].ID
+	}
+
+	if !validateBatchEntryIDs(w, ids) {
+		return
+	}
+
 	for i := range req.Entries {
 		if reason := validateSystemAttributes(req.Entries[i].SystemAttributes); reason != "" {
 			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", reason)
@@ -522,30 +544,43 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	successful := make([]map[string]any, 0, len(res.Successful))
+	successful := buildSendBatchSuccess(res.Successful, bodyByID, attrsByID, sysAttrsByID)
 
-	for i := range res.Successful {
+	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": batchFailed(res.Failed)})
+}
+
+// buildSendBatchSuccess shapes the successful SendMessageBatch entries, attaching
+// the body/attribute MD5 checksums real clients validate, keyed back to each
+// entry by its request Id.
+func buildSendBatchSuccess(
+	entries []mqdriver.BatchSendResultEntry,
+	bodyByID map[string]string,
+	attrsByID, sysAttrsByID map[string]map[string]mqdriver.MessageAttributeValue,
+) []map[string]any {
+	successful := make([]map[string]any, 0, len(entries))
+
+	for i := range entries {
 		entry := map[string]any{
-			"Id":               res.Successful[i].ID,
-			"MessageId":        res.Successful[i].MessageID,
-			"MD5OfMessageBody": md5OfBody(bodyByID[res.Successful[i].ID]),
+			"Id":               entries[i].ID,
+			"MessageId":        entries[i].MessageID,
+			"MD5OfMessageBody": md5OfBody(bodyByID[entries[i].ID]),
 		}
-		if md5Attrs := md5OfMessageAttributes(attrsByID[res.Successful[i].ID]); md5Attrs != "" {
+		if md5Attrs := md5OfMessageAttributes(attrsByID[entries[i].ID]); md5Attrs != "" {
 			entry["MD5OfMessageAttributes"] = md5Attrs
 		}
 
-		if md5Sys := md5OfMessageAttributes(sysAttrsByID[res.Successful[i].ID]); md5Sys != "" {
+		if md5Sys := md5OfMessageAttributes(sysAttrsByID[entries[i].ID]); md5Sys != "" {
 			entry["MD5OfMessageSystemAttributes"] = md5Sys
 		}
 
-		if res.Successful[i].SequenceNumber != "" {
-			entry["SequenceNumber"] = res.Successful[i].SequenceNumber
+		if entries[i].SequenceNumber != "" {
+			entry["SequenceNumber"] = entries[i].SequenceNumber
 		}
 
 		successful = append(successful, entry)
 	}
 
-	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": batchFailed(res.Failed)})
+	return successful
 }
 
 func (h *Handler) deleteMessageBatch(w http.ResponseWriter, r *http.Request) {
@@ -558,6 +593,15 @@ func (h *Handler) deleteMessageBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	ids := make([]string, len(req.Entries))
+	for i := range req.Entries {
+		ids[i] = req.Entries[i].ID
+	}
+
+	if !validateBatchEntryIDs(w, ids) {
 		return
 	}
 
@@ -1012,6 +1056,10 @@ func (h *Handler) setQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if !validateQueueAttributeRanges(w, req.Attributes) {
 		return
 	}
 
