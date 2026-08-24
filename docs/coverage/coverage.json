@@ -1535,6 +1535,20 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccessKeys",
+        "doc": "AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure",
+        "operations": [
+          {
+            "name": "ListCacheKeys",
+            "doc": "ListCacheKeys returns the cache's current primary and secondary access"
+          },
+          {
+            "name": "RegenerateCacheKey",
+            "doc": "RegenerateCacheKey rotates the requested key (\"Primary\" or \"Secondary\")"
+          }
+        ]
+      },
+      {
         "name": "ReplicationGroups",
         "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
