@@ -280,6 +280,12 @@ type CopyObjectRequest struct {
 	ReplaceMetadata bool
 	Metadata        map[string]string
 	ContentType     string
+	// Tags is the destination object's tag set, applied only when ReplaceTags is
+	// true (x-amz-tagging with x-amz-tagging-directive: REPLACE). With ReplaceTags
+	// false (the default COPY tagging directive) the destination inherits the
+	// source object's tags.
+	Tags        map[string]string
+	ReplaceTags bool
 	// Copy-source preconditions; a zero value means the header was absent. A
 	// failed precondition must abort the copy with a FailedPrecondition error.
 	IfMatch           string

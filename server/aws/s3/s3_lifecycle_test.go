@@ -617,8 +617,9 @@ func TestS3MetadataContentTypeRoundTrip(t *testing.T) {
 }
 
 // TestS3CopyObjectSemantics verifies the survey-documented copy
-// behavior end-to-end: ETag and metadata are preserved, tags are NOT copied,
-// and copying from a missing source key fails with NoSuchKey.
+// behavior end-to-end: ETag and metadata are preserved, the source tag-set is
+// copied under the default COPY tagging directive, and copying from a missing
+// source key fails with NoSuchKey.
 func TestS3CopyObjectSemantics(t *testing.T) {
 	client := newSuiteS3Client(t)
 	ctx := context.Background()
@@ -661,11 +662,15 @@ func TestS3CopyObjectSemantics(t *testing.T) {
 	assert.Equal(t, "text/plain", aws.ToString(get.ContentType), "copy preserves content type")
 	assert.Equal(t, map[string]string{"origin": "src"}, get.Metadata, "copy preserves metadata")
 
+	// The default tagging directive is COPY: the destination inherits the source
+	// object's tag-set.
 	dstTags, err := client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
 		Bucket: aws.String(dstBucket), Key: aws.String("dst.txt"),
 	})
 	require.NoError(t, err)
-	assert.Empty(t, dstTags.TagSet, "tags must NOT be copied")
+	require.Len(t, dstTags.TagSet, 1, "source tag-set must be copied under the default COPY directive")
+	assert.Equal(t, "classified", aws.ToString(dstTags.TagSet[0].Key))
+	assert.Equal(t, "yes", aws.ToString(dstTags.TagSet[0].Value))
 
 	// Copy from a missing source key fails.
 	_, err = client.CopyObject(ctx, &s3.CopyObjectInput{

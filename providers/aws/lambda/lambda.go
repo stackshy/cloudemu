@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -332,6 +333,40 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+}
+
+// InvokeExternal asynchronously invokes the function identified by its ARN with
+// the given event payload. It backs cross-service event delivery (e.g. S3 ->
+// Lambda notifications). An unknown function is a no-op so a stale target never
+// fails the caller.
+func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload []byte) error {
+	name := functionNameFromARN(functionARN)
+	if _, ok := m.funcs.Get(name); !ok {
+		return nil
+	}
+
+	_, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: name, Payload: payload, InvokeType: "Event"})
+
+	return err
+}
+
+// functionNameFromARN extracts the function name from a Lambda ARN
+// (arn:aws:lambda:region:account:function:name[:qualifier]); a bare name is
+// returned unchanged.
+func functionNameFromARN(arn string) string {
+	const marker = ":function:"
+
+	i := strings.Index(arn, marker)
+	if i < 0 {
+		return arn
+	}
+
+	name := arn[i+len(marker):]
+	if j := strings.IndexByte(name, ':'); j >= 0 { // strip a version/alias qualifier
+		name = name[:j]
+	}
+
+	return name
 }
 
 // invokeEngine runs a function whose code was deployed to the configured

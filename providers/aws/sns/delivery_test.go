@@ -75,3 +75,49 @@ func TestSNSToSQSDelivery(t *testing.T) {
 		t.Fatalf("unexpected MessageAttributes: %+v", attrs)
 	}
 }
+
+// TestPublishExternalByARN verifies PublishExternal resolves a topic by ARN and
+// fans a raw message out to its SQS subscriptions (backing S3 -> SNS delivery),
+// and that an unknown topic ARN is a no-op.
+func TestPublishExternalByARN(t *testing.T) {
+	ctx := context.Background()
+	opts := config.NewOptions()
+
+	sqs := sqsprovider.New(opts)
+	sns := snsprovider.New(opts)
+	sns.SetSQSDeliverer(sqs)
+
+	q, err := sqs.CreateQueue(ctx, mqdriver.QueueConfig{Name: "inbox"})
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+
+	topic, err := sns.CreateTopic(ctx, sndriver.TopicConfig{Name: "s3-topic"})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	if _, err := sns.Subscribe(ctx, sndriver.SubscriptionConfig{
+		TopicID: topic.Name, Protocol: "sqs", Endpoint: q.ARN, Attributes: map[string]string{"RawMessageDelivery": "true"},
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Unknown topic ARN: no error, nothing delivered.
+	if err := sns.PublishExternal(ctx, "arn:aws:sns:us-east-1:000000000000:missing", "x"); err != nil {
+		t.Fatalf("PublishExternal unknown: %v", err)
+	}
+
+	if err := sns.PublishExternal(ctx, topic.ResourceID, `{"event":"s3"}`); err != nil {
+		t.Fatalf("PublishExternal: %v", err)
+	}
+
+	msgs, err := sqs.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 10})
+	if err != nil {
+		t.Fatalf("ReceiveMessages: %v", err)
+	}
+
+	if len(msgs) != 1 || msgs[0].Body != `{"event":"s3"}` {
+		t.Fatalf("expected the raw S3 event delivered once, got %d: %+v", len(msgs), msgs)
+	}
+}
