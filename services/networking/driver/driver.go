@@ -323,6 +323,58 @@ type NetworkInterface struct {
 	Tags         map[string]string
 }
 
+// Azure network interface (Microsoft.Network/networkInterfaces) is an
+// Azure-specific optional capability, kept out of the cross-cloud Networking
+// interface (Azure NICs carry ipConfigurations, a location, and per-config
+// private-IP allocation that the AWS-shaped ENI model does not). A provider
+// exposes it by implementing AzureNetworkInterfaces; the wire handler reaches
+// it by type assertion, mirroring the AWS-specific NetworkInterfaceCreator
+// surface below.
+
+// AzureIPConfig is one ipConfiguration on an Azure network interface.
+type AzureIPConfig struct {
+	Name             string
+	SubnetID         string // ARM resource id of the referenced subnet
+	SubnetCIDR       string // resolved address prefix, used to allocate a dynamic private IP
+	PrivateIP        string // set for Static; assigned by the mock for Dynamic
+	AllocationMethod string // "Dynamic" (default) or "Static"
+	PublicIPID       string // ARM resource id of an associated public IP, optional
+	Primary          bool
+}
+
+// AzureNICConfig is the create-or-update payload for an Azure network interface.
+type AzureNICConfig struct {
+	Location     string
+	Tags         map[string]string
+	IPConfigs    []AzureIPConfig
+	IPForwarding bool
+}
+
+// AzureNIC is the stored/returned Azure network interface.
+type AzureNIC struct {
+	Name              string
+	ResourceGroup     string
+	Location          string
+	Tags              map[string]string
+	IPConfigs         []AzureIPConfig
+	IPForwarding      bool
+	MACAddress        string
+	ResourceGUID      string
+	ProvisioningState string
+	ETag              string
+	VirtualMachineID  string // set while attached to a VM
+}
+
+// AzureNetworkInterfaces is the Azure-specific network-interface surface,
+// keyed by (resourceGroup, name) to match ARM's addressing and give idempotent
+// createOrUpdate. Nil resource group on List means subscription-wide.
+type AzureNetworkInterfaces interface {
+	CreateOrUpdateNetworkInterface(ctx context.Context, resourceGroup, name string, cfg AzureNICConfig) (*AzureNIC, error)
+	GetNetworkInterface(ctx context.Context, resourceGroup, name string) (*AzureNIC, error)
+	DeleteNetworkInterface(ctx context.Context, resourceGroup, name string) error
+	ListNetworkInterfaces(ctx context.Context, resourceGroup string) ([]AzureNIC, error)
+}
+
 // VPCEndpointConfig describes a VPC endpoint to create.
 type VPCEndpointConfig struct {
 	VPCID            string

@@ -12,6 +12,8 @@
 //	GET .../virtualNetworks/{vn}/subnets                 — list subnets
 //	PUT/GET/DELETE  .../networkSecurityGroups/{name}     — NSG CRUD
 //	GET .../networkSecurityGroups                        — list NSGs
+//	PUT/GET/DELETE  .../networkInterfaces/{name}         — NIC CRUD
+//	GET .../networkInterfaces                            — list NICs
 package vnet
 
 import (
@@ -62,7 +64,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typePublicIP, typeLocations:
+	case typeVNet, typeNSG, typePublicIP, typeNIC, typeLocations:
 		return true
 	}
 
@@ -93,6 +95,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeNSG(w, r, rp)
 	case typePublicIP:
 		h.routePublicIP(w, r, rp)
+	case typeNIC:
+		h.routeNIC(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)

@@ -3,6 +3,7 @@ package vnet
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -62,7 +63,12 @@ type Mock struct {
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
-	opts           *config.Options
+	nics           *memstore.Store[*nicData]
+	// nicMu serializes network-interface create/update, whose private-IP
+	// allocation is a read-modify-write across the nics store (memstore is
+	// per-op safe but can't make that sequence atomic).
+	nicMu sync.RWMutex
+	opts  *config.Options
 }
 
 // New creates a new Azure Virtual Network mock.
@@ -80,6 +86,7 @@ func New(opts *config.Options) *Mock {
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
+		nics:           memstore.New[*nicData](),
 		opts:           opts,
 	}
 }
