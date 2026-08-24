@@ -3,7 +3,9 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -75,6 +77,82 @@ func (h *Handler) createImage(w http.ResponseWriter, r *http.Request) {
 		RequestID: awsquery.RequestID,
 		ImageID:   info.ID,
 	})
+}
+
+type registerImageResponseXML struct {
+	XMLName   xml.Name `xml:"RegisterImageResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	ImageID   string   `xml:"imageId"`
+}
+
+// registerImage handles Action=RegisterImage. It is served by the AWS-only
+// ImageRegistrar capability; a compute driver that does not implement it
+// reports Unimplemented.
+func (h *Handler) registerImage(w http.ResponseWriter, r *http.Request) {
+	registrar, ok := h.compute.(computedriver.ImageRegistrar)
+	if !ok {
+		writeImageErr(w, cerrors.New(cerrors.Unimplemented, "RegisterImage is not supported"))
+		return
+	}
+
+	info, err := registrar.RegisterImage(r.Context(), computedriver.RegisterImageInput{
+		Name:                r.Form.Get("Name"),
+		Description:         r.Form.Get("Description"),
+		Architecture:        r.Form.Get("Architecture"),
+		RootDeviceName:      r.Form.Get("RootDeviceName"),
+		VirtualizationType:  r.Form.Get("VirtualizationType"),
+		BlockDeviceMappings: parseImageBlockDeviceMappings(r),
+		Tags:                mergeTagSpecs(awsquery.TagSpecs(r.Form), "image"),
+	})
+	if err != nil {
+		writeRegisterImageErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, registerImageResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		ImageID:   info.ID,
+	})
+}
+
+// parseImageBlockDeviceMappings reads the BlockDeviceMapping.N.* query groups
+// RegisterImage carries (DeviceName + nested Ebs.* fields).
+func parseImageBlockDeviceMappings(r *http.Request) []computedriver.ImageBlockDeviceMapping {
+	indices := awsquery.CollectIndices(r.Form, "BlockDeviceMapping")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]computedriver.ImageBlockDeviceMapping, 0, len(indices))
+
+	for _, i := range indices {
+		base := "BlockDeviceMapping." + strconv.Itoa(i)
+		size, _ := strconv.Atoi(r.Form.Get(base + ".Ebs.VolumeSize"))
+
+		out = append(out, computedriver.ImageBlockDeviceMapping{
+			DeviceName:          r.Form.Get(base + ".DeviceName"),
+			SnapshotID:          r.Form.Get(base + ".Ebs.SnapshotId"),
+			VolumeSize:          size,
+			VolumeType:          r.Form.Get(base + ".Ebs.VolumeType"),
+			DeleteOnTermination: r.Form.Get(base+".Ebs.DeleteOnTermination") == formTrue,
+		})
+	}
+
+	return out
+}
+
+// writeRegisterImageErr maps RegisterImage failures to their AWS codes: a
+// duplicate Name is InvalidAMIName.Duplicate, and a missing referenced snapshot
+// is InvalidSnapshot.NotFound (RegisterImage never reports InvalidAMIID).
+func writeRegisterImageErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAMIName.Duplicate", err.Error())
+		return
+	}
+
+	writeErrWithNotFound(w, err, "InvalidSnapshot.NotFound", "IncorrectState")
 }
 
 func (h *Handler) deregisterImage(w http.ResponseWriter, r *http.Request) {

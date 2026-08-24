@@ -2,15 +2,20 @@ package ec2_test
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // AWS defines imported key fingerprints as MD5 of the public key DER
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	smithy "github.com/aws/smithy-go"
+	"golang.org/x/crypto/ssh"
 )
 
 // TestCreateKeyPairReturnsKeyIDAndUsablePEM pins that keyPairId is a real
@@ -106,4 +111,109 @@ func TestDescribeKeyPairsUnknownNameErrors(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidKeyPair.NotFound" {
 		t.Fatalf("error code = %v, want InvalidKeyPair.NotFound", err)
 	}
+}
+
+// TestImportKeyPairFingerprintAndDescribe pins that ImportKeyPair (previously
+// undispatched) returns the MD5-of-DER public-key fingerprint AWS uses for
+// imported keys, assigns a key-... id, and is visible to DescribeKeyPairs.
+func TestImportKeyPairFingerprintAndDescribe(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	sshPub, err := ssh.NewPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("ssh.NewPublicKey: %v", err)
+	}
+	authKey := ssh.MarshalAuthorizedKey(sshPub) // "ssh-rsa AAAA...\n"
+
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	sum := md5.Sum(der) //nolint:gosec // matches AWS imported-key fingerprint definition
+	want := colonHexTest(sum[:])
+
+	out, err := client.ImportKeyPair(ctx, &ec2.ImportKeyPairInput{
+		KeyName:           aws.String("imported"),
+		PublicKeyMaterial: authKey,
+	})
+	if err != nil {
+		t.Fatalf("ImportKeyPair: %v", err)
+	}
+
+	if id := aws.ToString(out.KeyPairId); !strings.HasPrefix(id, "key-") {
+		t.Errorf("KeyPairId = %q, want a key-... id", id)
+	}
+	if got := aws.ToString(out.KeyFingerprint); got != want {
+		t.Errorf("KeyFingerprint = %q, want MD5-of-DER %q", got, want)
+	}
+	if aws.ToString(out.KeyName) != "imported" {
+		t.Errorf("KeyName = %q, want imported", aws.ToString(out.KeyName))
+	}
+
+	desc, err := client.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{
+		KeyNames: []string{"imported"},
+	})
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs: %v", err)
+	}
+	if len(desc.KeyPairs) != 1 {
+		t.Fatalf("DescribeKeyPairs = %d, want 1", len(desc.KeyPairs))
+	}
+	if got := aws.ToString(desc.KeyPairs[0].KeyFingerprint); got != want {
+		t.Errorf("described fingerprint = %q, want %q", got, want)
+	}
+}
+
+// TestImportKeyPairDuplicateRejected pins the AWS error code for importing a key
+// whose name already exists.
+func TestImportKeyPairDuplicateRejected(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	sshPub, err := ssh.NewPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("ssh.NewPublicKey: %v", err)
+	}
+	authKey := ssh.MarshalAuthorizedKey(sshPub)
+
+	if _, err := client.ImportKeyPair(ctx, &ec2.ImportKeyPairInput{
+		KeyName:           aws.String("dup-import"),
+		PublicKeyMaterial: authKey,
+	}); err != nil {
+		t.Fatalf("ImportKeyPair(first): %v", err)
+	}
+
+	_, err = client.ImportKeyPair(ctx, &ec2.ImportKeyPairInput{
+		KeyName:           aws.String("dup-import"),
+		PublicKeyMaterial: authKey,
+	})
+	if err == nil {
+		t.Fatal("ImportKeyPair(duplicate) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidKeyPair.Duplicate" {
+		t.Fatalf("ImportKeyPair error = %v, want InvalidKeyPair.Duplicate", err)
+	}
+}
+
+// colonHexTest formats bytes as colon-separated lowercase hex, matching the
+// server's fingerprint encoding.
+func colonHexTest(b []byte) string {
+	parts := make([]string, len(b))
+	for i, x := range b {
+		parts[i] = fmt.Sprintf("%02x", x)
+	}
+
+	return strings.Join(parts, ":")
 }

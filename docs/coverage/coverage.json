@@ -1954,6 +1954,42 @@
             "name": "GetConsoleOutput"
           }
         ]
+      },
+      {
+        "name": "ImageRegistrar",
+        "doc": "ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage",
+        "operations": [
+          {
+            "name": "RegisterImage"
+          }
+        ]
+      },
+      {
+        "name": "KeyPairImporter",
+        "doc": "KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair",
+        "operations": [
+          {
+            "name": "ImportKeyPair"
+          }
+        ]
+      },
+      {
+        "name": "SnapshotCopier",
+        "doc": "SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is",
+        "operations": [
+          {
+            "name": "CopySnapshot"
+          }
+        ]
+      },
+      {
+        "name": "VolumeModifier",
+        "doc": "VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume",
+        "operations": [
+          {
+            "name": "ModifyVolume"
+          }
+        ]
       }
     ],
     "providers": {

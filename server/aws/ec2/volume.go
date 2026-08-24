@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -269,6 +270,76 @@ func (h *Handler) detachVolume(w http.ResponseWriter, r *http.Request) {
 		InstanceID: r.Form.Get("InstanceId"),
 		Device:     r.Form.Get("Device"),
 		Status:     "detaching",
+	})
+}
+
+// volumeModificationXML mirrors the AWS EC2 VolumeModification structure
+// returned by ModifyVolume.
+type volumeModificationXML struct {
+	VolumeID           string `xml:"volumeId"`
+	ModificationState  string `xml:"modificationState"`
+	StartTime          string `xml:"startTime,omitempty"`
+	Progress           int    `xml:"progress"`
+	OriginalSize       int    `xml:"originalSize"`
+	OriginalIops       int    `xml:"originalIops,omitempty"`
+	OriginalThroughput int    `xml:"originalThroughput,omitempty"`
+	OriginalVolumeType string `xml:"originalVolumeType"`
+	TargetSize         int    `xml:"targetSize"`
+	TargetIops         int    `xml:"targetIops,omitempty"`
+	TargetThroughput   int    `xml:"targetThroughput,omitempty"`
+	TargetVolumeType   string `xml:"targetVolumeType"`
+}
+
+type modifyVolumeResponseXML struct {
+	XMLName            xml.Name              `xml:"ModifyVolumeResponse"`
+	Xmlns              string                `xml:"xmlns,attr"`
+	RequestID          string                `xml:"requestId"`
+	VolumeModification volumeModificationXML `xml:"volumeModification"`
+}
+
+// modifyVolume handles Action=ModifyVolume. It is served by the AWS-only
+// VolumeModifier capability; a compute driver that does not implement it
+// reports Unimplemented.
+func (h *Handler) modifyVolume(w http.ResponseWriter, r *http.Request) {
+	modifier, ok := h.compute.(computedriver.VolumeModifier)
+	if !ok {
+		writeVolumeErr(w, cerrors.New(cerrors.Unimplemented, "ModifyVolume is not supported"))
+		return
+	}
+
+	size, _ := strconv.Atoi(r.Form.Get("Size"))
+	iops, _ := strconv.Atoi(r.Form.Get("Iops"))
+	throughput, _ := strconv.Atoi(r.Form.Get("Throughput"))
+
+	mod, err := modifier.ModifyVolume(r.Context(), computedriver.ModifyVolumeInput{
+		VolumeID:   r.Form.Get("VolumeId"),
+		Size:       size,
+		IOPS:       iops,
+		Throughput: throughput,
+		VolumeType: r.Form.Get("VolumeType"),
+	})
+	if err != nil {
+		writeVolumeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyVolumeResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		VolumeModification: volumeModificationXML{
+			VolumeID:           mod.VolumeID,
+			ModificationState:  mod.ModificationState,
+			StartTime:          mod.StartTime,
+			Progress:           mod.Progress,
+			OriginalSize:       mod.OriginalSize,
+			OriginalIops:       mod.OriginalIOPS,
+			OriginalThroughput: mod.OriginalThroughput,
+			OriginalVolumeType: mod.OriginalVolumeType,
+			TargetSize:         mod.TargetSize,
+			TargetIops:         mod.TargetIOPS,
+			TargetThroughput:   mod.TargetThroughput,
+			TargetVolumeType:   mod.TargetVolumeType,
+		},
 	})
 }
 

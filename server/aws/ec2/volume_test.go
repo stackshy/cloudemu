@@ -2,6 +2,7 @@ package ec2_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	smithy "github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -159,5 +161,119 @@ func TestDescribeVolumeStatusReturnsOK(t *testing.T) {
 	}
 	if got := out.VolumeStatuses[0].VolumeStatus.Status; got != ec2types.VolumeStatusInfoStatusOk {
 		t.Errorf("volume status = %q, want ok", got)
+	}
+}
+
+// TestModifyVolumeGrowsAndReportsModification pins that ModifyVolume (previously
+// undispatched) returns a VolumeModification with matching original/target
+// fields and that DescribeVolumes reflects the new size, IOPS, and type.
+func TestModifyVolumeGrowsAndReportsModification(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	cre, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(20),
+		VolumeType:       ec2types.VolumeTypeGp3,
+		Iops:             aws.Int32(3000),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	volID := aws.ToString(cre.VolumeId)
+
+	mod, err := client.ModifyVolume(ctx, &ec2.ModifyVolumeInput{
+		VolumeId:   aws.String(volID),
+		Size:       aws.Int32(50),
+		Iops:       aws.Int32(6000),
+		VolumeType: ec2types.VolumeTypeIo2,
+	})
+	if err != nil {
+		t.Fatalf("ModifyVolume: %v", err)
+	}
+
+	vm := mod.VolumeModification
+	if vm == nil {
+		t.Fatal("ModifyVolume returned nil VolumeModification")
+	}
+	if aws.ToString(vm.VolumeId) != volID {
+		t.Errorf("VolumeModification VolumeId = %q, want %q", aws.ToString(vm.VolumeId), volID)
+	}
+	if vm.ModificationState == "" {
+		t.Error("VolumeModification ModificationState is empty")
+	}
+	if aws.ToInt32(vm.OriginalSize) != 20 || aws.ToInt32(vm.TargetSize) != 50 {
+		t.Errorf("size original=%d target=%d, want 20 -> 50",
+			aws.ToInt32(vm.OriginalSize), aws.ToInt32(vm.TargetSize))
+	}
+	if aws.ToInt32(vm.TargetIops) != 6000 {
+		t.Errorf("TargetIops = %d, want 6000", aws.ToInt32(vm.TargetIops))
+	}
+	if vm.OriginalVolumeType != ec2types.VolumeTypeGp3 || vm.TargetVolumeType != ec2types.VolumeTypeIo2 {
+		t.Errorf("volume type original=%q target=%q, want gp3 -> io2",
+			vm.OriginalVolumeType, vm.TargetVolumeType)
+	}
+
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volID}})
+	if err != nil {
+		t.Fatalf("DescribeVolumes: %v", err)
+	}
+	v := desc.Volumes[0]
+	if aws.ToInt32(v.Size) != 50 {
+		t.Errorf("post-modify Size = %d, want 50", aws.ToInt32(v.Size))
+	}
+	if aws.ToInt32(v.Iops) != 6000 {
+		t.Errorf("post-modify Iops = %d, want 6000", aws.ToInt32(v.Iops))
+	}
+	if v.VolumeType != ec2types.VolumeTypeIo2 {
+		t.Errorf("post-modify VolumeType = %q, want io2", v.VolumeType)
+	}
+}
+
+// TestModifyVolumeShrinkRejected pins that shrinking a volume is rejected with
+// InvalidParameterValue rather than silently succeeding.
+func TestModifyVolumeShrinkRejected(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	cre, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(30),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	_, err = client.ModifyVolume(ctx, &ec2.ModifyVolumeInput{
+		VolumeId: cre.VolumeId,
+		Size:     aws.Int32(10),
+	})
+	if err == nil {
+		t.Fatal("ModifyVolume(shrink) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValue" {
+		t.Fatalf("ModifyVolume(shrink) error = %v, want InvalidParameterValue", err)
+	}
+}
+
+// TestModifyVolumeMissingIsNotFound pins the AWS error code for modifying a
+// non-existent volume.
+func TestModifyVolumeMissingIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	_, err := client.ModifyVolume(ctx, &ec2.ModifyVolumeInput{
+		VolumeId: aws.String("vol-000000000000"),
+		Size:     aws.Int32(100),
+	})
+	if err == nil {
+		t.Fatal("ModifyVolume(missing) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidVolume.NotFound" {
+		t.Fatalf("ModifyVolume(missing) error = %v, want InvalidVolume.NotFound", err)
 	}
 }

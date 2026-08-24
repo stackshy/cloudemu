@@ -386,3 +386,86 @@ type Compute interface {
 type ConsoleReader interface {
 	GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error)
 }
+
+// CopySnapshotInput describes an AWS EC2 CopySnapshot request. SourceRegion is
+// required by the API but ignored by the single-region emulator.
+type CopySnapshotInput struct {
+	SourceRegion     string
+	SourceSnapshotID string
+	Description      string
+	Encrypted        bool
+	KmsKeyID         string
+	Tags             map[string]string
+}
+
+// RegisterImageInput describes an AWS EC2 RegisterImage request.
+type RegisterImageInput struct {
+	Name                string
+	Description         string
+	Architecture        string
+	RootDeviceName      string
+	VirtualizationType  string
+	BlockDeviceMappings []ImageBlockDeviceMapping
+	Tags                map[string]string
+}
+
+// ImportKeyPairInput describes an AWS EC2 ImportKeyPair request. PublicKeyMaterial
+// is the decoded public key (OpenSSH or PEM), not the base64 wire form.
+type ImportKeyPairInput struct {
+	Name              string
+	PublicKeyMaterial []byte
+	Tags              map[string]string
+}
+
+// ModifyVolumeInput describes an AWS EC2 ModifyVolume request. A zero numeric
+// field or empty VolumeType means "leave unchanged".
+type ModifyVolumeInput struct {
+	VolumeID   string
+	Size       int
+	IOPS       int
+	Throughput int
+	VolumeType string
+}
+
+// VolumeModification describes the state of an in-progress AWS EC2 ModifyVolume,
+// mirroring the API's VolumeModification structure.
+type VolumeModification struct {
+	VolumeID           string
+	ModificationState  string // "modifying", "optimizing", "completed", "failed"
+	StartTime          string
+	Progress           int
+	OriginalSize       int
+	OriginalIOPS       int
+	OriginalThroughput int
+	OriginalVolumeType string
+	TargetSize         int
+	TargetIOPS         int
+	TargetThroughput   int
+	TargetVolumeType   string
+}
+
+// SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is
+// discovered by type assertion; clouds that do not model EBS snapshot copies
+// (Azure, GCP, OCI) simply do not implement it.
+type SnapshotCopier interface {
+	CopySnapshot(ctx context.Context, input CopySnapshotInput) (*SnapshotInfo, error)
+}
+
+// ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
+// (registering an AMI from block device mappings). Discovered by type assertion.
+type ImageRegistrar interface {
+	RegisterImage(ctx context.Context, input RegisterImageInput) (*ImageInfo, error)
+}
+
+// KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair
+// (importing an externally-generated public key). Discovered by type assertion.
+type KeyPairImporter interface {
+	ImportKeyPair(ctx context.Context, input ImportKeyPairInput) (*KeyPairInfo, error)
+}
+
+// VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume
+// (elastic volume resize / IOPS / throughput / type change). Discovered by
+// type assertion.
+type VolumeModifier interface {
+	ModifyVolume(ctx context.Context, input ModifyVolumeInput) (*VolumeModification, error)
+}

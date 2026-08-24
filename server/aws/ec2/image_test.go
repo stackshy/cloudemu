@@ -198,3 +198,114 @@ func TestDescribeImageAttribute(t *testing.T) {
 		t.Errorf("description attribute = %+v, want golden image", out.Description)
 	}
 }
+
+// TestRegisterImageDescribableAndBootable pins that RegisterImage (previously
+// undispatched) stores the caller-supplied architecture, root device, and block
+// device mapping, that DescribeImages reflects them, and that RunInstances can
+// launch from the registered AMI.
+func TestRegisterImageDescribableAndBootable(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	// A backing snapshot the AMI's block device mapping references.
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(20),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	snap, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{VolumeId: vol.VolumeId})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	reg, err := client.RegisterImage(ctx, &ec2.RegisterImageInput{
+		Name:               aws.String("custom-ami"),
+		Architecture:       ec2types.ArchitectureValuesArm64,
+		RootDeviceName:     aws.String("/dev/xvda"),
+		VirtualizationType: aws.String("hvm"),
+		BlockDeviceMappings: []ec2types.BlockDeviceMapping{{
+			DeviceName: aws.String("/dev/xvda"),
+			Ebs: &ec2types.EbsBlockDevice{
+				SnapshotId:          snap.SnapshotId,
+				VolumeSize:          aws.Int32(20),
+				VolumeType:          ec2types.VolumeTypeGp3,
+				DeleteOnTermination: aws.Bool(true),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RegisterImage: %v", err)
+	}
+	amiID := aws.ToString(reg.ImageId)
+	if amiID == "" {
+		t.Fatal("RegisterImage returned empty ImageId")
+	}
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{amiID}})
+	if err != nil {
+		t.Fatalf("DescribeImages: %v", err)
+	}
+	if len(desc.Images) != 1 {
+		t.Fatalf("DescribeImages = %d, want 1", len(desc.Images))
+	}
+
+	im := desc.Images[0]
+	if im.Architecture != ec2types.ArchitectureValuesArm64 {
+		t.Errorf("Architecture = %q, want arm64", im.Architecture)
+	}
+	if aws.ToString(im.RootDeviceName) != "/dev/xvda" {
+		t.Errorf("RootDeviceName = %q, want /dev/xvda", aws.ToString(im.RootDeviceName))
+	}
+	if len(im.BlockDeviceMappings) != 1 {
+		t.Fatalf("BlockDeviceMappings = %d, want 1", len(im.BlockDeviceMappings))
+	}
+	bdm := im.BlockDeviceMappings[0]
+	if bdm.Ebs == nil || aws.ToString(bdm.Ebs.SnapshotId) != aws.ToString(snap.SnapshotId) {
+		t.Errorf("block device mapping snapshot = %+v, want %q", bdm.Ebs, aws.ToString(snap.SnapshotId))
+	}
+	if aws.ToInt32(bdm.Ebs.VolumeSize) != 20 {
+		t.Errorf("block device mapping size = %d, want 20", aws.ToInt32(bdm.Ebs.VolumeSize))
+	}
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String(amiID),
+		InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances(registered AMI): %v", err)
+	}
+	if len(run.Instances) != 1 || aws.ToString(run.Instances[0].ImageId) != amiID {
+		t.Fatalf("RunInstances did not launch from registered AMI %q: %+v", amiID, run.Instances)
+	}
+}
+
+// TestRegisterImageDuplicateNameRejected pins the AWS error code for reusing an
+// AMI name that is already registered.
+func TestRegisterImageDuplicateNameRejected(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	if _, err := client.RegisterImage(ctx, &ec2.RegisterImageInput{
+		Name:         aws.String("dup-ami"),
+		Architecture: ec2types.ArchitectureValuesX8664,
+	}); err != nil {
+		t.Fatalf("RegisterImage(first): %v", err)
+	}
+
+	_, err := client.RegisterImage(ctx, &ec2.RegisterImageInput{
+		Name:         aws.String("dup-ami"),
+		Architecture: ec2types.ArchitectureValuesX8664,
+	})
+	if err == nil {
+		t.Fatal("RegisterImage(duplicate name) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidAMIName.Duplicate" {
+		t.Fatalf("RegisterImage error = %v, want InvalidAMIName.Duplicate", err)
+	}
+}

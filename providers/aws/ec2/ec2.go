@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/md5" //nolint:gosec // AWS defines imported key-pair fingerprints as MD5 digests of the public key
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1" //nolint:gosec // AWS defines RSA key-pair fingerprints as SHA-1 digests
@@ -18,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -30,6 +33,15 @@ import (
 )
 
 var _ driver.Compute = (*Mock)(nil)
+
+// The AWS EC2 mock also serves these optional AWS-only capabilities, which the
+// wire handler discovers by type assertion (no Azure/GCP/OCI mirror).
+var (
+	_ driver.SnapshotCopier  = (*Mock)(nil)
+	_ driver.ImageRegistrar  = (*Mock)(nil)
+	_ driver.KeyPairImporter = (*Mock)(nil)
+	_ driver.VolumeModifier  = (*Mock)(nil)
+)
 
 const (
 	ipSegmentSize  = 256
@@ -53,6 +65,10 @@ const (
 	imageRootDeviceSize = 8
 	// rsaKeyBits is the modulus size for generated RSA key pairs.
 	rsaKeyBits = 2048
+	// keyTypeRSA / keyTypeEd25519 are the two key-pair algorithms the mock
+	// generates and imports.
+	keyTypeRSA     = "rsa"
+	keyTypeEd25519 = "ed25519"
 
 	// monitoringDisabled / monitoringEnabled are the stored detailed-monitoring
 	// states for an instance.
@@ -1200,7 +1216,7 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 
 	keyType := cfg.KeyType
 	if keyType == "" {
-		keyType = "rsa"
+		keyType = keyTypeRSA
 	}
 
 	mat, err := generateKeyMaterial(keyType)
@@ -1266,6 +1282,219 @@ func (m *Mock) DescribeKeyPairs(_ context.Context, names []string) ([]driver.Key
 	return result, nil
 }
 
+// CopySnapshot clones an existing snapshot into a new snap-id, matching AWS EC2
+// CopySnapshot. The single-region emulator ignores SourceRegion but still
+// requires the source snapshot to exist.
+//
+//nolint:gocritic // hugeParam: capability method signature is fixed by the interface.
+func (m *Mock) CopySnapshot(_ context.Context, in driver.CopySnapshotInput) (*driver.SnapshotInfo, error) {
+	src, ok := m.snapshots.Get(in.SourceSnapshotID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "snapshot %q not found", in.SourceSnapshotID)
+	}
+
+	id := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
+
+	snap := &driver.SnapshotInfo{
+		ID:          id,
+		VolumeID:    src.VolumeID,
+		State:       "completed",
+		Description: in.Description,
+		Size:        src.Size,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        copyTags(in.Tags),
+		OwnerID:     awsAccountID,
+		Progress:    "100%",
+		Encrypted:   src.Encrypted || in.Encrypted,
+	}
+
+	m.snapshots.Set(id, snap)
+
+	result := *snap
+
+	return &result, nil
+}
+
+// RegisterImage registers an AMI from caller-supplied block device mappings,
+// matching AWS EC2 RegisterImage. Names are unique per account; a referenced
+// snapshot must exist.
+//
+//nolint:gocritic // hugeParam: capability method signature is fixed by the interface.
+func (m *Mock) RegisterImage(_ context.Context, in driver.RegisterImageInput) (*driver.ImageInfo, error) {
+	if in.Name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "image name must not be empty")
+	}
+
+	for _, img := range m.images.All() {
+		if img.Name == in.Name {
+			return nil, cerrors.Newf(cerrors.AlreadyExists, "image name %q is already in use", in.Name)
+		}
+	}
+
+	for _, b := range in.BlockDeviceMappings {
+		if b.SnapshotID != "" && !m.snapshots.Has(b.SnapshotID) {
+			return nil, cerrors.Newf(cerrors.NotFound, "snapshot %q not found", b.SnapshotID)
+		}
+	}
+
+	img := &driver.ImageInfo{
+		ID:                  fmt.Sprintf("ami-%012d", m.amiCounter.Add(1)),
+		Name:                in.Name,
+		State:               stateAvailable,
+		Description:         in.Description,
+		CreatedAt:           m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:                copyTags(in.Tags),
+		OwnerID:             awsAccountID,
+		Architecture:        nonEmpty(in.Architecture, "x86_64"),
+		RootDeviceType:      "ebs",
+		RootDeviceName:      nonEmpty(in.RootDeviceName, "/dev/sda1"),
+		VirtualizationType:  nonEmpty(in.VirtualizationType, "hvm"),
+		Hypervisor:          "xen",
+		ImageType:           "machine",
+		PlatformDetails:     "Linux/UNIX",
+		BlockDeviceMappings: append([]driver.ImageBlockDeviceMapping(nil), in.BlockDeviceMappings...),
+	}
+
+	m.images.Set(img.ID, img)
+
+	result := *img
+
+	return &result, nil
+}
+
+// ImportKeyPair stores an externally-generated public key, matching AWS EC2
+// ImportKeyPair. Imported keys carry an MD5 fingerprint of the DER-encoded
+// public key (distinct from CreateKeyPair's SHA-1 private-key fingerprint) and
+// never expose private-key material.
+func (m *Mock) ImportKeyPair(_ context.Context, in driver.ImportKeyPairInput) (*driver.KeyPairInfo, error) {
+	if in.Name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "key pair name must not be empty")
+	}
+
+	if _, ok := m.keyPairs.Get(in.Name); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "key pair %q already exists", in.Name)
+	}
+
+	fingerprint, keyType, err := importedKeyFingerprint(in.PublicKeyMaterial)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid public key material: %v", err)
+	}
+
+	kp := &driver.KeyPairInfo{
+		ID:          fmt.Sprintf("key-%016x", m.keyCounter.Add(1)),
+		Name:        in.Name,
+		Fingerprint: fingerprint,
+		KeyType:     keyType,
+		PublicKey:   string(in.PublicKeyMaterial),
+		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        copyTags(in.Tags),
+	}
+
+	m.keyPairs.Set(in.Name, kp)
+
+	result := *kp
+
+	return &result, nil
+}
+
+// ModifyVolume applies an elastic-volume change (size / IOPS / throughput /
+// type), matching AWS EC2 ModifyVolume. Size may only grow. Original values are
+// captured before mutation and returned alongside the requested targets.
+func (m *Mock) ModifyVolume(_ context.Context, in driver.ModifyVolumeInput) (*driver.VolumeModification, error) {
+	vol, ok := m.volumes.Get(in.VolumeID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "volume %q not found", in.VolumeID)
+	}
+
+	orig := *vol
+
+	targetSize := orig.Size
+	if in.Size != 0 {
+		targetSize = in.Size
+	}
+
+	if targetSize < orig.Size {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"New size %d GiB is smaller than current size %d GiB", targetSize, orig.Size)
+	}
+
+	targetType := nonEmpty(in.VolumeType, orig.VolumeType)
+
+	targetIOPS := orig.IOPS
+	if in.IOPS != 0 {
+		targetIOPS = in.IOPS
+	}
+
+	targetThroughput := orig.Throughput
+	if in.Throughput != 0 {
+		targetThroughput = in.Throughput
+	}
+
+	vol.Size = targetSize
+	vol.VolumeType = targetType
+	vol.IOPS = targetIOPS
+	vol.Throughput = targetThroughput
+
+	return &driver.VolumeModification{
+		VolumeID:           in.VolumeID,
+		ModificationState:  "modifying",
+		StartTime:          m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Progress:           0,
+		OriginalSize:       orig.Size,
+		OriginalIOPS:       orig.IOPS,
+		OriginalThroughput: orig.Throughput,
+		OriginalVolumeType: orig.VolumeType,
+		TargetSize:         targetSize,
+		TargetIOPS:         targetIOPS,
+		TargetThroughput:   targetThroughput,
+		TargetVolumeType:   targetType,
+	}, nil
+}
+
+// importedKeyFingerprint computes the AWS ImportKeyPair fingerprint: the MD5
+// digest of the DER-encoded public key as colon-separated hex. It accepts
+// OpenSSH ("ssh-rsa AAAA...") and PEM (PKIX or PKCS1) public-key material.
+func importedKeyFingerprint(material []byte) (fingerprint, keyType string, err error) {
+	if pub, _, _, _, perr := ssh.ParseAuthorizedKey(material); perr == nil {
+		cpk, ok := pub.(ssh.CryptoPublicKey)
+		if !ok {
+			return "", "", cerrors.New(cerrors.InvalidArgument, "unsupported public key type")
+		}
+
+		return derMD5Fingerprint(cpk.CryptoPublicKey())
+	}
+
+	if block, _ := pem.Decode(material); block != nil {
+		if key, kerr := x509.ParsePKIXPublicKey(block.Bytes); kerr == nil {
+			return derMD5Fingerprint(key)
+		}
+
+		if key, kerr := x509.ParsePKCS1PublicKey(block.Bytes); kerr == nil {
+			return derMD5Fingerprint(key)
+		}
+	}
+
+	return "", "", cerrors.New(cerrors.InvalidArgument, "unrecognized public key format")
+}
+
+// derMD5Fingerprint marshals a parsed public key to PKIX DER and returns its
+// MD5 digest as colon-hex plus the inferred key type.
+func derMD5Fingerprint(pub any) (fingerprint, keyType string, err error) {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", "", err
+	}
+
+	sum := md5.Sum(der) //nolint:gosec // AWS defines imported key fingerprints as MD5 of the public key DER
+
+	kt := keyTypeRSA
+	if _, ok := pub.(ed25519.PublicKey); ok {
+		kt = keyTypeEd25519
+	}
+
+	return colonHex(sum[:]), kt, nil
+}
+
 // keyMaterial bundles the PEM-encoded key pair and its fingerprint.
 type keyMaterial struct {
 	privatePEM  string
@@ -1277,7 +1506,7 @@ type keyMaterial struct {
 // fingerprints are the SHA-1 digest of the DER private key as colon-separated
 // hex, matching CreateKeyPair on real EC2; ed25519 keys use a SHA-256 digest.
 func generateKeyMaterial(keyType string) (keyMaterial, error) {
-	if keyType == "ed25519" {
+	if keyType == keyTypeEd25519 {
 		pub, priv, gerr := ed25519.GenerateKey(rand.Reader)
 		if gerr != nil {
 			return keyMaterial{}, gerr
@@ -1324,6 +1553,15 @@ func pkixPublicPEM(pub any) string {
 	}
 
 	return pemEncode("PUBLIC KEY", der)
+}
+
+// nonEmpty returns s when it is non-empty, otherwise fallback.
+func nonEmpty(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+
+	return s
 }
 
 // colonHex formats bytes as colon-separated lowercase hex (aa:bb:cc), the
