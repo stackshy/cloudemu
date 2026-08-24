@@ -49,6 +49,7 @@ type metricDataQueryCBR struct {
 	ID         string         `cbor:"Id"`
 	Label      string         `cbor:"Label,omitempty"`
 	MetricStat *metricStatCBR `cbor:"MetricStat,omitempty"`
+	Expression string         `cbor:"Expression,omitempty"`
 	ReturnData *bool          `cbor:"ReturnData,omitempty"`
 }
 
@@ -82,51 +83,57 @@ func (h *Handler) getMetricData(w http.ResponseWriter, r *http.Request, body []b
 	start := timeOrZero(in.StartTime)
 	end := timeOrZero(in.EndTime)
 
+	eval := newMathEvaluator(r.Context(), h.monitoring, in.MetricDataQueries, start, end)
+
 	out := make([]metricDataResultCBR, 0, len(in.MetricDataQueries))
 
-	for _, q := range in.MetricDataQueries {
-		if q.MetricStat == nil {
-			continue // math-expression queries are not modeled
-		}
+	for i := range in.MetricDataQueries {
+		q := in.MetricDataQueries[i]
 
-		res, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
-			Namespace:  q.MetricStat.Metric.Namespace,
-			MetricName: q.MetricStat.Metric.MetricName,
-			Dimensions: toDimensionMap(q.MetricStat.Metric.Dimensions),
-			StartTime:  start,
-			EndTime:    end,
-			Period:     q.MetricStat.Period,
-			Stat:       q.MetricStat.Stat,
-		})
+		series, err := eval.resolve(q.ID)
 		if err != nil {
 			writeDriverErr(w, err)
 			return
 		}
 
-		out = append(out, buildMetricDataResult(q, res))
+		// A query with ReturnData explicitly false is an input to other queries
+		// only (e.g. a raw metric feeding a math expression) and is not emitted
+		// as a data row. When omitted, ReturnData defaults to true.
+		if q.ReturnData != nil && !*q.ReturnData {
+			continue
+		}
+
+		out = append(out, buildMetricDataResult(q, series))
 	}
 
 	writeCBORResponse(w, getMetricDataOutput{MetricDataResults: out})
 }
 
-func buildMetricDataResult(q metricDataQueryCBR, res *mondriver.MetricDataResult) metricDataResultCBR {
-	label := q.Label
-	if label == "" {
-		label = q.MetricStat.Metric.MetricName
+func buildMetricDataResult(q metricDataQueryCBR, series mathSeries) metricDataResultCBR {
+	row := metricDataResultCBR{ID: q.ID, Label: metricDataLabel(q), StatusCode: statusCodeComplete}
+
+	row.Timestamps = make([]time.Time, len(series.timestamps))
+	for i := range series.timestamps {
+		row.Timestamps[i] = series.timestamps[i].UTC()
 	}
 
-	row := metricDataResultCBR{ID: q.ID, Label: label, StatusCode: statusCodeComplete}
-
-	if res != nil {
-		row.Timestamps = make([]time.Time, len(res.Timestamps))
-		for i := range res.Timestamps {
-			row.Timestamps[i] = res.Timestamps[i].UTC()
-		}
-
-		row.Values = res.Values
-	}
+	row.Values = series.values
 
 	return row
+}
+
+// metricDataLabel resolves the response label for a query: the caller-supplied
+// Label, else the metric name for a MetricStat query, else the query Id.
+func metricDataLabel(q metricDataQueryCBR) string {
+	if q.Label != "" {
+		return q.Label
+	}
+
+	if q.MetricStat != nil {
+		return q.MetricStat.Metric.MetricName
+	}
+
+	return q.ID
 }
 
 type describeAlarmsForMetricInput struct {

@@ -81,6 +81,18 @@ func key(resourceGroup, name string) string {
 	return resourceGroup + "/" + name
 }
 
+// subOrDefault returns the request subscription, falling back to the emulator's
+// default account when a caller (e.g. the typed Go API) supplies none. ARM
+// resource IDs must reflect the subscription the request targeted, not the
+// default account.
+func (m *Mock) subOrDefault(subscription string) string {
+	if subscription != "" {
+		return subscription
+	}
+
+	return m.opts.AccountID
+}
+
 // CreateWorkspace creates a workspace, completing provisioning synchronously.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
@@ -113,9 +125,11 @@ func (m *Mock) CreateWorkspace(_ context.Context, cfg driver.WorkspaceConfig) (*
 	}
 
 	wsID := workspaceID(k)
+	sub := m.subOrDefault(cfg.Subscription)
 	ws := &driver.Workspace{
-		ID:                     idgen.AzureID(m.opts.AccountID, cfg.ResourceGroup, providerNamespace, resourceType, cfg.Name),
+		ID:                     idgen.AzureID(sub, cfg.ResourceGroup, providerNamespace, resourceType, cfg.Name),
 		Name:                   cfg.Name,
+		Subscription:           sub,
 		ResourceGroup:          cfg.ResourceGroup,
 		Location:               cfg.Location,
 		SKUName:                skuOrDefault(cfg.SKUName),

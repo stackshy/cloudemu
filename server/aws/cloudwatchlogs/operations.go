@@ -355,10 +355,19 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// logStreamNames and logStreamNamePrefix are mutually exclusive; supplying
+	// both is an InvalidParameterException on real AWS.
+	if len(req.LogStreamNames) > 0 && req.LogStreamNamePrefix != "" {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
+			"logStreamNames and logStreamNamePrefix are mutually exclusive")
+		return
+	}
+
 	// The driver filters one stream at a time; when the caller scopes the query
-	// to a single stream, honor it, otherwise search across all streams.
+	// to exactly one stream (and no prefix), push it down. A name list or a
+	// prefix needs events from every stream, which are then scoped below.
 	stream := ""
-	if len(req.LogStreamNames) == 1 {
+	if len(req.LogStreamNames) == 1 && req.LogStreamNamePrefix == "" {
 		stream = req.LogStreamNames[0]
 	}
 
@@ -376,6 +385,11 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+
+	// Restrict to the requested streams: an explicit name list (membership) or a
+	// name prefix. The single-stream fast path already scoped the driver query,
+	// so this only trims the multi-name and prefix cases.
+	events = scopeFilteredStreams(events, req.LogStreamNames, req.LogStreamNamePrefix)
 
 	limit := req.Limit
 	if limit <= 0 {
@@ -401,4 +415,39 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
+}
+
+// scopeFilteredStreams restricts filtered events to the caller's requested
+// streams. names limits results to that exact set; prefix limits them to streams
+// whose name starts with it. With neither set (or an empty names list), events
+// pass through unchanged. names and prefix are mutually exclusive at the call
+// site, so at most one is ever active.
+func scopeFilteredStreams(
+	events []logdriver.FilteredLogEvent,
+	names []string,
+	prefix string,
+) []logdriver.FilteredLogEvent {
+	if len(names) == 0 && prefix == "" {
+		return events
+	}
+
+	allowed := make(map[string]bool, len(names))
+	for _, n := range names {
+		allowed[n] = true
+	}
+
+	scoped := make([]logdriver.FilteredLogEvent, 0, len(events))
+
+	for i := range events {
+		switch {
+		case len(names) > 0:
+			if allowed[events[i].LogStream] {
+				scoped = append(scoped, events[i])
+			}
+		case strings.HasPrefix(events[i].LogStream, prefix):
+			scoped = append(scoped, events[i])
+		}
+	}
+
+	return scoped
 }

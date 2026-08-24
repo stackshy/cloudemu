@@ -45,6 +45,11 @@ const (
 	// timeout (7 days, in seconds).
 	maxUpdateVisibilityTimeout = 7 * 24 * 60 * 60
 
+	// minNumOfMessages / maxNumOfMessages bound the numofmessages query parameter
+	// for Get Messages and Peek Messages. Azure rejects anything outside [1, 32].
+	minNumOfMessages = 1
+	maxNumOfMessages = 32
+
 	// maxEnqueueBodyBytes caps a single enqueued message body. Azure allows up
 	// to 64 KiB; we use a generous 1 MiB cap.
 	maxEnqueueBodyBytes = 1 << 20
@@ -353,7 +358,12 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 	}
 
 	q := r.URL.Query()
-	maxMsgs := atoiDefault(q.Get("numofmessages"), 1)
+
+	maxMsgs, ok := parseNumOfMessages(w, q.Get("numofmessages"))
+	if !ok {
+		return
+	}
+
 	visTimeout := atoiDefault(q.Get("visibilitytimeout"), 0)
 
 	msgs, err := h.dequeueMessages(r, url, maxMsgs, visTimeout)
@@ -410,7 +420,10 @@ func (h *Handler) peek(w http.ResponseWriter, r *http.Request, queue string) {
 		return
 	}
 
-	maxMsgs := atoiDefault(r.URL.Query().Get("numofmessages"), 1)
+	maxMsgs, ok := parseNumOfMessages(w, r.URL.Query().Get("numofmessages"))
+	if !ok {
+		return
+	}
 
 	msgs, err := svc.PeekMessages(r.Context(), url, maxMsgs)
 	if err != nil {
@@ -583,6 +596,33 @@ func parseVisibilityTimeout(w http.ResponseWriter, raw string) (int, bool) {
 	return v, true
 }
 
+// parseNumOfMessages validates the optional numofmessages parameter for Get
+// Messages and Peek Messages. An absent value defaults to 1; a present value
+// must be an integer in [1, 32]. A non-integer is a 400 InvalidQueryParameterValue
+// and an out-of-range integer is a 400 OutOfRangeQueryParameterValue carrying the
+// permissible bounds, matching real Azure Queue Storage. It writes the error and
+// returns ok=false on a bad value.
+func parseNumOfMessages(w http.ResponseWriter, raw string) (int, bool) {
+	if raw == "" {
+		return minNumOfMessages, true
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue",
+			"Value for one of the query parameters specified in the request URI is invalid.")
+
+		return 0, false
+	}
+
+	if n < minNumOfMessages || n > maxNumOfMessages {
+		writeQueryParameterRangeError(w, "numofmessages", raw, minNumOfMessages, maxNumOfMessages)
+		return 0, false
+	}
+
+	return n, true
+}
+
 // readMessageText reads an optional <QueueMessage><MessageText> body, returning
 // nil when the body is empty (visibility-only update).
 func readMessageText(w http.ResponseWriter, r *http.Request) (*string, error) {
@@ -633,6 +673,26 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(xml.Header))
 	_ = xml.NewEncoder(w).Encode(errorXML{Code: code, Message: msg})
+}
+
+// writeQueryParameterRangeError emits the Azure Queue Storage 400
+// OutOfRangeQueryParameterValue error, including the offending parameter's name
+// and value plus the permitted [min, max] bounds, as real Queue Storage does.
+func writeQueryParameterRangeError(w http.ResponseWriter, name, value string, minVal, maxVal int) {
+	const code = "OutOfRangeQueryParameterValue"
+
+	w.Header().Set("Content-Type", contentTypeXML)
+	w.Header().Set("X-Ms-Error-Code", code)
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write([]byte(xml.Header))
+	_ = xml.NewEncoder(w).Encode(queryParamRangeErrorXML{
+		Code:                code,
+		Message:             "One of the query parameters specified in the request URI is outside the permissible range.",
+		QueryParameterName:  name,
+		QueryParameterValue: value,
+		MinimumAllowed:      strconv.Itoa(minVal),
+		MaximumAllowed:      strconv.Itoa(maxVal),
+	})
 }
 
 // writeErr maps CloudEmu canonical errors to Azure Queue HTTP errors.

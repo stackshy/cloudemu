@@ -49,6 +49,23 @@ AWS's `compute` service · portable interface `driver.Compute` · [AWS index](./
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureDiskAccessor
+
+AzureDiskAccessor is an optional Azure-only capability for the managed-disk
+
+| Operation | Description |
+| --- | --- |
+| `GrantDiskAccess` | GrantDiskAccess issues a time-bounded SAS URI granting the requested |
+| `RevokeDiskAccess` | RevokeDiskAccess revokes any SAS access previously granted to the disk. |
+
+### AzureSSHKeyUpdater
+
+AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys
+
+| Operation | Description |
+| --- | --- |
+| `UpdateKeyPair` | UpdateKeyPair updates the public key and/or tags of an existing key pair. |
+
 ### AzureVMController
 
 AzureVMController is an optional Azure-only capability supporting the ARM
@@ -56,6 +73,7 @@ AzureVMController is an optional Azure-only capability supporting the ARM
 | Operation | Description |
 | --- | --- |
 | `Deallocate` | Deallocate stops the guest and releases the allocated compute |
+| `GeneralizeInstance` | GeneralizeInstance marks an instance as generalized (Azure Generalize |
 | `PowerOff` | PowerOff stops the guest OS while keeping the VM allocated |
 | `UpdateInstance` | UpdateInstance overwrites the mutable configuration of an existing |
 

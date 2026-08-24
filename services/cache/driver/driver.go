@@ -27,6 +27,18 @@ type CacheInfo struct {
 	Tags      map[string]string
 	Scope     scope.Scope
 
+	// Location is the geo-region the cache was created in (Azure Redis
+	// `location`, e.g. "westus2"). Empty for providers with no per-resource
+	// region concept.
+	Location string
+
+	// PrimaryKey / SecondaryKey are the Azure Redis access keys clients use to
+	// authenticate to the cache. Generated at create time by the Azure backend
+	// and rotated by RegenerateCacheKey; empty for providers that do not model
+	// access keys.
+	PrimaryKey   string
+	SecondaryKey string
+
 	// ARN and EngineVersion are populated by the AWS ElastiCache backend (other
 	// clouds leave them empty). The ARN is the tag-operation handle, so tag
 	// read/write flows depend on it being set on Describe.
@@ -59,6 +71,10 @@ type CacheConfig struct {
 	Engine        string // "redis", "memcached"
 	EngineVersion string
 	Tags          map[string]string
+
+	// Location is the geo-region the cache is created in (Azure Redis
+	// `location`). Optional and left empty by non-Azure callers.
+	Location string
 
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.
@@ -227,4 +243,18 @@ type SnapshotFilter struct {
 type Snapshots interface {
 	CreateSnapshot(ctx context.Context, cfg SnapshotConfig) (*Snapshot, error)
 	DescribeSnapshots(ctx context.Context, filter SnapshotFilter) ([]Snapshot, error)
+}
+
+// AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure
+// Cache for Redis exposes the cache's two access keys via listKeys and rotates
+// them via regenerateKey; no other cloud in this emulator models cache access
+// keys, so their drivers do not implement this interface.
+type AccessKeys interface {
+	// ListCacheKeys returns the cache's current primary and secondary access
+	// keys.
+	ListCacheKeys(ctx context.Context, name string) (primary, secondary string, err error)
+
+	// RegenerateCacheKey rotates the requested key ("Primary" or "Secondary")
+	// and returns both current keys.
+	RegenerateCacheKey(ctx context.Context, name, keyType string) (primary, secondary string, err error)
 }

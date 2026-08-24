@@ -354,14 +354,15 @@ func toRecordSetJSON(rp *azurearm.ResourcePath, zone string, rec *dnsdriver.Reco
 }
 
 // recordFqdn builds the fully-qualified domain name Azure reports for a record
-// set: "<name>.<zone>." for a relative record, and "<zone>." for the apex
-// ("@") record. The trailing dot marks it as fully qualified.
+// set: "<name>.<zone>" for a relative record, and "<zone>" for the apex ("@")
+// record. Azure DNS returns the fqdn without a trailing dot (mirroring the
+// zone's nameServers), so none is appended.
 func recordFqdn(name, zone string) string {
 	if name == "" || name == apexRecordName {
-		return zone + "."
+		return zone
 	}
 
-	return name + "." + zone + "."
+	return name + "." + zone
 }
 
 // mapStrings projects a typed slice to its string values, dropping empties.

@@ -41,7 +41,9 @@ func putRaw(t *testing.T, ts *httptest.Server, path, body string) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+	// A VM create returns 201 Created; disks/images return 202/200.
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK &&
+		resp.StatusCode != http.StatusCreated {
 		dump, _ := io.ReadAll(resp.Body)
 		t.Fatalf("PUT %s: status %d body=%s", path, resp.StatusCode, dump)
 	}

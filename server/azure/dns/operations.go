@@ -102,16 +102,30 @@ func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rp *azurearm.R
 }
 
 // deleteZone removes the zone. Zones.Delete is an LRO in the SDK; returning
-// 200 with an empty body completes the poller on the first response.
+// 200 with an empty body completes the poller on the first response. A missing
+// zone makes the ARM DELETE idempotent: 204 No Content ("The DNS zone was not
+// found"), not a 404 error body.
 func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	id, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
+		if cerrors.IsNotFound(err) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		azurearm.WriteCErr(w, err)
+
 		return
 	}
 
 	if derr := h.dns.DeleteZone(r.Context(), id); derr != nil {
+		if cerrors.IsNotFound(derr) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		azurearm.WriteCErr(w, derr)
+
 		return
 	}
 

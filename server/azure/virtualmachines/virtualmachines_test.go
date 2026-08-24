@@ -60,7 +60,9 @@ func putVM(t *testing.T, ts *httptest.Server, name string) map[string]any {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// A create returns 201 Created (provisioningState "Creating"); an idempotent
+	// re-PUT that updates in place returns 200 OK. Both are valid.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		dump, _ := io.ReadAll(resp.Body)
 		t.Fatalf("PUT %s: status %d, body=%s", name, resp.StatusCode, dump)
 	}
@@ -91,12 +93,21 @@ func TestVMCreateOrUpdate(t *testing.T) {
 	}
 
 	props, _ := got["properties"].(map[string]any)
-	if props["provisioningState"] != "Succeeded" {
-		t.Errorf("provisioningState=%v", props["provisioningState"])
+	// A create is a long-running op: the initial response reports "Creating".
+	if props["provisioningState"] != "Creating" {
+		t.Errorf("provisioningState=%v want Creating", props["provisioningState"])
 	}
 
 	if props["vmId"] == "" || props["vmId"] == nil {
 		t.Error("expected non-empty vmId (driver instance ID)")
+	}
+
+	// A subsequent GET reports the settled "Succeeded" state.
+	gotGet := getVM(t, ts, "vm-1")
+	getProps, _ := gotGet["properties"].(map[string]any)
+
+	if getProps["provisioningState"] != "Succeeded" {
+		t.Errorf("GET provisioningState=%v want Succeeded", getProps["provisioningState"])
 	}
 }
 
