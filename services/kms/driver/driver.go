@@ -26,6 +26,7 @@ const (
 	SpecECCNISTP256      = "ECC_NIST_P256"
 	SpecECCNISTP384      = "ECC_NIST_P384"
 	SpecECCNISTP521      = "ECC_NIST_P521"
+	SpecHMAC224          = "HMAC_224"
 	SpecHMAC256          = "HMAC_256"
 	SpecHMAC384          = "HMAC_384"
 	SpecHMAC512          = "HMAC_512"

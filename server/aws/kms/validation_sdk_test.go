@@ -96,3 +96,43 @@ func TestSDKCreateKeyRejectsUnknownSpec(t *testing.T) {
 		t.Fatalf("no key should be created: before=%d after=%d", len(before.Keys), len(after.Keys))
 	}
 }
+
+// CreateKey accepts the standard HMAC_224 KeySpec (a real AWS value) and the
+// resulting key produces a usable HMAC-SHA-224 MAC.
+func TestSDKCreateKeyHMAC224(t *testing.T) {
+	ctx := context.Background()
+	c := newKMSClient(t)
+
+	key, err := c.CreateKey(ctx, &awskms.CreateKeyInput{
+		KeySpec: kmstypes.KeySpecHmac224, KeyUsage: kmstypes.KeyUsageTypeGenerateVerifyMac,
+	})
+	if err != nil {
+		t.Fatalf("CreateKey HMAC_224 should succeed: %v", err)
+	}
+
+	if key.KeyMetadata.KeySpec != kmstypes.KeySpecHmac224 {
+		t.Fatalf("KeySpec = %q, want HMAC_224", key.KeyMetadata.KeySpec)
+	}
+
+	keyID := aws.ToString(key.KeyMetadata.KeyId)
+	msg := []byte("authenticate me")
+
+	mac, err := c.GenerateMac(ctx, &awskms.GenerateMacInput{
+		KeyId: aws.String(keyID), Message: msg, MacAlgorithm: kmstypes.MacAlgorithmSpecHmacSha224,
+	})
+	if err != nil {
+		t.Fatalf("GenerateMac: %v", err)
+	}
+
+	ver, err := c.VerifyMac(ctx, &awskms.VerifyMacInput{
+		KeyId: aws.String(keyID), Message: msg, Mac: mac.Mac,
+		MacAlgorithm: kmstypes.MacAlgorithmSpecHmacSha224,
+	})
+	if err != nil {
+		t.Fatalf("VerifyMac: %v", err)
+	}
+
+	if !ver.MacValid {
+		t.Fatal("MAC should be valid")
+	}
+}

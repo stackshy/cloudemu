@@ -112,6 +112,8 @@ func generateMaterial(spec string) ([]byte, error) {
 	switch spec {
 	case driver.SpecSymmetricDefault:
 		size = symmetricKeyBytes
+	case driver.SpecHMAC224:
+		size = 28
 	case driver.SpecHMAC256:
 		size = 32
 	case driver.SpecHMAC384:
@@ -139,7 +141,7 @@ func validateSpec(spec string) error {
 	case driver.SpecSymmetricDefault,
 		driver.SpecRSA2048, driver.SpecRSA3072, driver.SpecRSA4096,
 		driver.SpecECCNISTP256, driver.SpecECCNISTP384, driver.SpecECCNISTP521,
-		driver.SpecHMAC256, driver.SpecHMAC384, driver.SpecHMAC512:
+		driver.SpecHMAC224, driver.SpecHMAC256, driver.SpecHMAC384, driver.SpecHMAC512:
 		return nil
 	default:
 		return errors.Newf(errors.InvalidArgument, "unsupported KeySpec %q", spec)
