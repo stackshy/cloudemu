@@ -168,6 +168,19 @@ func TestNICDistinctMACAndGUID(t *testing.T) {
 	}
 }
 
+func TestNICSubnetExhaustedIsResourceExhausted(t *testing.T) {
+	m := newNICMock(t)
+	ctx := context.Background()
+
+	// A /30 has hosts .0-.3, all reserved by Azure, so the first assignable
+	// host (.4) is already outside the block — allocation must report exhaustion
+	// (which the wire layer maps to HTTP 400, not 500).
+	_, err := m.CreateOrUpdateNetworkInterface(ctx, "rg-1", "nic-tight", dynamicConfig("subnet-tiny", "10.0.0.0/30"))
+	if cerrors.GetCode(err) != cerrors.ResourceExhausted {
+		t.Errorf("err=%v want ResourceExhausted for a /30 with no assignable host", err)
+	}
+}
+
 func TestNICDeleteAttachedIsRejected(t *testing.T) {
 	m := newNICMock(t)
 	ctx := context.Background()
