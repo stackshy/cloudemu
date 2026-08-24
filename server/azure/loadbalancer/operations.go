@@ -338,6 +338,7 @@ func rulesJSON(lbID string, in []lbdriver.AzureLBRule) []loadBalancingRuleJSON {
 			BackendPort:          i32(rule.BackendPort),
 			IdleTimeoutInMinutes: i32(rule.IdleTimeoutMin),
 			LoadDistribution:     rule.LoadDistribution,
+			EnableFloatingIP:     &rule.EnableFloatingIP,
 			ProvisioningState:    provisioningStateSucceeded,
 		}
 
@@ -399,7 +400,7 @@ func (h *Handler) findGenericLB(ctx context.Context, name string) (*lbdriver.LBI
 // weakETag wraps a stable etag in the weak-validator form (W/"...") ARM uses
 // for load-balancer resources.
 func weakETag(id string) string {
-	return `W/"` + azurearm.ETag(id) + `"`
+	return azurearm.WeakETag(id)
 }
 
 // schemeFromBody infers the cross-cloud scheme from the request body. An Azure

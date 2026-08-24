@@ -101,9 +101,15 @@ func TestSDKVNetIdempotentAddressSpaceLocation(t *testing.T) {
 		t.Fatalf("addressPrefixes = %+v, want 2 entries", got.Properties)
 	}
 
-	if got.Etag == nil || *got.Etag == "" {
-		t.Fatalf("etag empty, want non-empty")
+	if got.Etag == nil || !isWeakETag(*got.Etag) {
+		t.Fatalf("vnet etag = %v, want weak-validator form W/\"...\"", got.Etag)
 	}
+}
+
+// isWeakETag reports whether s is in the weak-validator form W/"..." that the
+// real ARM API emits for Microsoft.Network resources (VNets/NSGs/subnets).
+func isWeakETag(s string) bool {
+	return len(s) >= 4 && s[:3] == `W/"` && s[len(s)-1] == '"'
 }
 
 // Findings #17 (inline subnets materialized) and #12 (subnet cascade on delete).
@@ -281,8 +287,8 @@ func TestSDKNSGRulesDefaultsIdempotent(t *testing.T) {
 		t.Fatalf("location = %v, want westus2", got.Location)
 	}
 
-	if got.Etag == nil || *got.Etag == "" {
-		t.Fatalf("etag empty, want non-empty")
+	if got.Etag == nil || !isWeakETag(*got.Etag) {
+		t.Fatalf("nsg etag = %v, want weak-validator form W/\"...\"", got.Etag)
 	}
 
 	if got.Properties == nil || len(got.Properties.SecurityRules) != 1 {

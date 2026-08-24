@@ -204,3 +204,10 @@ func ETag(parts ...string) string {
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
+
+// WeakETag wraps a deterministic ETag in the weak-validator form (W/"...") that
+// the real ARM API emits for Microsoft.Network resources (VNets, NSGs, subnets,
+// load balancers and their child rules/probes/pools).
+func WeakETag(parts ...string) string {
+	return `W/"` + ETag(parts...) + `"`
+}

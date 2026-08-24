@@ -135,7 +135,8 @@ func (h *Handler) azureMeta() (netdriver.AzureNetworkMetadata, bool) {
 	return m, ok
 }
 
-// etagOf returns a stable etag for an ARM resource id.
+// etagOf returns a stable etag for a Microsoft.Network ARM resource id, in the
+// weak-validator form (W/"...") the real ARM API emits for VNets/NSGs/subnets.
 func etagOf(id string) string {
-	return azurearm.ETag(id)
+	return azurearm.WeakETag(id)
 }

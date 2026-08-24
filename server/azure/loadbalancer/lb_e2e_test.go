@@ -101,6 +101,7 @@ func TestSDKLBFrontendRuleProbe(t *testing.T) {
 					Protocol:                to.Ptr(armnetwork.TransportProtocolTCP),
 					FrontendPort:            to.Ptr(int32(80)),
 					BackendPort:             to.Ptr(int32(8080)),
+					EnableFloatingIP:        to.Ptr(true),
 					FrontendIPConfiguration: &armnetwork.SubResource{ID: to.Ptr(lbChildID("frontendIPConfigurations", "my-frontend"))},
 					BackendAddressPool:      &armnetwork.SubResource{ID: to.Ptr(lbChildID("backendAddressPools", "web-pool"))},
 					Probe:                   &armnetwork.SubResource{ID: to.Ptr(lbChildID("probes", "probe-lb"))},
@@ -131,8 +132,8 @@ func TestSDKLBFrontendRuleProbe(t *testing.T) {
 		t.Fatalf("sku = %+v, want Basic", got.SKU)
 	}
 
-	if got.Etag == nil || *got.Etag == "" {
-		t.Fatalf("etag empty, want non-empty")
+	if got.Etag == nil || !isWeakETag(*got.Etag) {
+		t.Fatalf("etag = %v, want weak-validator form W/\"...\"", got.Etag)
 	}
 
 	assertFrontend(t, &got.LoadBalancer)
@@ -171,6 +172,10 @@ func assertRule(t *testing.T, lb *armnetwork.LoadBalancer) {
 
 	if rule.Properties == nil || *rule.Properties.FrontendPort != 80 || *rule.Properties.BackendPort != 8080 {
 		t.Fatalf("rule ports = %+v, want frontend 80 / backend 8080", rule.Properties)
+	}
+
+	if rule.Properties.EnableFloatingIP == nil || !*rule.Properties.EnableFloatingIP {
+		t.Fatalf("rule enableFloatingIP = %v, want echoed back as true", rule.Properties.EnableFloatingIP)
 	}
 
 	if rule.Properties.FrontendIPConfiguration == nil || rule.Properties.FrontendIPConfiguration.ID == nil ||
@@ -250,4 +255,10 @@ func TestSDKLBRuleProtocolUpdate(t *testing.T) {
 
 func hasSuffix(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
+}
+
+// isWeakETag reports whether s is in the weak-validator form W/"..." that the
+// real ARM API emits for Microsoft.Network resources.
+func isWeakETag(s string) bool {
+	return len(s) >= 4 && s[:3] == `W/"` && s[len(s)-1] == '"'
 }

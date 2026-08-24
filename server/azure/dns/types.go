@@ -76,7 +76,7 @@ func zoneNameServers(zoneName string, private bool) []string {
 
 	out := make([]string, len(nameServerSuffixes))
 	for i, suffix := range nameServerSuffixes {
-		out[i] = fmt.Sprintf("ns%d-%02d.%s.", i+1, shard, suffix)
+		out[i] = fmt.Sprintf("ns%d-%02d.%s", i+1, shard, suffix)
 	}
 
 	return out

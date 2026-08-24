@@ -89,6 +89,16 @@ func TestSDKAzureDNSZoneLifecycle(t *testing.T) {
 		t.Fatalf("nameServers = %+v, want 4 authoritative name servers", created.Properties)
 	}
 
+	for _, ns := range created.Properties.NameServers {
+		if ns == nil || *ns == "" {
+			t.Fatalf("nameServer entry empty, want e.g. ns1-01.azure-dns.com")
+		}
+
+		if (*ns)[len(*ns)-1] == '.' {
+			t.Fatalf("nameServer = %q, want no trailing dot (real Azure returns ns1-01.azure-dns.com)", *ns)
+		}
+	}
+
 	got, err := zones.Get(ctx, testRG, "example.com", nil)
 	if err != nil {
 		t.Fatalf("Zones.Get: %v", err)
