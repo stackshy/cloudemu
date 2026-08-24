@@ -39,6 +39,7 @@ const (
 	groupStateRunning   = "Running"
 	groupStateSucceeded = "Succeeded"
 	groupStateFailed    = "Failed"
+	groupStateStopped   = "Stopped"
 
 	// Per-container instanceView.currentState states (ACI vocabulary).
 	containerStateRunning    = "Running"
@@ -95,6 +96,7 @@ func (m *Mock) CreateContainerGroup(ctx context.Context, cfg driver.ContainerGro
 		ProvisioningState: provisioningStateSucceeded,
 		State:             groupStateRunning,
 		Containers:        synthContainers(cfg.Containers),
+		IPAddress:         assignIPAddress(cfg.IPAddress, cfg.Location),
 		Tags:              cfg.Tags,
 		Scope:             cfg.Scope,
 	}

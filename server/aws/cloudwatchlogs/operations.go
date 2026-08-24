@@ -187,6 +187,21 @@ func (h *Handler) describeLogStreams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// logStreamNamePrefix filters to streams whose name starts with the prefix.
+	// ListLogStreams already returns streams ordered by name (the default
+	// orderBy=LogStreamName), so filtering the slice keeps that order.
+	if req.LogStreamNamePrefix != "" {
+		filtered := make([]logdriver.LogStreamInfo, 0, len(infos))
+
+		for i := range infos {
+			if strings.HasPrefix(infos[i].Name, req.LogStreamNamePrefix) {
+				filtered = append(filtered, infos[i])
+			}
+		}
+
+		infos = filtered
+	}
+
 	// The stream ARN is derived from the owning group's ARN, which the driver
 	// carries on the group, not the stream.
 	groupARN := ""

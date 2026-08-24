@@ -96,6 +96,12 @@ func (h *Handler) putRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validRetentionInDays[req.RetentionInDays] {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
+			"retentionInDays is not a valid value")
+		return
+	}
+
 	if _, err := h.logs.UpdateLogGroup(r.Context(), logdriver.LogGroupConfig{
 		Name: req.LogGroupName, RetentionDays: req.RetentionInDays,
 	}); err != nil {
@@ -104,6 +110,16 @@ func (h *Handler) putRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, struct{}{})
+}
+
+// validRetentionInDays is the closed set of retentionInDays values CloudWatch
+// Logs accepts; any other value is rejected with InvalidParameterException.
+//
+//nolint:gochecknoglobals // fixed lookup table for a closed enum.
+var validRetentionInDays = map[int]bool{
+	1: true, 3: true, 5: true, 7: true, 14: true, 30: true, 60: true, 90: true,
+	120: true, 150: true, 180: true, 365: true, 400: true, 545: true, 731: true,
+	1096: true, 1827: true, 2192: true, 2557: true, 2922: true, 3288: true, 3653: true,
 }
 
 // writeErr maps canonical cloudemu errors to CloudWatch Logs JSON error

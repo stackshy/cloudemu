@@ -21,7 +21,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
 | `configservice` | [Config](./aws/config.md) | — | — | — | 102 |
-| `containerinstances` | — | [ContainerInstances](./azure/containerinstances.md) | — | — | 5 |
+| `containerinstances` | — | [ContainerInstances](./azure/containerinstances.md) | — | — | 9 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 14 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |

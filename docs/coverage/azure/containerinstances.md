@@ -3,15 +3,19 @@
 
 Azure's `containerinstances` service · portable interface `driver.ContainerInstances` · [Azure index](./README.md)
 
-## Operations (5)
+## Operations (9)
 
 | Operation | Description |
 | --- | --- |
 | `ContainerLogs` | ContainerLogs returns the captured stdout/stderr for one container in the |
 | `CreateContainerGroup` | CreateContainerGroup creates the group, or replaces it when one of the |
 | `DeleteContainerGroup` | DeleteContainerGroup removes the group, tearing down any engine-backed |
+| `ExecContainer` | ExecContainer opens an exec session on one container in the group and |
 | `GetContainerGroup` | GetContainerGroup returns the recorded group, or a NotFound error. |
 | `ListContainerGroups` | ListContainerGroups returns the groups visible under filter. |
+| `RestartContainerGroup` | RestartContainerGroup restarts all containers in the group. Returns NotFound |
+| `StartContainerGroup` | StartContainerGroup starts all containers in a stopped group, allocating |
+| `StopContainerGroup` | StopContainerGroup stops all containers in the group and deallocates |
 
 ## Not in scope
 

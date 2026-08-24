@@ -63,11 +63,13 @@ type Mock struct {
 	layers     *memstore.Store[*layerData]
 	mappings   *memstore.Store[*driver.EventSourceMappingInfo]
 	plans      *memstore.Store[*AppServicePlan]
+	sites      *memstore.Store[*SiteMeta]
 	opts       *config.Options
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
 	monitoring mondriver.Monitoring
-	mu         sync.Mutex // guards PublishVersion read-modify-write on funcData
+	mu         sync.Mutex   // guards PublishVersion read-modify-write on funcData
+	sitesMu    sync.RWMutex // guards SiteMeta read-modify-write
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -104,6 +106,7 @@ func New(opts *config.Options) *Mock {
 		layers:   memstore.New[*layerData](),
 		mappings: memstore.New[*driver.EventSourceMappingInfo](),
 		plans:    memstore.New[*AppServicePlan](),
+		sites:    memstore.New[*SiteMeta](),
 		opts:     opts,
 		handlers: make(map[string]driver.HandlerFunc),
 	}

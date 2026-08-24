@@ -16,6 +16,9 @@ type EventBusInfo struct {
 	CreatedAt string
 	Tags      map[string]string
 	Scope     scope.Scope
+	// Region is the geographic location the resource was created in (Azure
+	// location, GCP region). Empty for AWS and unscoped portable callers.
+	Region string
 }
 
 // EventBusConfig configures a new event bus.
@@ -26,6 +29,9 @@ type EventBusConfig struct {
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.
 	Scope scope.Scope
+	// Region is the geographic location the resource is created in (Azure
+	// location, GCP region). Empty for AWS and unscoped portable callers.
+	Region string
 }
 
 // Rule defines an event routing rule with filtering.

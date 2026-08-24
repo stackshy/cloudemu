@@ -265,6 +265,9 @@ func New(d Drivers) http.Handler {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.EventGrid != nil {
 		srv.Register(eventgridsrv.New(d.EventGrid))
+		// Data-plane publish endpoint (POST /api/events, topic taken from the
+		// request Host). Registered before the BlobStorage fallback.
+		srv.Register(eventgridsrv.NewPublishHandler(d.EventGrid))
 	}
 
 	// Log Analytics matches on Microsoft.OperationalInsights/workspaces — a
@@ -287,6 +290,10 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if d.NotificationHubs != nil {
 		srv.Register(notificationhubssrv.New(d.NotificationHubs))
+		// Data-plane device registration API on
+		// {namespace}.servicebus.windows.net. Registered before the BlobStorage
+		// fallback.
+		srv.Register(notificationhubssrv.NewRegistrationHandler(d.NotificationHubs))
 	}
 
 	if d.Monitor != nil {

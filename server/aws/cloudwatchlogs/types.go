@@ -29,9 +29,10 @@ type createLogStreamRequest struct {
 }
 
 type describeLogStreamsRequest struct {
-	LogGroupName string `json:"logGroupName"`
-	Limit        int32  `json:"limit"`
-	NextToken    string `json:"nextToken"`
+	LogGroupName        string `json:"logGroupName"`
+	LogStreamNamePrefix string `json:"logStreamNamePrefix"`
+	Limit               int32  `json:"limit"`
+	NextToken           string `json:"nextToken"`
 }
 
 type deleteLogStreamRequest struct {

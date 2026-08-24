@@ -15,6 +15,29 @@ GCP's `secrets` service · portable interface `driver.Secrets` · [GCP index](./
 | `ListSecrets` |  |
 | `PutSecretValue` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### KeyVaultSecrets
+
+KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version
+
+| Operation | Description |
+| --- | --- |
+| `BackupKeyVaultSecret` |  |
+| `DeleteKeyVaultSecret` |  |
+| `GetDeletedKeyVaultSecret` |  |
+| `GetKeyVaultSecret` |  |
+| `ListDeletedKeyVaultSecrets` |  |
+| `ListKeyVaultSecretVersions` |  |
+| `ListKeyVaultSecrets` |  |
+| `PurgeDeletedKeyVaultSecret` |  |
+| `RecoverDeletedKeyVaultSecret` |  |
+| `RestoreKeyVaultSecret` |  |
+| `SetKeyVaultSecret` |  |
+| `UpdateKeyVaultSecret` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
