@@ -1956,6 +1956,24 @@
         ]
       },
       {
+        "name": "ImageRegistrar",
+        "doc": "ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage",
+        "operations": [
+          {
+            "name": "RegisterImage"
+          }
+        ]
+      },
+      {
+        "name": "KeyPairImporter",
+        "doc": "KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair",
+        "operations": [
+          {
+            "name": "ImportKeyPair"
+          }
+        ]
+      },
+      {
         "name": "LaunchTemplateVersioner",
         "doc": "LaunchTemplateVersioner is an AWS-only optional capability implementing launch",
         "operations": [
@@ -1970,6 +1988,24 @@
           {
             "name": "GetLaunchTemplateData",
             "doc": "GetLaunchTemplateData synthesizes launch-template data from a running"
+          }
+        ]
+      },
+      {
+        "name": "SnapshotCopier",
+        "doc": "SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is",
+        "operations": [
+          {
+            "name": "CopySnapshot"
+          }
+        ]
+      },
+      {
+        "name": "VolumeModifier",
+        "doc": "VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume",
+        "operations": [
+          {
+            "name": "ModifyVolume"
           }
         ]
       }
