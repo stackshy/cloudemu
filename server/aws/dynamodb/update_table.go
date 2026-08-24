@@ -179,7 +179,8 @@ func (h *Handler) applyGSIUpdate(ctx context.Context, table string, create *seco
 	if create != nil {
 		pk, sk := indexKeys(*create)
 		_, err := h.db.CreateIndex(ctx, table, dbdriver.GSIConfig{
-			Name: create.IndexName, PartitionKey: pk, SortKey: sk, Projection: create.Projection.ProjectionType,
+			Name: create.IndexName, PartitionKey: pk, SortKey: sk,
+			Projection: create.Projection.ProjectionType, NonKeyAttributes: create.Projection.NonKeyAttributes,
 		})
 
 		return err

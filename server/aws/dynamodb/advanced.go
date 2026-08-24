@@ -144,6 +144,7 @@ func equalAttr(a, b any) bool {
 func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
+		IndexName                 string            `json:"IndexName"`
 		FilterExpression          string            `json:"FilterExpression"`
 		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
@@ -163,6 +164,7 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	// it with full grammar fidelity.
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
 		Table:             req.TableName,
+		IndexName:         req.IndexName,
 		FilterExpression:  req.FilterExpression,
 		ExprNames:         req.ExpressionAttributeNames,
 		ExprValues:        vals,
@@ -318,11 +320,16 @@ func (h *Handler) applyBatchWrite(ctx context.Context, table string, req *batchW
 	}
 }
 
-// batchGetItem handles BatchGetItem (gets across one or more tables).
+// batchGetItem handles BatchGetItem (gets across one or more tables). Each
+// per-table entry may carry a ProjectionExpression (with ExpressionAttributeNames
+// placeholders); when present, only the named attributes are returned for that
+// table's items — otherwise all attributes are returned.
 func (h *Handler) batchGetItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RequestItems map[string]struct {
-			Keys []map[string]any `json:"Keys"`
+			Keys                     []map[string]any  `json:"Keys"`
+			ProjectionExpression     string            `json:"ProjectionExpression"`
+			ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 		} `json:"RequestItems"`
 	}
 
@@ -345,6 +352,12 @@ func (h *Handler) batchGetItem(w http.ResponseWriter, r *http.Request) {
 	responses := make(map[string][]map[string]any, len(req.RequestItems))
 
 	for table, spec := range req.RequestItems {
+		paths, perr := expr.ParseProjection(spec.ProjectionExpression, spec.ExpressionAttributeNames)
+		if perr != nil {
+			writeErr(w, perr)
+			return
+		}
+
 		keys := make([]map[string]any, 0, len(spec.Keys))
 		for _, k := range spec.Keys {
 			keys = append(keys, fromWireItem(k))
@@ -358,7 +371,7 @@ func (h *Handler) batchGetItem(w http.ResponseWriter, r *http.Request) {
 
 		out := make([]map[string]any, 0, len(items))
 		for _, item := range items {
-			out = append(out, toWireItem(item))
+			out = append(out, toWireItem(expr.Project(item, paths)))
 		}
 
 		responses[table] = out

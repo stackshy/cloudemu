@@ -22,10 +22,27 @@ const (
 	keyTypeHash        = "HASH"
 	keyTypeRange       = "RANGE"
 	projectionAll      = "ALL"
+	projectionInclude  = "INCLUDE"
 	statusEnabled      = "ENABLED"
 	statusDisabled     = "DISABLED"
 	billingProvisioned = "PROVISIONED"
 )
+
+// projectionBlock builds the Projection wire block echoed by a describe. An
+// INCLUDE projection also carries the NonKeyAttributes it copied so the
+// declared index round-trips exactly.
+func projectionBlock(projType string, nonKey []string) map[string]any {
+	if projType == "" {
+		projType = projectionAll
+	}
+
+	block := map[string]any{"ProjectionType": projType}
+	if projType == projectionInclude && len(nonKey) > 0 {
+		block["NonKeyAttributes"] = nonKey
+	}
+
+	return block
+}
 
 // Handler serves DynamoDB JSON-RPC requests against a database.Database driver.
 type Handler struct {
@@ -186,14 +203,18 @@ func buildCreateConfig(req *createTableRequest) dbdriver.TableConfig {
 
 	for _, gsi := range req.GlobalSecondaryIndexes {
 		pk, sk := indexKeys(gsi)
-		cfg.GSIs = append(cfg.GSIs,
-			dbdriver.GSIConfig{Name: gsi.IndexName, PartitionKey: pk, SortKey: sk, Projection: gsi.Projection.ProjectionType})
+		cfg.GSIs = append(cfg.GSIs, dbdriver.GSIConfig{
+			Name: gsi.IndexName, PartitionKey: pk, SortKey: sk,
+			Projection: gsi.Projection.ProjectionType, NonKeyAttributes: gsi.Projection.NonKeyAttributes,
+		})
 	}
 
 	for _, lsi := range req.LocalSecondaryIndexes {
 		_, sk := indexKeys(lsi)
-		cfg.LSIs = append(cfg.LSIs,
-			dbdriver.LSIConfig{Name: lsi.IndexName, SortKey: sk, Projection: lsi.Projection.ProjectionType})
+		cfg.LSIs = append(cfg.LSIs, dbdriver.LSIConfig{
+			Name: lsi.IndexName, SortKey: sk,
+			Projection: lsi.Projection.ProjectionType, NonKeyAttributes: lsi.Projection.NonKeyAttributes,
+		})
 	}
 
 	if req.StreamSpecification != nil && req.StreamSpecification.StreamEnabled {
@@ -284,7 +305,8 @@ type secondaryIndexJSON struct {
 		KeyType       string `json:"KeyType"`
 	} `json:"KeySchema"`
 	Projection struct {
-		ProjectionType string `json:"ProjectionType"`
+		ProjectionType   string   `json:"ProjectionType"`
+		NonKeyAttributes []string `json:"NonKeyAttributes"`
 	} `json:"Projection"`
 }
 
@@ -396,15 +418,10 @@ func lsiDescriptions(cfg *dbdriver.TableConfig) []map[string]any {
 			{"AttributeName": lsi.SortKey, "KeyType": keyTypeRange},
 		}
 
-		projection := lsi.Projection
-		if projection == "" {
-			projection = projectionAll
-		}
-
 		out = append(out, map[string]any{
 			"IndexName":      lsi.Name,
 			"KeySchema":      keySchema,
-			"Projection":     map[string]any{"ProjectionType": projection},
+			"Projection":     projectionBlock(lsi.Projection, lsi.NonKeyAttributes),
 			"IndexArn":       cfg.TableArn + "/index/" + lsi.Name,
 			"ItemCount":      0,
 			"IndexSizeBytes": 0,
@@ -426,16 +443,11 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 			keySchema = append(keySchema, map[string]string{"AttributeName": gsi.SortKey, "KeyType": keyTypeRange})
 		}
 
-		projection := gsi.Projection
-		if projection == "" {
-			projection = projectionAll
-		}
-
 		desc := map[string]any{
 			"IndexName":      gsi.Name,
 			"IndexStatus":    "ACTIVE",
 			"KeySchema":      keySchema,
-			"Projection":     map[string]any{"ProjectionType": projection},
+			"Projection":     projectionBlock(gsi.Projection, gsi.NonKeyAttributes),
 			"IndexArn":       cfg.TableArn + "/index/" + gsi.Name,
 			"ItemCount":      0,
 			"IndexSizeBytes": 0,

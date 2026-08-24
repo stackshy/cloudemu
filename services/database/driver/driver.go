@@ -93,6 +93,9 @@ type GSIConfig struct {
 	// Projection is the DynamoDB projection type (ALL, KEYS_ONLY, INCLUDE); a
 	// describe echoes it so an IaC client's declared index round-trips.
 	Projection string
+	// NonKeyAttributes are the base-table attributes an INCLUDE projection copies
+	// into the index in addition to the key attributes. Ignored for ALL/KEYS_ONLY.
+	NonKeyAttributes []string
 }
 
 // LSIConfig describes a Local Secondary Index. An LSI shares the table's
@@ -102,6 +105,9 @@ type LSIConfig struct {
 	Name       string
 	SortKey    string
 	Projection string
+	// NonKeyAttributes are the base-table attributes an INCLUDE projection copies
+	// into the index in addition to the key attributes. Ignored for ALL/KEYS_ONLY.
+	NonKeyAttributes []string
 }
 
 // UpdateAction represents a single field-level update action. It is the legacy,
@@ -213,6 +219,10 @@ type QueryInput struct {
 // ScanInput configures a scan operation.
 type ScanInput struct {
 	Table string
+	// IndexName scans a secondary index instead of the base table. Items lacking
+	// the index's key attributes are skipped (sparse index), and only the
+	// index's projected attributes are returned.
+	IndexName string
 	// Filters is the legacy pre-simplified filter; ignored when
 	// FilterExpression is set. Retained for back-compat.
 	Filters []ScanFilter
