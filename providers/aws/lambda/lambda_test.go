@@ -395,6 +395,33 @@ func TestUpdateAlias(t *testing.T) {
 		})
 		assertError(t, err, true)
 	})
+
+	t.Run("atomic: failed routing validation leaves alias unchanged", func(t *testing.T) {
+		_, _ = m.CreateAlias(ctx, driver.AliasConfig{
+			FunctionName: "my-func", Name: "atomic", FunctionVersion: "1",
+		})
+
+		// A valid FunctionVersion change combined with a RoutingConfig that fails
+		// validation ($LATEST additional version) must fail as a whole and leave
+		// the alias completely unchanged — FunctionVersion must stay "1".
+		_, err := m.UpdateAlias(ctx, driver.AliasConfig{
+			FunctionName:    "my-func",
+			Name:            "atomic",
+			FunctionVersion: "2",
+			RoutingConfig: &driver.AliasRoutingConfig{
+				AdditionalVersion: "$LATEST",
+				Weight:            0.1,
+			},
+		})
+		assertError(t, err, true)
+
+		got, err := m.GetAlias(ctx, "my-func", "atomic")
+		requireNoError(t, err)
+		assertEqual(t, "1", got.FunctionVersion)
+		if got.RoutingConfig != nil {
+			t.Fatalf("expected RoutingConfig to remain nil, got %+v", got.RoutingConfig)
+		}
+	})
 }
 
 func TestDeleteAlias(t *testing.T) {

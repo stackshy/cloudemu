@@ -63,25 +63,35 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", cfg.Name)
 	}
 
+	// Compute the prospective effective FunctionVersion without touching the
+	// live alias yet. UpdateAlias is atomic in real AWS: if any validation
+	// fails the alias must be left completely unchanged.
+	effectiveVersion := ad.alias.FunctionVersion
+
 	if cfg.FunctionVersion != "" {
 		if !m.versionExists(&fd, cfg.FunctionVersion) {
 			return nil, cerrors.Newf(cerrors.NotFound, "version %s not found", cfg.FunctionVersion)
 		}
 
-		ad.alias.FunctionVersion = cfg.FunctionVersion
+		effectiveVersion = cfg.FunctionVersion
 	}
+
+	if cfg.RoutingConfig != nil {
+		// Validate the routing config against the prospective FunctionVersion,
+		// which is the effective primary target for this alias.
+		if err := m.validateRoutingConfig(&fd, effectiveVersion, cfg.RoutingConfig); err != nil {
+			return nil, err
+		}
+	}
+
+	// All validation passed — commit the changes to the live alias.
+	ad.alias.FunctionVersion = effectiveVersion
 
 	if cfg.Description != "" {
 		ad.alias.Description = cfg.Description
 	}
 
 	if cfg.RoutingConfig != nil {
-		// ad.alias.FunctionVersion already reflects any FunctionVersion update
-		// applied above, so it is the effective primary target for this alias.
-		if err := m.validateRoutingConfig(&fd, ad.alias.FunctionVersion, cfg.RoutingConfig); err != nil {
-			return nil, err
-		}
-
 		ad.alias.RoutingConfig = copyRoutingConfig(cfg.RoutingConfig)
 	}
 
