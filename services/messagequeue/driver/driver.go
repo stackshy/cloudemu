@@ -160,6 +160,23 @@ type QueueAttributes struct {
 	KmsMasterKeyID                string
 }
 
+// MessageMoveTask describes an SQS dead-letter-queue redrive task, as reported
+// by StartMessageMoveTask / ListMessageMoveTasks. It is an AWS-specific concept
+// (not part of the portable MessageQueue interface); only the AWS provider
+// populates it, and the SQS wire handler type-asserts for the optional
+// interface that returns it.
+type MessageMoveTask struct {
+	TaskHandle                   string
+	SourceARN                    string
+	DestinationARN               string
+	MaxNumberOfMessagesPerSecond int
+	Status                       string // AWS SQS task status, e.g. RUNNING, COMPLETED, FAILED
+	ApproxMessagesMoved          int64
+	ApproxMessagesToMove         int64
+	FailureReason                string
+	StartedAt                    time.Time
+}
+
 // MessageQueue is the interface that message queue provider implementations must satisfy.
 type MessageQueue interface {
 	CreateQueue(ctx context.Context, config QueueConfig) (*QueueInfo, error)

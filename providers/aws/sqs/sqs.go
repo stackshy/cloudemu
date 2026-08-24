@@ -47,6 +47,10 @@ type sqsMessage struct {
 	SentAt            time.Time
 	FirstReceivedAt   time.Time
 	ReceiveCount      int
+	// sourceQueueURL records the queue a message was redriven from when it lands
+	// in a DLQ, so a DLQ redrive (StartMessageMoveTask without a DestinationArn)
+	// can return it to its original source.
+	sourceQueueURL string
 }
 
 // queueData holds the internal state of a single SQS queue.
@@ -77,6 +81,7 @@ type LambdaTrigger func(queueURL string, message driver.Message)
 // Mock is an in-memory mock implementation of the AWS SQS service.
 type Mock struct {
 	queues     *memstore.Store[*queueData]
+	moveTasks  *memstore.Store[*moveTask]
 	opts       *config.Options
 	mu         sync.RWMutex
 	triggers   map[string]LambdaTrigger // queueURL -> trigger
@@ -102,9 +107,10 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 // New creates a new SQS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		queues:   memstore.New[*queueData](),
-		opts:     opts,
-		triggers: make(map[string]LambdaTrigger),
+		queues:    memstore.New[*queueData](),
+		moveTasks: memstore.New[*moveTask](),
+		opts:      opts,
+		triggers:  make(map[string]LambdaTrigger),
 	}
 }
 
@@ -574,7 +580,7 @@ func (m *Mock) collectVisibleMessages(
 
 		// Check if message exceeded max receive count - move to DLQ.
 		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount {
-			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
+			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, qd.info.URL, msg)
 
 			toRemove = append(toRemove, i)
 
@@ -632,8 +638,9 @@ func buildReceivedMessage(msg *sqsMessage, visibilityTimeout int, now time.Time)
 	}
 }
 
-// moveToDLQ moves a message to the dead-letter queue.
-func (m *Mock) moveToDLQ(dlqURL string, msg *sqsMessage) {
+// moveToDLQ moves a message to the dead-letter queue, recording the source
+// queue URL so a later DLQ redrive can return it to its origin.
+func (m *Mock) moveToDLQ(dlqURL, sourceURL string, msg *sqsMessage) {
 	dlq, ok := m.queues.Get(dlqURL)
 	if !ok {
 		return
@@ -651,6 +658,7 @@ func (m *Mock) moveToDLQ(dlqURL string, msg *sqsMessage) {
 		SenderID:          msg.SenderID,
 		VisibleAt:         m.opts.Clock.Now(),
 		SentAt:            m.opts.Clock.Now(),
+		sourceQueueURL:    sourceURL,
 	}
 
 	dlq.messages = append(dlq.messages, dlqMsg)
