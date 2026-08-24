@@ -405,10 +405,11 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 
 	result.ScannedCount = scanned
 
-	// A query on a secondary index only exposes the index's projected
-	// attributes (KEYS_ONLY / INCLUDE); non-projected base-table attributes are
-	// not fetchable through the index.
-	if attrs, filtered := indexProjection(td.config, input.IndexName); filtered {
+	// A GSI query only exposes the index's projected attributes; an LSI query
+	// with no projection defaults to ALL_PROJECTED_ATTRIBUTES. When a
+	// ProjectionExpression is supplied, an LSI can fetch non-projected base-table
+	// attributes, so the full base item is left intact for the wire layer.
+	if attrs, filtered := indexProjection(td.config, input.IndexName, input.ProjectionRequested); filtered {
 		for i, it := range result.Items {
 			result.Items[i] = projectToIndex(it, attrs)
 		}
@@ -446,14 +447,27 @@ func resolveKeyFields(td *tableData, indexName string) (pkField, skField string,
 }
 
 // indexProjection returns the attribute set a secondary-index query/scan may
-// surface, and whether that set must be enforced. Per the DynamoDB GSI/LSI
-// contract a query on a secondary index cannot fetch base-table attributes that
-// are not projected: a KEYS_ONLY index exposes only the table and index key
-// attributes; INCLUDE adds the named non-key attributes; ALL passes everything
-// through. A nil-or-ALL projection returns filtered=false so items are
-// untouched. Caller must hold at least td's read lock (reads td.config only).
-func indexProjection(cfg driver.TableConfig, indexName string) (attrs map[string]struct{}, filtered bool) {
+// surface, and whether that set must be enforced. A GSI always enforces its
+// projection: a query on a GSI cannot fetch base-table attributes that are not
+// projected — KEYS_ONLY exposes only the table and index key attributes,
+// INCLUDE adds the named non-key attributes, ALL passes everything through.
+//
+// An LSI is different (per the LSI developer guide): it can transparently fetch
+// non-projected attributes from the base table. When the caller supplied a
+// ProjectionExpression (projectionRequested), the full base item — which
+// CloudEmu already holds in memory — is returned untouched so the wire layer can
+// select any attribute, matching AWS's functional result (CloudEmu does not
+// model the extra throughput cost). With no projection an index query defaults
+// to ALL_PROJECTED_ATTRIBUTES, so an LSI is still trimmed to its projected set.
+//
+// A nil-or-ALL projection returns filtered=false so items are untouched. Caller
+// must hold at least td's read lock (reads td.config only).
+func indexProjection(cfg driver.TableConfig, indexName string, projectionRequested bool) (attrs map[string]struct{}, filtered bool) {
 	if indexName == "" {
+		return nil, false
+	}
+
+	if projectionRequested && isLSI(cfg, indexName) {
 		return nil, false
 	}
 
@@ -475,6 +489,17 @@ func indexProjection(cfg driver.TableConfig, indexName string) (attrs map[string
 	}
 
 	return attrs, true
+}
+
+// isLSI reports whether indexName names a local secondary index on the table.
+func isLSI(cfg driver.TableConfig, indexName string) bool {
+	for _, lsi := range cfg.LSIs {
+		if lsi.Name == indexName {
+			return true
+		}
+	}
+
+	return false
 }
 
 // lookupIndexProjection resolves an index's projection type, key attributes and
@@ -674,7 +699,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 
 	result.ScannedCount = scanned
 
-	if attrs, filtered := indexProjection(td.config, input.IndexName); filtered {
+	if attrs, filtered := indexProjection(td.config, input.IndexName, input.ProjectionRequested); filtered {
 		for i, it := range result.Items {
 			result.Items[i] = projectToIndex(it, attrs)
 		}

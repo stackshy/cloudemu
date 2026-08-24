@@ -844,15 +844,16 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	// parses and evaluates it with full grammar fidelity. The KeyCondition
 	// path is unchanged.
 	result, err := h.db.Query(r.Context(), dbdriver.QueryInput{
-		Table:             req.TableName,
-		IndexName:         req.IndexName,
-		KeyCondition:      kc,
-		FilterExpression:  req.FilterExpression,
-		ExprNames:         req.ExpressionAttributeNames,
-		ExprValues:        vals,
-		Limit:             req.Limit,
-		SortDescending:    !forward,
-		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
+		Table:               req.TableName,
+		IndexName:           req.IndexName,
+		KeyCondition:        kc,
+		FilterExpression:    req.FilterExpression,
+		ExprNames:           req.ExpressionAttributeNames,
+		ExprValues:          vals,
+		Limit:               req.Limit,
+		SortDescending:      !forward,
+		ExclusiveStartKey:   fromWireItem(req.ExclusiveStartKey),
+		ProjectionRequested: req.ProjectionExpression != "",
 	})
 	if err != nil {
 		writeErr(w, err)

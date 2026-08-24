@@ -163,13 +163,14 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	// Flow the raw FilterExpression to the driver, which parses and evaluates
 	// it with full grammar fidelity.
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
-		Table:             req.TableName,
-		IndexName:         req.IndexName,
-		FilterExpression:  req.FilterExpression,
-		ExprNames:         req.ExpressionAttributeNames,
-		ExprValues:        vals,
-		Limit:             req.Limit,
-		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
+		Table:               req.TableName,
+		IndexName:           req.IndexName,
+		FilterExpression:    req.FilterExpression,
+		ExprNames:           req.ExpressionAttributeNames,
+		ExprValues:          vals,
+		Limit:               req.Limit,
+		ExclusiveStartKey:   fromWireItem(req.ExclusiveStartKey),
+		ProjectionRequested: req.ProjectionExpression != "",
 	})
 	if err != nil {
 		writeErr(w, err)

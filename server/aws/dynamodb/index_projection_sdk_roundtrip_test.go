@@ -146,8 +146,12 @@ func TestGSIProjectionRoundTrip(t *testing.T) {
 }
 
 // TestLSIQueryProjection covers the projection contract on a Local Secondary
-// Index: a KEYS_ONLY LSI query returns only the table keys plus the LSI sort
-// key.
+// Index. Unlike a GSI, an LSI can transparently fetch non-projected attributes
+// from the base table (per the AWS LSI developer guide and the Query Select
+// rules): with no ProjectionExpression the query defaults to
+// ALL_PROJECTED_ATTRIBUTES (a KEYS_ONLY LSI returns only the keys), but a
+// ProjectionExpression naming a non-projected attribute recovers it from the
+// base table.
 func TestLSIQueryProjection(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -179,17 +183,34 @@ func TestLSIQueryProjection(t *testing.T) {
 		"id": sAttr("u1"), "sk": sAttr("s1"), "alt": sAttr("a1"), "extra": sAttr("x"),
 	})
 
-	out, err := client.Query(ctx, &dynamodb.QueryInput{
-		TableName:                 aws.String("lt"),
-		IndexName:                 aws.String("by-alt"),
-		KeyConditionExpression:    aws.String("id = :i AND alt = :a"),
-		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": sAttr("u1"), ":a": sAttr("a1")},
+	t.Run("no ProjectionExpression defaults to ALL_PROJECTED_ATTRIBUTES", func(t *testing.T) {
+		out, err := client.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String("lt"),
+			IndexName:                 aws.String("by-alt"),
+			KeyConditionExpression:    aws.String("id = :i AND alt = :a"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": sAttr("u1"), ":a": sAttr("a1")},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Items, 1)
+		assert.Len(t, out.Items[0], 3, "id, sk and alt only (KEYS_ONLY projected set)")
+		_, hasExtra := out.Items[0]["extra"]
+		assert.False(t, hasExtra, "a non-projected attribute must not appear without a ProjectionExpression")
 	})
-	require.NoError(t, err)
-	require.Len(t, out.Items, 1)
-	assert.Len(t, out.Items[0], 3, "id, sk and alt only")
-	_, hasExtra := out.Items[0]["extra"]
-	assert.False(t, hasExtra, "a non-projected attribute must not appear on an LSI query")
+
+	t.Run("ProjectionExpression fetches a non-projected attribute from the base table", func(t *testing.T) {
+		out, err := client.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String("lt"),
+			IndexName:                 aws.String("by-alt"),
+			KeyConditionExpression:    aws.String("id = :i AND alt = :a"),
+			ProjectionExpression:      aws.String("id, extra"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": sAttr("u1"), ":a": sAttr("a1")},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Items, 1)
+		assert.Len(t, out.Items[0], 2, "only the requested attributes")
+		assert.Equal(t, "x", attrS(t, out.Items[0], "extra"),
+			"an LSI transparently fetches a non-projected attribute from the base table")
+	})
 }
 
 // TestBatchGetItemProjection covers the per-table ProjectionExpression on

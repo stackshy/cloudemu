@@ -211,6 +211,15 @@ type QueryInput struct {
 	// The zero value (ascending) matches the historical behavior.
 	SortDescending bool
 
+	// ProjectionRequested reports that the caller supplied a ProjectionExpression
+	// which the wire layer will apply to the returned items. It only matters for
+	// a Local Secondary Index: real DynamoDB transparently fetches non-projected
+	// attributes from the base table, so when a projection is requested the driver
+	// must expose the full base item (letting the wire layer select any
+	// attribute). With no projection an index query defaults to
+	// ALL_PROJECTED_ATTRIBUTES, so the driver still trims to the projected set.
+	ProjectionRequested bool
+
 	// Deprecated: never implemented; use SortDescending. Retained so
 	// existing constructors keep compiling.
 	ScanForward bool
@@ -238,6 +247,12 @@ type ScanInput struct {
 
 	// ExclusiveStartKey selects key-based continuation; see QueryInput.
 	ExclusiveStartKey map[string]any
+
+	// ProjectionRequested reports that the caller supplied a ProjectionExpression;
+	// see QueryInput.ProjectionRequested. On a Local Secondary Index scan it makes
+	// the driver expose the full base item so non-projected attributes can be
+	// fetched, matching real DynamoDB.
+	ProjectionRequested bool
 }
 
 // QueryResult is the result of a query or scan.
