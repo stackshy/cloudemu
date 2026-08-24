@@ -20,6 +20,7 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 	cfg := rdsdriver.ClusterConfig{
 		ID:             rp.ResourceName,
 		Engine:         "SQLServer",
+		Location:       body.Location,
 		MasterUsername: stringFrom(body.Properties, func(p *armServerProps) string { return p.AdministratorLogin }),
 		MasterUserPassword: stringFrom(body.Properties, func(p *armServerProps) string {
 			return p.AdministratorLoginPassword
@@ -121,7 +122,12 @@ func (h *Handler) databases() (rdsdriver.Databases, bool) {
 }
 
 func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.DatabaseConfig {
-	cfg := rdsdriver.DatabaseConfig{Server: rp.ResourceName, Name: rp.SubResourceName}
+	cfg := rdsdriver.DatabaseConfig{
+		Server:   rp.ResourceName,
+		Name:     rp.SubResourceName,
+		Location: body.Location,
+		Tags:     body.Tags,
+	}
 	if body.SKU != nil {
 		cfg.SKUName = body.SKU.Name
 		cfg.SKUTier = body.SKU.Tier
@@ -151,6 +157,14 @@ func (*Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm
 
 	out, err := db.CreateDatabase(r.Context(), cfg)
 	if err != nil {
+		if cerrors.IsNotFound(err) {
+			// The only NotFound CreateDatabase raises is a missing parent server;
+			// real Azure answers 404 ParentResourceNotFound for a child under an
+			// absent parent.
+			azurearm.WriteParentNotFound(w, err)
+			return
+		}
+
 		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
@@ -190,6 +204,14 @@ func replaceDatabase(
 		merged.Collation = cfg.Collation
 	}
 
+	if cfg.Location != "" {
+		merged.Location = cfg.Location
+	}
+
+	if cfg.Tags != nil {
+		merged.Tags = cfg.Tags
+	}
+
 	if body.Properties != nil && body.Properties.ZoneRedundant != nil {
 		merged.ZoneRedundant = *body.Properties.ZoneRedundant
 	}
@@ -203,6 +225,8 @@ func replaceDatabase(
 		Name:          merged.Name,
 		Charset:       merged.Charset,
 		Collation:     merged.Collation,
+		Location:      merged.Location,
+		Tags:          merged.Tags,
 		SKUName:       merged.SKUName,
 		SKUTier:       merged.SKUTier,
 		ZoneRedundant: merged.ZoneRedundant,

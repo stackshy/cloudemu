@@ -299,7 +299,7 @@ func TestSDKTypedErrorsAndStart(t *testing.T) {
 		t.Fatalf("get missing cluster: got %v, want 404 ResponseError", err)
 	}
 
-	// Datacenter create under a missing cluster → typed 400.
+	// Datacenter create under a missing cluster → typed 404 ParentResourceNotFound.
 	dcPoller, err := dcc.BeginCreateUpdate(ctx, "rg1", "ghost", "dc1", armcosmos.DataCenterResource{
 		Properties: &armcosmos.DataCenterResourceProperties{NodeCount: to.Ptr[int32](3)},
 	}, nil)
@@ -307,8 +307,12 @@ func TestSDKTypedErrorsAndStart(t *testing.T) {
 		_, err = dcPoller.PollUntilDone(ctx, nil)
 	}
 
-	if !errors.As(err, &respErr) || respErr.StatusCode != 400 {
-		t.Fatalf("dc under missing cluster: got %v, want 400 ResponseError", err)
+	if !errors.As(err, &respErr) || respErr.StatusCode != 404 {
+		t.Fatalf("dc under missing cluster: got %v, want 404 ResponseError", err)
+	}
+
+	if respErr.ErrorCode != "ParentResourceNotFound" {
+		t.Fatalf("dc under missing cluster: got code %q, want ParentResourceNotFound", respErr.ErrorCode)
 	}
 
 	// Deallocate → Start round-trips (Start shares the async path).

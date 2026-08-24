@@ -22,6 +22,7 @@ type vnetResponse struct {
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Location   string            `json:"location"`
+	Etag       string            `json:"etag,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties vnetResponseProps `json:"properties"`
 }
@@ -48,6 +49,7 @@ type subnetRequestProps struct {
 type subnetResponse struct {
 	ID         string              `json:"id"`
 	Name       string              `json:"name"`
+	Etag       string              `json:"etag,omitempty"`
 	Properties subnetResponseProps `json:"properties"`
 }
 
@@ -86,6 +88,7 @@ type securityRuleProps struct {
 	Access                   string `json:"access,omitempty"`
 	Priority                 int    `json:"priority,omitempty"`
 	Direction                string `json:"direction,omitempty"`
+	ProvisioningState        string `json:"provisioningState,omitempty"`
 }
 
 type nsgResponse struct {
@@ -93,13 +96,15 @@ type nsgResponse struct {
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Location   string            `json:"location"`
+	Etag       string            `json:"etag,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties nsgResponseProps  `json:"properties"`
 }
 
 type nsgResponseProps struct {
-	ProvisioningState string         `json:"provisioningState"`
-	SecurityRules     []securityRule `json:"securityRules,omitempty"`
+	ProvisioningState    string         `json:"provisioningState"`
+	SecurityRules        []securityRule `json:"securityRules"`
+	DefaultSecurityRules []securityRule `json:"defaultSecurityRules,omitempty"`
 }
 
 type nsgListResponse struct {

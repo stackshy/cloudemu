@@ -3,10 +3,11 @@
 
 Azure's `tablestorage` service · portable interface `driver.TableStorage` · [Azure index](./README.md)
 
-## Operations (8)
+## Operations (9)
 
 | Operation | Description |
 | --- | --- |
+| `ApplyBatch` | ApplyBatch atomically applies an entity group transaction: either every |
 | `CreateTable` |  |
 | `DeleteEntity` |  |
 | `DeleteTable` |  |

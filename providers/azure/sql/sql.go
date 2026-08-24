@@ -241,7 +241,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		State:            rdsdriver.StateAvailable,
 		ClusterID:        cfg.ClusterID,
 		ElasticPoolID:    cfg.ElasticPoolID,
-		AvailabilityZone: server.SubnetGroupName, // re-use as region carrier
+		Location:         server.Location,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
 	}
@@ -465,11 +465,9 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		Endpoint:       cfg.ID + ".database.windows.net",
 		Port:           defaultPort,
 		State:          rdsdriver.StateAvailable,
-		// Stash region in SubnetGroupName since the field exists; consumers
-		// can read it back from there.
-		SubnetGroupName: m.opts.Region,
-		CreatedAt:       m.opts.Clock.Now().UTC(),
-		Tags:            copyTags(cfg.Tags),
+		Location:       orDefault(cfg.Location, m.opts.Region),
+		CreatedAt:      m.opts.Clock.Now().UTC(),
+		Tags:           copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)

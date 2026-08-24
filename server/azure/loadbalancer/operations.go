@@ -3,7 +3,6 @@ package loadbalancer
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -11,17 +10,18 @@ import (
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
-// Internal tags scope a driver target group to its Azure parent load balancer
-// and preserve the SDK-facing backend-pool name. They are stripped from the
-// tags echoed back to callers.
-const (
-	tagLBName   = "cloudemu:azureLBName"
-	tagPoolName = "cloudemu:azurePoolName"
-)
+// azureLB returns the native Azure load-balancer store if the driver implements
+// it (the Azure provider does).
+func (h *Handler) azureLB() (lbdriver.AzureLoadBalancers, bool) {
+	az, ok := h.lb.(lbdriver.AzureLoadBalancers)
+
+	return az, ok
+}
 
 // createOrUpdateLoadBalancer handles PUT .../loadBalancers/{name}. The whole
-// nested load balancer arrives in one body; we reconcile the driver's LB,
-// backend pools (target groups) and load-balancing rules (listeners) to match.
+// nested load balancer arrives in one body and fully REPLACES the stored state,
+// so any frontend / pool / rule / probe omitted from the body is removed —
+// matching ARM's CreateOrUpdate semantics (no stale-child accumulation).
 //
 // LoadBalancers.CreateOrUpdate is an LRO in the SDK; returning 200 with the
 // fully-provisioned body (ProvisioningState=Succeeded) completes the poller on
@@ -32,40 +32,346 @@ func (h *Handler) createOrUpdateLoadBalancer(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	lb, err := h.upsertLB(r.Context(), rp.ResourceName, &body)
+	az, ok := h.azureLB()
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"load balancers are not supported by this driver")
+
+		return
+	}
+
+	stored, err := az.CreateOrUpdateAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName, buildAzureLB(&body))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	pools, err := h.reconcilePools(r.Context(), lb, &body)
+	// Keep a minimal cross-cloud LB record so resource discovery still sees the
+	// load balancer; its rich shape lives in the native store.
+	h.syncGenericLB(r.Context(), rp.ResourceName, &body)
+
+	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored))
+}
+
+func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	az, ok := h.azureLB()
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "load balancer not found")
+		return
+	}
+
+	stored, err := az.GetAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	if err := h.reconcileRules(r.Context(), lb, pools, &body); err != nil {
+	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored))
+}
+
+// deleteLoadBalancer removes the load balancer from both the native store and
+// the cross-cloud record. LoadBalancers.Delete is an LRO; a 200 with empty body
+// completes the poller.
+func (h *Handler) deleteLoadBalancer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	az, ok := h.azureLB()
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "load balancer not found")
+		return
+	}
+
+	if derr := az.DeleteAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName); derr != nil {
+		azurearm.WriteCErr(w, derr)
+		return
+	}
+
+	if lb, ferr := h.findGenericLB(r.Context(), rp.ResourceName); ferr == nil {
+		_ = h.lb.DeleteLoadBalancer(r.Context(), lb.ARN)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) listLoadBalancers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	az, ok := h.azureLB()
+	if !ok {
+		azurearm.WriteJSON(w, http.StatusOK, lbListResult{Value: []loadBalancerJSON{}})
+		return
+	}
+
+	stored, err := az.ListAzureLoadBalancers(r.Context(), rp.ResourceGroup)
+	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	out, err := h.buildLBJSON(r.Context(), rp, lb)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
+	out := lbListResult{Value: make([]loadBalancerJSON, 0, len(stored))}
+
+	for i := range stored {
+		scope := *rp
+		scope.ResourceGroup = stored[i].ResourceGroup
+		scope.ResourceName = stored[i].Name
+		out.Value = append(out.Value, toLBJSON(&scope, &stored[i]))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
 }
 
-// upsertLB creates the load balancer if absent, otherwise returns the existing
-// one (CreateOrUpdate is idempotent on the top-level resource).
-func (h *Handler) upsertLB(ctx context.Context, name string, body *loadBalancerJSON) (*lbdriver.LBInfo, error) {
-	if lb, err := h.findLBByName(ctx, name); err == nil {
-		return lb, nil
+// --- request → native model ---
+
+// buildAzureLB maps the ARM request body to the native store model, preserving
+// every frontend/pool/rule/probe name and each rule's independent ports and
+// child references verbatim.
+func buildAzureLB(body *loadBalancerJSON) lbdriver.AzureLoadBalancer {
+	lb := lbdriver.AzureLoadBalancer{
+		Location: firstNonEmpty(body.Location, defaultLBLocation),
+		SKUName:  defaultSKUName,
+		SKUTier:  defaultSKUTier,
+		Tags:     stripInternalTags(body.Tags),
 	}
 
-	return h.lb.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+	if body.SKU != nil {
+		lb.SKUName = firstNonEmpty(body.SKU.Name, defaultSKUName)
+		lb.SKUTier = firstNonEmpty(body.SKU.Tier, defaultSKUTier)
+	}
+
+	if body.Properties == nil {
+		return lb
+	}
+
+	lb.Frontends = buildFrontends(body.Properties.FrontendIPConfigurations)
+	lb.BackendPools = buildPools(body.Properties.BackendAddressPools)
+	lb.Probes = buildProbes(body.Properties.Probes)
+	lb.Rules = buildRules(body.Properties.LoadBalancingRules)
+
+	return lb
+}
+
+func buildFrontends(in []frontendIPJSON) []lbdriver.AzureLBFrontend {
+	out := make([]lbdriver.AzureLBFrontend, 0, len(in))
+
+	for i := range in {
+		fe := lbdriver.AzureLBFrontend{Name: in[i].Name}
+
+		if p := in[i].Properties; p != nil {
+			fe.PrivateIPAddress = p.PrivateIPAddress
+			fe.AllocationMethod = p.PrivateIPAllocationMethod
+
+			if p.Subnet != nil {
+				fe.SubnetID = p.Subnet.ID
+			}
+
+			if p.PublicIPAddress != nil {
+				fe.PublicIPID = p.PublicIPAddress.ID
+			}
+		}
+
+		out = append(out, fe)
+	}
+
+	return out
+}
+
+func buildPools(in []backendPoolJSON) []string {
+	out := make([]string, 0, len(in))
+
+	for i := range in {
+		if in[i].Name != "" {
+			out = append(out, in[i].Name)
+		}
+	}
+
+	return out
+}
+
+func buildProbes(in []probeJSON) []lbdriver.AzureLBProbe {
+	out := make([]lbdriver.AzureLBProbe, 0, len(in))
+
+	for i := range in {
+		pr := lbdriver.AzureLBProbe{Name: in[i].Name}
+
+		if p := in[i].Properties; p != nil {
+			pr.Protocol = p.Protocol
+			pr.Port = int(p.Port)
+			pr.RequestPath = p.RequestPath
+			pr.IntervalInSeconds = int(p.IntervalInSeconds)
+			pr.NumberOfProbes = int(p.NumberOfProbes)
+		}
+
+		out = append(out, pr)
+	}
+
+	return out
+}
+
+func buildRules(in []loadBalancingRuleJSON) []lbdriver.AzureLBRule {
+	out := make([]lbdriver.AzureLBRule, 0, len(in))
+
+	for i := range in {
+		rule := lbdriver.AzureLBRule{Name: in[i].Name}
+
+		if p := in[i].Properties; p != nil {
+			rule.Protocol = firstNonEmpty(p.Protocol, protocolTCP)
+			rule.FrontendPort = int(p.FrontendPort)
+			rule.BackendPort = int(p.BackendPort)
+
+			if rule.BackendPort == 0 {
+				rule.BackendPort = rule.FrontendPort
+			}
+
+			rule.FrontendName = lastPathSegment(refID(p.FrontendIPConfiguration))
+			rule.BackendPoolName = lastPathSegment(refID(p.BackendAddressPool))
+			rule.ProbeName = lastPathSegment(refID(p.Probe))
+			rule.IdleTimeoutMin = int(p.IdleTimeoutInMinutes)
+			rule.LoadDistribution = p.LoadDistribution
+
+			if p.EnableFloatingIP != nil {
+				rule.EnableFloatingIP = *p.EnableFloatingIP
+			}
+		}
+
+		out = append(out, rule)
+	}
+
+	return out
+}
+
+// --- native model → response ---
+
+// toLBJSON reconstructs the nested ARM load balancer body from the stored
+// native model, stamping ids, etags and terminal provisioning states.
+func toLBJSON(rp *azurearm.ResourcePath, lb *lbdriver.AzureLoadBalancer) loadBalancerJSON {
+	lbID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeLBs, rp.ResourceName)
+
+	props := &loadBalancerProps{
+		ProvisioningState:        provisioningStateSucceeded,
+		FrontendIPConfigurations: frontendsJSON(lbID, lb.Frontends),
+		BackendAddressPools:      poolsJSON(lbID, lb.BackendPools),
+		Probes:                   probesJSON(lbID, lb.Probes),
+		LoadBalancingRules:       rulesJSON(lbID, lb.Rules),
+	}
+
+	return loadBalancerJSON{
+		ID:         lbID,
+		Name:       rp.ResourceName,
+		Type:       lbResourceType,
+		Location:   firstNonEmpty(lb.Location, defaultLBLocation),
+		Etag:       weakETag(lbID),
+		SKU:        &lbSKU{Name: firstNonEmpty(lb.SKUName, defaultSKUName), Tier: firstNonEmpty(lb.SKUTier, defaultSKUTier)},
+		Tags:       lb.Tags,
+		Properties: props,
+	}
+}
+
+func frontendsJSON(lbID string, in []lbdriver.AzureLBFrontend) []frontendIPJSON {
+	out := make([]frontendIPJSON, 0, len(in))
+
+	for i := range in {
+		fe := in[i]
+		id := lbID + "/frontendIPConfigurations/" + fe.Name
+		p := &frontendIPProps{
+			PrivateIPAddress:          fe.PrivateIPAddress,
+			PrivateIPAllocationMethod: fe.AllocationMethod,
+			ProvisioningState:         provisioningStateSucceeded,
+		}
+
+		if fe.SubnetID != "" {
+			p.Subnet = &subResource{ID: fe.SubnetID}
+		}
+
+		if fe.PublicIPID != "" {
+			p.PublicIPAddress = &subResource{ID: fe.PublicIPID}
+		}
+
+		out = append(out, frontendIPJSON{
+			ID: id, Name: fe.Name, Type: feResourceType, Etag: weakETag(id), Properties: p,
+		})
+	}
+
+	return out
+}
+
+func poolsJSON(lbID string, names []string) []backendPoolJSON {
+	out := make([]backendPoolJSON, 0, len(names))
+
+	for _, name := range names {
+		id := lbID + "/backendAddressPools/" + name
+		out = append(out, backendPoolJSON{
+			ID: id, Name: name, Type: poolResourceType, Etag: weakETag(id),
+			Properties: &backendPoolProps{ProvisioningState: provisioningStateSucceeded},
+		})
+	}
+
+	return out
+}
+
+func probesJSON(lbID string, in []lbdriver.AzureLBProbe) []probeJSON {
+	out := make([]probeJSON, 0, len(in))
+
+	for i := range in {
+		pr := in[i]
+		id := lbID + "/probes/" + pr.Name
+		out = append(out, probeJSON{
+			ID: id, Name: pr.Name, Type: probeResourceType, Etag: weakETag(id),
+			Properties: &probeProps{
+				Protocol:          pr.Protocol,
+				Port:              i32(pr.Port),
+				RequestPath:       pr.RequestPath,
+				IntervalInSeconds: i32(pr.IntervalInSeconds),
+				NumberOfProbes:    i32(pr.NumberOfProbes),
+				ProvisioningState: provisioningStateSucceeded,
+			},
+		})
+	}
+
+	return out
+}
+
+func rulesJSON(lbID string, in []lbdriver.AzureLBRule) []loadBalancingRuleJSON {
+	out := make([]loadBalancingRuleJSON, 0, len(in))
+
+	for i := range in {
+		rule := in[i]
+		id := lbID + "/loadBalancingRules/" + rule.Name
+		p := &loadBalancingRuleProps{
+			Protocol:             firstNonEmpty(rule.Protocol, protocolTCP),
+			FrontendPort:         i32(rule.FrontendPort),
+			BackendPort:          i32(rule.BackendPort),
+			IdleTimeoutInMinutes: i32(rule.IdleTimeoutMin),
+			LoadDistribution:     rule.LoadDistribution,
+			EnableFloatingIP:     &rule.EnableFloatingIP,
+			ProvisioningState:    provisioningStateSucceeded,
+		}
+
+		if rule.FrontendName != "" {
+			p.FrontendIPConfiguration = &subResource{ID: lbID + "/frontendIPConfigurations/" + rule.FrontendName}
+		}
+
+		if rule.BackendPoolName != "" {
+			p.BackendAddressPool = &subResource{ID: lbID + "/backendAddressPools/" + rule.BackendPoolName}
+		}
+
+		if rule.ProbeName != "" {
+			p.Probe = &subResource{ID: lbID + "/probes/" + rule.ProbeName}
+		}
+
+		out = append(out, loadBalancingRuleJSON{
+			ID: id, Name: rule.Name, Type: ruleResourceType, Etag: weakETag(id), Properties: p,
+		})
+	}
+
+	return out
+}
+
+// --- cross-cloud (discovery) sync ---
+
+// syncGenericLB ensures a minimal cross-cloud LB record exists for name so
+// resource discovery can still enumerate the load balancer.
+func (h *Handler) syncGenericLB(ctx context.Context, name string, body *loadBalancerJSON) {
+	if _, err := h.findGenericLB(ctx, name); err == nil {
+		return
+	}
+
+	_, _ = h.lb.CreateLoadBalancer(ctx, lbdriver.LBConfig{
 		Name:   name,
 		Type:   "network",
 		Scheme: schemeFromBody(body),
@@ -73,175 +379,8 @@ func (h *Handler) upsertLB(ctx context.Context, name string, body *loadBalancerJ
 	})
 }
 
-// reconcilePools ensures every backend address pool in the body exists as a
-// driver target group tagged to this load balancer, and returns them keyed by
-// Azure pool name.
-func (h *Handler) reconcilePools(ctx context.Context, lb *lbdriver.LBInfo,
-	body *loadBalancerJSON,
-) (map[string]*lbdriver.TargetGroupInfo, error) {
-	out := make(map[string]*lbdriver.TargetGroupInfo)
-
-	if body.Properties == nil {
-		return out, nil
-	}
-
-	existing, err := h.poolsForLB(ctx, lb.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range body.Properties.BackendAddressPools {
-		pool := body.Properties.BackendAddressPools[i]
-		if pool.Name == "" {
-			continue
-		}
-
-		if tg, ok := existing[pool.Name]; ok {
-			out[pool.Name] = tg
-			continue
-		}
-
-		tg, cErr := h.lb.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
-			Name: lb.Name + "-" + pool.Name,
-			Tags: map[string]string{tagLBName: lb.Name, tagPoolName: pool.Name},
-		})
-		if cErr != nil {
-			return nil, cErr
-		}
-
-		out[pool.Name] = tg
-	}
-
-	return out, nil
-}
-
-// reconcileRules ensures every load-balancing rule in the body exists as a
-// driver listener on this load balancer, resolving the rule's backend pool
-// reference to the matching target group ARN.
-func (h *Handler) reconcileRules(ctx context.Context, lb *lbdriver.LBInfo,
-	pools map[string]*lbdriver.TargetGroupInfo, body *loadBalancerJSON,
-) error {
-	if body.Properties == nil {
-		return nil
-	}
-
-	existing, err := h.lb.DescribeListeners(ctx, lb.ARN)
-	if err != nil {
-		return err
-	}
-
-	haveByPort := make(map[int]struct{}, len(existing))
-	for i := range existing {
-		haveByPort[existing[i].Port] = struct{}{}
-	}
-
-	for i := range body.Properties.LoadBalancingRules {
-		rule := body.Properties.LoadBalancingRules[i]
-		if rule.Properties == nil {
-			continue
-		}
-
-		port := int(rule.Properties.FrontendPort)
-		if _, ok := haveByPort[port]; ok {
-			continue
-		}
-
-		var tgARN string
-		if rule.Properties.BackendAddressPool != nil {
-			if tg, ok := pools[poolNameFromID(rule.Properties.BackendAddressPool.ID)]; ok {
-				tgARN = tg.ARN
-			}
-		}
-
-		if _, err := h.lb.CreateListener(ctx, lbdriver.ListenerConfig{
-			LBARN:          lb.ARN,
-			Protocol:       protocolOrDefault(rule.Properties.Protocol),
-			Port:           port,
-			TargetGroupARN: tgARN,
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	lb, err := h.findLBByName(r.Context(), rp.ResourceName)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	out, err := h.buildLBJSON(r.Context(), rp, lb)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, out)
-}
-
-// deleteLoadBalancer removes the load balancer and its backend pools. The
-// driver drops the load balancer's listeners as part of DeleteLoadBalancer.
-// LoadBalancers.Delete is an LRO; a 200 with empty body completes the poller.
-func (h *Handler) deleteLoadBalancer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	lb, err := h.findLBByName(r.Context(), rp.ResourceName)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	pools, err := h.poolsForLB(r.Context(), lb.Name)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	for _, tg := range pools {
-		if derr := h.lb.DeleteTargetGroup(r.Context(), tg.ARN); derr != nil && !cerrors.IsNotFound(derr) {
-			azurearm.WriteCErr(w, derr)
-			return
-		}
-	}
-
-	if derr := h.lb.DeleteLoadBalancer(r.Context(), lb.ARN); derr != nil {
-		azurearm.WriteCErr(w, derr)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func (h *Handler) listLoadBalancers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	lbs, err := h.lb.DescribeLoadBalancers(r.Context(), nil)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	out := lbListResult{Value: make([]loadBalancerJSON, 0, len(lbs))}
-
-	for i := range lbs {
-		scope := *rp
-		scope.ResourceName = lbs[i].Name
-
-		item, berr := h.buildLBJSON(r.Context(), &scope, &lbs[i])
-		if berr != nil {
-			azurearm.WriteCErr(w, berr)
-			return
-		}
-
-		out.Value = append(out.Value, item)
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, out)
-}
-
-// --- helpers ---
-
-// findLBByName resolves the SDK-facing load balancer name to its driver record.
-func (h *Handler) findLBByName(ctx context.Context, name string) (*lbdriver.LBInfo, error) {
+// findGenericLB resolves the cross-cloud LB record by its user-assigned name.
+func (h *Handler) findGenericLB(ctx context.Context, name string) (*lbdriver.LBInfo, error) {
 	lbs, err := h.lb.DescribeLoadBalancers(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -256,141 +395,26 @@ func (h *Handler) findLBByName(ctx context.Context, name string) (*lbdriver.LBIn
 	return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
 }
 
-// poolsForLB returns the target groups tagged to load balancer lbName, keyed by
-// their Azure pool name.
-func (h *Handler) poolsForLB(ctx context.Context, lbName string) (map[string]*lbdriver.TargetGroupInfo, error) {
-	tgs, err := h.lb.DescribeTargetGroups(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
+// --- helpers ---
 
-	out := make(map[string]*lbdriver.TargetGroupInfo)
-
-	for i := range tgs {
-		if tgs[i].Tags[tagLBName] != lbName {
-			continue
-		}
-
-		out[tgs[i].Tags[tagPoolName]] = &tgs[i]
-	}
-
-	return out, nil
+// weakETag wraps a stable etag in the weak-validator form (W/"...") ARM uses
+// for load-balancer resources.
+func weakETag(id string) string {
+	return azurearm.WeakETag(id)
 }
 
-// buildLBJSON reconstructs the nested ARM load balancer body from driver state.
-func (h *Handler) buildLBJSON(ctx context.Context, rp *azurearm.ResourcePath,
-	lb *lbdriver.LBInfo,
-) (loadBalancerJSON, error) {
-	pools, err := h.poolsForLB(ctx, lb.Name)
-	if err != nil {
-		return loadBalancerJSON{}, err
-	}
-
-	listeners, err := h.lb.DescribeListeners(ctx, lb.ARN)
-	if err != nil {
-		return loadBalancerJSON{}, err
-	}
-
-	lbID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeLBs, lb.Name)
-
-	props := &loadBalancerProps{
-		ProvisioningState: provisioningStateSucceeded,
-		FrontendIPConfigurations: []frontendIPJSON{{
-			ID:   lbID + "/frontendIPConfigurations/default",
-			Name: "default",
-			Type: feResourceType,
-			Properties: &frontendIPProps{
-				ProvisioningState: provisioningStateSucceeded,
-			},
-		}},
-	}
-
-	// Backend pools, keyed by ARN so rules can reference them.
-	poolIDByARN := make(map[string]string, len(pools))
-
-	for name, tg := range pools {
-		poolID := lbID + "/backendAddressPools/" + name
-		poolIDByARN[tg.ARN] = poolID
-		props.BackendAddressPools = append(props.BackendAddressPools, backendPoolJSON{
-			ID:         poolID,
-			Name:       name,
-			Type:       poolResourceType,
-			Properties: &backendPoolProps{ProvisioningState: provisioningStateSucceeded},
-		})
-	}
-
-	for i := range listeners {
-		li := listeners[i]
-		ruleName := "rule-" + portString(li.Port)
-		ruleProps := &loadBalancingRuleProps{
-			Protocol:          li.Protocol,
-			FrontendPort:      int32(li.Port),
-			BackendPort:       int32(li.Port),
-			ProvisioningState: provisioningStateSucceeded,
-			FrontendIPConfiguration: &subResource{
-				ID: lbID + "/frontendIPConfigurations/default",
-			},
-		}
-
-		if poolID, ok := poolIDByARN[li.TargetGroupARN]; ok {
-			ruleProps.BackendAddressPool = &subResource{ID: poolID}
-		}
-
-		props.LoadBalancingRules = append(props.LoadBalancingRules, loadBalancingRuleJSON{
-			ID:         lbID + "/loadBalancingRules/" + ruleName,
-			Name:       ruleName,
-			Type:       ruleResourceType,
-			Properties: ruleProps,
-		})
-	}
-
-	return loadBalancerJSON{
-		ID:         lbID,
-		Name:       lb.Name,
-		Type:       lbResourceType,
-		Location:   defaultLBLocation,
-		SKU:        &lbSKU{Name: "Standard", Tier: "Regional"},
-		Tags:       stripInternalTags(lb.Tags),
-		Properties: props,
-	}, nil
-}
-
-// schemeFromBody infers the driver scheme from the request body. Azure load
-// balancers are internal unless a public frontend is present; we default to
-// internal, which is the common case for the Standard SKU.
+// schemeFromBody infers the cross-cloud scheme from the request body. An Azure
+// load balancer is internal unless a public frontend is present.
 func schemeFromBody(body *loadBalancerJSON) string {
 	if body.Properties != nil {
 		for _, fe := range body.Properties.FrontendIPConfigurations {
-			if fe.Properties != nil && fe.Properties.PrivateIPAddress == "" {
+			if fe.Properties != nil && fe.Properties.PublicIPAddress != nil {
 				return "internet-facing"
 			}
 		}
 	}
 
 	return "internal"
-}
-
-// protocolOrDefault normalizes the ARM transport protocol to the driver's
-// stored value, defaulting to TCP.
-func protocolOrDefault(p string) string {
-	if p == "" {
-		return "Tcp"
-	}
-
-	return p
-}
-
-// poolNameFromID extracts the trailing backend-pool name from an ARM
-// backendAddressPools sub-resource ID.
-func poolNameFromID(id string) string {
-	const marker = "/backendAddressPools/"
-
-	idx := strings.LastIndex(id, marker)
-	if idx < 0 {
-		return id
-	}
-
-	return id[idx+len(marker):]
 }
 
 // stripInternalTags removes cloudemu-internal bookkeeping tags before echoing
@@ -417,6 +441,38 @@ func stripInternalTags(in map[string]string) map[string]string {
 	return out
 }
 
-func portString(p int) string {
-	return strconv.Itoa(p)
+// refID returns the id of a sub-resource reference, or "" if nil.
+func refID(ref *subResource) string {
+	if ref == nil {
+		return ""
+	}
+
+	return ref.ID
+}
+
+// lastPathSegment returns the trailing segment of an ARM resource id.
+func lastPathSegment(id string) string {
+	id = strings.TrimRight(id, "/")
+	if idx := strings.LastIndexByte(id, '/'); idx >= 0 {
+		return id[idx+1:]
+	}
+
+	return id
+}
+
+// firstNonEmpty returns a if non-empty, otherwise b.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+
+	return b
+}
+
+// i32 narrows a small, non-negative load-balancer config value (port, interval,
+// probe count, timeout) to the int32 the ARM wire types use.
+//
+//nolint:gosec // G115: these are small, non-negative port/interval/count/timeout inputs
+func i32(n int) int32 {
+	return int32(n)
 }

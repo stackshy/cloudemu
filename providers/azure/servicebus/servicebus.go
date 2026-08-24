@@ -52,6 +52,7 @@ type queueData struct {
 	lastModifiedAt     time.Time
 	deduplicationIndex map[string]time.Time
 	dlqConfig          *driver.DeadLetterConfig
+	metadata           map[string]string
 }
 
 // FunctionTrigger is a function that gets called when a message is sent to a queue.
@@ -167,6 +168,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		lastModifiedAt:     now,
 		deduplicationIndex: make(map[string]time.Time),
 		dlqConfig:          cfg.DeadLetterQueue,
+		metadata:           make(map[string]string),
 	}
 
 	m.queues.Set(url, qd)
@@ -445,6 +447,7 @@ func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) 
 		Body:          msg.Body,
 		Attributes:    attrs,
 		GroupID:       msg.GroupID,
+		ReceiveCount:  msg.ReceiveCount,
 	}
 }
 

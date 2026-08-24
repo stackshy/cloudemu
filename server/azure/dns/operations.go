@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"context"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -47,7 +48,41 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
+	// Azure auto-provisions the apex SOA and NS record sets when a zone is
+	// created, so a fresh public zone already reports numberOfRecordSets=2 and
+	// its ListByDnsZone is non-empty. Refresh info so the response carries the
+	// updated record count.
+	if refreshed := h.provisionApexRecords(r.Context(), info); refreshed != nil {
+		info = refreshed
+	}
+
 	azurearm.WriteJSON(w, http.StatusCreated, toZoneJSON(rp, info))
+}
+
+// provisionApexRecords creates the apex SOA and NS record sets Azure DNS
+// auto-generates with every new zone. It returns the zone re-read with the
+// bumped record count, or nil if the zone could not be re-read (leaving the
+// caller's copy in place). Private zones get no name-server-backed records.
+func (h *Handler) provisionApexRecords(ctx context.Context, zone *dnsdriver.ZoneInfo) *dnsdriver.ZoneInfo {
+	nameServers := zoneNameServers(zone.Name, zone.Private)
+	if len(nameServers) == 0 {
+		return nil
+	}
+
+	_, _ = h.dns.CreateRecord(ctx, dnsdriver.RecordConfig{
+		ZoneID: zone.ID, Name: apexRecordName, Type: recTypeNS, TTL: nsRecordTTL, Values: nameServers,
+	})
+	_, _ = h.dns.CreateRecord(ctx, dnsdriver.RecordConfig{
+		ZoneID: zone.ID, Name: apexRecordName, Type: recTypeSOA, TTL: soaRecordTTL,
+		Values: []string{nameServers[0], soaEmail},
+	})
+
+	refreshed, err := h.dns.GetZone(ctx, zone.ID)
+	if err != nil {
+		return nil
+	}
+
+	return refreshed
 }
 
 func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

@@ -30,6 +30,22 @@ type messageXML struct {
 	MessageText     string `xml:"MessageText,omitempty"`
 }
 
+// peekMessagesList is the QueueMessagesList body returned by Peek Messages. It
+// omits PopReceipt and TimeNextVisible (a peek is non-destructive) and always
+// renders DequeueCount, matching the real service.
+type peekMessagesList struct {
+	XMLName  xml.Name         `xml:"QueueMessagesList"`
+	Messages []peekMessageXML `xml:"QueueMessage"`
+}
+
+type peekMessageXML struct {
+	MessageID      string `xml:"MessageId"`
+	InsertionTime  string `xml:"InsertionTime"`
+	ExpirationTime string `xml:"ExpirationTime"`
+	DequeueCount   int64  `xml:"DequeueCount"`
+	MessageText    string `xml:"MessageText"`
+}
+
 // listQueuesResult is the EnumerationResults body for GET /?comp=list.
 type listQueuesResult struct {
 	XMLName    xml.Name   `xml:"EnumerationResults"`
