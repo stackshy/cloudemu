@@ -61,6 +61,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.update(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -145,6 +147,54 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	// SDK is happiest with sync 200/201 for sshPublicKeys.
 	azurearm.WriteJSON(w, http.StatusOK, body)
+}
+
+// update handles PATCH .../sshPublicKeys/{name}. It updates the resource's
+// publicKey and/or tags in place (Azure SshPublicKeys Update). A publicKey
+// omitted from the body leaves the key material unchanged; a tags object
+// present in the body replaces the resource's tags.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	updater, ok := h.compute.(computedriver.AzureSSHKeyUpdater)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "sshPublicKeys update not supported")
+		return
+	}
+
+	existing, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	var req sshKeyRequest
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// PATCH semantics: an omitted publicKey keeps the current key material; an
+	// omitted tags object keeps the current tags.
+	publicKey := tagOr(existing.Tags, publicKeyTag, existing.PublicKey)
+	if req.Properties.PublicKey != "" {
+		publicKey = req.Properties.PublicKey
+	}
+
+	userTags := stripInternalTags(existing.Tags)
+	if req.Tags != nil {
+		userTags = req.Tags
+	}
+
+	merged := mergeTags(userTags, rp.ResourceName, publicKey, rp.ResourceGroup)
+
+	updated, err := updater.UpdateKeyPair(r.Context(), rp.ResourceName, &publicKey, merged)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toSSHKeyResponse(updated, rp, ""))
 }
 
 //nolint:gocritic // rp is a request-scoped value

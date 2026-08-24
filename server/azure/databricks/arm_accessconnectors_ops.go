@@ -44,6 +44,7 @@ func (h *Handler) createOrUpdateAccessConnector(w http.ResponseWriter, r *http.R
 
 	cfg := dbxdriver.AccessConnectorConfig{
 		Name:          rp.ResourceName,
+		Subscription:  rp.Subscription,
 		ResourceGroup: rp.ResourceGroup,
 		Location:      body.Location,
 		Tags:          body.Tags,

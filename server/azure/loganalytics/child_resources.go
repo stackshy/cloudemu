@@ -169,13 +169,24 @@ func (h *Handler) getChild(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 	azurearm.WriteJSON(w, http.StatusOK, h.childToJSON(rp, res))
 }
 
+// deleteChild removes a workspace child. The missing-resource status differs per
+// child type, matching the Log Analytics REST reference exactly:
+//   - tables:        204 No Content ("Resource does not exist")
+//   - dataExports:   404 Not Found (documented response, which the SDK ignores)
+//   - savedSearches: only 200 is documented; a miss falls through to a 404
+//     ErrorResponse ("Other Status Codes")
 func (h *Handler) deleteChild(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	if !h.children.delete(rp.ResourceName, rp.SubResource, rp.SubResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", rp.SubResource+" "+rp.SubResourceName+" not found")
+	if h.children.delete(rp.ResourceName, rp.SubResource, rp.SubResourceName) {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if rp.SubResource == subTables {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	azurearm.WriteError(w, http.StatusNotFound, "NotFound", rp.SubResource+" "+rp.SubResourceName+" not found")
 }
 
 func (h *Handler) listChildren(w http.ResponseWriter, rp *azurearm.ResourcePath) {

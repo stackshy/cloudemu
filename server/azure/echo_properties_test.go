@@ -113,7 +113,9 @@ func TestEchoUnmodeledPropertiesRoundTrip(t *testing.T) {
 		t.Errorf("create response dropped evictionPolicy: %v", cp["evictionPolicy"])
 	}
 
-	if cp["provisioningState"] != "Succeeded" {
+	// A create is a long-running op: the handler's authoritative create value
+	// is "Creating" (it settles to "Succeeded" on a later GET).
+	if cp["provisioningState"] != "Creating" {
 		t.Errorf("create response lost modeled provisioningState: %v", cp["provisioningState"])
 	}
 
@@ -150,12 +152,14 @@ func TestEchoDoesNotOverrideModeledFields(t *testing.T) {
 		"location": "eastus",
 		"properties": map[string]any{
 			"hardwareProfile":   map[string]any{"vmSize": "Standard_D2s_v5"},
-			"provisioningState": "Creating", // the handler owns this — must win
+			"provisioningState": "Succeeded", // the handler owns this — must win
 		},
 	})
 
-	if got := props(t, created)["provisioningState"]; got != "Succeeded" {
-		t.Errorf("overlay overrode modeled provisioningState: got %v, want Succeeded", got)
+	// The handler's authoritative create value ("Creating") must win over the
+	// request-supplied value rather than the overlay clobbering it.
+	if got := props(t, created)["provisioningState"]; got != "Creating" {
+		t.Errorf("overlay overrode modeled provisioningState: got %v, want Creating", got)
 	}
 }
 

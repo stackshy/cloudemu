@@ -3,6 +3,7 @@ package loganalytics
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -61,10 +62,18 @@ func (h *Handler) getWorkspace(w http.ResponseWriter, r *http.Request, rp *azure
 }
 
 // deleteWorkspace removes the workspace. Workspaces.Delete is an LRO in the SDK;
-// returning 200 with an empty body completes the poller on the first response.
+// returning 200 with an empty body completes the poller on the first response. A
+// missing workspace makes the ARM DELETE idempotent: 204 No Content ("Resource
+// does not exist"), not a 404 error body.
 func (h *Handler) deleteWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if err := h.logs.DeleteLogGroup(r.Context(), rp.ResourceName); err != nil {
+		if cerrors.IsNotFound(err) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		azurearm.WriteCErr(w, err)
+
 		return
 	}
 

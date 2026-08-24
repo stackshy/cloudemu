@@ -2,6 +2,7 @@ package route53_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -181,6 +182,38 @@ func TestSDKRoutingPolicyRoundTrip(t *testing.T) {
 	geo := findRecordSet(t, sets, "geo.routing.com.", r53types.RRTypeA)
 	if geo.GeoLocation == nil || aws.ToString(geo.GeoLocation.CountryCode) != "IN" {
 		t.Fatalf("GeoLocation = %+v, want CountryCode IN", geo.GeoLocation)
+	}
+}
+
+// TestSDKWeightedRecordRequiresSetIdentifier pins that a CREATE of a weighted
+// routing record set (Weight set) with no SetIdentifier is rejected as
+// InvalidChangeBatch, matching real Route 53, and that the record is not stored.
+func TestSDKWeightedRecordRequiresSetIdentifier(t *testing.T) {
+	client := newRoute53Client(t)
+	zoneID := createRoutingZone(t, client, "wtd-req.com.")
+	name := "app.wtd-req.com."
+
+	_, err := client.ChangeResourceRecordSets(context.Background(), &awsr53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch: &r53types.ChangeBatch{
+			Changes: []r53types.Change{{
+				Action: r53types.ChangeActionCreate,
+				ResourceRecordSet: &r53types.ResourceRecordSet{
+					Name: aws.String(name), Type: r53types.RRTypeA, TTL: aws.Int64(60),
+					Weight:          aws.Int64(10),
+					ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("192.0.2.1")}},
+				},
+			}},
+		},
+	})
+
+	var invalid *r53types.InvalidChangeBatch
+	if !errors.As(err, &invalid) {
+		t.Fatalf("weighted CREATE without SetIdentifier: got %v, want InvalidChangeBatch", err)
+	}
+
+	if got := weightedSetIdentifiers(t, client, zoneID, name); len(got) != 0 {
+		t.Fatalf("record stored despite rejection: %v", got)
 	}
 }
 

@@ -62,13 +62,14 @@ type getLogEventsRequest struct {
 }
 
 type filterLogEventsRequest struct {
-	LogGroupName   string   `json:"logGroupName"`
-	LogStreamNames []string `json:"logStreamNames"`
-	FilterPattern  string   `json:"filterPattern"`
-	StartTime      int64    `json:"startTime"`
-	EndTime        int64    `json:"endTime"`
-	Limit          int32    `json:"limit"`
-	NextToken      string   `json:"nextToken"`
+	LogGroupName        string   `json:"logGroupName"`
+	LogStreamNames      []string `json:"logStreamNames"`
+	LogStreamNamePrefix string   `json:"logStreamNamePrefix"`
+	FilterPattern       string   `json:"filterPattern"`
+	StartTime           int64    `json:"startTime"`
+	EndTime             int64    `json:"endTime"`
+	Limit               int32    `json:"limit"`
+	NextToken           string   `json:"nextToken"`
 }
 
 // --- response envelopes ---

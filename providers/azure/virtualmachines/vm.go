@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -28,10 +30,12 @@ import (
 // Compile-time checks that Mock implements driver.Compute and, when a real
 // compute engine is wired, the optional driver.ConsoleReader capability.
 var (
-	_ driver.Compute           = (*Mock)(nil)
-	_ driver.ConsoleReader     = (*Mock)(nil)
-	_ driver.AzureVMController = (*Mock)(nil)
-	_ driver.KeyPairGenerator  = (*Mock)(nil)
+	_ driver.Compute            = (*Mock)(nil)
+	_ driver.ConsoleReader      = (*Mock)(nil)
+	_ driver.AzureVMController  = (*Mock)(nil)
+	_ driver.KeyPairGenerator   = (*Mock)(nil)
+	_ driver.AzureDiskAccessor  = (*Mock)(nil)
+	_ driver.AzureSSHKeyUpdater = (*Mock)(nil)
 )
 
 const (
@@ -126,6 +130,9 @@ type instanceData struct {
 	ResourceGroup  string
 	// PowerState is the Azure power state ("running"/"stopped"/"deallocated").
 	PowerState string
+	// Generalized is true once the VM has been generalized (Azure Generalize
+	// action), a precondition for capturing it into a reusable image.
+	Generalized bool
 	// engineBacked is true when a real config.ComputeEngine backs this
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
@@ -148,6 +155,7 @@ type Mock struct {
 	images       *memstore.Store[*driver.ImageInfo]
 	keyPairs     *memstore.Store[*driver.KeyPairInfo]
 	scaleSets    *memstore.Store[*ScaleSet]
+	diskAccess   *memstore.Store[string]
 	sm           *statemachine.Machine
 	opts         *config.Options
 	ipCounter    atomic.Int64
@@ -229,6 +237,7 @@ func New(opts *config.Options) *Mock {
 		images:       memstore.New[*driver.ImageInfo](),
 		keyPairs:     memstore.New[*driver.KeyPairInfo](),
 		scaleSets:    memstore.New[*ScaleSet](),
+		diskAccess:   memstore.New[string](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
 	}
@@ -256,7 +265,8 @@ func toInstance(d *instanceData) driver.Instance {
 		OSType: d.OSType, Priority: d.Priority, LicenseType: d.LicenseType,
 		Zones:  append([]string(nil), d.Zones...),
 		Region: d.Region, ResourceGroup: d.ResourceGroup,
-		PowerState: d.PowerState,
+		PowerState:  d.PowerState,
+		Generalized: d.Generalized,
 	}
 }
 
@@ -442,6 +452,27 @@ func (m *Mock) UpdateInstance(_ context.Context, instanceID string, cfg driver.I
 	}
 
 	inst.Tags = copyTags(cfg.Tags)
+
+	return nil
+}
+
+// GeneralizeInstance marks an instance as generalized (Azure Generalize
+// action), a precondition for capturing it into a reusable image. Real Azure
+// requires the VM to be stopped or deallocated first: generalizing a running VM
+// is rejected. It is otherwise idempotent — generalizing an already-generalized
+// (and still stopped/deallocated) VM succeeds.
+func (m *Mock) GeneralizeInstance(_ context.Context, instanceID string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if inst.PowerState == powerStateRunning {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"instance %q must be stopped or deallocated before it can be generalized", instanceID)
+	}
+
+	inst.Generalized = true
 
 	return nil
 }
@@ -698,6 +729,58 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID string) error {
 	return nil
 }
 
+// GrantDiskAccess issues a time-bounded SAS URI granting the requested access
+// level to a managed disk (Azure Disks beginGetAccess). The synthesized URI
+// mirrors the shape of a real managed-disk export SAS: an md-* blob host, a
+// signed-start (st) and signed-expiry (se) window derived from durationSeconds,
+// and a signed-permission (sp) reflecting the access level.
+func (m *Mock) GrantDiskAccess(_ context.Context, volumeID, access string, durationSeconds int) (string, error) {
+	vol, ok := m.volumes.Get(volumeID)
+	if !ok {
+		return "", cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
+	}
+
+	now := m.opts.Clock.Now().UTC()
+
+	sum := sha256.Sum256([]byte(vol.ID))
+	host := "md-" + hex.EncodeToString(sum[:6])
+	token := hex.EncodeToString(sum[6:12])
+
+	sas := fmt.Sprintf(
+		"https://%s.blob.storage.azure.net/%s/abcd?sv=2018-03-28&sr=b&si=&sig=cloudemu&st=%s&se=%s&sp=%s",
+		host, token,
+		now.Format("2006-01-02T15:04:05Z"),
+		now.Add(time.Duration(durationSeconds)*time.Second).Format("2006-01-02T15:04:05Z"),
+		sasPermission(access),
+	)
+
+	m.diskAccess.Set(volumeID, sas)
+
+	return sas, nil
+}
+
+// RevokeDiskAccess revokes any SAS access previously granted to a managed disk
+// (Azure Disks endGetAccess).
+func (m *Mock) RevokeDiskAccess(_ context.Context, volumeID string) error {
+	if _, ok := m.volumes.Get(volumeID); !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
+	}
+
+	m.diskAccess.Delete(volumeID)
+
+	return nil
+}
+
+// sasPermission maps an Azure disk AccessLevel to the SAS signed-permission
+// (sp) code: Write grants read+write ("rw"), everything else read-only ("r").
+func sasPermission(access string) string {
+	if access == "Write" {
+		return "rw"
+	}
+
+	return "r"
+}
+
 func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
 	vol, ok := m.volumes.Get(cfg.VolumeID)
 	if !ok {
@@ -844,6 +927,30 @@ func generateRSAKeyPair() (publicKey, privateKey string, err error) {
 	}
 
 	return string(ssh.MarshalAuthorizedKey(sshPub)), string(privPEM), nil
+}
+
+// UpdateKeyPair updates the public key and/or tags of an existing key pair
+// (Azure sshPublicKeys PATCH Update). A nil publicKey leaves the key material
+// unchanged; a non-nil tags map replaces the resource's tags.
+func (m *Mock) UpdateKeyPair(_ context.Context, name string, publicKey *string, tags map[string]string) (*driver.KeyPairInfo, error) {
+	kp, ok := m.keyPairs.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "sshPublicKey %q not found", name)
+	}
+
+	if publicKey != nil {
+		kp.PublicKey = *publicKey
+	}
+
+	if tags != nil {
+		kp.Tags = copyTags(tags)
+	}
+
+	m.keyPairs.Set(name, kp)
+
+	result := *kp
+
+	return &result, nil
 }
 
 // DeleteKeyPair deletes a key pair by name.
