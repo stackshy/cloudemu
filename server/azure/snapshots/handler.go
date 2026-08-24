@@ -20,6 +20,9 @@ const (
 	providerName    = "Microsoft.Compute"
 	resourceType    = "snapshots"
 	armNameTag      = "cloudemu:azureSnapshotName"
+	rgTag           = "cloudemu:azureRG"
+	createOptionTag = "cloudemu:createOption"
+	sourceIDTag     = "cloudemu:sourceResourceId"
 	defaultLocation = "eastus"
 )
 
@@ -88,6 +91,10 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]snapshotResponse, 0, len(snaps))
 
 	for i := range snaps {
+		if rp.ResourceGroup != "" && tagOr(snaps[i].Tags, rgTag, "") != rp.ResourceGroup {
+			continue
+		}
+
 		name := tagOr(snaps[i].Tags, armNameTag, snaps[i].ID)
 		scope := rp
 		scope.ResourceName = name
@@ -110,7 +117,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	driverVolID, err := h.resolveSourceVolumeID(r.Context(), sourceVolumeID(req.Properties.CreationData))
+	submittedSource := sourceVolumeID(req.Properties.CreationData)
+
+	driverVolID, err := h.resolveSourceVolumeID(r.Context(), submittedSource)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -119,7 +128,16 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	cfg := computedriver.SnapshotConfig{
 		VolumeID:    driverVolID,
 		Description: rp.ResourceName,
-		Tags:        mergeSnapshotTags(req.Tags, rp.ResourceName),
+		Tags: mergeSnapshotTags(
+			req.Tags, rp.ResourceName, rp.ResourceGroup,
+			createOptionOr(req.Properties.CreationData), submittedSource,
+		),
+	}
+
+	// ARM CreateOrUpdate is idempotent: replace an existing snapshot in place
+	// rather than accumulating a duplicate under the same name.
+	if existing, findErr := findSnapshotByName(r.Context(), h.compute, rp.ResourceName); findErr == nil {
+		_ = h.compute.DeleteSnapshot(r.Context(), existing.ID)
 	}
 
 	snap, err := h.compute.CreateSnapshot(r.Context(), cfg)
@@ -136,6 +154,16 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	body := toSnapshotResponse(snap, rp, location)
 
 	writeSnapshotAsync(w, r, rp.Subscription, "snap-create-"+rp.ResourceName, body)
+}
+
+// createOptionOr returns the submitted createOption, defaulting to "Copy" (the
+// only source-backed option snapshots support) when unset.
+func createOptionOr(c *creationData) string {
+	if c != nil && c.CreateOption != "" {
+		return c.CreateOption
+	}
+
+	return "Copy"
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -212,6 +240,9 @@ func toSnapshotResponse(snap *computedriver.SnapshotInfo, rp azurearm.ResourcePa
 
 	name := tagOr(snap.Tags, armNameTag, rp.ResourceName)
 
+	createOption := tagOr(snap.Tags, createOptionTag, "Copy")
+	sourceID := tagOr(snap.Tags, sourceIDTag, snap.VolumeID)
+
 	return snapshotResponse{
 		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
 		Name:     name,
@@ -223,8 +254,8 @@ func toSnapshotResponse(snap *computedriver.SnapshotInfo, rp azurearm.ResourcePa
 			DiskSizeGB:        snap.Size,
 			DiskState:         "ReadyToUpload",
 			CreationData: &creationData{
-				CreateOption:     "Copy",
-				SourceResourceID: snap.VolumeID,
+				CreateOption:     createOption,
+				SourceResourceID: sourceID,
 			},
 		},
 	}
@@ -278,14 +309,30 @@ func (h *Handler) resolveSourceVolumeID(ctx context.Context, src string) (string
 	return "", cerrors.Newf(cerrors.NotFound, "source disk %s not found", name)
 }
 
-func mergeSnapshotTags(in map[string]string, name string) map[string]string {
-	out := make(map[string]string, len(in)+1)
+// snapExtraSlots is the headroom for the cloudemu-internal tags
+// mergeSnapshotTags inserts (name, resource group, createOption, source id).
+const snapExtraSlots = 4
+
+func mergeSnapshotTags(in map[string]string, name, resourceGroup, createOption, sourceID string) map[string]string {
+	out := make(map[string]string, len(in)+snapExtraSlots)
 
 	for k, v := range in {
 		out[k] = v
 	}
 
 	out[armNameTag] = name
+
+	if resourceGroup != "" {
+		out[rgTag] = resourceGroup
+	}
+
+	if createOption != "" {
+		out[createOptionTag] = createOption
+	}
+
+	if sourceID != "" {
+		out[sourceIDTag] = sourceID
+	}
 
 	return out
 }
@@ -306,7 +353,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag {
+		if k == armNameTag || k == rgTag || k == createOptionTag || k == sourceIDTag {
 			continue
 		}
 

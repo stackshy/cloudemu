@@ -15,11 +15,18 @@ const (
 	providerName    = "Microsoft.Compute"
 	resourceType    = "images"
 	armNameTag      = "cloudemu:azureImageName"
+	rgTag           = "cloudemu:azureRG"
+	sourceVMTag     = "cloudemu:sourceVM"
+	osTypeTag       = "cloudemu:osType"
 	defaultLocation = "eastus"
 
 	// vmARMNameTag mirrors the constant in server/azure/virtualmachines so
 	// we can resolve a VM ARM ID to its driver-internal instance ID.
 	vmARMNameTag = "cloudemu:azureName"
+
+	// defaultOSDiskSizeGB is the OS-disk size we report for a captured image
+	// when the source disk size is unknown (Azure's marketplace default).
+	defaultOSDiskSizeGB = 30
 )
 
 // Handler serves Microsoft.Compute/images requests.
@@ -84,6 +91,10 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]imageResponse, 0, len(imgs))
 
 	for i := range imgs {
+		if rp.ResourceGroup != "" && tagOr(imgs[i].Tags, rgTag, "") != rp.ResourceGroup {
+			continue
+		}
+
 		name := tagOr(imgs[i].Tags, armNameTag, imgs[i].Name)
 		scope := rp
 		scope.ResourceName = name
@@ -106,7 +117,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	driverInstanceID, err := h.resolveSourceVMID(r.Context(), sourceVMID(req.Properties.SourceVirtualMachine))
+	submittedVM := sourceVMID(req.Properties.SourceVirtualMachine)
+
+	driverInstanceID, err := h.resolveSourceVMID(r.Context(), submittedVM)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -115,7 +128,16 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	cfg := computedriver.ImageConfig{
 		InstanceID: driverInstanceID,
 		Name:       rp.ResourceName,
-		Tags:       mergeTags(req.Tags, rp.ResourceName),
+		Tags: mergeTags(
+			req.Tags, rp.ResourceName, rp.ResourceGroup,
+			submittedVM, h.sourceOSType(r.Context(), driverInstanceID),
+		),
+	}
+
+	// ARM CreateOrUpdate is idempotent: replace an existing image in place
+	// rather than accumulating a duplicate under the same name.
+	if existing, findErr := findImageByName(r.Context(), h.compute, rp.ResourceName); findErr == nil {
+		_ = h.compute.DeregisterImage(r.Context(), existing.ID)
 	}
 
 	img, err := h.compute.CreateImage(r.Context(), cfg)
@@ -218,6 +240,17 @@ func sourceVMID(r *resourceRef) string {
 	return r.ID
 }
 
+// sourceOSType returns the guest OS family of the source VM (driver instance
+// id), so the captured image echoes the OS type Azure records on osDisk.
+func (h *Handler) sourceOSType(ctx context.Context, instanceID string) string {
+	insts, err := h.compute.DescribeInstances(ctx, []string{instanceID}, nil)
+	if err != nil || len(insts) == 0 {
+		return ""
+	}
+
+	return insts[0].OSType
+}
+
 func writeImageAsync(w http.ResponseWriter, r *http.Request, sub, opID string, body any) {
 	scheme := "http"
 	if r.TLS != nil {
@@ -249,26 +282,66 @@ func toImageResponse(img *computedriver.ImageInfo, rp azurearm.ResourcePath, loc
 
 	name := tagOr(img.Tags, armNameTag, img.Name)
 
-	return imageResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
-		Name:     name,
-		Type:     providerName + "/" + resourceType,
-		Location: location,
-		Tags:     stripInternalTags(img.Tags),
-		Properties: imageResponseProps{
-			ProvisioningState: "Succeeded",
+	props := imageResponseProps{
+		ProvisioningState: "Succeeded",
+		StorageProfile: &imageStorageProfile{
+			OSDisk: &imageOSDisk{
+				OSType:             osTypeOr(tagOr(img.Tags, osTypeTag, "")),
+				OSState:            "Generalized",
+				DiskSizeGB:         defaultOSDiskSizeGB,
+				StorageAccountType: "Standard_LRS",
+			},
 		},
+	}
+
+	if src := tagOr(img.Tags, sourceVMTag, ""); src != "" {
+		props.SourceVirtualMachine = &resourceRef{ID: src}
+	}
+
+	return imageResponse{
+		ID:         azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
+		Name:       name,
+		Type:       providerName + "/" + resourceType,
+		Location:   location,
+		Tags:       stripInternalTags(img.Tags),
+		Properties: props,
 	}
 }
 
-func mergeTags(in map[string]string, name string) map[string]string {
-	out := make(map[string]string, len(in)+1)
+// osTypeOr defaults an unknown captured-image OS type to Linux, the most common
+// case, so the osDisk always reports a concrete osType.
+func osTypeOr(osType string) string {
+	if osType == "" {
+		return "Linux"
+	}
+
+	return osType
+}
+
+// imgExtraSlots is the headroom for the cloudemu-internal tags mergeTags
+// inserts (name, resource group, source VM, OS type).
+const imgExtraSlots = 4
+
+func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType string) map[string]string {
+	out := make(map[string]string, len(in)+imgExtraSlots)
 
 	for k, v := range in {
 		out[k] = v
 	}
 
 	out[armNameTag] = name
+
+	if resourceGroup != "" {
+		out[rgTag] = resourceGroup
+	}
+
+	if sourceVM != "" {
+		out[sourceVMTag] = sourceVM
+	}
+
+	if osType != "" {
+		out[osTypeTag] = osType
+	}
 
 	return out
 }
@@ -289,7 +362,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag {
+		if k == armNameTag || k == rgTag || k == sourceVMTag || k == osTypeTag {
 			continue
 		}
 

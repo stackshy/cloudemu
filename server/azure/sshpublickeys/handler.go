@@ -16,6 +16,8 @@ const (
 	providerName    = "Microsoft.Compute"
 	resourceType    = "sshPublicKeys"
 	armNameTag      = "cloudemu:azureSSHKeyName"
+	rgTag           = "cloudemu:azureRG"
+	publicKeyTag    = "cloudemu:publicKey"
 	defaultLocation = "eastus"
 )
 
@@ -87,6 +89,10 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]sshKeyResponse, 0, len(keys))
 
 	for i := range keys {
+		if rp.ResourceGroup != "" && tagOr(keys[i].Tags, rgTag, "") != rp.ResourceGroup {
+			continue
+		}
+
 		name := tagOr(keys[i].Tags, armNameTag, keys[i].Name)
 		scope := rp
 		scope.ResourceName = name
@@ -112,7 +118,13 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	cfg := computedriver.KeyPairConfig{
 		Name:    rp.ResourceName,
 		KeyType: "rsa",
-		Tags:    mergeTags(req.Tags, rp.ResourceName, req.Properties.PublicKey),
+		Tags:    mergeTags(req.Tags, rp.ResourceName, req.Properties.PublicKey, rp.ResourceGroup),
+	}
+
+	// ARM CreateOrUpdate is idempotent: a repeated PUT replaces the resource
+	// in place rather than failing with AlreadyExists.
+	if _, err := findKeyByName(r.Context(), h.compute, rp.ResourceName); err == nil {
+		_ = h.compute.DeleteKeyPair(r.Context(), rp.ResourceName)
 	}
 
 	key, err := h.compute.CreateKeyPair(r.Context(), cfg)
@@ -162,9 +174,10 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	w.WriteHeader(http.StatusOK)
 }
 
-// generateKeyPair handles POST .../sshPublicKeys/{name}/generateKeyPair.
-// Real Azure generates a fresh RSA pair server-side; we return the driver's
-// provisioned PublicKey/PrivateKey, which the test fixtures populate.
+// generateKeyPair handles POST .../sshPublicKeys/{name}/generateKeyPair. Real
+// Azure generates a fresh 2048-bit RSA pair server-side, stores the public key
+// on the resource, and returns both keys (the only time the private key is
+// disclosed). We delegate to the driver's KeyPairGenerator when available.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) generateKeyPair(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
@@ -175,7 +188,15 @@ func (h *Handler) generateKeyPair(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
-	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceName)
+	gen, ok := h.compute.(computedriver.KeyPairGenerator)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"generateKeyPair not supported")
+
+		return
+	}
+
+	key, err := gen.GenerateKeyPair(r.Context(), rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -211,7 +232,7 @@ func toSSHKeyResponse(key *computedriver.KeyPairInfo, rp azurearm.ResourcePath, 
 
 	name := tagOr(key.Tags, armNameTag, key.Name)
 
-	pub := tagOr(key.Tags, "cloudemu:publicKey", key.PublicKey)
+	pub := tagOr(key.Tags, publicKeyTag, key.PublicKey)
 
 	return sshKeyResponse{
 		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
@@ -226,10 +247,10 @@ func toSSHKeyResponse(key *computedriver.KeyPairInfo, rp azurearm.ResourcePath, 
 }
 
 // extraSlots is the size headroom we add when copying a tag map and inserting
-// the cloudemu-internal name + public-key tags.
-const extraSlots = 2
+// the cloudemu-internal name, resource-group, and public-key tags.
+const extraSlots = 3
 
-func mergeTags(in map[string]string, name, publicKey string) map[string]string {
+func mergeTags(in map[string]string, name, publicKey, resourceGroup string) map[string]string {
 	out := make(map[string]string, len(in)+extraSlots)
 
 	for k, v := range in {
@@ -238,8 +259,12 @@ func mergeTags(in map[string]string, name, publicKey string) map[string]string {
 
 	out[armNameTag] = name
 
+	if resourceGroup != "" {
+		out[rgTag] = resourceGroup
+	}
+
 	if publicKey != "" {
-		out["cloudemu:publicKey"] = publicKey
+		out[publicKeyTag] = publicKey
 	}
 
 	return out
@@ -261,7 +286,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == "cloudemu:publicKey" {
+		if k == armNameTag || k == publicKeyTag || k == rgTag {
 			continue
 		}
 
