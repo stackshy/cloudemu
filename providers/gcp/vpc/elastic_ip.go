@@ -72,7 +72,7 @@ func (m *Mock) DescribeAddresses(
 
 // AssociateAddress associates an external IP with an instance.
 func (m *Mock) AssociateAddress(
-	_ context.Context, allocationID, instanceID string,
+	_ context.Context, allocationID string, in driver.AssociateAddressInput,
 ) (string, error) {
 	eip, ok := m.eips.Get(allocationID)
 	if !ok {
@@ -95,7 +95,7 @@ func (m *Mock) AssociateAddress(
 		idgen.GenerateID("assoc-"),
 	)
 	eip.AssociationID = assocID
-	eip.InstanceID = instanceID
+	eip.InstanceID = in.InstanceID
 
 	return assocID, nil
 }
