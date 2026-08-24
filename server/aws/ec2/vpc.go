@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -17,15 +18,37 @@ const stateAvailable = "available"
 // option set (no explicit set associated).
 const dhcpDefault = "default"
 
+// cidrAssocIDPrefix is the id prefix AWS assigns to a VPC's primary-CIDR
+// association in cidrBlockAssociationSet.
+const cidrAssocIDPrefix = "vpc-cidr-assoc-"
+
+// cidrStateAssociated is the terminal state AWS reports for an in-use VPC CIDR
+// association.
+const cidrStateAssociated = "associated"
+
+type vpcCidrBlockStateXML struct {
+	State string `xml:"state"`
+}
+
+// vpcCidrAssocXML is one entry in a VPC's cidrBlockAssociationSet. AWS returns
+// the primary CIDR both flat (cidrBlock) and here; IaC tools read the
+// association id and state from this set.
+type vpcCidrAssocXML struct {
+	AssociationID  string               `xml:"associationId"`
+	CidrBlock      string               `xml:"cidrBlock"`
+	CidrBlockState vpcCidrBlockStateXML `xml:"cidrBlockState"`
+}
+
 type vpcXML struct {
-	VpcID           string    `xml:"vpcId"`
-	State           string    `xml:"state"`
-	CidrBlock       string    `xml:"cidrBlock"`
-	DhcpOptionsID   string    `xml:"dhcpOptionsId"`
-	InstanceTenancy string    `xml:"instanceTenancy"`
-	IsDefault       bool      `xml:"isDefault"`
-	OwnerID         string    `xml:"ownerId"`
-	Tags            []tagItem `xml:"tagSet>item,omitempty"`
+	VpcID                   string            `xml:"vpcId"`
+	State                   string            `xml:"state"`
+	CidrBlock               string            `xml:"cidrBlock"`
+	DhcpOptionsID           string            `xml:"dhcpOptionsId"`
+	InstanceTenancy         string            `xml:"instanceTenancy"`
+	IsDefault               bool              `xml:"isDefault"`
+	OwnerID                 string            `xml:"ownerId"`
+	CidrBlockAssociationSet []vpcCidrAssocXML `xml:"cidrBlockAssociationSet>item,omitempty"`
+	Tags                    []tagItem         `xml:"tagSet>item,omitempty"`
 }
 
 type createVpcResponseXML struct {
@@ -111,15 +134,32 @@ func toVpcXML(v *netdriver.VPCInfo) vpcXML {
 	}
 
 	return vpcXML{
-		VpcID:           v.ID,
-		State:           state,
-		CidrBlock:       v.CIDRBlock,
-		DhcpOptionsID:   nonEmpty(v.DhcpOptionsID, dhcpDefault),
-		InstanceTenancy: "default",
-		IsDefault:       false,
-		OwnerID:         ownerID,
-		Tags:            toTagItems(v.Tags),
+		VpcID:                   v.ID,
+		State:                   state,
+		CidrBlock:               v.CIDRBlock,
+		DhcpOptionsID:           nonEmpty(v.DhcpOptionsID, dhcpDefault),
+		InstanceTenancy:         "default",
+		IsDefault:               false,
+		OwnerID:                 ownerID,
+		CidrBlockAssociationSet: vpcCidrAssociationSet(v),
+		Tags:                    toTagItems(v.Tags),
 	}
+}
+
+// vpcCidrAssociationSet synthesizes the single primary-CIDR association AWS
+// returns for a VPC. The association id is derived deterministically from the
+// VPC id so it is stable across Describe calls (real AWS ids are stable too).
+// IPv6 associations are not modeled, so ipv6CidrBlockAssociationSet stays empty.
+func vpcCidrAssociationSet(v *netdriver.VPCInfo) []vpcCidrAssocXML {
+	if v.CIDRBlock == "" {
+		return nil
+	}
+
+	return []vpcCidrAssocXML{{
+		AssociationID:  cidrAssocIDPrefix + strings.TrimPrefix(v.ID, "vpc-"),
+		CidrBlock:      v.CIDRBlock,
+		CidrBlockState: vpcCidrBlockStateXML{State: cidrStateAssociated},
+	}}
 }
 
 // validateVpcFilters rejects filter names DescribeVpcs does not model. Silently

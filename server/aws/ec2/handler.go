@@ -472,6 +472,8 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 		h.createRoute(w, r)
 	case "DeleteRoute":
 		h.deleteRoute(w, r)
+	case "ReplaceRoute":
+		h.replaceRoute(w, r)
 	case "AssociateRouteTable":
 		h.associateRouteTable(w, r)
 	case "DisassociateRouteTable":

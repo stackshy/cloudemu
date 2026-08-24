@@ -662,3 +662,16 @@ type VPCBlockPublicAccess interface {
 	DeleteVPCBlockPublicAccessExclusion(ctx context.Context, id string) (*VPCBlockPublicAccessExclusion, error)
 	DescribeVPCBlockPublicAccessExclusions(ctx context.Context, ids []string) ([]VPCBlockPublicAccessExclusion, error)
 }
+
+// ---- Network-resource tagging ----
+
+// NetworkResourceTagger is an OPTIONAL AWS capability (type-asserted).
+//
+// It tags VPC-family resources that have no dedicated Update*Tags method on the
+// portable Networking interface: route tables, internet gateways, NAT gateways,
+// network ACLs, DHCP option sets, peering connections, managed prefix lists, and
+// egress-only internet gateways. The EC2 tag handler routes those id prefixes here.
+type NetworkResourceTagger interface {
+	UpdateResourceTags(ctx context.Context, id string, tags map[string]string) error
+	RemoveResourceTags(ctx context.Context, id string, keys []string) error
+}

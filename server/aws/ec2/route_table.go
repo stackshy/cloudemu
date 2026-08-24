@@ -47,6 +47,7 @@ type rtAssociationXML struct {
 type routeTableXML struct {
 	RouteTableID string             `xml:"routeTableId"`
 	VpcID        string             `xml:"vpcId"`
+	OwnerID      string             `xml:"ownerId"`
 	Routes       []routeXML         `xml:"routeSet>item,omitempty"`
 	Associations []rtAssociationXML `xml:"associationSet>item,omitempty"`
 	Tags         []tagItem          `xml:"tagSet>item,omitempty"`
@@ -75,6 +76,13 @@ type createRouteResponseXML struct {
 
 type deleteRouteResponseXML struct {
 	XMLName   xml.Name `xml:"DeleteRouteResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type replaceRouteResponseXML struct {
+	XMLName   xml.Name `xml:"ReplaceRouteResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
@@ -173,6 +181,40 @@ func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	awsquery.WriteXMLResponse(w, createRouteResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+// replaceRoute swaps the target of an existing route, keyed by its destination
+// CIDR. Real EC2 requires the route to already exist (a miss is
+// InvalidRoute.NotFound), so it is modeled as DeleteRoute-then-CreateRoute: the
+// delete step's NotFound is exactly the "route must exist" precondition, and the
+// create step re-adds it with the new target.
+func (h *Handler) replaceRoute(w http.ResponseWriter, r *http.Request) {
+	target, targetType := resolveRouteTarget(r)
+	if target == "" {
+		writeReplaceRouteErr(w, newInvalidParameterErr(
+			"one of GatewayId / NatGatewayId / VpcPeeringConnectionId is required"))
+
+		return
+	}
+
+	routeTableID := r.Form.Get("RouteTableId")
+	destinationCIDR := r.Form.Get("DestinationCidrBlock")
+
+	if err := h.vpc.DeleteRoute(r.Context(), routeTableID, destinationCIDR); err != nil {
+		writeReplaceRouteErr(w, err)
+		return
+	}
+
+	if err := h.vpc.CreateRoute(r.Context(), routeTableID, destinationCIDR, target, targetType); err != nil {
+		writeReplaceRouteErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, replaceRouteResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
 		Return:    true,
@@ -347,6 +389,7 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 	x := routeTableXML{
 		RouteTableID: rt.ID,
 		VpcID:        rt.VPCID,
+		OwnerID:      ownerID,
 		Tags:         toTagItems(rt.Tags),
 	}
 
@@ -406,4 +449,11 @@ func nonEmpty(s, fallback string) string {
 
 func writeRouteTableErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidRouteTableID.NotFound", "DependencyViolation")
+}
+
+// writeReplaceRouteErr maps a NotFound to InvalidRoute.NotFound: ReplaceRoute's
+// precondition is that the route already exists, so the delete-step miss reports
+// the missing route, matching real EC2, rather than the route-table code.
+func writeReplaceRouteErr(w http.ResponseWriter, err error) {
+	writeErrWithNotFound(w, err, "InvalidRoute.NotFound", "DependencyViolation")
 }

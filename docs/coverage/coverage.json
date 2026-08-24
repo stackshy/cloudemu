@@ -6485,6 +6485,18 @@
         ]
       },
       {
+        "name": "NetworkResourceTagger",
+        "doc": "NetworkResourceTagger is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "RemoveResourceTags"
+          },
+          {
+            "name": "UpdateResourceTags"
+          }
+        ]
+      },
+      {
         "name": "PrefixLists",
         "doc": "PrefixLists is an OPTIONAL AWS capability (type-asserted).",
         "operations": [

@@ -49,6 +49,7 @@ var (
 	_ driver.TrafficMirroring           = (*Mock)(nil)
 	_ driver.NetworkInsights            = (*Mock)(nil)
 	_ driver.VPCBlockPublicAccess       = (*Mock)(nil)
+	_ driver.NetworkResourceTagger      = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.

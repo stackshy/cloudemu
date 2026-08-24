@@ -27,6 +27,7 @@ type dhcpConfigXML struct {
 
 type dhcpOptionsXML struct {
 	DhcpOptionsID      string          `xml:"dhcpOptionsId"`
+	OwnerID            string          `xml:"ownerId"`
 	DhcpConfigurations []dhcpConfigXML `xml:"dhcpConfigurationSet>item,omitempty"`
 	Tags               []tagItem       `xml:"tagSet>item,omitempty"`
 }
@@ -149,7 +150,7 @@ func toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
 		cfgs = append(cfgs, dhcpConfigXML{Key: k, Values: vals})
 	}
 
-	return dhcpOptionsXML{DhcpOptionsID: d.ID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
+	return dhcpOptionsXML{DhcpOptionsID: d.ID, OwnerID: ownerID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
 }
 
 func writeDHCPErr(w http.ResponseWriter, err error) {
