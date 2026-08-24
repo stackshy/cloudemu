@@ -86,8 +86,10 @@ func (h *ARMHandler) serveRegistryCollection(w http.ResponseWriter, r *http.Requ
 
 func (h *ARMHandler) serveRegistry(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch r.Method {
-	case http.MethodPut, http.MethodPatch:
+	case http.MethodPut:
 		h.createOrUpdateRegistry(w, r, rp)
+	case http.MethodPatch:
+		h.updateRegistry(w, r, rp)
 	case http.MethodGet:
 		h.getRegistry(w, r, rp)
 	case http.MethodDelete:
@@ -97,6 +99,8 @@ func (h *ARMHandler) serveRegistry(w http.ResponseWriter, r *http.Request, rp *a
 	}
 }
 
+// createOrUpdateRegistry handles the ARM PUT (full create-or-replace): every
+// attribute is taken from the request body, replacing the stored registry.
 func (h *ARMHandler) createOrUpdateRegistry(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body armRegistry
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -120,7 +124,45 @@ func (h *ARMHandler) createOrUpdateRegistry(w http.ResponseWriter, r *http.Reque
 		cfg.AdminUserEnabled = body.Properties.AdminUserEnabled
 	}
 
-	reg, err := h.mgr.CreateOrUpdateRegistry(r.Context(), rp.ResourceGroup, rp.ResourceName, cfg)
+	reg, created, err := h.mgr.CreateOrUpdateRegistry(r.Context(), rp.ResourceGroup, rp.ResourceName, cfg)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, createdStatus(created), toARMRegistry(reg, rp.Subscription))
+}
+
+// updateRegistry handles the ARM PATCH (partial update): only attributes
+// present in the request body are overwritten; the rest are preserved.
+func (h *ARMHandler) updateRegistry(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body armRegistry
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	var upd crdriver.AzureRegistryUpdate
+
+	if body.Tags != nil {
+		upd.Tags = fromPtrTags(body.Tags)
+	}
+
+	if body.SKU != nil {
+		sku := body.SKU.Name
+		upd.SKUName = &sku
+	}
+
+	if body.Identity != nil {
+		id := body.Identity.Type
+		upd.IdentityType = &id
+	}
+
+	if body.Properties != nil {
+		admin := body.Properties.AdminUserEnabled
+		upd.AdminUserEnabled = &admin
+	}
+
+	reg, err := h.mgr.UpdateRegistry(r.Context(), rp.ResourceGroup, rp.ResourceName, upd)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -220,4 +262,14 @@ func (h *ARMHandler) getListUsages(w http.ResponseWriter, r *http.Request, rp *a
 
 func armMethodNotAllowed(w http.ResponseWriter) {
 	azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+}
+
+// createdStatus maps an ARM PUT create-or-replace outcome to its status code:
+// 201 Created on first create, 200 OK on replace.
+func createdStatus(created bool) int {
+	if created {
+		return http.StatusCreated
+	}
+
+	return http.StatusOK
 }

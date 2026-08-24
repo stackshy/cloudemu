@@ -32,7 +32,7 @@ AzureRegistryManager is the Azure-specific ACR management-plane surface,
 
 | Operation | Description |
 | --- | --- |
-| `CreateOrUpdateRegistry` |  |
+| `CreateOrUpdateRegistry` | CreateOrUpdateRegistry is the ARM PUT (full create-or-replace). It reports |
 | `CreateOrUpdateReplication` |  |
 | `CreateOrUpdateWebhook` |  |
 | `DeleteRegistry` |  |
@@ -47,6 +47,9 @@ AzureRegistryManager is the Azure-specific ACR management-plane surface,
 | `ListReplications` |  |
 | `ListWebhooks` |  |
 | `RegenerateRegistryCredential` |  |
+| `UpdateRegistry` | UpdateRegistry is the ARM PATCH (partial update). It merges upd onto the |
+| `UpdateReplication` |  |
+| `UpdateWebhook` |  |
 
 ### AzureRepositoryWriter
 

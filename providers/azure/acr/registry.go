@@ -42,16 +42,18 @@ func subResourceKey(rg, registry, name string) string {
 	return rg + "/" + registry + "/" + name
 }
 
-// CreateOrUpdateRegistry creates or replaces an ACR registry (ARM PUT).
+// CreateOrUpdateRegistry creates or replaces an ACR registry (ARM PUT). It
+// reports whether the registry was newly created (vs. replaced) so the wire
+// layer can distinguish 201 Created from 200 OK.
 func (m *Mock) CreateOrUpdateRegistry(
 	_ context.Context, rg, name string, cfg driver.AzureRegistryConfig,
-) (*driver.AzureRegistry, error) {
+) (*driver.AzureRegistry, bool, error) {
 	if name == "" {
-		return nil, errors.New(errors.InvalidArgument, "registry name is required")
+		return nil, false, errors.New(errors.InvalidArgument, "registry name is required")
 	}
 
 	if rg == "" {
-		return nil, errors.New(errors.InvalidArgument, "resource group is required")
+		return nil, false, errors.New(errors.InvalidArgument, "resource group is required")
 	}
 
 	m.mu.Lock()
@@ -81,6 +83,47 @@ func (m *Mock) CreateOrUpdateRegistry(
 	rd.reg.ProvisioningState = registryProvisioned
 	rd.reg.Tags = copyTags(cfg.Tags)
 	applyIdentity(&rd.reg, cfg.IdentityType, rg, name)
+
+	m.registries.Set(key, rd)
+
+	out := rd.reg
+
+	return &out, !existing, nil
+}
+
+// UpdateRegistry applies a partial update to an existing ACR registry (ARM
+// PATCH). Only fields present in upd are overwritten; everything else is
+// preserved. A missing registry is a NotFound.
+func (m *Mock) UpdateRegistry(
+	_ context.Context, rg, name string, upd driver.AzureRegistryUpdate,
+) (*driver.AzureRegistry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := registryStoreKey(rg, name)
+
+	rd, ok := m.registries.Get(key)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", name, rg)
+	}
+
+	if upd.Tags != nil {
+		rd.reg.Tags = copyTags(upd.Tags)
+	}
+
+	if upd.SKUName != nil {
+		sku := defaultIfEmpty(*upd.SKUName, defaultRegistrySKU)
+		rd.reg.SKUName = sku
+		rd.reg.SKUTier = skuTier(sku)
+	}
+
+	if upd.AdminUserEnabled != nil {
+		rd.reg.AdminUserEnabled = *upd.AdminUserEnabled
+	}
+
+	if upd.IdentityType != nil {
+		applyIdentity(&rd.reg, *upd.IdentityType, rg, name)
+	}
 
 	m.registries.Set(key, rd)
 
@@ -284,22 +327,27 @@ func fnvSalted(seed string) uint64 {
 	return h.Sum64()
 }
 
-// CreateOrUpdateWebhook creates or replaces a registry webhook.
+// CreateOrUpdateWebhook creates or replaces a registry webhook (ARM PUT). It
+// reports whether the webhook was newly created so the wire layer can return
+// 201 Created vs 200 OK.
 //
 //nolint:gocritic // cfg mirrors the driver interface's value-type config; pointer would invite caller mutation.
 func (m *Mock) CreateOrUpdateWebhook(
 	_ context.Context, rg, registry, name string, cfg driver.AzureWebhookConfig,
-) (*driver.AzureWebhook, error) {
+) (*driver.AzureWebhook, bool, error) {
 	if name == "" {
-		return nil, errors.New(errors.InvalidArgument, "webhook name is required")
+		return nil, false, errors.New(errors.InvalidArgument, "webhook name is required")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.registries.Has(registryStoreKey(rg, registry)) {
-		return nil, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", registry, rg)
+		return nil, false, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", registry, rg)
 	}
+
+	key := subResourceKey(rg, registry, name)
+	_, existing := m.webhooks.Get(key)
 
 	wh := &driver.AzureWebhook{
 		Name:              name,
@@ -315,7 +363,54 @@ func (m *Mock) CreateOrUpdateWebhook(
 		ProvisioningState: registryProvisioned,
 	}
 
-	m.webhooks.Set(subResourceKey(rg, registry, name), wh)
+	m.webhooks.Set(key, wh)
+
+	out := *wh
+
+	return &out, !existing, nil
+}
+
+// UpdateWebhook applies a partial update to an existing registry webhook (ARM
+// PATCH). Only fields present in upd are overwritten. A missing webhook is a
+// NotFound.
+func (m *Mock) UpdateWebhook(
+	_ context.Context, rg, registry, name string, upd driver.AzureWebhookUpdate,
+) (*driver.AzureWebhook, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := subResourceKey(rg, registry, name)
+
+	wh, ok := m.webhooks.Get(key)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "webhook %q not found on registry %q", name, registry)
+	}
+
+	if upd.Tags != nil {
+		wh.Tags = copyTags(upd.Tags)
+	}
+
+	if upd.ServiceURI != nil {
+		wh.ServiceURI = *upd.ServiceURI
+	}
+
+	if upd.Actions != nil {
+		wh.Actions = append([]string(nil), upd.Actions...)
+	}
+
+	if upd.Scope != nil {
+		wh.Scope = *upd.Scope
+	}
+
+	if upd.Status != nil {
+		wh.Status = *upd.Status
+	}
+
+	if upd.CustomHeaders != nil {
+		wh.CustomHeaders = copyTags(upd.CustomHeaders)
+	}
+
+	m.webhooks.Set(key, wh)
 
 	out := *wh
 
@@ -373,20 +468,25 @@ func (m *Mock) ListWebhooks(_ context.Context, rg, registry string) ([]driver.Az
 	return out, nil
 }
 
-// CreateOrUpdateReplication creates or replaces a geo-replication.
+// CreateOrUpdateReplication creates or replaces a geo-replication (ARM PUT). It
+// reports whether the replication was newly created so the wire layer can
+// return 201 Created vs 200 OK.
 func (m *Mock) CreateOrUpdateReplication(
 	_ context.Context, rg, registry, name string, cfg driver.AzureReplicationConfig,
-) (*driver.AzureReplication, error) {
+) (*driver.AzureReplication, bool, error) {
 	if name == "" {
-		return nil, errors.New(errors.InvalidArgument, "replication name is required")
+		return nil, false, errors.New(errors.InvalidArgument, "replication name is required")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.registries.Has(registryStoreKey(rg, registry)) {
-		return nil, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", registry, rg)
+		return nil, false, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", registry, rg)
 	}
+
+	key := subResourceKey(rg, registry, name)
+	_, existing := m.replications.Get(key)
 
 	rep := &driver.AzureReplication{
 		Name:                  name,
@@ -399,7 +499,38 @@ func (m *Mock) CreateOrUpdateReplication(
 		Status:                "Ready",
 	}
 
-	m.replications.Set(subResourceKey(rg, registry, name), rep)
+	m.replications.Set(key, rep)
+
+	out := *rep
+
+	return &out, !existing, nil
+}
+
+// UpdateReplication applies a partial update to an existing geo-replication
+// (ARM PATCH). Only fields present in upd are overwritten. A missing
+// replication is a NotFound.
+func (m *Mock) UpdateReplication(
+	_ context.Context, rg, registry, name string, upd driver.AzureReplicationUpdate,
+) (*driver.AzureReplication, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := subResourceKey(rg, registry, name)
+
+	rep, ok := m.replications.Get(key)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "replication %q not found on registry %q", name, registry)
+	}
+
+	if upd.Tags != nil {
+		rep.Tags = copyTags(upd.Tags)
+	}
+
+	if upd.RegionEndpointEnabled != nil {
+		rep.RegionEndpointEnabled = *upd.RegionEndpointEnabled
+	}
+
+	m.replications.Set(key, rep)
 
 	out := *rep
 

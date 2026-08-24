@@ -2553,7 +2553,8 @@
         "doc": "AzureRegistryManager is the Azure-specific ACR management-plane surface,",
         "operations": [
           {
-            "name": "CreateOrUpdateRegistry"
+            "name": "CreateOrUpdateRegistry",
+            "doc": "CreateOrUpdateRegistry is the ARM PUT (full create-or-replace). It reports"
           },
           {
             "name": "CreateOrUpdateReplication"
@@ -2596,6 +2597,16 @@
           },
           {
             "name": "RegenerateRegistryCredential"
+          },
+          {
+            "name": "UpdateRegistry",
+            "doc": "UpdateRegistry is the ARM PATCH (partial update). It merges upd onto the"
+          },
+          {
+            "name": "UpdateReplication"
+          },
+          {
+            "name": "UpdateWebhook"
           }
         ]
       },

@@ -14,7 +14,8 @@ import (
 // AzureRegistryManager; the wire handler reaches it by type assertion,
 // mirroring the AzureNetworkInterfaces pattern in the networking driver.
 
-// AzureRegistryConfig is the create-or-update payload for an ACR registry.
+// AzureRegistryConfig is the full create-or-replace payload for an ACR registry
+// (ARM PUT).
 type AzureRegistryConfig struct {
 	Location         string
 	Tags             map[string]string
@@ -24,6 +25,17 @@ type AzureRegistryConfig struct {
 	// block: "SystemAssigned", "UserAssigned", "SystemAssigned, UserAssigned"
 	// or "None"/"" for no identity.
 	IdentityType string
+}
+
+// AzureRegistryUpdate is the partial-update payload for an ACR registry (ARM
+// PATCH, RegistryUpdateParameters). Every field is optional: a nil pointer (or
+// nil Tags map) leaves the corresponding attribute untouched on the existing
+// registry.
+type AzureRegistryUpdate struct {
+	Tags             map[string]string // nil = unchanged; non-nil replaces the tag set
+	SKUName          *string
+	AdminUserEnabled *bool
+	IdentityType     *string
 }
 
 // AzureRegistry is a stored/returned ACR registry resource.
@@ -62,7 +74,8 @@ type AzureRegistryUsage struct {
 	Unit         string
 }
 
-// AzureWebhookConfig is the create-or-update payload for a registry webhook.
+// AzureWebhookConfig is the full create-or-replace payload for a registry
+// webhook (ARM PUT).
 type AzureWebhookConfig struct {
 	Location      string
 	Tags          map[string]string
@@ -71,6 +84,18 @@ type AzureWebhookConfig struct {
 	Scope         string
 	Status        string // "enabled" / "disabled"
 	CustomHeaders map[string]string
+}
+
+// AzureWebhookUpdate is the partial-update payload for a registry webhook (ARM
+// PATCH, WebhookUpdateParameters). Every field is optional: a nil pointer (or
+// nil slice/map) leaves the corresponding attribute untouched.
+type AzureWebhookUpdate struct {
+	Tags          map[string]string // nil = unchanged
+	ServiceURI    *string
+	Actions       []string // nil = unchanged
+	Scope         *string
+	Status        *string
+	CustomHeaders map[string]string // nil = unchanged
 }
 
 // AzureWebhook is a stored/returned registry webhook resource.
@@ -88,11 +113,20 @@ type AzureWebhook struct {
 	ProvisioningState string
 }
 
-// AzureReplicationConfig is the create-or-update payload for a geo-replication.
+// AzureReplicationConfig is the full create-or-replace payload for a
+// geo-replication (ARM PUT).
 type AzureReplicationConfig struct {
 	Location              string
 	Tags                  map[string]string
 	RegionEndpointEnabled bool
+}
+
+// AzureReplicationUpdate is the partial-update payload for a geo-replication
+// (ARM PATCH, ReplicationUpdateParameters). Every field is optional: a nil
+// pointer (or nil Tags map) leaves the corresponding attribute untouched.
+type AzureReplicationUpdate struct {
+	Tags                  map[string]string // nil = unchanged
+	RegionEndpointEnabled *bool
 }
 
 // AzureReplication is a stored/returned geo-replication resource.
@@ -111,7 +145,15 @@ type AzureReplication struct {
 // keyed by (resourceGroup, name) to match ARM addressing and give idempotent
 // createOrUpdate. An empty resource group on a list means subscription-wide.
 type AzureRegistryManager interface {
-	CreateOrUpdateRegistry(ctx context.Context, rg, name string, cfg AzureRegistryConfig) (*AzureRegistry, error)
+	// CreateOrUpdateRegistry is the ARM PUT (full create-or-replace). It reports
+	// whether the registry was newly created so the wire layer can return 201
+	// Created on first create and 200 OK on replace.
+	CreateOrUpdateRegistry(
+		ctx context.Context, rg, name string, cfg AzureRegistryConfig,
+	) (reg *AzureRegistry, created bool, err error)
+	// UpdateRegistry is the ARM PATCH (partial update). It merges upd onto the
+	// existing registry, returning NotFound when the registry does not exist.
+	UpdateRegistry(ctx context.Context, rg, name string, upd AzureRegistryUpdate) (*AzureRegistry, error)
 	GetRegistry(ctx context.Context, rg, name string) (*AzureRegistry, error)
 	DeleteRegistry(ctx context.Context, rg, name string) error
 	ListRegistries(ctx context.Context, rg string) ([]AzureRegistry, error)
@@ -120,13 +162,19 @@ type AzureRegistryManager interface {
 	RegenerateRegistryCredential(ctx context.Context, rg, name, passwordName string) (*AzureRegistryCredentials, error)
 	ListRegistryUsages(ctx context.Context, rg, name string) ([]AzureRegistryUsage, error)
 
-	CreateOrUpdateWebhook(ctx context.Context, rg, registry, name string, cfg AzureWebhookConfig) (*AzureWebhook, error)
+	CreateOrUpdateWebhook(
+		ctx context.Context, rg, registry, name string, cfg AzureWebhookConfig,
+	) (wh *AzureWebhook, created bool, err error)
+	UpdateWebhook(ctx context.Context, rg, registry, name string, upd AzureWebhookUpdate) (*AzureWebhook, error)
 	GetWebhook(ctx context.Context, rg, registry, name string) (*AzureWebhook, error)
 	DeleteWebhook(ctx context.Context, rg, registry, name string) error
 	ListWebhooks(ctx context.Context, rg, registry string) ([]AzureWebhook, error)
 
 	CreateOrUpdateReplication(
 		ctx context.Context, rg, registry, name string, cfg AzureReplicationConfig,
+	) (rep *AzureReplication, created bool, err error)
+	UpdateReplication(
+		ctx context.Context, rg, registry, name string, upd AzureReplicationUpdate,
 	) (*AzureReplication, error)
 	GetReplication(ctx context.Context, rg, registry, name string) (*AzureReplication, error)
 	DeleteReplication(ctx context.Context, rg, registry, name string) error

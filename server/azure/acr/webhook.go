@@ -23,8 +23,10 @@ func (h *ARMHandler) serveWebhook(w http.ResponseWriter, r *http.Request, rp *az
 	}
 
 	switch r.Method {
-	case http.MethodPut, http.MethodPatch:
+	case http.MethodPut:
 		h.createOrUpdateWebhook(w, r, rp)
+	case http.MethodPatch:
+		h.updateWebhook(w, r, rp)
 	case http.MethodGet:
 		h.getWebhook(w, r, rp)
 	case http.MethodDelete:
@@ -34,6 +36,7 @@ func (h *ARMHandler) serveWebhook(w http.ResponseWriter, r *http.Request, rp *az
 	}
 }
 
+// createOrUpdateWebhook handles the ARM PUT (full create-or-replace).
 func (h *ARMHandler) createOrUpdateWebhook(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body armWebhook
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -53,13 +56,69 @@ func (h *ARMHandler) createOrUpdateWebhook(w http.ResponseWriter, r *http.Reques
 		cfg.CustomHeaders = fromPtrTags(body.Properties.CustomHeaders)
 	}
 
-	wh, err := h.mgr.CreateOrUpdateWebhook(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, cfg)
+	wh, created, err := h.mgr.CreateOrUpdateWebhook(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, cfg)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, createdStatus(created), toARMWebhook(wh, rp.Subscription))
+}
+
+// updateWebhook handles the ARM PATCH (partial update): only properties present
+// in the request body are overwritten; the rest are preserved.
+func (h *ARMHandler) updateWebhook(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body armWebhook
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	upd := crdriver.AzureWebhookUpdate{}
+
+	if body.Tags != nil {
+		upd.Tags = fromPtrTags(body.Tags)
+	}
+
+	applyWebhookProps(body.Properties, &upd)
+
+	wh, err := h.mgr.UpdateWebhook(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, upd)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMWebhook(wh, rp.Subscription))
+}
+
+// applyWebhookProps copies the properties present in a PATCH body onto upd,
+// leaving absent fields nil so the provider preserves the stored values.
+func applyWebhookProps(p *armWebhookProps, upd *crdriver.AzureWebhookUpdate) {
+	if p == nil {
+		return
+	}
+
+	if p.ServiceURI != "" {
+		uri := p.ServiceURI
+		upd.ServiceURI = &uri
+	}
+
+	if p.Actions != nil {
+		upd.Actions = p.Actions
+	}
+
+	if p.Scope != "" {
+		scope := p.Scope
+		upd.Scope = &scope
+	}
+
+	if p.Status != "" {
+		status := p.Status
+		upd.Status = &status
+	}
+
+	if p.CustomHeaders != nil {
+		upd.CustomHeaders = fromPtrTags(p.CustomHeaders)
+	}
 }
 
 func (h *ARMHandler) getWebhook(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
