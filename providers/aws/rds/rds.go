@@ -559,8 +559,6 @@ func (m *Mock) rollbackReserved(id, clusterID string) {
 }
 
 // DescribeInstances returns all instances if ids is empty, else only matching ones.
-//
-//nolint:dupl // structurally similar to DescribeClusters but operates on a different store/type.
 func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.Instance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -943,8 +941,6 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 }
 
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
-//
-//nolint:dupl // structurally similar to DescribeInstances but operates on a different store/type.
 func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cluster, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1143,8 +1139,6 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 }
 
 // DescribeSnapshots returns snapshots filtered by ids and/or instance.
-//
-//nolint:dupl // structurally similar to DescribeClusterSnapshots but operates on a different store/type.
 func (m *Mock) DescribeSnapshots(
 	_ context.Context, ids []string, instanceID string,
 ) ([]rdsdriver.Snapshot, error) {
@@ -1304,8 +1298,6 @@ func (m *Mock) CreateClusterSnapshot(
 }
 
 // DescribeClusterSnapshots returns cluster snapshots filtered by ids and/or cluster.
-//
-//nolint:dupl // structurally similar to DescribeSnapshots but operates on a different store/type.
 func (m *Mock) DescribeClusterSnapshots(
 	_ context.Context, ids []string, clusterID string,
 ) ([]rdsdriver.ClusterSnapshot, error) {

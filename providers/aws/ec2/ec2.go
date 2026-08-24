@@ -1070,6 +1070,7 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 	out := describeResources(m.volumes, ids)
 
 	now := m.opts.Clock.Now()
+
 	for i := range out {
 		if w, ok := m.volSettle.Get(out[i].ID); ok {
 			out[i].State = w.Observe(now, out[i].State)

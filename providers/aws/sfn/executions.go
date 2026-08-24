@@ -70,7 +70,7 @@ func (m *Mock) runExecution(in driver.StartExecutionInput) (*driver.Execution, e
 		return nil, execAlreadyExists(name)
 	}
 
-	out := observedExec(exec, window, now)
+	out := observedExec(&exec, window, now)
 
 	return &out, nil
 }
@@ -78,14 +78,15 @@ func (m *Mock) runExecution(in driver.StartExecutionInput) (*driver.Execution, e
 // observedExec overlays a RUNNING settle window onto a stored (terminal)
 // execution: while the window is unelapsed the execution reports RUNNING with no
 // stop date and no output yet, exactly as a real in-flight execution does.
-func observedExec(exec driver.Execution, w settle.Window, now time.Time) driver.Execution {
-	if observed := w.Observe(now, exec.Status); observed != exec.Status {
-		exec.Status = observed
-		exec.StopDate = time.Time{}
-		exec.Output = ""
+func observedExec(exec *driver.Execution, w settle.Window, now time.Time) driver.Execution {
+	out := *exec
+	if observed := w.Observe(now, out.Status); observed != out.Status {
+		out.Status = observed
+		out.StopDate = time.Time{}
+		out.Output = ""
 	}
 
-	return exec
+	return out
 }
 
 func (m *Mock) StartExecution(_ context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
@@ -105,7 +106,7 @@ func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Executi
 	ed.mu.RLock()
 	defer ed.mu.RUnlock()
 
-	out := observedExec(ed.exec, ed.settle, m.now())
+	out := observedExec(&ed.exec, ed.settle, m.now())
 
 	return &out, nil
 }
@@ -147,7 +148,7 @@ func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter s
 
 	for _, ed := range all {
 		ed.mu.RLock()
-		exec := observedExec(ed.exec, ed.settle, now)
+		exec := observedExec(&ed.exec, ed.settle, now)
 		ed.mu.RUnlock()
 
 		if exec.StateMachineArn != stateMachineArn {
