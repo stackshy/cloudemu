@@ -1554,7 +1554,7 @@
       },
       {
         "name": "Snapshots",
-        "doc": "Snapshots is an OPTIONAL capability, discovered by type assertion. Snapshots",
+        "doc": "Snapshots is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
             "name": "CreateSnapshot"

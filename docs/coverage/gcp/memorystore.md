@@ -42,7 +42,7 @@ ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
 
 ### Snapshots
 
-Snapshots is an OPTIONAL capability, discovered by type assertion. Snapshots
+Snapshots is an OPTIONAL capability, discovered by type assertion.
 
 | Operation | Description |
 | --- | --- |

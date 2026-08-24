@@ -196,9 +196,9 @@ type SnapshotFilter struct {
 	ReplicationGroupID string
 }
 
-// Snapshots is an OPTIONAL capability, discovered by type assertion. Snapshots
-// are an AWS ElastiCache concept (Redis/Valkey only); drivers for other clouds
-// do not model them and answering InvalidAction is the truthful response there.
+// Snapshots is an OPTIONAL capability, discovered by type assertion.
+// ElastiCache snapshots are an AWS concept (Redis/Valkey only); drivers for other
+// clouds do not model them and answering InvalidAction is the truthful response.
 type Snapshots interface {
 	CreateSnapshot(ctx context.Context, cfg SnapshotConfig) (*Snapshot, error)
 	DescribeSnapshots(ctx context.Context, filter SnapshotFilter) ([]Snapshot, error)
