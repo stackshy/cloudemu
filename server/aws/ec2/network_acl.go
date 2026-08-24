@@ -4,7 +4,9 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strconv"
+	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -21,13 +23,27 @@ type networkACLEntryXML struct {
 	} `xml:"portRange,omitempty"`
 }
 
+type networkACLAssociationXML struct {
+	NetworkACLAssociationID string `xml:"networkAclAssociationId"`
+	NetworkACLID            string `xml:"networkAclId"`
+	SubnetID                string `xml:"subnetId"`
+}
+
 type networkACLXML struct {
-	NetworkACLID string               `xml:"networkAclId"`
-	VpcID        string               `xml:"vpcId"`
-	OwnerID      string               `xml:"ownerId"`
-	IsDefault    bool                 `xml:"default"`
-	Entries      []networkACLEntryXML `xml:"entrySet>item,omitempty"`
-	Tags         []tagItem            `xml:"tagSet>item,omitempty"`
+	NetworkACLID string                     `xml:"networkAclId"`
+	VpcID        string                     `xml:"vpcId"`
+	OwnerID      string                     `xml:"ownerId"`
+	IsDefault    bool                       `xml:"default"`
+	Entries      []networkACLEntryXML       `xml:"entrySet>item,omitempty"`
+	Associations []networkACLAssociationXML `xml:"associationSet>item,omitempty"`
+	Tags         []tagItem                  `xml:"tagSet>item,omitempty"`
+}
+
+type replaceNetworkACLAssociationResponseXML struct {
+	XMLName          xml.Name `xml:"ReplaceNetworkAclAssociationResponse"`
+	Xmlns            string   `xml:"xmlns,attr"`
+	RequestID        string   `xml:"requestId"`
+	NewAssociationID string   `xml:"newAssociationId"`
 }
 
 type createNetworkACLResponseXML struct {
@@ -211,6 +227,45 @@ func (h *Handler) deleteNetworkACLEntry(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// replaceNetworkACLAssociation moves a subnet from its current network ACL to
+// the one named, returning a fresh association id. Subnet<->ACL associations are
+// an AWS-only concept, so the backend serves it via the optional
+// NetworkACLAssociator interface.
+func (h *Handler) replaceNetworkACLAssociation(w http.ResponseWriter, r *http.Request) {
+	assoc, ok := h.vpc.(netdriver.NetworkACLAssociator)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+			"ReplaceNetworkAclAssociation is not supported")
+
+		return
+	}
+
+	out, err := assoc.ReplaceNetworkACLAssociation(r.Context(),
+		r.Form.Get("AssociationId"), r.Form.Get("NetworkAclId"))
+	if err != nil {
+		writeNetworkACLAssocErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, replaceNetworkACLAssociationResponseXML{
+		Xmlns:            awsquery.Namespace,
+		RequestID:        awsquery.RequestID,
+		NewAssociationID: out.ID,
+	})
+}
+
+// writeNetworkACLAssocErr maps the two distinct not-found cases to the codes
+// real EC2 uses: a missing NetworkAclId -> InvalidNetworkAclID.NotFound, a
+// missing AssociationId -> InvalidAssociationID.NotFound.
+func writeNetworkACLAssocErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && !strings.Contains(err.Error(), "association") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkAclID.NotFound", err.Error())
+		return
+	}
+
+	writeErrWithNotFound(w, err, "InvalidAssociationID.NotFound", "DependencyViolation")
+}
+
 func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
 	x := networkACLXML{
 		NetworkACLID: a.ID,
@@ -218,6 +273,14 @@ func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
 		OwnerID:      ownerID,
 		IsDefault:    a.IsDefault,
 		Tags:         toTagItems(a.Tags),
+	}
+
+	for _, assoc := range a.Associations {
+		x.Associations = append(x.Associations, networkACLAssociationXML{
+			NetworkACLAssociationID: assoc.ID,
+			NetworkACLID:            assoc.NetworkACLID,
+			SubnetID:                assoc.SubnetID,
+		})
 	}
 
 	for _, rule := range a.Rules {

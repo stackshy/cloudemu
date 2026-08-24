@@ -123,14 +123,22 @@ func TestDescribeNetworkAclsPaginatesAllOnce(t *testing.T) {
 
 	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
 
-	want := map[string]int{}
 	for range 3 {
-		acl, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: aws.String(vpcID)})
-		if err != nil {
+		if _, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: aws.String(vpcID)}); err != nil {
 			t.Fatalf("CreateNetworkAcl: %v", err)
 		}
+	}
 
-		want[aws.ToString(acl.NetworkAcl.NetworkAclId)] = 0
+	// The expected set is every ACL in the account — the 3 just created plus the
+	// VPC's auto-created default ACL — captured via an unpaginated describe.
+	all, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls(all): %v", err)
+	}
+
+	want := map[string]int{}
+	for _, a := range all.NetworkAcls {
+		want[aws.ToString(a.NetworkAclId)] = 0
 	}
 
 	seen := map[string]int{}

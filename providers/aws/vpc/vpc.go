@@ -35,6 +35,7 @@ const (
 var (
 	_ driver.Networking                 = (*Mock)(nil)
 	_ driver.NetworkInterfaces          = (*Mock)(nil)
+	_ driver.NetworkACLAssociator       = (*Mock)(nil)
 	_ driver.VPCAttributes              = (*Mock)(nil)
 	_ driver.SubnetAttributes           = (*Mock)(nil)
 	_ driver.TransitGateways            = (*Mock)(nil)
@@ -76,6 +77,7 @@ type Mock struct {
 	flowLogs       *memstore.Store[*flowLogData]
 	routeTables    *memstore.Store[*routeTableData]
 	networkACLs    *memstore.Store[*networkACLData]
+	aclAssocs      *memstore.Store[*aclAssocData]
 	igws           *memstore.Store[*igwData]
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
@@ -189,6 +191,7 @@ func New(opts *config.Options) *Mock {
 		flowLogs:       memstore.New[*flowLogData](),
 		routeTables:    memstore.New[*routeTableData](),
 		networkACLs:    memstore.New[*networkACLData](),
+		aclAssocs:      memstore.New[*aclAssocData](),
 		igws:           memstore.New[*igwData](),
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
@@ -265,6 +268,7 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 
 	m.createMainRouteTable(id, cfg.CIDRBlock)
 	m.createDefaultSecurityGroup(id)
+	m.createDefaultNetworkACL(id)
 
 	m.mu.RLock()
 	info := toVPCInfo(v)
@@ -354,6 +358,7 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	m.vpcs.Delete(id)
 	m.deleteMainRouteTable(id)
 	m.deleteDefaultSecurityGroup(id)
+	m.deleteDefaultNetworkACL(id)
 	m.markVPCPeeringsDeleted(id)
 
 	return nil
@@ -509,6 +514,11 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	}
 	m.subnets.Set(id, s)
 
+	// A new subnet is automatically associated with its VPC's default network
+	// ACL, matching real EC2 (this is the association ReplaceNetworkAclAssociation
+	// later moves to a different ACL).
+	m.associateDefaultNetworkACL(cfg.VPCID, id)
+
 	info := toSubnetInfo(s)
 
 	return &info, nil
@@ -529,6 +539,12 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	}
 
 	m.subnets.Delete(id)
+
+	for assocID, a := range m.aclAssocs.All() {
+		if a.SubnetID == id {
+			m.aclAssocs.Delete(assocID)
+		}
+	}
 
 	return nil
 }

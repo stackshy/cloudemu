@@ -228,11 +228,23 @@ type RouteTableConfig struct {
 
 // NetworkACL represents a network ACL.
 type NetworkACL struct {
-	ID        string
-	VPCID     string
-	Rules     []NetworkACLRule
-	Tags      map[string]string
-	IsDefault bool
+	ID    string
+	VPCID string
+	Rules []NetworkACLRule
+	Tags  map[string]string
+	// Associations lists the subnets this ACL is associated with. It is an AWS
+	// concept the AWS backend populates; other clouds leave it empty.
+	Associations []NetworkACLAssociation
+	IsDefault    bool
+}
+
+// NetworkACLAssociation binds a subnet to a network ACL. Replacing the ACL for a
+// subnet yields a new association ID. This is an AWS concept (see
+// NetworkACLAssociator); other clouds do not populate it.
+type NetworkACLAssociation struct {
+	ID           string
+	NetworkACLID string
+	SubnetID     string
 }
 
 // NetworkACLRule represents a rule in a network ACL.
@@ -263,7 +275,7 @@ type InternetGateway struct {
 type ElasticIPConfig struct {
 	Tags map[string]string
 	// SKU (Azure public IP: Basic/Standard) and AllocationMethod (Static/
-	// Dynamic) are cost/behaviour inputs a discoverer reads; optional.
+	// Dynamic) are cost/behavior inputs a discoverer reads; optional.
 	SKU              string
 	AllocationMethod string
 }
@@ -441,6 +453,14 @@ type VPCAttributeUpdate struct {
 // than forcing them to carry a method they cannot implement meaningfully.
 type VPCAttributes interface {
 	ModifyVPCAttribute(ctx context.Context, id string, update VPCAttributeUpdate) error
+}
+
+// NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.
+// Moving a subnet from one network ACL to another (yielding a new association
+// ID) is an AWS concept; other clouds model network security differently, so it
+// is kept out of the Networking interface rather than forcing a mirror.
+type NetworkACLAssociator interface {
+	ReplaceNetworkACLAssociation(ctx context.Context, associationID, newACLID string) (*NetworkACLAssociation, error)
 }
 
 // SubnetAttributeUpdate carries the subnet attributes a caller wants changed. A

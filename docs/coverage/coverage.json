@@ -6479,6 +6479,15 @@
         ]
       },
       {
+        "name": "NetworkACLAssociator",
+        "doc": "NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "ReplaceNetworkACLAssociation"
+          }
+        ]
+      },
+      {
         "name": "NetworkInsights",
         "doc": "NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both",
         "operations": [
