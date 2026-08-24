@@ -63,7 +63,11 @@ const (
 func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
-	count := instanceCount(form.Get("MinCount"), form.Get("MaxCount"))
+	count, err := instanceCount(form.Get("MinCount"), form.Get("MaxCount"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	// A LaunchTemplate reference supplies the base instance parameters (real EC2
 	// resolves the template's default/requested version). Explicit RunInstances
@@ -582,21 +586,44 @@ func decodeUserData(s string) string {
 // instanceCount returns how many instances RunInstances should launch.
 // Real EC2 launches MaxCount instances when capacity allows, falling back to
 // fewer (but at least MinCount) when it doesn't. Our in-memory backend has
-// unlimited capacity, so we always launch MaxCount. Unparsable / missing
-// MaxCount defaults to MinCount; both missing defaults to 1.
-func instanceCount(minStr, maxStr string) int {
-	minN, _ := strconv.Atoi(minStr)
-	maxN, _ := strconv.Atoi(maxStr)
+// unlimited capacity, so we always launch MaxCount. Missing MinCount defaults
+// to 1 and missing MaxCount defaults to MinCount. MinCount must be >= 1 and
+// MaxCount >= MinCount; otherwise EC2 rejects the call with InvalidParameterValue
+// and launches nothing.
+func instanceCount(minStr, maxStr string) (int, error) {
+	minN := 1
 
-	if maxN < 1 {
-		maxN = minN
+	if minStr != "" {
+		n, err := strconv.Atoi(minStr)
+		if err != nil {
+			return 0, cerrors.Newf(cerrors.InvalidArgument, "Invalid value '%s' for parameter minCount", minStr)
+		}
+
+		minN = n
 	}
 
-	if maxN < 1 {
-		maxN = 1
+	maxN := minN
+
+	if maxStr != "" {
+		n, err := strconv.Atoi(maxStr)
+		if err != nil {
+			return 0, cerrors.Newf(cerrors.InvalidArgument, "Invalid value '%s' for parameter maxCount", maxStr)
+		}
+
+		maxN = n
 	}
 
-	return maxN
+	if minN < 1 {
+		return 0, cerrors.Newf(cerrors.InvalidArgument,
+			"Invalid value '%d' for parameter minCount is invalid. minCount must be greater than 0", minN)
+	}
+
+	if maxN < minN {
+		return 0, cerrors.Newf(cerrors.InvalidArgument,
+			"Invalid value '%d' for parameter maxCount is invalid. maxCount must be greater than or equal to minCount %d", maxN, minN)
+	}
+
+	return maxN, nil
 }
 
 // mergeTagSpecs flattens tag-specifications whose ResourceType matches

@@ -45,6 +45,9 @@ type objectXML struct {
 	ETag         string `xml:"ETag"`
 	Size         int    `xml:"Size"`
 	StorageClass string `xml:"StorageClass"`
+	// Owner is emitted only for a ListObjectsV2 request with fetch-owner=true
+	// (ListObjects v1 always includes it); nil otherwise so it is omitted.
+	Owner *aclOwnerXML `xml:"Owner,omitempty"`
 }
 
 type prefixXML struct {

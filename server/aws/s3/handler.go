@@ -453,6 +453,13 @@ func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket st
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// wantsOwner reports whether an <Owner> element belongs on each listed object.
+// ListObjects v1 always includes it; only ListObjectsV2 (list-type=2) gates it
+// behind fetch-owner=true, omitting it by default.
+func wantsOwner(q url.Values) bool {
+	return q.Get("list-type") != "2" || q.Get("fetch-owner") == "true"
+}
+
 func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
 	q := r.URL.Query()
 
@@ -505,6 +512,11 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		resp.NextContinuationToken = result.NextPageToken
 	}
 
+	var owner *aclOwnerXML
+	if wantsOwner(q) {
+		owner = &aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
+	}
+
 	for i := range result.Objects {
 		obj := &result.Objects[i]
 		resp.Contents = append(resp.Contents, objectXML{
@@ -513,6 +525,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			ETag:         fmt.Sprintf("%q", obj.ETag),
 			Size:         int(obj.Size),
 			StorageClass: "STANDARD",
+			Owner:        owner,
 		})
 	}
 
