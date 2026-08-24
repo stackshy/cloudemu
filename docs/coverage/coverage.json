@@ -5947,6 +5947,10 @@
         "doc": "AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,",
         "operations": [
           {
+            "name": "DequeueMessages",
+            "doc": "DequeueMessages retrieves up to maxMessages visible messages, hiding them"
+          },
+          {
             "name": "GetQueueMetadata",
             "doc": "GetQueueMetadata reports the approximate message count and user metadata."
           },

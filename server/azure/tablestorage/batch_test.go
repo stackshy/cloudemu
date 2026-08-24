@@ -1,8 +1,15 @@
 package tablestorage_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/textproto"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
@@ -94,5 +101,115 @@ func TestSubmitTransactionRollsBack(t *testing.T) {
 	// Because the batch failed atomically, the first insert must NOT have landed.
 	if _, err := client.GetEntity(ctx, "p", "fresh", nil); err == nil {
 		t.Error("entity 'fresh' exists after a rolled-back batch, want it absent")
+	}
+}
+
+// buildRawBatch renders a raw multipart/mixed $batch body with one change set of
+// insert operations, bypassing the aztables client-side partition-key check so
+// the server's own validation can be exercised.
+func buildRawBatch(t *testing.T, table string, entities [][]byte) (contentType string, body []byte) {
+	t.Helper()
+
+	var changeset bytes.Buffer
+
+	cw := multipart.NewWriter(&changeset)
+
+	for _, ent := range entities {
+		part, err := cw.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {"application/http"},
+			"Content-Transfer-Encoding": {"binary"},
+		})
+		if err != nil {
+			t.Fatalf("create change-set part: %v", err)
+		}
+
+		var inner bytes.Buffer
+
+		fmt.Fprintf(&inner, "POST /%s HTTP/1.1\r\n", table)
+		inner.WriteString("Content-Type: application/json\r\n")
+		fmt.Fprintf(&inner, "Content-Length: %d\r\n\r\n", len(ent))
+		inner.Write(ent)
+
+		if _, err := part.Write(inner.Bytes()); err != nil {
+			t.Fatalf("write inner request: %v", err)
+		}
+	}
+
+	_ = cw.Close()
+
+	var batch bytes.Buffer
+
+	bw := multipart.NewWriter(&batch)
+
+	part, err := bw.CreatePart(textproto.MIMEHeader{
+		"Content-Type": {"multipart/mixed; boundary=" + cw.Boundary()},
+	})
+	if err != nil {
+		t.Fatalf("create batch part: %v", err)
+	}
+
+	if _, err := part.Write(changeset.Bytes()); err != nil {
+		t.Fatalf("write change set: %v", err)
+	}
+
+	_ = bw.Close()
+
+	return "multipart/mixed; boundary=" + bw.Boundary(), batch.Bytes()
+}
+
+// postRawBatch submits a raw $batch body and returns the response body text.
+func postRawBatch(t *testing.T, ts, contentType string, body []byte) string {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, ts+"/$batch", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new batch request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do batch request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read batch response: %v", err)
+	}
+
+	return string(out)
+}
+
+// TestBatchMixedPartitionKeysRejected covers the entity-group-transaction rule
+// that all operations must share one PartitionKey; a mixed batch is rejected.
+func TestBatchMixedPartitionKeysRejected(t *testing.T) {
+	_, ts := newTableClient(t, "mixpk")
+
+	contentType, body := buildRawBatch(t, "mixpk", [][]byte{
+		marshalEntity(t, "p", "a", nil),
+		marshalEntity(t, "q", "b", nil),
+	})
+
+	got := postRawBatch(t, ts.URL, contentType, body)
+	if !strings.Contains(got, "CommandsInBatchActOnDifferentPartitions") {
+		t.Fatalf("mixed-partition batch response = %q, want CommandsInBatchActOnDifferentPartitions", got)
+	}
+}
+
+// TestBatchDuplicateEntityRejected covers the rule that an entity may appear only
+// once in a transaction; a duplicate (PartitionKey, RowKey) is rejected.
+func TestBatchDuplicateEntityRejected(t *testing.T) {
+	_, ts := newTableClient(t, "dupent")
+
+	contentType, body := buildRawBatch(t, "dupent", [][]byte{
+		marshalEntity(t, "p", "a", nil),
+		marshalEntity(t, "p", "a", nil),
+	})
+
+	got := postRawBatch(t, ts.URL, contentType, body)
+	if !strings.Contains(got, "InvalidDuplicateRow") {
+		t.Fatalf("duplicate-entity batch response = %q, want InvalidDuplicateRow", got)
 	}
 }

@@ -356,11 +356,7 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 	maxMsgs := atoiDefault(q.Get("numofmessages"), 1)
 	visTimeout := atoiDefault(q.Get("visibilitytimeout"), 0)
 
-	msgs, err := h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
-		QueueURL:          url,
-		MaxMessages:       maxMsgs,
-		VisibilityTimeout: visTimeout,
-	})
+	msgs, err := h.dequeueMessages(r, url, maxMsgs, visTimeout)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -382,6 +378,21 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 	}
 
 	writeXML(w, http.StatusOK, out)
+}
+
+// dequeueMessages retrieves messages using the Azure Queue Storage surface when
+// the driver exposes it (respecting the 32-message max), falling back to the
+// cross-cloud receive path otherwise.
+func (h *Handler) dequeueMessages(r *http.Request, url string, maxMsgs, visTimeout int) ([]mqdriver.Message, error) {
+	if svc, ok := h.mq.(mqdriver.AzureQueueStorage); ok {
+		return svc.DequeueMessages(r.Context(), url, maxMsgs, visTimeout)
+	}
+
+	return h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
+		QueueURL:          url,
+		MaxMessages:       maxMsgs,
+		VisibilityTimeout: visTimeout,
+	})
 }
 
 // peek handles GET /{queue}/messages?peekonly=true — a non-destructive read

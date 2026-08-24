@@ -227,6 +227,11 @@ type AzureQueueMetadata struct {
 // provider opts into). The wire handler reaches it by type assertion, mirroring
 // the AWS-specific message-move surface on the SQS side.
 type AzureQueueStorage interface {
+	// DequeueMessages retrieves up to maxMessages visible messages, hiding them
+	// for visibilityTimeout seconds and issuing a pop receipt per message. It
+	// respects Azure Queue Storage's max of 32 messages per call (distinct from
+	// Service Bus's receive cap).
+	DequeueMessages(ctx context.Context, queueURL string, maxMessages, visibilityTimeout int) ([]Message, error)
 	// PeekMessages returns up to maxMessages visible messages without altering
 	// their visibility or issuing pop receipts.
 	PeekMessages(ctx context.Context, queueURL string, maxMessages int) ([]AzureQueueMessage, error)

@@ -15,6 +15,61 @@ var _ driver.AzureQueueStorage = (*Mock)(nil)
 // defaultMessageRetention is the Azure Queue Storage default message TTL.
 const defaultMessageRetention = 7 * 24 * time.Hour
 
+// maxQueueStorageMessages is the maximum number of messages Azure Queue Storage
+// returns from a single Get Messages or Peek Messages call. This differs from
+// Service Bus's receive cap, so Queue Storage clamps against its own limit.
+const maxQueueStorageMessages = 32
+
+// clampQueueStorageMessages bounds a requested message count to Azure Queue
+// Storage's [1, 32] range, defaulting to 1 when unset or non-positive.
+func clampQueueStorageMessages(maxMessages int) int {
+	if maxMessages <= 0 {
+		return 1
+	}
+
+	if maxMessages > maxQueueStorageMessages {
+		return maxQueueStorageMessages
+	}
+
+	return maxMessages
+}
+
+// DequeueMessages retrieves up to maxMessages visible messages, hiding each for
+// visibilityTimeout seconds and issuing a fresh pop receipt (Azure Get Messages).
+func (m *Mock) DequeueMessages(
+	_ context.Context, queueURL string, maxMessages, visibilityTimeout int,
+) ([]driver.Message, error) {
+	qd, ok := m.queues.Get(queueURL)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "queue %q not found", queueURL)
+	}
+
+	qd.mu.Lock()
+	defer qd.mu.Unlock()
+
+	maxMsgs := clampQueueStorageMessages(maxMessages)
+
+	visTimeout := visibilityTimeout
+	if visTimeout == 0 {
+		visTimeout = qd.visibilityTimeout
+	}
+
+	now := m.opts.Clock.Now()
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now)
+
+	removeByIndices(qd, toRemove)
+
+	if results == nil {
+		results = []driver.Message{}
+	}
+
+	m.emitMetric(qd.info.Name, map[string]float64{
+		"OutgoingMessages": float64(len(results)), "ActiveMessages": float64(len(qd.messages)),
+	})
+
+	return results, nil
+}
+
 // messageExpiry returns when a message expires given the queue's retention.
 func (qd *queueData) messageExpiry(msg *sbMessage) time.Time {
 	if qd.messageRetention > 0 {
@@ -35,7 +90,7 @@ func (m *Mock) PeekMessages(_ context.Context, queueURL string, maxMessages int)
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	limit := clampMaxMessages(maxMessages)
+	limit := clampQueueStorageMessages(maxMessages)
 	now := m.opts.Clock.Now()
 
 	out := make([]driver.AzureQueueMessage, 0, limit)
@@ -111,14 +166,10 @@ func (m *Mock) GetQueueMetadata(_ context.Context, queueURL string) (driver.Azur
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	now := m.opts.Clock.Now()
-	count := 0
-
-	for _, msg := range qd.messages {
-		if !msg.VisibleAt.After(now) {
-			count++
-		}
-	}
+	// x-ms-approximate-messages-count reflects the total messages in the queue,
+	// counting both visible and invisible (in-flight) messages; it ignores
+	// message visibility. See Get Queue Metadata (Azure Queue Storage) docs.
+	count := len(qd.messages)
 
 	meta := make(map[string]string, len(qd.metadata))
 	for k, v := range qd.metadata {

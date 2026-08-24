@@ -159,6 +159,84 @@ func TestQueueGetPropertiesAndSetMetadata(t *testing.T) {
 	}
 }
 
+// TestQueueDequeueUpTo32 covers the Azure Queue Storage max-messages limit: a
+// single Get Messages call may return up to 32 messages, not Service Bus's 10.
+func TestQueueDequeueUpTo32(t *testing.T) {
+	ctx := context.Background()
+	qc := newQueueClient(t, "maxq")
+
+	const want = 12
+	for range [want]int{} {
+		if _, err := qc.EnqueueMessage(ctx, "m", nil); err != nil {
+			t.Fatalf("EnqueueMessage: %v", err)
+		}
+	}
+
+	deq, err := qc.DequeueMessages(ctx, &azqueue.DequeueMessagesOptions{
+		NumberOfMessages: to.Ptr(int32(want)),
+	})
+	if err != nil {
+		t.Fatalf("DequeueMessages: %v", err)
+	}
+
+	if len(deq.Messages) != want {
+		t.Fatalf("dequeued %d messages, want %d (Azure allows up to 32 per call)", len(deq.Messages), want)
+	}
+}
+
+// TestQueuePeekUpTo32 covers the same 32-message limit on the Peek Messages path.
+func TestQueuePeekUpTo32(t *testing.T) {
+	ctx := context.Background()
+	qc := newQueueClient(t, "peekmaxq")
+
+	const want = 12
+	for range [want]int{} {
+		if _, err := qc.EnqueueMessage(ctx, "m", nil); err != nil {
+			t.Fatalf("EnqueueMessage: %v", err)
+		}
+	}
+
+	peek, err := qc.PeekMessages(ctx, &azqueue.PeekMessagesOptions{
+		NumberOfMessages: to.Ptr(int32(want)),
+	})
+	if err != nil {
+		t.Fatalf("PeekMessages: %v", err)
+	}
+
+	if len(peek.Messages) != want {
+		t.Fatalf("peeked %d messages, want %d (Azure allows up to 32 per call)", len(peek.Messages), want)
+	}
+}
+
+// TestQueueMetadataCountsInFlight covers the x-ms-approximate-messages-count
+// semantics: the count reflects total messages in the queue, including ones that
+// are invisible because they are mid-flight (dequeued but not yet deleted).
+func TestQueueMetadataCountsInFlight(t *testing.T) {
+	ctx := context.Background()
+	qc := newQueueClient(t, "inflightq")
+
+	for range [2]int{} {
+		if _, err := qc.EnqueueMessage(ctx, "m", nil); err != nil {
+			t.Fatalf("EnqueueMessage: %v", err)
+		}
+	}
+
+	// Dequeue one message; it becomes invisible for the visibility timeout but
+	// remains in the queue until deleted.
+	if _, err := qc.DequeueMessage(ctx, nil); err != nil {
+		t.Fatalf("DequeueMessage: %v", err)
+	}
+
+	props, err := qc.GetProperties(ctx, nil)
+	if err != nil {
+		t.Fatalf("GetProperties: %v", err)
+	}
+
+	if props.ApproximateMessagesCount == nil || *props.ApproximateMessagesCount != 2 {
+		t.Errorf("ApproximateMessagesCount = %v, want 2 (both visible and in-flight)", props.ApproximateMessagesCount)
+	}
+}
+
 // TestQueueDequeueCountIncrements covers finding #9: DequeueCount reflects the
 // real number of receives, not a hardcoded 1.
 func TestQueueDequeueCountIncrements(t *testing.T) {

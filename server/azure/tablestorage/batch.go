@@ -55,6 +55,11 @@ func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if code, msg, ok := validateBatchPartitions(ops); !ok {
+		writeError(w, http.StatusBadRequest, code, msg)
+		return
+	}
+
 	results, applyErr := h.ts.ApplyBatch(r.Context(), table, ops)
 	if applyErr != nil {
 		writeBatchFailure(w, applyErr)
@@ -62,6 +67,32 @@ func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeBatchSuccess(w, ops, results)
+}
+
+// validateBatchPartitions enforces Azure's entity-group-transaction rules: every
+// operation must target the same PartitionKey, and an entity — identified by its
+// (PartitionKey, RowKey) — may appear at most once. It returns the Azure error
+// code and message when a rule is violated. ops must be non-empty.
+func validateBatchPartitions(ops []driver.BatchOp) (code, msg string, ok bool) {
+	partition := ops[0].PartitionKey
+	seen := make(map[string]struct{}, len(ops))
+
+	for _, op := range ops {
+		if op.PartitionKey != partition {
+			return "CommandsInBatchActOnDifferentPartitions",
+				"all commands in a batch transaction must operate on the same partition key", false
+		}
+
+		key := op.PartitionKey + "\x00" + op.RowKey
+		if _, dup := seen[key]; dup {
+			return "InvalidDuplicateRow",
+				"an entity can appear only once in a batch transaction", false
+		}
+
+		seen[key] = struct{}{}
+	}
+
+	return "", "", true
 }
 
 // parseBatch decodes the multipart batch body into an ordered op list and the

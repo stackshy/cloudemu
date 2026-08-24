@@ -32,6 +32,7 @@ AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,
 
 | Operation | Description |
 | --- | --- |
+| `DequeueMessages` | DequeueMessages retrieves up to maxMessages visible messages, hiding them |
 | `GetQueueMetadata` | GetQueueMetadata reports the approximate message count and user metadata. |
 | `PeekMessages` | PeekMessages returns up to maxMessages visible messages without altering |
 | `SetQueueMetadata` | SetQueueMetadata replaces the queue's user metadata. |
