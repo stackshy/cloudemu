@@ -5,12 +5,9 @@
 // hit management.azure.com, driving the shared eventbus driver.
 //
 // Event Grid topics map onto the eventbus driver's event buses: a topic is an
-// event bus keyed by its user-assigned name. The driver's rule/target and
-// event-publish model has no ARM management-plane surface — Event Grid models
-// those as event subscriptions and a separate data-plane publish endpoint on
-// the topic's own hostname — so this handler covers only the topic
-// (event-bus) lifecycle. See the package README note in the New docstring for
-// the honest scope.
+// event bus keyed by its user-assigned name. Event subscriptions map onto the
+// driver's rules (the raw ARM properties round-trip verbatim), and the
+// data-plane publish endpoint is served separately by PublishHandler.
 //
 // This handler claims Microsoft.EventGrid/topics only; it is disjoint from
 // every other Azure ARM provider, so registration order relative to them is
@@ -18,10 +15,11 @@
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.EventGrid/topics/{t}   — Topics.CreateOrUpdate (LRO, completes inline)
-//	GET    .../providers/Microsoft.EventGrid/topics/{t}   — Topics.Get
-//	DELETE .../providers/Microsoft.EventGrid/topics/{t}   — Topics.Delete (LRO, completes inline)
-//	GET    .../providers/Microsoft.EventGrid/topics       — Topics.ListBySubscription / ListByResourceGroup
+//	PUT/GET/DELETE .../topics/{t}                           — Topics CRUD (LRO, completes inline)
+//	GET            .../topics                               — Topics.ListBySubscription / ListByResourceGroup
+//	POST           .../topics/{t}/listKeys                  — Topics.ListSharedAccessKeys
+//	PUT/GET/DELETE .../topics/{t}/eventSubscriptions/{s}    — TopicEventSubscriptions CRUD
+//	GET            .../topics/{t}/eventSubscriptions        — TopicEventSubscriptions.List
 package eventgrid
 
 import (
@@ -79,13 +77,56 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	switch rp.SubResource {
+	case actionListKeys:
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+
+		h.listTopicKeys(w, r, &rp)
+	case subEventSubscriptions:
+		h.serveEventSubscription(w, r, &rp)
+	case "":
+		h.serveTopic(w, r, &rp)
+	default:
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Event Grid topic sub-resource")
+	}
+}
+
+func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch r.Method {
 	case http.MethodPut:
-		h.createOrUpdateTopic(w, r, &rp)
+		h.createOrUpdateTopic(w, r, rp)
 	case http.MethodGet:
-		h.getTopic(w, r, &rp)
+		h.getTopic(w, r, rp)
 	case http.MethodDelete:
-		h.deleteTopic(w, r, &rp)
+		h.deleteTopic(w, r, rp)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveEventSubscription routes .../topics/{t}/eventSubscriptions[/{name}].
+func (h *Handler) serveEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if rp.SubResourceName == "" {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+
+		h.listEventSubscriptions(w, r, rp)
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		h.createOrUpdateEventSubscription(w, r, rp)
+	case http.MethodGet:
+		h.getEventSubscription(w, r, rp)
+	case http.MethodDelete:
+		h.deleteEventSubscription(w, r, rp)
 	default:
 		writeMethodNotAllowed(w)
 	}
