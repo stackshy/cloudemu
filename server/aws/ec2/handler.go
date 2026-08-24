@@ -363,6 +363,10 @@ func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string
 		return true
 	}
 
+	if h.routeVPCSecurityGroupRule(w, r, action) {
+		return true
+	}
+
 	if h.routeVPCInternetGateway(w, r, action) {
 		return true
 	}
@@ -438,6 +442,24 @@ func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, 
 		h.revokeSecurityGroupIngress(w, r)
 	case "RevokeSecurityGroupEgress":
 		h.revokeSecurityGroupEgress(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeVPCSecurityGroupRule dispatches the AWS-only security-group rule-mutation
+// actions (rule full-replace + description updates). It is kept separate from
+// routeVPCSecurityGroup so each dispatch table stays small.
+func (h *Handler) routeVPCSecurityGroupRule(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "ModifySecurityGroupRules":
+		h.modifySecurityGroupRules(w, r)
+	case "UpdateSecurityGroupRuleDescriptionsIngress":
+		h.updateSecurityGroupRuleDescriptions(w, r, false)
+	case "UpdateSecurityGroupRuleDescriptionsEgress":
+		h.updateSecurityGroupRuleDescriptions(w, r, true)
 	default:
 		return false
 	}

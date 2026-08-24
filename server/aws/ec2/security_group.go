@@ -871,3 +871,238 @@ func writeSimpleSGResponse(w http.ResponseWriter, rootName string) {
 func writeSGErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidGroup.NotFound", "DependencyViolation")
 }
+
+// sgRuleMutator is the AWS-only optional interface the VPC mock satisfies to
+// back the rule-mutation actions (ModifySecurityGroupRules,
+// UpdateSecurityGroupRuleDescriptions{Ingress,Egress}). These identify a rule by
+// its "sgr-" id, a concept Azure/GCP/OCI do not share, so they are type-asserted
+// here rather than added to the cross-cloud Networking driver.
+type sgRuleMutator interface {
+	ModifySecurityGroupRule(ctx context.Context, groupID, ruleID string, updated netdriver.SecurityRule) error
+	SetSecurityGroupRuleDescription(ctx context.Context, groupID, ruleID string, egress bool, description string) error
+}
+
+// modifySecurityGroupRules backs ec2:ModifySecurityGroupRules: it full-replaces
+// the permission fields of each identified rule (keeping its id, side, and
+// tags) and answers the trivial <return>true</return> envelope.
+func (h *Handler) modifySecurityGroupRules(w http.ResponseWriter, r *http.Request) {
+	mutator, ok := h.vpc.(sgRuleMutator)
+	if !ok {
+		writeSGErr(w, newInvalidParameterErr("security group rule modification is not supported"))
+		return
+	}
+
+	groupID := r.Form.Get("GroupId")
+	if groupID == "" {
+		writeSGErr(w, errMissingGroupID())
+		return
+	}
+
+	const prefix = "SecurityGroupRule"
+
+	indices := awsquery.CollectIndices(r.Form, prefix)
+	if len(indices) == 0 {
+		writeSGErr(w, newInvalidParameterErr("at least one SecurityGroupRule update is required"))
+		return
+	}
+
+	for _, idx := range indices {
+		base := prefix + "." + strconv.Itoa(idx)
+
+		ruleID := r.Form.Get(base + ".SecurityGroupRuleId")
+		if ruleID == "" {
+			writeSGErr(w, newInvalidParameterErr("SecurityGroupRuleId is required for each update"))
+			return
+		}
+
+		updated, err := parseSecurityGroupRuleRequest(r.Form, base+".SecurityGroupRule")
+		if err != nil {
+			writeSGErr(w, err)
+			return
+		}
+
+		if err := mutator.ModifySecurityGroupRule(r.Context(), groupID, ruleID, updated); err != nil {
+			writeSGRuleErr(w, err)
+			return
+		}
+	}
+
+	writeSimpleSGResponse(w, "ModifySecurityGroupRulesResponse")
+}
+
+// parseSecurityGroupRuleRequest reads the single nested SecurityGroupRuleRequest
+// object at base into a SecurityRule, enforcing AWS's "exactly one target"
+// rule across CidrIpv4/CidrIpv6/PrefixListId/ReferencedGroupId.
+func parseSecurityGroupRuleRequest(form url.Values, base string) (netdriver.SecurityRule, error) {
+	fromPort, _ := strconv.Atoi(form.Get(base + ".FromPort"))
+	toPort, _ := strconv.Atoi(form.Get(base + ".ToPort"))
+
+	rule := netdriver.SecurityRule{
+		Protocol:          form.Get(base + ".IpProtocol"),
+		FromPort:          fromPort,
+		ToPort:            toPort,
+		CIDR:              form.Get(base + ".CidrIpv4"),
+		IPv6CIDR:          form.Get(base + ".CidrIpv6"),
+		PrefixListID:      form.Get(base + ".PrefixListId"),
+		ReferencedGroupID: form.Get(base + ".ReferencedGroupId"),
+		Description:       form.Get(base + ".Description"),
+	}
+
+	targets := 0
+
+	for _, t := range []string{rule.CIDR, rule.IPv6CIDR, rule.PrefixListID, rule.ReferencedGroupID} {
+		if t != "" {
+			targets++
+		}
+	}
+
+	if targets != 1 {
+		return netdriver.SecurityRule{}, newInvalidParameterErr(
+			"exactly one of CidrIpv4, CidrIpv6, PrefixListId or ReferencedGroupId must be specified")
+	}
+
+	return rule, nil
+}
+
+// updateSecurityGroupRuleDescriptions backs
+// ec2:UpdateSecurityGroupRuleDescriptions{Ingress,Egress}. Rules are identified
+// either directly by SecurityGroupRuleDescription.N.SecurityGroupRuleId or,
+// classically, by an IpPermissions match resolved against the group's rules in
+// the selected direction. Omitting a Description clears it.
+func (h *Handler) updateSecurityGroupRuleDescriptions(w http.ResponseWriter, r *http.Request, egress bool) {
+	mutator, ok := h.vpc.(sgRuleMutator)
+	if !ok {
+		writeSGErr(w, newInvalidParameterErr("security group rule modification is not supported"))
+		return
+	}
+
+	groupID := r.Form.Get("GroupId")
+	if groupID == "" {
+		writeSGErr(w, errMissingGroupID())
+		return
+	}
+
+	descByID := parseRuleDescriptions(r.Form)
+	perms := parseIPPermissions(r.Form)
+
+	if len(descByID) == 0 && len(perms) == 0 {
+		writeSGErr(w, newInvalidParameterErr(
+			"either IpPermissions or SecurityGroupRuleDescription must be specified"))
+		return
+	}
+
+	for _, d := range descByID {
+		if err := mutator.SetSecurityGroupRuleDescription(r.Context(), groupID, d.ruleID, egress, d.description); err != nil {
+			writeSGRuleErr(w, err)
+			return
+		}
+	}
+
+	if len(perms) > 0 {
+		if err := h.applyPermissionDescriptions(r.Context(), mutator, groupID, egress, perms); err != nil {
+			writeSGRuleErr(w, err)
+			return
+		}
+	}
+
+	name := "UpdateSecurityGroupRuleDescriptionsIngressResponse"
+	if egress {
+		name = "UpdateSecurityGroupRuleDescriptionsEgressResponse"
+	}
+
+	writeSimpleSGResponse(w, name)
+}
+
+// applyPermissionDescriptions resolves each parsed IpPermission to the matching
+// rule id in the selected direction and sets that rule's description, matching
+// how real EC2 accepts the classic (pre-sgr-id) description-update form.
+func (h *Handler) applyPermissionDescriptions(
+	ctx context.Context,
+	mutator sgRuleMutator,
+	groupID string,
+	egress bool,
+	perms []netdriver.SecurityRule,
+) error {
+	sgs, err := h.vpc.DescribeSecurityGroups(ctx, []string{groupID})
+	if err != nil {
+		return err
+	}
+
+	if len(sgs) == 0 {
+		return cerrors.Newf(cerrors.NotFound, "security group %q not found", groupID)
+	}
+
+	current := sgs[0].IngressRules
+	if egress {
+		current = sgs[0].EgressRules
+	}
+
+	for i := range perms {
+		ruleID, found := resolveRuleID(current, &perms[i])
+		if !found {
+			return cerrors.New(cerrors.NotFound, "the specified security group rule does not exist")
+		}
+
+		if err := mutator.SetSecurityGroupRuleDescription(ctx, groupID, ruleID, egress, perms[i].Description); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// resolveRuleID returns the id of the rule in current that matches perm's
+// permission fields (protocol/ports/target), ignoring description.
+func resolveRuleID(current []netdriver.SecurityRule, perm *netdriver.SecurityRule) (string, bool) {
+	for i := range current {
+		if current[i].Matches(perm) {
+			return current[i].RuleID, true
+		}
+	}
+
+	return "", false
+}
+
+// ruleDescription is one parsed SecurityGroupRuleDescription.N entry.
+type ruleDescription struct {
+	ruleID      string
+	description string
+}
+
+// parseRuleDescriptions reads the SecurityGroupRuleDescription.N array
+// (SecurityGroupRuleId + optional Description) from the wire form.
+func parseRuleDescriptions(form url.Values) []ruleDescription {
+	const prefix = "SecurityGroupRuleDescription"
+
+	indices := awsquery.CollectIndices(form, prefix)
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]ruleDescription, 0, len(indices))
+
+	for _, idx := range indices {
+		base := prefix + "." + strconv.Itoa(idx)
+
+		id := form.Get(base + ".SecurityGroupRuleId")
+		if id == "" {
+			continue
+		}
+
+		out = append(out, ruleDescription{ruleID: id, description: form.Get(base + ".Description")})
+	}
+
+	return out
+}
+
+// writeSGRuleErr maps a rule-level not-found (a rule id that names no rule in
+// the group) to InvalidSecurityGroupRuleId.NotFound, falling back to the
+// group-level SG error mapping for everything else.
+func writeSGRuleErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "rule") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSecurityGroupRuleId.NotFound", err.Error())
+		return
+	}
+
+	writeSGErr(w, err)
+}
