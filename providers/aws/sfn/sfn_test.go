@@ -449,3 +449,83 @@ func TestInvalidArnFormats(t *testing.T) {
 		t.Fatalf("malformed execution ARN should be InvalidArgument, got %v", err)
 	}
 }
+
+// TestAsyncSettleExecution pins that under AsyncSettle an execution reports
+// RUNNING (no stop date, no output) until the settle window elapses, then
+// SUCCEEDED; and that StopExecution during the RUNNING window aborts it.
+func TestAsyncSettleExecution(t *testing.T) {
+	fc := config.NewFakeClock(time.Unix(0, 0))
+	m := sfn.New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("000000000000"), config.WithAsyncSettle()))
+	ctx := context.Background()
+	arn := createSM(t, m, "sm")
+
+	start, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "e1", Input: "{}"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+	if start.Status != driver.ExecStatusRunning {
+		t.Fatalf("start status = %q, want RUNNING", start.Status)
+	}
+
+	got, _ := m.DescribeExecution(ctx, start.ARN)
+	if got.Status != driver.ExecStatusRunning || !got.StopDate.IsZero() || got.Output != "" {
+		t.Fatalf("running describe = %+v, want RUNNING/no-stop/no-output", got)
+	}
+
+	fc.Advance(2 * time.Second) // past DefaultExecutionSettle (1s)
+	got, _ = m.DescribeExecution(ctx, start.ARN)
+	if got.Status != driver.ExecStatusSucceeded || got.StopDate.IsZero() {
+		t.Fatalf("settled describe = %+v, want SUCCEEDED with stop date", got)
+	}
+
+	// Stop during the RUNNING window aborts.
+	start2, _ := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "e2", Input: "{}"})
+	if _, err := m.StopExecution(ctx, start2.ARN, "", ""); err != nil {
+		t.Fatalf("StopExecution: %v", err)
+	}
+	got2, _ := m.DescribeExecution(ctx, start2.ARN)
+	if got2.Status != driver.ExecStatusAborted {
+		t.Fatalf("stopped status = %q, want ABORTED", got2.Status)
+	}
+}
+
+// TestAsyncSettleSyncExecutionAndHistory pins that StartSyncExecution bypasses
+// the settle overlay (returns the terminal SUCCEEDED result immediately), and
+// that GetExecutionHistory omits the terminal event while an async execution is
+// still observably RUNNING.
+func TestAsyncSettleSyncExecutionAndHistory(t *testing.T) {
+	fc := config.NewFakeClock(time.Unix(0, 0))
+	m := sfn.New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("000000000000"), config.WithAsyncSettle()))
+	ctx := context.Background()
+	arn := createSM(t, m, "sm")
+
+	// Synchronous execution returns terminal SUCCEEDED with output, not RUNNING.
+	sync, err := m.StartSyncExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "sync1", Input: `{"k":1}`})
+	if err != nil {
+		t.Fatalf("StartSyncExecution: %v", err)
+	}
+	if sync.Status != driver.ExecStatusSucceeded {
+		t.Fatalf("sync status = %q, want SUCCEEDED", sync.Status)
+	}
+	if sync.Output == "" || sync.StopDate.IsZero() {
+		t.Fatalf("sync execution missing output/stopDate: %+v", sync)
+	}
+
+	// Async execution: history has only ExecutionStarted while RUNNING.
+	start, _ := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "a1", Input: "{}"})
+	hist, err := m.GetExecutionHistory(ctx, start.ARN, false)
+	if err != nil {
+		t.Fatalf("GetExecutionHistory: %v", err)
+	}
+	if len(hist) != 1 || hist[0].Type != "ExecutionStarted" {
+		t.Fatalf("running history = %+v, want only ExecutionStarted", hist)
+	}
+
+	fc.Advance(2 * time.Second)
+	hist, _ = m.GetExecutionHistory(ctx, start.ARN, false)
+	if len(hist) != 4 || hist[len(hist)-1].Type != "ExecutionSucceeded" {
+		t.Fatalf("settled history len = %d, want 4 ending ExecutionSucceeded", len(hist))
+	}
+}

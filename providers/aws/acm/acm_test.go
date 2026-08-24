@@ -69,3 +69,74 @@ func TestDeleteInUseGuard(t *testing.T) {
 		t.Fatalf("deleting missing cert should be NotFound, got %v", err)
 	}
 }
+
+// TestAsyncSettleCertificate pins that under AsyncSettle a DNS-validated
+// certificate reports PENDING_VALIDATION (with its CNAME record to create) until
+// the settle window elapses, then ISSUED; and that ListCertificates filtered by
+// PENDING_VALIDATION reflects the transition.
+func TestAsyncSettleCertificate(t *testing.T) {
+	fc := config.NewFakeClock(time.Unix(0, 0))
+	m := acm.New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("000000000000"), config.WithAsyncSettle()))
+	ctx := context.Background()
+
+	arn, err := m.RequestCertificate(ctx, driver.RequestCertificateInput{
+		DomainName: "example.com", ValidationMethod: driver.ValidationDNS,
+	})
+	if err != nil {
+		t.Fatalf("RequestCertificate: %v", err)
+	}
+
+	cert, _ := m.DescribeCertificate(ctx, arn)
+	if cert.Status != driver.StatusPendingValidation {
+		t.Fatalf("status = %q, want PENDING_VALIDATION", cert.Status)
+	}
+	if len(cert.DomainValidationOptions) == 0 || cert.DomainValidationOptions[0].ResourceRecordN == "" {
+		t.Fatal("expected a DNS validation ResourceRecord (CNAME) to create")
+	}
+	if cert.DomainValidationOptions[0].ValidationStatus != driver.StatusPendingValidation {
+		t.Fatalf("dv status = %q, want PENDING_VALIDATION", cert.DomainValidationOptions[0].ValidationStatus)
+	}
+
+	pending, _ := m.ListCertificates(ctx, driver.ListFilter{Statuses: []string{driver.StatusPendingValidation}})
+	if len(pending) != 1 {
+		t.Fatalf("PENDING_VALIDATION filter returned %d, want 1", len(pending))
+	}
+
+	fc.Advance(3 * time.Second) // past DefaultCertificateSettle (2s)
+	cert, _ = m.DescribeCertificate(ctx, arn)
+	if cert.Status != driver.StatusIssued {
+		t.Fatalf("status after settle = %q, want ISSUED", cert.Status)
+	}
+	pending, _ = m.ListCertificates(ctx, driver.ListFilter{Statuses: []string{driver.StatusPendingValidation}})
+	if len(pending) != 0 {
+		t.Fatalf("PENDING_VALIDATION filter after settle returned %d, want 0", len(pending))
+	}
+}
+
+// TestAsyncSettleGetCertificateGated pins that GetCertificate returns no
+// material while the certificate is observably PENDING_VALIDATION, then the
+// issued PEM once the settle window elapses.
+func TestAsyncSettleGetCertificateGated(t *testing.T) {
+	fc := config.NewFakeClock(time.Unix(0, 0))
+	m := acm.New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("000000000000"), config.WithAsyncSettle()))
+	ctx := context.Background()
+
+	arn, err := m.RequestCertificate(ctx, driver.RequestCertificateInput{
+		DomainName: "example.com", ValidationMethod: driver.ValidationDNS,
+	})
+	if err != nil {
+		t.Fatalf("RequestCertificate: %v", err)
+	}
+
+	if _, _, err := m.GetCertificate(ctx, arn); err == nil {
+		t.Fatal("GetCertificate while pending should error, got nil")
+	}
+
+	fc.Advance(3 * time.Second)
+	pem, _, err := m.GetCertificate(ctx, arn)
+	if err != nil || pem == "" {
+		t.Fatalf("GetCertificate after settle = %q (err %v), want issued PEM", pem, err)
+	}
+}

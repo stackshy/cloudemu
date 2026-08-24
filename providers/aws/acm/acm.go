@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
 
@@ -38,7 +39,29 @@ type Mock struct {
 // certData is a certificate plus its own lock.
 type certData struct {
 	cert driver.Certificate
-	mu   sync.RWMutex
+	// settle overlays a PENDING_VALIDATION window over the stored (ISSUED) status
+	// on the Describe/List surface under AsyncSettle; zero-value reports ISSUED
+	// immediately. While pending, each domain-validation option also reports
+	// PENDING_VALIDATION so a caller sees the CNAME it must create.
+	settle settle.Window
+	mu     sync.RWMutex
+}
+
+// observeCert returns a deep copy of cert with the PENDING_VALIDATION window
+// overlaid: while the window is unelapsed the certificate and every domain
+// validation report PENDING_VALIDATION; once elapsed the stored (ISSUED) status
+// shows through.
+func observeCert(cert *driver.Certificate, w settle.Window, now time.Time) driver.Certificate {
+	out := copyCert(cert)
+
+	if observed := w.Observe(now, out.Status); observed != out.Status {
+		out.Status = observed
+		for i := range out.DomainValidationOptions {
+			out.DomainValidationOptions[i].ValidationStatus = observed
+		}
+	}
+
+	return out
 }
 
 // New creates a new ACM mock with the given configuration options.
