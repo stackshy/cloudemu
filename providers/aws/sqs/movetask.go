@@ -54,6 +54,12 @@ func (m *Mock) StartMessageMoveTask(_ context.Context, sourceARN, destARN string
 		return "", errors.Newf(errors.NotFound, "no queue found for source arn %q", sourceARN)
 	}
 
+	// Real SQS requires the source to be a dead-letter queue that some other queue
+	// redrives to. cloudemu deliberately relaxes this: it accepts any existing
+	// queue as a redrive source, so a user can seed a queue and redrive it without
+	// first configuring a maxReceiveCount RedrivePolicy. This is a permissive
+	// divergence (cloudemu accepts what AWS would reject), never the reverse.
+
 	var destURL string
 
 	if destARN != "" {
@@ -120,7 +126,10 @@ func (m *Mock) drainSourceQueue(sourceURL, destURL string) (moved, toMove int64,
 
 	toMove = int64(len(pending))
 
-	var remaining []*sqsMessage
+	// Track the exact messages successfully moved (by pointer identity) rather
+	// than rebuilding the source from a stale snapshot: messages delivered to the
+	// DLQ while the move is in flight must survive, not be clobbered.
+	movedSet := make(map[*sqsMessage]struct{}, len(pending))
 
 	for _, msg := range pending {
 		target := destURL
@@ -131,16 +140,23 @@ func (m *Mock) drainSourceQueue(sourceURL, destURL string) (moved, toMove int64,
 		if target == "" || !m.appendMessageToQueue(target, msg) {
 			failure = "no destination queue for one or more messages"
 
-			remaining = append(remaining, msg)
-
 			continue
 		}
 
+		movedSet[msg] = struct{}{}
 		moved++
 	}
 
 	src.mu.Lock()
-	src.messages = remaining
+
+	kept := make([]*sqsMessage, 0, len(src.messages))
+	for _, msg := range src.messages {
+		if _, done := movedSet[msg]; !done {
+			kept = append(kept, msg)
+		}
+	}
+
+	src.messages = kept
 	src.mu.Unlock()
 
 	return moved, toMove, failure
@@ -255,8 +271,16 @@ func (m *Mock) ListMessageMoveTasks(_ context.Context, sourceARN string, maxResu
 
 	out := make([]driver.MessageMoveTask, 0, len(tasks))
 	for _, t := range tasks {
+		// Real SQS only returns a TaskHandle for a RUNNING task (the handle exists
+		// to cancel it); terminal tasks omit it. cloudemu completes moves
+		// synchronously, so listed tasks are terminal and carry no handle.
+		handle := ""
+		if t.status == moveTaskRunning {
+			handle = t.handle
+		}
+
 		out = append(out, driver.MessageMoveTask{
-			TaskHandle:                   t.handle,
+			TaskHandle:                   handle,
 			SourceARN:                    t.sourceARN,
 			DestinationARN:               t.destARN,
 			MaxNumberOfMessagesPerSecond: t.maxRate,

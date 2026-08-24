@@ -135,29 +135,32 @@ func TestListMessageMoveTasksNewestFirstBounded(t *testing.T) {
 	dlq := createStdQueue(m, "dlq")
 	dest := createStdQueue(m, "dest")
 
-	var handles []string
-
 	for i := 0; i < 3; i++ {
 		sendN(t, m, dlq.URL, 1)
 
-		h, err := m.StartMessageMoveTask(ctx, dlq.ARN, dest.ARN, 0)
+		_, err := m.StartMessageMoveTask(ctx, dlq.ARN, dest.ARN, 0)
 		requireNoError(t, err)
 
-		handles = append(handles, h)
 		fc.Advance(time.Second) // so StartedTimestamps are strictly increasing
 	}
 
 	all, err := m.ListMessageMoveTasks(ctx, dlq.ARN, 10)
 	requireNoError(t, err)
 	assertEqual(t, 3, len(all))
-	// Newest first: the last-created handle comes first.
-	assertEqual(t, handles[2], all[0].TaskHandle)
-	assertEqual(t, handles[0], all[2].TaskHandle)
+	// Newest first: StartedAt strictly decreasing down the list.
+	if !all[0].StartedAt.After(all[1].StartedAt) || !all[1].StartedAt.After(all[2].StartedAt) {
+		t.Fatalf("tasks not newest-first: %v, %v, %v", all[0].StartedAt, all[1].StartedAt, all[2].StartedAt)
+	}
+	// Synchronous moves are terminal (COMPLETED), so no TaskHandle is returned.
+	for _, tk := range all {
+		assertEqual(t, moveTaskCompleted, tk.Status)
+		assertEqual(t, "", tk.TaskHandle)
+	}
 
 	bounded, err := m.ListMessageMoveTasks(ctx, dlq.ARN, 1)
 	requireNoError(t, err)
 	assertEqual(t, 1, len(bounded))
-	assertEqual(t, handles[2], bounded[0].TaskHandle)
+	assertEqual(t, all[0].StartedAt, bounded[0].StartedAt)
 
 	// Default (MaxResults=0) returns a single most-recent task.
 	def, err := m.ListMessageMoveTasks(ctx, dlq.ARN, 0)
