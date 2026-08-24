@@ -677,6 +677,7 @@ func instanceXMLFor(inst *computedriver.Instance, names map[string]string) insta
 		Hypervisor:         hypervisorXen,
 		Placement:          &placementXML{AvailabilityZone: instanceZone(inst), Tenancy: tenancyDefault},
 		Monitoring:         &monitoringXML{State: monitoringState(inst.Monitoring)},
+		MetadataOptions:    metadataOptionsXMLFor(&inst.MetadataOptions),
 	}
 
 	for _, sg := range inst.SecurityGroups {
@@ -700,6 +701,24 @@ func instanceXMLFor(inst *computedriver.Instance, names map[string]string) insta
 	}
 
 	return xi
+}
+
+// metadataOptionsXMLFor renders an instance's IMDS configuration, filling in the
+// EC2 defaults for any field an older stored instance left unset.
+func metadataOptionsXMLFor(o *computedriver.MetadataOptions) *metadataOptionsXML {
+	hopLimit := o.HTTPPutResponseHopLimit
+	if hopLimit == 0 {
+		hopLimit = 1
+	}
+
+	return &metadataOptionsXML{
+		State:                   nonEmpty(o.State, "applied"),
+		HTTPTokens:              nonEmpty(o.HTTPTokens, "optional"),
+		HTTPPutResponseHopLimit: hopLimit,
+		HTTPEndpoint:            nonEmpty(o.HTTPEndpoint, "enabled"),
+		HTTPProtocolIPv6:        nonEmpty(o.HTTPProtocolIPv6, "disabled"),
+		InstanceMetadataTags:    nonEmpty(o.InstanceMetadataTags, "disabled"),
+	}
 }
 
 // primaryENI synthesizes the instance's single primary network interface from

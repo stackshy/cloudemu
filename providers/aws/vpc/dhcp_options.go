@@ -23,18 +23,40 @@ func (m *Mock) CreateDHCPOptions(_ context.Context, cfg driver.DHCPOptionsConfig
 }
 
 // DeleteDHCPOptions deletes a DHCP option set.
+//
+// A set still associated with a VPC cannot be deleted; real EC2 answers
+// DependencyViolation and the caller must first re-associate the VPC with
+// another set (or the Amazon-provided default).
 func (m *Mock) DeleteDHCPOptions(_ context.Context, id string) error {
-	if !m.dhcpOptions.Delete(id) {
+	if !m.dhcpOptions.Has(id) {
 		return errors.Newf(errors.NotFound, "dhcp options %q not found", id)
 	}
+
+	for _, v := range m.vpcs.All() {
+		if v.DhcpOptionsID == id {
+			return errors.Newf(errors.FailedPrecondition,
+				"DependencyViolation: dhcp options %q is associated with vpc %q", id, v.ID)
+		}
+	}
+
+	m.dhcpOptions.Delete(id)
 
 	return nil
 }
 
 // DescribeDHCPOptions returns DHCP option sets matching ids.
+//
+// An explicitly named dopt- ID that does not exist is NotFound rather than an
+// empty list, matching real EC2 (InvalidDhcpOptionID.NotFound).
 func (m *Mock) DescribeDHCPOptions(_ context.Context, ids []string) ([]driver.DHCPOptions, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.dhcpOptions.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "dhcp options %q not found", id)
+		}
+	}
 
 	return describeResources(m.dhcpOptions, ids, cloneDHCPOptions), nil
 }

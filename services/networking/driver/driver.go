@@ -321,6 +321,11 @@ type NetworkInterface struct {
 	AttachmentID string
 	Description  string
 	Tags         map[string]string
+	// InstanceID and DeviceIndex describe the attachment when the interface is
+	// attached to an instance (ec2:AttachNetworkInterface); both are empty/zero
+	// for an available interface.
+	InstanceID  string
+	DeviceIndex int
 }
 
 // Azure network interface (Microsoft.Network/networkInterfaces) is an
@@ -547,4 +552,13 @@ type NetworkInterfaces interface {
 // (e.g. resourcediscovery's read-only walker, which only needs Describe).
 type NetworkInterfaceCreator interface {
 	CreateNetworkInterface(ctx context.Context, subnetID, description string, groups []string, tags map[string]string) (*NetworkInterface, error)
+}
+
+// NetworkInterfaceAttacher is the AWS-specific ENI attach surface
+// (ec2:AttachNetworkInterface), completing the ENI attach/detach lifecycle. It
+// returns the new attachment id. The instance's existence is verified by the
+// wire layer (which holds the compute driver); the networking provider only
+// records the attachment.
+type NetworkInterfaceAttacher interface {
+	AttachNetworkInterface(ctx context.Context, networkInterfaceID, instanceID string, deviceIndex int) (string, error)
 }

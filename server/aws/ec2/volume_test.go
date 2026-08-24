@@ -360,3 +360,51 @@ func TestDeleteAttachedVolumeReturnsVolumeInUse(t *testing.T) {
 		t.Fatalf("DeleteVolume(attached) error = %v, want VolumeInUse", err)
 	}
 }
+
+// TestAttachAlreadyAttachedVolumeReturnsVolumeInUse pins that attaching a volume
+// that is already attached to an instance is rejected with the VolumeInUse code
+// (not the generic IncorrectState).
+func TestAttachAlreadyAttachedVolumeReturnsVolumeInUse(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:  aws.String("ami-123"),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(10),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	if _, err := client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdf"),
+	}); err != nil {
+		t.Fatalf("AttachVolume(first): %v", err)
+	}
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdg"),
+	})
+	if err == nil {
+		t.Fatal("AttachVolume(already attached) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "VolumeInUse" {
+		t.Fatalf("AttachVolume(already attached) error = %v, want VolumeInUse", err)
+	}
+}

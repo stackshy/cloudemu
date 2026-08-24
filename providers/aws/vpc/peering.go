@@ -114,9 +114,19 @@ func (m *Mock) DeletePeeringConnection(_ context.Context, peeringID string) erro
 }
 
 // DescribePeeringConnections returns peering connections matching the given IDs.
+//
+// An explicitly named pcx- ID that does not exist is NotFound rather than an
+// empty list, matching real EC2 (InvalidVpcPeeringConnectionID.NotFound) and
+// the convention DescribeVpcs/DescribeVolumes already follow.
 func (m *Mock) DescribePeeringConnections(
 	_ context.Context, ids []string,
 ) ([]driver.PeeringConnection, error) {
+	for _, id := range ids {
+		if !m.peerings.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "peering connection %q not found", id)
+		}
+	}
+
 	return describeResources(m.peerings, ids, toPeeringInfo), nil
 }
 

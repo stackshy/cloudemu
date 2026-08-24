@@ -82,6 +82,20 @@ type Instance struct {
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo
+	// MetadataOptions is the instance's IMDS configuration (AWS). The zero value
+	// means "not set"; the wire layer fills in EC2 defaults when rendering.
+	MetadataOptions MetadataOptions
+}
+
+// MetadataOptions is an instance's IMDS (instance metadata service)
+// configuration, set at launch and changed by ModifyInstanceMetadataOptions.
+type MetadataOptions struct {
+	State                   string // "applied", "pending"
+	HTTPTokens              string // "optional" (IMDSv1+v2), "required" (IMDSv2-only)
+	HTTPPutResponseHopLimit int
+	HTTPEndpoint            string // "enabled", "disabled"
+	HTTPProtocolIPv6        string // "enabled", "disabled"
+	InstanceMetadataTags    string // "enabled", "disabled"
 }
 
 // OperatorInfo describes the service-provider ownership of a managed resource.
@@ -344,6 +358,26 @@ type SnapshotInfo struct {
 	Progress string
 	// Encrypted indicates the snapshot is encrypted.
 	Encrypted bool
+	// CreateVolumePermissions holds the createVolumePermission attribute set by
+	// ModifySnapshotAttribute (snapshot sharing). Empty means private.
+	CreateVolumePermissions []SnapshotCreateVolumePermission
+}
+
+// SnapshotCreateVolumePermission is one createVolumePermission grant: either a
+// Group ("all" for public) or a specific UserID (account id).
+type SnapshotCreateVolumePermission struct {
+	Group  string
+	UserID string
+}
+
+// ModifySnapshotAttributeInput describes an AWS EC2 ModifySnapshotAttribute
+// request for the createVolumePermission attribute. OperationType is "add" or
+// "remove"; Groups and UserIDs are the grants added or removed.
+type ModifySnapshotAttributeInput struct {
+	SnapshotID    string
+	OperationType string
+	Groups        []string
+	UserIDs       []string
 }
 
 // ImageConfig describes a machine image to create.
@@ -380,6 +414,35 @@ type ImageInfo struct {
 	PlatformDetails string
 	// BlockDeviceMappings are the image's block device mappings.
 	BlockDeviceMappings []ImageBlockDeviceMapping
+	// LaunchPermissions holds the launchPermission attribute set by
+	// ModifyImageAttribute (AMI sharing). Empty means private.
+	LaunchPermissions []ImageLaunchPermission
+}
+
+// ImageLaunchPermission is one launchPermission grant on an AMI: either a Group
+// ("all" for public) or a specific UserID (account id).
+type ImageLaunchPermission struct {
+	Group  string
+	UserID string
+}
+
+// CopyImageInput describes an AWS EC2 CopyImage request. SourceRegion is
+// required by the API but ignored by the single-region emulator.
+type CopyImageInput struct {
+	SourceRegion  string
+	SourceImageID string
+	Name          string
+	Description   string
+	Tags          map[string]string
+}
+
+// ModifyImageAttributeInput describes an AWS EC2 ModifyImageAttribute request
+// for the launchPermission attribute. OperationType is "add" or "remove".
+type ModifyImageAttributeInput struct {
+	ImageID       string
+	OperationType string
+	Groups        []string
+	UserIDs       []string
 }
 
 // ImageBlockDeviceMapping is one entry in an image's block device mapping set.
@@ -467,6 +530,14 @@ type Compute interface {
 	CreateKeyPair(ctx context.Context, config KeyPairConfig) (*KeyPairInfo, error)
 	DeleteKeyPair(ctx context.Context, name string) error
 	DescribeKeyPairs(ctx context.Context, names []string) ([]KeyPairInfo, error)
+}
+
+// InstanceMetadataModifier is an optional AWS-only capability for
+// ec2:ModifyInstanceMetadataOptions (IMDS settings, e.g. enforcing IMDSv2 via
+// HttpTokens=required). A zero-value field in the update means "leave
+// unchanged". Discovered by type assertion.
+type InstanceMetadataModifier interface {
+	ModifyInstanceMetadataOptions(ctx context.Context, instanceID string, update MetadataOptions) (*MetadataOptions, error)
 }
 
 // AzureVMController is an optional Azure-only capability supporting the ARM
@@ -574,6 +645,58 @@ type SnapshotCopier interface {
 // (registering an AMI from block device mappings). Discovered by type assertion.
 type ImageRegistrar interface {
 	RegisterImage(ctx context.Context, input RegisterImageInput) (*ImageInfo, error)
+}
+
+// SnapshotAttributeModifier is an optional AWS-only capability for the EC2
+// snapshot-sharing round-trip: ModifySnapshotAttribute persists the
+// createVolumePermission attribute and DescribeSnapshotAttribute reads it back.
+// Discovered by type assertion.
+type SnapshotAttributeModifier interface {
+	ModifySnapshotAttribute(ctx context.Context, input ModifySnapshotAttributeInput) error
+	DescribeSnapshotVolumePermissions(ctx context.Context, snapshotID string) ([]SnapshotCreateVolumePermission, error)
+}
+
+// ImageCopier is an optional AWS-only capability for EC2 CopyImage (aws_ami_copy).
+// Discovered by type assertion.
+type ImageCopier interface {
+	CopyImage(ctx context.Context, input CopyImageInput) (*ImageInfo, error)
+}
+
+// PlacementGroupConfig describes an EC2 placement group to create.
+type PlacementGroupConfig struct {
+	Name           string
+	Strategy       string // "cluster", "spread", or "partition"
+	PartitionCount int
+	SpreadLevel    string
+	Tags           map[string]string
+}
+
+// PlacementGroup describes an EC2 placement group.
+type PlacementGroup struct {
+	ID             string
+	Name           string
+	Strategy       string
+	State          string // "available", "pending", "deleting", "deleted"
+	PartitionCount int
+	SpreadLevel    string
+	Tags           map[string]string
+}
+
+// PlacementGroups is an optional AWS-only capability for EC2 placement groups
+// (aws_placement_group). Discovered by type assertion.
+type PlacementGroups interface {
+	CreatePlacementGroup(ctx context.Context, config PlacementGroupConfig) (*PlacementGroup, error)
+	DeletePlacementGroup(ctx context.Context, name string) error
+	DescribePlacementGroups(ctx context.Context, names, ids []string) ([]PlacementGroup, error)
+}
+
+// ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI
+// launchPermission round-trip: ModifyImageAttribute persists launchPermission
+// grants (aws_ami_launch_permission) and DescribeImageAttribute reads them back.
+// Discovered by type assertion.
+type ImageAttributeModifier interface {
+	ModifyImageAttribute(ctx context.Context, input ModifyImageAttributeInput) error
+	DescribeImageLaunchPermissions(ctx context.Context, imageID string) ([]ImageLaunchPermission, error)
 }
 
 // KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair
