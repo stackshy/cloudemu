@@ -577,25 +577,22 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 
 // matchListKeys applies the prefix, start-after, and delimiter filters to the
 // sorted key set, returning the matched objects and the rolled-up common
-// prefixes. start-after begins the listing strictly after the given key, but
-// only for a fresh listing — a resumed page (PageToken set) ignores it, as real
-// S3 does.
+// prefixes. start-after begins the listing strictly after the given key. It is
+// applied unconditionally so the filtered array stays identical across a paged
+// scan: our continuation is an offset into this array, and a real S3
+// continuation always resumes past the start-after key anyway, so re-applying
+// it on a resumed page is a correctness no-op that keeps the offset stable.
 func matchListKeys(
 	bkt *bucketMeta, allKeys []string, opts driver.ListOptions,
 ) (matchedObjects []driver.ObjectInfo, commonPrefixSet map[string]struct{}) {
 	commonPrefixSet = make(map[string]struct{})
-
-	startAfter := opts.StartAfter
-	if opts.PageToken != "" {
-		startAfter = ""
-	}
 
 	for _, k := range allKeys {
 		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
 			continue
 		}
 
-		if startAfter != "" && k <= startAfter {
+		if opts.StartAfter != "" && k <= opts.StartAfter {
 			continue
 		}
 

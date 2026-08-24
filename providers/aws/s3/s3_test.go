@@ -351,22 +351,34 @@ func TestListObjects(t *testing.T) {
 		assertEqual(t, "d", result.Objects[1].Key)
 	})
 
-	t.Run("start after ignored on resumed page", func(t *testing.T) {
+	t.Run("start after continues across pages without overlap", func(t *testing.T) {
 		_ = m.CreateBucket(ctx, "sab2")
-		for _, k := range []string{"a", "b", "c"} {
+		for _, k := range []string{"a", "b", "c", "d", "e"} {
 			_ = m.PutObject(ctx, "sab2", k, []byte("x"), "", nil)
 		}
 
-		// A PageToken means a resumed listing; StartAfter must not re-filter.
-		first, err := m.ListObjects(ctx, "sab2", driver.ListOptions{MaxKeys: 1})
+		// A real SDK paginator carries the original StartAfter forward on every
+		// page and only adds the continuation token. StartAfter="a" leaves
+		// b,c,d,e; MaxKeys=2 truncates the first page to b,c.
+		first, err := m.ListObjects(ctx, "sab2", driver.ListOptions{
+			StartAfter: "a", MaxKeys: 2,
+		})
 		requireNoError(t, err)
-		assertEqual(t, 1, len(first.Objects))
+		assertEqual(t, 2, len(first.Objects))
+		assertEqual(t, "b", first.Objects[0].Key)
+		assertEqual(t, "c", first.Objects[1].Key)
+		if !first.IsTruncated || first.NextPageToken == "" {
+			t.Fatalf("expected first page to be truncated with a continuation token")
+		}
 
+		// The continuation must resume strictly past c — no re-listing of b,c.
 		second, err := m.ListObjects(ctx, "sab2", driver.ListOptions{
-			MaxKeys: 10, PageToken: first.NextPageToken, StartAfter: "z",
+			StartAfter: "a", MaxKeys: 2, PageToken: first.NextPageToken,
 		})
 		requireNoError(t, err)
 		assertEqual(t, 2, len(second.Objects))
+		assertEqual(t, "d", second.Objects[0].Key)
+		assertEqual(t, "e", second.Objects[1].Key)
 	})
 }
 
