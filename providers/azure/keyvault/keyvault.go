@@ -13,14 +13,37 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
-// Compile-time check that Mock implements driver.Secrets.
-var _ driver.Secrets = (*Mock)(nil)
+// Compile-time checks that Mock implements the shared Secrets driver and the
+// Azure-specific KeyVaultSecrets surface.
+var (
+	_ driver.Secrets         = (*Mock)(nil)
+	_ driver.KeyVaultSecrets = (*Mock)(nil)
+)
+
+// purgeWindowDays is the soft-delete retention window Key Vault schedules
+// between deletion and automatic purge.
+const purgeWindowDays = 90
+
+// secretVersion is one stored secret version with its Key Vault attributes.
+type secretVersion struct {
+	versionID   string
+	value       []byte
+	contentType string
+	tags        map[string]string
+	enabled     bool
+	expires     int64
+	notBefore   int64
+	created     time.Time
+	updated     time.Time
+	current     bool
+}
 
 type secretData struct {
-	info      driver.SecretInfo
-	versions  []driver.SecretVersion
-	deletedAt time.Time
-	mu        sync.RWMutex
+	info           driver.SecretInfo
+	versions       []secretVersion
+	deletedAt      time.Time
+	scheduledPurge time.Time
+	mu             sync.RWMutex
 }
 
 // Mock is an in-memory mock implementation of Azure Key Vault.
@@ -37,48 +60,70 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
+func copyTags(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+
+	return out
+}
+
+func copyBytes(in []byte) []byte {
+	out := make([]byte, len(in))
+	copy(out, in)
+
+	return out
+}
+
 // CreateSecret creates a new secret with an initial value.
 func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
 	}
 
-	if m.secrets.Has(cfg.Name) {
+	if existing, ok := m.secrets.Get(cfg.Name); ok {
+		existing.mu.RLock()
+		deleted := !existing.deletedAt.IsZero()
+		existing.mu.RUnlock()
+
+		if deleted {
+			// Real Key Vault returns 409 Conflict / ObjectIsDeletedButRecoverable:
+			// a soft-deleted name cannot be reused until Recover or Purge.
+			return nil, errors.Newf(errors.AlreadyExists, "secret %q is in a deleted but recoverable state", cfg.Name)
+		}
+
 		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
 	}
 
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	now := m.opts.Clock.Now().UTC()
 	resourceID := idgen.AzureID(m.opts.AccountID, "rg-default", "Microsoft.KeyVault", "vaults/default/secrets", cfg.Name)
-
-	tags := make(map[string]string, len(cfg.Tags))
-	for k, v := range cfg.Tags {
-		tags[k] = v
-	}
 
 	info := driver.SecretInfo{
 		ID:          idgen.GenerateID("secret-"),
 		Name:        cfg.Name,
 		ResourceID:  resourceID,
 		Description: cfg.Description,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Tags:        tags,
-	}
-
-	data := make([]byte, len(value))
-	copy(data, value)
-
-	versionID := idgen.GenerateID("ver-")
-	version := driver.SecretVersion{
-		VersionID: versionID,
-		Value:     data,
-		CreatedAt: now,
-		Current:   true,
+		CreatedAt:   now.Format(time.RFC3339),
+		UpdatedAt:   now.Format(time.RFC3339),
+		Tags:        copyTags(cfg.Tags),
 	}
 
 	sd := &secretData{
-		info:     info,
-		versions: []driver.SecretVersion{version},
+		info: info,
+		versions: []secretVersion{{
+			versionID: idgen.GenerateID("ver-"),
+			value:     copyBytes(value),
+			tags:      copyTags(cfg.Tags),
+			enabled:   true,
+			created:   now,
+			updated:   now,
+			current:   true,
+		}},
 	}
 
 	m.secrets.Set(cfg.Name, sd)
@@ -88,7 +133,25 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	return &result, nil
 }
 
-// DeleteSecret soft-deletes a secret by name, scheduling it for deletion after a recovery window.
+// liveSecret returns the stored secret if it exists and is not soft-deleted.
+func (m *Mock) liveSecret(name string) *secretData {
+	sd, ok := m.secrets.Get(name)
+	if !ok {
+		return nil
+	}
+
+	sd.mu.RLock()
+	deleted := !sd.deletedAt.IsZero()
+	sd.mu.RUnlock()
+
+	if deleted {
+		return nil
+	}
+
+	return sd
+}
+
+// DeleteSecret soft-deletes a secret by name.
 func (m *Mock) DeleteSecret(_ context.Context, name string) error {
 	sd, ok := m.secrets.Get(name)
 	if !ok {
@@ -102,24 +165,26 @@ func (m *Mock) DeleteSecret(_ context.Context, name string) error {
 		return errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
 	}
 
-	sd.deletedAt = m.opts.Clock.Now().UTC()
+	m.markDeletedLocked(sd)
 
 	return nil
 }
 
+func (m *Mock) markDeletedLocked(sd *secretData) {
+	now := m.opts.Clock.Now().UTC()
+	sd.deletedAt = now
+	sd.scheduledPurge = now.AddDate(0, 0, purgeWindowDays)
+}
+
 // GetSecret retrieves secret metadata by name.
 func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, error) {
-	sd, ok := m.secrets.Get(name)
-	if !ok {
+	sd := m.liveSecret(name)
+	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
-
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
 
 	result := sd.info
 
@@ -145,102 +210,122 @@ func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 
 // PutSecretValue stores a new version of a secret value.
 func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
-	if !ok {
+	sd := m.liveSecret(name)
+	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
+	// PutSecretValue is the shared cross-cloud rotate-value path. Like AWS
+	// Secrets Manager PutSecretValue and GCP AddSecretVersion, adding a version
+	// must not touch resource-level tags — those are managed by separate tag
+	// APIs. Preserve the secret's existing tags rather than clearing them.
+	v := m.appendVersionLocked(sd, driver.KVSetParams{Value: value, Attributes: driver.KVAttributes{Enabled: true}}, false)
 
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	return &driver.SecretVersion{
+		VersionID: v.versionID,
+		Value:     copyBytes(v.value),
+		CreatedAt: v.created.Format(time.RFC3339),
+		Current:   true,
+	}, nil
+}
+
+// appendVersionLocked adds a new current version from the given params. When
+// updateSecretTags is true the secret-level tags are replaced with the params'
+// tags (Azure Key Vault SetSecret semantics); otherwise the existing
+// secret-level tags are preserved (shared PutSecretValue semantics). The caller
+// must hold sd.mu.
+func (m *Mock) appendVersionLocked(sd *secretData, params driver.KVSetParams, updateSecretTags bool) *secretVersion {
+	now := m.opts.Clock.Now().UTC()
 
 	for i := range sd.versions {
-		sd.versions[i].Current = false
+		sd.versions[i].current = false
 	}
 
-	data := make([]byte, len(value))
-	copy(data, value)
+	enabled := params.Attributes.Enabled
 
-	versionID := idgen.GenerateID("ver-")
-	version := driver.SecretVersion{
-		VersionID: versionID,
-		Value:     data,
-		CreatedAt: now,
-		Current:   true,
+	v := secretVersion{
+		versionID:   idgen.GenerateID("ver-"),
+		value:       copyBytes(params.Value),
+		contentType: params.ContentType,
+		tags:        copyTags(params.Tags),
+		enabled:     enabled,
+		expires:     params.Attributes.Expires,
+		notBefore:   params.Attributes.NotBefore,
+		created:     now,
+		updated:     now,
+		current:     true,
 	}
 
-	sd.versions = append(sd.versions, version)
-	sd.info.UpdatedAt = now
+	sd.versions = append(sd.versions, v)
+	sd.info.UpdatedAt = now.Format(time.RFC3339)
 
-	result := version
+	if updateSecretTags {
+		sd.info.Tags = copyTags(params.Tags)
+	}
 
-	return &result, nil
+	return &sd.versions[len(sd.versions)-1]
 }
 
 // GetSecretValue retrieves a secret value. Empty versionID returns the current version.
 func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
-	if !ok {
+	sd := m.liveSecret(name)
+	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+	v := findVersion(sd, versionID)
+	if v == nil {
+		return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", versionID, name)
 	}
 
-	for _, v := range sd.versions {
-		if versionID == "" && v.Current {
-			result := v
-
-			data := make([]byte, len(v.Value))
-			copy(data, v.Value)
-			result.Value = data
-
-			return &result, nil
-		}
-
-		if v.VersionID == versionID {
-			result := v
-
-			data := make([]byte, len(v.Value))
-			copy(data, v.Value)
-			result.Value = data
-
-			return &result, nil
-		}
-	}
-
-	return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", versionID, name)
+	return &driver.SecretVersion{
+		VersionID: v.versionID,
+		Value:     copyBytes(v.value),
+		CreatedAt: v.created.Format(time.RFC3339),
+		Current:   v.current,
+	}, nil
 }
 
-// ListSecretVersions lists all versions of a secret.
+// findVersion returns the version with the given id, or the current version
+// when versionID is empty. The caller must hold sd.mu.
+func findVersion(sd *secretData, versionID string) *secretVersion {
+	for i := range sd.versions {
+		v := &sd.versions[i]
+		if versionID == "" && v.current {
+			return v
+		}
+
+		if v.versionID == versionID {
+			return v
+		}
+	}
+
+	return nil
+}
+
+// ListSecretVersions lists all versions of a secret (metadata only).
 func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
-	if !ok {
+	sd := m.liveSecret(name)
+	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
 	versions := make([]driver.SecretVersion, len(sd.versions))
-	for i, v := range sd.versions {
+	for i := range sd.versions {
+		v := &sd.versions[i]
 		versions[i] = driver.SecretVersion{
-			VersionID: v.VersionID,
-			CreatedAt: v.CreatedAt,
-			Current:   v.Current,
+			VersionID: v.versionID,
+			CreatedAt: v.created.Format(time.RFC3339),
+			Current:   v.current,
 		}
 	}
 
