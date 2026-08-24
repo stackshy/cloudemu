@@ -1,6 +1,7 @@
 package route53
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"sort"
@@ -120,7 +121,31 @@ func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.dns.DeleteZone(r.Context(), trimZonePrefix(id)); err != nil {
+	zoneID := trimZonePrefix(id)
+
+	zone, err := h.dns.GetZone(r.Context(), zoneID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// Real Route 53 deletes a hosted zone only when it holds nothing but the
+	// default SOA and apex NS records; any other record set returns a 400
+	// HostedZoneNotEmpty and deletes nothing.
+	records, err := h.dns.ListRecords(r.Context(), zoneID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if extra := extraRecordName(zone.Name, records); extra != "" {
+		writeError(w, http.StatusBadRequest, "HostedZoneNotEmpty",
+			"The hosted zone contains resource records that are not SOA or NS records, or a custom NS record: "+extra)
+
+		return
+	}
+
+	if err := h.dns.DeleteZone(r.Context(), zoneID); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -129,6 +154,28 @@ func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id st
 		Xmlns:      xmlns,
 		ChangeInfo: newChangeInfo(),
 	})
+}
+
+// extraRecordName returns the name of the first record set that blocks deletion
+// (any record beyond the default apex SOA and apex NS), or "" when the zone is
+// empty enough to delete. Matching is case-insensitive and trailing-dot
+// insensitive so an apex name written either way is recognized.
+func extraRecordName(zoneName string, records []dnsdriver.RecordInfo) string {
+	apex := strings.ToLower(strings.TrimSuffix(zoneName, "."))
+
+	for i := range records {
+		rec := &records[i]
+		name := strings.ToLower(strings.TrimSuffix(rec.Name, "."))
+		isApex := name == apex
+
+		if isApex && (rec.Type == "SOA" || rec.Type == "NS") {
+			continue
+		}
+
+		return rec.Name
+	}
+
+	return ""
 }
 
 // changeResourceRecordSets applies a CREATE/UPSERT/DELETE batch against the
@@ -225,7 +272,7 @@ func (h *Handler) applyChange(r *http.Request, zoneID string, ch *changeItem) er
 
 	switch ch.Action {
 	case actionDelete:
-		return h.dns.DeleteRecord(r.Context(), zoneID, rr.Name, rr.Type)
+		return h.deleteRecordSet(r, zoneID, rr)
 	case actionCreate:
 		_, err := h.dns.CreateRecord(r.Context(), cfg)
 		return err
@@ -236,19 +283,37 @@ func (h *Handler) applyChange(r *http.Request, zoneID string, ch *changeItem) er
 	}
 }
 
-// upsertRecord updates the record if it already exists, otherwise creates it —
-// Route 53's UPSERT semantics. Only a genuine not-found routes to create; any
-// other GetRecord error (e.g. an injected/transient failure) is propagated so
-// an existing record isn't misrouted into a create → spurious conflict.
+// recordSetDeleter is the AWS-only extension a Route 53 backend implements to
+// delete one record set addressed by SetIdentifier, leaving weighted/latency/
+// failover/geo siblings at the same name+type untouched. Backends without it
+// fall back to the SetIdentifier-less DeleteRecord.
+type recordSetDeleter interface {
+	DeleteRecordSet(ctx context.Context, zoneID, name, recordType, setID string) error
+}
+
+// deleteRecordSet removes exactly the record set identified by name+type+
+// SetIdentifier. A weighted/latency/failover/geo DELETE must not disturb its
+// siblings, so the SetIdentifier is honored when the backend supports it.
+func (h *Handler) deleteRecordSet(r *http.Request, zoneID string, rr *resourceRecordSetXML) error {
+	if d, ok := h.dns.(recordSetDeleter); ok {
+		return d.DeleteRecordSet(r.Context(), zoneID, rr.Name, rr.Type, rr.SetIdentifier)
+	}
+
+	return h.dns.DeleteRecord(r.Context(), zoneID, rr.Name, rr.Type)
+}
+
+// upsertRecord creates the record set, and on an exact-key conflict updates it
+// instead — Route 53's UPSERT semantics keyed by name+type+SetIdentifier. Going
+// through CreateRecord first keeps a new weighted/geo sibling from being
+// misrouted into an update of a different SetIdentifier's record.
 func (h *Handler) upsertRecord(r *http.Request, cfg dnsdriver.RecordConfig) error {
-	_, err := h.dns.GetRecord(r.Context(), cfg.ZoneID, cfg.Name, cfg.Type)
+	_, err := h.dns.CreateRecord(r.Context(), cfg)
 	switch {
 	case err == nil:
+		return nil
+	case cerrors.IsAlreadyExists(err):
 		_, uerr := h.dns.UpdateRecord(r.Context(), cfg)
 		return uerr
-	case cerrors.IsNotFound(err):
-		_, cerr := h.dns.CreateRecord(r.Context(), cfg)
-		return cerr
 	default:
 		return err
 	}
@@ -342,11 +407,15 @@ func recordConfig(zoneID string, rr *resourceRecordSetXML) dnsdriver.RecordConfi
 	}
 
 	cfg := dnsdriver.RecordConfig{
-		ZoneID: zoneID,
-		Name:   rr.Name,
-		Type:   rr.Type,
-		Values: values,
-		SetID:  rr.SetIdentifier,
+		ZoneID:           zoneID,
+		Name:             rr.Name,
+		Type:             rr.Type,
+		Values:           values,
+		SetID:            rr.SetIdentifier,
+		Region:           rr.Region,
+		Failover:         rr.Failover,
+		HealthCheckID:    rr.HealthCheckId,
+		MultiValueAnswer: rr.MultiValueAnswer,
 	}
 
 	if rr.TTL != nil {
@@ -356,6 +425,22 @@ func recordConfig(zoneID string, rr *resourceRecordSetXML) dnsdriver.RecordConfi
 	if rr.Weight != nil {
 		w := int(*rr.Weight)
 		cfg.Weight = &w
+	}
+
+	if rr.GeoLocation != nil {
+		cfg.GeoLocation = &dnsdriver.GeoLocation{
+			ContinentCode:   rr.GeoLocation.ContinentCode,
+			CountryCode:     rr.GeoLocation.CountryCode,
+			SubdivisionCode: rr.GeoLocation.SubdivisionCode,
+		}
+	}
+
+	if rr.AliasTarget != nil {
+		cfg.AliasTarget = &dnsdriver.AliasTarget{
+			DNSName:              rr.AliasTarget.DNSName,
+			HostedZoneID:         rr.AliasTarget.HostedZoneId,
+			EvaluateTargetHealth: rr.AliasTarget.EvaluateTargetHealth,
+		}
 	}
 
 	return cfg

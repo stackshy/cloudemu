@@ -148,10 +148,11 @@ func (m *Mock) DeleteZone(_ context.Context, id string) error {
 		return errors.Newf(errors.NotFound, "zone %q not found", id)
 	}
 
-	// Delete all records belonging to this zone.
+	// Delete all records belonging to this zone. Index by key rather than
+	// ranging the value so a grown RecordInfo isn't copied each iteration.
 	all := m.records.All()
-	for key, rec := range all {
-		if rec.ZoneID == id {
+	for key := range all {
+		if all[key].ZoneID == id {
 			m.records.Delete(key)
 		}
 	}
@@ -248,20 +249,7 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, errors.Newf(errors.AlreadyExists, "record %q already exists in zone %q", cfg.Name, cfg.ZoneID)
 	}
 
-	values := make([]string, len(cfg.Values))
-	copy(values, cfg.Values)
-
-	weight := copyWeight(cfg.Weight)
-
-	rec := driver.RecordInfo{
-		ZoneID: cfg.ZoneID,
-		Name:   cfg.Name,
-		Type:   cfg.Type,
-		TTL:    cfg.TTL,
-		Values: values,
-		Weight: weight,
-		SetID:  cfg.SetID,
-	}
+	rec := recordFromConfig(cfg)
 
 	m.records.Set(key, rec)
 
@@ -276,43 +264,30 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	return &result, nil
 }
 
-// DeleteRecord deletes a DNS record from the specified zone.
-func (m *Mock) DeleteRecord(_ context.Context, zoneID, name, recordType string) error {
+// DeleteRecord deletes a DNS record from the specified zone. It targets the
+// record set with no SetIdentifier (a simple, non-routing record); routing
+// record sets are addressed by SetIdentifier via DeleteRecordSet.
+func (m *Mock) DeleteRecord(ctx context.Context, zoneID, name, recordType string) error {
+	return m.DeleteRecordSet(ctx, zoneID, name, recordType, "")
+}
+
+// DeleteRecordSet deletes the single record set identified by
+// zoneID+name+type+setID. It never touches sibling record sets that share the
+// same name+type but carry a different SetIdentifier — a DELETE of one
+// weighted/latency/failover/geo record must leave its siblings intact.
+func (m *Mock) DeleteRecordSet(_ context.Context, zoneID, name, recordType, setID string) error {
 	if _, ok := m.zones.Get(zoneID); !ok {
 		return errors.Newf(errors.NotFound, "zone %q not found", zoneID)
 	}
 
-	key := recordKey(zoneID, name, recordType, "")
+	key := recordKey(zoneID, name, recordType, setID)
 
-	// Try without set ID first. If not found, search for any matching record with a set ID.
-	if m.records.Delete(key) {
-		m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
-			z.RecordCount--
-			return z
-		})
-
-		return nil
-	}
-
-	// Search for weighted records with a set ID.
-	prefix := zoneID + ":" + name + ":" + recordType + ":"
-	all := m.records.All()
-	deleted := 0
-
-	for k := range all {
-		if strings.HasPrefix(k, prefix) {
-			m.records.Delete(k)
-
-			deleted++
-		}
-	}
-
-	if deleted == 0 {
+	if !m.records.Delete(key) {
 		return errors.Newf(errors.NotFound, "record %q of type %q not found in zone %q", name, recordType, zoneID)
 	}
 
 	m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
-		z.RecordCount -= deleted
+		z.RecordCount--
 		return z
 	})
 
@@ -337,9 +312,11 @@ func (m *Mock) GetRecord(_ context.Context, zoneID, name, recordType string) (*d
 	// sorted-key order and return the lowest set ID, so a name+type with
 	// several weighted records resolves to the same record every call rather
 	// than a map-order-random one (#259).
-	for _, r := range m.records.SortedValues() {
+	sorted := m.records.SortedValues()
+	for i := range sorted {
+		r := &sorted[i]
 		if r.ZoneID == zoneID && r.Name == name && r.Type == recordType && r.SetID != "" {
-			result := r
+			result := *r
 			return &result, nil
 		}
 	}
@@ -359,9 +336,9 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 	all := m.records.SortedValues()
 
 	records := make([]driver.RecordInfo, 0, len(all))
-	for _, rec := range all {
-		if rec.ZoneID == zoneID {
-			records = append(records, rec)
+	for i := range all {
+		if all[i].ZoneID == zoneID {
+			records = append(records, all[i])
 		}
 	}
 
@@ -382,26 +359,39 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, errors.Newf(errors.NotFound, "record %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
 	}
 
-	values := make([]string, len(cfg.Values))
-	copy(values, cfg.Values)
-
-	weight := copyWeight(cfg.Weight)
-
-	rec := driver.RecordInfo{
-		ZoneID: cfg.ZoneID,
-		Name:   cfg.Name,
-		Type:   cfg.Type,
-		TTL:    cfg.TTL,
-		Values: values,
-		Weight: weight,
-		SetID:  cfg.SetID,
-	}
+	rec := recordFromConfig(cfg)
 
 	m.records.Set(key, rec)
 
 	result := rec
 
 	return &result, nil
+}
+
+// recordFromConfig builds a stored RecordInfo from a RecordConfig, deep-copying
+// the slice and pointer fields so a later caller mutation cannot reach into the
+// store.
+//
+//nolint:gocritic // hugeParam: value copy is intentional to detach from caller.
+func recordFromConfig(cfg driver.RecordConfig) driver.RecordInfo {
+	values := make([]string, len(cfg.Values))
+	copy(values, cfg.Values)
+
+	return driver.RecordInfo{
+		ZoneID:           cfg.ZoneID,
+		Name:             cfg.Name,
+		Type:             cfg.Type,
+		TTL:              cfg.TTL,
+		Values:           values,
+		Weight:           copyWeight(cfg.Weight),
+		SetID:            cfg.SetID,
+		Failover:         cfg.Failover,
+		Region:           cfg.Region,
+		HealthCheckID:    cfg.HealthCheckID,
+		MultiValueAnswer: copyBool(cfg.MultiValueAnswer),
+		GeoLocation:      copyGeo(cfg.GeoLocation),
+		AliasTarget:      copyAlias(cfg.AliasTarget),
+	}
 }
 
 // copyWeight creates a copy of a weight pointer.
@@ -411,6 +401,39 @@ func copyWeight(w *int) *int {
 	}
 
 	v := *w
+
+	return &v
+}
+
+// copyBool copies a *bool so stored records don't alias caller memory.
+func copyBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+
+	v := *b
+
+	return &v
+}
+
+// copyGeo copies a *GeoLocation so stored records don't alias caller memory.
+func copyGeo(g *driver.GeoLocation) *driver.GeoLocation {
+	if g == nil {
+		return nil
+	}
+
+	v := *g
+
+	return &v
+}
+
+// copyAlias copies a *AliasTarget so stored records don't alias caller memory.
+func copyAlias(a *driver.AliasTarget) *driver.AliasTarget {
+	if a == nil {
+		return nil
+	}
+
+	v := *a
 
 	return &v
 }

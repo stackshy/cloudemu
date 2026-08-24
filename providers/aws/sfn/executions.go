@@ -42,6 +42,7 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 
 	sd.mu.RLock()
 	smName := sd.sm.Name
+	smType := sd.sm.Type
 	sd.mu.RUnlock()
 
 	name := in.Name
@@ -73,12 +74,36 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 	}
 
 	if !m.executions.SetIfAbsent(arn, &execData{exec: exec, settle: window}) {
-		return nil, execAlreadyExists(name)
+		return m.idempotentReuse(arn, name, smType, in.Input, async, now)
 	}
 
 	out := observedExec(&exec, window, now)
 
 	return &out, nil
+}
+
+// idempotentReuse resolves a StartExecution name collision. StartExecution is
+// idempotent for STANDARD workflows: reusing the name of a still-running
+// execution with the *same* input succeeds and returns that execution. A
+// different input, a closed (settled) execution, or an EXPRESS workflow all
+// yield ExecutionAlreadyExists.
+func (m *Mock) idempotentReuse(arn, name, smType, input string, async bool, now time.Time) (*driver.Execution, error) {
+	ed, ok := m.executions.Get(arn)
+	if !ok || !async || smType != driver.TypeStandard {
+		return nil, execAlreadyExists(name)
+	}
+
+	ed.mu.RLock()
+	sameInput := ed.exec.Input == input
+	running := !ed.settle.Settled(now)
+	out := observedExec(&ed.exec, ed.settle, now)
+	ed.mu.RUnlock()
+
+	if sameInput && running {
+		return &out, nil
+	}
+
+	return nil, execAlreadyExists(name)
 }
 
 // observedExec overlays a RUNNING settle window onto a stored (terminal)
