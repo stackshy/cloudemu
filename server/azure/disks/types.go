@@ -48,6 +48,8 @@ type diskResponseProps struct {
 	DiskIOPSReadWrite int           `json:"diskIOPSReadWrite,omitempty"`
 	DiskMBpsReadWrite int           `json:"diskMBpsReadWrite,omitempty"`
 	Tier              string        `json:"tier,omitempty"`
+	TimeCreated       string        `json:"timeCreated,omitempty"`
+	UniqueID          string        `json:"uniqueId,omitempty"`
 }
 
 type diskListResponse struct {
