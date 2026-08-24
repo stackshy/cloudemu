@@ -221,6 +221,8 @@ func (h *Handler) routeNetworkACLs(w http.ResponseWriter, r *http.Request, actio
 		h.createNetworkACLEntry(w, r)
 	case "ReplaceNetworkAclEntry":
 		h.replaceNetworkACLEntry(w, r)
+	case "ReplaceNetworkAclAssociation":
+		h.replaceNetworkACLAssociation(w, r)
 	case "DeleteNetworkAclEntry":
 		h.deleteNetworkACLEntry(w, r)
 	default:

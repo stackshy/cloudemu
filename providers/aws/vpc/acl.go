@@ -81,14 +81,27 @@ func (m *Mock) DeleteNetworkACL(_ context.Context, id string) error {
 		return errors.Newf(errors.FailedPrecondition, "cannot delete default network ACL %q", id)
 	}
 
+	// Real EC2 refuses to delete an ACL still associated with a subnet; the
+	// caller must move the subnet (ReplaceNetworkAclAssociation) first.
+	if m.aclHasAssociation(id) {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: network ACL %q is associated with a subnet", id)
+	}
+
 	m.networkACLs.Delete(id)
 
 	return nil
 }
 
-// DescribeNetworkACLs returns network ACLs matching the given IDs, or all if empty.
+// DescribeNetworkACLs returns network ACLs matching the given IDs, or all if
+// empty, each with its subnet associations attached.
 func (m *Mock) DescribeNetworkACLs(_ context.Context, ids []string) ([]driver.NetworkACL, error) {
-	return describeResources(m.networkACLs, ids, toNetworkACLInfo), nil
+	acls := describeResources(m.networkACLs, ids, toNetworkACLInfo)
+	for i := range acls {
+		acls[i].Associations = m.aclAssociationsFor(acls[i].ID)
+	}
+
+	return acls, nil
 }
 
 // AddNetworkACLRule adds a rule to the specified network ACL, keeping rules sorted by number.
@@ -134,4 +147,118 @@ func toNetworkACLInfo(acl *networkACLData) driver.NetworkACL {
 		Tags:      copyTags(acl.Tags),
 		IsDefault: acl.IsDefault,
 	}
+}
+
+// aclAssocData binds a subnet to a network ACL. Replacing the ACL for a subnet
+// deletes the old binding and creates a new one with a fresh id.
+type aclAssocData struct {
+	ID           string
+	NetworkACLID string
+	SubnetID     string
+}
+
+// createDefaultNetworkACL creates the default network ACL EC2 auto-creates with
+// every VPC (allow-all rules, IsDefault). New subnets associate with it.
+func (m *Mock) createDefaultNetworkACL(vpcID string) {
+	id := idgen.GenerateID("acl-")
+	m.networkACLs.Set(id, &networkACLData{
+		ID:        id,
+		VPCID:     vpcID,
+		Rules:     defaultACLRules(),
+		Tags:      map[string]string{},
+		IsDefault: true,
+	})
+}
+
+// deleteDefaultNetworkACL removes the VPC's default ACL and its associations
+// when the VPC is torn down.
+func (m *Mock) deleteDefaultNetworkACL(vpcID string) {
+	for aclID, acl := range m.networkACLs.All() {
+		if acl.VPCID != vpcID || !acl.IsDefault {
+			continue
+		}
+
+		m.networkACLs.Delete(aclID)
+
+		for assocID, a := range m.aclAssocs.All() {
+			if a.NetworkACLID == aclID {
+				m.aclAssocs.Delete(assocID)
+			}
+		}
+	}
+}
+
+// associateDefaultNetworkACL binds a new subnet to its VPC's default ACL.
+func (m *Mock) associateDefaultNetworkACL(vpcID, subnetID string) {
+	var aclID string
+
+	for _, acl := range m.networkACLs.All() {
+		if acl.VPCID == vpcID && acl.IsDefault {
+			aclID = acl.ID
+			break
+		}
+	}
+
+	if aclID == "" {
+		return
+	}
+
+	id := idgen.GenerateID("aclassoc-")
+	m.aclAssocs.Set(id, &aclAssocData{ID: id, NetworkACLID: aclID, SubnetID: subnetID})
+}
+
+// aclHasAssociation reports whether any subnet is associated with the ACL.
+func (m *Mock) aclHasAssociation(aclID string) bool {
+	for _, a := range m.aclAssocs.All() {
+		if a.NetworkACLID == aclID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// aclAssociationsFor returns the subnet associations of the ACL, sorted by id.
+func (m *Mock) aclAssociationsFor(aclID string) []driver.NetworkACLAssociation {
+	var out []driver.NetworkACLAssociation
+
+	for _, a := range m.aclAssocs.All() {
+		if a.NetworkACLID == aclID {
+			out = append(out, driver.NetworkACLAssociation{ID: a.ID, NetworkACLID: a.NetworkACLID, SubnetID: a.SubnetID})
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+
+	return out
+}
+
+// ReplaceNetworkACLAssociation moves the subnet in associationID onto newACLID,
+// returning the new association (a fresh id). It is idempotent, matching real
+// EC2: re-associating to the same ACL still yields a new association id.
+func (m *Mock) ReplaceNetworkACLAssociation(
+	_ context.Context, associationID, newACLID string,
+) (*driver.NetworkACLAssociation, error) {
+	assoc, ok := m.aclAssocs.Get(associationID)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "network ACL association %q not found", associationID)
+	}
+
+	acl, ok := m.networkACLs.Get(newACLID)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "network ACL %q not found", newACLID)
+	}
+
+	// Real EC2 requires the network ACL and the subnet to be in the same VPC.
+	if sub, ok := m.subnets.Get(assoc.SubnetID); ok && sub.VPCID != acl.VPCID {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"the network ACL %q and subnet %q are not in the same VPC", newACLID, assoc.SubnetID)
+	}
+
+	m.aclAssocs.Delete(associationID)
+
+	id := idgen.GenerateID("aclassoc-")
+	m.aclAssocs.Set(id, &aclAssocData{ID: id, NetworkACLID: newACLID, SubnetID: assoc.SubnetID})
+
+	return &driver.NetworkACLAssociation{ID: id, NetworkACLID: newACLID, SubnetID: assoc.SubnetID}, nil
 }

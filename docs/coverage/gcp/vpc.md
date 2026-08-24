@@ -241,6 +241,14 @@ IPAMResources is an OPTIONAL AWS capability exposing IPAM's view of the
 | `GetIpamResourceCidrs` |  |
 | `ModifyIpamResourceCidr` |  |
 
+### NetworkACLAssociator
+
+NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.
+
+| Operation | Description |
+| --- | --- |
+| `ReplaceNetworkACLAssociation` |  |
+
 ### NetworkInsights
 
 NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both
