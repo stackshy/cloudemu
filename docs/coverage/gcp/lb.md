@@ -31,6 +31,17 @@ GCP's `loadbalancer` service · portable interface `driver.LoadBalancer` · [GCP
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureLoadBalancers
+
+AzureLoadBalancers is an OPTIONAL, type-asserted capability. The Azure
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateAzureLoadBalancer` |  |
+| `DeleteAzureLoadBalancer` |  |
+| `GetAzureLoadBalancer` |  |
+| `ListAzureLoadBalancers` |  |
+
 ### LBAttributeUpdater
 
 LBAttributeUpdater is implemented by drivers that can apply a partial

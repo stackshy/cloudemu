@@ -5541,6 +5541,24 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureLoadBalancers",
+        "doc": "AzureLoadBalancers is an OPTIONAL, type-asserted capability. The Azure",
+        "operations": [
+          {
+            "name": "CreateOrUpdateAzureLoadBalancer"
+          },
+          {
+            "name": "DeleteAzureLoadBalancer"
+          },
+          {
+            "name": "GetAzureLoadBalancer"
+          },
+          {
+            "name": "ListAzureLoadBalancers"
+          }
+        ]
+      },
+      {
         "name": "LBAttributeUpdater",
         "doc": "LBAttributeUpdater is implemented by drivers that can apply a partial",
         "operations": [
@@ -6277,6 +6295,30 @@
           },
           {
             "name": "ListNetworkInterfaces"
+          }
+        ]
+      },
+      {
+        "name": "AzureNetworkMetadata",
+        "doc": "AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure",
+        "operations": [
+          {
+            "name": "DeleteAzureNSGMetadata"
+          },
+          {
+            "name": "DeleteAzureVNetMetadata"
+          },
+          {
+            "name": "GetAzureNSGMetadata"
+          },
+          {
+            "name": "GetAzureVNetMetadata"
+          },
+          {
+            "name": "PutAzureNSGMetadata"
+          },
+          {
+            "name": "PutAzureVNetMetadata"
           }
         ]
       },

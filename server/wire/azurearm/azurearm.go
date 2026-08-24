@@ -12,7 +12,9 @@
 package azurearm
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -190,4 +192,15 @@ func BuildResourceID(subscription, resourceGroup, provider, resourceType, name s
 		"/providers/" + provider +
 		"/" + resourceType +
 		"/" + name
+}
+
+// ETag returns a deterministic GUID-shaped etag derived from parts, so a
+// resource's etag is stable across reads yet distinct per resource. Azure
+// etags are opaque tokens SDKs only compare for equality (If-Match /
+// If-None-Match concurrency), so a stable synthetic value round-trips
+// correctly without a real version counter.
+func ETag(parts ...string) string {
+	h := sha256.Sum256([]byte(strings.Join(parts, "/")))
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }

@@ -80,6 +80,19 @@ AzureNetworkInterfaces is the Azure-specific network-interface surface,
 | `GetNetworkInterface` |  |
 | `ListNetworkInterfaces` |  |
 
+### AzureNetworkMetadata
+
+AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzureNSGMetadata` |  |
+| `DeleteAzureVNetMetadata` |  |
+| `GetAzureNSGMetadata` |  |
+| `GetAzureVNetMetadata` |  |
+| `PutAzureNSGMetadata` |  |
+| `PutAzureVNetMetadata` |  |
+
 ### ClientVPN
 
 ClientVPN is an OPTIONAL AWS capability (type-asserted).
