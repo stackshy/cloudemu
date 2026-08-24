@@ -11,6 +11,7 @@
 package rds
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -339,20 +340,37 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeErr maps cloudemu errors to RDS XML error responses.
+// writeErr maps cloudemu errors to RDS XML error responses. The fault Code is
+// the machine-readable part; the Message carries the clean human sentence with
+// no internal enum prefix, matching real RDS error responses. The fault-code
+// pickers still read err.Error() so the resource keyword drives the code.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := errMessage(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
+}
+
+// errMessage returns the human-readable message for a cloudemu error without
+// the "Code: " prefix that Error() prepends. Real RDS fault messages carry no
+// such prefix, so surfacing it would leak an internal detail.
+func errMessage(err error) string {
+	var e *cerrors.Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+
+	return err.Error()
 }
 
 // faultMapping maps a resource keyword found in an error message to the

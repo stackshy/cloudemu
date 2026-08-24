@@ -10,6 +10,12 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
+const launchPermissionAttr = "launchPermission"
+
+// permissionOpRemove is the ModifySnapshotAttribute / ModifyImageAttribute
+// OperationType that revokes (rather than grants) a permission.
+const permissionOpRemove = "remove"
+
 type imageBlockDeviceMappingXML struct {
 	DeviceName          string `xml:"deviceName"`
 	SnapshotID          string `xml:"ebs>snapshotId"`
@@ -256,13 +262,19 @@ func imageMatchesFilter(img *computedriver.ImageInfo, f awsquery.Filter) bool {
 	}
 }
 
+type launchPermissionXML struct {
+	Group  string `xml:"group,omitempty"`
+	UserID string `xml:"userId,omitempty"`
+}
+
 type describeImageAttributeResponseXML struct {
-	XMLName   xml.Name  `xml:"DescribeImageAttributeResponse"`
-	Xmlns     string    `xml:"xmlns,attr"`
-	RequestID string    `xml:"requestId"`
-	ImageID   string    `xml:"imageId"`
-	Desc      *valueXML `xml:"description,omitempty"`
-	BootMode  *valueXML `xml:"bootMode,omitempty"`
+	XMLName          xml.Name              `xml:"DescribeImageAttributeResponse"`
+	Xmlns            string                `xml:"xmlns,attr"`
+	RequestID        string                `xml:"requestId"`
+	ImageID          string                `xml:"imageId"`
+	Desc             *valueXML             `xml:"description,omitempty"`
+	BootMode         *valueXML             `xml:"bootMode,omitempty"`
+	LaunchPermission []launchPermissionXML `xml:"launchPermission>item,omitempty"`
 }
 
 type valueXML struct {
@@ -270,8 +282,9 @@ type valueXML struct {
 }
 
 // describeImageAttribute returns a single AMI attribute. Only the attributes
-// the emulator models (description, bootMode) carry a value; others return the
-// image id with an empty attribute, matching the SDK's single-attribute shape.
+// the emulator models (description, bootMode, launchPermission) carry a value;
+// others return the image id with an empty attribute, matching the SDK's
+// single-attribute shape.
 func (h *Handler) describeImageAttribute(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("ImageId")
 
@@ -292,9 +305,139 @@ func (h *Handler) describeImageAttribute(w http.ResponseWriter, r *http.Request)
 		resp.Desc = &valueXML{Value: imgs[0].Description}
 	case "bootMode":
 		resp.BootMode = &valueXML{Value: ""}
+	case launchPermissionAttr:
+		resp.LaunchPermission = h.imageLaunchPermissionXML(r, id)
 	}
 
 	awsquery.WriteXMLResponse(w, resp)
+}
+
+// imageLaunchPermissionXML reads the AMI's persisted launchPermission grants
+// when the compute driver models them.
+func (h *Handler) imageLaunchPermissionXML(r *http.Request, id string) []launchPermissionXML {
+	modifier, ok := h.compute.(computedriver.ImageAttributeModifier)
+	if !ok {
+		return nil
+	}
+
+	perms, err := modifier.DescribeImageLaunchPermissions(r.Context(), id)
+	if err != nil {
+		return nil
+	}
+
+	out := make([]launchPermissionXML, 0, len(perms))
+	for _, p := range perms {
+		out = append(out, launchPermissionXML{Group: p.Group, UserID: p.UserID})
+	}
+
+	return out
+}
+
+type copyImageResponseXML struct {
+	XMLName   xml.Name `xml:"CopyImageResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	ImageID   string   `xml:"imageId"`
+}
+
+// copyImage handles Action=CopyImage (aws_ami_copy). Served by the AWS-only
+// ImageCopier capability; a driver that does not implement it reports Unimplemented.
+func (h *Handler) copyImage(w http.ResponseWriter, r *http.Request) {
+	copier, ok := h.compute.(computedriver.ImageCopier)
+	if !ok {
+		writeImageErr(w, cerrors.New(cerrors.Unimplemented, "CopyImage is not supported"))
+		return
+	}
+
+	info, err := copier.CopyImage(r.Context(), computedriver.CopyImageInput{
+		SourceRegion:  r.Form.Get("SourceRegion"),
+		SourceImageID: r.Form.Get("SourceImageId"),
+		Name:          r.Form.Get("Name"),
+		Description:   r.Form.Get("Description"),
+		Tags:          mergeTagSpecs(awsquery.TagSpecs(r.Form), "image"),
+	})
+	if err != nil {
+		writeImageErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, copyImageResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		ImageID:   info.ID,
+	})
+}
+
+// modifyImageAttribute applies launchPermission add/remove grants (AMI sharing).
+func (h *Handler) modifyImageAttribute(w http.ResponseWriter, r *http.Request) {
+	id := r.Form.Get("ImageId")
+
+	if _, err := h.compute.DescribeImages(r.Context(), []string{id}); err != nil {
+		writeImageErr(w, err)
+		return
+	}
+
+	if modifier, ok := h.compute.(computedriver.ImageAttributeModifier); ok {
+		if err := applyImagePermissionChanges(r, modifier, id); err != nil {
+			writeImageErr(w, err)
+			return
+		}
+	}
+
+	writeReturnTrue(w, "ModifyImageAttributeResponse")
+}
+
+// applyImagePermissionChanges reads the launchPermission Add/Remove modifications
+// and persists each non-empty side. It supports both the structured
+// LaunchPermission.Add.N.* form the SDK sends and the flat OperationType form.
+func applyImagePermissionChanges(
+	r *http.Request, modifier computedriver.ImageAttributeModifier, imageID string,
+) error {
+	addGroups, addUsers := imagePermissionGrants(r, "Add")
+	removeGroups, removeUsers := imagePermissionGrants(r, "Remove")
+
+	if op := r.Form.Get("OperationType"); op != "" && r.Form.Get("Attribute") == launchPermissionAttr {
+		groups := awsquery.ListStrings(r.Form, "UserGroup")
+		users := awsquery.ListStrings(r.Form, "UserId")
+
+		if op == permissionOpRemove {
+			removeGroups, removeUsers = append(removeGroups, groups...), append(removeUsers, users...)
+		} else {
+			addGroups, addUsers = append(addGroups, groups...), append(addUsers, users...)
+		}
+	}
+
+	if len(addGroups) > 0 || len(addUsers) > 0 {
+		if err := modifier.ModifyImageAttribute(r.Context(), computedriver.ModifyImageAttributeInput{
+			ImageID: imageID, OperationType: "add", Groups: addGroups, UserIDs: addUsers,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if len(removeGroups) > 0 || len(removeUsers) > 0 {
+		return modifier.ModifyImageAttribute(r.Context(), computedriver.ModifyImageAttributeInput{
+			ImageID: imageID, OperationType: "remove", Groups: removeGroups, UserIDs: removeUsers,
+		})
+	}
+
+	return nil
+}
+
+// imagePermissionGrants reads LaunchPermission.<side>.N.Group / .UserId.
+func imagePermissionGrants(r *http.Request, side string) (groups, users []string) {
+	for _, i := range awsquery.CollectIndices(r.Form, "LaunchPermission."+side) {
+		base := "LaunchPermission." + side + "." + strconv.Itoa(i)
+		if g := r.Form.Get(base + ".Group"); g != "" {
+			groups = append(groups, g)
+		}
+
+		if u := r.Form.Get(base + ".UserId"); u != "" {
+			users = append(users, u)
+		}
+	}
+
+	return groups, users
 }
 
 func toImageXML(img *computedriver.ImageInfo) imageXML {
@@ -328,7 +471,7 @@ func toImageXML(img *computedriver.ImageInfo) imageXML {
 		CreationDate:        img.CreatedAt,
 		Architecture:        arch,
 		ImageType:           img.ImageType,
-		Public:              false,
+		Public:              imageIsPublic(img),
 		RootDeviceType:      img.RootDeviceType,
 		RootDeviceName:      img.RootDeviceName,
 		VirtualizationType:  img.VirtualizationType,
@@ -337,6 +480,18 @@ func toImageXML(img *computedriver.ImageInfo) imageXML {
 		BlockDeviceMappings: bdms,
 		Tags:                toTagItems(img.Tags),
 	}
+}
+
+// imageIsPublic reports whether the AMI has a launchPermission grant to the
+// "all" group, which is what makes an AMI public.
+func imageIsPublic(img *computedriver.ImageInfo) bool {
+	for _, p := range img.LaunchPermissions {
+		if p.Group == "all" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func writeImageErr(w http.ResponseWriter, err error) {

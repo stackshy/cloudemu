@@ -1067,15 +1067,17 @@ type ModifyClusterEndpointInput struct {
 	ExcludedMembers []string
 }
 
-// ClusterEndpoint is a custom Aurora cluster endpoint.
+// ClusterEndpoint is an Aurora cluster endpoint — either a built-in WRITER /
+// READER endpoint auto-provisioned at cluster create time, or a user-created
+// CUSTOM endpoint.
 type ClusterEndpoint struct {
 	EndpointID         string
 	ClusterID          string
 	ARN                string
 	Endpoint           string
 	Status             string
-	EndpointType       string // always "CUSTOM" for user-created endpoints
-	CustomEndpointType string // "READER" | "ANY"
+	EndpointType       string // "WRITER" | "READER" (built-in) or "CUSTOM" (user-created)
+	CustomEndpointType string // "READER" | "ANY" (custom endpoints only)
 	StaticMembers      []string
 	ExcludedMembers    []string
 }

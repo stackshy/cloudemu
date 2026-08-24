@@ -73,6 +73,14 @@ BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 | --- | --- |
 | `BucketAttributes` |  |
 
+### ObjectCopier
+
+ObjectCopier is an OPTIONAL capability (discovered by type assertion, like
+
+| Operation | Description |
+| --- | --- |
+| `CopyObjectV2` |  |
+
 ### RawBucketConfig
 
 RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
@@ -82,6 +90,14 @@ RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
 | `DeleteBucketConfig` | DeleteBucketConfig removes the stored document (idempotent). |
 | `GetBucketConfig` | GetBucketConfig returns the stored document, or NotFound when none was set. |
 | `PutBucketConfig` | PutBucketConfig stores document body under the sub-resource name (e.g. |
+
+### RegionalBucket
+
+RegionalBucket is an OPTIONAL capability a storage provider implements to
+
+| Operation | Description |
+| --- | --- |
+| `CreateBucketInRegion` |  |
 
 ### StorageAccountKeys
 

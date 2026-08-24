@@ -3,8 +3,11 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 // commonRegions is the representative region set DescribeRegions reports. Tools
@@ -35,11 +38,54 @@ func (h *Handler) routeMetadata(w http.ResponseWriter, r *http.Request, action s
 		h.describeRegions(w, r)
 	case "DescribeInstanceTypes":
 		h.describeInstanceTypes(w, r)
+	case "ModifyInstanceMetadataOptions":
+		h.modifyInstanceMetadataOptions(w, r)
 	default:
 		return false
 	}
 
 	return true
+}
+
+type modifyInstanceMetadataOptionsResponseXML struct {
+	XMLName    xml.Name            `xml:"ModifyInstanceMetadataOptionsResponse"`
+	Xmlns      string              `xml:"xmlns,attr"`
+	RequestID  string              `xml:"requestId"`
+	InstanceID string              `xml:"instanceId"`
+	Options    *metadataOptionsXML `xml:"instanceMetadataOptions"`
+}
+
+// modifyInstanceMetadataOptions updates an instance's IMDS settings (e.g.
+// HttpTokens=required to enforce IMDSv2). Served by the AWS-only
+// InstanceMetadataModifier capability; a driver without it reports Unimplemented.
+func (h *Handler) modifyInstanceMetadataOptions(w http.ResponseWriter, r *http.Request) {
+	modifier, ok := h.compute.(computedriver.InstanceMetadataModifier)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "ModifyInstanceMetadataOptions is not supported"))
+		return
+	}
+
+	instanceID := r.Form.Get("InstanceId")
+	hopLimit, _ := strconv.Atoi(r.Form.Get("HttpPutResponseHopLimit"))
+
+	opts, err := modifier.ModifyInstanceMetadataOptions(r.Context(), instanceID, computedriver.MetadataOptions{
+		HTTPTokens:              r.Form.Get("HttpTokens"),
+		HTTPPutResponseHopLimit: hopLimit,
+		HTTPEndpoint:            r.Form.Get("HttpEndpoint"),
+		HTTPProtocolIPv6:        r.Form.Get("HttpProtocolIpv6"),
+		InstanceMetadataTags:    r.Form.Get("InstanceMetadataTags"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyInstanceMetadataOptionsResponseXML{
+		Xmlns:      awsquery.Namespace,
+		RequestID:  awsquery.RequestID,
+		InstanceID: instanceID,
+		Options:    metadataOptionsXMLFor(opts),
+	})
 }
 
 // describeRegions answers ec2:DescribeRegions. If explicit RegionName.N filters

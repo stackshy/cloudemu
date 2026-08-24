@@ -93,6 +93,9 @@ type GSIConfig struct {
 	// Projection is the DynamoDB projection type (ALL, KEYS_ONLY, INCLUDE); a
 	// describe echoes it so an IaC client's declared index round-trips.
 	Projection string
+	// NonKeyAttributes are the base-table attributes an INCLUDE projection copies
+	// into the index in addition to the key attributes. Ignored for ALL/KEYS_ONLY.
+	NonKeyAttributes []string
 }
 
 // LSIConfig describes a Local Secondary Index. An LSI shares the table's
@@ -102,6 +105,9 @@ type LSIConfig struct {
 	Name       string
 	SortKey    string
 	Projection string
+	// NonKeyAttributes are the base-table attributes an INCLUDE projection copies
+	// into the index in addition to the key attributes. Ignored for ALL/KEYS_ONLY.
+	NonKeyAttributes []string
 }
 
 // UpdateAction represents a single field-level update action. It is the legacy,
@@ -205,6 +211,15 @@ type QueryInput struct {
 	// The zero value (ascending) matches the historical behavior.
 	SortDescending bool
 
+	// ProjectionRequested reports that the caller supplied a ProjectionExpression
+	// which the wire layer will apply to the returned items. It only matters for
+	// a Local Secondary Index: real DynamoDB transparently fetches non-projected
+	// attributes from the base table, so when a projection is requested the driver
+	// must expose the full base item (letting the wire layer select any
+	// attribute). With no projection an index query defaults to
+	// ALL_PROJECTED_ATTRIBUTES, so the driver still trims to the projected set.
+	ProjectionRequested bool
+
 	// Deprecated: never implemented; use SortDescending. Retained so
 	// existing constructors keep compiling.
 	ScanForward bool
@@ -213,6 +228,10 @@ type QueryInput struct {
 // ScanInput configures a scan operation.
 type ScanInput struct {
 	Table string
+	// IndexName scans a secondary index instead of the base table. Items lacking
+	// the index's key attributes are skipped (sparse index), and only the
+	// index's projected attributes are returned.
+	IndexName string
 	// Filters is the legacy pre-simplified filter; ignored when
 	// FilterExpression is set. Retained for back-compat.
 	Filters []ScanFilter
@@ -228,6 +247,12 @@ type ScanInput struct {
 
 	// ExclusiveStartKey selects key-based continuation; see QueryInput.
 	ExclusiveStartKey map[string]any
+
+	// ProjectionRequested reports that the caller supplied a ProjectionExpression;
+	// see QueryInput.ProjectionRequested. On a Local Secondary Index scan it makes
+	// the driver expose the full base item so non-projected attributes can be
+	// fetched, matching real DynamoDB.
+	ProjectionRequested bool
 }
 
 // QueryResult is the result of a query or scan.

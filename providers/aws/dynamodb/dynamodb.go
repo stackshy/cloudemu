@@ -42,6 +42,13 @@ const (
 	defaultStreamLimit = 100
 )
 
+// Secondary-index projection types.
+const (
+	projectionAll      = "ALL"
+	projectionKeysOnly = "KEYS_ONLY"
+	projectionInclude  = "INCLUDE"
+)
+
 var _ driver.Database = (*Mock)(nil)
 
 type tableData struct {
@@ -398,6 +405,16 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 
 	result.ScannedCount = scanned
 
+	// A GSI query only exposes the index's projected attributes; an LSI query
+	// with no projection defaults to ALL_PROJECTED_ATTRIBUTES. When a
+	// ProjectionExpression is supplied, an LSI can fetch non-projected base-table
+	// attributes, so the full base item is left intact for the wire layer.
+	if attrs, filtered := indexProjection(td.config, input.IndexName, input.ProjectionRequested); filtered {
+		for i, it := range result.Items {
+			result.Items[i] = projectToIndex(it, attrs)
+		}
+	}
+
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
 	m.emitMetric("SuccessfulRequestCount", 1, dims)
@@ -427,6 +444,102 @@ func resolveKeyFields(td *tableData, indexName string) (pkField, skField string,
 	}
 
 	return "", "", cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
+}
+
+// indexProjection returns the attribute set a secondary-index query/scan may
+// surface, and whether that set must be enforced. A GSI always enforces its
+// projection: a query on a GSI cannot fetch base-table attributes that are not
+// projected — KEYS_ONLY exposes only the table and index key attributes,
+// INCLUDE adds the named non-key attributes, ALL passes everything through.
+//
+// An LSI is different (per the LSI developer guide): it can transparently fetch
+// non-projected attributes from the base table. When the caller supplied a
+// ProjectionExpression (projectionRequested), the full base item — which
+// CloudEmu already holds in memory — is returned untouched so the wire layer can
+// select any attribute, matching AWS's functional result (CloudEmu does not
+// model the extra throughput cost). With no projection an index query defaults
+// to ALL_PROJECTED_ATTRIBUTES, so an LSI is still trimmed to its projected set.
+//
+// A nil-or-ALL projection returns filtered=false so items are untouched. Caller
+// must hold at least td's read lock (reads td.config only).
+func indexProjection(cfg driver.TableConfig, indexName string, projectionRequested bool) (attrs map[string]struct{}, filtered bool) {
+	if indexName == "" {
+		return nil, false
+	}
+
+	if projectionRequested && isLSI(cfg, indexName) {
+		return nil, false
+	}
+
+	projType, idxPK, idxSK, nonKey := lookupIndexProjection(cfg, indexName)
+	if projType == "" || strings.EqualFold(projType, projectionAll) {
+		return nil, false
+	}
+
+	attrs = map[string]struct{}{}
+	addAttr(attrs, cfg.PartitionKey)
+	addAttr(attrs, cfg.SortKey)
+	addAttr(attrs, idxPK)
+	addAttr(attrs, idxSK)
+
+	if strings.EqualFold(projType, projectionInclude) {
+		for _, a := range nonKey {
+			addAttr(attrs, a)
+		}
+	}
+
+	return attrs, true
+}
+
+// isLSI reports whether indexName names a local secondary index on the table.
+func isLSI(cfg driver.TableConfig, indexName string) bool {
+	for _, lsi := range cfg.LSIs {
+		if lsi.Name == indexName {
+			return true
+		}
+	}
+
+	return false
+}
+
+// lookupIndexProjection resolves an index's projection type, key attributes and
+// (for INCLUDE) non-key attributes. An LSI shares the table partition key.
+func lookupIndexProjection(cfg driver.TableConfig, indexName string) (projType, idxPK, idxSK string, nonKey []string) {
+	for _, gsi := range cfg.GSIs {
+		if gsi.Name == indexName {
+			return gsi.Projection, gsi.PartitionKey, gsi.SortKey, gsi.NonKeyAttributes
+		}
+	}
+
+	for _, lsi := range cfg.LSIs {
+		if lsi.Name == indexName {
+			return lsi.Projection, cfg.PartitionKey, lsi.SortKey, lsi.NonKeyAttributes
+		}
+	}
+
+	return "", "", "", nil
+}
+
+// addAttr records a non-empty attribute name in the set.
+func addAttr(attrs map[string]struct{}, name string) {
+	if name != "" {
+		attrs[name] = struct{}{}
+	}
+}
+
+// projectToIndex returns a copy of item retaining only the attributes an index
+// projects. Attributes absent from the item are simply not present, matching
+// the sparse nature of index projections.
+func projectToIndex(item map[string]any, attrs map[string]struct{}) map[string]any {
+	out := make(map[string]any, len(attrs))
+
+	for name := range attrs {
+		if v, ok := item[name]; ok {
+			out[name] = v
+		}
+	}
+
+	return out
 }
 
 // matchQueryItems returns the items matching the key condition and filter, plus
@@ -507,6 +620,38 @@ func passesFilter(node expr.Node, legacy []driver.ScanFilter, item map[string]an
 	return matchesFilters(item, legacy), nil
 }
 
+// scanItems walks the table's items, skipping expired ones and (for an index
+// scan) those lacking the index partition key, returning the filter-matched set
+// and the pre-filter scanned count.
+func (m *Mock) scanItems(
+	td *tableData, node expr.Node, input *driver.ScanInput, idxPK string,
+) (matched []map[string]any, scanned int, err error) {
+	for _, item := range td.items.All() {
+		if m.isItemExpired(td, item) {
+			continue
+		}
+
+		if idxPK != "" {
+			if _, ok := item[idxPK]; !ok {
+				continue
+			}
+		}
+
+		scanned++
+
+		ok, ferr := passesFilter(node, input.Filters, item)
+		if ferr != nil {
+			return nil, 0, ferr
+		}
+
+		if ok {
+			matched = append(matched, item)
+		}
+	}
+
+	return matched, scanned, nil
+}
+
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
@@ -522,28 +667,20 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		return nil, err
 	}
 
-	allItems := td.items.All()
+	// A scan on a secondary index only visits items carrying that index's
+	// partition key (a sparse index), so resolve it up front — this also
+	// validates the index exists.
+	var idxPK string
 
-	var (
-		matched []map[string]any
-		scanned int
-	)
-
-	for _, item := range allItems {
-		if m.isItemExpired(td, item) {
-			continue
+	if input.IndexName != "" {
+		if idxPK, _, err = resolveKeyFields(td, input.IndexName); err != nil {
+			return nil, err
 		}
+	}
 
-		scanned++
-
-		ok, ferr := passesFilter(node, input.Filters, item)
-		if ferr != nil {
-			return nil, ferr
-		}
-
-		if ok {
-			matched = append(matched, item)
-		}
+	matched, scanned, err := m.scanItems(td, node, &input, idxPK)
+	if err != nil {
+		return nil, err
 	}
 
 	limit := input.Limit
@@ -561,6 +698,12 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 	}
 
 	result.ScannedCount = scanned
+
+	if attrs, filtered := indexProjection(td.config, input.IndexName, input.ProjectionRequested); filtered {
+		for i, it := range result.Items {
+			result.Items[i] = projectToIndex(it, attrs)
+		}
+	}
 
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
