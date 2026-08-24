@@ -7591,7 +7591,7 @@ func TestElasticIPAWS(t *testing.T) {
 
 	// Associate with instance.
 	assocID, err := p.VPC.AssociateAddress(
-		ctx, eip.AllocationID, "i-12345",
+		ctx, eip.AllocationID, netdriver.AssociateAddressInput{InstanceID: "i-12345"},
 	)
 	if err != nil {
 		t.Fatal(err)

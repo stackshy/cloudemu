@@ -612,7 +612,7 @@ func (m *mockDriver) DescribeAddresses(
 }
 
 func (m *mockDriver) AssociateAddress(
-	_ context.Context, allocationID, instanceID string,
+	_ context.Context, allocationID string, in driver.AssociateAddressInput,
 ) (string, error) {
 	eip, ok := m.eips[allocationID]
 	if !ok {
@@ -621,7 +621,7 @@ func (m *mockDriver) AssociateAddress(
 
 	assocID := m.nextID("eipassoc")
 	eip.AssociationID = assocID
-	eip.InstanceID = instanceID
+	eip.InstanceID = in.InstanceID
 
 	return assocID, nil
 }

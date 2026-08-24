@@ -9,11 +9,13 @@ import (
 )
 
 type eipData struct {
-	AllocationID  string
-	PublicIP      string
-	AssociationID string
-	InstanceID    string
-	Tags          map[string]string
+	AllocationID       string
+	PublicIP           string
+	AssociationID      string
+	InstanceID         string
+	NetworkInterfaceID string
+	PrivateIP          string
+	Tags               map[string]string
 }
 
 // AllocateAddress allocates a new elastic IP address.
@@ -72,9 +74,14 @@ func (m *Mock) DescribeAddresses(
 	return describeResources(m.eips, ids, toEIPInfo), nil
 }
 
-// AssociateAddress associates an elastic IP with an instance.
+// AssociateAddress binds an elastic IP to an instance or, when
+// in.NetworkInterfaceID is set, to a specific network interface (optionally at
+// a secondary private address). Real EC2 rejects an unknown interface with
+// InvalidNetworkInterfaceID.NotFound; the networking mock does not model
+// instances, so an unknown instance is validated by the caller (the wire
+// layer), not here.
 func (m *Mock) AssociateAddress(
-	_ context.Context, allocationID, instanceID string,
+	_ context.Context, allocationID string, in driver.AssociateAddressInput,
 ) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -87,16 +94,21 @@ func (m *Mock) AssociateAddress(
 		)
 	}
 
-	if eip.AssociationID != "" {
-		return "", errors.Newf(
-			errors.FailedPrecondition,
-			"elastic IP %q is already associated", allocationID,
-		)
+	if in.NetworkInterfaceID != "" {
+		if !m.enis.Has(in.NetworkInterfaceID) {
+			return "", errors.Newf(errors.NotFound,
+				"InvalidNetworkInterfaceID.NotFound: network interface %q not found", in.NetworkInterfaceID)
+		}
 	}
 
+	// Real EC2 remaps automatically (idempotent AllowReassociation default), so
+	// re-associating an already-bound EIP replaces the target rather than
+	// erroring. A fresh association id is returned each time.
 	assocID := idgen.GenerateID("eipassoc-")
 	eip.AssociationID = assocID
-	eip.InstanceID = instanceID
+	eip.InstanceID = in.InstanceID
+	eip.NetworkInterfaceID = in.NetworkInterfaceID
+	eip.PrivateIP = in.PrivateIP
 
 	return assocID, nil
 }
@@ -112,6 +124,8 @@ func (m *Mock) DisassociateAddress(
 		if eip.AssociationID == associationID {
 			eip.AssociationID = ""
 			eip.InstanceID = ""
+			eip.NetworkInterfaceID = ""
+			eip.PrivateIP = ""
 
 			return nil
 		}
@@ -125,10 +139,12 @@ func (m *Mock) DisassociateAddress(
 
 func toEIPInfo(eip *eipData) driver.ElasticIP {
 	return driver.ElasticIP{
-		AllocationID:  eip.AllocationID,
-		PublicIP:      eip.PublicIP,
-		AssociationID: eip.AssociationID,
-		InstanceID:    eip.InstanceID,
-		Tags:          copyTags(eip.Tags),
+		AllocationID:       eip.AllocationID,
+		PublicIP:           eip.PublicIP,
+		AssociationID:      eip.AssociationID,
+		InstanceID:         eip.InstanceID,
+		NetworkInterfaceID: eip.NetworkInterfaceID,
+		PrivateIP:          eip.PrivateIP,
+		Tags:               copyTags(eip.Tags),
 	}
 }

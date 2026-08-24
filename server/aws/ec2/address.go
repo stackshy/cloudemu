@@ -3,6 +3,7 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -34,11 +35,14 @@ type releaseAddressResponseXML struct {
 }
 
 type addressXML struct {
-	PublicIP      string `xml:"publicIp"`
-	AllocationID  string `xml:"allocationId"`
-	AssociationID string `xml:"associationId,omitempty"`
-	InstanceID    string `xml:"instanceId,omitempty"`
-	Domain        string `xml:"domain"`
+	PublicIP                string `xml:"publicIp"`
+	AllocationID            string `xml:"allocationId"`
+	AssociationID           string `xml:"associationId,omitempty"`
+	InstanceID              string `xml:"instanceId,omitempty"`
+	NetworkInterfaceID      string `xml:"networkInterfaceId,omitempty"`
+	NetworkInterfaceOwnerID string `xml:"networkInterfaceOwnerId,omitempty"`
+	PrivateIPAddress        string `xml:"privateIpAddress,omitempty"`
+	Domain                  string `xml:"domain"`
 }
 
 type describeAddressesResponseXML struct {
@@ -112,13 +116,24 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]addressXML, 0, len(eips))
 	for i := range eips {
-		out = append(out, addressXML{
-			PublicIP:      eips[i].PublicIP,
-			AllocationID:  eips[i].AllocationID,
-			AssociationID: eips[i].AssociationID,
-			InstanceID:    eips[i].InstanceID,
-			Domain:        domainVPC,
-		})
+		addr := addressXML{
+			PublicIP:           eips[i].PublicIP,
+			AllocationID:       eips[i].AllocationID,
+			AssociationID:      eips[i].AssociationID,
+			InstanceID:         eips[i].InstanceID,
+			NetworkInterfaceID: eips[i].NetworkInterfaceID,
+			PrivateIPAddress:   eips[i].PrivateIP,
+			Domain:             domainVPC,
+		}
+
+		// networkInterfaceOwnerId only surfaces for an ENI-bound EIP; it is the
+		// account that owns the interface, which in the emulator is the single
+		// default account.
+		if addr.NetworkInterfaceID != "" {
+			addr.NetworkInterfaceOwnerID = ownerID
+		}
+
+		out = append(out, addr)
 	}
 
 	awsquery.WriteXMLResponse(w, describeAddressesResponseXML{
@@ -162,11 +177,15 @@ type disassociateAddressResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
-// associateAddress binds an allocated EIP to an instance.
+// associateAddress binds an allocated EIP to an instance or a network
+// interface.
 //
-// AWS accepts the EIP by AllocationId and, for callers that never held one,
-// by PublicIp; the allocation ID is resolved from the public IP so both spell
-// the same association.
+// AWS accepts the EIP by AllocationId and, for callers that never held one, by
+// PublicIp; the allocation ID is resolved from the public IP so both spell the
+// same association. InstanceId and NetworkInterfaceId are mutually exclusive —
+// supplying both is InvalidParameterCombination. An unknown InstanceId answers
+// InvalidInstanceID.NotFound; the networking driver validates an unknown
+// NetworkInterfaceId as InvalidNetworkInterfaceID.NotFound.
 func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 	allocationID := r.Form.Get("AllocationId")
 
@@ -174,9 +193,35 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 		allocationID = h.allocationIDForPublicIP(r, r.Form.Get("PublicIp"))
 	}
 
-	assocID, err := h.vpc.AssociateAddress(r.Context(), allocationID, r.Form.Get("InstanceId"))
+	instanceID := r.Form.Get("InstanceId")
+	networkInterfaceID := r.Form.Get("NetworkInterfaceId")
+
+	if instanceID != "" && networkInterfaceID != "" {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			"You may specify an instance ID or a network interface ID, but not both")
+
+		return
+	}
+
+	// The networking driver does not model instances, so an unknown instance is
+	// caught here against the compute driver — matching AttachNetworkInterface.
+	if instanceID != "" && h.compute != nil {
+		insts, err := h.compute.DescribeInstances(r.Context(), []string{instanceID}, nil)
+		if err != nil || len(insts) == 0 {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidInstanceID,
+				"instance "+instanceID+" not found")
+
+			return
+		}
+	}
+
+	assocID, err := h.vpc.AssociateAddress(r.Context(), allocationID, netdriver.AssociateAddressInput{
+		InstanceID:         instanceID,
+		NetworkInterfaceID: networkInterfaceID,
+		PrivateIP:          r.Form.Get("PrivateIpAddress"),
+	})
 	if err != nil {
-		writeVPCErr(w, err)
+		writeAssociateAddressErr(w, err)
 		return
 	}
 
@@ -185,6 +230,18 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 		RequestID:     awsquery.RequestID,
 		AssociationID: assocID,
 	})
+}
+
+// writeAssociateAddressErr maps the driver's not-found cases to the exact EC2
+// codes: an unknown network interface -> InvalidNetworkInterfaceID.NotFound, an
+// unknown allocation -> InvalidAllocationID.NotFound.
+func writeAssociateAddressErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "network interface") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterfaceID.NotFound", err.Error())
+		return
+	}
+
+	writeErrWithNotFound(w, err, "InvalidAllocationID.NotFound", "DependencyViolation")
 }
 
 // disassociateAddress releases an association, addressed either by

@@ -287,10 +287,27 @@ type ElasticIP struct {
 	AssociationID string
 	InstanceID    string
 	Tags          map[string]string
+	// NetworkInterfaceID / PrivateIP describe the ENI target of an AWS
+	// association: AssociateAddress can bind an EIP to a network interface
+	// (and an optional secondary private address) rather than an instance, and
+	// DescribeAddresses reports both back. Empty for Azure/GCP.
+	NetworkInterfaceID string
+	PrivateIP          string
 	// SKU is the Azure public-IP SKU (Basic/Standard), echoed as sku.name.
 	SKU string
 	// AllocationMethod is Static/Dynamic (Azure publicIPAllocationMethod).
 	AllocationMethod string
+}
+
+// AssociateAddressInput carries the target of an AssociateAddress call. Exactly
+// one of InstanceID or NetworkInterfaceID identifies the target; PrivateIP
+// optionally pins the association to a specific private address on the
+// interface. The ENI form (NetworkInterfaceID/PrivateIP) is an AWS concept —
+// Azure/GCP read only InstanceID.
+type AssociateAddressInput struct {
+	InstanceID         string
+	NetworkInterfaceID string
+	PrivateIP          string
 }
 
 // RouteTableAssociation represents an association between
@@ -468,7 +485,7 @@ type Networking interface {
 	AllocateAddress(ctx context.Context, cfg ElasticIPConfig) (*ElasticIP, error)
 	ReleaseAddress(ctx context.Context, allocationID string) error
 	DescribeAddresses(ctx context.Context, ids []string) ([]ElasticIP, error)
-	AssociateAddress(ctx context.Context, allocationID, instanceID string) (string, error)
+	AssociateAddress(ctx context.Context, allocationID string, in AssociateAddressInput) (string, error)
 	DisassociateAddress(ctx context.Context, associationID string) error
 
 	// Route Table Associations
