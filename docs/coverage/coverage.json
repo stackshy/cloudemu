@@ -9177,6 +9177,50 @@
         "name": "PutSecretValue"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "KeyVaultSecrets",
+        "doc": "KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version",
+        "operations": [
+          {
+            "name": "BackupKeyVaultSecret"
+          },
+          {
+            "name": "DeleteKeyVaultSecret"
+          },
+          {
+            "name": "GetDeletedKeyVaultSecret"
+          },
+          {
+            "name": "GetKeyVaultSecret"
+          },
+          {
+            "name": "ListDeletedKeyVaultSecrets"
+          },
+          {
+            "name": "ListKeyVaultSecretVersions"
+          },
+          {
+            "name": "ListKeyVaultSecrets"
+          },
+          {
+            "name": "PurgeDeletedKeyVaultSecret"
+          },
+          {
+            "name": "RecoverDeletedKeyVaultSecret"
+          },
+          {
+            "name": "RestoreKeyVaultSecret"
+          },
+          {
+            "name": "SetKeyVaultSecret"
+          },
+          {
+            "name": "UpdateKeyVaultSecret"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "SecretsManager",
       "azure": "KeyVault",
