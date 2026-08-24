@@ -703,7 +703,7 @@ func TestVNICAndIPOperations(t *testing.T) {
 
 	// VNICs come from Compute's attachments, so the fixture uses the driver's
 	// creation capability directly.
-	vnic, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "primary", nil)
+	vnic, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	t.Run("get vnic", func(t *testing.T) {
@@ -803,10 +803,10 @@ func TestEphemeralPublicIPLifetime(t *testing.T) {
 	f := newFixture(t)
 	subnetID := f.newSubnet(f.newVCN())
 
-	vnic, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "host", nil)
+	vnic, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "host", nil, nil)
 	require.NoError(t, err)
 
-	other, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "other", nil)
+	other, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "other", nil, nil)
 	require.NoError(t, err)
 
 	target := f.primaryPrivateIP(vnic.ID)
@@ -914,10 +914,10 @@ func TestPublicIPRollsBackOnFailedAssign(t *testing.T) {
 
 	// Two VNICs, so their primary private IPs give an occupied target and a
 	// separate address to move around.
-	firstVNIC, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "first", nil)
+	firstVNIC, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "first", nil, nil)
 	require.NoError(t, err)
 
-	secondVNIC, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "second", nil)
+	secondVNIC, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "second", nil, nil)
 	require.NoError(t, err)
 
 	first := f.primaryPrivateIP(firstVNIC.ID)
@@ -987,10 +987,10 @@ func TestProhibitPublicIPOnVnicIsEnforced(t *testing.T) {
 	privateSubnetID, _ := decode(t, private)["id"].(string)
 	publicSubnetID := f.newSubnet(vcnID)
 
-	privateVNIC, err := f.mock.CreateNetworkInterface(t.Context(), privateSubnetID, "private", nil)
+	privateVNIC, err := f.mock.CreateNetworkInterface(t.Context(), privateSubnetID, "private", nil, nil)
 	require.NoError(t, err)
 
-	publicVNIC, err := f.mock.CreateNetworkInterface(t.Context(), publicSubnetID, "public", nil)
+	publicVNIC, err := f.mock.CreateNetworkInterface(t.Context(), publicSubnetID, "public", nil, nil)
 	require.NoError(t, err)
 
 	blockedTarget := f.primaryPrivateIP(privateVNIC.ID)

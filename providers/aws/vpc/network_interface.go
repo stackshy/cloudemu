@@ -15,20 +15,22 @@ const (
 )
 
 type eniData struct {
-	ID           string
-	VPCID        string
-	SubnetID     string
-	Status       string
-	AttachmentID string
-	Description  string
-	Tags         map[string]string
+	ID             string
+	VPCID          string
+	SubnetID       string
+	Status         string
+	AttachmentID   string
+	Description    string
+	SecurityGroups []string
+	Tags           map[string]string
 }
 
 // CreateNetworkInterface creates a standalone, unattached ENI in the given
 // subnet (ec2:CreateNetworkInterface). The VPC is resolved from the subnet, so
-// an unknown subnet is NotFound.
+// an unknown subnet is NotFound. groups records the security groups the ENI is
+// in, so DeleteSecurityGroup can refuse to delete one still attached.
 func (m *Mock) CreateNetworkInterface(
-	_ context.Context, subnetID, description string, tags map[string]string,
+	_ context.Context, subnetID, description string, groups []string, tags map[string]string,
 ) (*driver.NetworkInterface, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -40,12 +42,13 @@ func (m *Mock) CreateNetworkInterface(
 
 	id := idgen.GenerateID("eni-")
 	eni := &eniData{
-		ID:          id,
-		VPCID:       sub.VPCID,
-		SubnetID:    subnetID,
-		Status:      ENIStatusAvailable,
-		Description: description,
-		Tags:        copyTags(tags),
+		ID:             id,
+		VPCID:          sub.VPCID,
+		SubnetID:       subnetID,
+		Status:         ENIStatusAvailable,
+		Description:    description,
+		SecurityGroups: append([]string(nil), groups...),
+		Tags:           copyTags(tags),
 	}
 	m.enis.Set(id, eni)
 

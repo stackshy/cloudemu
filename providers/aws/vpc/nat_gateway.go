@@ -68,6 +68,14 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 	// A private NAT gateway has no public/Elastic IP address.
 	if connectivity == natConnectivityPublic {
 		nat.PublicIP = mockPublicIP(id)
+
+		// The NAT gateway holds the Elastic IP, so real EC2 refuses to release it
+		// until the NAT gateway is deleted (InvalidIPAddress.InUse).
+		if cfg.AllocationID != "" {
+			if eip, ok := m.eips.Get(cfg.AllocationID); ok {
+				eip.AssociationID = idgen.GenerateID("eipassoc-")
+			}
+		}
 	}
 
 	m.natGateways.Set(id, nat)
@@ -79,11 +87,20 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 
 // DeleteNATGateway deletes the NAT gateway with the given ID.
 func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
-	if !m.natGateways.Delete(id) {
+	nat, ok := m.natGateways.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "NAT gateway %q not found", id)
 	}
 
+	m.natGateways.Delete(id)
 	m.releaseManagedENIs(natENIDescription(id))
+
+	// Releasing the NAT gateway frees its Elastic IP so it can be released.
+	if nat.AllocationID != "" {
+		if eip, ok := m.eips.Get(nat.AllocationID); ok {
+			eip.AssociationID = ""
+		}
+	}
 
 	return nil
 }
