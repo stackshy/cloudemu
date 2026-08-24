@@ -42,13 +42,15 @@ const (
 	defaultTimeoutSecs = 3
 )
 
-// AWS Lambda create-time range limits. MemorySize must be 128–32768 MB and
+// AWS Lambda create-time range limits. MemorySize must be 128–10240 MB and
 // Timeout must be 1–900 seconds; an out-of-range value is rejected with
-// InvalidParameterValueException. See
-// https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+// InvalidParameterValueException. The 10240 MB ceiling is the value the Lambda
+// service actually enforces — the API reference's 32768 is only the wire-schema
+// bound. See
+// https://docs.aws.amazon.com/lambda/latest/dg/configuration-function-common.html
 const (
 	minMemoryMB    = 128
-	maxMemoryMB    = 32768
+	maxMemoryMB    = 10240
 	minTimeoutSecs = 1
 	maxTimeoutSecs = 900
 )
@@ -180,7 +182,7 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	return &result, nil
 }
 
-// validateFunctionLimits enforces the AWS MemorySize (128–32768 MB) and Timeout
+// validateFunctionLimits enforces the AWS MemorySize (128–10240 MB) and Timeout
 // (1–900 s) create-time ranges, returning an InvalidArgument error the wire
 // layer maps to InvalidParameterValueException / HTTP 400.
 func validateFunctionLimits(memory, timeout int) error {

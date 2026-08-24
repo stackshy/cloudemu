@@ -60,7 +60,8 @@ func TestSDKCreateFunctionMemoryBelowMinimum(t *testing.T) {
 }
 
 // TestSDKCreateFunctionMemoryAboveMaximum covers the AWS MemorySize ceiling: a
-// value above 32768 MB is rejected with InvalidParameterValueException.
+// value above the enforced 10240 MB limit is rejected with
+// InvalidParameterValueException.
 func TestSDKCreateFunctionMemoryAboveMaximum(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()
@@ -81,7 +82,7 @@ func TestSDKCreateFunctionMemoryAboveMaximum(t *testing.T) {
 }
 
 // TestSDKCreateFunctionBoundaryValuesAccepted confirms the happy path is not
-// regressed: Timeout=900 and MemorySize=128/32768 are all valid.
+// regressed: Timeout=900 and MemorySize=10240 (the enforced ceiling) are valid.
 func TestSDKCreateFunctionBoundaryValuesAccepted(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()
@@ -92,9 +93,31 @@ func TestSDKCreateFunctionBoundaryValuesAccepted(t *testing.T) {
 		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
 		Handler:      aws.String("main"),
 		Timeout:      aws.Int32(900),
-		MemorySize:   aws.Int32(32768),
+		MemorySize:   aws.Int32(10240),
 		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("z")},
 	}); err != nil {
-		t.Fatalf("CreateFunction(Timeout=900, MemorySize=32768): %v", err)
+		t.Fatalf("CreateFunction(Timeout=900, MemorySize=10240): %v", err)
+	}
+}
+
+// TestSDKCreateFunctionMemoryJustAboveMaximum covers the tight boundary: 10241 MB
+// (one above the enforced 10240 ceiling) is rejected with
+// InvalidParameterValueException.
+func TestSDKCreateFunctionMemoryJustAboveMaximum(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateFunction(ctx, &awslambda.CreateFunctionInput{
+		FunctionName: aws.String("one-over"),
+		Runtime:      lambdatypes.RuntimeGo1x,
+		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
+		Handler:      aws.String("main"),
+		MemorySize:   aws.Int32(10241),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("z")},
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValueException" {
+		t.Fatalf("CreateFunction(MemorySize=10241) err = %v, want InvalidParameterValueException", err)
 	}
 }
