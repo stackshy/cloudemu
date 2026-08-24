@@ -87,6 +87,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.addPermission(w, r)
 	case "RemovePermission":
 		h.removePermission(w, r)
+	case "StartMessageMoveTask":
+		h.startMessageMoveTask(w, r)
+	case "CancelMessageMoveTask":
+		h.cancelMessageMoveTask(w, r)
+	case "ListMessageMoveTasks":
+		h.listMessageMoveTasks(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -623,6 +629,7 @@ func (h *Handler) untagQueue(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
+//nolint:dupl // uniform optional-interface handler shape; distinct SQS operation.
 func (h *Handler) listQueueTags(w http.ResponseWriter, r *http.Request) {
 	tagger, ok := h.mq.(queueTagger)
 	if !ok {
@@ -664,6 +671,141 @@ type dlqSourceLister interface {
 type queuePermissioner interface {
 	AddPermission(ctx context.Context, queueURL, label string, accountIDs, actions []string) error
 	RemovePermission(ctx context.Context, queueURL, label string) error
+}
+
+// messageMover exposes the SQS dead-letter-queue redrive surface
+// (StartMessageMoveTask/CancelMessageMoveTask/ListMessageMoveTasks). It is
+// AWS-specific and not part of the portable MessageQueue driver, so the handler
+// type-asserts for it.
+type messageMover interface {
+	StartMessageMoveTask(ctx context.Context, sourceARN, destARN string, maxRate int) (string, error)
+	CancelMessageMoveTask(ctx context.Context, taskHandle string) (int64, error)
+	ListMessageMoveTasks(ctx context.Context, sourceARN string, maxResults int) ([]mqdriver.MessageMoveTask, error)
+}
+
+func (h *Handler) startMessageMoveTask(w http.ResponseWriter, r *http.Request) {
+	mover, ok := h.mq.(messageMover)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "StartMessageMoveTask not supported"))
+		return
+	}
+
+	var req struct {
+		SourceArn                    string `json:"SourceArn"`
+		DestinationArn               string `json:"DestinationArn"`
+		MaxNumberOfMessagesPerSecond int    `json:"MaxNumberOfMessagesPerSecond"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	handle, err := mover.StartMessageMoveTask(r.Context(), req.SourceArn, req.DestinationArn, req.MaxNumberOfMessagesPerSecond)
+	if err != nil {
+		writeMoveTaskErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"TaskHandle": handle})
+}
+
+//nolint:dupl // uniform optional-interface handler shape; distinct SQS operation.
+func (h *Handler) cancelMessageMoveTask(w http.ResponseWriter, r *http.Request) {
+	mover, ok := h.mq.(messageMover)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "CancelMessageMoveTask not supported"))
+		return
+	}
+
+	var req struct {
+		TaskHandle string `json:"TaskHandle"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	moved, err := mover.CancelMessageMoveTask(r.Context(), req.TaskHandle)
+	if err != nil {
+		writeMoveTaskErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"ApproximateNumberOfMessagesMoved": moved})
+}
+
+func (h *Handler) listMessageMoveTasks(w http.ResponseWriter, r *http.Request) {
+	mover, ok := h.mq.(messageMover)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "ListMessageMoveTasks not supported"))
+		return
+	}
+
+	var req struct {
+		SourceArn  string `json:"SourceArn"`
+		MaxResults int    `json:"MaxResults"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tasks, err := mover.ListMessageMoveTasks(r.Context(), req.SourceArn, req.MaxResults)
+	if err != nil {
+		writeMoveTaskErr(w, err)
+		return
+	}
+
+	results := make([]map[string]any, 0, len(tasks))
+	for i := range tasks {
+		results = append(results, moveTaskResult(&tasks[i]))
+	}
+
+	wire.WriteJSON(w, map[string]any{"Results": results})
+}
+
+// moveTaskResult shapes one move task into its SQS ListMessageMoveTasks wire
+// entry, omitting the optional fields real SQS leaves out when unset.
+func moveTaskResult(t *mqdriver.MessageMoveTask) map[string]any {
+	entry := map[string]any{
+		"ApproximateNumberOfMessagesMoved":  t.ApproxMessagesMoved,
+		"ApproximateNumberOfMessagesToMove": t.ApproxMessagesToMove,
+		"SourceArn":                         t.SourceARN,
+		"Status":                            t.Status,
+		"StartedTimestamp":                  t.StartedAt.UnixMilli(),
+	}
+
+	if t.TaskHandle != "" {
+		entry["TaskHandle"] = t.TaskHandle
+	}
+
+	if t.DestinationARN != "" {
+		entry["DestinationArn"] = t.DestinationARN
+	}
+
+	if t.MaxNumberOfMessagesPerSecond > 0 {
+		entry["MaxNumberOfMessagesPerSecond"] = t.MaxNumberOfMessagesPerSecond
+	}
+
+	if t.FailureReason != "" {
+		entry["FailureReason"] = t.FailureReason
+	}
+
+	return entry
+}
+
+// writeMoveTaskErr maps canonical errors to the SQS message-move error codes.
+func writeMoveTaskErr(w http.ResponseWriter, err error) {
+	switch {
+	case cerrors.IsNotFound(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedOperation", err.Error())
+	case cerrors.IsInvalidArgument(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+	default:
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", err.Error())
+	}
 }
 
 func (h *Handler) addPermission(w http.ResponseWriter, r *http.Request) {
