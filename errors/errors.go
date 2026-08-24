@@ -70,6 +70,25 @@ func Newf(code Code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
+// Message returns the human-readable message of a cloudemu error, without the
+// canonical code prefix that Error() prepends. Wire handlers use this so the
+// error surfaced to an SDK carries only the human message (real AWS never
+// leaks an internal error-taxonomy name into its <Message>/message field).
+// For a nil error it returns "", and for a non-cloudemu error it falls back to
+// err.Error().
+func Message(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+
+	return err.Error()
+}
+
 // GetCode extracts the error code from an error. Returns Internal for non-cloudemu errors
 // and OK for nil errors.
 func GetCode(err error) Code {

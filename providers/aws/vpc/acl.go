@@ -125,7 +125,7 @@ func (m *Mock) DeleteNetworkACL(_ context.Context, id string) error {
 	// caller must move the subnet (ReplaceNetworkAclAssociation) first.
 	if m.aclHasAssociation(id) {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: network ACL %q is associated with a subnet", id)
+			"network ACL %q is associated with a subnet", id)
 	}
 
 	m.networkACLs.Delete(id)
