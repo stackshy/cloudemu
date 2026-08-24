@@ -237,6 +237,44 @@ func TestSendCommandTagTargetsNoMatch(t *testing.T) {
 	}
 }
 
+// A documented Run Command target key the emulator cannot resolve
+// (resource-groups:Name) must select nothing rather than fanning the command
+// out to every instance in the fleet. Before the fix the raw key was forwarded
+// as an EC2 describe-filter name, which the matcher's default branch treated as
+// an unrestricted match — so the command silently hit unrelated instances.
+func TestSendCommandUnsupportedTargetKeyMatchesNothing(t *testing.T) {
+	ctx := context.Background()
+	c, ec2c := newRunCommandClient(t)
+
+	// Two live instances that the command must NOT touch.
+	ids := runInstances(t, ec2c, 2)
+
+	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
+		DocumentName: aws.String("AWS-RunShellScript"),
+		Targets: []ssmtypes.Target{{
+			Key: aws.String("resource-groups:Name"), Values: []string{"my-group"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SendCommand with resource-groups target should be accepted: %v", err)
+	}
+
+	if sent.Command == nil || aws.ToString(sent.Command.CommandId) == "" {
+		t.Fatalf("SendCommand returned no command id: %+v", sent.Command)
+	}
+
+	// No instance was resolved, so none has an invocation. A fan-out bug would
+	// register invocations for both live instances instead.
+	for _, id := range ids {
+		if _, err := c.GetCommandInvocation(ctx, &awsssm.GetCommandInvocationInput{
+			CommandId:  sent.Command.CommandId,
+			InstanceId: aws.String(id),
+		}); err == nil {
+			t.Errorf("instance %s should not have been targeted by a resource-groups command", id)
+		}
+	}
+}
+
 // Real SSM answers InvalidInstanceId for a target that is not a managed
 // instance. It is the most common Run Command failure during bring-up, so
 // accepting any id would hide it until the caller runs for real.

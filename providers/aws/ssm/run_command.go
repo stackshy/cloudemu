@@ -2,6 +2,7 @@ package ssm
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -77,8 +78,19 @@ func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarge
 
 	filters := make([]computedriver.DescribeFilter, 0, len(targets))
 	for _, t := range targets {
+		name, ok := targetFilterName(t.Key)
+		if !ok {
+			// A documented Run Command target key the emulator cannot resolve
+			// (resource-groups:Name, resource-groups:ResourceTypeFilters, tag-key).
+			// Targets are AND-combined, so an unresolvable one must select nothing.
+			// Forwarding the raw key as an EC2 describe-filter name instead falls
+			// into matchesTagFilter's default branch, which matches every instance
+			// unconditionally — fanning the command out to the whole fleet.
+			return nil
+		}
+
 		filters = append(filters, computedriver.DescribeFilter{
-			Name: targetFilterName(t.Key), Values: t.Values,
+			Name: name, Values: t.Values,
 		})
 	}
 
@@ -96,15 +108,23 @@ func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarge
 	return ids
 }
 
-// targetFilterName maps an SSM Target Key to the equivalent EC2 describe-filter
-// name. Tag keys ("tag:<name>") pass through unchanged; the "InstanceIds"
-// pseudo-key selects by instance id.
-func targetFilterName(key string) string {
-	if key == "InstanceIds" {
-		return "instance-id"
+// targetFilterName maps a supported SSM Target Key to the equivalent EC2
+// describe-filter name, reporting whether the key is one the emulator can
+// resolve. Only the two Run Command keys the EC2 matcher actually understands
+// are supported: the "InstanceIds" pseudo-key (selects by instance id) and
+// "tag:<name>" (passes through unchanged). Other documented keys such as
+// resource-groups:Name / resource-groups:ResourceTypeFilters, and the bare
+// "tag-key" form, are reported unsupported so the caller can decline to forward
+// them — the EC2 matcher would otherwise treat them as an unrestricted match.
+func targetFilterName(key string) (string, bool) {
+	switch {
+	case key == "InstanceIds":
+		return "instance-id", true
+	case strings.HasPrefix(key, "tag:") && len(key) > len("tag:"):
+		return key, true
+	default:
+		return "", false
 	}
-
-	return key
 }
 
 func dedupeStrings(in []string) []string {
