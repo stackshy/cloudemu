@@ -98,7 +98,7 @@ func (h *Handler) attachInternetGateway(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) detachInternetGateway(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.DetachInternetGateway(r.Context(),
 		r.Form.Get("InternetGatewayId"), r.Form.Get("VpcId")); err != nil {
-		writeIGWErr(w, err)
+		writeDetachIGWErr(w, err)
 		return
 	}
 
@@ -218,4 +218,12 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 
 func writeIGWErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidInternetGatewayID.NotFound", "DependencyViolation")
+}
+
+// writeDetachIGWErr maps DetachInternetGateway errors. Detaching an internet
+// gateway that is not attached to the specified VPC is a distinct AWS error
+// code (Gateway.NotAttached), not the DependencyViolation used for delete-while-
+// attached. Both are 400 client errors.
+func writeDetachIGWErr(w http.ResponseWriter, err error) {
+	writeErrWithNotFound(w, err, "InvalidInternetGatewayID.NotFound", "Gateway.NotAttached")
 }
