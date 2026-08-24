@@ -907,7 +907,7 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 			return
 		case derr != nil:
 			result.Errors = append(result.Errors, deleteErrorXML{
-				Key: obj.Key, Code: "InternalError", Message: derr.Error(),
+				Key: obj.Key, Code: "InternalError", Message: cerrors.Message(derr),
 			})
 		case !req.Quiet:
 			result.Deleted = append(result.Deleted, deletedObjectXML{
@@ -1783,7 +1783,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 // missing resource is the upload (NoSuchUpload), not the object key.
 func writeMultipartErr(w http.ResponseWriter, err error) {
 	if cerrors.IsNotFound(err) {
-		writeError(w, http.StatusNotFound, "NoSuchUpload", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchUpload", cerrors.Message(err))
 		return
 	}
 	writeErr(w, err)
@@ -1795,9 +1795,9 @@ func writeMultipartErr(w http.ResponseWriter, err error) {
 func writeCompleteMultipartErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NoSuchUpload", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchUpload", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidPart", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidPart", cerrors.Message(err))
 	default:
 		writeErr(w, err)
 	}
@@ -1820,23 +1820,25 @@ func bucketMissing(err error) bool {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
 		// Real S3 distinguishes NoSuchBucket from NoSuchKey.
 		if bucketMissing(err) {
-			writeError(w, http.StatusNotFound, "NoSuchBucket", err.Error())
+			writeError(w, http.StatusNotFound, "NoSuchBucket", msg)
 			return
 		}
-		writeError(w, http.StatusNotFound, "NoSuchKey", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchKey", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "BucketAlreadyOwnedByYou", err.Error())
+		writeError(w, http.StatusConflict, "BucketAlreadyOwnedByYou", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidArgument", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Deleting a non-empty bucket is a client error in real S3, not a
 		// server fault — and a 5xx would trigger SDK retry backoff.
-		writeError(w, http.StatusConflict, "BucketNotEmpty", err.Error())
+		writeError(w, http.StatusConflict, "BucketNotEmpty", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", msg)
 	}
 }
