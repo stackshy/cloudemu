@@ -59,6 +59,7 @@ import (
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
+	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
@@ -171,7 +172,14 @@ type Drivers struct {
 	// check on incoming queries.
 	ResourceDiscovery *resourcediscovery.Engine
 	SubscriptionID    string
+	// TenantID is the Azure AD tenant reported by the subscriptions Get/List and
+	// the global tenants list. Empty falls back to defaultTenantID.
+	TenantID string
 }
+
+// defaultTenantID is reported when Drivers.TenantID is unset, so a caller
+// verifying an account always sees a well-formed tenant GUID.
+const defaultTenantID = "11111111-1111-1111-1111-111111111111"
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
 // non-nil driver in d. Routing is path-based on
@@ -190,9 +198,18 @@ type Drivers struct {
 func New(d Drivers) http.Handler {
 	srv := server.New()
 
-	// The subscriptions collection has no driver behind it — see the package
-	// doc for why the list is empty rather than invented.
-	srv.Register(subscriptions.New())
+	tenantID := d.TenantID
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+
+	// The subscriptions endpoints (list / get / locations) have no driver: the
+	// emulator serves a single estate under one subscription and echoes it back.
+	srv.Register(subscriptions.New(d.SubscriptionID, tenantID))
+
+	// The global tenants list is a non-/subscriptions ARM path; register it
+	// before the permissive blob fallback so it isn't swallowed as a blob call.
+	srv.Register(tenants.New(tenantID))
 
 	// Resource groups have no driver: they are containers, and the emulator
 	// tracks membership by the ids resources already carry.
@@ -393,6 +410,9 @@ func New(d Drivers) http.Handler {
 	// unconstrained relative to the resource handlers above.
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourcegraph.New(d.ResourceDiscovery, d.SubscriptionID))
+		// Generic Microsoft.Resources listing (az resource list) at subscription
+		// and resource-group scope, backed by the same discovery engine.
+		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
 	}
 
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
