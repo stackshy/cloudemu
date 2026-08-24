@@ -24,6 +24,11 @@ type QueueConfig struct {
 	ReceiveMessageWaitTimeSeconds int
 	ContentBasedDeduplication     bool
 	RedrivePolicy                 string // raw JSON, echoed by GetQueueAttributes
+	// VisibilityTimeoutSet reports that VisibilityTimeout was supplied explicitly,
+	// so the AWS provider can distinguish an explicit 0 (kept as 0) from an
+	// omitted value (defaulted to 30). The wire handler sets it from attribute
+	// presence; the typed Go API leaves it false, where 0 means "use the default".
+	VisibilityTimeoutSet bool
 }
 
 // DeadLetterConfig configures a dead-letter queue for failed messages.

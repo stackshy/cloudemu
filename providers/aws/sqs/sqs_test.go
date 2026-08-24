@@ -162,6 +162,47 @@ func TestSendAndReceiveMessages(t *testing.T) {
 	})
 }
 
+// TestCreateQueueVisibilityTimeoutDefault locks in that the 30s default lives at
+// the provider layer (so the typed Go API and portable path get it), while an
+// explicitly-set 0 still round-trips.
+func TestCreateQueueVisibilityTimeoutDefault(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	// Typed API omits VisibilityTimeout: it must default to 30s, so a received
+	// message stays invisible and an immediate second receive returns nothing.
+	q := createStdQueue(m, "default-vis")
+	if _, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "x"}); err != nil {
+		requireNoError(t, err)
+	}
+
+	r1, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 1})
+	requireNoError(t, err)
+	r2, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 1})
+	requireNoError(t, err)
+
+	if len(r1) != 1 || len(r2) != 0 {
+		t.Fatalf("default visibility should hide the received message: r1=%d r2=%d", len(r1), len(r2))
+	}
+
+	// Explicit 0 (as the wire handler flags it) round-trips: the received
+	// message is immediately visible again.
+	q0, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "zero-vis", VisibilityTimeout: 0, VisibilityTimeoutSet: true})
+	requireNoError(t, err)
+	if _, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q0.URL, Body: "y"}); err != nil {
+		requireNoError(t, err)
+	}
+
+	z1, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q0.URL, MaxMessages: 1})
+	requireNoError(t, err)
+	z2, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q0.URL, MaxMessages: 1})
+	requireNoError(t, err)
+
+	if len(z1) != 1 || len(z2) != 1 {
+		t.Fatalf("explicit 0 visibility should re-expose the message: z1=%d z2=%d", len(z1), len(z2))
+	}
+}
+
 func TestDeleteMessage(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()

@@ -25,10 +25,11 @@ import (
 var _ driver.MessageQueue = (*Mock)(nil)
 
 const (
-	defaultMaxMessageSize   = 262144
-	defaultMessageRetention = 345600
-	maxReceiveMessages      = 10
-	deduplicationWindow     = 5 * time.Minute
+	defaultVisibilityTimeout = 30
+	defaultMaxMessageSize    = 262144
+	defaultMessageRetention  = 345600
+	maxReceiveMessages       = 10
+	deduplicationWindow      = 5 * time.Minute
 )
 
 // sqsMessage represents an internal message stored in a queue.
@@ -186,6 +187,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	}
 
 	maxMessageSize, messageRetention := queueSizeDefaults(&cfg)
+	visibilityTimeout := resolveVisibilityTimeout(&cfg)
 
 	info := driver.QueueInfo{
 		URL:                url,
@@ -202,7 +204,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		info:               info,
 		messages:           make([]*sqsMessage, 0),
 		delaySeconds:       cfg.DelaySeconds,
-		visibilityTimeout:  cfg.VisibilityTimeout,
+		visibilityTimeout:  visibilityTimeout,
 		maxMessageSize:     maxMessageSize,
 		messageRetention:   messageRetention,
 		receiveWaitTime:    cfg.ReceiveMessageWaitTimeSeconds,
@@ -228,11 +230,20 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	return &result, nil
 }
 
+// resolveVisibilityTimeout applies the SQS default of 30 only when the timeout
+// was left unset. An explicit 0 (VisibilityTimeoutSet, which the wire handler
+// derives from attribute presence) round-trips unchanged; the typed Go API,
+// which cannot express an explicit 0 through a plain int, treats 0 as unset.
+func resolveVisibilityTimeout(cfg *driver.QueueConfig) int {
+	if cfg.VisibilityTimeout == 0 && !cfg.VisibilityTimeoutSet {
+		return defaultVisibilityTimeout
+	}
+
+	return cfg.VisibilityTimeout
+}
+
 // queueSizeDefaults resolves the numeric size attributes that have no valid
-// zero value, applying SQS defaults for any left at zero. VisibilityTimeout is
-// intentionally excluded: 0 is a valid VisibilityTimeout, so its default (30)
-// is applied by the AWS wire handler only when the attribute is absent, letting
-// an explicit "0" round-trip unchanged.
+// zero value, applying SQS defaults for any left at zero.
 func queueSizeDefaults(cfg *driver.QueueConfig) (maxSize, retention int) {
 	maxSize = cfg.MaxMessageSize
 	if maxSize == 0 {
@@ -257,7 +268,7 @@ func sameQueueConfig(existing *queueData, cfg *driver.QueueConfig) bool {
 	defer existing.mu.Unlock()
 
 	return existing.info.FIFO == cfg.FIFO &&
-		existing.visibilityTimeout == cfg.VisibilityTimeout &&
+		existing.visibilityTimeout == resolveVisibilityTimeout(cfg) &&
 		existing.maxMessageSize == maxSize &&
 		existing.messageRetention == retention &&
 		existing.delaySeconds == cfg.DelaySeconds &&

@@ -22,11 +22,6 @@ import (
 
 const targetPrefix = "AmazonSQS."
 
-// defaultVisibilityTimeout is the SQS default applied when CreateQueue omits the
-// VisibilityTimeout attribute. It is applied here (not in the provider) so an
-// explicit "0" survives round-trip.
-const defaultVisibilityTimeout = 30
-
 // Handler serves SQS JSON-RPC requests against a messagequeue.MessageQueue
 // driver.
 type Handler struct {
@@ -120,7 +115,8 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 		FIFO:                          req.Attributes["FifoQueue"] == attrTrue || strings.HasSuffix(req.QueueName, ".fifo"),
 		Tags:                          req.Tags,
 		DelaySeconds:                  atoiAttr(req.Attributes, "DelaySeconds"),
-		VisibilityTimeout:             visibilityTimeoutAttr(req.Attributes),
+		VisibilityTimeout:             atoiAttr(req.Attributes, "VisibilityTimeout"),
+		VisibilityTimeoutSet:          attrPresent(req.Attributes, "VisibilityTimeout"),
 		MaxMessageSize:                atoiAttr(req.Attributes, "MaximumMessageSize"),
 		MessageRetention:              atoiAttr(req.Attributes, "MessageRetentionPeriod"),
 		ReceiveMessageWaitTimeSeconds: atoiAttr(req.Attributes, "ReceiveMessageWaitTimeSeconds"),
@@ -875,15 +871,12 @@ func (h *Handler) removePermission(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
-// visibilityTimeoutAttr resolves the CreateQueue VisibilityTimeout attribute,
-// applying the SQS default of 30 only when the attribute is absent so that an
-// explicit "0" is preserved end-to-end.
-func visibilityTimeoutAttr(attrs map[string]string) int {
-	if _, ok := attrs["VisibilityTimeout"]; ok {
-		return atoiAttr(attrs, "VisibilityTimeout")
-	}
+// attrPresent reports whether an attribute was supplied, distinguishing an
+// explicit "0" from an omitted value for defaults resolved in the provider.
+func attrPresent(attrs map[string]string, key string) bool {
+	_, ok := attrs[key]
 
-	return defaultVisibilityTimeout
+	return ok
 }
 
 // atoiAttr parses a string attribute as an int, returning 0 when absent or invalid.
