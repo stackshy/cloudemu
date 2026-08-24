@@ -363,31 +363,56 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 			continue
 		}
 
-		env := map[string]any{
-			"Type":      "Notification",
-			"MessageId": msgID,
-			"TopicArn":  td.info.ResourceID,
-			"Subject":   input.Subject,
-			"Message":   input.Message,
-			"Timestamp": m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		// A filter policy gates delivery: the message reaches the subscriber
+		// only when its attributes (or body) satisfy the policy.
+		if !subscriptionAccepts(&sub, &input) {
+			continue
 		}
 
-		// Real SNS carries publish MessageAttributes into the SQS envelope as
-		// {name: {"Type": "String", "Value": v}}; preserve them end-to-end.
-		if len(input.Attributes) > 0 {
-			attrs := make(map[string]any, len(input.Attributes))
-			for k, v := range input.Attributes {
-				attrs[k] = map[string]string{"Type": "String", "Value": v}
-			}
+		// With raw message delivery enabled, SNS strips its metadata and sends
+		// the published message body as-is instead of the Notification envelope.
+		if rawDeliveryEnabled(&sub) {
+			_ = m.sqs.DeliverExternal(ctx, sub.Endpoint, input.Message)
 
-			env["MessageAttributes"] = attrs
+			continue
 		}
 
-		envelope, err := json.Marshal(env)
+		envelope, err := m.notificationEnvelope(td, msgID, input)
 		if err != nil {
 			continue
 		}
 
-		_ = m.sqs.DeliverExternal(ctx, sub.Endpoint, string(envelope))
+		_ = m.sqs.DeliverExternal(ctx, sub.Endpoint, envelope)
 	}
+}
+
+// notificationEnvelope builds the SNS Notification JSON that wraps a published
+// message for a non-raw SQS subscription.
+func (m *Mock) notificationEnvelope(td *topicData, msgID string, input driver.PublishInput) (string, error) {
+	env := map[string]any{
+		"Type":      "Notification",
+		"MessageId": msgID,
+		"TopicArn":  td.info.ResourceID,
+		"Subject":   input.Subject,
+		"Message":   input.Message,
+		"Timestamp": m.opts.Clock.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Real SNS carries publish MessageAttributes into the SQS envelope as
+	// {name: {"Type": "String", "Value": v}}; preserve them end-to-end.
+	if len(input.Attributes) > 0 {
+		attrs := make(map[string]any, len(input.Attributes))
+		for k, v := range input.Attributes {
+			attrs[k] = map[string]string{"Type": "String", "Value": v}
+		}
+
+		env["MessageAttributes"] = attrs
+	}
+
+	body, err := json.Marshal(env)
+	if err != nil {
+		return "", err
+	}
+
+	return string(body), nil
 }
