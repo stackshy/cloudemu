@@ -234,6 +234,9 @@ func TestStreamsGetRecordsTrimHorizon(t *testing.T) {
 		// Keys are always present regardless of view type.
 		assert.Contains(t, rec.Dynamodb.Keys, "pk")
 		assert.Contains(t, rec.Dynamodb.Keys, "sk")
+		// Every record reports the stream's CONFIGURED view type, not one
+		// inferred from which images the INSERT/REMOVE happens to carry.
+		assert.Equal(t, streamtypes.StreamViewTypeNewAndOldImages, rec.Dynamodb.StreamViewType)
 	}
 
 	// INSERT carries a NewImage; MODIFY carries both; REMOVE carries the OldImage.
@@ -378,6 +381,24 @@ func TestStreamsUnknownStreamArn(t *testing.T) {
 
 	_, err := streams.DescribeStream(context.Background(), &dynamodbstreams.DescribeStreamInput{
 		StreamArn: aws.String("arn:aws:dynamodb:us-east-1:000000000000:table/ghost/stream/2020-01-01T00:00:00.000"),
+	})
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "ResourceNotFoundException", apiErr.ErrorCode())
+}
+
+func TestStreamsGetShardIteratorUnknownShard(t *testing.T) {
+	t.Parallel()
+
+	ddb, streams := newStreamsEnv(t)
+	arn := createStreamTable(t, ddb, "orders", ddbtypes.StreamViewTypeNewImage)
+
+	_, err := streams.GetShardIterator(context.Background(), &dynamodbstreams.GetShardIteratorInput{
+		StreamArn:         aws.String(arn),
+		ShardId:           aws.String("shard-does-not-exist"),
+		ShardIteratorType: streamtypes.ShardIteratorTypeTrimHorizon,
 	})
 	require.Error(t, err)
 

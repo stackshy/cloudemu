@@ -24,6 +24,8 @@ const (
 	streamEventVer    = "1.1"
 	defaultAWSRegion  = "us-east-1"
 	maxGetRecords     = 1000
+	arnMinParts       = 4 // arn:aws:dynamodb:<region>:...
+	arnRegionField    = 3
 )
 
 // Shard iterator types accepted by GetShardIterator.
@@ -208,6 +210,13 @@ func (h *StreamsHandler) getShardIterator(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// The emulator models a single shard; any other ShardId does not exist on the
+	// stream, which real DynamoDB Streams answers with ResourceNotFoundException.
+	if req.ShardID != streamShardID {
+		writeStreamsErr(w, cerrors.Newf(cerrors.NotFound, "shard %s not found on stream", req.ShardID))
+		return
+	}
+
 	after, err := h.iteratorPosition(r.Context(), cfg.Name, req.ShardIteratorType, req.SequenceNumber)
 	if err != nil {
 		writeStreamsErr(w, err)
@@ -295,17 +304,27 @@ func (h *StreamsHandler) getRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	it, err := h.db.GetStreamRecords(r.Context(), cur.Table, req.Limit, cur.After)
+	it, err := h.db.GetStreamRecords(r.Context(), cur.Table, clampLimit(req.Limit), cur.After)
 	if err != nil {
 		writeStreamsErr(w, err)
 		return
 	}
 
-	region := regionFromTable(r.Context(), h.db, cur.Table)
+	// The stream's configured view type is reported verbatim on every record, so
+	// KEYS_ONLY/NEW_IMAGE/OLD_IMAGE/NEW_AND_OLD_IMAGES reflects the table config,
+	// not which images a given INSERT/REMOVE happens to carry.
+	viewType, region := "", defaultAWSRegion
+	if cfg, derr := h.db.DescribeTable(r.Context(), cur.Table); derr == nil {
+		viewType = cfg.StreamViewType
+
+		if parts := strings.Split(cfg.StreamArn, ":"); len(parts) >= arnMinParts && parts[arnRegionField] != "" {
+			region = parts[arnRegionField]
+		}
+	}
 
 	records := make([]map[string]any, 0, len(it.Records))
 	for i := range it.Records {
-		records = append(records, streamRecordWire(&it.Records[i], region))
+		records = append(records, streamRecordWire(&it.Records[i], region, viewType))
 	}
 
 	// The single shard is always open, so a next iterator is always returned
@@ -322,15 +341,31 @@ func (h *StreamsHandler) getRecords(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// clampLimit bounds a GetRecords Limit to DynamoDB's [1,1000] range, defaulting
+// an unset (<=0) limit to the 1000-record maximum.
+func clampLimit(limit int) int {
+	if limit <= 0 || limit > maxGetRecords {
+		return maxGetRecords
+	}
+
+	return limit
+}
+
 // streamRecordWire renders a driver StreamRecord into the API_streams_Record
-// wire shape, AV-encoding the key/image maps via the shared codec.
-func streamRecordWire(rec *dbdriver.StreamRecord, region string) map[string]any {
+// wire shape, AV-encoding the key/image maps via the shared codec. viewType is
+// the stream's configured StreamViewType, reported verbatim on every record; it
+// falls back to per-record inference only when the config is unavailable.
+func streamRecordWire(rec *dbdriver.StreamRecord, region, viewType string) map[string]any {
+	if viewType == "" {
+		viewType = viewTypeForRecord(rec)
+	}
+
 	dyn := map[string]any{
 		"ApproximateCreationDateTime": float64(rec.Timestamp.Unix()),
 		"Keys":                        toWireItem(rec.Keys),
 		"SequenceNumber":              rec.SequenceNumber,
 		"SizeBytes":                   recordSizeBytes(rec),
-		"StreamViewType":              viewTypeForRecord(rec),
+		"StreamViewType":              viewType,
 	}
 
 	if rec.NewImage != nil {
@@ -384,23 +419,6 @@ func recordSizeBytes(rec *dbdriver.StreamRecord) int {
 	}
 
 	return size
-}
-
-// regionFromTable extracts the AWS region embedded in the table's stream ARN
-// (arn:aws:dynamodb:<region>:<account>:table/...). It falls back to the default
-// region when the ARN is unavailable or malformed.
-func regionFromTable(ctx context.Context, db dbdriver.Database, table string) string {
-	cfg, err := db.DescribeTable(ctx, table)
-	if err != nil {
-		return defaultAWSRegion
-	}
-
-	parts := strings.Split(cfg.StreamArn, ":")
-	if len(parts) >= 4 && parts[3] != "" {
-		return parts[3]
-	}
-
-	return defaultAWSRegion
 }
 
 // streamCursor is the opaque state a shard iterator carries: which table's
