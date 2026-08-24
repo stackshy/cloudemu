@@ -70,6 +70,89 @@ func TestEventBridgeInputTransformer(t *testing.T) {
 	}
 }
 
+// TestEventBridgeReservedVarInString covers AWS's "Including reserved variables
+// in a string" pattern: a reserved string variable inside a quoted string literal
+// is inserted unquoted, so "<aws.events.rule-name> triggered" yields
+// "example triggered" (delivered as the unquoted string), not corrupted output.
+func TestEventBridgeReservedVarInString(t *testing.T) {
+	it, _ := json.Marshal(map[string]any{
+		"InputTemplate": `"<aws.events.rule-name> triggered"`,
+	})
+
+	body := deliverWithTarget(t, ebdriver.Target{ID: "1", InputTransformer: string(it)}, "app", `{"state":"ok"}`)
+
+	if body != "r triggered" {
+		t.Fatalf("reserved-in-string body = %q, want %q", body, "r triggered")
+	}
+}
+
+// TestEventBridgeReservedVarStandalone covers AWS's "Including reserved variables
+// in JSON" pattern: a reserved string variable used as a standalone JSON field
+// value is auto-quoted, and a reserved object variable is inserted raw, so the
+// delivered body is valid JSON.
+func TestEventBridgeReservedVarStandalone(t *testing.T) {
+	it, _ := json.Marshal(map[string]any{
+		"InputTemplate": `{"ruleName":<aws.events.rule-name>,"whole":<aws.events.event.json>}`,
+	})
+
+	body := deliverWithTarget(t, ebdriver.Target{ID: "1", InputTransformer: string(it)}, "app", `{"state":"ok"}`)
+
+	var got struct {
+		RuleName string         `json:"ruleName"`
+		Whole    map[string]any `json:"whole"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("standalone reserved body not valid JSON: %v (%s)", err, body)
+	}
+
+	if got.RuleName != "r" {
+		t.Fatalf("ruleName = %q, want %q (auto-quoted reserved string)", got.RuleName, "r")
+	}
+
+	if got.Whole["source"] != "app" {
+		t.Fatalf("aws.events.event.json did not embed the full event: %s", body)
+	}
+}
+
+// TestEventBridgeUserVarStandaloneQuoted covers AWS's "Simple JSON" pattern: a
+// string user variable used as a standalone JSON field value (no surrounding
+// quotes in the template) is auto-quoted so the output is valid JSON.
+func TestEventBridgeUserVarStandaloneQuoted(t *testing.T) {
+	it, _ := json.Marshal(map[string]any{
+		"InputPathsMap": map[string]string{"st": "$.detail.state"},
+		"InputTemplate": `{"state":<st>}`,
+	})
+
+	body := deliverWithTarget(t, ebdriver.Target{ID: "1", InputTransformer: string(it)}, "app", `{"state":"ok"}`)
+
+	if body != `{"state":"ok"}` {
+		t.Fatalf("standalone user-var body = %q, want %q", body, `{"state":"ok"}`)
+	}
+}
+
+// TestEventBridgeMixedVarsInString covers a reserved and a user variable embedded
+// together inside one string literal alongside escaped quotes: both are inserted
+// unquoted so the surrounding string stays intact.
+func TestEventBridgeMixedVarsInString(t *testing.T) {
+	it, _ := json.Marshal(map[string]any{
+		"InputPathsMap": map[string]string{"st": "$.detail.state"},
+		"InputTemplate": `{"msg":"rule <aws.events.rule-name> saw \"<st>\""}`,
+	})
+
+	body := deliverWithTarget(t, ebdriver.Target{ID: "1", InputTransformer: string(it)}, "app", `{"state":"ok"}`)
+
+	var got struct {
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("mixed-in-string body not valid JSON: %v (%s)", err, body)
+	}
+
+	if got.Msg != `rule r saw "ok"` {
+		t.Fatalf("msg = %q, want %q", got.Msg, `rule r saw "ok"`)
+	}
+}
+
 func TestEventBridgeConstantInput(t *testing.T) {
 	body := deliverWithTarget(t, ebdriver.Target{ID: "1", Input: `{"hello":"world"}`}, "app", `{"state":"ok"}`)
 

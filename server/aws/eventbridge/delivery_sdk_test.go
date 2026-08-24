@@ -275,6 +275,53 @@ func TestSDKEventBridgeReservedTransformerVars(t *testing.T) {
 	}
 }
 
+// TestSDKEventBridgeReservedVarInString verifies AWS's "Including reserved
+// variables in a string" pattern over the wire: a reserved string variable inside
+// a quoted string literal is inserted unquoted, so the template
+// "<aws.events.rule-name> triggered" is delivered as "r triggered" rather than a
+// corrupted double-quoted string.
+func TestSDKEventBridgeReservedVarInString(t *testing.T) {
+	eb, sqs := newEBAndSQS(t)
+	ctx := context.Background()
+
+	url, arn := makeQueue(t, sqs, "eb-reserved-string")
+
+	if _, err := eb.PutRule(ctx, &awseb.PutRuleInput{
+		Name:         aws.String("r"),
+		EventPattern: aws.String(`{"source":["app"]}`),
+	}); err != nil {
+		t.Fatalf("PutRule: %v", err)
+	}
+
+	if _, err := eb.PutTargets(ctx, &awseb.PutTargetsInput{
+		Rule: aws.String("r"),
+		Targets: []ebtypes.Target{{
+			Id:  aws.String("1"),
+			Arn: aws.String(arn),
+			InputTransformer: &ebtypes.InputTransformer{
+				InputTemplate: aws.String(`"<aws.events.rule-name> triggered"`),
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("PutTargets: %v", err)
+	}
+
+	if _, err := eb.PutEvents(ctx, &awseb.PutEventsInput{Entries: []ebtypes.PutEventsRequestEntry{
+		{Source: aws.String("app"), DetailType: aws.String("t"), Detail: aws.String(`{"state":"ok"}`)},
+	}}); err != nil {
+		t.Fatalf("PutEvents: %v", err)
+	}
+
+	body, count := receiveOne(t, sqs, url)
+	if count != 1 {
+		t.Fatalf("delivered %d messages, want 1", count)
+	}
+
+	if body != "r triggered" {
+		t.Fatalf("reserved-in-string body = %q, want %q", body, "r triggered")
+	}
+}
+
 // TestSDKEventBridgeResourcesAlwaysArray verifies the delivered envelope carries
 // "resources" as an empty array (never null) when the event has none.
 func TestSDKEventBridgeResourcesAlwaysArray(t *testing.T) {
