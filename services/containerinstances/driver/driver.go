@@ -28,6 +28,24 @@ type ContainerConfig struct {
 	Env        []EnvVar
 }
 
+// Port is a single port exposed on a container group's public/private IP.
+type Port struct {
+	Port     int
+	Protocol string // "TCP" or "UDP"
+}
+
+// IPAddress is a container group's requested/assigned IP configuration
+// (Microsoft.ContainerInstance/containerGroups properties.ipAddress). Type is
+// "Public" or "Private". For a Public group with a DNSNameLabel the provider
+// assigns an IP and computes an FQDN.
+type IPAddress struct {
+	Type         string // "Public" or "Private"
+	Ports        []Port
+	DNSNameLabel string
+	IP           string // server-assigned for a Public group
+	FQDN         string // computed from DNSNameLabel for a Public group
+}
+
 // ContainerGroupConfig describes a container group to create or update. It maps
 // the request body of a Microsoft.ContainerInstance/containerGroups PUT onto
 // the fields the provider records.
@@ -37,8 +55,17 @@ type ContainerGroupConfig struct {
 	OSType        string // "Linux" or "Windows"
 	RestartPolicy string // "Always", "OnFailure", or "Never"
 	Containers    []ContainerConfig
+	IPAddress     *IPAddress
 	Tags          map[string]string
 	Scope         scope.Scope
+}
+
+// ExecSession is the connection descriptor returned by ExecContainer, mirroring
+// ACI's ContainerExecResponse: a websocket URI to attach to and a one-time
+// password to authenticate the exec stream.
+type ExecSession struct {
+	WebSocketURI string
+	Password     string
 }
 
 // ContainerState is the observed lifecycle state of a single container, mirroring
@@ -71,8 +98,9 @@ type ContainerGroup struct {
 	OSType            string
 	RestartPolicy     string
 	ProvisioningState string // "Succeeded"
-	State             string // group-level instanceView.state ("Running", "Succeeded")
+	State             string // group-level instanceView.state ("Running", "Succeeded", "Stopped")
 	Containers        []ContainerInstance
+	IPAddress         *IPAddress
 	Tags              map[string]string
 	Scope             scope.Scope
 }
@@ -96,6 +124,25 @@ type ContainerInstances interface {
 
 	// ListContainerGroups returns the groups visible under filter.
 	ListContainerGroups(ctx context.Context, filter scope.Scope) ([]ContainerGroup, error)
+
+	// StartContainerGroup starts all containers in a stopped group, allocating
+	// compute again. Returns NotFound when the group does not exist.
+	StartContainerGroup(ctx context.Context, name string) error
+
+	// StopContainerGroup stops all containers in the group and deallocates
+	// compute, tearing down any engine-backed workload. Returns NotFound when the
+	// group does not exist.
+	StopContainerGroup(ctx context.Context, name string) error
+
+	// RestartContainerGroup restarts all containers in the group. Returns NotFound
+	// when the group does not exist.
+	RestartContainerGroup(ctx context.Context, name string) error
+
+	// ExecContainer opens an exec session on one container in the group and
+	// returns its websocket URI and password. When the group is engine-backed the
+	// command is run for real on the engine. Returns NotFound when the group or
+	// container does not exist.
+	ExecContainer(ctx context.Context, group, container string, command []string) (*ExecSession, error)
 
 	// ContainerLogs returns the captured stdout/stderr for one container in the
 	// group. A non-positive tail returns the full log. It is empty for a group
