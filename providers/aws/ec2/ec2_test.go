@@ -27,6 +27,45 @@ func newTestMock() *Mock {
 	return New(opts)
 }
 
+// TestAsyncSettleInstanceAndVolume pins that with WithAsyncSettle a freshly
+// created instance/volume reports the intermediate state until the settle
+// window elapses on the FakeClock, then the final state. Default (no
+// WithAsyncSettle) behavior is covered by every other test reporting terminal
+// state immediately.
+func TestAsyncSettleInstanceAndVolume(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"), config.WithAsyncSettle())
+	m := New(opts)
+	ctx := context.Background()
+
+	run, err := m.RunInstances(ctx, defaultConfig(), 1)
+	requireNoError(t, err)
+	// RunInstances response reports pending (matches real EC2).
+	assertEqual(t, "pending", run[0].State)
+
+	got, err := m.DescribeInstances(ctx, []string{run[0].ID}, nil, driver.DescribeInstancesOptions{})
+	requireNoError(t, err)
+	assertEqual(t, "pending", got[0].State)
+
+	fc.Advance(3 * time.Second) // past DefaultInstanceSettle (2s)
+	got, err = m.DescribeInstances(ctx, []string{run[0].ID}, nil, driver.DescribeInstancesOptions{})
+	requireNoError(t, err)
+	assertEqual(t, "running", got[0].State)
+
+	vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+	requireNoError(t, err)
+	assertEqual(t, "creating", vol.State)
+
+	dv, err := m.DescribeVolumes(ctx, []string{vol.ID})
+	requireNoError(t, err)
+	assertEqual(t, "creating", dv[0].State)
+
+	fc.Advance(2 * time.Second) // past DefaultVolumeSettle (1s)
+	dv, err = m.DescribeVolumes(ctx, []string{vol.ID})
+	requireNoError(t, err)
+	assertEqual(t, "available", dv[0].State)
+}
+
 func defaultConfig() driver.InstanceConfig {
 	return driver.InstanceConfig{
 		ImageID:      "ami-12345",

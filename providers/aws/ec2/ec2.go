@@ -26,6 +26,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/internal/statemachine"
 	"github.com/stackshy/cloudemu/v2/services/compute"
 	"github.com/stackshy/cloudemu/v2/services/compute/computeengine"
@@ -47,6 +48,7 @@ var (
 const (
 	ipSegmentSize  = 256
 	stateAvailable = "available"
+	stateCreating  = "creating"
 	stateInUse     = "in-use"
 
 	// visibilityHidden and visibilityVisible are the account-level
@@ -173,6 +175,10 @@ type instanceData struct {
 	// monitoring is the CloudWatch detailed-monitoring state
 	// ("disabled"/"enabled"); defaults to "disabled" at launch.
 	monitoring string
+	// settle overlays a post-launch "pending" window over the stored (running)
+	// State on the Describe surface when AsyncSettle is enabled; zero-value
+	// (default) reports the stored State immediately.
+	settle settle.Window
 }
 
 // operatorData records service-provider managed-resource ownership.
@@ -197,17 +203,22 @@ type Mock struct {
 	// AWS-specific, so this store backs the LaunchTemplateVersioner capability.
 	templateVersions *memstore.Store[*driver.LaunchTemplateVersion]
 	volumes          *memstore.Store[*driver.VolumeInfo]
-	snapshots        *memstore.Store[*driver.SnapshotInfo]
-	images           *memstore.Store[*driver.ImageInfo]
-	keyPairs         *memstore.Store[*driver.KeyPairInfo]
-	sm               *statemachine.Machine
-	opts             *config.Options
-	ipCounter        atomic.Int64
-	volCounter       atomic.Int64
-	snapCounter      atomic.Int64
-	amiCounter       atomic.Int64
-	keyCounter       atomic.Int64
-	monitoring       mondriver.Monitoring
+	// volSettle overlays a "creating" window over a volume's stored (available)
+	// State on the Describe surface, keyed by volume id. It lives beside volumes
+	// rather than on the shared driver.VolumeInfo struct (which azure/gcp also
+	// use), keeping settling AWS-internal. Empty/absent = report State directly.
+	volSettle   *memstore.Store[settle.Window]
+	snapshots   *memstore.Store[*driver.SnapshotInfo]
+	images      *memstore.Store[*driver.ImageInfo]
+	keyPairs    *memstore.Store[*driver.KeyPairInfo]
+	sm          *statemachine.Machine
+	opts        *config.Options
+	ipCounter   atomic.Int64
+	volCounter  atomic.Int64
+	snapCounter atomic.Int64
+	amiCounter  atomic.Int64
+	keyCounter  atomic.Int64
+	monitoring  mondriver.Monitoring
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
@@ -299,6 +310,7 @@ func New(opts *config.Options) *Mock {
 		templates:        memstore.New[*driver.LaunchTemplate](),
 		templateVersions: memstore.New[*driver.LaunchTemplateVersion](),
 		volumes:          memstore.New[*driver.VolumeInfo](),
+		volSettle:        memstore.New[settle.Window](),
 		snapshots:        memstore.New[*driver.SnapshotInfo](),
 		images:           memstore.New[*driver.ImageInfo](),
 		keyPairs:         memstore.New[*driver.KeyPairInfo](),
@@ -319,7 +331,7 @@ func (m *Mock) nextIP() string {
 // toInstance converts stored instance data to the driver shape. hidden is the
 // account-level managed-resource-visibility ("hidden") resolved once by the
 // caller, so this never touches m.mu (avoiding nested read locks).
-func toInstance(d *instanceData, hidden bool) driver.Instance {
+func toInstance(d *instanceData, hidden bool, now time.Time) driver.Instance {
 	sg := make([]string, len(d.SecurityGroups))
 	copy(sg, d.SecurityGroups)
 
@@ -339,7 +351,7 @@ func toInstance(d *instanceData, hidden bool) driver.Instance {
 	}
 
 	return driver.Instance{
-		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.State,
+		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.settle.Observe(now, d.State),
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
 		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
 		ReservationID: d.reservationID, KeyName: d.keyName, Monitoring: d.monitoring,
@@ -430,7 +442,9 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
-		results = append(results, toInstance(inst, hidden))
+		inst.settle = settle.Pending(compute.StatePending, m.opts.Clock.Now(),
+			m.opts.SettleDuration(settle.DefaultInstanceSettle))
+		results = append(results, toInstance(inst, hidden, m.opts.Clock.Now()))
 		created = append(created, inst)
 
 		// Managed (service-owned) instances are hidden from Describe, so
@@ -466,7 +480,7 @@ func (m *Mock) instancesForClientToken(token string) ([]driver.Instance, bool) {
 
 	for _, id := range ids {
 		if inst, found := m.instances.Get(id); found {
-			out = append(out, toInstance(inst, hidden))
+			out = append(out, toInstance(inst, hidden, m.opts.Clock.Now()))
 		}
 	}
 
@@ -703,7 +717,7 @@ func (m *Mock) DescribeInstances(
 		}
 
 		if matchesFilters(inst, filters) {
-			results = append(results, toInstance(inst, hidden))
+			results = append(results, toInstance(inst, hidden, m.opts.Clock.Now()))
 		}
 	}
 
@@ -1016,7 +1030,12 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 
 	m.volumes.Set(id, vol)
 
+	now := m.opts.Clock.Now()
+	window := settle.Pending(stateCreating, now, m.opts.SettleDuration(settle.DefaultVolumeSettle))
+	m.volSettle.Set(id, window)
+
 	result := *vol
+	result.State = window.Observe(now, result.State)
 
 	return &result, nil
 }
@@ -1033,6 +1052,7 @@ func (m *Mock) DeleteVolume(_ context.Context, id string) error {
 	}
 
 	m.volumes.Delete(id)
+	m.volSettle.Delete(id)
 
 	return nil
 }
@@ -1047,7 +1067,16 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 		}
 	}
 
-	return describeResources(m.volumes, ids), nil
+	out := describeResources(m.volumes, ids)
+
+	now := m.opts.Clock.Now()
+	for i := range out {
+		if w, ok := m.volSettle.Get(out[i].ID); ok {
+			out[i].State = w.Observe(now, out[i].State)
+		}
+	}
+
+	return out, nil
 }
 
 // AttachVolume attaches a volume to an instance.
