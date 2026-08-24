@@ -237,8 +237,17 @@ func (m *Mock) DescribeTaskDefinition(_ context.Context, id string) (*driver.Tas
 	return &out, nil
 }
 
-// DeregisterTaskDefinition marks a task-definition revision INACTIVE.
+// DeregisterTaskDefinition marks a task-definition revision INACTIVE. Unlike
+// DescribeTaskDefinition, it requires an explicit revision: AWS rejects a bare
+// family name because it will not pick a revision to deregister on the caller's
+// behalf.
 func (m *Mock) DeregisterTaskDefinition(_ context.Context, id string) (*driver.TaskDefinition, error) {
+	if !taskDefHasRevision(id) {
+		return nil, apiErrf(errors.InvalidArgument, excClient,
+			"Deregister task definition: the task definition must be specified as a family and revision "+
+				"(family:revision) or full ARN. You must specify a revision.")
+	}
+
 	td, ok := m.resolveTaskDef(id)
 	if !ok {
 		return nil, apiErrf(errors.NotFound, excClient, "task definition %q not found", id)
@@ -253,6 +262,18 @@ func (m *Mock) DeregisterTaskDefinition(_ context.Context, id string) (*driver.T
 	out := cloneTaskDef(&updated)
 
 	return &out, nil
+}
+
+// taskDefHasRevision reports whether id names a specific revision — either
+// "family:revision" or an ARN whose "task-definition/family:revision" segment
+// carries a revision. A bare family name has no revision.
+func taskDefHasRevision(id string) bool {
+	key := id
+	if strings.Contains(id, "task-definition/") {
+		key = id[strings.LastIndex(id, "task-definition/")+len("task-definition/"):]
+	}
+
+	return strings.Contains(key, ":")
 }
 
 // resolveTaskDef looks up a task definition by family, family:revision, or ARN.
