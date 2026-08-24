@@ -111,6 +111,15 @@ func natENIDescription(natID string) string {
 
 // DescribeNATGateways returns NAT gateways matching the given IDs, or all if empty.
 func (m *Mock) DescribeNATGateways(_ context.Context, ids []string) ([]driver.NATGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.natGateways.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "NAT gateway %q not found", id)
+		}
+	}
+
 	return describeResources(m.natGateways, ids, toNATGatewayInfo), nil
 }
 

@@ -68,6 +68,15 @@ func (m *Mock) DeleteInternetGateway(
 func (m *Mock) DescribeInternetGateways(
 	_ context.Context, ids []string,
 ) ([]driver.InternetGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.igws.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "internet gateway %q not found", id)
+		}
+	}
+
 	return describeResources(m.igws, ids, toIGWInfo), nil
 }
 
