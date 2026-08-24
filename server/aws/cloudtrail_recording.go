@@ -20,9 +20,19 @@ func recordManagementEvent(rec cloudtraildriver.EventRecorder, r *http.Request) 
 	}
 
 	auth := r.Header.Get("Authorization")
+	svc := awsquery.CredentialScopeService(auth)
+	readOnly := isReadOnlyEvent(name)
+
+	// Don't record CloudTrail's own read-only operations (LookupEvents polling,
+	// ListTrails, ...). Otherwise a client polling LookupEvents would fill and
+	// evict the bounded log with its own reads, crowding out the API activity it
+	// is trying to observe.
+	if svc == "cloudtrail" && readOnly {
+		return
+	}
 
 	source := ""
-	if svc := awsquery.CredentialScopeService(auth); svc != "" {
+	if svc != "" {
 		source = svc + ".amazonaws.com"
 	}
 
@@ -30,7 +40,7 @@ func recordManagementEvent(rec cloudtraildriver.EventRecorder, r *http.Request) 
 		EventName:   name,
 		EventSource: source,
 		AccessKeyID: credentialAccessKeyID(auth),
-		ReadOnly:    strconv.FormatBool(isReadOnlyEvent(name)),
+		ReadOnly:    strconv.FormatBool(readOnly),
 	})
 }
 

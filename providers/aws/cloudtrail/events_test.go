@@ -2,7 +2,6 @@ package cloudtrail
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -74,14 +73,17 @@ func TestLookupEventsRingBufferBounded(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
 
-	for i := 0; i < maxRecordedEvents+50; i++ {
-		m.RecordEvent(&driver.Event{EventName: "Op" + strings.Repeat("x", 0), EventSource: "ec2.amazonaws.com"})
+	// Record well past the high-water mark so the amortized trim fires.
+	for i := 0; i < 3*maxRecordedEvents; i++ {
+		m.RecordEvent(&driver.Event{EventName: "Op", EventSource: "ec2.amazonaws.com"})
 	}
 
 	m.eventsMu.RLock()
 	n := len(m.events)
 	m.eventsMu.RUnlock()
-	assert.Equal(t, maxRecordedEvents, n, "event log must stay bounded")
+	// The log is bounded: the amortized trim keeps it at or below the 2x cap.
+	assert.LessOrEqual(t, n, 2*maxRecordedEvents, "event log must stay bounded")
+	assert.GreaterOrEqual(t, n, maxRecordedEvents, "trim keeps at least cap events")
 
 	page, _, err := m.LookupEvents(ctx, driver.LookupInput{MaxResults: maxLookupResults})
 	require.NoError(t, err)
@@ -90,3 +92,49 @@ func TestLookupEventsRingBufferBounded(t *testing.T) {
 
 // EventRecorder is satisfied by the Mock.
 var _ driver.EventRecorder = (*Mock)(nil)
+
+// TestLookupEventsPaginationNoDuplicates pins that paginating through all events
+// never duplicates or skips, even when new events are recorded between pages
+// (the cursor is keyed on the event id, not a positional offset).
+func TestLookupEventsPaginationStableAcrossInserts(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m := New(config.NewOptions(config.WithClock(fc)))
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		fc.Advance(time.Second)
+		m.RecordEvent(&driver.Event{EventName: "Op", EventSource: "ec2.amazonaws.com"})
+	}
+
+	seen := map[string]int{}
+	var token string
+	pages := 0
+
+	for {
+		fc.Advance(time.Second)
+		// A new event is inserted at the front between every page.
+		m.RecordEvent(&driver.Event{EventName: "Noise", EventSource: "ec2.amazonaws.com"})
+
+		out, next, err := m.LookupEvents(ctx, driver.LookupInput{
+			MaxResults:       2,
+			NextToken:        token,
+			LookupAttributes: []driver.LookupAttribute{{AttributeKey: "EventName", AttributeValue: "Op"}},
+		})
+		require.NoError(t, err)
+
+		for i := range out {
+			seen[out[i].EventID]++
+		}
+
+		pages++
+		if next == "" || pages > 10 {
+			break
+		}
+		token = next
+	}
+
+	require.Len(t, seen, 5, "should page through exactly the 5 Op events")
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "event %s returned %d times, want exactly once", id, n)
+	}
+}

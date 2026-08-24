@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -57,8 +56,10 @@ func (m *Mock) RecordEvent(e *driver.Event) {
 	defer m.eventsMu.Unlock()
 
 	m.events = append(m.events, *e)
-	if len(m.events) > maxRecordedEvents {
-		// Drop the oldest, keeping the newest maxRecordedEvents.
+	// Amortized trim: only re-slice once the log reaches the high-water mark
+	// (2x cap), then drop back to cap. This keeps the common append O(1) instead
+	// of copying the whole slice under the lock on every request past the cap.
+	if len(m.events) > 2*maxRecordedEvents {
 		m.events = append([]driver.Event(nil), m.events[len(m.events)-maxRecordedEvents:]...)
 	}
 }
@@ -103,8 +104,15 @@ func (m *Mock) LookupEvents(_ context.Context, in driver.LookupInput) ([]driver.
 	all := append([]driver.Event(nil), m.events...)
 	m.eventsMu.RUnlock()
 
-	// Newest first, matching the API's default ordering.
-	sort.SliceStable(all, func(i, j int) bool { return all[i].EventTime.After(all[j].EventTime) })
+	// Newest first, with the event id as a stable tiebreak so a total order holds
+	// even when events share a timestamp (e.g. under a FakeClock).
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].EventTime.Equal(all[j].EventTime) {
+			return all[i].EventTime.After(all[j].EventTime)
+		}
+
+		return all[i].EventID > all[j].EventID
+	})
 
 	matched := make([]driver.Event, 0, len(all))
 
@@ -114,27 +122,42 @@ func (m *Mock) LookupEvents(_ context.Context, in driver.LookupInput) ([]driver.
 		}
 	}
 
-	start := decodeLookupToken(in.NextToken)
-	if start > len(matched) {
-		start = len(matched)
+	start, end := lookupWindow(matched, in.NextToken, in.MaxResults)
+
+	next := ""
+	if end < len(matched) {
+		next = matched[end-1].EventID
 	}
 
-	limit := int(in.MaxResults)
+	return matched[start:end], next, nil
+}
+
+// lookupWindow resolves the [start,end) page for a cursor token. It resumes
+// strictly after the cursor event (keyed by id), not a positional offset, so
+// front-insertions between pages (including a LookupEvents call recording
+// itself) don't shift the boundary — a paginate-through-all scan never
+// duplicates or skips events.
+func lookupWindow(matched []driver.Event, token string, maxResults int32) (start, end int) {
+	if token != "" {
+		for i := range matched {
+			if matched[i].EventID == token {
+				start = i + 1
+				break
+			}
+		}
+	}
+
+	limit := int(maxResults)
 	if limit <= 0 || limit > maxLookupResults {
 		limit = defaultLookupResults
 	}
 
-	end := start + limit
+	end = start + limit
 	if end > len(matched) {
 		end = len(matched)
 	}
 
-	next := ""
-	if end < len(matched) {
-		next = strconv.Itoa(end)
-	}
-
-	return matched[start:end], next, nil
+	return start, end
 }
 
 // eventMatches reports whether an event satisfies the lookup's time window and
@@ -178,17 +201,4 @@ func attributeMatches(e *driver.Event, key, value string) bool {
 	default:
 		return false
 	}
-}
-
-func decodeLookupToken(token string) int {
-	if token == "" {
-		return 0
-	}
-
-	n, err := strconv.Atoi(token)
-	if err != nil || n < 0 {
-		return 0
-	}
-
-	return n
 }
