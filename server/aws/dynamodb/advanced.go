@@ -626,16 +626,60 @@ func (h *Handler) evaluateTransactConditions(
 	return reasons, canceled, nil
 }
 
-// applyTransactOps applies every operation. Conditions have already passed, so
-// the only errors here are structural (e.g. a missing table or item).
+// txSnapshot is a pre-image of an item a transaction op will change, kept so a
+// mid-apply failure can be rolled back (DynamoDB transactions are all-or-nothing).
+type txSnapshot struct {
+	table   string
+	key     map[string]any
+	before  map[string]any
+	existed bool
+}
+
+// applyTransactOps applies every operation atomically. Conditions have already
+// passed; should any op still fail structurally, every already-applied op is
+// rolled back so the transaction is all-or-nothing. checkTransactDuplicates
+// guarantees each item is touched by at most one op, so the snapshots don't
+// alias.
 func (h *Handler) applyTransactOps(ctx context.Context, ops []txOp) error {
+	snaps := make([]txSnapshot, 0, len(ops))
+
+	for i := range ops {
+		if ops[i].kind == "ConditionCheck" {
+			continue
+		}
+
+		before, err := h.db.GetItem(ctx, ops[i].table, ops[i].keySrc)
+		// A missing item (or table) is expected — the op may create it; only a
+		// real read failure aborts. Treat NotFound as "no pre-image".
+		if err != nil && !cerrors.IsNotFound(err) {
+			h.rollbackTransact(ctx, snaps)
+			return err
+		}
+
+		snaps = append(snaps, txSnapshot{ops[i].table, ops[i].keySrc, before, err == nil && before != nil})
+	}
+
 	for i := range ops {
 		if err := h.applyTransactOp(ctx, &ops[i]); err != nil {
+			h.rollbackTransact(ctx, snaps)
 			return err
 		}
 	}
 
 	return nil
+}
+
+// rollbackTransact restores each snapshotted item to its pre-image (re-putting
+// what existed, deleting what the transaction created), in reverse order.
+func (h *Handler) rollbackTransact(ctx context.Context, snaps []txSnapshot) {
+	for i := len(snaps) - 1; i >= 0; i-- {
+		s := snaps[i]
+		if s.existed {
+			_ = h.db.PutItem(ctx, s.table, s.before)
+		} else {
+			_ = h.db.DeleteItem(ctx, s.table, s.key)
+		}
+	}
 }
 
 func (h *Handler) applyTransactOp(ctx context.Context, op *txOp) error {

@@ -881,17 +881,26 @@ func TestDDBTypedErrors(t *testing.T) {
 		require.NoError(t, err, "DeleteItem is idempotent like real DynamoDB")
 	})
 
-	t.Run("UpdateItem on missing item is ResourceNotFoundException", func(t *testing.T) {
-		// Documented emulator divergence: real DynamoDB upserts here.
-		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+	t.Run("UpdateItem on missing item upserts (creates it)", func(t *testing.T) {
+		// Real DynamoDB UpdateItem adds a new item when the key does not exist.
+		if _, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 			TableName:        aws.String("errs"),
-			Key:              map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")},
+			Key:              map[string]ddbtypes.AttributeValue{"pk": sAttr("upserted")},
 			UpdateExpression: aws.String("SET v = :v"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
 				":v": nAttr("1"),
 			},
+		}); err != nil {
+			t.Fatalf("UpdateItem upsert: %v", err)
+		}
+
+		got, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName: aws.String("errs"),
+			Key:       map[string]ddbtypes.AttributeValue{"pk": sAttr("upserted")},
 		})
-		require.ErrorAs(t, err, &rnf)
+		if err != nil || got.Item == nil {
+			t.Fatalf("UpdateItem should have created the item, got item=%v err=%v", got.Item, err)
+		}
 	})
 
 	t.Run("GetItem on missing table is ResourceNotFoundException", func(t *testing.T) {

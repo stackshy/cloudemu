@@ -887,17 +887,29 @@ func TestUpdateItemTableNotFound(t *testing.T) {
 	assertError(t, err, true)
 }
 
-func TestUpdateItemItemNotFound(t *testing.T) {
+// TestUpdateItemUpsertsMissing pins that UpdateItem on a missing item CREATES it
+// (real DynamoDB UpdateItem upserts — "adds a new item to the table if it does
+// not already exist"), rather than erroring.
+func TestUpdateItemUpsertsMissing(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 	createTestTable(m, "tbl")
 
-	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+	out, err := m.UpdateItem(ctx, driver.UpdateItemInput{
 		Table:   "tbl",
-		Key:     map[string]any{"pk": "missing", "sk": "missing"},
+		Key:     map[string]any{"pk": "new", "sk": "new"},
 		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 1}},
 	})
-	assertError(t, err, true)
+	assertError(t, err, false)
+	if out["pk"] != "new" || out["v"] == nil {
+		t.Fatalf("upsert result missing key/attr: %#v", out)
+	}
+
+	got, err := m.GetItem(ctx, "tbl", map[string]any{"pk": "new", "sk": "new"})
+	assertError(t, err, false)
+	if got == nil {
+		t.Fatal("UpdateItem on a missing item should have created it")
+	}
 }
 
 func TestUpdateItemInvalidAction(t *testing.T) {

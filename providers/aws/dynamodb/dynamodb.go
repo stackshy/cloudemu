@@ -303,14 +303,19 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	k := itemKey(td.config, input.Key)
 	item, ok := td.items.Get(k)
 
-	if !ok {
-		m.mu.Unlock()
-		return nil, cerrors.New(cerrors.NotFound, "item not found")
+	// Real DynamoDB UpdateItem upserts: a missing item is created from the key
+	// attributes and the update expression, rather than erroring. Any
+	// ConditionExpression has already been evaluated by the caller (the wire
+	// handler / transaction), so applying here is unconditional.
+	var base, oldItem map[string]any
+	if ok {
+		base = copyItem(item)
+		oldItem = copyItem(item)
+	} else {
+		base = copyItem(input.Key)
 	}
 
-	oldItem := copyItem(item)
-
-	updated, err := driver.ApplyUpdate(copyItem(item), input)
+	updated, err := driver.ApplyUpdate(base, input)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err

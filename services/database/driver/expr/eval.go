@@ -401,7 +401,9 @@ func dynamoType(v any) string {
 	switch v.(type) {
 	case string:
 		return "S"
-	case float64, Number:
+	case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, Number:
+		// All native numeric kinds map to N so typed-Go-API integer keys/values
+		// are accepted (the wire path already normalizes to Number).
 		return "N"
 	case bool:
 		return "BOOL"
