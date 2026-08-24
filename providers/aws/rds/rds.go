@@ -9,7 +9,10 @@ package rds
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -32,6 +35,18 @@ const (
 	cpuMetricRunning     = 25.0
 	connectionsRunning   = 5.0
 	cpuMetricStopped     = 0.0
+)
+
+// Defaults RDS applies to a new DBInstance/DBCluster that real AWS reports on
+// read even when the caller did not set them.
+const (
+	defaultBackupRetention   = 1
+	defaultCACertIdentifier  = "rds-ca-rsa2048-g1"
+	defaultBackupWindow      = "07:00-07:30" //nolint:gosec // a maintenance-window time range, not a credential.
+	defaultMaintenanceWindow = "sun:05:00-sun:05:30"
+	defaultEngineMode        = "provisioned"
+	auroraAllocatedStorage   = 1
+	resourceIDLen            = 20
 )
 
 // Metric namespaces for engines that share the RDS wire protocol but emit
@@ -196,8 +211,28 @@ func instanceARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "db:"+id)
 }
 
+// resourceID derives a stable, region-unique RDS resource id (e.g.
+// "db-ABCDEF...", "cluster-ABCDEF...") from a prefix and the resource id. Real
+// AWS assigns an opaque immutable id; a deterministic hash keeps it stable
+// across Describe calls without persisting a random value.
+func resourceID(prefix, id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return prefix + strings.ToUpper(hex.EncodeToString(sum[:])[:resourceIDLen])
+}
+
 func clusterARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "cluster:"+id)
+}
+
+// availabilityZones synthesizes the three AZ names AWS spreads an Aurora
+// cluster across (region + a/b/c), matching the DBCluster AvailabilityZones
+// array real RDS returns.
+func availabilityZones(region string) []string {
+	if region == "" {
+		return nil
+	}
+
+	return []string{region + "a", region + "b", region + "c"}
 }
 
 func snapshotARN(region, accountID, id string) string {
@@ -236,6 +271,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Tags = copyTags(c.Tags)
 	c.Members = cloneSlice(c.Members)
 	c.VPCSecurityGroups = cloneSlice(c.VPCSecurityGroups)
+	c.AvailabilityZones = cloneSlice(c.AvailabilityZones)
 
 	return c
 }
@@ -360,28 +396,34 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 	}
 
 	return rdsdriver.Instance{
-		ID:                   cfg.ID,
-		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:               cfg.Engine,
-		EngineVersion:        engineVersion,
-		InstanceClass:        instanceClass,
-		AllocatedStorage:     storage,
-		StorageType:          storageType,
-		MasterUsername:       cfg.MasterUsername,
-		DBName:               cfg.DBName,
-		Endpoint:             endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
-		Port:                 port,
-		State:                rdsdriver.StateAvailable,
-		MultiAZ:              cfg.MultiAZ,
-		PubliclyAccessible:   cfg.PubliclyAccessible,
-		VPCSecurityGroups:    append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:      cfg.SubnetGroupName,
-		DBParameterGroupName: cfg.DBParameterGroupName,
-		OptionGroupName:      cfg.OptionGroupName,
-		ClusterID:            cfg.ClusterID,
-		AvailabilityZone:     cfg.AvailabilityZone,
-		CreatedAt:            m.opts.Clock.Now().UTC(),
-		Tags:                 copyTags(cfg.Tags),
+		ID:                         cfg.ID,
+		ARN:                        instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:                     cfg.Engine,
+		EngineVersion:              engineVersion,
+		InstanceClass:              instanceClass,
+		AllocatedStorage:           storage,
+		StorageType:                storageType,
+		MasterUsername:             cfg.MasterUsername,
+		DBName:                     cfg.DBName,
+		Endpoint:                   endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
+		Port:                       port,
+		State:                      rdsdriver.StateAvailable,
+		MultiAZ:                    cfg.MultiAZ,
+		PubliclyAccessible:         cfg.PubliclyAccessible,
+		VPCSecurityGroups:          append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:            cfg.SubnetGroupName,
+		DBParameterGroupName:       cfg.DBParameterGroupName,
+		OptionGroupName:            cfg.OptionGroupName,
+		ClusterID:                  cfg.ClusterID,
+		AvailabilityZone:           cfg.AvailabilityZone,
+		DbiResourceID:              resourceID("db-", cfg.ID),
+		BackupRetentionPeriod:      defaultBackupRetention,
+		PreferredBackupWindow:      defaultBackupWindow,
+		PreferredMaintenanceWindow: defaultMaintenanceWindow,
+		CACertificateIdentifier:    defaultCACertIdentifier,
+		StorageEncrypted:           cfg.StorageEncrypted,
+		CreatedAt:                  m.opts.Clock.Now().UTC(),
+		Tags:                       copyTags(cfg.Tags),
 	}
 }
 
@@ -532,6 +574,30 @@ func (m *Mock) ModifyInstance(
 		return nil, err
 	}
 
+	applyInstanceCoreMods(&inst, &input)
+	applyInstanceStorageMods(&inst, &input)
+
+	// A rename re-keys the store and rewrites the ARN + any replica references.
+	// Apply the scalar changes first so the renamed row carries them.
+	if renameRequested(id, &input) {
+		return m.renameInstance(id, input.NewInstanceID, inst)
+	}
+
+	m.instances.Set(id, inst)
+
+	out := inst
+
+	return &out, nil
+}
+
+// renameRequested reports whether the input asks to rename the instance to a
+// different identifier.
+func renameRequested(id string, input *rdsdriver.ModifyInstanceInput) bool {
+	return input.NewInstanceID != "" && input.NewInstanceID != id
+}
+
+// applyInstanceCoreMods applies the class/storage/version/param-group changes.
+func applyInstanceCoreMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
 	if input.InstanceClass != "" {
 		inst.InstanceClass = input.InstanceClass
 	}
@@ -559,8 +625,79 @@ func (m *Mock) ModifyInstance(
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
 	}
+}
 
-	m.instances.Set(id, inst)
+// applyInstanceStorageMods applies the storage/backup/maintenance/protection
+// attributes real RDS honors on ModifyDBInstance.
+func applyInstanceStorageMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+	if input.StorageType != "" {
+		inst.StorageType = input.StorageType
+	}
+
+	if input.BackupRetentionPeriod > 0 {
+		inst.BackupRetentionPeriod = input.BackupRetentionPeriod
+	}
+
+	if input.PreferredBackupWindow != "" {
+		inst.PreferredBackupWindow = input.PreferredBackupWindow
+	}
+
+	if input.PreferredMaintenanceWindow != "" {
+		inst.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
+	}
+
+	if input.Iops > 0 {
+		inst.Iops = input.Iops
+	}
+
+	if input.DeletionProtection != nil {
+		inst.DeletionProtection = *input.DeletionProtection
+	}
+}
+
+// renameInstance re-keys an instance to newID under the caller's write lock:
+// it rewrites the ARN, moves the remembered root password, updates the
+// membership in any owning cluster, and fixes any replica source/target
+// back-references so nothing dangles. It returns AlreadyExists if newID is
+// taken.
+//
+//nolint:gocritic // inst is finalized and returned by value on purpose.
+func (m *Mock) renameInstance(oldID, newID string, inst rdsdriver.Instance) (*rdsdriver.Instance, error) {
+	if _, ok := m.instances.Get(newID); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB instance %q already exists", newID)
+	}
+
+	inst.ID = newID
+	inst.ARN = instanceARN(m.opts.Region, m.opts.AccountID, newID)
+
+	m.instances.Delete(oldID)
+	m.instances.Set(newID, inst)
+
+	if pw, ok := m.rootPasswords[oldID]; ok {
+		delete(m.rootPasswords, oldID)
+		m.rootPasswords[newID] = pw
+	}
+
+	if inst.ClusterID != "" {
+		if cluster, ok := m.clusters.Get(inst.ClusterID); ok {
+			cluster.Members = renameString(cluster.Members, oldID, newID)
+			m.clusters.Set(inst.ClusterID, cluster)
+		}
+	}
+
+	if inst.ReadReplicaSource != "" {
+		if src, ok := m.instances.Get(inst.ReadReplicaSource); ok {
+			src.ReadReplicaTargets = renameString(src.ReadReplicaTargets, oldID, newID)
+			m.instances.Set(src.ID, src)
+		}
+	}
+
+	for _, target := range inst.ReadReplicaTargets {
+		if rep, ok := m.instances.Get(target); ok {
+			rep.ReadReplicaSource = newID
+			m.instances.Set(target, rep)
+		}
+	}
 
 	out := inst
 
@@ -718,6 +855,16 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		port = defaultPortFor(cfg.Engine)
 	}
 
+	engineMode := cfg.EngineMode
+	if engineMode == "" {
+		engineMode = defaultEngineMode
+	}
+
+	allocatedStorage := cfg.AllocatedStorage
+	if allocatedStorage == 0 {
+		allocatedStorage = auroraAllocatedStorage
+	}
+
 	cluster := rdsdriver.Cluster{
 		ID:                          cfg.ID,
 		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
@@ -732,6 +879,11 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:             cfg.SubnetGroupName,
 		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		EngineMode:                  engineMode,
+		DBClusterResourceID:         resourceID("cluster-", cfg.ID),
+		AllocatedStorage:            allocatedStorage,
+		StorageEncrypted:            cfg.StorageEncrypted,
+		AvailabilityZones:           availabilityZones(m.opts.Region),
 		CreatedAt:                   m.opts.Clock.Now().UTC(),
 		Tags:                        copyTags(cfg.Tags),
 	}
@@ -1219,6 +1371,22 @@ func removeString(slice []string, target string) []string {
 	for _, v := range slice {
 		if v != target {
 			out = append(out, v)
+		}
+	}
+
+	return out
+}
+
+// renameString returns a NEW slice with every occurrence of oldVal replaced by
+// newVal, never mutating the input's backing array.
+func renameString(slice []string, oldVal, newVal string) []string {
+	out := make([]string, len(slice))
+
+	for i, v := range slice {
+		if v == oldVal {
+			out[i] = newVal
+		} else {
+			out[i] = v
 		}
 	}
 

@@ -79,6 +79,9 @@ type InstanceConfig struct {
 	OptionGroupName      string
 	ClusterID            string // empty for standalone, set for Aurora cluster members
 	AvailabilityZone     string
+	// StorageEncrypted requests encryption-at-rest on the instance's storage
+	// (AWS RDS StorageEncrypted); false for engines with no such flag.
+	StorageEncrypted bool
 	// HighAvailabilityMode is the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty for engines with no such
 	// concept. StandbyAvailabilityZone is the zone the standby replica runs in
@@ -122,6 +125,18 @@ type Instance struct {
 	OptionGroupName      string
 	ClusterID            string
 	AvailabilityZone     string
+	// The fields below echo AWS RDS DBInstance attributes on read. They default
+	// to their zero value for engines (Azure/GCP) that have no such concept.
+	// DbiResourceId is the immutable region-unique resource id (db-XXXX...).
+	// CACertificateIdentifier is the server CA cert id (e.g. rds-ca-rsa2048-g1).
+	DbiResourceID              string
+	BackupRetentionPeriod      int
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	CACertificateIdentifier    string
+	Iops                       int
+	StorageEncrypted           bool
+	DeletionProtection         bool
 	// HighAvailabilityMode / StandbyAvailabilityZone echo the Azure Flexible
 	// Server HA configuration on read; empty for engines with no HA concept.
 	HighAvailabilityMode    string
@@ -150,6 +165,15 @@ type ModifyInstanceInput struct {
 	OptionGroupName             string
 	DBClusterParameterGroupName string
 	ElasticPoolID               string
+	// The fields below are AWS RDS ModifyDBInstance attributes; empty / zero /
+	// nil means "no change". NewInstanceID renames the instance (and its ARN).
+	NewInstanceID              string
+	BackupRetentionPeriod      int
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	StorageType                string
+	Iops                       int
+	DeletionProtection         *bool
 	// HighAvailabilityMode updates the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
 	// StandbyAvailabilityZone updates the standby replica's zone when HA is
@@ -172,7 +196,20 @@ type ClusterConfig struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
-	Tags                        map[string]string
+	// EngineMode is the AWS Aurora engine mode ("provisioned"/"serverless");
+	// empty defaults to "provisioned". StorageEncrypted / AllocatedStorage echo
+	// the corresponding create inputs. All default to zero for non-AWS engines.
+	EngineMode       string
+	StorageEncrypted bool
+	AllocatedStorage int
+	// Redshift-specific create inputs carried on the shared config (following the
+	// Azure HighAvailabilityMode precedent); zero for RDS/Aurora/Azure/GCP.
+	NodeType           string
+	NumberOfNodes      int
+	Encrypted          bool
+	PubliclyAccessible bool
+	AvailabilityZone   string
+	Tags               map[string]string
 }
 
 // Cluster describes an Aurora-style database cluster.
@@ -191,8 +228,26 @@ type Cluster struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
-	CreatedAt                   time.Time
-	Tags                        map[string]string
+	// EngineMode / DbClusterResourceId / AllocatedStorage / StorageEncrypted /
+	// AvailabilityZones echo AWS Aurora DBCluster attributes on read; they
+	// default to zero for non-AWS engines.
+	EngineMode          string
+	DBClusterResourceID string
+	AllocatedStorage    int
+	StorageEncrypted    bool
+	AvailabilityZones   []string
+	// NodeType / NumberOfNodes / Encrypted / PubliclyAccessible /
+	// AvailabilityZone / VpcID are Redshift-specific cluster attributes carried
+	// on the shared struct (Azure HighAvailabilityMode precedent); zero for
+	// RDS/Aurora/Azure/GCP.
+	NodeType           string
+	NumberOfNodes      int
+	Encrypted          bool
+	PubliclyAccessible bool
+	AvailabilityZone   string
+	VpcID              string
+	CreatedAt          time.Time
+	Tags               map[string]string
 }
 
 // SnapshotConfig configures an instance snapshot.
@@ -230,8 +285,15 @@ type ClusterSnapshot struct {
 	Engine        string
 	EngineVersion string
 	State         string
-	CreatedAt     time.Time
-	Tags          map[string]string
+	// NodeType / NumberOfNodes / Encrypted / TotalBackupSizeInMegaBytes echo the
+	// AWS Redshift snapshot attributes on read (copied from the source cluster);
+	// zero for RDS/Aurora/Azure/GCP cluster snapshots.
+	NodeType                   string
+	NumberOfNodes              int
+	Encrypted                  bool
+	TotalBackupSizeInMegaBytes float64
+	CreatedAt                  time.Time
+	Tags                       map[string]string
 }
 
 // RestoreInstanceInput configures restoring an instance from a snapshot.
