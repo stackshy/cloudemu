@@ -25,8 +25,10 @@ func (m *Mock) CreateServiceLinkedRole(
 
 	name := serviceLinkedRoleName(awsServiceName, customSuffix)
 
+	// AWS's CreateServiceLinkedRole error set does not include EntityAlreadyExists;
+	// a duplicate name is rejected as InvalidInput (supply a different CustomSuffix).
 	if m.roles.Has(name) {
-		return nil, errors.Newf(errors.AlreadyExists,
+		return nil, errors.Newf(errors.InvalidArgument,
 			"service-linked role %q already exists (supply a different CustomSuffix)", name)
 	}
 
@@ -49,20 +51,57 @@ func (m *Mock) CreateServiceLinkedRole(
 }
 
 // serviceLinkedRoleName derives the AWSServiceRoleFor<Service>[_suffix] name
-// from a service principal such as "elasticbeanstalk.amazonaws.com".
+// from a service principal such as "elasticbeanstalk.amazonaws.com". AWS's
+// service-linked-role names are a fixed per-service table, not a derivable
+// function, so known principals resolve through canonicalServiceLinkedRoleBase;
+// unlisted ones fall back to a best-effort "capitalize the first label" heuristic.
 func serviceLinkedRoleName(awsServiceName, customSuffix string) string {
-	label := awsServiceName
-	if idx := strings.IndexByte(label, '.'); idx >= 0 {
-		label = label[:idx]
-	}
-
-	name := serviceLinkedRolePrefix + capitalize(label)
+	name := canonicalServiceLinkedRoleBase(awsServiceName)
 
 	if customSuffix != "" {
 		name += "_" + customSuffix
 	}
 
 	return name
+}
+
+// canonicalServiceLinkedRoleBase returns AWS's real, published service-linked
+// role name (without any custom suffix) for a known service principal, or the
+// heuristic AWSServiceRoleFor<Label> fallback for principals not in the table.
+func canonicalServiceLinkedRoleBase(awsServiceName string) string {
+	// AWS's canonical service-linked-role names for the principals users are
+	// most likely to reference. These cannot be produced by any simple casing
+	// transform, so they are mapped explicitly.
+	known := map[string]string{
+		"ecs.amazonaws.com":                     "AWSServiceRoleForECS",
+		"rds.amazonaws.com":                     "AWSServiceRoleForRDS",
+		"autoscaling.amazonaws.com":             "AWSServiceRoleForAutoScaling",
+		"elasticbeanstalk.amazonaws.com":        "AWSServiceRoleForElasticBeanstalk",
+		"application-autoscaling.amazonaws.com": "AWSServiceRoleForApplicationAutoScaling",
+		"opsworks.amazonaws.com":                "AWSServiceRoleForOpsWorks",
+		"elasticache.amazonaws.com":             "AWSServiceRoleForElastiCache",
+		"eks.amazonaws.com":                     "AWSServiceRoleForAmazonEKS",
+		"eks-nodegroup.amazonaws.com":           "AWSServiceRoleForAmazonEKSNodegroup",
+		"elasticloadbalancing.amazonaws.com":    "AWSServiceRoleForElasticLoadBalancing",
+		"spot.amazonaws.com":                    "AWSServiceRoleForEC2Spot",
+		"spotfleet.amazonaws.com":               "AWSServiceRoleForEC2SpotFleet",
+		"organizations.amazonaws.com":           "AWSServiceRoleForOrganizations",
+		"config.amazonaws.com":                  "AWSServiceRoleForConfig",
+		"ssm.amazonaws.com":                     "AWSServiceRoleForAmazonSSM",
+		"trustedadvisor.amazonaws.com":          "AWSServiceRoleForTrustedAdvisor",
+		"globalaccelerator.amazonaws.com":       "AWSServiceRoleForGlobalAccelerator",
+	}
+
+	if base, ok := known[awsServiceName]; ok {
+		return base
+	}
+
+	label := awsServiceName
+	if idx := strings.IndexByte(label, '.'); idx >= 0 {
+		label = label[:idx]
+	}
+
+	return serviceLinkedRolePrefix + capitalize(label)
 }
 
 // capitalize upper-cases the first byte of an ASCII service label.

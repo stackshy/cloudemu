@@ -101,6 +101,31 @@ func TestSDKUserPermissionsBoundary(t *testing.T) {
 	}
 }
 
+// TestSDKCreateUserPermissionsBoundary asserts CreateUser applies a
+// PermissionsBoundary supplied at creation time (matching CreateRole), and
+// echoes it back on the CreateUser response.
+func TestSDKCreateUserPermissionsBoundary(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateUser(ctx, &iam.CreateUserInput{
+		UserName:            aws.String("boundary-at-create"),
+		PermissionsBoundary: aws.String(boundaryArn),
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	assertBoundary(t, "CreateUser", created.User.PermissionsBoundary, boundaryArn)
+
+	got, err := client.GetUser(ctx, &iam.GetUserInput{UserName: aws.String("boundary-at-create")})
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+
+	assertBoundary(t, "GetUser", got.User.PermissionsBoundary, boundaryArn)
+}
+
 func assertBoundary(t *testing.T, where string, b *iamtypes.AttachedPermissionsBoundary, wantArn string) {
 	t.Helper()
 

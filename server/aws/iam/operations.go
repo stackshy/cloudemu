@@ -80,9 +80,21 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if boundary := r.Form.Get("PermissionsBoundary"); boundary != "" {
+		if mgr := h.boundaryManager(); mgr != nil {
+			if err := mgr.PutUserPermissionsBoundary(r.Context(), u.Name, boundary); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+
+	out := toUserXML(u)
+	out.PermissionsBoundary = h.userBoundaryXML(r.Context(), u.Name)
+
 	awsquery.WriteXMLResponse(w, createUserResponse{
 		Xmlns:    Namespace,
-		Result:   createUserResult{User: toUserXML(u)},
+		Result:   createUserResult{User: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
