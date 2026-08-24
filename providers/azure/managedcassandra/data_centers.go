@@ -37,7 +37,9 @@ func (m *Mock) CreateOrUpdateDataCenter(_ context.Context, cfg mcdriver.CreateDa
 
 	cluster, ok := m.clusters.Get(clusterKey(cfg.ResourceGroup, cfg.ClusterName))
 	if !ok {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "managed cassandra cluster %q not found", cfg.ClusterName)
+		// A datacenter is a child of a cluster: real Azure returns 404
+		// ParentResourceNotFound when the parent cluster does not exist.
+		return nil, cerrors.Newf(cerrors.NotFound, "managed cassandra cluster %q not found", cfg.ClusterName)
 	}
 
 	if err := validateNodeCount(cfg.NodeCount); err != nil {

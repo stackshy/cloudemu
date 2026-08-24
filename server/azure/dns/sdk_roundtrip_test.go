@@ -80,6 +80,25 @@ func TestSDKAzureDNSZoneLifecycle(t *testing.T) {
 		t.Fatalf("CreateOrUpdate name = %v, want example.com", created.Name)
 	}
 
+	if created.Properties == nil || created.Properties.NumberOfRecordSets == nil ||
+		*created.Properties.NumberOfRecordSets != 2 {
+		t.Fatalf("numberOfRecordSets = %+v, want 2 (auto apex SOA+NS)", created.Properties)
+	}
+
+	if created.Properties == nil || len(created.Properties.NameServers) != 4 {
+		t.Fatalf("nameServers = %+v, want 4 authoritative name servers", created.Properties)
+	}
+
+	for _, ns := range created.Properties.NameServers {
+		if ns == nil || *ns == "" {
+			t.Fatalf("nameServer entry empty, want e.g. ns1-01.azure-dns.com")
+		}
+
+		if (*ns)[len(*ns)-1] == '.' {
+			t.Fatalf("nameServer = %q, want no trailing dot (real Azure returns ns1-01.azure-dns.com)", *ns)
+		}
+	}
+
 	got, err := zones.Get(ctx, testRG, "example.com", nil)
 	if err != nil {
 		t.Fatalf("Zones.Get: %v", err)
@@ -87,6 +106,10 @@ func TestSDKAzureDNSZoneLifecycle(t *testing.T) {
 
 	if got.Tags["env"] == nil || *got.Tags["env"] != "test" {
 		t.Fatalf("tags = %v, want env=test", got.Tags)
+	}
+
+	if got.Etag == nil || *got.Etag == "" {
+		t.Fatalf("zone etag = %v, want non-empty", got.Etag)
 	}
 
 	var names []string
@@ -161,6 +184,10 @@ func TestSDKAzureDNSRecordSets(t *testing.T) {
 		t.Fatalf("ARecords = %+v, want [192.0.2.1]", got.Properties.ARecords)
 	}
 
+	if got.Properties.Fqdn == nil || *got.Properties.Fqdn != "www.records.com." {
+		t.Fatalf("fqdn = %v, want www.records.com.", got.Properties.Fqdn)
+	}
+
 	var listed []string
 
 	pager := records.NewListByDNSZonePager(testRG, "records.com", nil)
@@ -175,8 +202,10 @@ func TestSDKAzureDNSRecordSets(t *testing.T) {
 		}
 	}
 
-	if len(listed) != 1 || listed[0] != "www" {
-		t.Fatalf("record list = %v, want [www]", listed)
+	// The zone auto-provisions apex SOA and NS record sets, so the list carries
+	// them alongside the user's www record.
+	if !contains(listed, "www") || !contains(listed, "@") {
+		t.Fatalf("record list = %v, want to contain www and apex @ (SOA/NS)", listed)
 	}
 
 	if _, err := records.Delete(ctx, testRG, "records.com", "www", armdns.RecordTypeA, nil); err != nil {
@@ -189,6 +218,16 @@ func TestSDKAzureDNSRecordSets(t *testing.T) {
 	if !errors.As(err, &respErr) || respErr.StatusCode != 404 {
 		t.Fatalf("Get after delete: got %v, want 404", err)
 	}
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+
+	return false
 }
 
 func TestSDKAzureDNSErrors(t *testing.T) {

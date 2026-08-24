@@ -3,6 +3,7 @@ package mysqlflex
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -39,10 +40,10 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 	}
 
 	cfg := rdsdriver.InstanceConfig{
-		ID:               rp.ResourceName,
-		Engine:           "MySQL",
-		AvailabilityZone: body.Location,
-		Tags:             body.Tags,
+		ID:       rp.ResourceName,
+		Engine:   "MySQL",
+		Location: body.Location,
+		Tags:     body.Tags,
 	}
 
 	if body.SKU != nil {
@@ -53,6 +54,7 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 		cfg.MasterUsername = body.Properties.AdministratorLogin
 		cfg.MasterUserPassword = body.Properties.AdministratorLoginPassword
 		cfg.EngineVersion = body.Properties.Version
+		cfg.AvailabilityZone = body.Properties.AvailabilityZone
 
 		if body.Properties.Storage != nil {
 			cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
@@ -67,32 +69,27 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
 	if err != nil {
-		// Idempotent PUT: if the server already exists, fall back to a get.
-		existing, getErr := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
-		if getErr != nil || len(existing) != 1 {
+		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
 
-		inst = &existing[0]
+		// Idempotent PUT: a create against an existing server applies the body's
+		// storage/sku/version/HA rather than returning the stale record.
+		inst, err = h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
-func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	var body armServer
-	if !azurearm.DecodeJSON(w, r, &body) {
-		return
-	}
-
-	if rejectInvalidHAMode(w, &body) {
-		return
-	}
-
-	input := rdsdriver.ModifyInstanceInput{
-		Tags: body.Tags,
-	}
+// modifyInputFromBody maps a MySQL Flex server body to the portable modify
+// input. Shared by PATCH (updateServer) and the re-PUT upsert path.
+func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
+	input := rdsdriver.ModifyInstanceInput{Tags: body.Tags}
 
 	if body.SKU != nil {
 		input.InstanceClass = body.SKU.Name
@@ -111,7 +108,20 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 		}
 	}
 
-	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName, input)
+	return input
+}
+
+func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body armServer
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if rejectInvalidHAMode(w, &body) {
+		return
+	}
+
+	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

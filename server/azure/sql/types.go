@@ -68,11 +68,10 @@ type armList[T any] struct {
 // toARMServer converts a portable Cluster (logical server) to ARM JSON.
 func toARMServer(cluster *rdsdriver.Cluster, subscription, resourceGroup string) armServer {
 	return armServer{
-		ID:   armServerID(subscription, resourceGroup, cluster.ID),
-		Name: cluster.ID,
-		Type: providerName + "/servers",
-		// Region is stashed in SubnetGroupName by the provider.
-		Location: cluster.SubnetGroupName,
+		ID:       armServerID(subscription, resourceGroup, cluster.ID),
+		Name:     cluster.ID,
+		Type:     providerName + "/servers",
+		Location: cluster.Location,
 		Tags:     cluster.Tags,
 		Properties: &armServerProps{
 			AdministratorLogin:       cluster.MasterUsername,
@@ -90,10 +89,12 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath) armDatabas
 	zoneRedundant := db.ZoneRedundant
 
 	return armDatabase{
-		ID:   armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
-		Name: db.Name,
-		Type: providerName + "/servers/databases",
-		SKU:  &armSKU{Name: db.SKUName, Tier: db.SKUTier},
+		ID:       armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
+		Name:     db.Name,
+		Type:     providerName + "/servers/databases",
+		Location: db.Location,
+		Tags:     db.Tags,
+		SKU:      &armSKU{Name: db.SKUName, Tier: db.SKUTier},
 		Properties: &armDatabaseProps{
 			Status:                      dbStatusOnline,
 			Collation:                   db.Collation,

@@ -4,16 +4,31 @@ import (
 	"context"
 	"testing"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
+
+// mustServer creates a logical server so a database has a parent to hang off.
+func mustServer(t *testing.T, m *Mock, ids ...string) {
+	t.Helper()
+
+	for _, id := range ids {
+		if _, err := m.CreateCluster(context.Background(), rdsdriver.ClusterConfig{ID: id}); err != nil {
+			t.Fatalf("CreateCluster %q: %v", id, err)
+		}
+	}
+}
 
 func TestCreateDatabaseCarriesSKUAndZoneRedundancy(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
+	mustServer(t, m, "srv1")
 
 	db, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
 		Server:        "srv1",
 		Name:          "db1",
+		Location:      "westus2",
+		Tags:          map[string]string{"team": "data"},
 		SKUName:       "GP_Gen5_4",
 		SKUTier:       "GeneralPurpose",
 		ZoneRedundant: true,
@@ -22,15 +37,27 @@ func TestCreateDatabaseCarriesSKUAndZoneRedundancy(t *testing.T) {
 
 	assertEqual(t, "srv1", db.Server)
 	assertEqual(t, "db1", db.Name)
+	assertEqual(t, "westus2", db.Location)
+	assertEqual(t, "data", db.Tags["team"])
 	assertEqual(t, "GP_Gen5_4", db.SKUName)
 	assertEqual(t, "GeneralPurpose", db.SKUTier)
 	assertEqual(t, true, db.ZoneRedundant)
 	assertNotEmpty(t, db.ARN)
 }
 
+func TestCreateDatabaseUnderMissingServerNotFound(t *testing.T) {
+	m := newTestMock()
+
+	_, err := m.CreateDatabase(context.Background(), rdsdriver.DatabaseConfig{Server: "ghostsrv", Name: "db1"})
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("CreateDatabase under missing server: got %v, want NotFound", err)
+	}
+}
+
 func TestCreateDatabaseDefaultsSKU(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
+	mustServer(t, m, "srv1")
 
 	db, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv1", Name: "db1"})
 	requireNoError(t, err)
@@ -42,6 +69,7 @@ func TestCreateDatabaseDefaultsSKU(t *testing.T) {
 func TestDatabaseGetListRoundTrip(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
+	mustServer(t, m, "srv1", "srv2")
 
 	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv1", Name: "db1"}); err != nil {
 		t.Fatalf("CreateDatabase srv1/db1: %v", err)
@@ -77,6 +105,7 @@ func TestDatabaseGetListRoundTrip(t *testing.T) {
 func TestCreateDatabaseDuplicateRejected(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
+	mustServer(t, m, "srv1")
 
 	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv1", Name: "db1"}); err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
@@ -90,6 +119,7 @@ func TestCreateDatabaseDuplicateRejected(t *testing.T) {
 func TestGetAndDeleteDatabaseMissing(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
+	mustServer(t, m, "srv1")
 
 	if _, err := m.GetDatabase(ctx, "srv1", "ghost"); err == nil {
 		t.Error("GetDatabase on missing database: expected NotFound")
