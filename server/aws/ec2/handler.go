@@ -256,6 +256,7 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
@@ -418,6 +419,7 @@ func (h *Handler) routeVPCSubnet(w http.ResponseWriter, r *http.Request, action 
 	return true
 }
 
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateSecurityGroup":
@@ -426,6 +428,8 @@ func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, 
 		h.deleteSecurityGroup(w, r)
 	case "DescribeSecurityGroups":
 		h.describeSecurityGroups(w, r)
+	case "DescribeSecurityGroupRules":
+		h.describeSecurityGroupRules(w, r)
 	case "AuthorizeSecurityGroupIngress":
 		h.authorizeSecurityGroupIngress(w, r)
 	case "AuthorizeSecurityGroupEgress":

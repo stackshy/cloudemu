@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -17,6 +18,13 @@ import (
 // tagKeyFilter is the DescribeSecurityGroups filter that matches on the
 // presence of a tag key (as opposed to "tag:<key>", which matches a value).
 const tagKeyFilter = "tag-key"
+
+// groupIDFilter and securityGroupRuleIDFilter are the filter names shared by
+// DescribeSecurityGroups and DescribeSecurityGroupRules.
+const (
+	groupIDFilter             = "group-id"
+	securityGroupRuleIDFilter = "security-group-rule-id"
+)
 
 func errMissingGroupID() error {
 	return cerrors.New(cerrors.InvalidArgument, "GroupId is required")
@@ -33,14 +41,58 @@ func newInvalidParameterErr(msg string) error {
 }
 
 type ipRangeXML struct {
-	CidrIP string `xml:"cidrIp"`
+	CidrIP      string `xml:"cidrIp"`
+	Description string `xml:"description,omitempty"`
+}
+
+type ipv6RangeXML struct {
+	CidrIPv6    string `xml:"cidrIpv6"`
+	Description string `xml:"description,omitempty"`
+}
+
+type prefixListIDXML struct {
+	PrefixListID string `xml:"prefixListId"`
+	Description  string `xml:"description,omitempty"`
+}
+
+type userIDGroupPairXML struct {
+	GroupID     string `xml:"groupId"`
+	UserID      string `xml:"userId,omitempty"`
+	Description string `xml:"description,omitempty"`
 }
 
 type ipPermissionXML struct {
-	IPProtocol string       `xml:"ipProtocol"`
-	FromPort   int          `xml:"fromPort"`
-	ToPort     int          `xml:"toPort"`
-	IPRanges   []ipRangeXML `xml:"ipRanges>item,omitempty"`
+	IPProtocol    string               `xml:"ipProtocol"`
+	FromPort      int                  `xml:"fromPort"`
+	ToPort        int                  `xml:"toPort"`
+	IPRanges      []ipRangeXML         `xml:"ipRanges>item,omitempty"`
+	IPv6Ranges    []ipv6RangeXML       `xml:"ipv6Ranges>item,omitempty"`
+	PrefixListIDs []prefixListIDXML    `xml:"prefixListIds>item,omitempty"`
+	Groups        []userIDGroupPairXML `xml:"groups>item,omitempty"`
+}
+
+// referencedGroupInfoXML is the ReferencedSecurityGroup shape nested inside a
+// SecurityGroupRule when the rule targets another security group.
+type referencedGroupInfoXML struct {
+	GroupID string `xml:"groupId,omitempty"`
+	UserID  string `xml:"userId,omitempty"`
+}
+
+// securityGroupRuleXML is the flat SecurityGroupRule shape returned by
+// Authorize*/DescribeSecurityGroupRules (one item per resolved target).
+type securityGroupRuleXML struct {
+	SecurityGroupRuleID string                  `xml:"securityGroupRuleId"`
+	GroupID             string                  `xml:"groupId"`
+	GroupOwnerID        string                  `xml:"groupOwnerId"`
+	IsEgress            bool                    `xml:"isEgress"`
+	IPProtocol          string                  `xml:"ipProtocol"`
+	FromPort            int                     `xml:"fromPort"`
+	ToPort              int                     `xml:"toPort"`
+	CidrIPv4            string                  `xml:"cidrIpv4,omitempty"`
+	CidrIPv6            string                  `xml:"cidrIpv6,omitempty"`
+	PrefixListID        string                  `xml:"prefixListId,omitempty"`
+	ReferencedGroupInfo *referencedGroupInfoXML `xml:"referencedGroupInfo,omitempty"`
+	Description         string                  `xml:"description,omitempty"`
 }
 
 type securityGroupXML struct {
@@ -68,6 +120,24 @@ type describeSecurityGroupsResponseXML struct {
 	Xmlns            string             `xml:"xmlns,attr"`
 	RequestID        string             `xml:"requestId"`
 	SecurityGroupSet []securityGroupXML `xml:"securityGroupInfo>item"`
+}
+
+// authorizeSecurityGroupResponseXML is the Authorize{Ingress,Egress} response.
+// Its root element differs per op (Ingress vs Egress), so XMLName is set at
+// runtime rather than fixed by a struct tag.
+type authorizeSecurityGroupResponseXML struct {
+	XMLName              xml.Name
+	Xmlns                string                 `xml:"xmlns,attr"`
+	RequestID            string                 `xml:"requestId"`
+	Return               bool                   `xml:"return"`
+	SecurityGroupRuleSet []securityGroupRuleXML `xml:"securityGroupRuleSet>item,omitempty"`
+}
+
+type describeSecurityGroupRulesResponseXML struct {
+	XMLName              xml.Name               `xml:"DescribeSecurityGroupRulesResponse"`
+	Xmlns                string                 `xml:"xmlns,attr"`
+	RequestID            string                 `xml:"requestId"`
+	SecurityGroupRuleSet []securityGroupRuleXML `xml:"securityGroupRuleSet>item"`
 }
 
 func (h *Handler) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +229,7 @@ func (h *Handler) describeSecurityGroups(w http.ResponseWriter, r *http.Request)
 // filter (tag filters are handled separately in sgMatchesFilters).
 func sgScalarFilterField(sg *netdriver.SecurityGroupInfo, name string) (string, bool) {
 	switch name {
-	case "group-id":
+	case groupIDFilter:
 		return sg.ID, true
 	case "group-name":
 		return sg.Name, true
@@ -235,11 +305,99 @@ func (h *Handler) authorizeSecurityGroupIngress(w http.ResponseWriter, r *http.R
 	})
 }
 
+// describeSecurityGroupRules flattens every group's ingress + egress rules into
+// the SecurityGroupRule shape, honoring the group-id / security-group-rule-id
+// filters and the SecurityGroupRuleId.N selector.
+func (h *Handler) describeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {
+	filters := awsquery.Filters(r.Form)
+	if err := validateSGRuleFilters(filters); err != nil {
+		writeSGErr(w, err)
+		return
+	}
+
+	sgs, err := h.vpc.DescribeSecurityGroups(r.Context(), nil)
+	if err != nil {
+		writeSGErr(w, err)
+		return
+	}
+
+	wantGroups := sgRuleFilterValues(filters, groupIDFilter)
+	wantRuleIDs := append(awsquery.ListStrings(r.Form, "SecurityGroupRuleId"),
+		sgRuleFilterValues(filters, securityGroupRuleIDFilter)...)
+
+	items := make([]securityGroupRuleXML, 0)
+
+	for i := range sgs {
+		sg := &sgs[i]
+		if len(wantGroups) > 0 && !containsString(wantGroups, sg.ID) {
+			continue
+		}
+
+		items = appendSGRuleXMLs(items, sg.ID, false, sg.IngressRules, wantRuleIDs)
+		items = appendSGRuleXMLs(items, sg.ID, true, sg.EgressRules, wantRuleIDs)
+	}
+
+	awsquery.WriteXMLResponse(w, describeSecurityGroupRulesResponseXML{
+		Xmlns:                awsquery.Namespace,
+		RequestID:            awsquery.RequestID,
+		SecurityGroupRuleSet: items,
+	})
+}
+
+// appendSGRuleXMLs appends the rules to out as SecurityGroupRule items, keeping
+// only those whose id is in wantRuleIDs when that selector is non-empty.
+func appendSGRuleXMLs(
+	out []securityGroupRuleXML,
+	groupID string,
+	egress bool,
+	rules []netdriver.SecurityRule,
+	wantRuleIDs []string,
+) []securityGroupRuleXML {
+	for i := range rules {
+		if len(wantRuleIDs) > 0 && !containsString(wantRuleIDs, rules[i].RuleID) {
+			continue
+		}
+
+		out = append(out, toSecurityGroupRuleXML(groupID, egress, &rules[i]))
+	}
+
+	return out
+}
+
+// sgRuleFilterValues returns the accumulated values of every filter with the
+// given name.
+func sgRuleFilterValues(filters []awsquery.Filter, name string) []string {
+	var out []string
+
+	for _, f := range filters {
+		if f.Name == name {
+			out = append(out, f.Values...)
+		}
+	}
+
+	return out
+}
+
+// validateSGRuleFilters rejects DescribeSecurityGroupRules filter names this
+// emulator does not implement, matching real EC2's InvalidParameterValue.
+func validateSGRuleFilters(filters []awsquery.Filter) error {
+	for _, f := range filters {
+		switch f.Name {
+		case groupIDFilter, securityGroupRuleIDFilter:
+		default:
+			return newInvalidParameterErr(fmt.Sprintf("The filter '%s' is invalid", f.Name))
+		}
+	}
+
+	return nil
+}
+
 func (h *Handler) authorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 	h.applyRules(w, r, ruleApply{
 		apply:        h.vpc.AddEgressRule,
 		responseName: "AuthorizeSecurityGroupEgressResponse",
 		existing:     func(sg *netdriver.SecurityGroupInfo) []netdriver.SecurityRule { return sg.EgressRules },
+		egress:       true,
 	})
 }
 
@@ -283,6 +441,9 @@ type ruleApply struct {
 	apply        ruleFunc
 	responseName string
 	existing     func(*netdriver.SecurityGroupInfo) []netdriver.SecurityRule
+	// egress marks the Authorize path as egress so the returned
+	// SecurityGroupRule items carry isEgress=true.
+	egress bool
 }
 
 // applyRules is the shared Authorize/Revoke path. The driver takes one rule
@@ -307,14 +468,68 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 		return
 	}
 
-	for _, rule := range rules {
-		if err := spec.apply(r.Context(), groupID, rule); err != nil {
+	for i := range rules {
+		if err := spec.apply(r.Context(), groupID, rules[i]); err != nil {
 			writeSGErr(w, err)
 			return
 		}
 	}
 
+	// Authorize (existing != nil) echoes the created SecurityGroupRule set; the
+	// idempotent Revoke path carries no payload.
+	if spec.existing != nil {
+		writeAuthorizeSGResponse(w, spec.responseName, groupID, spec.egress, rules)
+		return
+	}
+
 	writeSimpleSGResponse(w, spec.responseName)
+}
+
+// writeAuthorizeSGResponse emits <return>true</return> plus the
+// securityGroupRuleSet AWS returns from Authorize{Ingress,Egress}.
+func writeAuthorizeSGResponse(w http.ResponseWriter, name, groupID string, egress bool, rules []netdriver.SecurityRule) {
+	items := make([]securityGroupRuleXML, 0, len(rules))
+	for i := range rules {
+		items = append(items, toSecurityGroupRuleXML(groupID, egress, &rules[i]))
+	}
+
+	awsquery.WriteXMLResponse(w, authorizeSecurityGroupResponseXML{
+		XMLName:              xml.Name{Local: name},
+		Xmlns:                awsquery.Namespace,
+		RequestID:            awsquery.RequestID,
+		Return:               true,
+		SecurityGroupRuleSet: items,
+	})
+}
+
+// toSecurityGroupRuleXML maps one stored rule to the flat SecurityGroupRule
+// wire shape, emitting exactly the target element (cidrIpv4/cidrIpv6/
+// prefixListId/referencedGroupInfo) the rule carries.
+func toSecurityGroupRuleXML(groupID string, egress bool, rule *netdriver.SecurityRule) securityGroupRuleXML {
+	x := securityGroupRuleXML{
+		SecurityGroupRuleID: rule.RuleID,
+		GroupID:             groupID,
+		GroupOwnerID:        ownerID,
+		IsEgress:            egress,
+		IPProtocol:          rule.Protocol,
+		FromPort:            rule.FromPort,
+		ToPort:              rule.ToPort,
+		CidrIPv4:            rule.CIDR,
+		CidrIPv6:            rule.IPv6CIDR,
+		PrefixListID:        rule.PrefixListID,
+		Description:         rule.Description,
+	}
+
+	if rule.ReferencedGroupID != "" {
+		userID := rule.ReferencedGroupOwnerID
+		if userID == "" {
+			userID = ownerID
+		}
+
+		x.ReferencedGroupInfo = &referencedGroupInfoXML{GroupID: rule.ReferencedGroupID, UserID: userID}
+	}
+
+	return x
 }
 
 // hasDuplicateRule reports whether any of the rules being authorized already
@@ -332,9 +547,9 @@ func (h *Handler) hasDuplicateRule(
 
 	current := existing(&sgs[0])
 
-	for _, rule := range rules {
-		for i := range current {
-			if current[i] == rule {
+	for i := range rules {
+		for j := range current {
+			if current[j].Matches(&rules[i]) {
 				return true
 			}
 		}
@@ -364,43 +579,113 @@ func parseIPPermissions(form url.Values) []netdriver.SecurityRule {
 
 	for _, idx := range indices {
 		base := prefix + "." + strconv.Itoa(idx)
-		proto := form.Get(base + ".IpProtocol")
-		fromPort, _ := strconv.Atoi(form.Get(base + ".FromPort"))
-		toPort, _ := strconv.Atoi(form.Get(base + ".ToPort"))
-		cidrs := cidrsFromNested(form, base+".IpRanges")
-
-		if len(cidrs) == 0 {
-			rules = append(rules, netdriver.SecurityRule{
-				Protocol: proto, FromPort: fromPort, ToPort: toPort,
-			})
-
-			continue
-		}
-
-		for _, cidr := range cidrs {
-			rules = append(rules, netdriver.SecurityRule{
-				Protocol: proto, FromPort: fromPort, ToPort: toPort, CIDR: cidr,
-			})
-		}
+		rules = append(rules, rulesForPermission(form, base)...)
 	}
 
 	return rules
 }
 
-// cidrsFromNested reads IpRanges.M.CidrIp values for a given base prefix.
-func cidrsFromNested(form url.Values, prefix string) []string {
+// rulesForPermission unrolls one IpPermissions.N block into one SecurityRule
+// per target (IpRanges / Ipv6Ranges / PrefixListIds / Groups), minting an
+// "sgr-" id for each. A block with no target yields a single target-less rule.
+func rulesForPermission(form url.Values, base string) []netdriver.SecurityRule {
+	proto := form.Get(base + ".IpProtocol")
+	fromPort, _ := strconv.Atoi(form.Get(base + ".FromPort"))
+	toPort, _ := strconv.Atoi(form.Get(base + ".ToPort"))
+
+	mk := func(target netdriver.SecurityRule) netdriver.SecurityRule {
+		target.Protocol = proto
+		target.FromPort = fromPort
+		target.ToPort = toPort
+		target.RuleID = idgen.GenerateID("sgr-")
+
+		return target
+	}
+
+	var out []netdriver.SecurityRule
+
+	for _, e := range rangesFromNested(form, base+".IpRanges", "CidrIp") {
+		out = append(out, mk(netdriver.SecurityRule{CIDR: e.value, Description: e.description}))
+	}
+
+	for _, e := range rangesFromNested(form, base+".Ipv6Ranges", "CidrIpv6") {
+		out = append(out, mk(netdriver.SecurityRule{IPv6CIDR: e.value, Description: e.description}))
+	}
+
+	for _, e := range rangesFromNested(form, base+".PrefixListIds", "PrefixListId") {
+		out = append(out, mk(netdriver.SecurityRule{PrefixListID: e.value, Description: e.description}))
+	}
+
+	for _, g := range groupsFromNested(form, base+".Groups") {
+		out = append(out, mk(netdriver.SecurityRule{
+			ReferencedGroupID:      g.groupID,
+			ReferencedGroupOwnerID: g.ownerID,
+			Description:            g.description,
+		}))
+	}
+
+	if len(out) == 0 {
+		out = append(out, mk(netdriver.SecurityRule{}))
+	}
+
+	return out
+}
+
+// rangeEntry is a single nested range/prefix-list entry with its description.
+type rangeEntry struct {
+	value       string
+	description string
+}
+
+// rangesFromNested reads <prefix>.M.<valueField> (+ optional .Description) for
+// the IpRanges / Ipv6Ranges / PrefixListIds groups.
+func rangesFromNested(form url.Values, prefix, valueField string) []rangeEntry {
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
 		return nil
 	}
 
-	out := make([]string, 0, len(indices))
+	out := make([]rangeEntry, 0, len(indices))
 
 	for _, idx := range indices {
-		key := prefix + "." + strconv.Itoa(idx) + ".CidrIp"
-		if v := form.Get(key); v != "" {
-			out = append(out, v)
+		b := prefix + "." + strconv.Itoa(idx)
+		if v := form.Get(b + "." + valueField); v != "" {
+			out = append(out, rangeEntry{value: v, description: form.Get(b + ".Description")})
 		}
+	}
+
+	return out
+}
+
+// referencedGroup is one parsed UserIdGroupPairs (Groups.M) source reference.
+type referencedGroup struct {
+	groupID     string
+	ownerID     string
+	description string
+}
+
+// groupsFromNested reads Groups.M.GroupId (+ optional .UserId / .Description).
+func groupsFromNested(form url.Values, prefix string) []referencedGroup {
+	indices := awsquery.CollectIndices(form, prefix)
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]referencedGroup, 0, len(indices))
+
+	for _, idx := range indices {
+		b := prefix + "." + strconv.Itoa(idx)
+
+		gid := form.Get(b + ".GroupId")
+		if gid == "" {
+			continue
+		}
+
+		out = append(out, referencedGroup{
+			groupID:     gid,
+			ownerID:     form.Get(b + ".UserId"),
+			description: form.Get(b + ".Description"),
+		})
 	}
 
 	return out
@@ -436,24 +721,23 @@ func toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermissionXML {
 	byKey := make(map[key]*ipPermissionXML)
 	order := []key{}
 
-	for _, rule := range rules {
+	for i := range rules {
+		rule := &rules[i]
 		k := key{protocol: rule.Protocol, from: rule.FromPort, to: rule.ToPort}
 
-		existing, ok := byKey[k]
+		perm, ok := byKey[k]
 		if !ok {
-			existing = &ipPermissionXML{
+			perm = &ipPermissionXML{
 				IPProtocol: rule.Protocol,
 				FromPort:   rule.FromPort,
 				ToPort:     rule.ToPort,
 			}
-			byKey[k] = existing
+			byKey[k] = perm
 
 			order = append(order, k)
 		}
 
-		if rule.CIDR != "" {
-			existing.IPRanges = append(existing.IPRanges, ipRangeXML{CidrIP: rule.CIDR})
-		}
+		addRuleTarget(perm, rule)
 	}
 
 	out := make([]ipPermissionXML, 0, len(order))
@@ -462,6 +746,28 @@ func toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermissionXML {
 	}
 
 	return out
+}
+
+// addRuleTarget appends the rule's single target (IPv4 / IPv6 / prefix list /
+// referenced group) to the matching sub-list of the IpPermission.
+func addRuleTarget(perm *ipPermissionXML, rule *netdriver.SecurityRule) {
+	switch {
+	case rule.CIDR != "":
+		perm.IPRanges = append(perm.IPRanges, ipRangeXML{CidrIP: rule.CIDR, Description: rule.Description})
+	case rule.IPv6CIDR != "":
+		perm.IPv6Ranges = append(perm.IPv6Ranges, ipv6RangeXML{CidrIPv6: rule.IPv6CIDR, Description: rule.Description})
+	case rule.PrefixListID != "":
+		perm.PrefixListIDs = append(perm.PrefixListIDs,
+			prefixListIDXML{PrefixListID: rule.PrefixListID, Description: rule.Description})
+	case rule.ReferencedGroupID != "":
+		userID := rule.ReferencedGroupOwnerID
+		if userID == "" {
+			userID = ownerID
+		}
+
+		perm.Groups = append(perm.Groups,
+			userIDGroupPairXML{GroupID: rule.ReferencedGroupID, UserID: userID, Description: rule.Description})
+	}
 }
 
 // writeSimpleSGResponse writes a <return>true</return>-shaped response for
