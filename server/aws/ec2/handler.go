@@ -253,6 +253,12 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 		h.deleteLaunchTemplate(w, r)
 	case "DescribeLaunchTemplates":
 		h.describeLaunchTemplates(w, r)
+	case "CreateLaunchTemplateVersion":
+		h.createLaunchTemplateVersion(w, r)
+	case "DescribeLaunchTemplateVersions":
+		h.describeLaunchTemplateVersions(w, r)
+	case "GetLaunchTemplateData":
+		h.getLaunchTemplateData(w, r)
 	default:
 		return false
 	}

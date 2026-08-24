@@ -1952,7 +1952,7 @@ func TestCreateLaunchTemplate(t *testing.T) {
 		assertError(t, err, true)
 	})
 
-	t.Run("version numbering increments", func(t *testing.T) {
+	t.Run("each template starts at version 1", func(t *testing.T) {
 		m := newTestMock()
 		ctx := context.Background()
 
@@ -1968,7 +1968,12 @@ func TestCreateLaunchTemplate(t *testing.T) {
 		})
 		requireNoError(t, err)
 
-		assertTrue(t, tmpl2.Version > tmpl1.Version, "second template version should be greater")
+		// Real AWS numbers versions per-template: every template's first version
+		// is 1 (the old package-global counter bled numbers across templates).
+		assertEqual(t, 1, tmpl1.Version)
+		assertEqual(t, 1, tmpl2.Version)
+		assertEqual(t, 1, tmpl1.DefaultVersion)
+		assertEqual(t, 1, tmpl1.LatestVersion)
 	})
 }
 

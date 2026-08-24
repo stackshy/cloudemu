@@ -3,16 +3,47 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"net/url"
+	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
+// launchTemplateDataXML is the nested <launchTemplateData> element echoed on
+// version responses, carrying the instance parameters a version pins.
+type launchTemplateDataXML struct {
+	ImageID          string    `xml:"imageId,omitempty"`
+	InstanceType     string    `xml:"instanceType,omitempty"`
+	KeyName          string    `xml:"keyName,omitempty"`
+	SubnetID         string    `xml:"subnetId,omitempty"`
+	UserData         string    `xml:"userData,omitempty"`
+	SecurityGroupIDs []string  `xml:"securityGroupIdSet>item,omitempty"`
+	TagSpec          []tagItem `xml:"tagSpecificationSet>item>tagSet>item,omitempty"`
+}
+
 type launchTemplateXML struct {
-	LaunchTemplateID   string `xml:"launchTemplateId"`
-	LaunchTemplateName string `xml:"launchTemplateName"`
-	Version            int    `xml:"versionNumber"`
-	CreateTime         string `xml:"createTime,omitempty"`
+	LaunchTemplateID     string    `xml:"launchTemplateId"`
+	LaunchTemplateName   string    `xml:"launchTemplateName"`
+	Version              int       `xml:"versionNumber"`
+	DefaultVersionNumber int       `xml:"defaultVersionNumber"`
+	LatestVersionNumber  int       `xml:"latestVersionNumber"`
+	CreatedBy            string    `xml:"createdBy,omitempty"`
+	CreateTime           string    `xml:"createTime,omitempty"`
+	Tags                 []tagItem `xml:"tagSet>item,omitempty"`
+}
+
+// launchTemplateVersionXML is one <launchTemplateVersion> element.
+type launchTemplateVersionXML struct {
+	LaunchTemplateID   string                `xml:"launchTemplateId"`
+	LaunchTemplateName string                `xml:"launchTemplateName"`
+	VersionNumber      int                   `xml:"versionNumber"`
+	DefaultVersion     bool                  `xml:"defaultVersion"`
+	CreatedBy          string                `xml:"createdBy,omitempty"`
+	CreateTime         string                `xml:"createTime,omitempty"`
+	VersionDescription string                `xml:"versionDescription,omitempty"`
+	LaunchTemplateData launchTemplateDataXML `xml:"launchTemplateData"`
 }
 
 type createLaunchTemplateResponseXML struct {
@@ -36,13 +67,34 @@ type deleteLaunchTemplateResponseXML struct {
 	LaunchTemplate launchTemplateXML `xml:"launchTemplate"`
 }
 
+type createLaunchTemplateVersionResponseXML struct {
+	XMLName               xml.Name                 `xml:"CreateLaunchTemplateVersionResponse"`
+	Xmlns                 string                   `xml:"xmlns,attr"`
+	RequestID             string                   `xml:"requestId"`
+	LaunchTemplateVersion launchTemplateVersionXML `xml:"launchTemplateVersion"`
+}
+
+type describeLaunchTemplateVersionsResponseXML struct {
+	XMLName   xml.Name                   `xml:"DescribeLaunchTemplateVersionsResponse"`
+	Xmlns     string                     `xml:"xmlns,attr"`
+	RequestID string                     `xml:"requestId"`
+	Versions  []launchTemplateVersionXML `xml:"launchTemplateVersionSet>item"`
+	NextToken string                     `xml:"nextToken,omitempty"`
+}
+
+type getLaunchTemplateDataResponseXML struct {
+	XMLName            xml.Name              `xml:"GetLaunchTemplateDataResponse"`
+	Xmlns              string                `xml:"xmlns,attr"`
+	RequestID          string                `xml:"requestId"`
+	LaunchTemplateData launchTemplateDataXML `xml:"launchTemplateData"`
+}
+
 func (h *Handler) createLaunchTemplate(w http.ResponseWriter, r *http.Request) {
 	cfg := computedriver.LaunchTemplateConfig{
-		Name: r.Form.Get("LaunchTemplateName"),
-		InstanceConfig: computedriver.InstanceConfig{
-			ImageID:      r.Form.Get("LaunchTemplateData.ImageId"),
-			InstanceType: r.Form.Get("LaunchTemplateData.InstanceType"),
-		},
+		Name:               r.Form.Get("LaunchTemplateName"),
+		InstanceConfig:     parseLaunchTemplateData(r.Form, "LaunchTemplateData"),
+		Tags:               mergeTagSpecs(awsquery.TagSpecs(r.Form), "launch-template"),
+		VersionDescription: r.Form.Get("VersionDescription"),
 	}
 
 	info, err := h.compute.CreateLaunchTemplate(r.Context(), cfg)
@@ -120,15 +172,155 @@ func (h *Handler) describeLaunchTemplates(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func toLaunchTemplateXML(lt *computedriver.LaunchTemplate) launchTemplateXML {
-	return launchTemplateXML{
-		LaunchTemplateID:   lt.ID,
-		LaunchTemplateName: lt.Name,
-		Version:            lt.Version,
-		CreateTime:         lt.CreatedAt,
+func (h *Handler) createLaunchTemplateVersion(w http.ResponseWriter, r *http.Request) {
+	lt, ok := h.compute.(computedriver.LaunchTemplateVersioner)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+			"CreateLaunchTemplateVersion is not supported")
+
+		return
+	}
+
+	ver, err := lt.CreateLaunchTemplateVersion(r.Context(), computedriver.CreateLaunchTemplateVersionInput{
+		Name:               r.Form.Get("LaunchTemplateName"),
+		ID:                 r.Form.Get("LaunchTemplateId"),
+		SourceVersion:      r.Form.Get("SourceVersion"),
+		VersionDescription: r.Form.Get("VersionDescription"),
+		InstanceConfig:     parseLaunchTemplateData(r.Form, "LaunchTemplateData"),
+	})
+	if err != nil {
+		writeLaunchTemplateErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, createLaunchTemplateVersionResponseXML{
+		Xmlns:                 awsquery.Namespace,
+		RequestID:             awsquery.RequestID,
+		LaunchTemplateVersion: toLaunchTemplateVersionXML(ver),
+	})
+}
+
+func (h *Handler) describeLaunchTemplateVersions(w http.ResponseWriter, r *http.Request) {
+	lt, ok := h.compute.(computedriver.LaunchTemplateVersioner)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+			"DescribeLaunchTemplateVersions is not supported")
+
+		return
+	}
+
+	versions, err := lt.DescribeLaunchTemplateVersions(r.Context(), computedriver.DescribeLaunchTemplateVersionsInput{
+		Name:       r.Form.Get("LaunchTemplateName"),
+		ID:         r.Form.Get("LaunchTemplateId"),
+		Versions:   awsquery.ListStrings(r.Form, "LaunchTemplateVersion"),
+		MinVersion: r.Form.Get("MinVersion"),
+		MaxVersion: r.Form.Get("MaxVersion"),
+	})
+	if err != nil {
+		writeLaunchTemplateErr(w, err)
+		return
+	}
+
+	page, next := paginateXML(versions, r.Form.Get("MaxResults"), r.Form.Get("NextToken"),
+		func(v computedriver.LaunchTemplateVersion) string { return strconv.Itoa(v.VersionNumber) })
+
+	out := make([]launchTemplateVersionXML, 0, len(page))
+	for i := range page {
+		out = append(out, toLaunchTemplateVersionXML(&page[i]))
+	}
+
+	awsquery.WriteXMLResponse(w, describeLaunchTemplateVersionsResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Versions:  out,
+		NextToken: next,
+	})
+}
+
+func (h *Handler) getLaunchTemplateData(w http.ResponseWriter, r *http.Request) {
+	lt, ok := h.compute.(computedriver.LaunchTemplateVersioner)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+			"GetLaunchTemplateData is not supported")
+
+		return
+	}
+
+	cfg, err := lt.GetLaunchTemplateData(r.Context(), r.Form.Get("InstanceId"))
+	if err != nil {
+		writeLaunchTemplateErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, getLaunchTemplateDataResponseXML{
+		Xmlns:              awsquery.Namespace,
+		RequestID:          awsquery.RequestID,
+		LaunchTemplateData: toLaunchTemplateDataXML(*cfg),
+	})
+}
+
+// parseLaunchTemplateData reads the LaunchTemplateData.* parameter group into an
+// InstanceConfig. prefix is "LaunchTemplateData".
+func parseLaunchTemplateData(form url.Values, prefix string) computedriver.InstanceConfig {
+	return computedriver.InstanceConfig{
+		ImageID:        form.Get(prefix + ".ImageId"),
+		InstanceType:   form.Get(prefix + ".InstanceType"),
+		KeyName:        form.Get(prefix + ".KeyName"),
+		SubnetID:       form.Get(prefix + ".SubnetId"),
+		UserData:       form.Get(prefix + ".UserData"),
+		SecurityGroups: awsquery.ListStrings(form, prefix+".SecurityGroupId"),
 	}
 }
 
+func toLaunchTemplateXML(lt *computedriver.LaunchTemplate) launchTemplateXML {
+	return launchTemplateXML{
+		LaunchTemplateID:     lt.ID,
+		LaunchTemplateName:   lt.Name,
+		Version:              lt.Version,
+		DefaultVersionNumber: lt.DefaultVersion,
+		LatestVersionNumber:  lt.LatestVersion,
+		CreatedBy:            lt.CreatedBy,
+		CreateTime:           lt.CreatedAt,
+		Tags:                 toTagItems(lt.Tags),
+	}
+}
+
+func toLaunchTemplateVersionXML(v *computedriver.LaunchTemplateVersion) launchTemplateVersionXML {
+	return launchTemplateVersionXML{
+		LaunchTemplateID:   v.LaunchTemplateID,
+		LaunchTemplateName: v.LaunchTemplateName,
+		VersionNumber:      v.VersionNumber,
+		DefaultVersion:     v.DefaultVersion,
+		CreatedBy:          v.CreatedBy,
+		CreateTime:         v.CreateTime,
+		VersionDescription: v.VersionDescription,
+		LaunchTemplateData: toLaunchTemplateDataXML(v.InstanceConfig),
+	}
+}
+
+//nolint:gocritic // hugeParam: value copy of a small config for read-only projection.
+func toLaunchTemplateDataXML(cfg computedriver.InstanceConfig) launchTemplateDataXML {
+	return launchTemplateDataXML{
+		ImageID:          cfg.ImageID,
+		InstanceType:     cfg.InstanceType,
+		KeyName:          cfg.KeyName,
+		SubnetID:         cfg.SubnetID,
+		UserData:         cfg.UserData,
+		SecurityGroupIDs: cfg.SecurityGroups,
+		TagSpec:          toTagItems(cfg.Tags),
+	}
+}
+
+// writeLaunchTemplateErr maps a duplicate create to the EC2-specific
+// InvalidLaunchTemplateName.AlreadyExistsException code rather than the generic
+// ResourceAlreadyExists; other codes use the shared mapping.
 func writeLaunchTemplateErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest,
+			"InvalidLaunchTemplateName.AlreadyExistsException", err.Error())
+
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidLaunchTemplateId.NotFound", "IncorrectState")
 }

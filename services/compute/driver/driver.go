@@ -175,12 +175,81 @@ type LaunchTemplate struct {
 	Version        int
 	InstanceConfig InstanceConfig
 	CreatedAt      string
+	// DefaultVersion is the version number RunInstances uses when no version is
+	// named (AWS defaultVersionNumber). LatestVersion is the highest version
+	// number created so far (AWS latestVersionNumber). CreatedBy is the ARN of
+	// the principal that created the template. Tags are the template-level
+	// resource tags. These are populated by AWS EC2; providers with no launch
+	// template versioning leave them zero.
+	DefaultVersion int
+	LatestVersion  int
+	CreatedBy      string
+	Tags           map[string]string
 }
 
 // LaunchTemplateConfig configures a launch template.
 type LaunchTemplateConfig struct {
 	Name           string
 	InstanceConfig InstanceConfig
+	// Tags are template-level resource tags (AWS TagSpecification on the
+	// launch-template resource). VersionDescription annotates the initial (v1)
+	// version. Both are AWS-specific and ignored by providers without launch
+	// template versioning.
+	Tags               map[string]string
+	VersionDescription string
+}
+
+// LaunchTemplateVersion is one immutable version of a launch template (AWS EC2).
+// Versions are numbered sequentially per template starting at 1.
+type LaunchTemplateVersion struct {
+	LaunchTemplateID   string
+	LaunchTemplateName string
+	VersionNumber      int
+	DefaultVersion     bool
+	CreatedBy          string
+	CreateTime         string
+	VersionDescription string
+	InstanceConfig     InstanceConfig
+}
+
+// CreateLaunchTemplateVersionInput carries the parameters for
+// CreateLaunchTemplateVersion. Exactly one of Name/ID identifies the template.
+// When SourceVersion is set the new version inherits that version's parameters,
+// with the non-zero fields of InstanceConfig overlaid on top.
+type CreateLaunchTemplateVersionInput struct {
+	Name               string
+	ID                 string
+	SourceVersion      string
+	VersionDescription string
+	InstanceConfig     InstanceConfig
+}
+
+// DescribeLaunchTemplateVersionsInput carries the filters for
+// DescribeLaunchTemplateVersions. Exactly one of Name/ID identifies the
+// template. Versions is an explicit version-number list (also accepting the
+// "$Latest"/"$Default" tokens); MinVersion/MaxVersion bound the range. Paging
+// (MaxResults/NextToken) is applied by the wire layer.
+type DescribeLaunchTemplateVersionsInput struct {
+	Name       string
+	ID         string
+	Versions   []string
+	MinVersion string
+	MaxVersion string
+}
+
+// LaunchTemplateVersioner is an AWS-only optional capability implementing launch
+// template versioning. Only the EC2 provider implements it; the wire handler
+// type-asserts for it, so providers without versioning (Azure, GCP) are
+// unaffected.
+type LaunchTemplateVersioner interface {
+	// CreateLaunchTemplateVersion appends a new immutable version to a template.
+	CreateLaunchTemplateVersion(ctx context.Context, input CreateLaunchTemplateVersionInput) (*LaunchTemplateVersion, error)
+	// DescribeLaunchTemplateVersions returns a template's versions (filtered,
+	// sorted ascending by version number).
+	DescribeLaunchTemplateVersions(ctx context.Context, input DescribeLaunchTemplateVersionsInput) ([]LaunchTemplateVersion, error)
+	// GetLaunchTemplateData synthesizes launch-template data from a running
+	// instance's configuration.
+	GetLaunchTemplateData(ctx context.Context, instanceID string) (*InstanceConfig, error)
 }
 
 // VolumeConfig describes a volume to create.

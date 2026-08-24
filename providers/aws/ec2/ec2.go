@@ -187,18 +187,22 @@ type Mock struct {
 	asgs         *memstore.Store[*asgData]
 	spotRequests *memstore.Store[*driver.SpotInstanceRequest]
 	templates    *memstore.Store[*driver.LaunchTemplate]
-	volumes      *memstore.Store[*driver.VolumeInfo]
-	snapshots    *memstore.Store[*driver.SnapshotInfo]
-	images       *memstore.Store[*driver.ImageInfo]
-	keyPairs     *memstore.Store[*driver.KeyPairInfo]
-	sm           *statemachine.Machine
-	opts         *config.Options
-	ipCounter    atomic.Int64
-	volCounter   atomic.Int64
-	snapCounter  atomic.Int64
-	amiCounter   atomic.Int64
-	keyCounter   atomic.Int64
-	monitoring   mondriver.Monitoring
+	// templateVersions holds every launch-template version keyed by
+	// "<name>#<version>" (see templateVersionKey). Launch-template versioning is
+	// AWS-specific, so this store backs the LaunchTemplateVersioner capability.
+	templateVersions *memstore.Store[*driver.LaunchTemplateVersion]
+	volumes          *memstore.Store[*driver.VolumeInfo]
+	snapshots        *memstore.Store[*driver.SnapshotInfo]
+	images           *memstore.Store[*driver.ImageInfo]
+	keyPairs         *memstore.Store[*driver.KeyPairInfo]
+	sm               *statemachine.Machine
+	opts             *config.Options
+	ipCounter        atomic.Int64
+	volCounter       atomic.Int64
+	snapCounter      atomic.Int64
+	amiCounter       atomic.Int64
+	keyCounter       atomic.Int64
+	monitoring       mondriver.Monitoring
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
@@ -284,16 +288,17 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, valu
 // New creates a new EC2 mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances:    memstore.New[*instanceData](),
-		asgs:         memstore.New[*asgData](),
-		spotRequests: memstore.New[*driver.SpotInstanceRequest](),
-		templates:    memstore.New[*driver.LaunchTemplate](),
-		volumes:      memstore.New[*driver.VolumeInfo](),
-		snapshots:    memstore.New[*driver.SnapshotInfo](),
-		images:       memstore.New[*driver.ImageInfo](),
-		keyPairs:     memstore.New[*driver.KeyPairInfo](),
-		sm:           statemachine.New(compute.VMTransitions()),
-		opts:         opts,
+		instances:        memstore.New[*instanceData](),
+		asgs:             memstore.New[*asgData](),
+		spotRequests:     memstore.New[*driver.SpotInstanceRequest](),
+		templates:        memstore.New[*driver.LaunchTemplate](),
+		templateVersions: memstore.New[*driver.LaunchTemplateVersion](),
+		volumes:          memstore.New[*driver.VolumeInfo](),
+		snapshots:        memstore.New[*driver.SnapshotInfo](),
+		images:           memstore.New[*driver.ImageInfo](),
+		keyPairs:         memstore.New[*driver.KeyPairInfo](),
+		sm:               statemachine.New(compute.VMTransitions()),
+		opts:             opts,
 
 		managedResourceVisibility: visibilityVisible,
 		clientTokens:              make(map[string][]string),

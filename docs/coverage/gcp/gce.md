@@ -57,37 +57,15 @@ ConsoleReader is an optional capability a Compute implementation may provide
 | --- | --- |
 | `GetConsoleOutput` |  |
 
-### ImageRegistrar
+### LaunchTemplateVersioner
 
-ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
-
-| Operation | Description |
-| --- | --- |
-| `RegisterImage` |  |
-
-### KeyPairImporter
-
-KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair
+LaunchTemplateVersioner is an AWS-only optional capability implementing launch
 
 | Operation | Description |
 | --- | --- |
-| `ImportKeyPair` |  |
-
-### SnapshotCopier
-
-SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is
-
-| Operation | Description |
-| --- | --- |
-| `CopySnapshot` |  |
-
-### VolumeModifier
-
-VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume
-
-| Operation | Description |
-| --- | --- |
-| `ModifyVolume` |  |
+| `CreateLaunchTemplateVersion` | CreateLaunchTemplateVersion appends a new immutable version to a template. |
+| `DescribeLaunchTemplateVersions` | DescribeLaunchTemplateVersions returns a template's versions (filtered, |
+| `GetLaunchTemplateData` | GetLaunchTemplateData synthesizes launch-template data from a running |
 
 ## Not in scope
 
