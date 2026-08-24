@@ -212,6 +212,44 @@ func TestCopySnapshotMissingSourceIsNotFound(t *testing.T) {
 	}
 }
 
+// TestDeleteSnapshotInUseByImage pins that a snapshot referenced by a
+// registered AMI's block device mapping cannot be deleted — real EC2 answers
+// InvalidSnapshot.InUse until the AMI is deregistered.
+func TestDeleteSnapshotInUseByImage(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	volumeID := createSnapshotVolume(t, ctx, client)
+
+	snap, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId: aws.String(volumeID),
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	snapID := aws.ToString(snap.SnapshotId)
+
+	if _, err := client.RegisterImage(ctx, &ec2.RegisterImageInput{
+		Name: aws.String("audit-ami"),
+		BlockDeviceMappings: []ec2types.BlockDeviceMapping{{
+			DeviceName: aws.String("/dev/sda1"),
+			Ebs:        &ec2types.EbsBlockDevice{SnapshotId: aws.String(snapID)},
+		}},
+	}); err != nil {
+		t.Fatalf("RegisterImage: %v", err)
+	}
+
+	_, err = client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(snapID)})
+	if err == nil {
+		t.Fatal("DeleteSnapshot(in use by AMI) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidSnapshot.InUse" {
+		t.Fatalf("DeleteSnapshot(in use) error = %v, want InvalidSnapshot.InUse", err)
+	}
+}
+
 // hasTag reports whether tags contains key=value.
 func hasTag(tags []ec2types.Tag, key, value string) bool {
 	for _, tg := range tags {

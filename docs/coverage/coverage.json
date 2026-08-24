@@ -1985,6 +1985,15 @@
         ]
       },
       {
+        "name": "LaunchTemplateModifier",
+        "doc": "LaunchTemplateModifier is an AWS-only optional capability implementing",
+        "operations": [
+          {
+            "name": "ModifyLaunchTemplate"
+          }
+        ]
+      },
+      {
         "name": "LaunchTemplateVersioner",
         "doc": "LaunchTemplateVersioner is an AWS-only optional capability implementing launch",
         "operations": [

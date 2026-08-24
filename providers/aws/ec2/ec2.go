@@ -1100,6 +1100,16 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
+	// A volume can only attach to an instance in the SAME Availability Zone
+	// (real EC2 InvalidVolume.ZoneMismatch). Instances aren't placed in an
+	// explicit zone here, so they occupy the region's default zone, which is
+	// what CreateVolume also defaults to — an explicit cross-AZ volume mismatches.
+	if instZone := m.opts.Region + "a"; vol.AvailabilityZone != "" && vol.AvailabilityZone != instZone {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"ZoneMismatch: volume %q is in availability zone %q but instance %q is in %q",
+			volumeID, vol.AvailabilityZone, instanceID, instZone)
+	}
+
 	vol.State = stateInUse
 	vol.AttachedTo = instanceID
 	vol.Device = device
@@ -1154,13 +1164,37 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*dr
 	return &result, nil
 }
 
-// DeleteSnapshot deletes a snapshot.
+// DeleteSnapshot deletes a snapshot. A snapshot referenced by a registered
+// AMI's block device mapping cannot be deleted until the AMI is deregistered
+// (real EC2 InvalidSnapshot.InUse), so we guard against orphaning an AMI whose
+// backing snapshot was removed.
 func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
-	if !m.snapshots.Delete(id) {
+	if !m.snapshots.Has(id) {
 		return cerrors.Newf(cerrors.NotFound, "snapshot %q not found", id)
 	}
 
+	if ami := m.imageUsingSnapshot(id); ami != "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"InUse: snapshot %q is currently in use by %s", id, ami)
+	}
+
+	m.snapshots.Delete(id)
+
 	return nil
+}
+
+// imageUsingSnapshot returns the id of a registered AMI whose block device
+// mapping references the snapshot, or "" if none does.
+func (m *Mock) imageUsingSnapshot(snapshotID string) string {
+	for _, img := range m.images.All() {
+		for _, bdm := range img.BlockDeviceMappings {
+			if bdm.SnapshotID == snapshotID {
+				return img.ID
+			}
+		}
+	}
+
+	return ""
 }
 
 // DescribeSnapshots returns snapshots matching the given IDs. An explicit ID
@@ -1287,11 +1321,12 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 	return &result, nil
 }
 
-// DeleteKeyPair deletes a key pair by name.
+// DeleteKeyPair deletes a key pair by name. It is idempotent: deleting a key
+// pair that does not exist still succeeds (real EC2 DeleteKeyPair returns
+// <return>true</return> for a missing key), so Terraform destroy re-runs and
+// cleanup scripts don't fail on an already-deleted key.
 func (m *Mock) DeleteKeyPair(_ context.Context, name string) error {
-	if !m.keyPairs.Delete(name) {
-		return cerrors.Newf(cerrors.NotFound, "key pair %q not found", name)
-	}
+	m.keyPairs.Delete(name)
 
 	return nil
 }

@@ -170,6 +170,90 @@ func TestGetLaunchTemplateDataFromRunningInstance(t *testing.T) {
 	}
 }
 
+// TestRunInstancesFromLaunchTemplate pins that RunInstances given a
+// LaunchTemplate reference resolves the template's default version and applies
+// its data (ImageId/InstanceType) to the launched instance — previously the
+// template was silently ignored and ImageId came back empty.
+func TestRunInstancesFromLaunchTemplate(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	if _, err := client.CreateLaunchTemplate(ctx, &ec2.CreateLaunchTemplateInput{
+		LaunchTemplateName: aws.String("audit-lt"),
+		LaunchTemplateData: &ec2types.RequestLaunchTemplateData{
+			ImageId:      aws.String("ami-55555"),
+			InstanceType: ec2types.InstanceTypeT3Small,
+		},
+	}); err != nil {
+		t.Fatalf("CreateLaunchTemplate: %v", err)
+	}
+
+	out, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		LaunchTemplate: &ec2types.LaunchTemplateSpecification{
+			LaunchTemplateName: aws.String("audit-lt"),
+		},
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+	if len(out.Instances) != 1 {
+		t.Fatalf("got %d instances, want 1", len(out.Instances))
+	}
+	if got := aws.ToString(out.Instances[0].ImageId); got != "ami-55555" {
+		t.Errorf("ImageId = %q, want ami-55555 (launch template applied)", got)
+	}
+	if got := out.Instances[0].InstanceType; got != ec2types.InstanceTypeT3Small {
+		t.Errorf("InstanceType = %q, want t3.small", got)
+	}
+}
+
+// TestModifyLaunchTemplateSetsDefaultVersion pins that ModifyLaunchTemplate
+// promotes a version to the default and that a subsequent RunInstances with no
+// explicit version resolves the new default's data.
+func TestModifyLaunchTemplateSetsDefaultVersion(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	if _, err := client.CreateLaunchTemplate(ctx, &ec2.CreateLaunchTemplateInput{
+		LaunchTemplateName: aws.String("audit-lt"),
+		LaunchTemplateData: &ec2types.RequestLaunchTemplateData{ImageId: aws.String("ami-55555")},
+	}); err != nil {
+		t.Fatalf("CreateLaunchTemplate: %v", err)
+	}
+
+	if _, err := client.CreateLaunchTemplateVersion(ctx, &ec2.CreateLaunchTemplateVersionInput{
+		LaunchTemplateName: aws.String("audit-lt"),
+		LaunchTemplateData: &ec2types.RequestLaunchTemplateData{ImageId: aws.String("ami-66666")},
+	}); err != nil {
+		t.Fatalf("CreateLaunchTemplateVersion: %v", err)
+	}
+
+	mod, err := client.ModifyLaunchTemplate(ctx, &ec2.ModifyLaunchTemplateInput{
+		LaunchTemplateName: aws.String("audit-lt"),
+		DefaultVersion:     aws.String("2"),
+	})
+	if err != nil {
+		t.Fatalf("ModifyLaunchTemplate: %v", err)
+	}
+	if got := aws.ToInt64(mod.LaunchTemplate.DefaultVersionNumber); got != 2 {
+		t.Fatalf("DefaultVersionNumber = %d, want 2", got)
+	}
+
+	out, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		LaunchTemplate: &ec2types.LaunchTemplateSpecification{LaunchTemplateName: aws.String("audit-lt")},
+		MinCount:       aws.Int32(1),
+		MaxCount:       aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+	if got := aws.ToString(out.Instances[0].ImageId); got != "ami-66666" {
+		t.Errorf("ImageId = %q, want ami-66666 (new default version)", got)
+	}
+}
+
 // TestCreateDuplicateLaunchTemplateErrors pins the EC2-specific
 // InvalidLaunchTemplateName.AlreadyExistsException code for a duplicate name.
 func TestCreateDuplicateLaunchTemplateErrors(t *testing.T) {

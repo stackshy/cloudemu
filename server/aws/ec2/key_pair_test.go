@@ -207,6 +207,20 @@ func TestImportKeyPairDuplicateRejected(t *testing.T) {
 	}
 }
 
+// TestDeleteKeyPairIdempotent pins that deleting a non-existent key pair
+// succeeds (real EC2 DeleteKeyPair returns true for a missing key), so
+// Terraform destroy re-runs and cleanup scripts don't fail.
+func TestDeleteKeyPairIdempotent(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	if _, err := client.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{
+		KeyName: aws.String("does-not-exist"),
+	}); err != nil {
+		t.Fatalf("DeleteKeyPair(missing) = %v, want success", err)
+	}
+}
+
 // colonHexTest formats bytes as colon-separated lowercase hex, matching the
 // server's fingerprint encoding.
 func colonHexTest(b []byte) string {

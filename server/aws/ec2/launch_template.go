@@ -67,6 +67,13 @@ type deleteLaunchTemplateResponseXML struct {
 	LaunchTemplate launchTemplateXML `xml:"launchTemplate"`
 }
 
+type modifyLaunchTemplateResponseXML struct {
+	XMLName        xml.Name          `xml:"ModifyLaunchTemplateResponse"`
+	Xmlns          string            `xml:"xmlns,attr"`
+	RequestID      string            `xml:"requestId"`
+	LaunchTemplate launchTemplateXML `xml:"launchTemplate"`
+}
+
 type createLaunchTemplateVersionResponseXML struct {
 	XMLName               xml.Name                 `xml:"CreateLaunchTemplateVersionResponse"`
 	Xmlns                 string                   `xml:"xmlns,attr"`
@@ -133,6 +140,36 @@ func (h *Handler) deleteLaunchTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	awsquery.WriteXMLResponse(w, resp)
+}
+
+// modifyLaunchTemplate handles Action=ModifyLaunchTemplate. It promotes the
+// version named by SetDefaultVersion to the template's default and echoes the
+// updated launch template. Served by the AWS-only LaunchTemplateModifier
+// capability.
+func (h *Handler) modifyLaunchTemplate(w http.ResponseWriter, r *http.Request) {
+	modifier, ok := h.compute.(computedriver.LaunchTemplateModifier)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+			"ModifyLaunchTemplate is not supported")
+
+		return
+	}
+
+	info, err := modifier.ModifyLaunchTemplate(r.Context(), computedriver.ModifyLaunchTemplateInput{
+		Name:           r.Form.Get("LaunchTemplateName"),
+		ID:             r.Form.Get("LaunchTemplateId"),
+		DefaultVersion: r.Form.Get("SetDefaultVersion"),
+	})
+	if err != nil {
+		writeLaunchTemplateErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyLaunchTemplateResponseXML{
+		Xmlns:          awsquery.Namespace,
+		RequestID:      awsquery.RequestID,
+		LaunchTemplate: toLaunchTemplateXML(info),
+	})
 }
 
 func (h *Handler) describeLaunchTemplates(w http.ResponseWriter, r *http.Request) {

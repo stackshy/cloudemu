@@ -73,6 +73,14 @@ KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair
 | --- | --- |
 | `ImportKeyPair` |  |
 
+### LaunchTemplateModifier
+
+LaunchTemplateModifier is an AWS-only optional capability implementing
+
+| Operation | Description |
+| --- | --- |
+| `ModifyLaunchTemplate` |  |
+
 ### LaunchTemplateVersioner
 
 LaunchTemplateVersioner is an AWS-only optional capability implementing launch

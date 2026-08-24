@@ -130,14 +130,17 @@ func TestRouteKeyPairsDispatch(t *testing.T) {
 	}
 }
 
-func TestKeyPairOpsUnknownIDReturnsError(t *testing.T) {
+// TestDeleteUnknownKeyPairIsIdempotent pins that deleting a non-existent key
+// pair succeeds — real EC2 DeleteKeyPair returns <return>true</return> for a
+// missing key (idempotent cleanup / Terraform destroy re-runs).
+func TestDeleteUnknownKeyPairIsIdempotent(t *testing.T) {
 	h := newFullHandler()
 
 	rr := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"DeleteKeyPair"}, "KeyName": {"ghost-key"},
 	})
-	if rr.Code == http.StatusOK {
-		t.Errorf("DeleteKeyPair ghost-key should error, got 200")
+	if rr.Code != http.StatusOK {
+		t.Errorf("DeleteKeyPair ghost-key = %d, want 200 (idempotent)", rr.Code)
 	}
 }
 

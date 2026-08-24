@@ -277,3 +277,86 @@ func TestModifyVolumeMissingIsNotFound(t *testing.T) {
 		t.Fatalf("ModifyVolume(missing) error = %v, want InvalidVolume.NotFound", err)
 	}
 }
+
+// TestAttachVolumeCrossAZRejected pins that attaching a volume to an instance
+// in a different Availability Zone is rejected with InvalidVolume.ZoneMismatch,
+// matching real EC2 (a volume and its instance must share an AZ).
+func TestAttachVolumeCrossAZRejected(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:  aws.String("ami-123"),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-west-2b"),
+		Size:             aws.Int32(10),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdf"),
+	})
+	if err == nil {
+		t.Fatal("cross-AZ AttachVolume succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidVolume.ZoneMismatch" {
+		t.Fatalf("cross-AZ AttachVolume error = %v, want InvalidVolume.ZoneMismatch", err)
+	}
+}
+
+// TestDeleteAttachedVolumeReturnsVolumeInUse pins that deleting an attached
+// volume is rejected with the VolumeInUse code (not the generic IncorrectState).
+func TestDeleteAttachedVolumeReturnsVolumeInUse(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:  aws.String("ami-123"),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(10),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	if _, err := client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdf"),
+	}); err != nil {
+		t.Fatalf("AttachVolume: %v", err)
+	}
+
+	_, err = client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: vol.VolumeId})
+	if err == nil {
+		t.Fatal("DeleteVolume(attached) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "VolumeInUse" {
+		t.Fatalf("DeleteVolume(attached) error = %v, want VolumeInUse", err)
+	}
+}
