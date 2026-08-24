@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -207,6 +208,185 @@ func TestDeleteSecurityGroup(t *testing.T) {
 	assertError(t, m.DeleteSecurityGroup(context.Background(), "sg-nope"), true)
 }
 
+// defaultSG returns the auto-created "default" security group for a VPC.
+func defaultSG(t *testing.T, m *Mock, vpcID string) driver.SecurityGroupInfo {
+	t.Helper()
+
+	sgs, err := m.DescribeSecurityGroups(context.Background(), nil)
+	requireNoError(t, err)
+
+	for _, sg := range sgs {
+		if sg.VPCID == vpcID && sg.Name == defaultSGName {
+			return sg
+		}
+	}
+
+	t.Fatalf("vpc %s has no default security group: %+v", vpcID, sgs)
+
+	return driver.SecurityGroupInfo{}
+}
+
+// TestCreateVPCCreatesDefaultSecurityGroup pins the group EC2 auto-creates with
+// every VPC: name "default", allow-all egress, and a self-referencing ingress
+// rule permitting all traffic between members of the group (no CIDR ingress).
+func TestCreateVPCCreatesDefaultSecurityGroup(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	sgs, err := m.DescribeSecurityGroups(ctx, nil)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(sgs))
+
+	sg := defaultSG(t, m, v.ID)
+	assertEqual(t, defaultSGName, sg.Name)
+	assertEqual(t, "default VPC security group", sg.Description)
+	assertEqual(t, v.ID, sg.VPCID)
+
+	assertEqual(t, 1, len(sg.EgressRules))
+	assertEqual(t, "-1", sg.EgressRules[0].Protocol)
+	assertEqual(t, "0.0.0.0/0", sg.EgressRules[0].CIDR)
+
+	assertEqual(t, 1, len(sg.IngressRules))
+	assertEqual(t, "-1", sg.IngressRules[0].Protocol)
+	assertEqual(t, "", sg.IngressRules[0].CIDR)
+	assertEqual(t, sg.ID, sg.IngressRules[0].ReferencedGroupID)
+}
+
+// TestDefaultSecurityGroupCannotBeDeleted pins Client.CannotDelete semantics:
+// the default group refuses a direct delete with FailedPrecondition.
+func TestDefaultSecurityGroupCannotBeDeleted(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	sg := defaultSG(t, m, v.ID)
+
+	err := m.DeleteSecurityGroup(ctx, sg.ID)
+	assertError(t, err, true)
+
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("want FailedPrecondition, got %v", err)
+	}
+}
+
+// TestDeleteVPCRemovesDefaultSecurityGroup pins the cascade: the default group
+// disappears with the VPC rather than stranding an undeletable row.
+func TestDeleteVPCRemovesDefaultSecurityGroup(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	requireNoError(t, m.DeleteVPC(ctx, v.ID))
+
+	sgs, err := m.DescribeSecurityGroups(ctx, nil)
+	requireNoError(t, err)
+	assertEqual(t, 0, len(sgs))
+}
+
+// TestDeleteVPCBlocksOnDependencies walks the resource types real EC2 refuses to
+// delete a VPC around: each one blocks with DependencyViolation, and removing it
+// lets the delete proceed. The auto-created default SG never blocks.
+func TestDeleteVPCBlocksOnDependencies(t *testing.T) {
+	ctx := context.Background()
+
+	assertBlocks := func(t *testing.T, m *Mock, vpcID string) {
+		t.Helper()
+
+		err := m.DeleteVPC(ctx, vpcID)
+		assertError(t, err, true)
+
+		if !cerrors.IsFailedPrecondition(err) {
+			t.Fatalf("want FailedPrecondition (DependencyViolation), got %v", err)
+		}
+	}
+
+	t.Run("subnet", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		sub, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteSubnet(ctx, sub.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("non-default security group", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		sg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "app", VPCID: v.ID})
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteSecurityGroup(ctx, sg.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("non-main route table", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		rt, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteRouteTable(ctx, rt.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("network ACL", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		acl, err := m.CreateNetworkACL(ctx, v.ID, nil)
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteNetworkACL(ctx, acl.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("attached internet gateway", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+		requireNoError(t, err)
+		requireNoError(t, m.AttachInternetGateway(ctx, igw.ID, v.ID))
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DetachInternetGateway(ctx, igw.ID, v.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+}
+
+// TestDeleteVPCNotBlockedByActivePeering pins the real-EC2 rule that an active
+// peering connection is deleted alongside the VPC and never blocks the delete.
+func TestDeleteVPCNotBlockedByActivePeering(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	a := createTestVPC(m)
+
+	b, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.1.0.0/16"})
+	requireNoError(t, err)
+
+	p, err := m.CreatePeeringConnection(ctx, driver.PeeringConfig{RequesterVPC: a.ID, AccepterVPC: b.ID})
+	requireNoError(t, err)
+	requireNoError(t, m.AcceptPeeringConnection(ctx, p.ID))
+
+	// The active peering does not block the delete; it transitions to deleted.
+	requireNoError(t, m.DeleteVPC(ctx, a.ID))
+
+	peers, err := m.DescribePeeringConnections(ctx, []string{p.ID})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(peers))
+	assertEqual(t, PeeringStatusDeleted, peers[0].Status)
+}
+
 func TestDescribeSecurityGroups(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -217,7 +397,8 @@ func TestDescribeSecurityGroups(t *testing.T) {
 	t.Run("all", func(t *testing.T) {
 		sgs, err := m.DescribeSecurityGroups(ctx, nil)
 		requireNoError(t, err)
-		assertEqual(t, 2, len(sgs))
+		// sg1 + sg2 + the VPC's auto-created default security group.
+		assertEqual(t, 3, len(sgs))
 	})
 
 	t.Run("by ID", func(t *testing.T) {
