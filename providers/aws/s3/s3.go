@@ -781,12 +781,21 @@ func (m *Mock) resolveCopySourceVersion(
 
 // checkCopyPreconditions evaluates the four x-amz-copy-source-if-* headers
 // against the source, returning FailedPrecondition when one is not satisfied.
+//
+// AWS's CopyObject API reference documents a combined-precedence override: when
+// both x-amz-copy-source-if-match and x-amz-copy-source-if-unmodified-since are
+// present and if-match evaluates true, S3 returns 200 OK and copies the data
+// even if if-unmodified-since evaluates false. if-match therefore overrides the
+// if-unmodified-since result rather than the two being independently ANDed.
 func checkCopyPreconditions(req *driver.CopyObjectRequest, src *copySrcSnapshot) error {
+	etag := strings.Trim(src.etag, `"`)
+	skipUnmodified := req.IfMatch != "" && !req.IfUnmodifiedSince.IsZero() && etagMatches(req.IfMatch, etag)
+
 	if err := checkCopyETagPreconditions(req, src.etag); err != nil {
 		return err
 	}
 
-	return checkCopyTimePreconditions(req, src.lastModified)
+	return checkCopyTimePreconditions(req, src.lastModified, skipUnmodified)
 }
 
 func checkCopyETagPreconditions(req *driver.CopyObjectRequest, etag string) error {
@@ -803,7 +812,10 @@ func checkCopyETagPreconditions(req *driver.CopyObjectRequest, etag string) erro
 	return nil
 }
 
-func checkCopyTimePreconditions(req *driver.CopyObjectRequest, lastModified string) error {
+// checkCopyTimePreconditions evaluates the two time-based copy-source headers.
+// skipUnmodified suppresses the if-unmodified-since check when a true if-match
+// header has taken precedence over it (see checkCopyPreconditions).
+func checkCopyTimePreconditions(req *driver.CopyObjectRequest, lastModified string, skipUnmodified bool) error {
 	if req.IfUnmodifiedSince.IsZero() && req.IfModifiedSince.IsZero() {
 		return nil
 	}
@@ -813,7 +825,7 @@ func checkCopyTimePreconditions(req *driver.CopyObjectRequest, lastModified stri
 		return nil // an unparseable timestamp can't be evaluated; do not block the copy
 	}
 
-	if !req.IfUnmodifiedSince.IsZero() && mod.After(req.IfUnmodifiedSince) {
+	if !skipUnmodified && !req.IfUnmodifiedSince.IsZero() && mod.After(req.IfUnmodifiedSince) {
 		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-unmodified-since precondition failed")
 	}
 
@@ -1236,7 +1248,7 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 	}
 
 	if v.deleteMarker {
-		return nil, driver.ErrDeleteMarker
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
 	}
 
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: versionID}, v.data)
@@ -1270,7 +1282,7 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 	}
 
 	if v.deleteMarker {
-		return nil, driver.ErrDeleteMarker
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
 	}
 
 	info := infoFromVersion(key, v)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
@@ -82,6 +83,21 @@ func TestCopyObjectV2Preconditions(t *testing.T) {
 		IfMatch: info.ETag,
 	}); err != nil {
 		t.Fatalf("CopyObjectV2 matching if-match: %v", err)
+	}
+
+	// Documented override: with both headers present and if-match true, a false
+	// if-unmodified-since (a time before the source's last modification) does not
+	// block the copy — if-match takes precedence and S3 returns 200 OK.
+	mod, perr := time.Parse(s3TimeFormat, info.LastModified)
+	if perr != nil {
+		t.Fatalf("parse LastModified %q: %v", info.LastModified, perr)
+	}
+
+	if _, err := m.CopyObjectV2(ctx, &driver.CopyObjectRequest{
+		DstBucket: "b", DstKey: "override", Src: driver.CopySource{Bucket: "b", Key: "src"},
+		IfMatch: info.ETag, IfUnmodifiedSince: mod.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("CopyObjectV2 if-match overriding if-unmodified-since: %v", err)
 	}
 }
 

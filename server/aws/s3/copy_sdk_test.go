@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -290,6 +291,82 @@ func TestSDKCopyObjectConditional(t *testing.T) {
 		CopySourceIfNoneMatch: aws.String(etag),
 	})
 	assertAPICode(t, err, "PreconditionFailed")
+}
+
+// TestSDKCopyObjectIfMatchOverridesUnmodifiedSince verifies AWS's documented
+// combined-precedence override: with both x-amz-copy-source-if-match and
+// x-amz-copy-source-if-unmodified-since present and if-match true, S3 returns
+// 200 OK and copies even though if-unmodified-since evaluates false (the source
+// was modified after the supplied time). The two headers are not independent.
+func TestSDKCopyObjectIfMatchOverridesUnmodifiedSince(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	mustCreateBucket(t, client, "ovr")
+	putObject(t, client, "ovr", "src", "data", "", nil)
+
+	head, err := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String("ovr"), Key: aws.String("src")})
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+
+	// A time before the source's last modification: if-unmodified-since alone
+	// evaluates false (the source was modified since) and would fail with 412.
+	past := aws.ToTime(head.LastModified).Add(-1 * time.Hour)
+
+	if _, err := client.CopyObject(ctx, &awss3.CopyObjectInput{
+		Bucket: aws.String("ovr"), Key: aws.String("dst"), CopySource: aws.String("ovr/src"),
+		CopySourceIfMatch:           head.ETag,
+		CopySourceIfUnmodifiedSince: aws.Time(past),
+	}); err != nil {
+		t.Fatalf("CopyObject (if-match overrides if-unmodified-since): %v", err)
+	}
+
+	if got := getBody(t, client, "ovr", "dst"); got != "data" {
+		t.Fatalf("override copy body = %q, want data", got)
+	}
+}
+
+// TestSDKUploadPartCopyConditional verifies UploadPartCopy honours the same
+// copy-source preconditions as CopyObject: a mismatched if-match fails the part
+// copy with 412 PreconditionFailed.
+func TestSDKUploadPartCopyConditional(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	mustCreateBucket(t, client, "upcc")
+	putObject(t, client, "upcc", "src", "COPIED-PART-DATA", "", nil)
+
+	created, err := client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+		Bucket: aws.String("upcc"), Key: aws.String("dst"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+
+	uploadID := aws.ToString(created.UploadId)
+
+	_, err = client.UploadPartCopy(ctx, &awss3.UploadPartCopyInput{
+		Bucket: aws.String("upcc"), Key: aws.String("dst"), UploadId: aws.String(uploadID),
+		PartNumber: aws.Int32(1), CopySource: aws.String("upcc/src"),
+		CopySourceIfMatch: aws.String("\"0000000000000000000000000000dead\""),
+	})
+	assertAPICode(t, err, "PreconditionFailed")
+	assertStatus(t, err, 412)
+
+	// A matching if-match lets the part copy proceed.
+	head, err := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String("upcc"), Key: aws.String("src")})
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+
+	if _, err := client.UploadPartCopy(ctx, &awss3.UploadPartCopyInput{
+		Bucket: aws.String("upcc"), Key: aws.String("dst"), UploadId: aws.String(uploadID),
+		PartNumber: aws.Int32(1), CopySource: aws.String("upcc/src"),
+		CopySourceIfMatch: head.ETag,
+	}); err != nil {
+		t.Fatalf("UploadPartCopy (matching if-match): %v", err)
+	}
 }
 
 // TestSDKCopyObjectSelfCopy verifies self-copy with the default COPY directive

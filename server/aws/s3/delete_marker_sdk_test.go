@@ -61,6 +61,12 @@ func TestSDKGetDeleteMarkerVersion(t *testing.T) {
 		t.Fatalf("missing x-amz-delete-marker: true header; got %q", re.Response.Header.Get("x-amz-delete-marker"))
 	}
 
+	// S3 documents the delete marker's Last-Modified timestamp as part of the 405
+	// response for a version-addressed GET of a delete marker.
+	if re.Response.Header.Get("Last-Modified") == "" {
+		t.Fatalf("missing Last-Modified header on delete-marker 405 response")
+	}
+
 	// HEAD of the same delete-marker version is likewise a 405.
 	_, err = client.HeadObject(ctx, &awss3.HeadObjectInput{
 		Bucket: aws.String("dmb"), Key: aws.String("k"), VersionId: aws.String(markerID),

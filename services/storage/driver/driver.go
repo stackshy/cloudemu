@@ -15,6 +15,19 @@ import (
 // response instead of NoSuchKey.
 var ErrDeleteMarker = cerrors.New(cerrors.NotFound, "the specified version is a delete marker")
 
+// DeleteMarkerError carries the delete marker's LastModified timestamp alongside
+// the ErrDeleteMarker sentinel. S3 returns that timestamp in the Last-Modified
+// header of the 405 response for a version-addressed GET/HEAD of a delete marker,
+// so providers return this (it unwraps to ErrDeleteMarker, so errors.Is still
+// matches) to let the wire layer emit the header.
+type DeleteMarkerError struct {
+	LastModified string
+}
+
+func (*DeleteMarkerError) Error() string { return ErrDeleteMarker.Error() }
+
+func (*DeleteMarkerError) Unwrap() error { return ErrDeleteMarker }
+
 // BucketInfo describes a storage bucket.
 type BucketInfo struct {
 	Name      string

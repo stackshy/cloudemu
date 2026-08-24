@@ -121,6 +121,11 @@ func (h *Handler) getBucketConfig(w http.ResponseWriter, r *http.Request, bucket
 	// (CreateBucketConfiguration.LocationConstraint); us-east-1 is the empty
 	// constraint. It is derived from bucket state, never a stored document.
 	if sub == subLocation {
+		if !h.bucketExists(r.Context(), bucket) {
+			writeError(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist")
+			return
+		}
+
 		region := h.bucketRegion(r.Context(), bucket)
 		if region == usEast1 {
 			region = ""

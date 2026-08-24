@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -424,6 +425,23 @@ func (h *Handler) bucketRegion(ctx context.Context, bucket string) string {
 	}
 
 	return ""
+}
+
+// bucketExists reports whether a bucket with the given name exists. Used by
+// bucket-scoped sub-resources that must 404 NoSuchBucket for an absent bucket.
+func (h *Handler) bucketExists(ctx context.Context, bucket string) bool {
+	buckets, err := h.bucket.ListBuckets(ctx)
+	if err != nil {
+		return false
+	}
+
+	for _, b := range buckets {
+		if b.Name == bucket {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -1076,6 +1094,61 @@ func applyCopyConditions(req *driver.CopyObjectRequest, hdr http.Header) {
 	}
 }
 
+// evalCopySourceConditions evaluates the x-amz-copy-source-if-* request headers
+// against a resolved source object, returning a FailedPrecondition error (mapped
+// to 412 by writeCopyErr) when a precondition is not satisfied. UploadPartCopy
+// honors the same four copy-source conditions — and the same documented
+// combined-precedence override, where a true if-match overrides a false
+// if-unmodified-since — as CopyObject.
+func evalCopySourceConditions(hdr http.Header, etag, lastModified string) error {
+	etag = strings.Trim(etag, `"`)
+	ifMatch := hdr.Get("X-Amz-Copy-Source-If-Match")
+	ifNoneMatch := hdr.Get("X-Amz-Copy-Source-If-None-Match")
+
+	if ifMatch != "" && !copySourceETagMatches(ifMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-match precondition failed")
+	}
+
+	if ifNoneMatch != "" && copySourceETagMatches(ifNoneMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-none-match precondition failed")
+	}
+
+	skipUnmodified := ifMatch != "" && copySourceETagMatches(ifMatch, etag)
+
+	return evalCopySourceTimeConditions(hdr, lastModified, skipUnmodified)
+}
+
+// evalCopySourceTimeConditions evaluates the two time-based copy-source headers.
+func evalCopySourceTimeConditions(hdr http.Header, lastModified string, skipUnmodified bool) error {
+	mod, err := time.Parse(time.RFC3339, lastModified)
+	if err != nil {
+		return nil // an unparseable timestamp can't be evaluated; don't block the copy
+	}
+
+	if v := hdr.Get("X-Amz-Copy-Source-If-Unmodified-Since"); v != "" && !skipUnmodified {
+		if t, perr := http.ParseTime(v); perr == nil && mod.After(t) {
+			return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-unmodified-since precondition failed")
+		}
+	}
+
+	if v := hdr.Get("X-Amz-Copy-Source-If-Modified-Since"); v != "" {
+		if t, perr := http.ParseTime(v); perr == nil && !mod.After(t) {
+			return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-modified-since precondition failed")
+		}
+	}
+
+	return nil
+}
+
+// copySourceETagMatches reports whether a copy-source-if-[none-]match header
+// value matches the source ETag: "*" matches any object; otherwise a
+// quote-insensitive, case-insensitive comparison.
+func copySourceETagMatches(header, etag string) bool {
+	header = strings.Trim(header, `"`)
+
+	return header == "*" || strings.EqualFold(header, etag)
+}
+
 // writeCopyErr maps a copy driver error: a failed copy-source precondition is
 // 412 PreconditionFailed; everything else follows the standard mapping.
 func writeCopyErr(w http.ResponseWriter, err error) {
@@ -1108,6 +1181,11 @@ func (h *Handler) uploadPartCopy(w http.ResponseWriter, r *http.Request, bucket,
 	obj, err := h.copySourceObject(r.Context(), srcBucket, srcKey, srcVersionID)
 	if err != nil {
 		writeCopyErr(w, err)
+		return
+	}
+
+	if condErr := evalCopySourceConditions(r.Header, obj.Info.ETag, obj.Info.LastModified); condErr != nil {
+		writeCopyErr(w, condErr)
 		return
 	}
 
@@ -1592,6 +1670,12 @@ func writeDeleteMarker(w http.ResponseWriter, err error, versionID string) bool 
 
 	w.Header().Set("X-Amz-Delete-Marker", "true")
 	w.Header().Set("Allow", "DELETE")
+
+	// S3 returns the delete marker's Last-Modified timestamp in the 405 response.
+	var dm *driver.DeleteMarkerError
+	if errors.As(err, &dm) && dm.LastModified != "" {
+		w.Header().Set("Last-Modified", wire.ToHTTPDate(dm.LastModified))
+	}
 
 	if versionID != "" {
 		w.Header().Set("X-Amz-Version-Id", versionID)
