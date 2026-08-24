@@ -71,7 +71,7 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 
 	if rt.IsMain {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: cannot delete the main route table %q of vpc %q", id, rt.VPCID)
+			"cannot delete the main route table %q of vpc %q", id, rt.VPCID)
 	}
 
 	// Real EC2 refuses to delete a route table still associated with a subnet;
@@ -79,7 +79,7 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 	for _, a := range m.rtAssocs.All() {
 		if a.RouteTableID == id && !a.Main {
 			return errors.Newf(errors.FailedPrecondition,
-				"DependencyViolation: route table %q has a subnet association %q and cannot be deleted", id, a.ID)
+				"route table %q has a subnet association %q and cannot be deleted", id, a.ID)
 		}
 	}
 

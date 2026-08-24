@@ -368,18 +368,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // writeErr maps canonical cloudemu errors to IAM XML error responses.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusConflict, alreadyExistsCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusConflict, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidInput", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusConflict, "DeleteConflict", err.Error())
+		awsquery.WriteXMLError(w, http.StatusConflict, "DeleteConflict", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		awsquery.WriteXMLError(w, http.StatusConflict, "LimitExceeded", err.Error())
+		awsquery.WriteXMLError(w, http.StatusConflict, "LimitExceeded", msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }
