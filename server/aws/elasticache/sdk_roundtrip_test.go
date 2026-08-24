@@ -200,6 +200,33 @@ func TestSDKElastiCacheLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKCreateCacheClusterRejectsMultiNodeRedis proves the per-engine
+// NumCacheNodes limits: Redis/Valkey clusters must have exactly one node, and a
+// Memcached cluster cannot exceed 40 — both surface as InvalidParameterValue.
+func TestSDKCreateCacheClusterRejectsMultiNodeRedis(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("r"), Engine: aws.String("redis"),
+		CacheNodeType: aws.String("cache.t3.micro"), NumCacheNodes: aws.Int32(3),
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValue" {
+		t.Fatalf("CreateCacheCluster(redis, 3 nodes): got %v, want InvalidParameterValue", err)
+	}
+
+	_, err = client.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("mc-big"), Engine: aws.String("memcached"),
+		CacheNodeType: aws.String("cache.t3.micro"), NumCacheNodes: aws.Int32(41),
+	})
+
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValue" {
+		t.Fatalf("CreateCacheCluster(memcached, 41 nodes): got %v, want InvalidParameterValue", err)
+	}
+}
+
 func TestSDKElastiCacheNotFound(t *testing.T) {
 	client := newSDKClient(t)
 

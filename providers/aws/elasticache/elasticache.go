@@ -45,7 +45,33 @@ const (
 
 	defaultRedisVersion     = "7.1"
 	defaultMemcachedVersion = "1.6.22"
+
+	// maxMemcachedNodes is the ElastiCache ceiling on Memcached nodes per cluster;
+	// Redis/Valkey clusters must have exactly one node.
+	maxMemcachedNodes = 40
 )
+
+// validateNodeCount enforces the per-engine NumCacheNodes limits real
+// ElastiCache applies: Memcached allows 1-40 nodes, while Redis/Valkey clusters
+// must have exactly 1 (a larger count is InvalidParameterValue, not silently
+// accepted).
+func validateNodeCount(engine string, numNodes int) error {
+	if engine == engineMemcached {
+		if numNodes > maxMemcachedNodes {
+			return errors.Newf(errors.InvalidArgument,
+				"NumCacheNodes must be between 1 and %d for Memcached", maxMemcachedNodes)
+		}
+
+		return nil
+	}
+
+	if numNodes > 1 {
+		return errors.Newf(errors.InvalidArgument,
+			"NumCacheNodes must be 1 for engine %q", engine)
+	}
+
+	return nil
+}
 
 // cacheARN builds an ElastiCache cluster ARN.
 func (m *Mock) cacheARN(name string) string {
@@ -144,6 +170,10 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	numNodes := cfg.NumCacheNodes
 	if numNodes < 1 {
 		numNodes = 1
+	}
+
+	if err := validateNodeCount(engine, numNodes); err != nil {
+		return nil, err
 	}
 
 	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
