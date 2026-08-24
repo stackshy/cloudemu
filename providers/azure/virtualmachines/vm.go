@@ -457,12 +457,19 @@ func (m *Mock) UpdateInstance(_ context.Context, instanceID string, cfg driver.I
 }
 
 // GeneralizeInstance marks an instance as generalized (Azure Generalize
-// action), a precondition for capturing it into a reusable image. It is
-// idempotent: generalizing an already-generalized VM succeeds.
+// action), a precondition for capturing it into a reusable image. Real Azure
+// requires the VM to be stopped or deallocated first: generalizing a running VM
+// is rejected. It is otherwise idempotent — generalizing an already-generalized
+// (and still stopped/deallocated) VM succeeds.
 func (m *Mock) GeneralizeInstance(_ context.Context, instanceID string) error {
 	inst, ok := m.instances.Get(instanceID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if inst.PowerState == powerStateRunning {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"instance %q must be stopped or deallocated before it can be generalized", instanceID)
 	}
 
 	inst.Generalized = true

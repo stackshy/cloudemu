@@ -2,10 +2,13 @@ package virtualmachines_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v5"
@@ -40,6 +43,21 @@ func createSDKVM(t *testing.T, client *armcompute.VirtualMachinesClient, name st
 	}
 }
 
+// deallocateSDKVM deallocates a VM through the real SDK and polls to completion.
+func deallocateSDKVM(t *testing.T, client *armcompute.VirtualMachinesClient, name string) {
+	t.Helper()
+
+	poller, err := client.BeginDeallocate(context.Background(), "rg-1", name, nil)
+	if err != nil {
+		t.Fatalf("BeginDeallocate %s: %v", name, err)
+	}
+
+	if _, err := poller.PollUntilDone(context.Background(),
+		&runtime.PollUntilDoneOptions{Frequency: time.Millisecond}); err != nil {
+		t.Fatalf("deallocate poll %s: %v", name, err)
+	}
+}
+
 // TestSDKGeneralizeAndCapture verifies the golden-image workflow: capturing a
 // VM before it is generalized is rejected, and after Generalize the Capture
 // action returns a VirtualMachineCaptureResult template.
@@ -64,6 +82,14 @@ func TestSDKGeneralizeAndCapture(t *testing.T) {
 		}, nil); err == nil {
 		t.Fatal("expected Capture of a non-generalized VM to fail")
 	}
+
+	// Generalize before the VM is stopped/deallocated must be rejected: real
+	// Azure requires the VM to be deallocated first.
+	if _, err := client.Generalize(ctx, "rg-1", "img-vm", nil); err == nil {
+		t.Fatal("expected Generalize of a running VM to fail")
+	}
+
+	deallocateSDKVM(t, client, "img-vm")
 
 	if _, err := client.Generalize(ctx, "rg-1", "img-vm", nil); err != nil {
 		t.Fatalf("Generalize: %v", err)
@@ -90,6 +116,39 @@ func TestSDKGeneralizeAndCapture(t *testing.T) {
 
 	if len(res.Resources) == 0 {
 		t.Error("capture result missing resources template")
+	}
+}
+
+// TestSDKGeneralizeRunningVMConflict asserts Generalize on a running VM is
+// rejected with a 409 Conflict / OperationNotAllowed, matching real Azure.
+func TestSDKGeneralizeRunningVMConflict(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{VirtualMachines: cloudP.VirtualMachines})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newSDKClient(t, ts)
+	ctx := context.Background()
+
+	createSDKVM(t, client, "run-vm")
+
+	_, err := client.Generalize(ctx, "rg-1", "run-vm", nil)
+	if err == nil {
+		t.Fatal("expected Generalize of a running VM to fail")
+	}
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected *azcore.ResponseError, got %T: %v", err, err)
+	}
+
+	if respErr.StatusCode != http.StatusConflict {
+		t.Errorf("status = %d, want %d", respErr.StatusCode, http.StatusConflict)
+	}
+
+	if respErr.ErrorCode != "OperationNotAllowed" {
+		t.Errorf("error code = %q, want %q", respErr.ErrorCode, "OperationNotAllowed")
 	}
 }
 

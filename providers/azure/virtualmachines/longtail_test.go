@@ -19,6 +19,12 @@ func TestGeneralizeInstance(t *testing.T) {
 
 	id := insts[0].ID
 
+	// A running VM cannot be generalized — Azure requires it to be stopped or
+	// deallocated first.
+	require.Error(t, m.GeneralizeInstance(ctx, id), "generalize should reject a running VM")
+
+	// Deallocate, then generalize succeeds.
+	require.NoError(t, m.Deallocate(ctx, id))
 	require.NoError(t, m.GeneralizeInstance(ctx, id))
 
 	got, err := m.DescribeInstances(ctx, []string{id}, nil)

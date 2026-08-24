@@ -42,6 +42,12 @@ const (
 	stateTerminated = "terminated"
 )
 
+// ARM PowerState codes (the suffix after "PowerState/") a VM may report.
+const (
+	powerCodeStopped     = "stopped"
+	powerCodeDeallocated = "deallocated"
+)
+
 // createOrUpdate handles PUT virtualMachines/{name}. Maps the ARM JSON body
 // onto an InstanceConfig, calls RunInstances(count=1), and replies with an
 // ARM-shaped vmResponse.
@@ -319,6 +325,16 @@ func (h *Handler) generalize(w http.ResponseWriter, r *http.Request, rp azurearm
 	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	// Real Azure requires the VM to be stopped or deallocated before it can be
+	// generalized; generalizing a running (or otherwise not-stopped) VM is
+	// rejected with OperationNotAllowed / 409 Conflict.
+	if power := powerCode(inst); power != powerCodeStopped && power != powerCodeDeallocated {
+		azurearm.WriteError(w, http.StatusConflict, "OperationNotAllowed",
+			"the virtual machine must be stopped or deallocated before it can be generalized")
+
 		return
 	}
 
@@ -727,7 +743,7 @@ func powerStateFor(state string) string {
 	case statePending:
 		return "starting"
 	case stateStopped:
-		return "deallocated"
+		return powerCodeDeallocated
 	case stateStopping:
 		return "deallocating"
 	case stateTerminated:
