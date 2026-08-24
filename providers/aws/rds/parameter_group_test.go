@@ -48,30 +48,44 @@ func TestDBParameterGroupLifecycle(t *testing.T) {
 		t.Fatalf("DescribeDBParameters: %v", err)
 	}
 
-	if len(params) != 2 {
-		t.Fatalf("got %d params, want 2", len(params))
+	// Describe returns the full engine-default set with the two modifications
+	// overlaid as user-sourced (real RDS never returns an empty list).
+	if len(params) < 10 {
+		t.Fatalf("got %d params, want the full engine-default set", len(params))
+	}
+	if mc := findParam(params, "max_connections"); mc == nil || mc.Value != "200" || mc.Source != "user" {
+		t.Fatalf("max_connections = %+v, want value 200 source user", mc)
+	}
+	if sq := findParam(params, "slow_query_log"); sq == nil || sq.Value != "1" || sq.Source != "user" {
+		t.Fatalf("slow_query_log = %+v, want value 1 source user", sq)
+	}
+	if cs := findParam(params, "character_set_server"); cs == nil || cs.Source != "engine-default" {
+		t.Fatalf("unmodified character_set_server = %+v, want engine-default", cs)
 	}
 
-	if params[0].Source != "user" {
-		t.Errorf("param source = %q, want user", params[0].Source)
-	}
-
-	// Reset a named parameter.
+	// Resetting a named parameter reverts it to engine-default; the other stays.
 	if _, err := m.ResetDBParameterGroup(ctx, "pg-1", []string{"slow_query_log"}, false); err != nil {
 		t.Fatalf("ResetDBParameterGroup: %v", err)
 	}
 
-	if params, _ := m.DescribeDBParameters(ctx, "pg-1"); len(params) != 1 {
-		t.Fatalf("after reset one: got %d params, want 1", len(params))
+	params, _ = m.DescribeDBParameters(ctx, "pg-1")
+	if sq := findParam(params, "slow_query_log"); sq == nil || sq.Source != "engine-default" {
+		t.Fatalf("slow_query_log after reset = %+v, want engine-default", sq)
+	}
+	if mc := findParam(params, "max_connections"); mc == nil || mc.Source != "user" {
+		t.Fatalf("max_connections after resetting a different param = %+v, want still user", mc)
 	}
 
-	// Reset all.
+	// Reset all: every parameter reverts to engine-default.
 	if _, err := m.ResetDBParameterGroup(ctx, "pg-1", nil, true); err != nil {
 		t.Fatalf("ResetDBParameterGroup all: %v", err)
 	}
 
-	if params, _ := m.DescribeDBParameters(ctx, "pg-1"); len(params) != 0 {
-		t.Fatalf("after reset all: got %d params, want 0", len(params))
+	params, _ = m.DescribeDBParameters(ctx, "pg-1")
+	for i := range params {
+		if params[i].Source == "user" {
+			t.Fatalf("after reset all, %s is still user-sourced", params[i].Name)
+		}
 	}
 
 	// Delete, then describe-missing is NotFound.
@@ -103,9 +117,21 @@ func TestDBParameterGroupApplyMethodRoundTrips(t *testing.T) {
 		t.Fatalf("DescribeDBParameters: %v", err)
 	}
 
-	if len(params) != 1 || params[0].ApplyMethod != "immediate" {
-		t.Fatalf("ApplyMethod not preserved: %+v", params)
+	mc := findParam(params, "max_connections")
+	if mc == nil || mc.ApplyMethod != "immediate" || mc.Source != "user" {
+		t.Fatalf("ApplyMethod/source not preserved for max_connections: %+v", mc)
 	}
+}
+
+// findParam returns the parameter with the given name, or nil.
+func findParam(params []rdsdriver.Parameter, name string) *rdsdriver.Parameter {
+	for i := range params {
+		if params[i].Name == name {
+			return &params[i]
+		}
+	}
+
+	return nil
 }
 
 func TestDBParameterGroupCopy(t *testing.T) {
@@ -129,9 +155,10 @@ func TestDBParameterGroupCopy(t *testing.T) {
 		t.Errorf("copy metadata wrong: %+v", cp)
 	}
 
-	// The copy carries the source's parameters.
-	if params, _ := m.DescribeDBParameters(ctx, "dst"); len(params) != 1 || params[0].Name != "work_mem" {
-		t.Fatalf("copy did not carry params: %+v", params)
+	// The copy carries the source's user modification (over the engine defaults).
+	if params, _ := m.DescribeDBParameters(ctx, "dst"); findParam(params, "work_mem") == nil ||
+		findParam(params, "work_mem").Value != "64MB" || findParam(params, "work_mem").Source != "user" {
+		t.Fatalf("copy did not carry the work_mem modification: %+v", params)
 	}
 
 	// Copying onto an existing target is rejected.
@@ -283,8 +310,11 @@ func TestDBClusterParameterGroupLifecycle(t *testing.T) {
 		t.Fatalf("ModifyDBClusterParameterGroup: %v", err)
 	}
 
-	if params, _ := m.DescribeDBClusterParameters(ctx, "cpg-1"); len(params) != 1 {
-		t.Fatalf("got %d cluster params, want 1", len(params))
+	// Aurora-mysql defaults are returned with the modification overlaid.
+	if params, _ := m.DescribeDBClusterParameters(ctx, "cpg-1"); findParam(params, "character_set_server") == nil ||
+		findParam(params, "character_set_server").Value != "utf8mb4" ||
+		findParam(params, "character_set_server").Source != "user" {
+		t.Fatalf("cluster params missing the modification: got %d", len(params))
 	}
 
 	groups, err := m.DescribeDBClusterParameterGroups(ctx, nil)
