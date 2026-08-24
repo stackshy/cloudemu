@@ -164,9 +164,13 @@ func validateItemSize(item map[string]any) error {
 	return nil
 }
 
-// elementOverhead is the nominal per-element byte charge added when sizing a
-// list, map or set, approximating DynamoDB's per-element structural cost.
+// elementOverhead is the 1 byte DynamoDB charges per List or Map element, on
+// top of the element's own value size.
 const elementOverhead = 1
+
+// documentContainerOverhead is the flat 3 bytes DynamoDB charges for any List
+// or Map attribute, regardless of its contents.
+const documentContainerOverhead = 3
 
 // numberSetElementSize is a nominal per-number byte cost used when sizing a
 // number set, whose elements are parsed floats with no retained source text.
@@ -197,14 +201,14 @@ func valueSize(val any) int {
 func collectionSize(val any) int {
 	switch v := val.(type) {
 	case []any:
-		total := 0
+		total := documentContainerOverhead
 		for _, e := range v {
 			total += valueSize(e) + elementOverhead
 		}
 
 		return total
 	case map[string]any:
-		total := 0
+		total := documentContainerOverhead
 		for name, e := range v {
 			total += len(name) + valueSize(e) + elementOverhead
 		}
@@ -213,16 +217,16 @@ func collectionSize(val any) int {
 	case expr.StringSet:
 		total := 0
 		for _, s := range v {
-			total += len(s) + elementOverhead
+			total += len(s)
 		}
 
 		return total
 	case expr.NumberSet:
-		return len(v) * (numberSetElementSize + elementOverhead)
+		return len(v) * numberSetElementSize
 	case expr.BinarySet:
 		total := 0
 		for _, b := range v {
-			total += len(b) + elementOverhead
+			total += len(b)
 		}
 
 		return total

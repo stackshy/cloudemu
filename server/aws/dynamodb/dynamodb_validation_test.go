@@ -229,6 +229,46 @@ func TestDDBPutItemUnderMaxSizeSucceeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestDDBUpdateItemExceedsMaxSize: an UpdateItem whose SET grows the item past
+// the 400 KB ceiling is a ValidationException naming the maximum allowed size.
+func TestDDBUpdateItemExceedsMaxSize(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "upd_big", "id", "")
+	suiteDDBPut(t, client, "upd_big", map[string]ddbtypes.AttributeValue{"id": sAttr("k1")})
+
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String("upd_big"),
+		Key:                       map[string]ddbtypes.AttributeValue{"id": sAttr("k1")},
+		UpdateExpression:          aws.String("SET blob = :b"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":b": sAttr(strings.Repeat("a", 500*1024))},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+	assert.Contains(t, err.Error(), "maximum allowed size")
+}
+
+// TestDDBUpdateItemUnderMaxSizeSucceeds: an UpdateItem whose result stays under
+// 400 KB is accepted, guarding against an over-eager post-update size check.
+func TestDDBUpdateItemUnderMaxSizeSucceeds(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "upd_ok", "id", "")
+	suiteDDBPut(t, client, "upd_ok", map[string]ddbtypes.AttributeValue{"id": sAttr("k1")})
+
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String("upd_ok"),
+		Key:                       map[string]ddbtypes.AttributeValue{"id": sAttr("k1")},
+		UpdateExpression:          aws.String("SET blob = :b"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":b": sAttr(strings.Repeat("a", 100*1024))},
+	})
+
+	require.NoError(t, err)
+}
+
 // TestDDBUpdateTableAddGSIWithoutAttrDef: creating a GSI via UpdateTable whose
 // key attribute is not supplied in the request AttributeDefinitions is a
 // ValidationException.
