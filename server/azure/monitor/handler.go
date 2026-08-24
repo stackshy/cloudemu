@@ -163,8 +163,10 @@ func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath, kind st
 }
 
 func (h *Handler) delete(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
+	// Azure DELETE is idempotent: a missing metricAlert/actionGroup/activityLogAlert
+	// returns 204 No Content ("resource does not exist"), not a 404 error body.
 	if !h.store.delete(kind, rp.ResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", kind+" "+rp.ResourceName+" not found")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

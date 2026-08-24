@@ -249,3 +249,18 @@ func TestActivityLogAlertCRUD(t *testing.T) {
 		t.Errorf("condition dropped: %+v", got["properties"])
 	}
 }
+
+// TestInsightsDeleteMissingIsNoContent asserts DELETE on a metricAlert,
+// actionGroup or activityLogAlert that does not exist returns 204 No Content
+// (idempotent), matching the Azure Monitor REST contract, not a 404.
+func TestInsightsDeleteMissingIsNoContent(t *testing.T) {
+	ts, _ := newMonitorServer(t)
+
+	for _, typ := range []string{"metricAlerts", "actionGroups", "activityLogAlerts"} {
+		url := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/" + typ + "/nope" + apiVer
+
+		if code, body := doJSON(t, ts, http.MethodDelete, url, ""); code != http.StatusNoContent {
+			t.Errorf("DELETE missing %s = %d, want 204; body = %v", typ, code, body)
+		}
+	}
+}

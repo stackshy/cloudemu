@@ -136,3 +136,16 @@ func TestDiagnosticSettings(t *testing.T) {
 		t.Errorf("GET after delete = %d, want 404", code)
 	}
 }
+
+// TestDiagnosticSettingsDeleteMissingIsNoContent asserts DELETE on a
+// diagnosticSetting that does not exist returns 204 No Content (idempotent),
+// matching the Azure Monitor REST contract, not a 404 error body.
+func TestDiagnosticSettingsDeleteMissingIsNoContent(t *testing.T) {
+	ts, _ := newMonitorServer(t)
+
+	url := vmURI + "/providers/microsoft.insights/diagnosticSettings/never?api-version=2021-05-01-preview"
+
+	if code, body := doJSON(t, ts, http.MethodDelete, url, ""); code != http.StatusNoContent {
+		t.Errorf("DELETE missing status = %d, want 204; body = %v", code, body)
+	}
+}

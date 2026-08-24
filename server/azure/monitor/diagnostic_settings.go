@@ -129,8 +129,10 @@ func (h *DiagnosticSettingsHandler) delete(w http.ResponseWriter, uri, name stri
 
 	h.mu.Unlock()
 
+	// Azure DELETE is idempotent: a missing diagnosticSetting returns 204 No
+	// Content, not a 404 error body.
 	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "diagnosticSetting "+name+" not found")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
