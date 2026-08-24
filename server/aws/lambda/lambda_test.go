@@ -303,9 +303,25 @@ func TestEventSourceMappings(t *testing.T) {
 		t.Fatalf("get ESM status = %d", got.StatusCode)
 	}
 
-	// DELETE by UUID.
-	if del := doJSON(t, http.MethodDelete, esmURL+"/"+esm.UUID, ""); del.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete ESM status = %d", del.StatusCode)
+	// DELETE by UUID returns 202 with the full config in a Deleting state.
+	del := doJSON(t, http.MethodDelete, esmURL+"/"+esm.UUID, "")
+	if del.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete ESM status = %d, want 202", del.StatusCode)
+	}
+
+	var deleted struct {
+		UUID  string `json:"UUID"`
+		State string `json:"State"`
+	}
+
+	decode(t, del, &deleted)
+
+	if deleted.UUID != esm.UUID {
+		t.Fatalf("delete ESM UUID = %q, want %q", deleted.UUID, esm.UUID)
+	}
+
+	if deleted.State != "Deleting" {
+		t.Fatalf("delete ESM State = %q, want Deleting", deleted.State)
 	}
 }
 

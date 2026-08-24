@@ -74,12 +74,24 @@ func (h *Handler) serveEventSourceMappings(w http.ResponseWriter, r *http.Reques
 	case http.MethodPut:
 		h.updateEventSourceMapping(w, r, uuid)
 	case http.MethodDelete:
+		// AWS returns 202 with the full EventSourceMappingConfiguration whose
+		// State is "Deleting" (the mapping enters a Deleting state and is not
+		// fully removed for several seconds). Snapshot it before deleting so the
+		// SDK caller can read UUID/State/FunctionArn off the response.
+		info, err := h.fn.GetEventSourceMapping(r.Context(), uuid)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
 		if err := h.fn.DeleteEventSourceMapping(r.Context(), uuid); err != nil {
 			writeErr(w, err)
 			return
 		}
 
-		w.WriteHeader(http.StatusNoContent)
+		body := toESMJSON(info)
+		body.State = "Deleting"
+		writeJSON(w, http.StatusAccepted, body)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
@@ -167,7 +179,11 @@ func (h *Handler) updateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) listEventSourceMappings(w http.ResponseWriter, r *http.Request) {
-	// FunctionName is an optional filter carried as a query parameter.
+	// FunctionName and EventSourceArn are optional filters carried as query
+	// parameters. FunctionName is applied by the driver; EventSourceArn narrows
+	// the result further to mappings for a single event source.
+	eventSourceArn := r.URL.Query().Get("EventSourceArn")
+
 	infos, err := h.fn.ListEventSourceMappings(r.Context(), r.URL.Query().Get("FunctionName"))
 	if err != nil {
 		writeErr(w, err)
@@ -175,7 +191,12 @@ func (h *Handler) listEventSourceMappings(w http.ResponseWriter, r *http.Request
 	}
 
 	out := make([]eventSourceMappingJSON, 0, len(infos))
+
 	for i := range infos {
+		if eventSourceArn != "" && infos[i].EventSourceArn != eventSourceArn {
+			continue
+		}
+
 		out = append(out, toESMJSON(&infos[i]))
 	}
 
