@@ -380,10 +380,14 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
-	matched, scanned, err := m.matchQueryItems(td, pkField, skField, &input)
+	// Compile the FilterExpression up front so a malformed expression is
+	// rejected before any paging, matching AWS validation.
+	node, err := compileFilter(input.FilterExpression, input.ExprNames, input.ExprValues)
 	if err != nil {
 		return nil, err
 	}
+
+	candidates := m.keyMatchedItems(td, pkField, skField, &input)
 
 	limit := input.Limit
 	if limit <= 0 {
@@ -396,14 +400,24 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 	if input.IndexName != "" {
 		keyFields = append(keyFields, pkField, skField)
 	}
-	result, err := driver.PageOrdered(matched, pkField, skField, keyFields,
+	// Page the key-matched items FIRST — AWS reads up to Limit items and only
+	// then applies the FilterExpression. The returned page is the evaluated
+	// window, and PageOrdered's LastEvaluatedKey already points at the last
+	// evaluated item, present whenever more key-matched items remain (even if
+	// every item on this page is later filtered out).
+	result, err := driver.PageOrdered(candidates, pkField, skField, keyFields,
 		limit, input.PageToken, input.ExclusiveStartKey, input.SortDescending,
 		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
 		return nil, err
 	}
 
-	result.ScannedCount = scanned
+	// ScannedCount is the number of items evaluated for this page, before the
+	// FilterExpression is applied; the filter then trims Items and Count.
+	result.ScannedCount = len(result.Items)
+	if err = applyFilter(node, input.Filters, result); err != nil {
+		return nil, err
+	}
 
 	// A GSI query only exposes the index's projected attributes; an LSI query
 	// with no projection defaults to ALL_PROJECTED_ATTRIBUTES. When a
@@ -542,20 +556,16 @@ func projectToIndex(item map[string]any, attrs map[string]struct{}) map[string]a
 	return out
 }
 
-// matchQueryItems returns the items matching the key condition and filter, plus
-// the pre-filter scanned count (items that matched the key condition before the
-// FilterExpression), which the response surfaces as ScannedCount.
-func (m *Mock) matchQueryItems(
+// keyMatchedItems returns the live (non-expired) items whose key attributes
+// satisfy the KeyConditionExpression, in arbitrary order. The FilterExpression
+// is deliberately NOT applied here: AWS reads up to Limit of these items and
+// only then filters, so filtering happens after paging (see applyFilter).
+func (m *Mock) keyMatchedItems(
 	td *tableData, pkField, skField string, input *driver.QueryInput,
-) (matched []map[string]any, scanned int, err error) {
-	node, err := compileFilter(input.FilterExpression, input.ExprNames, input.ExprValues)
-	if err != nil {
-		return nil, 0, err
-	}
+) []map[string]any {
+	var matched []map[string]any
 
-	allItems := td.items.All()
-
-	for _, item := range allItems {
+	for _, item := range td.items.All() {
 		if m.isItemExpired(td, item) {
 			continue
 		}
@@ -564,21 +574,41 @@ func (m *Mock) matchQueryItems(
 			continue
 		}
 
-		scanned++
+		matched = append(matched, item)
+	}
 
-		// Apply the FilterExpression (post key-condition), matching real
-		// DynamoDB: Query filters the key-matched set the same way Scan does.
-		ok, ferr := passesFilter(node, input.Filters, item)
-		if ferr != nil {
-			return nil, 0, ferr
+	return matched
+}
+
+// applyFilter applies the FilterExpression (or legacy Filters) to an
+// already-paged result in place: it trims Items to those that pass and updates
+// Count. ScannedCount and LastEvaluatedKey are left untouched — AWS filters
+// after reading a page, so a fully filtered-out page still reports the items it
+// evaluated and a continuation key. A nil node with no legacy filters is a
+// no-op (Count then equals ScannedCount, as AWS documents for unfiltered
+// requests).
+func applyFilter(node expr.Node, legacy []driver.ScanFilter, result *driver.QueryResult) error {
+	if node == nil && len(legacy) == 0 {
+		return nil
+	}
+
+	kept := result.Items[:0]
+
+	for _, it := range result.Items {
+		ok, err := passesFilter(node, legacy, it)
+		if err != nil {
+			return err
 		}
 
 		if ok {
-			matched = append(matched, item)
+			kept = append(kept, it)
 		}
 	}
 
-	return matched, scanned, nil
+	result.Items = kept
+	result.Count = len(kept)
+
+	return nil
 }
 
 func matchesKeyCondition(item map[string]any, pkField, skField string, input *driver.QueryInput) bool {
@@ -620,12 +650,15 @@ func passesFilter(node expr.Node, legacy []driver.ScanFilter, item map[string]an
 	return matchesFilters(item, legacy), nil
 }
 
-// scanItems walks the table's items, skipping expired ones and (for an index
-// scan) those lacking the index partition key, returning the filter-matched set
-// and the pre-filter scanned count.
-func (m *Mock) scanItems(
-	td *tableData, node expr.Node, input *driver.ScanInput, idxPK string,
-) (matched []map[string]any, scanned int, err error) {
+// scanCandidates walks the table's items, skipping expired ones and (for an
+// index scan) those lacking the index partition key. The FilterExpression is
+// applied after paging (AWS reads up to Limit items, then filters), so it is
+// not applied here.
+func (m *Mock) scanCandidates(
+	td *tableData, idxPK string,
+) []map[string]any {
+	var matched []map[string]any
+
 	for _, item := range td.items.All() {
 		if m.isItemExpired(td, item) {
 			continue
@@ -637,19 +670,10 @@ func (m *Mock) scanItems(
 			}
 		}
 
-		scanned++
-
-		ok, ferr := passesFilter(node, input.Filters, item)
-		if ferr != nil {
-			return nil, 0, ferr
-		}
-
-		if ok {
-			matched = append(matched, item)
-		}
+		matched = append(matched, item)
 	}
 
-	return matched, scanned, nil
+	return matched
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
@@ -678,17 +702,16 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		}
 	}
 
-	matched, scanned, err := m.scanItems(td, node, &input, idxPK)
-	if err != nil {
-		return nil, err
-	}
+	candidates := m.scanCandidates(td, idxPK)
 
 	limit := input.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 
-	result, err := driver.PageOrdered(matched,
+	// Page FIRST, then filter — AWS reads up to Limit items and applies the
+	// FilterExpression to that evaluated window (see Query for the full note).
+	result, err := driver.PageOrdered(candidates,
 		td.config.PartitionKey, td.config.SortKey,
 		[]string{td.config.PartitionKey, td.config.SortKey},
 		limit, input.PageToken, input.ExclusiveStartKey, false,
@@ -697,7 +720,10 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		return nil, err
 	}
 
-	result.ScannedCount = scanned
+	result.ScannedCount = len(result.Items)
+	if err = applyFilter(node, input.Filters, result); err != nil {
+		return nil, err
+	}
 
 	if attrs, filtered := indexProjection(td.config, input.IndexName, input.ProjectionRequested); filtered {
 		for i, it := range result.Items {

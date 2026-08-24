@@ -162,6 +162,8 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	users = filterByPathPrefix(users, r.Form.Get("PathPrefix"), func(u *iamdriver.UserInfo) string { return u.Path })
+
 	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
 
 	start, end, marker, truncated := pageWindow(len(users), r.Form)
@@ -262,6 +264,8 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	roles = filterByPathPrefix(roles, r.Form.Get("PathPrefix"), func(role *iamdriver.RoleInfo) string { return role.Path })
+
 	sort.Slice(roles, func(i, j int) bool { return roles[i].Name < roles[j].Name })
 
 	start, end, marker, truncated := pageWindow(len(roles), r.Form)
@@ -357,6 +361,25 @@ func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 		Result:   listPoliciesResult{Policies: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// filterByPathPrefix returns only the entities whose path begins with prefix,
+// implementing the PathPrefix request parameter shared by ListUsers, ListRoles,
+// and ListGroups. An empty prefix (the default) returns everything unchanged.
+func filterByPathPrefix[T any](items []T, prefix string, path func(*T) string) []T {
+	if prefix == "" {
+		return items
+	}
+
+	out := items[:0]
+
+	for i := range items {
+		if strings.HasPrefix(path(&items[i]), prefix) {
+			out = append(out, items[i])
+		}
+	}
+
+	return out
 }
 
 // awsManagedPolicyPrefix is the ARN prefix AWS-published (managed) policies
@@ -729,6 +752,8 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+
+	groups = filterByPathPrefix(groups, r.Form.Get("PathPrefix"), func(g *iamdriver.GroupInfo) string { return g.Path })
 
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 

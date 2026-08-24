@@ -29,7 +29,13 @@ func pageWindow(token string, maxResults int32, defaultMax, total int) (start, e
 	}
 
 	limit := int(maxResults)
-	if limit <= 0 || limit > defaultMax {
+	if limit > defaultMax {
+		return 0, 0, "", cerrors.Newf(cerrors.InvalidArgument,
+			"1 validation error detected: Value '%d' at 'maxResults' failed to satisfy constraint: "+
+				"Member must have value less than or equal to %d", maxResults, defaultMax)
+	}
+
+	if limit <= 0 {
 		limit = defaultMax
 	}
 

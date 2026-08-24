@@ -64,6 +64,11 @@ type Mock struct {
 	rtAssocs       *memstore.Store[*rtAssocData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
 	nics           *memstore.Store[*nicData]
+	// azureVNetMeta / azureNSGMeta hold the ARM-specific fields the cross-cloud
+	// VPC / SecurityGroup model cannot represent (region, full address-prefix
+	// list, Azure security rules), keyed by the driver resource id.
+	azureVNetMeta *memstore.Store[driver.AzureVNetMetadata]
+	azureNSGMeta  *memstore.Store[driver.AzureNSGMetadata]
 	// nicMu serializes network-interface create/update, whose private-IP
 	// allocation is a read-modify-write across the nics store (memstore is
 	// per-op safe but can't make that sequence atomic).
@@ -87,6 +92,8 @@ func New(opts *config.Options) *Mock {
 		rtAssocs:       memstore.New[*rtAssocData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
 		nics:           memstore.New[*nicData](),
+		azureVNetMeta:  memstore.New[driver.AzureVNetMetadata](),
+		azureNSGMeta:   memstore.New[driver.AzureNSGMetadata](),
 		opts:           opts,
 	}
 }
@@ -250,6 +257,8 @@ func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver
 }
 
 // AddIngressRule adds an inbound security rule to the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -262,6 +271,8 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 }
 
 // AddEgressRule adds an outbound security rule to the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -274,6 +285,8 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 }
 
 // RemoveIngressRule removes a matching inbound rule from the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -291,6 +304,8 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 }
 
 // RemoveEgressRule removes a matching outbound rule from the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {

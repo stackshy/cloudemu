@@ -80,6 +80,8 @@ func (m *Mock) requireServer(server string) error {
 // ---- Databases ----
 
 // CreateDatabase adds a logical database to a server.
+//
+//nolint:gocritic // cfg matches the Databases capability interface signature.
 func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "database name is required")
@@ -143,9 +145,10 @@ func (m *Mock) ListDatabases(_ context.Context, server string) ([]rdsdriver.Data
 
 	out := []rdsdriver.Database{}
 
-	for _, db := range m.databases.SortedValues() {
-		if db.Server == server {
-			out = append(out, db)
+	vals := m.databases.SortedValues()
+	for i := range vals {
+		if vals[i].Server == server {
+			out = append(out, vals[i])
 		}
 	}
 

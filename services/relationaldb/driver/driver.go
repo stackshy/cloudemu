@@ -79,6 +79,11 @@ type InstanceConfig struct {
 	OptionGroupName      string
 	ClusterID            string // empty for standalone, set for Aurora cluster members
 	AvailabilityZone     string
+	// Location is the Azure region a managed server lives in (the ARM top-level
+	// "location"). It is distinct from AvailabilityZone, which on Azure Flexible
+	// Servers carries the compute zone id ("1"/"2"/"3"). Empty for AWS/GCP, which
+	// derive region from the endpoint/self-link.
+	Location string
 	// StorageEncrypted requests encryption-at-rest on the instance's storage
 	// (AWS RDS StorageEncrypted); false for engines with no such flag.
 	StorageEncrypted bool
@@ -125,6 +130,10 @@ type Instance struct {
 	OptionGroupName      string
 	ClusterID            string
 	AvailabilityZone     string
+	// Location is the Azure region the server lives in (ARM top-level "location"),
+	// echoed on read. It is distinct from AvailabilityZone (the Azure Flexible
+	// Server compute zone id). Empty for AWS/GCP.
+	Location string
 	// The fields below echo AWS RDS DBInstance attributes on read. They default
 	// to their zero value for engines (Azure/GCP) that have no such concept.
 	// DbiResourceId is the immutable region-unique resource id (db-XXXX...).
@@ -213,7 +222,10 @@ type ClusterConfig struct {
 	Encrypted          bool
 	PubliclyAccessible bool
 	AvailabilityZone   string
-	Tags               map[string]string
+	// Location is the Azure region an Azure SQL logical server lives in (ARM
+	// top-level "location"). Empty for AWS/GCP.
+	Location string
+	Tags     map[string]string
 }
 
 // Cluster describes an Aurora-style database cluster.
@@ -253,8 +265,11 @@ type Cluster struct {
 	PubliclyAccessible bool
 	AvailabilityZone   string
 	VpcID              string
-	CreatedAt          time.Time
-	Tags               map[string]string
+	// Location is the Azure region an Azure SQL logical server lives in (ARM
+	// top-level "location"), echoed on read. Empty for AWS/GCP.
+	Location  string
+	CreatedAt time.Time
+	Tags      map[string]string
 }
 
 // SnapshotConfig configures an instance snapshot.
@@ -384,6 +399,10 @@ type DatabaseConfig struct {
 	Name      string
 	Charset   string
 	Collation string
+	// Location is the Azure region the database lives in (ARM top-level
+	// "location"); Tags are the ARM resource tags. Both round-trip on read.
+	Location string
+	Tags     map[string]string
 	// SKUName / SKUTier are the database compute SKU (e.g. "GP_Gen5_2" /
 	// "GeneralPurpose") and ZoneRedundant is the HA flag — cost inputs a
 	// discoverer reads from an Azure SQL database's sku / properties.
@@ -400,6 +419,10 @@ type Database struct {
 	Charset   string
 	Collation string
 	ARN       string
+	// Location is the Azure region the database lives in (ARM top-level
+	// "location"); Tags are the ARM resource tags. Both echoed on read.
+	Location string
+	Tags     map[string]string
 	// SKUName / SKUTier / ZoneRedundant are echoed on read for cost discovery
 	// (Azure SQL database sku.name + properties.currentSku / zoneRedundant).
 	SKUName       string

@@ -50,15 +50,40 @@ var knownServerParameters = map[string]string{
 	"work_mem":                            "4096",
 	"maintenance_work_mem":                "65536",
 	"effective_cache_size":                "524288",
+	"effective_io_concurrency":            "1",
+	"random_page_cost":                    "4",
 	"log_statement":                       "none",
 	"log_min_duration_statement":          "-1",
+	"log_connections":                     "off",
+	"log_disconnections":                  "off",
+	"log_duration":                        "off",
+	"log_lock_waits":                      "off",
+	"log_checkpoints":                     "on",
 	"autovacuum":                          "on",
+	"autovacuum_max_workers":              "3",
+	"autovacuum_naptime":                  "60",
+	"autovacuum_vacuum_scale_factor":      "0.2",
+	"autovacuum_analyze_scale_factor":     "0.1",
 	"statement_timeout":                   "0",
-	"timezone":                            "UTC",
-	"max_wal_size":                        "1024",
-	"wal_level":                           "replica",
-	"max_prepared_transactions":           "0",
+	"lock_timeout":                        "0",
 	"idle_in_transaction_session_timeout": "0",
+	"timezone":                            "UTC",
+	"datestyle":                           "ISO, MDY",
+	"max_wal_size":                        "1024",
+	"min_wal_size":                        "80",
+	"wal_level":                           "replica",
+	"wal_buffers":                         "-1",
+	"checkpoint_timeout":                  "300",
+	"checkpoint_completion_target":        "0.9",
+	"max_prepared_transactions":           "0",
+	"max_worker_processes":                "8",
+	"max_parallel_workers":                "8",
+	"max_parallel_workers_per_gather":     "2",
+	"default_transaction_isolation":       "read committed",
+	"deadlock_timeout":                    "1000",
+	"temp_buffers":                        "8192",
+	"max_locks_per_transaction":           "64",
+	"ssl":                                 "on",
 }
 
 func childKey(server, name string) string { return server + "/" + name }
@@ -80,6 +105,8 @@ func (m *Mock) requireServer(server string) error {
 // ---- Databases ----
 
 // CreateDatabase adds a logical database to a server.
+//
+//nolint:gocritic // cfg matches the Databases capability interface signature.
 func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "database name is required")
@@ -148,9 +175,10 @@ func (m *Mock) ListDatabases(_ context.Context, server string) ([]rdsdriver.Data
 
 	out := []rdsdriver.Database{}
 
-	for _, db := range m.databases.SortedValues() {
-		if db.Server == server {
-			out = append(out, db)
+	vals := m.databases.SortedValues()
+	for i := range vals {
+		if vals[i].Server == server {
+			out = append(out, vals[i])
 		}
 	}
 
@@ -287,10 +315,11 @@ func (m *Mock) SetConfiguration(
 	conf, ok := m.configurations.Get(key)
 	if !ok {
 		conf = rdsdriver.Configuration{
-			Server:   cfg.Server,
-			Name:     cfg.Name,
-			DataType: "String",
-			ARN:      m.childARN(cfg.Server, "configurations", cfg.Name),
+			Server:       cfg.Server,
+			Name:         cfg.Name,
+			DataType:     "String",
+			DefaultValue: knownServerParameters[cfg.Name],
+			ARN:          m.childARN(cfg.Server, "configurations", cfg.Name),
 		}
 	}
 
@@ -328,12 +357,13 @@ func (m *Mock) GetConfiguration(_ context.Context, server, name string) (*rdsdri
 // defaultConfiguration builds the system-default view of a known parameter.
 func (m *Mock) defaultConfiguration(server, name, value string) *rdsdriver.Configuration {
 	return &rdsdriver.Configuration{
-		Server:   server,
-		Name:     name,
-		Value:    value,
-		Source:   "system-default",
-		DataType: "String",
-		ARN:      m.childARN(server, "configurations", name),
+		Server:       server,
+		Name:         name,
+		Value:        value,
+		Source:       "system-default",
+		DataType:     "String",
+		DefaultValue: value,
+		ARN:          m.childARN(server, "configurations", name),
 	}
 }
 

@@ -25,7 +25,11 @@ type Mock struct {
 	tgs       *memstore.Store[driver.TargetGroupInfo]
 	listeners *memstore.Store[driver.ListenerInfo]
 	rules     *memstore.Store[driver.RuleInfo]
-	opts      *config.Options
+	// azureLBs stores ARM load balancers natively (the full-replace nested
+	// resource the cross-cloud model above cannot represent), keyed by
+	// (resourceGroup, name).
+	azureLBs *memstore.Store[driver.AzureLoadBalancer]
+	opts     *config.Options
 
 	healthMu sync.RWMutex
 	health   map[string]map[string]*driver.TargetHealth // tgARN -> targetID -> health
@@ -41,6 +45,7 @@ func New(opts *config.Options) *Mock {
 		tgs:       memstore.New[driver.TargetGroupInfo](),
 		listeners: memstore.New[driver.ListenerInfo](),
 		rules:     memstore.New[driver.RuleInfo](),
+		azureLBs:  memstore.New[driver.AzureLoadBalancer](),
 		opts:      opts,
 		health:    make(map[string]map[string]*driver.TargetHealth),
 		attrs:     make(map[string]driver.LBAttributes),

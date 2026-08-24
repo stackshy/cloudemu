@@ -1,7 +1,9 @@
 package resourcegraph
 
 import (
+	"encoding/base64"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -68,8 +70,9 @@ type queryRequest struct {
 	Subscriptions []string `json:"subscriptions"`
 	Query         string   `json:"query"`
 	Options       struct {
-		Top  int `json:"$top"`
-		Skip int `json:"$skip"`
+		Top       int    `json:"$top"`
+		Skip      int    `json:"$skip"`
+		SkipToken string `json:"$skipToken"`
 	} `json:"options"`
 }
 
@@ -107,20 +110,31 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results = applyLimit(results, parsed.Limit, req.Options.Top, req.Options.Skip)
+	// The KQL `| limit N` caps the matching set; $top/$skip/$skipToken page over
+	// it. totalRecords is the size of that matching set (not the page), so a
+	// paged client can see how many rows exist beyond the current page.
+	matched := applyKQLLimit(results, parsed.Limit)
+	skip := effectiveSkip(req.Options.Skip, req.Options.SkipToken)
+	page := pageResults(matched, req.Options.Top, skip)
 
-	data := make([]map[string]any, 0, len(results))
-	for i := range results {
-		data = append(data, resourceToWire(&results[i], subscription))
+	data := make([]map[string]any, 0, len(page))
+	for i := range page {
+		data = append(data, resourceToWire(&page[i], subscription))
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
-		"totalRecords":    len(data),
+	resp := map[string]any{
+		"totalRecords":    len(matched),
 		"count":           len(data),
 		"data":            data,
 		"facets":          []any{},
 		"resultTruncated": "false",
-	})
+	}
+
+	if next := skip + len(page); next < len(matched) {
+		resp["$skipToken"] = encodeSkipToken(next)
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, resp)
 }
 
 // queryResourcesHistory returns the current inventory as a single point-in-time
@@ -182,28 +196,67 @@ func emptyResponse() map[string]any {
 	}
 }
 
-// applyLimit applies the caller-specified $top/$skip and any `| limit N` /
-// `| take N` from the KQL. The smaller of the two limits wins; $skip is
-// applied before slicing.
-func applyLimit(results []resourcediscovery.Resource, kqlLimit, top, skip int) []resourcediscovery.Resource {
-	if skip > 0 {
-		if skip >= len(results) {
-			return nil
-		}
-
-		results = results[skip:]
-	}
-
-	limit := top
-	if kqlLimit > 0 && (limit == 0 || kqlLimit < limit) {
-		limit = kqlLimit
-	}
-
-	if limit > 0 && limit < len(results) {
-		results = results[:limit]
+// applyKQLLimit caps the result set to the `| limit N` / `| take N` from the KQL
+// query. This is the query's own row cap, distinct from the $top paging control,
+// so it defines the total record count a client pages over.
+func applyKQLLimit(results []resourcediscovery.Resource, kqlLimit int) []resourcediscovery.Resource {
+	if kqlLimit > 0 && kqlLimit < len(results) {
+		return results[:kqlLimit]
 	}
 
 	return results
+}
+
+// pageResults returns the $top/$skip page of the matching set. skip past the end
+// yields an empty page; a top of 0 means no page cap.
+func pageResults(matched []resourcediscovery.Resource, top, skip int) []resourcediscovery.Resource {
+	if skip >= len(matched) {
+		return nil
+	}
+
+	page := matched[skip:]
+
+	if top > 0 && top < len(page) {
+		page = page[:top]
+	}
+
+	return page
+}
+
+// effectiveSkip resolves the paging offset: a $skipToken (an opaque continuation
+// cursor this handler issued) wins over a raw $skip.
+func effectiveSkip(skip int, token string) int {
+	if token != "" {
+		if n, ok := decodeSkipToken(token); ok {
+			return n
+		}
+	}
+
+	if skip > 0 {
+		return skip
+	}
+
+	return 0
+}
+
+// encodeSkipToken / decodeSkipToken wrap the next-page offset in an opaque
+// base64 cursor, matching how real Resource Graph returns $skipToken.
+func encodeSkipToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func decodeSkipToken(token string) (int, bool) {
+	raw, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return 0, false
+	}
+
+	n, err := strconv.Atoi(string(raw))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+
+	return n, true
 }
 
 // resourceToWire formats one Resource into the Azure Resource Graph row shape.

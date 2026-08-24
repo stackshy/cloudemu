@@ -70,7 +70,7 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		ID:       armServerID(subscription, resourceGroup, inst.ID),
 		Name:     inst.ID,
 		Type:     providerName + "/" + resourceFlexServers,
-		Location: inst.AvailabilityZone,
+		Location: inst.Location,
 		Tags:     inst.Tags,
 		SKU: &armSKU{
 			Name: inst.InstanceClass,

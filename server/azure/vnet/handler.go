@@ -181,17 +181,9 @@ func (h *Handler) createVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		return
 	}
 
-	cidr := ""
-	if req.Properties.AddressSpace != nil && len(req.Properties.AddressSpace.AddressPrefixes) > 0 {
-		cidr = req.Properties.AddressSpace.AddressPrefixes[0]
-	}
+	prefixes := vnetPrefixes(&req)
 
-	cfg := netdriver.VPCConfig{
-		CIDRBlock: cidr,
-		Tags:      mergeTags(req.Tags, armNameTag, rp.ResourceName),
-	}
-
-	info, err := h.net.CreateVPC(r.Context(), cfg)
+	info, err := h.upsertVNet(r.Context(), rp.ResourceName, prefixes, req.Tags)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -202,9 +194,97 @@ func (h *Handler) createVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		loc = defaultLoc
 	}
 
-	body := toVNetResponse(info, rp, loc, req.Properties.AddressSpace, nil)
+	if meta, ok := h.azureMeta(); ok {
+		_ = meta.PutAzureVNetMetadata(r.Context(), info.ID,
+			netdriver.AzureVNetMetadata{Location: loc, AddressPrefixes: prefixes})
+	}
 
-	writeAcceptedAsync(w, r, rp.Subscription, "vnet-create-"+rp.ResourceName, body)
+	// Materialize any inline subnets so they become real, addressable children
+	// (Subnets.Get resolves them) rather than a body-only echo.
+	if err := h.materializeSubnets(r.Context(), info.ID, req.Properties.Subnets); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, "vnet-create-"+rp.ResourceName, h.vnetResponse(r.Context(), info, rp))
+}
+
+// vnetPrefixes extracts the full address-prefix list from a vnet request.
+func vnetPrefixes(req *vnetRequest) []string {
+	if req.Properties.AddressSpace == nil {
+		return nil
+	}
+
+	return req.Properties.AddressSpace.AddressPrefixes
+}
+
+// upsertVNet reuses an existing virtual network of the same name (so a repeated
+// PUT updates in place rather than creating a duplicate) or creates a new one.
+func (h *Handler) upsertVNet(ctx context.Context, name string, prefixes []string,
+	tags map[string]string,
+) (*netdriver.VPCInfo, error) {
+	if existing, err := findVNetByName(ctx, h.net, name); err == nil {
+		if len(tags) > 0 {
+			_ = h.net.UpdateVPCTags(ctx, existing.ID, tags)
+
+			if refreshed, rerr := findVNetByName(ctx, h.net, name); rerr == nil {
+				existing = refreshed
+			}
+		}
+
+		return existing, nil
+	}
+
+	cidr := ""
+	if len(prefixes) > 0 {
+		cidr = prefixes[0]
+	}
+
+	return h.net.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: cidr,
+		Tags:      mergeTags(tags, armNameTag, name),
+	})
+}
+
+// materializeSubnets creates the inline subnets carried in a vnet PUT body,
+// skipping any that already exist (idempotent re-PUT).
+func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []subnetRequest) error {
+	if len(subs) == 0 {
+		return nil
+	}
+
+	existing, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	have := make(map[string]struct{})
+
+	for i := range existing {
+		if existing[i].VPCID == vpcID {
+			have[tagOr(existing[i].Tags, armSubnetTag, "")] = struct{}{}
+		}
+	}
+
+	for i := range subs {
+		if subs[i].Name == "" {
+			continue
+		}
+
+		if _, ok := have[subs[i].Name]; ok {
+			continue
+		}
+
+		if _, err := h.net.CreateSubnet(ctx, netdriver.SubnetConfig{
+			VPCID:     vpcID,
+			CIDRBlock: subs[i].Properties.AddressPrefix,
+			Tags:      mergeTags(nil, armSubnetTag, subs[i].Name),
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -215,12 +295,10 @@ func (h *Handler) getVNet(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 		return
 	}
 
-	subs, _ := h.net.DescribeSubnets(r.Context(), nil)
-
-	azurearm.WriteJSON(w, http.StatusOK, toVNetResponseFromInfo(info, rp, subs))
+	azurearm.WriteJSON(w, http.StatusOK, h.vnetResponse(r.Context(), info, rp))
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; mirrors listNSGs over a distinct resource type by design
 func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeVPCs(r.Context(), nil)
 	if err != nil {
@@ -228,13 +306,12 @@ func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	subs, _ := h.net.DescribeSubnets(r.Context(), nil)
 	out := vnetListResponse{}
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, armNameTag, infos[i].ID)
-		out.Value = append(out.Value, toVNetResponseFromInfo(&infos[i], scope, subs))
+		out.Value = append(out.Value, h.vnetResponse(r.Context(), &infos[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -248,12 +325,78 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		return
 	}
 
+	// A virtual network with a subnet still bound to a network interface cannot
+	// be deleted; ARM answers 400 with this code, which armnetwork switches on.
+	if h.vnetSubnetInUse(r.Context(), rp.ResourceName) {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted",
+			"virtual network "+rp.ResourceName+" has a subnet in use by a network interface")
+
+		return
+	}
+
+	// Cascade-delete the child subnets so they stop being globally addressable
+	// once their parent network is gone.
+	h.deleteChildSubnets(r.Context(), info.ID)
+
+	if meta, ok := h.azureMeta(); ok {
+		meta.DeleteAzureVNetMetadata(r.Context(), info.ID)
+	}
+
 	if err := h.net.DeleteVPC(r.Context(), info.ID); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
 	writeAcceptedAsync(w, r, rp.Subscription, "vnet-delete-"+rp.ResourceName, nil)
+}
+
+// deleteChildSubnets removes every subnet that belongs to the given vnet.
+func (h *Handler) deleteChildSubnets(ctx context.Context, vpcID string) {
+	subs, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return
+	}
+
+	for i := range subs {
+		if subs[i].VPCID == vpcID {
+			_ = h.net.DeleteSubnet(ctx, subs[i].ID)
+		}
+	}
+}
+
+// vnetSubnetInUse reports whether any network interface's ipConfiguration
+// references a subnet of the named virtual network.
+func (h *Handler) vnetSubnetInUse(ctx context.Context, vnetName string) bool {
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return false
+	}
+
+	nics, err := svc.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return false
+	}
+
+	for i := range nics {
+		for j := range nics[i].IPConfigs {
+			if subnetVNetName(nics[i].IPConfigs[j].SubnetID) == vnetName {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// subnetVNetName extracts the virtual-network name from an ARM subnet resource
+// id (.../virtualNetworks/{vnet}/subnets/{name}).
+func subnetVNetName(subnetID string) string {
+	sp, ok := azurearm.ParsePath(subnetID)
+	if !ok || sp.ResourceType != typeVNet {
+		return ""
+	}
+
+	return sp.ResourceName
 }
 
 // Subnet operations.
@@ -350,31 +493,7 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	// Find any VPC to anchor the SG; the driver requires a VPC ID. If no
-	// VPC exists we create a synthetic one.
-	vpcs, _ := h.net.DescribeVPCs(r.Context(), nil)
-
-	var anchor string
-
-	if len(vpcs) > 0 {
-		anchor = vpcs[0].ID
-	} else {
-		v, vErr := h.net.CreateVPC(r.Context(), netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
-		if vErr != nil {
-			azurearm.WriteCErr(w, vErr)
-			return
-		}
-
-		anchor = v.ID
-	}
-
-	cfg := netdriver.SecurityGroupConfig{
-		Name:  rp.ResourceName,
-		VPCID: anchor,
-		Tags:  mergeTags(req.Tags, armNSGTag, rp.ResourceName),
-	}
-
-	info, err := h.net.CreateSecurityGroup(r.Context(), cfg)
+	info, err := h.upsertNSG(r.Context(), rp.ResourceName, req.Tags)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -385,9 +504,46 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 		loc = defaultLoc
 	}
 
-	body := toNSGResponse(info, rp, loc, req.Properties.SecurityRules)
+	if meta, ok := h.azureMeta(); ok {
+		_ = meta.PutAzureNSGMetadata(r.Context(), info.ID, netdriver.AzureNSGMetadata{
+			Location:      loc,
+			SecurityRules: toAzureNSGRules(req.Properties.SecurityRules),
+		})
+	}
 
-	writeAcceptedAsync(w, r, rp.Subscription, "nsg-create-"+rp.ResourceName, body)
+	writeAcceptedAsync(w, r, rp.Subscription, "nsg-create-"+rp.ResourceName, h.nsgResponse(r.Context(), info, rp))
+}
+
+// upsertNSG reuses an existing NSG of the same name (idempotent re-PUT) or
+// creates one, anchoring the driver security group to any VPC (creating a
+// synthetic one when none exists, as the driver requires a VPC id).
+func (h *Handler) upsertNSG(ctx context.Context, name string,
+	tags map[string]string,
+) (*netdriver.SecurityGroupInfo, error) {
+	if existing, err := findNSGByName(ctx, h.net, name); err == nil {
+		return existing, nil
+	}
+
+	vpcs, _ := h.net.DescribeVPCs(ctx, nil)
+
+	var anchor string
+
+	if len(vpcs) > 0 {
+		anchor = vpcs[0].ID
+	} else {
+		v, vErr := h.net.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		if vErr != nil {
+			return nil, vErr
+		}
+
+		anchor = v.ID
+	}
+
+	return h.net.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		Name:  name,
+		VPCID: anchor,
+		Tags:  mergeTags(tags, armNSGTag, name),
+	})
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -398,10 +554,10 @@ func (h *Handler) getNSG(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toNSGResponse(info, rp, defaultLoc, nil))
+	azurearm.WriteJSON(w, http.StatusOK, h.nsgResponse(r.Context(), info, rp))
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; mirrors listVNets over a distinct resource type by design
 func (h *Handler) listNSGs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeSecurityGroups(r.Context(), nil)
 	if err != nil {
@@ -414,7 +570,7 @@ func (h *Handler) listNSGs(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, armNSGTag, infos[i].ID)
-		out.Value = append(out.Value, toNSGResponse(&infos[i], scope, defaultLoc, nil))
+		out.Value = append(out.Value, h.nsgResponse(r.Context(), &infos[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -426,6 +582,10 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
+	}
+
+	if meta, ok := h.azureMeta(); ok {
+		meta.DeleteAzureNSGMetadata(r.Context(), info.ID)
 	}
 
 	if err := h.net.DeleteSecurityGroup(r.Context(), info.ID); err != nil {
@@ -590,28 +750,25 @@ func findPublicIPByName(ctx context.Context, n netdriver.Networking, name string
 // Response shaping helpers.
 
 //nolint:gocritic // rp is a request-scoped value
-func toVNetResponse(info *netdriver.VPCInfo, rp azurearm.ResourcePath, location string,
-	addr *addressSpace, subs []netdriver.SubnetInfo,
-) vnetResponse {
-	if location == "" {
-		location = defaultLoc
-	}
+func (h *Handler) vnetResponse(ctx context.Context, info *netdriver.VPCInfo, rp azurearm.ResourcePath) vnetResponse {
+	location, prefixes := h.vnetLocationPrefixes(ctx, info)
 
-	if addr == nil && info != nil {
-		addr = &addressSpace{AddressPrefixes: []string{info.CIDRBlock}}
-	}
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeVNet, rp.ResourceName)
 
 	out := vnetResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeVNet, rp.ResourceName),
+		ID:       id,
 		Name:     rp.ResourceName,
 		Type:     providerName + "/" + typeVNet,
 		Location: location,
+		Etag:     etagOf(id),
 		Tags:     stripInternal(info.Tags),
 		Properties: vnetResponseProps{
 			ProvisioningState: "Succeeded",
-			AddressSpace:      addr,
+			AddressSpace:      &addressSpace{AddressPrefixes: prefixes},
 		},
 	}
+
+	subs, _ := h.net.DescribeSubnets(ctx, nil)
 
 	for i := range subs {
 		if subs[i].VPCID == info.ID {
@@ -626,21 +783,46 @@ func toVNetResponse(info *netdriver.VPCInfo, rp azurearm.ResourcePath, location 
 	return out
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func toVNetResponseFromInfo(info *netdriver.VPCInfo, rp azurearm.ResourcePath, subs []netdriver.SubnetInfo) vnetResponse {
-	return toVNetResponse(info, rp, defaultLoc, nil, subs)
+// vnetLocationPrefixes returns the region and full address-prefix list for a
+// vnet, reading the Azure metadata store when available and falling back to the
+// cross-cloud CIDR.
+func (h *Handler) vnetLocationPrefixes(ctx context.Context, info *netdriver.VPCInfo) (location string, prefixes []string) {
+	location = defaultLoc
+	prefixes = []string{info.CIDRBlock}
+
+	meta, ok := h.azureMeta()
+	if !ok {
+		return location, prefixes
+	}
+
+	md, found := meta.GetAzureVNetMetadata(ctx, info.ID)
+	if !found {
+		return location, prefixes
+	}
+
+	if md.Location != "" {
+		location = md.Location
+	}
+
+	if len(md.AddressPrefixes) > 0 {
+		prefixes = md.AddressPrefixes
+	}
+
+	return location, prefixes
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subnetResponse {
 	name := tagOr(info.Tags, armSubnetTag, rp.SubResourceName)
+	id := "/subscriptions/" + rp.Subscription +
+		"/resourceGroups/" + rp.ResourceGroup +
+		"/providers/" + providerName + "/" + typeVNet +
+		"/" + rp.ResourceName + "/subnets/" + name
 
 	return subnetResponse{
-		ID: "/subscriptions/" + rp.Subscription +
-			"/resourceGroups/" + rp.ResourceGroup +
-			"/providers/" + providerName + "/" + typeVNet +
-			"/" + rp.ResourceName + "/subnets/" + name,
+		ID:   id,
 		Name: name,
+		Etag: etagOf(id),
 		Properties: subnetResponseProps{
 			ProvisioningState: "Succeeded",
 			AddressPrefix:     info.CIDRBlock,
@@ -649,18 +831,34 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 }
 
 //nolint:gocritic // rp is a request-scoped value
-func toNSGResponse(info *netdriver.SecurityGroupInfo, rp azurearm.ResourcePath, location string,
-	rules []securityRule,
-) nsgResponse {
+func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroupInfo, rp azurearm.ResourcePath) nsgResponse {
+	location := defaultLoc
+
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNSG, rp.ResourceName)
+
+	var rules []securityRule
+
+	if meta, ok := h.azureMeta(); ok {
+		if md, found := meta.GetAzureNSGMetadata(ctx, info.ID); found {
+			if md.Location != "" {
+				location = md.Location
+			}
+
+			rules = fromAzureNSGRules(id, md.SecurityRules)
+		}
+	}
+
 	return nsgResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNSG, rp.ResourceName),
+		ID:       id,
 		Name:     rp.ResourceName,
 		Type:     providerName + "/" + typeNSG,
 		Location: location,
+		Etag:     etagOf(id),
 		Tags:     stripInternal(info.Tags),
 		Properties: nsgResponseProps{
-			ProvisioningState: "Succeeded",
-			SecurityRules:     rules,
+			ProvisioningState:    "Succeeded",
+			SecurityRules:        rules,
+			DefaultSecurityRules: defaultSecurityRules(id),
 		},
 	}
 }
