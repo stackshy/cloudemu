@@ -2,9 +2,17 @@ package ec2
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -702,6 +710,196 @@ func TestDescribeImages(t *testing.T) {
 
 	// Keep img2 referenced
 	assertNotEmpty(t, img2.ID)
+}
+
+// TestCopySnapshotClonesSource pins that CopySnapshot copies the source size,
+// encryption, description, and tags into a fresh snap-id, and reports NotFound
+// for a missing source.
+func TestCopySnapshotClonesSource(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 15, Encrypted: true})
+	requireNoError(t, err)
+
+	src, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{VolumeID: vol.ID, Description: "orig"})
+	requireNoError(t, err)
+
+	cp, err := m.CopySnapshot(ctx, driver.CopySnapshotInput{
+		SourceRegion:     "us-east-1",
+		SourceSnapshotID: src.ID,
+		Description:      "copy",
+		Tags:             map[string]string{"k": "v"},
+	})
+	requireNoError(t, err)
+
+	if cp.ID == src.ID || cp.ID == "" {
+		t.Fatalf("copy id = %q, want fresh id != source %q", cp.ID, src.ID)
+	}
+	assertEqual(t, 15, cp.Size)
+	assertEqual(t, true, cp.Encrypted)
+	assertEqual(t, "copy", cp.Description)
+	assertEqual(t, "v", cp.Tags["k"])
+	// The copy is decoupled from the source volume, so it must not inherit the
+	// source's volume id (a volume-id snapshot filter would otherwise match both).
+	assertEqual(t, "vol-ffffffff", cp.VolumeID)
+
+	_, err = m.CopySnapshot(ctx, driver.CopySnapshotInput{SourceSnapshotID: "snap-missing"})
+	assertError(t, err, true)
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("CopySnapshot(missing) err = %v, want NotFound", err)
+	}
+}
+
+// TestRegisterImageStoresMappings pins that RegisterImage records the supplied
+// architecture, root device, and block device mappings, rejects duplicate
+// names, and rejects references to a missing snapshot.
+func TestRegisterImageStoresMappings(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 20})
+	requireNoError(t, err)
+	snap, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{VolumeID: vol.ID})
+	requireNoError(t, err)
+
+	img, err := m.RegisterImage(ctx, driver.RegisterImageInput{
+		Name:           "custom",
+		Architecture:   "arm64",
+		RootDeviceName: "/dev/xvda",
+		BlockDeviceMappings: []driver.ImageBlockDeviceMapping{{
+			DeviceName:          "/dev/xvda",
+			SnapshotID:          snap.ID,
+			VolumeSize:          20,
+			VolumeType:          "gp3",
+			DeleteOnTermination: true,
+		}},
+	})
+	requireNoError(t, err)
+	assertEqual(t, "arm64", img.Architecture)
+	assertEqual(t, "/dev/xvda", img.RootDeviceName)
+	assertEqual(t, 1, len(img.BlockDeviceMappings))
+	assertEqual(t, snap.ID, img.BlockDeviceMappings[0].SnapshotID)
+
+	_, err = m.RegisterImage(ctx, driver.RegisterImageInput{Name: "custom"})
+	assertError(t, err, true)
+	if !cerrors.IsAlreadyExists(err) {
+		t.Fatalf("RegisterImage(dup) err = %v, want AlreadyExists", err)
+	}
+
+	_, err = m.RegisterImage(ctx, driver.RegisterImageInput{
+		Name:                "refs-missing",
+		BlockDeviceMappings: []driver.ImageBlockDeviceMapping{{DeviceName: "/dev/sda1", SnapshotID: "snap-missing"}},
+	})
+	assertError(t, err, true)
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("RegisterImage(missing snapshot) err = %v, want NotFound", err)
+	}
+}
+
+// TestImportKeyPairStoresPublicKey pins that ImportKeyPair computes a
+// colon-hex fingerprint, stores the public key, never retains private material,
+// rejects duplicates, and rejects unparseable material.
+func TestImportKeyPairStoresPublicKey(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	requireNoError(t, err)
+	sshPub, err := ssh.NewPublicKey(&priv.PublicKey)
+	requireNoError(t, err)
+	authKey := ssh.MarshalAuthorizedKey(sshPub)
+
+	kp, err := m.ImportKeyPair(ctx, driver.ImportKeyPairInput{Name: "k", PublicKeyMaterial: authKey})
+	requireNoError(t, err)
+
+	if len(kp.Fingerprint) != len("aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99") {
+		t.Errorf("fingerprint = %q, want 16 colon-hex byte pairs (MD5)", kp.Fingerprint)
+	}
+	assertEqual(t, "", kp.PrivateKey)
+	assertEqual(t, string(authKey), kp.PublicKey)
+
+	_, err = m.ImportKeyPair(ctx, driver.ImportKeyPairInput{Name: "k", PublicKeyMaterial: authKey})
+	assertError(t, err, true)
+	if !cerrors.IsAlreadyExists(err) {
+		t.Fatalf("ImportKeyPair(dup) err = %v, want AlreadyExists", err)
+	}
+
+	_, err = m.ImportKeyPair(ctx, driver.ImportKeyPairInput{Name: "bad", PublicKeyMaterial: []byte("not a key")})
+	assertError(t, err, true)
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("ImportKeyPair(bad material) err = %v, want InvalidArgument", err)
+	}
+}
+
+// TestImportKeyPairEd25519Fingerprint pins that an imported ed25519 key is
+// fingerprinted as the base64-encoded SHA-256 digest of the DER public key (real
+// EC2's rule for ed25519), not the MD5-of-DER colon-hex used for RSA.
+func TestImportKeyPairEd25519Fingerprint(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	requireNoError(t, err)
+	sshPub, err := ssh.NewPublicKey(pub)
+	requireNoError(t, err)
+	authKey := ssh.MarshalAuthorizedKey(sshPub)
+
+	kp, err := m.ImportKeyPair(ctx, driver.ImportKeyPairInput{Name: "ed", PublicKeyMaterial: authKey})
+	requireNoError(t, err)
+
+	if strings.Contains(kp.Fingerprint, ":") {
+		t.Fatalf("ed25519 fingerprint = %q, want base64 SHA-256 (no colon-hex MD5)", kp.Fingerprint)
+	}
+
+	raw, derr := base64.StdEncoding.DecodeString(kp.Fingerprint)
+	if derr != nil || len(raw) != sha256.Size {
+		t.Fatalf("ed25519 fingerprint = %q, want a base64-encoded 32-byte SHA-256 digest", kp.Fingerprint)
+	}
+}
+
+// TestModifyVolumeGrowsAndValidates pins that ModifyVolume captures originals,
+// mutates the stored volume, rejects shrink, and reports NotFound for a missing
+// volume.
+func TestModifyVolumeGrowsAndValidates(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 20, VolumeType: "gp3", IOPS: 3000})
+	requireNoError(t, err)
+
+	mod, err := m.ModifyVolume(ctx, driver.ModifyVolumeInput{
+		VolumeID:   vol.ID,
+		Size:       50,
+		IOPS:       6000,
+		VolumeType: "io2",
+	})
+	requireNoError(t, err)
+	assertEqual(t, "modifying", mod.ModificationState)
+	assertEqual(t, 20, mod.OriginalSize)
+	assertEqual(t, 50, mod.TargetSize)
+	assertEqual(t, 3000, mod.OriginalIOPS)
+	assertEqual(t, 6000, mod.TargetIOPS)
+	assertEqual(t, "gp3", mod.OriginalVolumeType)
+	assertEqual(t, "io2", mod.TargetVolumeType)
+
+	vols, err := m.DescribeVolumes(ctx, []string{vol.ID})
+	requireNoError(t, err)
+	assertEqual(t, 50, vols[0].Size)
+	assertEqual(t, 6000, vols[0].IOPS)
+	assertEqual(t, "io2", vols[0].VolumeType)
+
+	_, err = m.ModifyVolume(ctx, driver.ModifyVolumeInput{VolumeID: vol.ID, Size: 10})
+	assertError(t, err, true)
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("ModifyVolume(shrink) err = %v, want InvalidArgument", err)
+	}
+
+	_, err = m.ModifyVolume(ctx, driver.ModifyVolumeInput{VolumeID: "vol-missing", Size: 100})
+	assertError(t, err, true)
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("ModifyVolume(missing) err = %v, want NotFound", err)
+	}
 }
 
 func requireNoError(t *testing.T, err error) {
@@ -1787,7 +1985,7 @@ func TestCreateLaunchTemplate(t *testing.T) {
 		assertError(t, err, true)
 	})
 
-	t.Run("version numbering increments", func(t *testing.T) {
+	t.Run("each template starts at version 1", func(t *testing.T) {
 		m := newTestMock()
 		ctx := context.Background()
 
@@ -1803,7 +2001,12 @@ func TestCreateLaunchTemplate(t *testing.T) {
 		})
 		requireNoError(t, err)
 
-		assertTrue(t, tmpl2.Version > tmpl1.Version, "second template version should be greater")
+		// Real AWS numbers versions per-template: every template's first version
+		// is 1 (the old package-global counter bled numbers across templates).
+		assertEqual(t, 1, tmpl1.Version)
+		assertEqual(t, 1, tmpl2.Version)
+		assertEqual(t, 1, tmpl1.DefaultVersion)
+		assertEqual(t, 1, tmpl1.LatestVersion)
 	})
 }
 

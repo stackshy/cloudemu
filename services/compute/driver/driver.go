@@ -175,12 +175,81 @@ type LaunchTemplate struct {
 	Version        int
 	InstanceConfig InstanceConfig
 	CreatedAt      string
+	// DefaultVersion is the version number RunInstances uses when no version is
+	// named (AWS defaultVersionNumber). LatestVersion is the highest version
+	// number created so far (AWS latestVersionNumber). CreatedBy is the ARN of
+	// the principal that created the template. Tags are the template-level
+	// resource tags. These are populated by AWS EC2; providers with no launch
+	// template versioning leave them zero.
+	DefaultVersion int
+	LatestVersion  int
+	CreatedBy      string
+	Tags           map[string]string
 }
 
 // LaunchTemplateConfig configures a launch template.
 type LaunchTemplateConfig struct {
 	Name           string
 	InstanceConfig InstanceConfig
+	// Tags are template-level resource tags (AWS TagSpecification on the
+	// launch-template resource). VersionDescription annotates the initial (v1)
+	// version. Both are AWS-specific and ignored by providers without launch
+	// template versioning.
+	Tags               map[string]string
+	VersionDescription string
+}
+
+// LaunchTemplateVersion is one immutable version of a launch template (AWS EC2).
+// Versions are numbered sequentially per template starting at 1.
+type LaunchTemplateVersion struct {
+	LaunchTemplateID   string
+	LaunchTemplateName string
+	VersionNumber      int
+	DefaultVersion     bool
+	CreatedBy          string
+	CreateTime         string
+	VersionDescription string
+	InstanceConfig     InstanceConfig
+}
+
+// CreateLaunchTemplateVersionInput carries the parameters for
+// CreateLaunchTemplateVersion. Exactly one of Name/ID identifies the template.
+// When SourceVersion is set the new version inherits that version's parameters,
+// with the non-zero fields of InstanceConfig overlaid on top.
+type CreateLaunchTemplateVersionInput struct {
+	Name               string
+	ID                 string
+	SourceVersion      string
+	VersionDescription string
+	InstanceConfig     InstanceConfig
+}
+
+// DescribeLaunchTemplateVersionsInput carries the filters for
+// DescribeLaunchTemplateVersions. Exactly one of Name/ID identifies the
+// template. Versions is an explicit version-number list (also accepting the
+// "$Latest"/"$Default" tokens); MinVersion/MaxVersion bound the range. Paging
+// (MaxResults/NextToken) is applied by the wire layer.
+type DescribeLaunchTemplateVersionsInput struct {
+	Name       string
+	ID         string
+	Versions   []string
+	MinVersion string
+	MaxVersion string
+}
+
+// LaunchTemplateVersioner is an AWS-only optional capability implementing launch
+// template versioning. Only the EC2 provider implements it; the wire handler
+// type-asserts for it, so providers without versioning (Azure, GCP) are
+// unaffected.
+type LaunchTemplateVersioner interface {
+	// CreateLaunchTemplateVersion appends a new immutable version to a template.
+	CreateLaunchTemplateVersion(ctx context.Context, input CreateLaunchTemplateVersionInput) (*LaunchTemplateVersion, error)
+	// DescribeLaunchTemplateVersions returns a template's versions (filtered,
+	// sorted ascending by version number).
+	DescribeLaunchTemplateVersions(ctx context.Context, input DescribeLaunchTemplateVersionsInput) ([]LaunchTemplateVersion, error)
+	// GetLaunchTemplateData synthesizes launch-template data from a running
+	// instance's configuration.
+	GetLaunchTemplateData(ctx context.Context, instanceID string) (*InstanceConfig, error)
 }
 
 // VolumeConfig describes a volume to create.
@@ -385,4 +454,87 @@ type Compute interface {
 // do not support console output (Azure, GCP) are unaffected.
 type ConsoleReader interface {
 	GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error)
+}
+
+// CopySnapshotInput describes an AWS EC2 CopySnapshot request. SourceRegion is
+// required by the API but ignored by the single-region emulator.
+type CopySnapshotInput struct {
+	SourceRegion     string
+	SourceSnapshotID string
+	Description      string
+	Encrypted        bool
+	KmsKeyID         string
+	Tags             map[string]string
+}
+
+// RegisterImageInput describes an AWS EC2 RegisterImage request.
+type RegisterImageInput struct {
+	Name                string
+	Description         string
+	Architecture        string
+	RootDeviceName      string
+	VirtualizationType  string
+	BlockDeviceMappings []ImageBlockDeviceMapping
+	Tags                map[string]string
+}
+
+// ImportKeyPairInput describes an AWS EC2 ImportKeyPair request. PublicKeyMaterial
+// is the decoded public key (OpenSSH or PEM), not the base64 wire form.
+type ImportKeyPairInput struct {
+	Name              string
+	PublicKeyMaterial []byte
+	Tags              map[string]string
+}
+
+// ModifyVolumeInput describes an AWS EC2 ModifyVolume request. A zero numeric
+// field or empty VolumeType means "leave unchanged".
+type ModifyVolumeInput struct {
+	VolumeID   string
+	Size       int
+	IOPS       int
+	Throughput int
+	VolumeType string
+}
+
+// VolumeModification describes the state of an in-progress AWS EC2 ModifyVolume,
+// mirroring the API's VolumeModification structure.
+type VolumeModification struct {
+	VolumeID           string
+	ModificationState  string // "modifying", "optimizing", "completed", "failed"
+	StartTime          string
+	Progress           int
+	OriginalSize       int
+	OriginalIOPS       int
+	OriginalThroughput int
+	OriginalVolumeType string
+	TargetSize         int
+	TargetIOPS         int
+	TargetThroughput   int
+	TargetVolumeType   string
+}
+
+// SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is
+// discovered by type assertion; clouds that do not model EBS snapshot copies
+// (Azure, GCP, OCI) simply do not implement it.
+type SnapshotCopier interface {
+	CopySnapshot(ctx context.Context, input CopySnapshotInput) (*SnapshotInfo, error)
+}
+
+// ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
+// (registering an AMI from block device mappings). Discovered by type assertion.
+type ImageRegistrar interface {
+	RegisterImage(ctx context.Context, input RegisterImageInput) (*ImageInfo, error)
+}
+
+// KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair
+// (importing an externally-generated public key). Discovered by type assertion.
+type KeyPairImporter interface {
+	ImportKeyPair(ctx context.Context, input ImportKeyPairInput) (*KeyPairInfo, error)
+}
+
+// VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume
+// (elastic volume resize / IOPS / throughput / type change). Discovered by
+// type assertion.
+type VolumeModifier interface {
+	ModifyVolume(ctx context.Context, input ModifyVolumeInput) (*VolumeModification, error)
 }

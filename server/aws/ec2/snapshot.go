@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -47,6 +48,47 @@ type modifySnapshotAttributeResponseXML struct {
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
+}
+
+// copySnapshotResponseXML mirrors AWS CopySnapshot: the new snapshot id plus
+// any tags applied by TagSpecification.N.
+type copySnapshotResponseXML struct {
+	XMLName    xml.Name  `xml:"CopySnapshotResponse"`
+	Xmlns      string    `xml:"xmlns,attr"`
+	RequestID  string    `xml:"requestId"`
+	SnapshotID string    `xml:"snapshotId"`
+	Tags       []tagItem `xml:"tagSet>item,omitempty"`
+}
+
+// copySnapshot handles Action=CopySnapshot. It is served by the AWS-only
+// SnapshotCopier capability; a compute driver that does not implement it
+// reports Unimplemented.
+func (h *Handler) copySnapshot(w http.ResponseWriter, r *http.Request) {
+	copier, ok := h.compute.(computedriver.SnapshotCopier)
+	if !ok {
+		writeSnapshotErr(w, cerrors.New(cerrors.Unimplemented, "CopySnapshot is not supported"))
+		return
+	}
+
+	info, err := copier.CopySnapshot(r.Context(), computedriver.CopySnapshotInput{
+		SourceRegion:     r.Form.Get("SourceRegion"),
+		SourceSnapshotID: r.Form.Get("SourceSnapshotId"),
+		Description:      r.Form.Get("Description"),
+		Encrypted:        r.Form.Get("Encrypted") == formTrue,
+		KmsKeyID:         r.Form.Get("KmsKeyId"),
+		Tags:             mergeTagSpecs(awsquery.TagSpecs(r.Form), "snapshot"),
+	})
+	if err != nil {
+		writeSnapshotErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, copySnapshotResponseXML{
+		Xmlns:      awsquery.Namespace,
+		RequestID:  awsquery.RequestID,
+		SnapshotID: info.ID,
+		Tags:       toTagItems(info.Tags),
+	})
 }
 
 //nolint:dupl // per-resource create pattern; mirrors peering/flow-log shape

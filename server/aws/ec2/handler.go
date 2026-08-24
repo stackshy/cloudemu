@@ -132,6 +132,8 @@ func (h *Handler) routeSnapshots(w http.ResponseWriter, r *http.Request, action 
 		h.describeSnapshots(w, r)
 	case "ModifySnapshotAttribute":
 		h.modifySnapshotAttribute(w, r)
+	case "CopySnapshot":
+		h.copySnapshot(w, r)
 	default:
 		return false
 	}
@@ -143,6 +145,8 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 	switch action {
 	case "CreateImage":
 		h.createImage(w, r)
+	case "RegisterImage":
+		h.registerImage(w, r)
 	case "DeregisterImage":
 		h.deregisterImage(w, r)
 	case "DescribeImages":
@@ -249,6 +253,12 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 		h.deleteLaunchTemplate(w, r)
 	case "DescribeLaunchTemplates":
 		h.describeLaunchTemplates(w, r)
+	case "CreateLaunchTemplateVersion":
+		h.createLaunchTemplateVersion(w, r)
+	case "DescribeLaunchTemplateVersions":
+		h.describeLaunchTemplateVersions(w, r)
+	case "GetLaunchTemplateData":
+		h.getLaunchTemplateData(w, r)
 	default:
 		return false
 	}
@@ -325,6 +335,8 @@ func (h *Handler) routeVolumes(w http.ResponseWriter, r *http.Request, action st
 		h.detachVolume(w, r)
 	case "DescribeVolumeStatus":
 		h.describeVolumeStatus(w, r)
+	case "ModifyVolume":
+		h.modifyVolume(w, r)
 	default:
 		return false
 	}
@@ -336,6 +348,8 @@ func (h *Handler) routeKeyPairs(w http.ResponseWriter, r *http.Request, action s
 	switch action {
 	case "CreateKeyPair":
 		h.createKeyPair(w, r)
+	case "ImportKeyPair":
+		h.importKeyPair(w, r)
 	case "DeleteKeyPair":
 		h.deleteKeyPair(w, r)
 	case "DescribeKeyPairs":
@@ -541,6 +555,11 @@ func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, precon
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			preconditionCode, err.Error())
+	case cerrors.GetCode(err) == cerrors.Unimplemented:
+		// An unsupported optional op is a client-facing 400 InvalidAction, not a
+		// 500 — matching how the launch-template ops answer an absent capability.
+		awsquery.WriteXMLError(w, http.StatusBadRequest,
+			"InvalidAction", err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError,
 			"InternalError", err.Error())

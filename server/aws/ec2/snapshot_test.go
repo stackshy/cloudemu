@@ -131,3 +131,94 @@ func TestModifySnapshotAttributeAccepted(t *testing.T) {
 		t.Fatalf("ModifySnapshotAttribute: %v", err)
 	}
 }
+
+// TestCopySnapshotClonesSourceAndTags pins that CopySnapshot (previously
+// undispatched) returns a fresh snapshot id, copies the source size, applies
+// the requested description and tags, and leaves the source untouched.
+func TestCopySnapshotClonesSourceAndTags(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+	volID := createSnapshotVolume(t, ctx, client)
+
+	src, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(volID),
+		Description: aws.String("orig"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	cp, err := client.CopySnapshot(ctx, &ec2.CopySnapshotInput{
+		SourceRegion:     aws.String("us-east-1"),
+		SourceSnapshotId: src.SnapshotId,
+		Description:      aws.String("copy"),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSnapshot,
+			Tags:         []ec2types.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CopySnapshot: %v", err)
+	}
+
+	newID := aws.ToString(cp.SnapshotId)
+	if newID == "" || newID == aws.ToString(src.SnapshotId) {
+		t.Fatalf("CopySnapshot id = %q, want fresh id != source %q", newID, aws.ToString(src.SnapshotId))
+	}
+
+	if !hasTag(cp.Tags, "env", "prod") {
+		t.Errorf("CopySnapshot response tags = %+v, want env=prod", cp.Tags)
+	}
+
+	desc, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		SnapshotIds: []string{newID},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSnapshots(copy): %v", err)
+	}
+	if len(desc.Snapshots) != 1 {
+		t.Fatalf("DescribeSnapshots = %d, want 1", len(desc.Snapshots))
+	}
+
+	s := desc.Snapshots[0]
+	if aws.ToInt32(s.VolumeSize) != 10 {
+		t.Errorf("copy VolumeSize = %d, want 10 (source size)", aws.ToInt32(s.VolumeSize))
+	}
+	if aws.ToString(s.Description) != "copy" {
+		t.Errorf("copy Description = %q, want %q", aws.ToString(s.Description), "copy")
+	}
+	if !hasTag(s.Tags, "env", "prod") {
+		t.Errorf("copy tags = %+v, want env=prod", s.Tags)
+	}
+}
+
+// TestCopySnapshotMissingSourceIsNotFound pins the AWS error code for a copy of
+// a non-existent source snapshot.
+func TestCopySnapshotMissingSourceIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	_, err := client.CopySnapshot(ctx, &ec2.CopySnapshotInput{
+		SourceRegion:     aws.String("us-east-1"),
+		SourceSnapshotId: aws.String("snap-000000000000"),
+	})
+	if err == nil {
+		t.Fatal("CopySnapshot(missing source) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidSnapshot.NotFound" {
+		t.Fatalf("CopySnapshot error = %v, want InvalidSnapshot.NotFound", err)
+	}
+}
+
+// hasTag reports whether tags contains key=value.
+func hasTag(tags []ec2types.Tag, key, value string) bool {
+	for _, tg := range tags {
+		if aws.ToString(tg.Key) == key && aws.ToString(tg.Value) == value {
+			return true
+		}
+	}
+
+	return false
+}
