@@ -93,27 +93,33 @@ func TestLookupEventsRingBufferBounded(t *testing.T) {
 // EventRecorder is satisfied by the Mock.
 var _ driver.EventRecorder = (*Mock)(nil)
 
-// TestLookupEventsPaginationNoDuplicates pins that paginating through all events
-// never duplicates or skips, even when new events are recorded between pages
-// (the cursor is keyed on the event id, not a positional offset).
+// TestLookupEventsPaginationStableAcrossInserts pins that paginating through the
+// events present at scan-start returns each exactly once even when NEWER matching
+// events are recorded (front-inserted into the result window) between pages. The
+// cursor is keyed on the event id, so a positional-offset implementation would
+// return the original events more than once here and fail.
 func TestLookupEventsPaginationStableAcrossInserts(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	m := New(config.NewOptions(config.WithClock(fc)))
 	ctx := context.Background()
 
+	// Record five events and capture their ids (RecordEvent stamps EventID).
+	original := map[string]int{}
 	for i := 0; i < 5; i++ {
 		fc.Advance(time.Second)
-		m.RecordEvent(&driver.Event{EventName: "Op", EventSource: "ec2.amazonaws.com"})
+		e := driver.Event{EventName: "Op", EventSource: "ec2.amazonaws.com"}
+		m.RecordEvent(&e)
+		original[e.EventID] = 0
 	}
 
-	seen := map[string]int{}
 	var token string
 	pages := 0
 
 	for {
 		fc.Advance(time.Second)
-		// A new event is inserted at the front between every page.
-		m.RecordEvent(&driver.Event{EventName: "Noise", EventSource: "ec2.amazonaws.com"})
+		// A NEWER matching event is front-inserted into the window between pages.
+		ne := driver.Event{EventName: "Op", EventSource: "ec2.amazonaws.com"}
+		m.RecordEvent(&ne)
 
 		out, next, err := m.LookupEvents(ctx, driver.LookupInput{
 			MaxResults:       2,
@@ -123,18 +129,20 @@ func TestLookupEventsPaginationStableAcrossInserts(t *testing.T) {
 		require.NoError(t, err)
 
 		for i := range out {
-			seen[out[i].EventID]++
+			if _, isOriginal := original[out[i].EventID]; isOriginal {
+				original[out[i].EventID]++
+			}
 		}
 
 		pages++
-		if next == "" || pages > 10 {
+		if next == "" || pages > 30 {
 			break
 		}
 		token = next
 	}
 
-	require.Len(t, seen, 5, "should page through exactly the 5 Op events")
-	for id, n := range seen {
-		assert.Equal(t, 1, n, "event %s returned %d times, want exactly once", id, n)
+	// Every original event was paged through exactly once — no duplicate, no skip.
+	for id, n := range original {
+		assert.Equal(t, 1, n, "original event %s returned %d times, want exactly once", id, n)
 	}
 }
