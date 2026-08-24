@@ -39,12 +39,39 @@ type cacheData struct {
 // replication groups so the two cannot drift apart.
 const (
 	defaultEngine   = "redis"
+	engineMemcached = "memcached"
 	defaultNodeType = "cache.t3.micro"
 	statusAvailable = "available"
 
 	defaultRedisVersion     = "7.1"
 	defaultMemcachedVersion = "1.6.22"
+
+	// maxMemcachedNodes is the ElastiCache ceiling on Memcached nodes per cluster;
+	// Redis/Valkey clusters must have exactly one node.
+	maxMemcachedNodes = 40
 )
+
+// validateNodeCount enforces the per-engine NumCacheNodes limits real
+// ElastiCache applies: Memcached allows 1-40 nodes, while Redis/Valkey clusters
+// must have exactly 1 (a larger count is InvalidParameterValue, not silently
+// accepted).
+func validateNodeCount(engine string, numNodes int) error {
+	if engine == engineMemcached {
+		if numNodes > maxMemcachedNodes {
+			return errors.Newf(errors.InvalidArgument,
+				"NumCacheNodes must be between 1 and %d for Memcached", maxMemcachedNodes)
+		}
+
+		return nil
+	}
+
+	if numNodes > 1 {
+		return errors.Newf(errors.InvalidArgument,
+			"NumCacheNodes must be 1 for engine %q", engine)
+	}
+
+	return nil
+}
 
 // cacheARN builds an ElastiCache cluster ARN.
 func (m *Mock) cacheARN(name string) string {
@@ -54,7 +81,7 @@ func (m *Mock) cacheARN(name string) string {
 // defaultEngineVersion returns the ElastiCache default engine version for an
 // engine, matching what real ElastiCache assigns when the caller omits it.
 func defaultEngineVersion(engine string) string {
-	if engine == "memcached" {
+	if engine == engineMemcached {
 		return defaultMemcachedVersion
 	}
 
@@ -140,6 +167,15 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		engineVersion = defaultEngineVersion(engine)
 	}
 
+	numNodes := cfg.NumCacheNodes
+	if numNodes < 1 {
+		numNodes = 1
+	}
+
+	if err := validateNodeCount(engine, numNodes); err != nil {
+		return nil, err
+	}
+
 	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
 
 	tags := make(map[string]string, len(cfg.Tags))
@@ -148,16 +184,18 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:          cfg.Name,
-		Scope:         cfg.Scope,
-		NodeType:      nodeType,
-		Engine:        engine,
-		EngineVersion: engineVersion,
-		Status:        statusAvailable,
-		Endpoint:      endpoint,
-		ARN:           m.cacheARN(cfg.Name),
-		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:          tags,
+		Name:            cfg.Name,
+		Scope:           cfg.Scope,
+		NodeType:        nodeType,
+		Engine:          engine,
+		EngineVersion:   engineVersion,
+		Status:          statusAvailable,
+		Endpoint:        endpoint,
+		ARN:             m.cacheARN(cfg.Name),
+		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:            tags,
+		NumCacheNodes:   numNodes,
+		SubnetGroupName: cfg.SubnetGroupName,
 	}
 
 	// Opt-in: back the cache with a real server, replacing the synthetic

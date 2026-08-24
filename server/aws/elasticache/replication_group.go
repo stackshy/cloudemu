@@ -74,7 +74,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount(r.Form.Get("NumCacheClusters"))
+	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -140,7 +140,7 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount(r.Form.Get("NumCacheClusters"))
+	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -179,7 +179,12 @@ func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 
 	last := groups[0]
 
-	if err := store.DeleteReplicationGroup(r.Context(), id); err != nil {
+	opts := cachedriver.DeleteReplicationGroupOptions{
+		RetainPrimaryCluster:    r.Form.Get("RetainPrimaryCluster") == "true",
+		FinalSnapshotIdentifier: r.Form.Get("FinalSnapshotIdentifier"),
+	}
+
+	if err := store.DeleteReplicationGroup(r.Context(), id, opts); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -193,11 +198,12 @@ func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// parseNodeCount reads NumCacheClusters. Absent means "unspecified" and the
-// driver picks a default; present-but-unparseable is a caller error, and
-// coercing it to a node count silently builds something other than what was
-// asked for.
-func parseNodeCount(raw string) (int, error) {
+// parseNodeCount reads a node-count form field (NumCacheClusters for
+// replication groups, NumCacheNodes for cache clusters). Absent means
+// "unspecified" and the driver picks a default; present-but-unparseable is a
+// caller error, and coercing it to a node count silently builds something other
+// than what was asked for.
+func parseNodeCount(field, raw string) (int, error) {
 	if raw == "" {
 		return 0, nil
 	}
@@ -205,7 +211,7 @@ func parseNodeCount(raw string) (int, error) {
 	n, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, cerrors.Newf(cerrors.InvalidArgument,
-			"NumCacheClusters must be a number, got %q", raw)
+			"%s must be a number, got %q", field, raw)
 	}
 
 	return n, nil

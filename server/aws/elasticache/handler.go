@@ -208,9 +208,27 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidCacheClusterState", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+	}
+}
+
+// failedPreconditionCode picks the AWS-shaped error code for a failed
+// precondition. The driver encodes the intended fault as a prefix on the
+// message (a subnet group still in use, or an unsupported snapshot); a caller
+// matching the SDK's typed errors sees the code, not the message, so it has to
+// be surfaced as the wire Code. Anything else is a cache-cluster state error.
+func failedPreconditionCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "CacheSubnetGroupInUse"):
+		return "CacheSubnetGroupInUse"
+	case strings.Contains(msg, "SnapshotFeatureNotSupportedFault"):
+		return "SnapshotFeatureNotSupportedFault"
+	default:
+		return "InvalidCacheClusterState"
 	}
 }
 
