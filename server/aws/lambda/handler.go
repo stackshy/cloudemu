@@ -1107,14 +1107,16 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ResourceConflictException", err.Error())
+		writeError(w, http.StatusConflict, "ResourceConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "ServiceException", err.Error())
+		writeError(w, http.StatusInternalServerError, "ServiceException", msg)
 	}
 }

@@ -35,7 +35,7 @@ func (m *Mock) DeleteDHCPOptions(_ context.Context, id string) error {
 	for _, v := range m.vpcs.All() {
 		if v.DhcpOptionsID == id {
 			return errors.Newf(errors.FailedPrecondition,
-				"DependencyViolation: dhcp options %q is associated with vpc %q", id, v.ID)
+				"dhcp options %q is associated with vpc %q", id, v.ID)
 		}
 	}
 
