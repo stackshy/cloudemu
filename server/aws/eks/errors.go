@@ -2,6 +2,7 @@ package eks
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -28,6 +29,21 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 
 // writeErr maps cloudemu canonical errors to EKS-shaped error responses.
 func writeErr(w http.ResponseWriter, err error) {
+	// A provider error may carry a precise EKS exception name and HTTP status
+	// (e.g. ResourceInUseException/409 for deleting a cluster that still has
+	// node groups, Fargate profiles, or add-ons attached), which the generic
+	// code-based mapping below would otherwise surface as InvalidRequestException.
+	var ex interface {
+		EKSException() (string, int)
+	}
+
+	if stderrors.As(err, &ex) {
+		name, status := ex.EKSException()
+		writeError(w, status, name, wireMessage(err))
+
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
@@ -40,4 +56,16 @@ func writeErr(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "ServerException", err.Error())
 	}
+}
+
+// wireMessage returns the bare error message for the wire, stripping the
+// internal "<Code>: " prefix that cerrors.Error.Error() adds so the surfaced
+// exception message reads like real AWS rather than leaking the canonical code.
+func wireMessage(err error) string {
+	var ce *cerrors.Error
+	if stderrors.As(err, &ce) {
+		return ce.Message
+	}
+
+	return err.Error()
 }

@@ -9,6 +9,7 @@ package ecr
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"strings"
 	"time"
@@ -136,6 +137,16 @@ func writePutImageErr(w http.ResponseWriter, err error) {
 // returns errors as HTTP 400 with a "__type" body the SDK maps to a typed
 // exception.
 func writeErr(w http.ResponseWriter, err error) {
+	// A provider error may carry a precise ECR exception name (e.g.
+	// ImageNotFoundException vs ScanNotFoundException vs
+	// RepositoryPolicyNotFoundException), which the generic code-based mapping
+	// below would otherwise collapse to RepositoryNotFoundException.
+	var ex interface{ ECRException() string }
+	if stderrors.As(err, &ex) {
+		wire.WriteJSONError(w, http.StatusBadRequest, ex.ECRException(), err.Error())
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotFoundException", err.Error())
