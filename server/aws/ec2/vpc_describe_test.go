@@ -65,6 +65,67 @@ func TestDescribeVpcsTagFilter(t *testing.T) {
 	}
 }
 
+// TestDescribeVpcsCidrBlockAssociationSet pins that a VPC reports its primary
+// CIDR in cidrBlockAssociationSet with a stable vpc-cidr-assoc- id and an
+// "associated" state, alongside the flat cidrBlock. Terraform's aws_vpc reads
+// this set; an empty set makes the VPC look like it has no CIDR association.
+func TestDescribeVpcsCidrBlockAssociationSet(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	out, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{vpcID}})
+	if err != nil {
+		t.Fatalf("DescribeVpcs: %v", err)
+	}
+
+	assocs := out.Vpcs[0].CidrBlockAssociationSet
+	if len(assocs) != 1 {
+		t.Fatalf("cidrBlockAssociationSet = %d entries, want 1", len(assocs))
+	}
+
+	if got := aws.ToString(assocs[0].CidrBlock); got != "10.0.0.0/16" {
+		t.Errorf("association cidrBlock = %q, want 10.0.0.0/16", got)
+	}
+
+	if got := aws.ToString(assocs[0].AssociationId); got == "" || got[:len("vpc-cidr-assoc-")] != "vpc-cidr-assoc-" {
+		t.Errorf("association id = %q, want vpc-cidr-assoc- prefix", got)
+	}
+
+	if assocs[0].CidrBlockState == nil || assocs[0].CidrBlockState.State != ec2types.VpcCidrBlockStateCodeAssociated {
+		t.Errorf("association state = %+v, want associated", assocs[0].CidrBlockState)
+	}
+}
+
+// TestDhcpOptionsOwnerID pins that DHCP option sets report their owning account
+// id, which Terraform's aws_vpc_dhcp_options reads.
+func TestDhcpOptionsOwnerID(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	opts, err := c.CreateDhcpOptions(ctx, &ec2.CreateDhcpOptionsInput{
+		DhcpConfigurations: []ec2types.NewDhcpConfiguration{{
+			Key:    aws.String("domain-name-servers"),
+			Values: []string{"10.0.0.2"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateDhcpOptions: %v", err)
+	}
+
+	doptID := aws.ToString(opts.DhcpOptions.DhcpOptionsId)
+
+	desc, err := c.DescribeDhcpOptions(ctx, &ec2.DescribeDhcpOptionsInput{DhcpOptionsIds: []string{doptID}})
+	if err != nil {
+		t.Fatalf("DescribeDhcpOptions: %v", err)
+	}
+
+	if got := aws.ToString(desc.DhcpOptions[0].OwnerId); got != "123456789012" {
+		t.Errorf("DhcpOptions OwnerId = %q, want 123456789012", got)
+	}
+}
+
 // TestAssociateDhcpOptionsReflectedOnVpc pins that AssociateDhcpOptions actually
 // changes the VPC's dhcpOptionsId, rather than the VPC forever reporting
 // "default".

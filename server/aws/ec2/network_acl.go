@@ -24,6 +24,7 @@ type networkACLEntryXML struct {
 type networkACLXML struct {
 	NetworkACLID string               `xml:"networkAclId"`
 	VpcID        string               `xml:"vpcId"`
+	OwnerID      string               `xml:"ownerId"`
 	IsDefault    bool                 `xml:"default"`
 	Entries      []networkACLEntryXML `xml:"entrySet>item,omitempty"`
 	Tags         []tagItem            `xml:"tagSet>item,omitempty"`
@@ -211,6 +212,7 @@ func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
 	x := networkACLXML{
 		NetworkACLID: a.ID,
 		VpcID:        a.VPCID,
+		OwnerID:      ownerID,
 		IsDefault:    a.IsDefault,
 		Tags:         toTagItems(a.Tags),
 	}

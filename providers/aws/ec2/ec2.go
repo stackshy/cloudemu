@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,19 @@ const (
 	imageRootDeviceSize = 8
 	// rsaKeyBits is the modulus size for generated RSA key pairs.
 	rsaKeyBits = 2048
+
+	// monitoringDisabled / monitoringEnabled are the stored detailed-monitoring
+	// states for an instance.
+	monitoringDisabled = "disabled"
+	monitoringEnabled  = "enabled"
+
+	// subnetFirstHost is the first assignable host offset within a subnet CIDR.
+	// AWS reserves the first four addresses (.0-.3) of every subnet, so host
+	// allocation starts at .4.
+	subnetFirstHost = 4
+
+	// reservationPrefix is the AWS reservation-id prefix (r-xxxx).
+	reservationPrefix = "r-"
 )
 
 type lifecycleTransition struct {
@@ -123,6 +137,21 @@ type instanceData struct {
 	// sourceDestCheck mirrors the instance's source/destination check flag
 	// (default true), toggled via ModifyInstanceAttribute(SourceDestCheck).
 	sourceDestCheck bool
+	// userData is the base64 user-data blob set via
+	// ModifyInstanceAttribute(UserData) and read back by
+	// DescribeInstanceAttribute(userData).
+	userData string
+	// ebsOptimized is the EBS-optimized flag toggled via
+	// ModifyInstanceAttribute(EbsOptimized).
+	ebsOptimized bool
+	// reservationID groups all instances launched by one RunInstances call under
+	// a shared AWS reservation (r-xxxx).
+	reservationID string
+	// keyName is the key pair the instance was launched with, echoed as keyName.
+	keyName string
+	// monitoring is the CloudWatch detailed-monitoring state
+	// ("disabled"/"enabled"); defaults to "disabled" at launch.
+	monitoring string
 }
 
 // operatorData records service-provider managed-resource ownership.
@@ -158,13 +187,22 @@ type Mock struct {
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
 	subnetResolver SubnetResolver
-	// mu guards managedResourceVisibility, which is scalar shared state that
-	// (unlike the memstores) has no internal locking of its own.
+	// mu guards managedResourceVisibility, clientTokens and subnetIPCounters,
+	// which are scalar/map shared state that (unlike the memstores) has no
+	// internal locking of their own.
 	mu sync.RWMutex
 	// managedResourceVisibility is "visible" or "hidden". When "hidden",
 	// service-provider-managed instances are omitted from DescribeInstances
 	// unless the request opts in with IncludeManagedResources.
 	managedResourceVisibility string
+	// clientTokens maps a RunInstances ClientToken to the instance ids it
+	// launched, so a retry with the same token returns those instances instead
+	// of double-provisioning (AWS idempotency). Permanent — an emulator needs no
+	// expiry window.
+	clientTokens map[string][]string
+	// subnetIPCounters is the per-subnet host counter used to allocate private
+	// IPv4 addresses from the subnet's CIDR range.
+	subnetIPCounters map[string]int
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -242,6 +280,8 @@ func New(opts *config.Options) *Mock {
 		opts:         opts,
 
 		managedResourceVisibility: visibilityVisible,
+		clientTokens:              make(map[string][]string),
+		subnetIPCounters:          make(map[string]int),
 	}
 }
 
@@ -275,7 +315,9 @@ func toInstance(d *instanceData, hidden bool) driver.Instance {
 	return driver.Instance{
 		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.State,
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
-		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime, Operator: operator,
+		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
+		ReservationID: d.reservationID, KeyName: d.keyName, Monitoring: d.monitoring,
+		Operator: operator,
 	}
 }
 
@@ -292,8 +334,21 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "count %d exceeds the maximum of %d per call", count, maxRunInstances)
 	}
 
+	// Idempotency: a retry carrying a ClientToken we've already served returns the
+	// same instances rather than launching new ones (real EC2 RunInstances).
+	if dup, ok := m.instancesForClientToken(cfg.ClientToken); ok {
+		return dup, nil
+	}
+
 	results := make([]driver.Instance, 0, count)
 	hidden := m.visibility() == visibilityHidden
+
+	// One reservation groups every instance launched by this call (AWS r-xxxx).
+	reservationID := idgen.GenerateID(reservationPrefix)
+
+	// Resolve the target subnet once so both the VPC id and the CIDR-scoped
+	// private-IP allocation reuse a single lookup.
+	vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
 
 	// created tracks the instances already fully provisioned in this batch, so a
 	// mid-batch engine failure can roll them back rather than orphaning live
@@ -315,11 +370,15 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
-			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
-			VPCID:          m.resolveSubnetVPC(ctx, cfg.SubnetID),
+			State: compute.StatePending, PrivateIP: m.allocatePrivateIP(cfg.SubnetID, subnetCIDR),
+			SubnetID: cfg.SubnetID, VPCID: vpcID,
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime:      m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			sourceDestCheck: true,
+			reservationID:   reservationID,
+			keyName:         cfg.KeyName,
+			userData:        cfg.UserData,
+			monitoring:      monitoringDisabled,
 		}
 
 		if cfg.Managed {
@@ -356,7 +415,110 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		}
 	}
 
+	m.recordClientToken(cfg.ClientToken, created)
+
 	return results, nil
+}
+
+// instancesForClientToken returns the instances previously launched under token
+// (rendered fresh from the store) when token is non-empty and already recorded.
+func (m *Mock) instancesForClientToken(token string) ([]driver.Instance, bool) {
+	if token == "" {
+		return nil, false
+	}
+
+	m.mu.RLock()
+	ids, ok := m.clientTokens[token]
+	m.mu.RUnlock()
+
+	if !ok {
+		return nil, false
+	}
+
+	hidden := m.visibility() == visibilityHidden
+	out := make([]driver.Instance, 0, len(ids))
+
+	for _, id := range ids {
+		if inst, found := m.instances.Get(id); found {
+			out = append(out, toInstance(inst, hidden))
+		}
+	}
+
+	return out, true
+}
+
+// recordClientToken remembers which instances a ClientToken launched so a retry
+// is served idempotently. A no-op for the empty token.
+func (m *Mock) recordClientToken(token string, created []*instanceData) {
+	if token == "" {
+		return
+	}
+
+	ids := make([]string, 0, len(created))
+	for _, inst := range created {
+		ids = append(ids, inst.ID)
+	}
+
+	m.mu.Lock()
+	m.clientTokens[token] = ids
+	m.mu.Unlock()
+}
+
+// resolveSubnet returns the VPC that owns subnetID and the subnet's CIDR block
+// in a single resolver lookup. Both are "" when there is no subnet, no resolver,
+// or the subnet can't be found.
+func (m *Mock) resolveSubnet(ctx context.Context, subnetID string) (vpcID, cidr string) {
+	if subnetID == "" || m.subnetResolver == nil {
+		return "", ""
+	}
+
+	subs, err := m.subnetResolver.DescribeSubnets(ctx, []string{subnetID})
+	if err != nil || len(subs) == 0 {
+		return "", ""
+	}
+
+	return subs[0].VPCID, subs[0].CIDRBlock
+}
+
+// allocatePrivateIP hands out the next private IPv4 inside the subnet's CIDR
+// (AWS allocates from the target subnet, e.g. 10.0.1.0/24 -> 10.0.1.x). It falls
+// back to the global 10.0.<n> pool when there is no subnet CIDR to draw from.
+func (m *Mock) allocatePrivateIP(subnetID, cidr string) string {
+	if subnetID == "" || cidr == "" {
+		return m.nextIP()
+	}
+
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return m.nextIP()
+	}
+
+	base := ipNet.IP.To4()
+	if base == nil {
+		return m.nextIP()
+	}
+
+	m.mu.Lock()
+	offset := m.subnetIPCounters[subnetID] + subnetFirstHost
+	m.subnetIPCounters[subnetID]++
+	m.mu.Unlock()
+
+	host := make(net.IP, len(base))
+	copy(host, base)
+
+	// Add offset into the low-order bytes of the network address.
+	carry := offset
+	for i := len(host) - 1; i >= 0 && carry > 0; i-- {
+		sum := int(host[i]) + carry
+		host[i] = byte(sum % ipSegmentSize) //nolint:gosec // sum%256 is always in [0,255]
+		carry = sum / ipSegmentSize
+	}
+
+	if !ipNet.Contains(host) {
+		return m.nextIP()
+	}
+
+	return host.String()
 }
 
 // rollbackInstances best-effort tears down instances already provisioned earlier
@@ -653,6 +815,9 @@ const (
 	attrDisableAPITermination = "disableApiTermination"
 	attrSourceDestCheck       = "sourceDestCheck"
 	attrInstanceType          = "instanceType"
+	attrUserData              = "userData"
+	attrEbsOptimized          = "ebsOptimized"
+	attrMonitoring            = "monitoring"
 )
 
 // SetInstanceAttribute updates a single instance attribute in place. It backs
@@ -666,16 +831,44 @@ func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value s
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
-	b, _ := strconv.ParseBool(value)
-
 	switch name {
 	case attrDisableAPITermination:
-		inst.disableAPITermination = b
+		inst.disableAPITermination = parseBool(value)
 	case attrSourceDestCheck:
-		inst.sourceDestCheck = b
+		inst.sourceDestCheck = parseBool(value)
+	case attrEbsOptimized:
+		inst.ebsOptimized = parseBool(value)
+	case attrUserData:
+		inst.userData = value
+	case attrMonitoring:
+		inst.monitoring = value
 	default:
 		return cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
 	}
+
+	return nil
+}
+
+// parseBool interprets an attribute value as a boolean, treating an unparsable
+// value as false (real EC2 rejects malformed values upstream at the wire layer).
+func parseBool(value string) bool {
+	b, _ := strconv.ParseBool(value)
+
+	return b
+}
+
+// SetInstanceSecurityGroups overwrites an instance's security-group membership,
+// backing ModifyInstanceAttribute(Groups) for VPC instances. It replaces the set
+// rather than merging, matching AWS's GroupId.N semantics.
+func (m *Mock) SetInstanceSecurityGroups(_ context.Context, instanceID string, groupIDs []string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	sg := make([]string, len(groupIDs))
+	copy(sg, groupIDs)
+	inst.SecurityGroups = sg
 
 	return nil
 }
@@ -693,8 +886,14 @@ func (m *Mock) GetInstanceAttribute(_ context.Context, instanceID, name string) 
 		return strconv.FormatBool(inst.disableAPITermination), nil
 	case attrSourceDestCheck:
 		return strconv.FormatBool(inst.sourceDestCheck), nil
+	case attrEbsOptimized:
+		return strconv.FormatBool(inst.ebsOptimized), nil
 	case attrInstanceType:
 		return inst.InstanceType, nil
+	case attrUserData:
+		return inst.userData, nil
+	case attrMonitoring:
+		return inst.monitoring, nil
 	default:
 		return "", cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
 	}

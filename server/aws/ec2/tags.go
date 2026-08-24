@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // computeTagger is the AWS-specific compute-resource tagging surface
@@ -260,6 +261,26 @@ func tagNotFoundCode(id string) string {
 	return "InvalidID.NotFound"
 }
 
+// networkResourceTagPrefixes are the VPC-family id prefixes whose tags the
+// networking driver owns through the NetworkResourceTagger optional interface
+// (resources without a dedicated Update*Tags method). vpc-/subnet-/sg- keep
+// their own methods and are handled separately.
+//
+//nolint:gochecknoglobals // static id-prefix routing table
+var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-"}
+
+// networkTaggableID reports whether id belongs to a resource tagged via the
+// NetworkResourceTagger optional interface.
+func networkTaggableID(id string) bool {
+	for _, p := range networkResourceTagPrefixes {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *Handler) tagResource(ctx context.Context, id string, tags map[string]string) error {
 	switch {
 	case strings.HasPrefix(id, "vpc-"):
@@ -268,6 +289,12 @@ func (h *Handler) tagResource(ctx context.Context, id string, tags map[string]st
 		return h.vpc.UpdateSubnetTags(ctx, id, tags)
 	case strings.HasPrefix(id, "sg-"):
 		return h.vpc.UpdateSecurityGroupTags(ctx, id, tags)
+	case networkTaggableID(id):
+		if tagger, ok := h.vpc.(netdriver.NetworkResourceTagger); ok {
+			return tagger.UpdateResourceTags(ctx, id, tags)
+		}
+
+		return nil
 	default:
 		if tagger, ok := h.compute.(computeTagger); ok {
 			return tagger.TagResource(ctx, id, tags)
@@ -285,6 +312,12 @@ func (h *Handler) untagResource(ctx context.Context, id string, keys []string) e
 		return h.vpc.RemoveSubnetTags(ctx, id, keys)
 	case strings.HasPrefix(id, "sg-"):
 		return h.vpc.RemoveSecurityGroupTags(ctx, id, keys)
+	case networkTaggableID(id):
+		if tagger, ok := h.vpc.(netdriver.NetworkResourceTagger); ok {
+			return tagger.RemoveResourceTags(ctx, id, keys)
+		}
+
+		return nil
 	default:
 		if tagger, ok := h.compute.(computeTagger); ok {
 			return tagger.UntagResource(ctx, id, keys)

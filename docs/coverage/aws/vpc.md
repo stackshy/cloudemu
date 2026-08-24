@@ -280,6 +280,15 @@ NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
 | `DescribeNetworkInterfaces` |  |
 | `DetachNetworkInterface` |  |
 
+### NetworkResourceTagger
+
+NetworkResourceTagger is an OPTIONAL AWS capability (type-asserted).
+
+| Operation | Description |
+| --- | --- |
+| `RemoveResourceTags` |  |
+| `UpdateResourceTags` |  |
+
 ### PrefixLists
 
 PrefixLists is an OPTIONAL AWS capability (type-asserted).

@@ -275,7 +275,7 @@ func TestToInstanceXMLs(t *testing.T) {
 		Tags:           map[string]string{"k": "v"},
 	}}
 
-	got := toInstanceXMLs(in)
+	got := New(nil, nil).toInstanceXMLs(context.Background(), in)
 
 	if len(got) != 1 {
 		t.Fatalf("len=%d want 1", len(got))
@@ -292,7 +292,7 @@ func TestToInstanceXMLs(t *testing.T) {
 }
 
 func TestToInstanceXMLsEmpty(t *testing.T) {
-	got := toInstanceXMLs(nil)
+	got := New(nil, nil).toInstanceXMLs(context.Background(), nil)
 	if len(got) != 0 {
 		t.Errorf("empty input should give empty result, got %v", got)
 	}

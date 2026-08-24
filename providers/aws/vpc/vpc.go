@@ -49,6 +49,7 @@ var (
 	_ driver.TrafficMirroring           = (*Mock)(nil)
 	_ driver.NetworkInsights            = (*Mock)(nil)
 	_ driver.VPCBlockPublicAccess       = (*Mock)(nil)
+	_ driver.NetworkResourceTagger      = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -492,8 +493,15 @@ func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.Subnet
 // defaultEgressRule is the allow-all outbound rule real EC2 attaches to every
 // new security group (protocol -1, 0.0.0.0/0, all ports).
 //
-//nolint:gochecknoglobals // static default, mirrors real EC2
-var defaultEgressRule = driver.SecurityRule{Protocol: allTrafficProtocol, CIDR: allTrafficCIDR}
+// newDefaultEgressRule builds the allow-all outbound rule with a freshly minted
+// "sgr-" id so each group's default egress rule is individually identifiable.
+func newDefaultEgressRule() driver.SecurityRule {
+	return driver.SecurityRule{
+		Protocol: allTrafficProtocol,
+		CIDR:     allTrafficCIDR,
+		RuleID:   idgen.GenerateID("sgr-"),
+	}
+}
 
 func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	if cfg.Name == "" {
@@ -531,7 +539,9 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 		// (no ingress). IaC tools rely on it — Terraform revokes this default
 		// before applying the egress blocks in the config — and the topology
 		// engine otherwise reports a fresh SG as denying all outbound traffic.
-		EgressRules: []driver.SecurityRule{defaultEgressRule},
+		// The rule gets its own "sgr-" id so DescribeSecurityGroupRules can
+		// return and filter it the way real EC2 does.
+		EgressRules: []driver.SecurityRule{newDefaultEgressRule()},
 		Tags:        tags,
 	}
 	m.securityGroups.Set(id, sg)
@@ -591,6 +601,8 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 }
 
 // AddIngressRule adds an ingress rule to the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -603,6 +615,8 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 }
 
 // AddEgressRule adds an egress rule to the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -615,14 +629,16 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 }
 
 // RemoveIngressRule removes a matching ingress rule from the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
 	}
 
-	for i, r := range sg.IngressRules {
-		if r == rule {
+	for i := range sg.IngressRules {
+		if sg.IngressRules[i].Matches(&rule) {
 			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
 			return nil
 		}
@@ -632,14 +648,16 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 }
 
 // RemoveEgressRule removes a matching egress rule from the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
 	}
 
-	for i, r := range sg.EgressRules {
-		if r == rule {
+	for i := range sg.EgressRules {
+		if sg.EgressRules[i].Matches(&rule) {
 			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
 			return nil
 		}

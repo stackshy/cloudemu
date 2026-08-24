@@ -3,6 +3,7 @@ package ec2_test
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -206,5 +207,214 @@ func TestAuthorizeSecurityGroupIngressDuplicate(t *testing.T) {
 
 	if _, err := c.AuthorizeSecurityGroupIngress(ctx, auth); err == nil {
 		t.Fatalf("duplicate ingress rule should fail with InvalidPermission.Duplicate")
+	}
+}
+
+// authorizeIngressSG creates a group and returns its id.
+func authorizeIngressSG(t *testing.T, ctx context.Context, c *ec2.Client) string {
+	t.Helper()
+
+	vpcID := createSGTestVPC(t, ctx, c, "10.0.0.0/16")
+
+	sg, err := c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("sg"),
+		Description: aws.String("sg"),
+		VpcId:       aws.String(vpcID),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecurityGroup: %v", err)
+	}
+
+	return aws.ToString(sg.GroupId)
+}
+
+// TestAuthorizeSecurityGroupIngressReturnsRuleSet pins that Authorize returns
+// the created SecurityGroupRule set (sgr- id, isEgress=false, target fields),
+// matching real EC2's response so IaC tools can track the rule by id.
+func TestAuthorizeSecurityGroupIngressReturnsRuleSet(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	out, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(443),
+			ToPort:     aws.Int32(443),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0"), Description: aws.String("https")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	if len(out.SecurityGroupRules) != 1 {
+		t.Fatalf("Authorize returned %d rules, want 1", len(out.SecurityGroupRules))
+	}
+
+	rule := out.SecurityGroupRules[0]
+	if id := aws.ToString(rule.SecurityGroupRuleId); !strings.HasPrefix(id, "sgr-") {
+		t.Fatalf("SecurityGroupRuleId = %q, want sgr- prefix", id)
+	}
+
+	if aws.ToBool(rule.IsEgress) {
+		t.Fatalf("ingress rule reported isEgress=true")
+	}
+
+	if got := aws.ToString(rule.CidrIpv4); got != "0.0.0.0/0" {
+		t.Fatalf("CidrIpv4 = %q, want 0.0.0.0/0", got)
+	}
+
+	if got := aws.ToString(rule.Description); got != "https" {
+		t.Fatalf("Description = %q, want https", got)
+	}
+}
+
+// TestAuthorizeSecurityGroupIngressReferencedGroup pins that a source-group
+// reference (UserIdGroupPairs) round-trips: Authorize returns referencedGroupInfo
+// and DescribeSecurityGroups surfaces it under the permission's <groups>.
+func TestAuthorizeSecurityGroupIngressReferencedGroup(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	out, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol:       aws.String("tcp"),
+			FromPort:         aws.Int32(80),
+			ToPort:           aws.Int32(80),
+			UserIdGroupPairs: []ec2types.UserIdGroupPair{{GroupId: aws.String("sg-source123")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	if len(out.SecurityGroupRules) != 1 || out.SecurityGroupRules[0].ReferencedGroupInfo == nil {
+		t.Fatalf("Authorize did not return referencedGroupInfo: %+v", out.SecurityGroupRules)
+	}
+
+	if got := aws.ToString(out.SecurityGroupRules[0].ReferencedGroupInfo.GroupId); got != "sg-source123" {
+		t.Fatalf("referencedGroupInfo.GroupId = %q, want sg-source123", got)
+	}
+
+	desc, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{groupID}})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroups: %v", err)
+	}
+
+	if len(desc.SecurityGroups) != 1 || len(desc.SecurityGroups[0].IpPermissions) != 1 {
+		t.Fatalf("unexpected Describe shape: %+v", desc.SecurityGroups)
+	}
+
+	pairs := desc.SecurityGroups[0].IpPermissions[0].UserIdGroupPairs
+	if len(pairs) != 1 || aws.ToString(pairs[0].GroupId) != "sg-source123" {
+		t.Fatalf("Describe UserIdGroupPairs = %+v, want sg-source123", pairs)
+	}
+}
+
+// TestAuthorizeSecurityGroupIngressIPv6AndPrefixList pins that IPv6 ranges and
+// prefix-list targets round-trip through Authorize and DescribeSecurityGroups.
+func TestAuthorizeSecurityGroupIngressIPv6AndPrefixList(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	if _, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol:    aws.String("tcp"),
+			FromPort:      aws.Int32(22),
+			ToPort:        aws.Int32(22),
+			Ipv6Ranges:    []ec2types.Ipv6Range{{CidrIpv6: aws.String("::/0"), Description: aws.String("v6")}},
+			PrefixListIds: []ec2types.PrefixListId{{PrefixListId: aws.String("pl-12345")}},
+		}},
+	}); err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	desc, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{groupID}})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroups: %v", err)
+	}
+
+	perm := desc.SecurityGroups[0].IpPermissions[0]
+
+	if len(perm.Ipv6Ranges) != 1 || aws.ToString(perm.Ipv6Ranges[0].CidrIpv6) != "::/0" {
+		t.Fatalf("Ipv6Ranges = %+v, want ::/0", perm.Ipv6Ranges)
+	}
+
+	if got := aws.ToString(perm.Ipv6Ranges[0].Description); got != "v6" {
+		t.Fatalf("Ipv6Ranges[0].Description = %q, want v6", got)
+	}
+
+	if len(perm.PrefixListIds) != 1 || aws.ToString(perm.PrefixListIds[0].PrefixListId) != "pl-12345" {
+		t.Fatalf("PrefixListIds = %+v, want pl-12345", perm.PrefixListIds)
+	}
+}
+
+// TestDescribeSecurityGroupRules pins the DescribeSecurityGroupRules action:
+// it flattens ingress + egress rules (including the default egress rule) into
+// SecurityGroupRule items and honors the group-id filter.
+func TestDescribeSecurityGroupRules(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	if _, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(443),
+			ToPort:     aws.Int32(443),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	}); err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	out, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		Filters: []ec2types.Filter{{Name: aws.String("group-id"), Values: []string{groupID}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroupRules: %v", err)
+	}
+
+	// One ingress rule just added + one default egress rule.
+	if len(out.SecurityGroupRules) != 2 {
+		t.Fatalf("DescribeSecurityGroupRules = %d rules, want 2: %+v", len(out.SecurityGroupRules), out.SecurityGroupRules)
+	}
+
+	var haveIngress, haveEgress bool
+	for _, r := range out.SecurityGroupRules {
+		if !strings.HasPrefix(aws.ToString(r.SecurityGroupRuleId), "sgr-") {
+			t.Fatalf("rule missing sgr- id: %+v", r)
+		}
+
+		if aws.ToBool(r.IsEgress) {
+			haveEgress = true
+		} else {
+			haveIngress = true
+		}
+	}
+
+	if !haveIngress || !haveEgress {
+		t.Fatalf("want both ingress and egress rules, got ingress=%v egress=%v", haveIngress, haveEgress)
+	}
+
+	// Filtering by a single rule id returns just that rule.
+	oneID := aws.ToString(out.SecurityGroupRules[0].SecurityGroupRuleId)
+
+	one, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		SecurityGroupRuleIds: []string{oneID},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroupRules by id: %v", err)
+	}
+
+	if len(one.SecurityGroupRules) != 1 || aws.ToString(one.SecurityGroupRules[0].SecurityGroupRuleId) != oneID {
+		t.Fatalf("rule-id filter = %+v, want only %s", one.SecurityGroupRules, oneID)
 	}
 }

@@ -9,6 +9,39 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
+// TestNetworkACLOwnerID pins that a network ACL reports its owning account id.
+// Terraform's aws_network_acl and aws_default_network_acl read ownerId; an empty
+// value makes the ACL look cross-account.
+func TestNetworkACLOwnerID(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	vpc, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc: %v", err)
+	}
+
+	acl, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: vpc.Vpc.VpcId})
+	if err != nil {
+		t.Fatalf("CreateNetworkAcl: %v", err)
+	}
+
+	if got := aws.ToString(acl.NetworkAcl.OwnerId); got != "123456789012" {
+		t.Errorf("CreateNetworkAcl OwnerId = %q, want 123456789012", got)
+	}
+
+	desc, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		NetworkAclIds: []string{aws.ToString(acl.NetworkAcl.NetworkAclId)},
+	})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls: %v", err)
+	}
+
+	if got := aws.ToString(desc.NetworkAcls[0].OwnerId); got != "123456789012" {
+		t.Errorf("DescribeNetworkAcls OwnerId = %q, want 123456789012", got)
+	}
+}
+
 // TestReplaceNetworkAclEntry pins the previously-undispatched
 // ReplaceNetworkAclEntry action: it swaps the rule at (ruleNumber, egress) in
 // place, so a caller updating an existing entry (Terraform aws_network_acl_rule

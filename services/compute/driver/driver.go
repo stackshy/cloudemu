@@ -32,6 +32,10 @@ type InstanceConfig struct {
 	// rather than the emulator defaults.
 	Region        string
 	ResourceGroup string
+	// ClientToken provides idempotency for RunInstances (AWS): a retry with the
+	// same case-sensitive token returns the already-launched instances instead
+	// of provisioning new ones. Empty disables dedup. Ignored by Azure/GCP.
+	ClientToken string
 }
 
 // Instance describes a running virtual machine.
@@ -61,6 +65,15 @@ type Instance struct {
 	// resource group), when known; empty falls back to the emulator defaults.
 	Region        string
 	ResourceGroup string
+	// ReservationID groups instances launched by one RunInstances call under a
+	// shared AWS reservation (r-xxxx). Empty for providers with no reservation
+	// concept; the wire layer then falls back to a per-instance reservation.
+	ReservationID string
+	// KeyName is the key pair the instance was launched with (AWS), when set.
+	KeyName string
+	// Monitoring is the CloudWatch detailed-monitoring state
+	// ("disabled"/"enabled"), when known (AWS). Empty renders as "disabled".
+	Monitoring string
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo

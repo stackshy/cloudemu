@@ -72,6 +72,34 @@ type SecurityRule struct {
 	FromPort int
 	ToPort   int
 	CIDR     string
+	// IPv6CIDR is an IPv6 source/destination range (Ipv6Ranges.CidrIpv6),
+	// PrefixListID references a managed prefix list (PrefixListIds.PrefixListId),
+	// and ReferencedGroupID / ReferencedGroupOwnerID capture a source-group
+	// reference (UserIdGroupPairs). Exactly one of CIDR, IPv6CIDR, PrefixListID
+	// or ReferencedGroupID identifies a single rule's target on the AWS wire.
+	IPv6CIDR               string
+	PrefixListID           string
+	ReferencedGroupID      string
+	ReferencedGroupOwnerID string
+	// Description is the optional free-text note attached to a rule. It is not
+	// part of a rule's identity — AWS ignores it when revoking or deduplicating.
+	Description string
+	// RuleID is the service-assigned "sgr-" identifier for the rule. It is empty
+	// for rules created outside the AWS wire layer (Azure/GCP, portable API).
+	RuleID string
+}
+
+// Matches reports whether two rules describe the same permission, ignoring the
+// service-assigned RuleID and the free-text Description — the fields AWS does
+// not treat as part of a rule's identity when revoking or deduplicating.
+func (r *SecurityRule) Matches(o *SecurityRule) bool {
+	return r.Protocol == o.Protocol &&
+		r.FromPort == o.FromPort &&
+		r.ToPort == o.ToPort &&
+		r.CIDR == o.CIDR &&
+		r.IPv6CIDR == o.IPv6CIDR &&
+		r.PrefixListID == o.PrefixListID &&
+		r.ReferencedGroupID == o.ReferencedGroupID
 }
 
 // PeeringConnection represents a VPC peering connection.

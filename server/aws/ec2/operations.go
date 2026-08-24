@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -19,6 +21,7 @@ import (
 type instanceAttributer interface {
 	SetInstanceAttribute(ctx context.Context, id, name, value string) error
 	GetInstanceAttribute(ctx context.Context, id, name string) (string, error)
+	SetInstanceSecurityGroups(ctx context.Context, id string, groupIDs []string) error
 }
 
 // Attribute element names shared by ModifyInstanceAttribute (Name.Value on the
@@ -27,10 +30,33 @@ const (
 	attrDisableAPITermination = "disableApiTermination"
 	attrSourceDestCheck       = "sourceDestCheck"
 	attrInstanceType          = "instanceType"
+	attrUserData              = "userData"
+	attrEbsOptimized          = "ebsOptimized"
+	attrGroupSet              = "groupSet"
+	attrMonitoring            = "monitoring"
 )
 
-// reservationPrefix is our own reservation ID prefix. Real AWS uses "r-".
+// reservationPrefix is the AWS reservation ID prefix (r-xxxx).
 const reservationPrefix = "r-"
+
+// Static instance facts real EC2 reports for the Linux/x86 instances this
+// emulator launches. They are fixed rather than modeled because no cloudemu
+// behavior depends on them, but SDK clients and IaC read them.
+const (
+	archX86            = "x86_64"
+	hypervisorXen      = "xen"
+	virtualizationHVM  = "hvm"
+	rootDeviceTypeEBS  = "ebs"
+	rootDeviceNameXVDA = "/dev/xvda"
+	tenancyDefault     = "default"
+	defaultZone        = "us-east-1a"
+	// eniAttachedStatus / primaryDeviceIndex describe the primary ENI's
+	// attachment.
+	eniAttachedStatus  = "attached"
+	primaryDeviceIndex = 0
+	// internalDNSSuffix is the private-DNS suffix EC2 uses in us-east-1.
+	internalDNSSuffix = ".ec2.internal"
+)
 
 // runInstances handles Action=RunInstances.
 func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +71,7 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 		SecurityGroups: awsquery.ListStrings(form, "SecurityGroupId"),
 		KeyName:        form.Get("KeyName"),
 		UserData:       decodeUserData(form.Get("UserData")),
+		ClientToken:    form.Get("ClientToken"),
 		Tags:           mergeTagSpecs(awsquery.TagSpecs(form), "instance"),
 	}
 
@@ -64,10 +91,20 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, runInstancesResponse{
 		Xmlns:         awsquery.Namespace,
 		RequestID:     awsquery.RequestID,
-		ReservationID: reservationPrefix + stripInstancePrefix(instances[0].ID),
+		ReservationID: reservationIDFor(&instances[0]),
 		OwnerID:       ownerID,
-		Instances:     toInstanceXMLs(instances),
+		Instances:     h.toInstanceXMLs(r.Context(), instances),
 	})
+}
+
+// reservationIDFor returns the instance's reservation id, falling back to a
+// per-instance reservation for providers (Azure/GCP) that don't group launches.
+func reservationIDFor(inst *computedriver.Instance) string {
+	if inst.ReservationID != "" {
+		return inst.ReservationID
+	}
+
+	return reservationPrefix + stripInstancePrefix(inst.ID)
 }
 
 // describeInstances handles Action=DescribeInstances.
@@ -86,22 +123,102 @@ func (h *Handler) describeInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We don't track real reservation groupings — each instance gets its own
-	// singleton reservation. SDK clients are happy with this shape.
-	reservations := make([]reservationXML, 0, len(instances))
-	for i := range instances {
-		reservations = append(reservations, reservationXML{
-			ReservationID: reservationPrefix + stripInstancePrefix(instances[i].ID),
-			OwnerID:       ownerID,
-			Instances:     toInstanceXMLs(instances[i : i+1]),
-		})
-	}
+	// Group instances launched by one RunInstances call under a shared
+	// reservation, preserving first-seen order (real EC2 <reservationSet>).
+	reservations := h.groupReservations(r.Context(), instances)
+
+	page, next := paginateReservations(reservations, form.Get("MaxResults"), form.Get("NextToken"))
 
 	awsquery.WriteXMLResponse(w, describeInstancesResponse{
 		Xmlns:        awsquery.Namespace,
 		RequestID:    awsquery.RequestID,
-		Reservations: reservations,
+		Reservations: page,
+		NextToken:    next,
 	})
+}
+
+// groupReservations collapses instances into reservations by ReservationID,
+// keeping the order reservations were first seen so paging is stable.
+func (h *Handler) groupReservations(ctx context.Context, instances []computedriver.Instance) []reservationXML {
+	order := make([]string, 0)
+	byID := make(map[string]*reservationXML)
+
+	for i := range instances {
+		rid := reservationIDFor(&instances[i])
+
+		res, ok := byID[rid]
+		if !ok {
+			order = append(order, rid)
+			byID[rid] = &reservationXML{ReservationID: rid, OwnerID: ownerID}
+			res = byID[rid]
+		}
+
+		res.Instances = append(res.Instances, h.toInstanceXMLs(ctx, instances[i:i+1])...)
+	}
+
+	out := make([]reservationXML, 0, len(order))
+	for _, rid := range order {
+		out = append(out, *byID[rid])
+	}
+
+	// Sort by reservation id so the paging cursor is stable across calls (the
+	// underlying store iterates in map order). Ids are monotonic, so this is
+	// also launch order.
+	sort.Slice(out, func(i, j int) bool { return out[i].ReservationID < out[j].ReservationID })
+
+	return out
+}
+
+// maxDescribeResults bounds a page when the request omits a valid MaxResults.
+const maxDescribeResults = 1000
+
+// paginateReservations slices reservations to at most maxResults, returning the
+// page and a NextToken (the id of the first reservation on the following page,
+// base64-encoded). An empty/invalid maxResults returns everything.
+func paginateReservations(reservations []reservationXML, maxResultsStr, token string) (page []reservationXML, next string) {
+	start := decodeReservationToken(token, reservations)
+
+	limit, err := strconv.Atoi(maxResultsStr)
+	if err != nil || limit <= 0 {
+		return reservations[start:], ""
+	}
+
+	if limit > maxDescribeResults {
+		limit = maxDescribeResults
+	}
+
+	end := start + limit
+	if end >= len(reservations) {
+		return reservations[start:], ""
+	}
+
+	return reservations[start:end], encodeReservationToken(reservations[end].ReservationID)
+}
+
+// decodeReservationToken maps a NextToken back to a start index. An unknown or
+// empty token starts at the beginning.
+func decodeReservationToken(token string, reservations []reservationXML) int {
+	if token == "" {
+		return 0
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return 0
+	}
+
+	for i := range reservations {
+		if reservations[i].ReservationID == string(raw) {
+			return i
+		}
+	}
+
+	return 0
+}
+
+// encodeReservationToken base64-encodes a reservation id for use as a NextToken.
+func encodeReservationToken(reservationID string) string {
+	return base64.StdEncoding.EncodeToString([]byte(reservationID))
 }
 
 // startInstances handles Action=StartInstances.
@@ -213,19 +330,28 @@ func (h *Handler) modifyInstanceAttribute(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// applyInstanceAttributes writes the boolean instance attributes present in the
-// request through the instanceAttributer capability.
+// applyInstanceAttributes writes the single-value instance attributes and the
+// security-group membership present in the request through the
+// instanceAttributer capability. Each ModifyInstanceAttribute call carries at
+// most one attribute, so absent parameters are simply skipped.
 func (h *Handler) applyInstanceAttributes(r *http.Request, id string) error {
 	attributer, ok := h.compute.(instanceAttributer)
 	if !ok {
 		return nil
 	}
 
-	for _, name := range []string{attrDisableAPITermination, attrSourceDestCheck} {
+	for _, name := range []string{attrDisableAPITermination, attrSourceDestCheck, attrEbsOptimized, attrUserData} {
 		if v := r.Form.Get(attrForm(name) + ".Value"); v != "" {
 			if err := attributer.SetInstanceAttribute(r.Context(), id, name, v); err != nil {
 				return err
 			}
+		}
+	}
+
+	// GroupId.N (VPC instances) replaces the instance's security-group set.
+	if groups := awsquery.ListStrings(r.Form, "GroupId"); len(groups) > 0 {
+		if err := attributer.SetInstanceSecurityGroups(r.Context(), id, groups); err != nil {
+			return err
 		}
 	}
 
@@ -245,16 +371,29 @@ func (h *Handler) describeInstanceAttribute(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	val, err := attributer.GetInstanceAttribute(r.Context(), id, attr)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
 	resp := describeInstanceAttributeResponse{
 		Xmlns:      awsquery.Namespace,
 		RequestID:  awsquery.RequestID,
 		InstanceID: id,
+	}
+
+	// groupSet is a list, not a single scalar, so it is read from the instance's
+	// membership rather than the scalar GetInstanceAttribute path.
+	if attr == attrGroupSet {
+		if err := h.attachInstanceGroups(r.Context(), id, &resp); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		awsquery.WriteXMLResponse(w, resp)
+
+		return
+	}
+
+	val, err := attributer.GetInstanceAttribute(r.Context(), id, attr)
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	switch attr {
@@ -262,11 +401,35 @@ func (h *Handler) describeInstanceAttribute(w http.ResponseWriter, r *http.Reque
 		resp.DisableAPITermination = &attributeBooleanValueXML{Value: val == formTrue}
 	case attrSourceDestCheck:
 		resp.SourceDestCheck = &attributeBooleanValueXML{Value: val == formTrue}
+	case attrEbsOptimized:
+		resp.EBSOptimized = &attributeBooleanValueXML{Value: val == formTrue}
 	case attrInstanceType:
 		resp.InstanceType = &attributeValueXML{Value: val}
+	case attrUserData:
+		resp.UserData = &attributeValueXML{Value: val}
 	}
 
 	awsquery.WriteXMLResponse(w, resp)
+}
+
+// attachInstanceGroups populates resp.Groups from the instance's current
+// security-group membership (with resolved names) for the groupSet attribute.
+func (h *Handler) attachInstanceGroups(ctx context.Context, id string, resp *describeInstanceAttributeResponse) error {
+	instances, err := h.compute.DescribeInstances(ctx, []string{id}, nil)
+	if err != nil {
+		return err
+	}
+
+	if len(instances) == 0 {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+	}
+
+	names := h.securityGroupNames(ctx, instances[0].SecurityGroups)
+	for _, sg := range instances[0].SecurityGroups {
+		resp.Groups = append(resp.Groups, groupItem{GroupID: sg, GroupName: names[sg]})
+	}
+
+	return nil
 }
 
 // attrForm maps an attribute element name (lowerCamel, as on the response) to
@@ -277,6 +440,10 @@ func attrForm(name string) string {
 		return "DisableApiTermination"
 	case attrSourceDestCheck:
 		return "SourceDestCheck"
+	case attrEbsOptimized:
+		return "EbsOptimized"
+	case attrUserData:
+		return "UserData"
 	default:
 		return name
 	}
@@ -370,44 +537,164 @@ func mergeTagSpecs(specs []awsquery.TagSpec, resource string) map[string]string 
 	return out
 }
 
-// toInstanceXMLs converts driver instances to their XML wire form.
-func toInstanceXMLs(instances []computedriver.Instance) []instanceXML {
+// toInstanceXMLs converts driver instances to their XML wire form, resolving
+// security-group names once for the whole batch.
+func (h *Handler) toInstanceXMLs(ctx context.Context, instances []computedriver.Instance) []instanceXML {
+	names := h.securityGroupNames(ctx, collectSecurityGroups(instances))
+
 	out := make([]instanceXML, 0, len(instances))
-
 	for i := range instances {
-		inst := &instances[i]
-		xi := instanceXML{
-			InstanceID:   inst.ID,
-			ImageID:      inst.ImageID,
-			InstanceType: inst.InstanceType,
-			State:        instanceState{Code: stateCode(inst.State), Name: inst.State},
-			LaunchTime:   inst.LaunchTime,
-			SubnetID:     inst.SubnetID,
-			VPCID:        inst.VPCID,
-			PrivateIP:    inst.PrivateIP,
-			PublicIP:     inst.PublicIP,
-		}
-
-		for _, sg := range inst.SecurityGroups {
-			xi.Groups = append(xi.Groups, groupItem{GroupID: sg})
-		}
-
-		for k, v := range inst.Tags {
-			xi.Tags = append(xi.Tags, tagItem{Key: k, Value: v})
-		}
-
-		if inst.Operator != nil {
-			xi.Operator = &operatorXML{
-				Managed:         inst.Operator.Managed,
-				Principal:       inst.Operator.Principal,
-				HiddenByDefault: inst.Operator.HiddenByDefault,
-			}
-		}
-
-		out = append(out, xi)
+		out = append(out, instanceXMLFor(&instances[i], names))
 	}
 
 	return out
+}
+
+// instanceXMLFor builds the wire shape for one instance, including the static
+// facts and derived placement / DNS / primary-ENI fields real EC2 reports.
+func instanceXMLFor(inst *computedriver.Instance, names map[string]string) instanceXML {
+	xi := instanceXML{
+		InstanceID:         inst.ID,
+		ImageID:            inst.ImageID,
+		InstanceType:       inst.InstanceType,
+		State:              instanceState{Code: stateCode(inst.State), Name: inst.State},
+		LaunchTime:         inst.LaunchTime,
+		SubnetID:           inst.SubnetID,
+		VPCID:              inst.VPCID,
+		PrivateIP:          inst.PrivateIP,
+		PublicIP:           inst.PublicIP,
+		PrivateDNSName:     privateDNSName(inst.PrivateIP),
+		PublicDNSName:      publicDNSName(inst.PublicIP),
+		KeyName:            inst.KeyName,
+		AmiLaunchIndex:     0,
+		Architecture:       archX86,
+		RootDeviceType:     rootDeviceTypeEBS,
+		RootDeviceName:     rootDeviceNameXVDA,
+		VirtualizationType: virtualizationHVM,
+		Hypervisor:         hypervisorXen,
+		Placement:          &placementXML{AvailabilityZone: instanceZone(inst), Tenancy: tenancyDefault},
+		Monitoring:         &monitoringXML{State: monitoringState(inst.Monitoring)},
+	}
+
+	for _, sg := range inst.SecurityGroups {
+		xi.Groups = append(xi.Groups, groupItem{GroupID: sg, GroupName: names[sg]})
+	}
+
+	if eni := primaryENI(inst, xi.Groups); eni != nil {
+		xi.NetworkInterfaces = []instanceENIXML{*eni}
+	}
+
+	for k, v := range inst.Tags {
+		xi.Tags = append(xi.Tags, tagItem{Key: k, Value: v})
+	}
+
+	if inst.Operator != nil {
+		xi.Operator = &operatorXML{
+			Managed:         inst.Operator.Managed,
+			Principal:       inst.Operator.Principal,
+			HiddenByDefault: inst.Operator.HiddenByDefault,
+		}
+	}
+
+	return xi
+}
+
+// primaryENI synthesizes the instance's single primary network interface from
+// its subnet/VPC/private-IP/security-groups, or nil when there is nothing to
+// describe (no subnet, VPC, or private IP).
+func primaryENI(inst *computedriver.Instance, groups []groupItem) *instanceENIXML {
+	if inst.SubnetID == "" && inst.VPCID == "" && inst.PrivateIP == "" {
+		return nil
+	}
+
+	return &instanceENIXML{
+		SubnetID:   inst.SubnetID,
+		VPCID:      inst.VPCID,
+		PrivateIP:  inst.PrivateIP,
+		Groups:     groups,
+		Attachment: instanceENIAttachmentXML{DeviceIndex: primaryDeviceIndex, Status: eniAttachedStatus},
+	}
+}
+
+// instanceZone returns the instance's availability zone, defaulting to a stable
+// zone when the provider does not track placement.
+func instanceZone(inst *computedriver.Instance) string {
+	if len(inst.Zones) > 0 && inst.Zones[0] != "" {
+		return inst.Zones[0]
+	}
+
+	return defaultZone
+}
+
+// monitoringState maps a stored monitoring value to the wire enum, defaulting to
+// "disabled" (basic monitoring) when unset.
+func monitoringState(state string) string {
+	if state == "" {
+		return monitorStateDisabled
+	}
+
+	return state
+}
+
+// collectSecurityGroups returns the de-duplicated security-group ids across the
+// batch so names are resolved in a single networking lookup.
+func collectSecurityGroups(instances []computedriver.Instance) []string {
+	seen := make(map[string]struct{})
+
+	var ids []string
+
+	for i := range instances {
+		for _, sg := range instances[i].SecurityGroups {
+			if _, ok := seen[sg]; !ok {
+				seen[sg] = struct{}{}
+
+				ids = append(ids, sg)
+			}
+		}
+	}
+
+	return ids
+}
+
+// securityGroupNames resolves security-group ids to their names via the
+// networking driver. It returns an empty map when no networking driver is wired
+// or the lookup fails, so name resolution is best-effort (ids still render).
+func (h *Handler) securityGroupNames(ctx context.Context, ids []string) map[string]string {
+	names := make(map[string]string)
+	if h.vpc == nil || len(ids) == 0 {
+		return names
+	}
+
+	groups, err := h.vpc.DescribeSecurityGroups(ctx, ids)
+	if err != nil {
+		return names
+	}
+
+	for i := range groups {
+		names[groups[i].ID] = groups[i].Name
+	}
+
+	return names
+}
+
+// privateDNSName derives the EC2 internal DNS name from a private IPv4
+// (10.0.0.5 -> ip-10-0-0-5.ec2.internal). Empty for an instance with no IP.
+func privateDNSName(ip string) string {
+	if ip == "" {
+		return ""
+	}
+
+	return "ip-" + strings.ReplaceAll(ip, ".", "-") + internalDNSSuffix
+}
+
+// publicDNSName derives the public DNS name from a public IPv4
+// (52.1.2.3 -> ec2-52-1-2-3.compute-1.amazonaws.com). Empty when no public IP.
+func publicDNSName(ip string) string {
+	if ip == "" {
+		return ""
+	}
+
+	return "ec2-" + strings.ReplaceAll(ip, ".", "-") + ".compute-1.amazonaws.com"
 }
 
 // toDriverFilters converts parsed filters to the driver's filter shape.
