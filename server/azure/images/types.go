@@ -26,8 +26,22 @@ type imageResponse struct {
 }
 
 type imageResponseProps struct {
-	ProvisioningState    string       `json:"provisioningState"`
-	SourceVirtualMachine *resourceRef `json:"sourceVirtualMachine,omitempty"`
+	ProvisioningState    string               `json:"provisioningState"`
+	SourceVirtualMachine *resourceRef         `json:"sourceVirtualMachine,omitempty"`
+	StorageProfile       *imageStorageProfile `json:"storageProfile,omitempty"`
+}
+
+// imageStorageProfile is the storageProfile of an image resource, carrying the
+// captured OS disk (and, in real Azure, data disks we do not model).
+type imageStorageProfile struct {
+	OSDisk *imageOSDisk `json:"osDisk,omitempty"`
+}
+
+type imageOSDisk struct {
+	OSType             string `json:"osType,omitempty"`
+	OSState            string `json:"osState,omitempty"`
+	DiskSizeGB         int    `json:"diskSizeGB,omitempty"`
+	StorageAccountType string `json:"storageAccountType,omitempty"`
 }
 
 type imageListResponse struct {

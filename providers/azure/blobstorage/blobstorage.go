@@ -42,6 +42,22 @@ type blobObject struct {
 	LastModified string
 	Metadata     map[string]string
 	Tags         map[string]string
+	// BlobType is "BlockBlob" (default, empty) or "AppendBlob".
+	BlobType string
+	// AccessTier is the blob access tier (Hot/Cool/Cold/Archive), set by Set Blob
+	// Tier; empty when unset.
+	AccessTier string
+	// Content* are additional system properties settable via Set Blob Properties.
+	ContentEncoding    string
+	ContentLanguage    string
+	ContentDisposition string
+	CacheControl       string
+	// mu guards the in-place mutations of the new Azure ops (append, metadata /
+	// property / tier updates). Whole-object replacements via the container store
+	// don't need it.
+	mu sync.Mutex
+	// appendBlocks counts committed Append Block operations (append blobs only).
+	appendBlocks int
 }
 
 type blobMultipartUpload struct {
@@ -67,14 +83,35 @@ type containerMeta struct {
 	corsConfig *driver.CORSConfig
 	encryption *driver.EncryptionConfig
 	tags       map[string]string
+	// metadata is the container's x-ms-meta-* metadata (Set Container Metadata).
+	metadata map[string]string
+	// staging holds uncommitted blocks (Put Block) keyed by blob name.
+	staging *memstore.Store[*blockStaging]
+	// snapshots holds immutable blob snapshots keyed by snapshotKey(blob, id).
+	// Snapshots live at the container level so they survive a base-blob
+	// overwrite, matching real Azure snapshot lifetime.
+	snapshots *memstore.Store[*blobObject]
+	// mu guards snapshotSeq (and any future container-scoped counters).
+	mu          sync.Mutex
+	snapshotSeq int
+}
+
+// blockStaging buffers the uncommitted blocks staged for one blob before a
+// Put Block List commits them.
+type blockStaging struct {
+	mu     sync.Mutex
+	blocks map[string][]byte
 }
 
 // Mock is an in-memory mock implementation of Azure Blob Storage.
 type Mock struct {
 	containers *memstore.Store[*containerMeta]
-	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier)
-	// per container, for the BucketAttributes discovery capability.
+	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier/
+	// location/tags) per container, for the BucketAttributes discovery capability.
 	bucketAttrs *memstore.Store[driver.AccountAttributes]
+	// accountKeys holds the shared access keys per storage account, generated
+	// lazily on first ListStorageAccountKeys.
+	accountKeys *memstore.Store[[]driver.AccountKey]
 	opts        *config.Options
 	monitoring  mondriver.Monitoring
 }
@@ -116,6 +153,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		containers:  memstore.New[*containerMeta](),
 		bucketAttrs: memstore.New[driver.AccountAttributes](),
+		accountKeys: memstore.New[[]driver.AccountKey](),
 		opts:        opts,
 	}
 }
@@ -166,6 +204,8 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 		CreatedAt:  m.opts.Clock.Now().UTC().Format(blobTimeFormat),
 		objects:    memstore.New[*blobObject](),
 		multiparts: memstore.New[*blobMultipartUpload](),
+		staging:    memstore.New[*blockStaging](),
+		snapshots:  memstore.New[*blobObject](),
 	})
 
 	return nil
@@ -269,12 +309,18 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Egress": float64(obj.Size)})
 
 	return &driver.Object{
-		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-		},
+		Info: objectInfo(obj),
 		Data: data,
 	}, nil
+}
+
+// objectInfo renders a blobObject as a driver.ObjectInfo with cloned metadata.
+func objectInfo(obj *blobObject) driver.ObjectInfo {
+	return driver.ObjectInfo{
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
+		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+		BlobType: obj.BlobType, AccessTier: obj.AccessTier,
+	}
 }
 
 // loadObjectData returns the object's bytes: from the wired StorageEngine when
@@ -333,10 +379,9 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
-	return &driver.ObjectInfo{
-		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-	}, nil
+	info := objectInfo(obj)
+
+	return &info, nil
 }
 
 // ListObjects lists blobs in a container with optional prefix/delimiter filtering.
@@ -376,6 +421,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
 			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
+			BlobType: obj.BlobType, AccessTier: obj.AccessTier,
 		})
 	}
 

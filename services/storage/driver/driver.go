@@ -20,6 +20,96 @@ type AccountAttributes struct {
 	SKU        string // e.g. Standard_LRS, Premium_LRS
 	Kind       string // e.g. StorageV2, BlobStorage
 	AccessTier string // Hot / Cool
+	// Location is the account's region (e.g. westus2). Empty until an ARM
+	// create-or-update stamps it; the handler falls back to a default.
+	Location string
+	// Tags are the ARM resource tags submitted on create-or-update, round-tripped
+	// back on GET / list.
+	Tags map[string]string
+}
+
+// AccountKey is one access key of an Azure storage account (Microsoft.Storage
+// ListKeys / RegenerateKey). Value is a base64-encoded secret.
+type AccountKey struct {
+	KeyName      string
+	Value        string
+	Permissions  string // "Full" or "Read"
+	CreationTime string // RFC3339
+}
+
+// StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by
+// type assertion (like the networking AzureNetworkInterfaces surface). An Azure
+// storage-account backend exposes its shared access keys so a data-plane client
+// building a SharedKeyCredential can fetch and rotate them. S3/GCS buckets have
+// no equivalent and don't implement it.
+type StorageAccountKeys interface {
+	// ListStorageAccountKeys returns the account's access keys, generating a
+	// stable key1/key2 pair on first access.
+	ListStorageAccountKeys(ctx context.Context, account string) ([]AccountKey, error)
+	// RegenerateStorageAccountKey rotates the value of the named key (key1/key2)
+	// and returns the full, updated key list.
+	RegenerateStorageAccountKey(ctx context.Context, account, keyName string) ([]AccountKey, error)
+}
+
+// BlobProperties are the settable system (HTTP) properties of a blob, updated by
+// the Azure Set Blob Properties operation (?comp=properties). Empty fields clear
+// the corresponding property, matching Azure semantics.
+type BlobProperties struct {
+	ContentType        string
+	ContentEncoding    string
+	ContentLanguage    string
+	ContentDisposition string
+	CacheControl       string
+}
+
+// AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
+// discovered by type assertion. It covers operations with no AWS/GCS equivalent
+// (block staging + commit, metadata/properties/tier updates, snapshots, append
+// blobs, container metadata) so they are not forced onto the shared Bucket
+// interface every provider implements.
+type AzureBlobExtensions interface {
+	// StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob
+	// under blockID; the blob need not exist yet.
+	StageBlock(ctx context.Context, container, blob, blockID string, data []byte) error
+	// CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist)
+	// from the previously-staged blocks named by blockIDs, in the given order.
+	CommitBlockList(
+		ctx context.Context, container, blob string, blockIDs []string, contentType string, metadata map[string]string,
+	) (*ObjectInfo, error)
+
+	// SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata,
+	// ?comp=metadata), preserving its content, and returns the new info.
+	SetBlobMetadata(ctx context.Context, container, blob string, metadata map[string]string) (*ObjectInfo, error)
+	// SetBlobProperties replaces only a blob's system properties (Set Blob
+	// Properties, ?comp=properties), preserving its content.
+	SetBlobProperties(ctx context.Context, container, blob string, props *BlobProperties) (*ObjectInfo, error)
+	// SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier),
+	// preserving its content and ETag.
+	SetBlobTier(ctx context.Context, container, blob, tier string) error
+
+	// CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob,
+	// ?comp=snapshot) of a blob, preserving the base blob, and returns the
+	// snapshot's opaque timestamp identifier.
+	CreateBlobSnapshot(ctx context.Context, container, blob string) (snapshot string, info *ObjectInfo, err error)
+	// GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…).
+	GetBlobSnapshot(ctx context.Context, container, blob, snapshot string) (*Object, error)
+
+	// CreateAppendBlob creates an empty append blob (Put Blob with
+	// x-ms-blob-type: AppendBlob).
+	CreateAppendBlob(ctx context.Context, container, blob, contentType string, metadata map[string]string) (*ObjectInfo, error)
+	// AppendBlock appends a block to the end of an append blob (Append Block,
+	// ?comp=appendblock). offset is the byte position the block was committed at;
+	// committedBlocks is the total number of blocks appended so far.
+	AppendBlock(
+		ctx context.Context, container, blob string, data []byte,
+	) (offset int64, committedBlocks int, info *ObjectInfo, err error)
+
+	// SetContainerMetadata replaces a container's metadata (Set Container
+	// Metadata, ?restype=container&comp=metadata).
+	SetContainerMetadata(ctx context.Context, container string, metadata map[string]string) error
+	// ContainerMetadata returns a container's metadata (Get Container Properties /
+	// Get Container Metadata).
+	ContainerMetadata(ctx context.Context, container string) (map[string]string, error)
 }
 
 // BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
@@ -44,6 +134,12 @@ type ObjectInfo struct {
 	VersionID string
 	// DeleteMarker reports whether this version is a delete marker.
 	DeleteMarker bool
+	// BlobType is the Azure blob type ("BlockBlob" or "AppendBlob"). Empty is
+	// treated as BlockBlob; non-Azure providers leave it empty.
+	BlobType string
+	// AccessTier is the Azure blob access tier (Hot/Cool/Cold/Archive), set by
+	// Set Blob Tier. Empty when unset; non-Azure providers leave it empty.
+	AccessTier string
 }
 
 // Object is an object with its data.

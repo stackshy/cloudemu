@@ -110,6 +110,27 @@ type instanceViewStatus struct {
 	DisplayStatus string `json:"displayStatus"`
 }
 
+// instanceViewResponse is the ARM VirtualMachineInstanceView returned by
+// GET virtualMachines/{name}/instanceView.
+type instanceViewResponse struct {
+	ComputerName     string               `json:"computerName,omitempty"`
+	OSName           string               `json:"osName,omitempty"`
+	HyperVGeneration string               `json:"hyperVGeneration,omitempty"`
+	VMAgent          *vmAgentInstanceView `json:"vmAgent,omitempty"`
+	Disks            []diskInstanceView   `json:"disks,omitempty"`
+	Statuses         []instanceViewStatus `json:"statuses"`
+}
+
+type vmAgentInstanceView struct {
+	VMAgentVersion string               `json:"vmAgentVersion,omitempty"`
+	Statuses       []instanceViewStatus `json:"statuses,omitempty"`
+}
+
+type diskInstanceView struct {
+	Name     string               `json:"name,omitempty"`
+	Statuses []instanceViewStatus `json:"statuses,omitempty"`
+}
+
 // vmListResponse is the outbound shape for a list operation.
 type vmListResponse struct {
 	Value []vmResponse `json:"value"`

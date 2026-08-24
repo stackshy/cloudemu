@@ -51,7 +51,8 @@ type attrBackend interface {
 // storage bucket driver.
 type Handler struct {
 	bucket storagedriver.Bucket
-	attrs  attrBackend // nil when the driver doesn't expose account attributes
+	attrs  attrBackend                      // nil when the driver doesn't expose account attributes
+	keys   storagedriver.StorageAccountKeys // nil when the driver doesn't expose access keys
 }
 
 // New returns a storage-account handler backed by b.
@@ -59,6 +60,10 @@ func New(b storagedriver.Bucket) *Handler {
 	h := &Handler{bucket: b}
 	if a, ok := b.(attrBackend); ok {
 		h.attrs = a
+	}
+
+	if k, ok := b.(storagedriver.StorageAccountKeys); ok {
+		h.keys = k
 	}
 
 	return h
@@ -94,6 +99,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// POST .../storageAccounts/{name}/{action} — key management (listKeys,
+	// regenerateKey). These carry a sub-resource action segment.
+	if r.Method == http.MethodPost && rp.SubResource != "" {
+		h.serveAction(w, r, &rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, &rp)
@@ -104,6 +116,73 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// serveAction routes the POST action sub-resources (listKeys, regenerateKey).
+func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if !h.bucketExists(r.Context(), rp.ResourceName) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"storage account "+rp.ResourceName+" not found")
+		return
+	}
+
+	switch strings.ToLower(rp.SubResource) {
+	case "listkeys":
+		h.listKeys(w, r, rp)
+	case "regeneratekey":
+		h.regenerateKey(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unknown action "+rp.SubResource)
+	}
+}
+
+// listKeys serves POST .../storageAccounts/{name}/listKeys.
+func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if h.keys == nil {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "key management not supported")
+		return
+	}
+
+	keys, err := h.keys.ListStorageAccountKeys(r.Context(), rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toARMKeyList(keys))
+}
+
+// regenerateKey serves POST .../storageAccounts/{name}/regenerateKey.
+func (h *Handler) regenerateKey(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if h.keys == nil {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "key management not supported")
+		return
+	}
+
+	var body armRegenerateKey
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	keys, err := h.keys.RegenerateStorageAccountKey(r.Context(), rp.ResourceName, body.KeyName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toARMKeyList(keys))
+}
+
+// toARMKeyList maps driver keys to the ARM StorageAccountListKeysResult shape.
+func toARMKeyList(keys []storagedriver.AccountKey) armKeyList {
+	out := armKeyList{Keys: make([]armKey, 0, len(keys))}
+	for _, k := range keys {
+		out.Keys = append(out.Keys, armKey{
+			KeyName: k.KeyName, Value: k.Value, Permissions: k.Permissions, CreationTime: k.CreationTime,
+		})
+	}
+
+	return out
 }
 
 // serveCollection lists storage accounts at the subscription or resource-group
@@ -134,7 +213,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp *az
 			scope.ResourceGroup = "default"
 		}
 
-		out = append(out, h.toARMAccount(r.Context(), &scope, defaultLocation, nil))
+		out = append(out, h.toARMAccount(r.Context(), &scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armAccountList{Value: out})
@@ -155,7 +234,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		return
 	}
 
-	attrs := storagedriver.AccountAttributes{Kind: body.Kind}
+	attrs := storagedriver.AccountAttributes{Kind: body.Kind, Location: body.Location, Tags: body.Tags}
 	if body.SKU != nil {
 		attrs.SKU = body.SKU.Name
 	}
@@ -168,7 +247,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		h.attrs.SetBucketAttributes(name, attrs)
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp, body.Location, body.Tags))
+	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -178,7 +257,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp, defaultLocation, nil))
+	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
 }
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -206,10 +285,9 @@ func (h *Handler) bucketExists(ctx context.Context, name string) bool {
 }
 
 // toARMAccount renders the ARM storage-account wire shape, reading the stored
-// cost attributes (SKU / kind / access tier) back through the driver.
-func (h *Handler) toARMAccount(
-	ctx context.Context, rp *azurearm.ResourcePath, location string, tags map[string]string,
-) armAccount {
+// attributes (SKU / kind / access tier / location / tags) back through the
+// driver.
+func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) armAccount {
 	attrs := storagedriver.AccountAttributes{SKU: "Standard_LRS", Kind: "StorageV2", AccessTier: "Hot"}
 	if h.attrs != nil {
 		if a, err := h.attrs.BucketAttributes(ctx, rp.ResourceName); err == nil {
@@ -217,6 +295,7 @@ func (h *Handler) toARMAccount(
 		}
 	}
 
+	location := attrs.Location
 	if location == "" {
 		location = defaultLocation
 	}
@@ -227,13 +306,58 @@ func (h *Handler) toARMAccount(
 		Type:     providerName + "/" + resourceType,
 		Location: location,
 		Kind:     attrs.Kind,
-		Tags:     tags,
+		Tags:     attrs.Tags,
 		SKU:      &armSKU{Name: attrs.SKU, Tier: skuTier(attrs.SKU)},
 		Properties: &armAccountProps{
 			AccessTier:        attrs.AccessTier,
 			ProvisioningState: "Succeeded",
+			PrimaryLocation:   location,
+			StatusOfPrimary:   "available",
+			CreationTime:      h.accountCreatedAt(ctx, rp.ResourceName),
+			PrimaryEndpoints:  accountEndpoints(rp.ResourceName),
+			Encryption:        defaultEncryption(),
 		},
 	}
+}
+
+// accountEndpoints builds the primaryEndpoints service URLs for an account.
+func accountEndpoints(account string) *armEndpoints {
+	return &armEndpoints{
+		Blob:  "https://" + account + ".blob.core.windows.net/",
+		Queue: "https://" + account + ".queue.core.windows.net/",
+		Table: "https://" + account + ".table.core.windows.net/",
+		File:  "https://" + account + ".file.core.windows.net/",
+	}
+}
+
+// defaultEncryption returns the always-on service-side encryption block real
+// Azure storage accounts report.
+func defaultEncryption() *armEncryption {
+	svc := &armEncryptionService{Enabled: true, KeyType: "Account"}
+
+	return &armEncryption{
+		KeySource: "Microsoft.Storage",
+		Services:  &armEncryptionServices{Blob: svc, File: svc},
+	}
+}
+
+// accountCreatedAt returns the account's creation timestamp from the backing
+// bucket, falling back to a stable default when unavailable.
+func (h *Handler) accountCreatedAt(ctx context.Context, name string) string {
+	const fallback = "2020-01-01T00:00:00.0000000Z"
+
+	buckets, err := h.bucket.ListBuckets(ctx)
+	if err != nil {
+		return fallback
+	}
+
+	for _, b := range buckets {
+		if b.Name == name && b.CreatedAt != "" {
+			return b.CreatedAt
+		}
+	}
+
+	return fallback
 }
 
 // skuTier derives the read-only SKU tier from the SKU name (Standard_LRS ->

@@ -47,6 +47,24 @@ Azure's `storage` service · portable interface `driver.Bucket` · [Azure index]
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureBlobExtensions
+
+AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
+
+| Operation | Description |
+| --- | --- |
+| `AppendBlock` | AppendBlock appends a block to the end of an append blob (Append Block, |
+| `CommitBlockList` | CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist) |
+| `ContainerMetadata` | ContainerMetadata returns a container's metadata (Get Container Properties / |
+| `CreateAppendBlob` | CreateAppendBlob creates an empty append blob (Put Blob with |
+| `CreateBlobSnapshot` | CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob, |
+| `GetBlobSnapshot` | GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…). |
+| `SetBlobMetadata` | SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata, |
+| `SetBlobProperties` | SetBlobProperties replaces only a blob's system properties (Set Blob |
+| `SetBlobTier` | SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier), |
+| `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
+| `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
+
 ### BucketAttributes
 
 BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
@@ -64,6 +82,15 @@ RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
 | `DeleteBucketConfig` | DeleteBucketConfig removes the stored document (idempotent). |
 | `GetBucketConfig` | GetBucketConfig returns the stored document, or NotFound when none was set. |
 | `PutBucketConfig` | PutBucketConfig stores document body under the sub-resource name (e.g. |
+
+### StorageAccountKeys
+
+StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `ListStorageAccountKeys` | ListStorageAccountKeys returns the account's access keys, generating a |
+| `RegenerateStorageAccountKey` | RegenerateStorageAccountKey rotates the value of the named key (key1/key2) |
 
 ### VersionedBucket
 

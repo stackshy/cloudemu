@@ -470,8 +470,8 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		NextPageToken: result.NextPageToken,
 	}
 
-	for _, obj := range result.Objects {
-		out.Items = append(out.Items, toObjectResourceFromInfo(&obj, bucket, r))
+	for i := range result.Objects {
+		out.Items = append(out.Items, toObjectResourceFromInfo(&result.Objects[i], bucket, r))
 	}
 
 	writeJSON(w, http.StatusOK, out)
