@@ -456,24 +456,21 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 	//nolint:gocritic // Store.All copies values out anyway; the per-iter copy here is no extra cost.
 	for _, ng := range m.nodegroups.All() {
 		if ng.ClusterName == name {
-			return nil, cerrors.Newf(cerrors.FailedPrecondition,
-				"cluster %q still has nodegroup %q attached", name, ng.NodegroupName)
+			return nil, resourceInUseErrf("cluster %q still has nodegroup %q attached", name, ng.NodegroupName)
 		}
 	}
 
 	//nolint:gocritic // Store.All copies values out anyway; the per-iter copy here is no extra cost.
 	for _, fp := range m.fargateProfiles.All() {
 		if fp.ClusterName == name {
-			return nil, cerrors.Newf(cerrors.FailedPrecondition,
-				"cluster %q still has Fargate profile %q attached", name, fp.FargateProfileName)
+			return nil, resourceInUseErrf("cluster %q still has Fargate profile %q attached", name, fp.FargateProfileName)
 		}
 	}
 
 	//nolint:gocritic // Store.All copies values out anyway; the per-iter copy here is no extra cost.
 	for _, ad := range m.addons.All() {
 		if ad.ClusterName == name {
-			return nil, cerrors.Newf(cerrors.FailedPrecondition,
-				"cluster %q still has add-on %q installed", name, ad.AddonName)
+			return nil, resourceInUseErrf("cluster %q still has add-on %q installed", name, ad.AddonName)
 		}
 	}
 

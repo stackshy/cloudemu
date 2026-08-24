@@ -334,12 +334,22 @@ func containersFor(td *driver.TaskDefinition) []driver.Container {
 // reserved back to the instance. Releasing is guarded by placeMu (shared with
 // placement) and skipped for an already-stopped task, so a repeated StopTask can
 // never double-credit an instance.
-func (m *Mock) StopTask(ctx context.Context, _, task, reason string) (*driver.Task, error) {
+func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*driver.Task, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
+	// The cluster scopes the task lookup: a missing cluster is
+	// ClusterNotFoundException, matching real ECS (StopTask lists
+	// ClusterNotFoundException + InvalidParameterException).
+	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
+
+	// A task that resolves but lives in a different cluster is not visible to this
+	// StopTask, same as a task that does not exist at all: InvalidParameterException.
 	t, ok := m.resolveTask(task)
-	if !ok {
+	if !ok || clusterNameFromARN(t.ClusterARN) != want {
 		return nil, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
 	}
 

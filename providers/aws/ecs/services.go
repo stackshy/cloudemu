@@ -454,6 +454,9 @@ func applyServiceRefs(svc *driver.Service, in *driver.UpdateServiceInput) {
 // ListServices returns services in a cluster in deterministic order.
 func (m *Mock) ListServices(_ context.Context, cluster string) ([]driver.Service, error) {
 	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
 
 	all := m.services.SortedValues()
 
@@ -474,6 +477,9 @@ func (m *Mock) ListServices(_ context.Context, cluster string) ([]driver.Service
 // DescribeServices resolves services by name or ARN; unresolved ids become failures.
 func (m *Mock) DescribeServices(_ context.Context, cluster string, ids []string) ([]driver.Service, []driver.Failure, error) {
 	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
 
 	found := make([]driver.Service, 0, len(ids))
 	failures := make([]driver.Failure, 0, len(ids))
