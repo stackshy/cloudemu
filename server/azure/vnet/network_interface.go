@@ -165,7 +165,15 @@ func (*Handler) deleteNIC(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	svc netdriver.AzureNetworkInterfaces,
 ) {
 	if err := svc.DeleteNetworkInterface(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
+		// A NIC attached to a VM: ARM answers 400 with this specific code, which
+		// armnetwork clients switch on — not the generic 409 WriteCErr would emit.
+		if cerrors.IsFailedPrecondition(err) {
+			azurearm.WriteError(w, http.StatusBadRequest, "InUseNetworkInterfaceCannotBeDeleted", err.Error())
+			return
+		}
+
 		azurearm.WriteCErr(w, err)
+
 		return
 	}
 
@@ -223,6 +231,12 @@ func (h *Handler) buildIPConfigs(ctx context.Context, in []nicIPConfigRequest) (
 		}
 
 		if p.PublicIPAddress != nil {
+			pipName := lastSegment(p.PublicIPAddress.ID)
+			if _, err := findPublicIPByName(ctx, h.net, pipName); err != nil {
+				return nil, cerrors.Newf(cerrors.InvalidArgument,
+					"ipConfiguration references public IP %q which does not exist", pipName)
+			}
+
 			cfg.PublicIPID = p.PublicIPAddress.ID
 		}
 
@@ -235,18 +249,33 @@ func (h *Handler) buildIPConfigs(ctx context.Context, in []nicIPConfigRequest) (
 // subnetCIDR resolves the address prefix of the subnet named by an ARM subnet
 // resource id (.../virtualNetworks/{vn}/subnets/{name}).
 func (h *Handler) subnetCIDR(ctx context.Context, subnetID string) (string, error) {
-	name := lastSegment(subnetID)
-	if name == "" {
+	// Resolve scoped by (vnet, subnet): subnet names are only unique within a
+	// vnet, so a name-only lookup would allocate from the wrong address space
+	// when two vnets share a subnet name (e.g. every vnet has a "default").
+	sp, ok := azurearm.ParsePath(subnetID)
+	if !ok || sp.ResourceType != typeVNet || sp.SubResource != subResSubnets || sp.SubResourceName == "" {
 		return "", cerrors.Newf(cerrors.InvalidArgument, "malformed subnet id %q", subnetID)
 	}
 
-	info, err := findSubnetByName(ctx, h.net, name)
+	vnet, err := findVNetByName(ctx, h.net, sp.ResourceName)
 	if err != nil {
 		return "", cerrors.Newf(cerrors.InvalidArgument,
-			"ipConfiguration references subnet %q which does not exist", name)
+			"ipConfiguration references vnet %q which does not exist", sp.ResourceName)
 	}
 
-	return info.CIDRBlock, nil
+	subs, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+
+	for i := range subs {
+		if subs[i].VPCID == vnet.ID && tagOr(subs[i].Tags, armSubnetTag, "") == sp.SubResourceName {
+			return subs[i].CIDRBlock, nil
+		}
+	}
+
+	return "", cerrors.Newf(cerrors.InvalidArgument,
+		"ipConfiguration references subnet %q which does not exist in vnet %q", sp.SubResourceName, sp.ResourceName)
 }
 
 func lastSegment(id string) string {

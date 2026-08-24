@@ -3,6 +3,7 @@ package vnet
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"strings"
 
@@ -146,7 +147,9 @@ func (m *Mock) ListNetworkInterfaces(_ context.Context, resourceGroup string) ([
 
 	out := make([]driver.AzureNIC, 0)
 
-	for _, nic := range m.nics.All() {
+	// SortedValues (not All) so list ordering is deterministic across calls,
+	// matching real ARM list semantics.
+	for _, nic := range m.nics.SortedValues() {
 		if resourceGroup != "" && !strings.EqualFold(nic.ResourceGroup, resourceGroup) {
 			continue
 		}
@@ -283,27 +286,37 @@ func toAzureNIC(n *nicData) driver.AzureNIC {
 	}
 }
 
-// generateMAC returns a deterministic locally-administered MAC using Azure's
-// 00-0D-3A OUI prefix, so tests under a fake clock stay reproducible.
+// generateMAC returns a distinct locally-administered MAC under Azure's
+// 00-0D-3A OUI prefix. The last three octets come from a hash of a unique id,
+// so every NIC gets its own address (a plain counter's %08x string is a fixed
+// length, which is why the octets must derive from the id's content, not len).
 func generateMAC() string {
-	id := idgen.GenerateID("")
+	h := fmt.Sprintf("%08x", fnvHash32(idgen.GenerateID("mac-")))
 
-	return fmt.Sprintf("00-0D-3A-%02X-%02X-%02X",
-		len(id)%maxOctetValue, (len(id)*7)%maxOctetValue, (len(id)*13)%maxOctetValue)
+	return fmt.Sprintf("00-0D-3A-%s-%s-%s", h[0:2], h[2:4], h[4:6])
 }
 
-// generateGUID returns a GUID-shaped identifier for resourceGuid fields.
+// generateGUID returns a distinct GUID-shaped identifier for resourceGuid
+// fields, built by hex-slicing two hashes of unique ids (string slicing avoids
+// any narrowing integer conversion).
 func generateGUID() string {
-	return fmt.Sprintf("%s-0000-0000-0000-000000000000", padHex(idgen.GenerateID("")))
+	a := fmt.Sprintf("%016x", fnvHash64(idgen.GenerateID("guid-")))
+	b := fmt.Sprintf("%016x", fnvHash64(idgen.GenerateID("guid2-")))
+	hx := a + b
+
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hx[0:8], hx[8:12], hx[12:16], hx[16:20], hx[20:32])
 }
 
-func padHex(s string) string {
-	const width = 8
+func fnvHash32(s string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
 
-	h := fmt.Sprintf("%x", s)
-	if len(h) >= width {
-		return h[:width]
-	}
+	return h.Sum32()
+}
 
-	return strings.Repeat("0", width-len(h)) + h
+func fnvHash64(s string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s))
+
+	return h.Sum64()
 }

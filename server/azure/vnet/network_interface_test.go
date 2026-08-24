@@ -175,6 +175,94 @@ func TestSDKNetworkInterfaceRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKNetworkInterfaceCrossVnetSubnetScoping guards the fix for subnet names
+// that collide across vnets: a NIC that references vnet-b's "subnet-1" must get
+// an IP from vnet-b's address space, not vnet-a's.
+func TestSDKNetworkInterfaceCrossVnetSubnetScoping(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{Network: cloudP.VNet})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	opts := clientOpts(ts)
+	poll := &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}
+
+	vnetClient, err := armnetwork.NewVirtualNetworksClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subnetClient, err := armnetwork.NewSubnetsClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two vnets, each with a subnet named "subnet-1" but in different ranges.
+	for _, v := range []struct{ name, vnetCIDR, subnetCIDR string }{
+		{"vnet-a", "10.0.0.0/16", "10.0.1.0/24"},
+		{"vnet-b", "10.9.0.0/16", "10.9.1.0/24"},
+	} {
+		vp, cErr := vnetClient.BeginCreateOrUpdate(ctx, "rg-1", v.name, armnetwork.VirtualNetwork{
+			Location: to.Ptr("eastus"),
+			Properties: &armnetwork.VirtualNetworkPropertiesFormat{
+				AddressSpace: &armnetwork.AddressSpace{AddressPrefixes: []*string{to.Ptr(v.vnetCIDR)}},
+			},
+		}, nil)
+		if cErr != nil {
+			t.Fatalf("%s create: %v", v.name, cErr)
+		}
+
+		if _, cErr = vp.PollUntilDone(ctx, poll); cErr != nil {
+			t.Fatalf("%s poll: %v", v.name, cErr)
+		}
+
+		sp, sErr := subnetClient.BeginCreateOrUpdate(ctx, "rg-1", v.name, "subnet-1", armnetwork.Subnet{
+			Properties: &armnetwork.SubnetPropertiesFormat{AddressPrefix: to.Ptr(v.subnetCIDR)},
+		}, nil)
+		if sErr != nil {
+			t.Fatalf("%s subnet create: %v", v.name, sErr)
+		}
+
+		if _, sErr = sp.PollUntilDone(ctx, poll); sErr != nil {
+			t.Fatalf("%s subnet poll: %v", v.name, sErr)
+		}
+	}
+
+	nicClient, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subnetBID := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/" +
+		"virtualNetworks/vnet-b/subnets/subnet-1"
+
+	np, err := nicClient.BeginCreateOrUpdate(ctx, "rg-1", "nic-b", armnetwork.Interface{
+		Location: to.Ptr("eastus"),
+		Properties: &armnetwork.InterfacePropertiesFormat{
+			IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
+				Name: to.Ptr("ipconfig1"),
+				Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{
+					Subnet: &armnetwork.Subnet{ID: to.Ptr(subnetBID)},
+				},
+			}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("nic create: %v", err)
+	}
+
+	created, err := np.PollUntilDone(ctx, poll)
+	if err != nil {
+		t.Fatalf("nic poll: %v", err)
+	}
+
+	if ip := privateIP(created.Properties); ip != "10.9.1.4" {
+		t.Errorf("privateIP=%q want 10.9.1.4 (from vnet-b's subnet, not vnet-a's 10.0.1.x)", ip)
+	}
+}
+
 // TestSDKNetworkInterfaceUnknownSubnet confirms a NIC referencing a subnet that
 // does not exist is rejected rather than silently created with no IP.
 func TestSDKNetworkInterfaceUnknownSubnet(t *testing.T) {

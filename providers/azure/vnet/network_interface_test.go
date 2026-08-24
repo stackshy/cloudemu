@@ -152,6 +152,22 @@ func TestNICResourceGroupScoping(t *testing.T) {
 	}
 }
 
+func TestNICDistinctMACAndGUID(t *testing.T) {
+	m := newNICMock(t)
+	ctx := context.Background()
+
+	a, _ := m.CreateOrUpdateNetworkInterface(ctx, "rg-1", "nic-a", dynamicConfig("subnet-1", "10.0.1.0/24"))
+	b, _ := m.CreateOrUpdateNetworkInterface(ctx, "rg-1", "nic-b", dynamicConfig("subnet-1", "10.0.1.0/24"))
+
+	if a.MACAddress == b.MACAddress {
+		t.Errorf("both NICs got the same MAC %q; each NIC must get a distinct address", a.MACAddress)
+	}
+
+	if a.ResourceGUID == b.ResourceGUID {
+		t.Errorf("both NICs got the same resourceGuid %q; must be distinct", a.ResourceGUID)
+	}
+}
+
 func TestNICDeleteAttachedIsRejected(t *testing.T) {
 	m := newNICMock(t)
 	ctx := context.Background()
