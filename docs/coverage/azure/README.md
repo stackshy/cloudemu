@@ -5,7 +5,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 
 | Azure service | Portable service | Operations |
 | --- | --- | --- |
-| [ACR](./acr.md) | `containerregistry` | 14 |
+| [ACR](./acr.md) | `containerregistry` | 15 |
 | [AI](./ai.md) | `azureai` | 92 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |

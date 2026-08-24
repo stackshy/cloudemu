@@ -84,6 +84,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.putLifecyclePolicy(w, r)
 	case "GetLifecyclePolicy":
 		h.getLifecyclePolicy(w, r)
+	case "DeleteLifecyclePolicy":
+		h.deleteLifecyclePolicy(w, r)
 	case "StartImageScan":
 		h.startImageScan(w, r)
 	case "DescribeImageScanFindings":

@@ -243,6 +243,21 @@ func (c *ContainerRegistry) GetLifecyclePolicy(
 	return out.(*driver.LifecyclePolicy), nil
 }
 
+// DeleteLifecyclePolicy removes the lifecycle policy from a repository and
+// returns the policy that was deleted.
+func (c *ContainerRegistry) DeleteLifecyclePolicy(
+	ctx context.Context, repository string,
+) (*driver.LifecyclePolicy, error) {
+	out, err := c.do(ctx, "DeleteLifecyclePolicy", repository, func() (any, error) {
+		return c.driver.DeleteLifecyclePolicy(ctx, repository)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.LifecyclePolicy), nil
+}
+
 // EvaluateLifecyclePolicy evaluates the lifecycle policy and returns digests to expire.
 func (c *ContainerRegistry) EvaluateLifecyclePolicy(
 	ctx context.Context, repository string,

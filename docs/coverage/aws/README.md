@@ -15,7 +15,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Config](./config.md) | `configservice` | 102 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
 | [EC2](./ec2.md) | `compute` | 37 |
-| [ECR](./ecr.md) | `containerregistry` | 14 |
+| [ECR](./ecr.md) | `containerregistry` | 15 |
 | [ECS](./ecs.md) | `ecs` | 37 |
 | [EFS](./efs.md) | `efs` | 27 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |

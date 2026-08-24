@@ -28,24 +28,32 @@ func (m *Mock) SetInstanceResolver(r InstanceResolver) {
 // invocation is recorded as successful so a caller's send/poll loop runs to
 // completion, but the script itself is never validated — see driver.RunCommand.
 func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (string, error) {
-	if len(cfg.InstanceIDs) == 0 {
-		return "", errors.New(errors.InvalidArgument, "at least one instance id is required")
+	// Real SSM accepts EITHER explicit InstanceIds OR tag/attribute Targets;
+	// supplying neither is a ValidationException.
+	if len(cfg.InstanceIDs) == 0 && len(cfg.Targets) == 0 {
+		return "", errors.New(errors.InvalidArgument, "either instance IDs or targets must be specified")
 	}
 
 	if cfg.DocumentName == "" {
 		return "", errors.New(errors.InvalidArgument, "DocumentName is required")
 	}
 
-	// Real SSM answers InvalidInstanceId when a target is not a managed
-	// instance, and that is the single most common Run Command failure during
-	// bring-up. Accepting any id hides it until the caller runs for real.
+	// Real SSM answers InvalidInstanceId when an explicitly listed target is not
+	// a managed instance, and that is the single most common Run Command failure
+	// during bring-up. Accepting any id hides it until the caller runs for real.
 	if err := m.checkTargets(ctx, cfg.InstanceIDs); err != nil {
 		return "", err
 	}
 
+	// Resolve tag/attribute Targets to concrete instance ids. Unlike an explicit
+	// id, a Target that matches nothing is not an error — real SSM accepts the
+	// command with a TargetCount of zero.
+	resolved := m.resolveTargets(ctx, cfg.Targets)
+	instanceIDs := dedupeStrings(append(append([]string{}, cfg.InstanceIDs...), resolved...))
+
 	commandID := idgen.GenerateID("")
 
-	for _, instanceID := range cfg.InstanceIDs {
+	for _, instanceID := range instanceIDs {
 		m.commands.Set(commandKey(commandID, instanceID), driver.CommandInvocation{
 			CommandID:    commandID,
 			InstanceID:   instanceID,
@@ -56,6 +64,64 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 	}
 
 	return commandID, nil
+}
+
+// resolveTargets maps SSM Targets to the instance ids they select. Multiple
+// targets are AND-combined, matching real SSM. Resolution needs the compute
+// mock; without it (or on a lookup error) no ids are resolved, which still
+// yields an accepted command.
+func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarget) []string {
+	if len(targets) == 0 || m.instanceResolver == nil {
+		return nil
+	}
+
+	filters := make([]computedriver.DescribeFilter, 0, len(targets))
+	for _, t := range targets {
+		filters = append(filters, computedriver.DescribeFilter{
+			Name: targetFilterName(t.Key), Values: t.Values,
+		})
+	}
+
+	found, err := m.instanceResolver.DescribeInstances(ctx, nil, filters,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
+	if err != nil {
+		return nil
+	}
+
+	ids := make([]string, 0, len(found))
+	for i := range found {
+		ids = append(ids, found[i].ID)
+	}
+
+	return ids
+}
+
+// targetFilterName maps an SSM Target Key to the equivalent EC2 describe-filter
+// name. Tag keys ("tag:<name>") pass through unchanged; the "InstanceIds"
+// pseudo-key selects by instance id.
+func targetFilterName(key string) string {
+	if key == "InstanceIds" {
+		return "instance-id"
+	}
+
+	return key
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+
+		seen[s] = true
+
+		out = append(out, s)
+	}
+
+	return out
 }
 
 // GetCommandInvocation returns the recorded invocation for one instance.

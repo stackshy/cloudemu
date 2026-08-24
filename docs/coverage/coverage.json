@@ -2550,6 +2550,10 @@
         "name": "DeleteImage"
       },
       {
+        "name": "DeleteLifecyclePolicy",
+        "doc": "DeleteLifecyclePolicy removes the repository's lifecycle policy and returns"
+      },
+      {
         "name": "DeleteRepository"
       },
       {

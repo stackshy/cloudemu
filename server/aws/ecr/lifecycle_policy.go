@@ -77,10 +77,32 @@ func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	policy, err := h.registry.GetLifecyclePolicy(r.Context(), req.RepositoryName)
+	h.writeLifecyclePolicyResult(w, r, req.RepositoryName, policy, err)
+}
+
+func (h *Handler) deleteLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName string `json:"repositoryName"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	policy, err := h.registry.DeleteLifecyclePolicy(r.Context(), req.RepositoryName)
+	h.writeLifecyclePolicyResult(w, r, req.RepositoryName, policy, err)
+}
+
+// writeLifecyclePolicyResult renders the shared Get/DeleteLifecyclePolicy
+// response: the policy body plus the owning registryId, or the exception that
+// distinguishes a missing repository from a repository with no policy.
+func (h *Handler) writeLifecyclePolicyResult(
+	w http.ResponseWriter, r *http.Request, repositoryName string, policy *crdriver.LifecyclePolicy, err error,
+) {
 	if err != nil {
 		// A missing repository is RepositoryNotFoundException; a repository with
 		// no lifecycle policy is LifecyclePolicyNotFoundException.
-		if _, repoErr := h.registry.GetRepository(r.Context(), req.RepositoryName); repoErr != nil {
+		if _, repoErr := h.registry.GetRepository(r.Context(), repositoryName); repoErr != nil {
 			writeErr(w, repoErr)
 			return
 		}
@@ -97,13 +119,13 @@ func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"repositoryName":      req.RepositoryName,
+		"repositoryName":      repositoryName,
 		"lifecyclePolicyText": text,
 	}
 
-	// The policy lookup already proved the repository exists, so echo its
-	// registryId (real ECR always returns it).
-	if repo, repoErr := h.registry.GetRepository(r.Context(), req.RepositoryName); repoErr == nil {
+	// The repository is known to exist here, so echo its registryId (real ECR
+	// always returns it).
+	if repo, repoErr := h.registry.GetRepository(r.Context(), repositoryName); repoErr == nil {
 		resp["registryId"] = repo.RegistryID
 	}
 
