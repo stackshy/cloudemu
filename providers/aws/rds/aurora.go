@@ -65,27 +65,80 @@ func (m *Mock) DescribeDBClusterEndpoints(_ context.Context, clusterID, endpoint
 	defer m.mu.RUnlock()
 
 	if endpointID != "" {
-		ep, ok := m.clusterEndpoints.Get(endpointID)
-		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "DB cluster endpoint %q not found", endpointID)
-		}
-
-		return []rdsdriver.ClusterEndpoint{cloneEndpoint(ep)}, nil
+		return m.describeClusterEndpointByID(endpointID)
 	}
 
-	all := m.clusterEndpoints.SortedValues()
+	// Aurora auto-provisions a WRITER and a READER endpoint per cluster at
+	// create time; DescribeDBClusterEndpoints returns them alongside any custom
+	// endpoints, even before a custom endpoint exists.
+	out := m.builtInClusterEndpoints(clusterID)
 
-	out := make([]rdsdriver.ClusterEndpoint, 0, len(all))
-
-	for i := range all {
-		if clusterID != "" && all[i].ClusterID != clusterID {
+	custom := m.clusterEndpoints.SortedValues()
+	for i := range custom {
+		if clusterID != "" && custom[i].ClusterID != clusterID {
 			continue
 		}
 
-		out = append(out, cloneEndpoint(all[i]))
+		out = append(out, cloneEndpoint(custom[i]))
 	}
 
 	return out, nil
+}
+
+// describeClusterEndpointByID resolves a single endpoint by identifier. A
+// built-in endpoint carries the cluster's own identifier, so a lookup that
+// matches a cluster returns its WRITER + READER endpoints; otherwise it is a
+// custom endpoint.
+func (m *Mock) describeClusterEndpointByID(endpointID string) ([]rdsdriver.ClusterEndpoint, error) {
+	if m.clusters.Has(endpointID) {
+		return m.builtInClusterEndpoints(endpointID), nil
+	}
+
+	ep, ok := m.clusterEndpoints.Get(endpointID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "DB cluster endpoint %q not found", endpointID)
+	}
+
+	return []rdsdriver.ClusterEndpoint{cloneEndpoint(ep)}, nil
+}
+
+// builtInClusterEndpoints returns the auto-provisioned WRITER and READER
+// endpoints for the matching cluster(s). A built-in endpoint's identifier is
+// the cluster identifier and it carries no ARN, matching real Aurora.
+func (m *Mock) builtInClusterEndpoints(clusterID string) []rdsdriver.ClusterEndpoint {
+	var clusters []rdsdriver.Cluster
+
+	if clusterID != "" {
+		c, ok := m.clusters.Get(clusterID)
+		if !ok {
+			return nil
+		}
+
+		clusters = []rdsdriver.Cluster{c}
+	} else {
+		clusters = m.clusters.SortedValues()
+	}
+
+	const builtInPerCluster = 2 // one WRITER and one READER
+
+	out := make([]rdsdriver.ClusterEndpoint, 0, len(clusters)*builtInPerCluster)
+	for i := range clusters {
+		out = append(out,
+			builtInEndpoint(&clusters[i], "WRITER", clusters[i].Endpoint),
+			builtInEndpoint(&clusters[i], "READER", clusters[i].ReaderEndpoint))
+	}
+
+	return out
+}
+
+func builtInEndpoint(c *rdsdriver.Cluster, endpointType, address string) rdsdriver.ClusterEndpoint {
+	return rdsdriver.ClusterEndpoint{
+		EndpointID:   c.ID,
+		ClusterID:    c.ID,
+		Endpoint:     address,
+		Status:       rdsdriver.StateAvailable,
+		EndpointType: endpointType,
+	}
 }
 
 // cloneEndpoint copies the endpoint's member slices so a returned endpoint

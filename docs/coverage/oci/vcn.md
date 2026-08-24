@@ -281,6 +281,14 @@ NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both
 | `StartNetworkInsightsAccessScopeAnalysis` |  |
 | `StartNetworkInsightsAnalysis` |  |
 
+### NetworkInterfaceAttacher
+
+NetworkInterfaceAttacher is the AWS-specific ENI attach surface
+
+| Operation | Description |
+| --- | --- |
+| `AttachNetworkInterface` |  |
+
 ### NetworkInterfaceCreator
 
 NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept

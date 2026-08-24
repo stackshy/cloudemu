@@ -35,6 +35,8 @@ var (
 	_ driver.Bucket          = (*Mock)(nil)
 	_ driver.VersionedBucket = (*Mock)(nil)
 	_ driver.RawBucketConfig = (*Mock)(nil)
+	_ driver.ObjectCopier    = (*Mock)(nil)
+	_ driver.RegionalBucket  = (*Mock)(nil)
 )
 
 type s3Object struct {
@@ -185,7 +187,14 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-func (m *Mock) CreateBucket(_ context.Context, name string) error {
+func (m *Mock) CreateBucket(ctx context.Context, name string) error {
+	return m.CreateBucketInRegion(ctx, name, "")
+}
+
+// CreateBucketInRegion creates a bucket, recording region when non-empty
+// (S3 CreateBucketConfiguration.LocationConstraint). An empty region falls back
+// to the mock's default region, so GetBucketLocation reports it back correctly.
+func (m *Mock) CreateBucketInRegion(_ context.Context, name, region string) error {
 	if name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "bucket name cannot be empty")
 	}
@@ -194,9 +203,13 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.AlreadyExists, "bucket %q already exists", name)
 	}
 
+	if region == "" {
+		region = m.opts.Region
+	}
+
 	m.buckets.Set(name, &bucketMeta{
 		Name:       name,
-		Region:     m.opts.Region,
+		Region:     region,
 		CreatedAt:  m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		objects:    memstore.New[*s3Object](),
 		multiparts: memstore.New[*multipartUpload](),
@@ -640,6 +653,198 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	return nil
 }
 
+// copySrcSnapshot is the resolved source object for a server-side copy.
+type copySrcSnapshot struct {
+	data         []byte
+	size         int64
+	contentType  string
+	etag         string
+	lastModified string
+	metadata     map[string]string
+	versionID    string
+}
+
+// CopyObjectV2 performs a full-fidelity S3 server-side copy: it honors a
+// versioned source, the COPY/REPLACE metadata directive, and copy-source
+// preconditions (a failed precondition aborts with FailedPrecondition; a
+// delete-marker source version with InvalidArgument). The destination inherits
+// the source ETag exactly (COPY) unless REPLACE supplies new metadata.
+func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
+	src, err := m.resolveCopySource(ctx, req.Src, req.SrcVersionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkCopyPreconditions(req, src); err != nil {
+		return nil, err
+	}
+
+	dstBkt, ok := m.buckets.Get(req.DstBucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "destination bucket %q not found", req.DstBucket)
+	}
+
+	metadata, contentType := src.metadata, src.contentType
+	if req.ReplaceMetadata {
+		metadata = req.Metadata
+		contentType = req.ContentType
+
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+	}
+
+	dataCopy := make([]byte, len(src.data))
+	copy(dataCopy, src.data)
+
+	dstObj := &s3Object{
+		Key: req.DstKey, Data: dataCopy, Size: src.size, ContentType: contentType,
+		ETag: src.etag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
+		Metadata: maps.Clone(metadata),
+	}
+	m.storeObject(dstBkt, req.DstKey, dstObj)
+
+	if err := m.engineStore(ctx, req.DstBucket, req.DstKey, dstObj.VersionID, contentType, dataCopy, metadata); err != nil {
+		return nil, err
+	}
+
+	if m.opts.StorageEngine != nil {
+		dstObj.Data = nil
+	}
+
+	dims := map[string]string{"BucketName": req.DstBucket}
+	m.emitMetric("AllRequests", 1, "Count", dims)
+	m.emitMetric("CopyRequests", 1, "Count", dims)
+
+	m.notifyObjectCreated(dstBkt, req.DstBucket, req.DstKey, src.size)
+
+	return &driver.CopyObjectResult{
+		ETag: dstObj.ETag, LastModified: dstObj.LastModified,
+		VersionID: dstObj.VersionID, SourceVersionID: src.versionID,
+	}, nil
+}
+
+// resolveCopySource loads the source object for a copy: a specific version when
+// versionID is set (a delete-marker version is rejected with InvalidArgument),
+// otherwise the current object.
+func (m *Mock) resolveCopySource(ctx context.Context, src driver.CopySource, versionID string) (*copySrcSnapshot, error) {
+	srcBkt, ok := m.buckets.Get(src.Bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "source bucket %q not found", src.Bucket)
+	}
+
+	if versionID != "" {
+		return m.resolveCopySourceVersion(ctx, srcBkt, src, versionID)
+	}
+
+	srcObj, ok := srcBkt.objects.Get(src.Key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "source object %q not found", src.Key)
+	}
+
+	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: srcObj.VersionID}, srcObj.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &copySrcSnapshot{
+		data: data, size: srcObj.Size, contentType: srcObj.ContentType, etag: srcObj.ETag,
+		lastModified: srcObj.LastModified, metadata: srcObj.Metadata, versionID: srcObj.VersionID,
+	}, nil
+}
+
+func (m *Mock) resolveCopySourceVersion(
+	ctx context.Context, srcBkt *bucketMeta, src driver.CopySource, versionID string,
+) (*copySrcSnapshot, error) {
+	srcBkt.versionsMu.Lock()
+	v := findVersion(srcBkt, src.Key, versionID)
+	srcBkt.versionsMu.Unlock()
+
+	if v == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "source version %q of %q not found", versionID, src.Key)
+	}
+
+	if v.deleteMarker {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "source version %q of %q is a delete marker", versionID, src.Key)
+	}
+
+	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: versionID}, v.data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &copySrcSnapshot{
+		data: data, size: v.size, contentType: v.contentType, etag: v.etag,
+		lastModified: v.lastModified, metadata: v.metadata, versionID: versionID,
+	}, nil
+}
+
+// checkCopyPreconditions evaluates the four x-amz-copy-source-if-* headers
+// against the source, returning FailedPrecondition when one is not satisfied.
+//
+// AWS's CopyObject API reference documents a combined-precedence override: when
+// both x-amz-copy-source-if-match and x-amz-copy-source-if-unmodified-since are
+// present and if-match evaluates true, S3 returns 200 OK and copies the data
+// even if if-unmodified-since evaluates false. if-match therefore overrides the
+// if-unmodified-since result rather than the two being independently ANDed.
+func checkCopyPreconditions(req *driver.CopyObjectRequest, src *copySrcSnapshot) error {
+	etag := strings.Trim(src.etag, `"`)
+	skipUnmodified := req.IfMatch != "" && !req.IfUnmodifiedSince.IsZero() && etagMatches(req.IfMatch, etag)
+
+	if err := checkCopyETagPreconditions(req, src.etag); err != nil {
+		return err
+	}
+
+	return checkCopyTimePreconditions(req, src.lastModified, skipUnmodified)
+}
+
+func checkCopyETagPreconditions(req *driver.CopyObjectRequest, etag string) error {
+	etag = strings.Trim(etag, `"`)
+
+	if req.IfMatch != "" && !etagMatches(req.IfMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-match precondition failed")
+	}
+
+	if req.IfNoneMatch != "" && etagMatches(req.IfNoneMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-none-match precondition failed")
+	}
+
+	return nil
+}
+
+// checkCopyTimePreconditions evaluates the two time-based copy-source headers.
+// skipUnmodified suppresses the if-unmodified-since check when a true if-match
+// header has taken precedence over it (see checkCopyPreconditions).
+func checkCopyTimePreconditions(req *driver.CopyObjectRequest, lastModified string, skipUnmodified bool) error {
+	if req.IfUnmodifiedSince.IsZero() && req.IfModifiedSince.IsZero() {
+		return nil
+	}
+
+	mod, err := time.Parse(s3TimeFormat, lastModified)
+	if err != nil {
+		return nil // an unparseable timestamp can't be evaluated; do not block the copy
+	}
+
+	if !skipUnmodified && !req.IfUnmodifiedSince.IsZero() && mod.After(req.IfUnmodifiedSince) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-unmodified-since precondition failed")
+	}
+
+	if !req.IfModifiedSince.IsZero() && !mod.After(req.IfModifiedSince) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-modified-since precondition failed")
+	}
+
+	return nil
+}
+
+// etagMatches reports whether an If-[None-]Match header value matches the
+// object ETag: "*" matches any object; otherwise a quote-insensitive,
+// case-insensitive comparison.
+func etagMatches(header, etag string) bool {
+	header = strings.Trim(header, `"`)
+
+	return header == "*" || strings.EqualFold(header, etag)
+}
+
 // GeneratePresignedURL generates a mock presigned URL.
 // Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
@@ -1038,8 +1243,12 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 	v := findVersion(bkt, key, versionID)
 	bkt.versionsMu.Unlock()
 
-	if v == nil || v.deleteMarker {
+	if v == nil {
 		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	if v.deleteMarker {
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
 	}
 
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: versionID}, v.data)
@@ -1068,8 +1277,12 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 	v := findVersion(bkt, key, versionID)
 	bkt.versionsMu.Unlock()
 
-	if v == nil || v.deleteMarker {
+	if v == nil {
 		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	if v.deleteMarker {
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
 	}
 
 	info := infoFromVersion(key, v)

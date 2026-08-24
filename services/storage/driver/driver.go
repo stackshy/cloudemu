@@ -4,7 +4,29 @@ package driver
 import (
 	"context"
 	"time"
+
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
+
+// ErrDeleteMarker is returned by GetObjectVersion/HeadObjectVersion when the
+// requested version is a delete marker. S3 answers a version-addressed GET/HEAD
+// of a delete marker with 405 Method Not Allowed and x-amz-delete-marker: true
+// (not 404), so the wire layer matches this with errors.Is to emit that exact
+// response instead of NoSuchKey.
+var ErrDeleteMarker = cerrors.New(cerrors.NotFound, "the specified version is a delete marker")
+
+// DeleteMarkerError carries the delete marker's LastModified timestamp alongside
+// the ErrDeleteMarker sentinel. S3 returns that timestamp in the Last-Modified
+// header of the 405 response for a version-addressed GET/HEAD of a delete marker,
+// so providers return this (it unwraps to ErrDeleteMarker, so errors.Is still
+// matches) to let the wire layer emit the header.
+type DeleteMarkerError struct {
+	LastModified string
+}
+
+func (*DeleteMarkerError) Error() string { return ErrDeleteMarker.Error() }
+
+func (*DeleteMarkerError) Unwrap() error { return ErrDeleteMarker }
 
 // BucketInfo describes a storage bucket.
 type BucketInfo struct {
@@ -235,6 +257,58 @@ type RawBucketConfig interface {
 type CopySource struct {
 	Bucket string
 	Key    string
+}
+
+// CopyObjectRequest describes an S3 server-side copy with the semantics the
+// basic CopyObject cannot express: a versioned source, a metadata directive
+// (COPY vs REPLACE), and copy-source preconditions. Carried by the optional
+// ObjectCopier capability.
+type CopyObjectRequest struct {
+	DstBucket string
+	DstKey    string
+	Src       CopySource
+	// SrcVersionID selects a specific source version ("" = current version).
+	SrcVersionID string
+	// ReplaceMetadata is true for x-amz-metadata-directive: REPLACE — the
+	// destination takes Metadata and ContentType from the request instead of
+	// inheriting the source object's.
+	ReplaceMetadata bool
+	Metadata        map[string]string
+	ContentType     string
+	// Copy-source preconditions; a zero value means the header was absent. A
+	// failed precondition must abort the copy with a FailedPrecondition error.
+	IfMatch           string
+	IfNoneMatch       string
+	IfModifiedSince   time.Time
+	IfUnmodifiedSince time.Time
+}
+
+// CopyObjectResult reports the outcome of an ObjectCopier copy.
+type CopyObjectResult struct {
+	ETag         string
+	LastModified string
+	// VersionID is the destination version id ("" when the destination bucket
+	// is unversioned); SourceVersionID is the source version actually copied.
+	VersionID       string
+	SourceVersionID string
+}
+
+// ObjectCopier is an OPTIONAL capability (discovered by type assertion, like
+// VersionedBucket) for a full-fidelity S3 server-side copy: a versioned source,
+// the COPY/REPLACE metadata directive, and copy-source preconditions. A failed
+// precondition is reported as a FailedPrecondition error; a delete-marker source
+// version as an InvalidArgument error. Providers without it fall back to the
+// basic Bucket.CopyObject (current version, COPY directive, no preconditions).
+type ObjectCopier interface {
+	CopyObjectV2(ctx context.Context, req *CopyObjectRequest) (*CopyObjectResult, error)
+}
+
+// RegionalBucket is an OPTIONAL capability a storage provider implements to
+// create a bucket in a caller-specified region (S3
+// CreateBucketConfiguration.LocationConstraint), so GetBucketLocation reports
+// that region back. Providers without it create buckets in their default region.
+type RegionalBucket interface {
+	CreateBucketInRegion(ctx context.Context, name, region string) error
 }
 
 // PresignedURLRequest describes a presigned URL to generate.

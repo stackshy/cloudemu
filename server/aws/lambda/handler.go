@@ -115,6 +115,15 @@ type functionTagger interface {
 	ListFunctionTags(ctx context.Context, name string) (map[string]string, error)
 }
 
+// awsConfigManager is the AWS-specific surface for the Lambda VpcConfig,
+// DeadLetterConfig and TracingConfig settings. These have no Azure Functions or
+// GCP Cloud Functions equivalent, so they are kept off the portable Serverless
+// interface and asserted the same way as policyManager / functionURLManager.
+type awsConfigManager interface {
+	SetFunctionAWSConfig(ctx context.Context, name string, cfg sdrv.AWSFunctionConfig, create bool) error
+	GetFunctionAWSConfig(ctx context.Context, name string) (sdrv.AWSFunctionConfig, error)
+}
+
 // ObjectStore is the slice of the in-process S3 backend the handler needs to
 // fetch an S3-sourced deployment package (Code.S3Bucket/S3Key).
 type ObjectStore interface {
@@ -405,7 +414,7 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toConfiguration(info))
+		writeJSON(w, http.StatusOK, toConfiguration(info, h.awsFnConfig(r.Context(), name)))
 
 		return
 	}
@@ -439,7 +448,9 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toConfiguration(info))
+	awsCfg := h.applyAWSConfig(r.Context(), name, req.VpcConfig, req.DeadLetterConfig, req.TracingConfig, false)
+
+	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
 }
 
 // serveCode handles PUT .../{name}/code (UpdateFunctionCode). It resolves the
@@ -485,7 +496,7 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toConfiguration(info))
+	writeJSON(w, http.StatusOK, toConfiguration(info, h.awsFnConfig(r.Context(), name)))
 }
 
 // serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
@@ -510,7 +521,7 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 			return
 		}
 
-		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver))
+		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver, h.awsFnConfig(r.Context(), name)))
 	case http.MethodGet:
 		vers, err := h.fn.ListVersions(r.Context(), name)
 		if err != nil {
@@ -524,9 +535,11 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 			return
 		}
 
+		awsCfg := h.awsFnConfig(r.Context(), name)
+
 		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, len(vers))}
 		for i := range vers {
-			out.Versions = append(out.Versions, toVersionConfiguration(info, &vers[i]))
+			out.Versions = append(out.Versions, toVersionConfiguration(info, &vers[i], awsCfg))
 		}
 
 		writeJSON(w, http.StatusOK, out)
@@ -738,7 +751,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, toConfiguration(info))
+	awsCfg := h.applyAWSConfig(r.Context(), req.FunctionName, req.VpcConfig, req.DeadLetterConfig, req.TracingConfig, true)
+
+	writeJSON(w, http.StatusCreated, toConfiguration(info, awsCfg))
 }
 
 // resolveCode returns the deployment-package bytes for a CreateFunction request.
@@ -785,7 +800,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	writeJSON(w, http.StatusOK, functionResource{
-		Configuration: toConfiguration(info),
+		Configuration: toConfiguration(info, h.awsFnConfig(r.Context(), name)),
 		Code: codeLocation{
 			RepositoryType: "S3",
 			Location:       "https://cloudemu-mock/" + name,
@@ -809,7 +824,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 
 	out := listFunctionsResponse{Functions: make([]functionConfiguration, 0, end-start)}
 	for i := start; i < end; i++ {
-		out.Functions = append(out.Functions, toConfiguration(&infos[i]))
+		out.Functions = append(out.Functions, toConfiguration(&infos[i], h.awsFnConfig(r.Context(), infos[i].Name)))
 	}
 
 	out.NextMarker = nextMarker
@@ -897,8 +912,8 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 // from the live function (for name/ARN/state/environment) then overlays the
 // immutable per-version fields snapshotted at publish time, so each version
 // reports its own CodeSha256/RevisionId/runtime rather than reusing $LATEST.
-func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion) functionConfiguration {
-	cfg := toConfiguration(info)
+func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion, awsCfg *sdrv.AWSFunctionConfig) functionConfiguration {
+	cfg := toConfiguration(info, awsCfg)
 	cfg.Version = ver.Version
 	cfg.Description = ver.Description
 	cfg.CodeSha256 = ver.CodeSHA256
@@ -918,7 +933,7 @@ func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion) 
 	return cfg
 }
 
-func toConfiguration(info *sdrv.FunctionInfo) functionConfiguration {
+func toConfiguration(info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig) functionConfiguration {
 	version := info.Version
 	if version == "" {
 		version = latestVersion
@@ -947,7 +962,101 @@ func toConfiguration(info *sdrv.FunctionInfo) functionConfiguration {
 		cfg.Environment = &envEnvelope{Variables: info.Environment}
 	}
 
+	if awsCfg != nil {
+		if awsCfg.VPCConfig != nil {
+			cfg.VpcConfig = &vpcConfigEnvelope{
+				SubnetIDs:        awsCfg.VPCConfig.SubnetIDs,
+				SecurityGroupIDs: awsCfg.VPCConfig.SecurityGroupIDs,
+				VpcID:            awsCfg.VPCConfig.VpcID,
+			}
+		}
+
+		if awsCfg.DeadLetterConfig != nil {
+			cfg.DeadLetterConfig = &deadLetterConfigEnvelope{TargetArn: awsCfg.DeadLetterConfig.TargetArn}
+		}
+
+		if awsCfg.TracingConfig != nil {
+			cfg.TracingConfig = &tracingConfigEnvelope{Mode: awsCfg.TracingConfig.Mode}
+		}
+	}
+
 	return cfg
+}
+
+// awsFnConfig returns the AWS-only Lambda settings (VpcConfig/DeadLetterConfig/
+// TracingConfig) for a function, or nil when the backend does not model them (a
+// non-AWS serverless provider). It is fetched through the AWS-only optional
+// interface so these AWS-specific settings stay off the provider-agnostic
+// Serverless surface.
+func (h *Handler) awsFnConfig(ctx context.Context, name string) *sdrv.AWSFunctionConfig {
+	mgr, ok := h.fn.(awsConfigManager)
+	if !ok {
+		return nil
+	}
+
+	cfg, err := mgr.GetFunctionAWSConfig(ctx, name)
+	if err != nil {
+		return nil
+	}
+
+	return &cfg
+}
+
+// applyAWSConfig stores the AWS-only settings supplied on a Create/Update
+// request through the AWS-only optional interface, then returns the resulting
+// stored config for the response. It is a no-op returning nil when the backend
+// does not model these settings.
+func (h *Handler) applyAWSConfig(
+	ctx context.Context, name string,
+	vpc *vpcConfigEnvelope, dlq *deadLetterConfigEnvelope, tracing *tracingConfigEnvelope, create bool,
+) *sdrv.AWSFunctionConfig {
+	mgr, ok := h.fn.(awsConfigManager)
+	if !ok {
+		return nil
+	}
+
+	cfg := sdrv.AWSFunctionConfig{
+		VPCConfig:        toDriverVPCConfig(vpc),
+		DeadLetterConfig: toDriverDeadLetter(dlq),
+		TracingConfig:    toDriverTracing(tracing),
+	}
+	if err := mgr.SetFunctionAWSConfig(ctx, name, cfg, create); err != nil {
+		return nil
+	}
+
+	stored, err := mgr.GetFunctionAWSConfig(ctx, name)
+	if err != nil {
+		return nil
+	}
+
+	return &stored
+}
+
+// toDriverVPCConfig maps a wire VpcConfig envelope to the driver type.
+func toDriverVPCConfig(e *vpcConfigEnvelope) *sdrv.VPCConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.VPCConfig{SubnetIDs: e.SubnetIDs, SecurityGroupIDs: e.SecurityGroupIDs}
+}
+
+// toDriverDeadLetter maps a wire DeadLetterConfig envelope to the driver type.
+func toDriverDeadLetter(e *deadLetterConfigEnvelope) *sdrv.DeadLetterConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.DeadLetterConfig{TargetArn: e.TargetArn}
+}
+
+// toDriverTracing maps a wire TracingConfig envelope to the driver type.
+func toDriverTracing(e *tracingConfigEnvelope) *sdrv.TracingConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.TracingConfig{Mode: e.Mode}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

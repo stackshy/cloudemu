@@ -20,6 +20,8 @@ type eniData struct {
 	SubnetID       string
 	Status         string
 	AttachmentID   string
+	InstanceID     string
+	DeviceIndex    int
 	Description    string
 	SecurityGroups []string
 	Tags           map[string]string
@@ -77,6 +79,35 @@ func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]dri
 	return describeResources(m.enis, ids, toENIInfo), nil
 }
 
+// AttachNetworkInterface attaches an available ENI to an instance and returns
+// the new attachment id (ec2:AttachNetworkInterface). An interface already in
+// use cannot be re-attached; real EC2 answers InvalidNetworkInterface.InUse.
+func (m *Mock) AttachNetworkInterface(
+	_ context.Context, networkInterfaceID, instanceID string, deviceIndex int,
+) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	eni, ok := m.enis.Get(networkInterfaceID)
+	if !ok {
+		return "", errors.Newf(errors.NotFound, "network interface %q not found", networkInterfaceID)
+	}
+
+	if eni.AttachmentID != "" {
+		return "", errors.Newf(errors.FailedPrecondition,
+			"InvalidNetworkInterface.InUse: network interface %q is already attached to instance %q",
+			networkInterfaceID, eni.InstanceID)
+	}
+
+	attachmentID := idgen.GenerateID("eni-attach-")
+	eni.AttachmentID = attachmentID
+	eni.InstanceID = instanceID
+	eni.DeviceIndex = deviceIndex
+	eni.Status = ENIStatusInUse
+
+	return attachmentID, nil
+}
+
 // DetachNetworkInterface detaches the ENI carrying the given attachment ID.
 //
 // force is accepted and ignored: the emulator has no in-flight traffic for a
@@ -91,6 +122,8 @@ func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, _ 
 		}
 
 		eni.AttachmentID = ""
+		eni.InstanceID = ""
+		eni.DeviceIndex = 0
 		eni.Status = ENIStatusAvailable
 
 		return nil
@@ -162,6 +195,8 @@ func toENIInfo(e *eniData) driver.NetworkInterface {
 		SubnetID:     e.SubnetID,
 		Status:       e.Status,
 		AttachmentID: e.AttachmentID,
+		InstanceID:   e.InstanceID,
+		DeviceIndex:  e.DeviceIndex,
 		Description:  e.Description,
 		Tags:         copyTags(e.Tags),
 	}

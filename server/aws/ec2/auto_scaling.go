@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -21,17 +22,37 @@ type asgResponseMetadata struct {
 	RequestID string `xml:"RequestId"`
 }
 
+// asgLaunchTemplateXML is the LaunchTemplateSpecification the SDK reads back
+// from a group whose launch source is a launch template.
+type asgLaunchTemplateXML struct {
+	LaunchTemplateID   string `xml:"LaunchTemplateId,omitempty"`
+	LaunchTemplateName string `xml:"LaunchTemplateName,omitempty"`
+	Version            string `xml:"Version,omitempty"`
+}
+
+// asgInstanceXML is one member of a group's Instances list. Each running
+// instance is its own <member>, so the SDK returns one Instance per instance.
+type asgInstanceXML struct {
+	InstanceID           string `xml:"InstanceId"`
+	AvailabilityZone     string `xml:"AvailabilityZone,omitempty"`
+	LifecycleState       string `xml:"LifecycleState"`
+	HealthStatus         string `xml:"HealthStatus"`
+	ProtectedFromScaleIn bool   `xml:"ProtectedFromScaleIn"`
+}
+
 type asgXML struct {
-	Name              string    `xml:"AutoScalingGroupName"`
-	MinSize           int       `xml:"MinSize"`
-	MaxSize           int       `xml:"MaxSize"`
-	DesiredCapacity   int       `xml:"DesiredCapacity"`
-	Status            string    `xml:"Status,omitempty"`
-	HealthCheckType   string    `xml:"HealthCheckType,omitempty"`
-	CreatedTime       string    `xml:"CreatedTime,omitempty"`
-	InstanceIDs       []string  `xml:"Instances>member>InstanceId,omitempty"`
-	AvailabilityZones []string  `xml:"AvailabilityZones>member,omitempty"`
-	Tags              []tagItem `xml:"Tags>member,omitempty"`
+	Name                    string                `xml:"AutoScalingGroupName"`
+	MinSize                 int                   `xml:"MinSize"`
+	MaxSize                 int                   `xml:"MaxSize"`
+	DesiredCapacity         int                   `xml:"DesiredCapacity"`
+	Status                  string                `xml:"Status,omitempty"`
+	HealthCheckType         string                `xml:"HealthCheckType,omitempty"`
+	CreatedTime             string                `xml:"CreatedTime,omitempty"`
+	LaunchConfigurationName string                `xml:"LaunchConfigurationName,omitempty"`
+	LaunchTemplate          *asgLaunchTemplateXML `xml:"LaunchTemplate,omitempty"`
+	Instances               []asgInstanceXML      `xml:"Instances>member,omitempty"`
+	AvailabilityZones       []string              `xml:"AvailabilityZones>member,omitempty"`
+	Tags                    []tagItem             `xml:"Tags>member,omitempty"`
 }
 
 type createAutoScalingGroupResponseXML struct {
@@ -93,15 +114,34 @@ func (h *Handler) createAutoScalingGroup(w http.ResponseWriter, r *http.Request)
 	maxSize, _ := strconv.Atoi(r.Form.Get("MaxSize"))
 	desired, _ := strconv.Atoi(r.Form.Get("DesiredCapacity"))
 
+	lcName := r.Form.Get("LaunchConfigurationName")
+	ltName := r.Form.Get("LaunchTemplate.LaunchTemplateName")
+	ltID := r.Form.Get("LaunchTemplate.LaunchTemplateId")
+
+	// A group must draw its launch source from exactly one of: a launch template,
+	// a launch configuration, an existing instance, or a mixed-instances policy.
+	// A create with none is a client ValidationError, not a silent empty group.
+	if lcName == "" && ltName == "" && ltID == "" &&
+		r.Form.Get("InstanceId") == "" && !asgHasPrefix(r.Form, "MixedInstancesPolicy.") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError",
+			"Valid requests must contain either a LaunchTemplate, LaunchConfigurationName, "+
+				"InstanceId or MixedInstancesPolicy parameter.")
+
+		return
+	}
+
 	cfg := computedriver.AutoScalingGroupConfig{
-		Name:              r.Form.Get("AutoScalingGroupName"),
-		MinSize:           minSize,
-		MaxSize:           maxSize,
-		DesiredCapacity:   desired,
-		HealthCheckType:   r.Form.Get("HealthCheckType"),
-		AvailabilityZones: asgMembers(r.Form, "AvailabilityZones"),
+		Name:                    r.Form.Get("AutoScalingGroupName"),
+		MinSize:                 minSize,
+		MaxSize:                 maxSize,
+		DesiredCapacity:         desired,
+		HealthCheckType:         r.Form.Get("HealthCheckType"),
+		AvailabilityZones:       asgMembers(r.Form, "AvailabilityZones"),
+		LaunchConfigurationName: lcName,
+		LaunchTemplateName:      ltName,
+		LaunchTemplateID:        ltID,
+		LaunchTemplateVersion:   r.Form.Get("LaunchTemplate.Version"),
 		InstanceConfig: computedriver.InstanceConfig{
-			ImageID:      r.Form.Get("LaunchConfigurationName"),
 			InstanceType: "t2.micro",
 		},
 	}
@@ -134,9 +174,34 @@ func (h *Handler) deleteAutoScalingGroup(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) updateAutoScalingGroup(w http.ResponseWriter, r *http.Request) {
 	name := r.Form.Get("AutoScalingGroupName")
-	minSize, _ := strconv.Atoi(r.Form.Get("MinSize"))
-	maxSize, _ := strconv.Atoi(r.Form.Get("MaxSize"))
-	desired, _ := strconv.Atoi(r.Form.Get("DesiredCapacity"))
+
+	// Partial update: any size property the client omits is left unchanged (and,
+	// since an unchanged DesiredCapacity reconciles to a no-op, the running fleet
+	// is untouched). Resolve each field against the group's current value.
+	current, err := h.compute.GetAutoScalingGroup(r.Context(), name)
+	if err != nil {
+		writeASGErr(w, err)
+		return
+	}
+
+	minSize := asgFormInt(r.Form, "MinSize", current.MinSize)
+	maxSize := asgFormInt(r.Form, "MaxSize", current.MaxSize)
+	desired := asgFormInt(r.Form, "DesiredCapacity", current.DesiredCapacity)
+
+	// AWS auto-adjusts DesiredCapacity when the client changes the bounds without
+	// specifying a new DesiredCapacity: a new MinSize larger than the current size
+	// raises desired to MinSize; a new MaxSize smaller than the current size lowers
+	// desired to MaxSize. (docs.aws.amazon.com/autoscaling/ec2/APIReference/
+	// API_UpdateAutoScalingGroup.html — "Note the following about changing ...")
+	if _, explicit := r.Form["DesiredCapacity"]; !explicit || r.Form.Get("DesiredCapacity") == "" {
+		if minSize > desired {
+			desired = minSize
+		}
+
+		if maxSize < desired {
+			desired = maxSize
+		}
+	}
 
 	if err := h.compute.UpdateAutoScalingGroup(r.Context(), name, desired, minSize, maxSize); err != nil {
 		writeASGErr(w, err)
@@ -241,18 +306,79 @@ func (h *Handler) executePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func toASGXML(g *computedriver.AutoScalingGroup) asgXML {
-	return asgXML{
-		Name:              g.Name,
-		MinSize:           g.MinSize,
-		MaxSize:           g.MaxSize,
-		DesiredCapacity:   g.DesiredCapacity,
-		Status:            g.Status,
-		HealthCheckType:   g.HealthCheckType,
-		CreatedTime:       g.CreatedAt,
-		InstanceIDs:       g.InstanceIDs,
-		AvailabilityZones: g.AvailabilityZones,
-		Tags:              toTagItems(g.Tags),
+	x := asgXML{
+		Name:                    g.Name,
+		MinSize:                 g.MinSize,
+		MaxSize:                 g.MaxSize,
+		DesiredCapacity:         g.DesiredCapacity,
+		Status:                  g.Status,
+		HealthCheckType:         g.HealthCheckType,
+		CreatedTime:             g.CreatedAt,
+		LaunchConfigurationName: g.LaunchConfigurationName,
+		Instances:               toASGInstances(g),
+		AvailabilityZones:       g.AvailabilityZones,
+		Tags:                    toTagItems(g.Tags),
 	}
+
+	if g.LaunchTemplateName != "" || g.LaunchTemplateID != "" {
+		x.LaunchTemplate = &asgLaunchTemplateXML{
+			LaunchTemplateID:   g.LaunchTemplateID,
+			LaunchTemplateName: g.LaunchTemplateName,
+			Version:            g.LaunchTemplateVersion,
+		}
+	}
+
+	return x
+}
+
+// toASGInstances renders each running instance as its own Instances member,
+// matching the AWS wire shape (one Instance per instance in the fleet).
+func toASGInstances(g *computedriver.AutoScalingGroup) []asgInstanceXML {
+	out := make([]asgInstanceXML, 0, len(g.InstanceIDs))
+
+	for i, id := range g.InstanceIDs {
+		inst := asgInstanceXML{
+			InstanceID:     id,
+			LifecycleState: "InService",
+			HealthStatus:   "Healthy",
+		}
+
+		if len(g.AvailabilityZones) > 0 {
+			inst.AvailabilityZone = g.AvailabilityZones[i%len(g.AvailabilityZones)]
+		}
+
+		out = append(out, inst)
+	}
+
+	return out
+}
+
+// asgFormInt returns the form value for key as an int, or fallback when the
+// client omitted the field — the basis of AutoScaling's partial-update semantics.
+func asgFormInt(form map[string][]string, key string, fallback int) int {
+	vals, ok := form[key]
+	if !ok || len(vals) == 0 || vals[0] == "" {
+		return fallback
+	}
+
+	n, err := strconv.Atoi(vals[0])
+	if err != nil {
+		return fallback
+	}
+
+	return n
+}
+
+// asgHasPrefix reports whether any form key starts with prefix (used to detect a
+// nested MixedInstancesPolicy.* launch source).
+func asgHasPrefix(form map[string][]string, prefix string) bool {
+	for k := range form {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // asgMembers reads the AutoScaling wire form (member.N=value) vs EC2's (Foo.N=value).
@@ -298,5 +424,7 @@ func (h *Handler) listASGs(r *http.Request) ([]computedriver.AutoScalingGroup, e
 }
 
 func writeASGErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "AutoScalingGroupNotFound", "ValidationError")
+	// A FailedPrecondition from the ASG driver is a delete blocked by live
+	// instances (no ForceDelete) — AWS answers that with ResourceInUse (400).
+	writeErrWithNotFound(w, err, "AutoScalingGroupNotFound", "ResourceInUse")
 }

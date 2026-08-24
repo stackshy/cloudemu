@@ -3,6 +3,8 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -11,6 +13,8 @@ import (
 
 type eniAttachmentXML struct {
 	AttachmentID string `xml:"attachmentId"`
+	InstanceID   string `xml:"instanceId,omitempty"`
+	DeviceIndex  int    `xml:"deviceIndex"`
 	Status       string `xml:"status"`
 }
 
@@ -36,6 +40,14 @@ type createNetworkInterfaceResponseXML struct {
 	Xmlns            string              `xml:"xmlns,attr"`
 	RequestID        string              `xml:"requestId"`
 	NetworkInterface networkInterfaceXML `xml:"networkInterface"`
+}
+
+type attachNetworkInterfaceResponseXML struct {
+	XMLName          xml.Name `xml:"AttachNetworkInterfaceResponse"`
+	Xmlns            string   `xml:"xmlns,attr"`
+	RequestID        string   `xml:"requestId"`
+	AttachmentID     string   `xml:"attachmentId"`
+	NetworkCardIndex int      `xml:"networkCardIndex"`
 }
 
 type detachNetworkInterfaceResponseXML struct {
@@ -97,7 +109,7 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 // The second result reports whether the filter is recognized at all.
 func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool) {
 	switch name {
-	case "vpc-id":
+	case filterVPCID:
 		return eni.VPCID, true
 	case "subnet-id":
 		return eni.SubnetID, true
@@ -105,7 +117,7 @@ func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool)
 		return eni.Status, true
 	case "network-interface-id":
 		return eni.ID, true
-	case "description":
+	case filterDescription:
 		return eni.Description, true
 	case "group-id":
 		// ENIs don't model security-group membership, so this filter is
@@ -191,6 +203,55 @@ func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// attachNetworkInterface attaches an existing ENI to an instance
+// (ec2:AttachNetworkInterface). The instance's existence is verified against
+// the compute driver here — the networking provider does not model instances —
+// so an unknown instance answers InvalidInstanceID.NotFound.
+func (h *Handler) attachNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	attacher, ok := h.vpc.(netdriver.NetworkInterfaceAttacher)
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	instanceID := r.Form.Get("InstanceId")
+	if h.compute != nil {
+		insts, err := h.compute.DescribeInstances(r.Context(), []string{instanceID}, nil)
+		if err != nil || len(insts) == 0 {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidInstanceID,
+				"instance "+instanceID+" not found")
+
+			return
+		}
+	}
+
+	deviceIndex, _ := strconv.Atoi(r.Form.Get("DeviceIndex"))
+
+	attachmentID, err := attacher.AttachNetworkInterface(r.Context(),
+		r.Form.Get("NetworkInterfaceId"), instanceID, deviceIndex)
+	if err != nil {
+		writeENIAttachErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, attachNetworkInterfaceResponseXML{
+		Xmlns:        awsquery.Namespace,
+		RequestID:    awsquery.RequestID,
+		AttachmentID: attachmentID,
+	})
+}
+
+// writeENIAttachErr maps an already-attached interface to InvalidNetworkInterface.InUse
+// (real EC2's code), falling back to the shared ENI error mapping otherwise.
+func writeENIAttachErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "InvalidNetworkInterface.InUse:") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterface.InUse", err.Error())
+		return
+	}
+
+	writeENIErr(w, err)
+}
+
 func (h *Handler) detachNetworkInterface(w http.ResponseWriter, r *http.Request) {
 	force := r.Form.Get("Force") == formTrue
 
@@ -242,7 +303,12 @@ func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 	}
 
 	if e.AttachmentID != "" {
-		x.Attachment = &eniAttachmentXML{AttachmentID: e.AttachmentID, Status: stateAttached}
+		x.Attachment = &eniAttachmentXML{
+			AttachmentID: e.AttachmentID,
+			InstanceID:   e.InstanceID,
+			DeviceIndex:  e.DeviceIndex,
+			Status:       stateAttached,
+		}
 	}
 
 	return x

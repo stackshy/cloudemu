@@ -13,6 +13,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/eventmatch"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
@@ -463,12 +464,17 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 	return result, nil
 }
 
-// deliverToTargets delivers an event to the SQS targets of matched rules,
-// wrapping it in the standard EventBridge event envelope.
+// deliverToTargets delivers an event to the SQS targets of matched rules. The
+// body delivered to each target is the event envelope by default, but is
+// replaced by the target's Input (constant), InputPath (selected subtree), or
+// InputTransformer (templated) when one is configured — matching how real
+// EventBridge shapes each target's payload independently.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
 	if m.sqs == nil {
 		return
 	}
+
+	envelope := m.eventEnvelope(event)
 
 	for i := range matched {
 		for _, t := range matched[i].Targets {
@@ -476,29 +482,36 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, even
 				continue
 			}
 
-			detail := json.RawMessage(event.Detail)
-			if len(detail) == 0 {
-				detail = json.RawMessage("{}")
-			}
+			body := targetBody(&t, envelope)
 
-			body, err := json.Marshal(map[string]any{
-				"version":     "0",
-				"id":          event.ID,
-				"detail-type": event.DetailType,
-				"source":      event.Source,
-				"account":     m.opts.AccountID,
-				"time":        event.Time.UTC().Format(time.RFC3339),
-				"region":      m.opts.Region,
-				"resources":   event.Resources,
-				"detail":      detail,
-			})
-			if err != nil {
-				continue
-			}
-
-			_ = m.sqs.DeliverExternal(ctx, t.ARN, string(body))
+			_ = m.sqs.DeliverExternal(ctx, t.ARN, body)
 		}
 	}
+}
+
+// eventEnvelope renders the standard EventBridge delivery envelope for an event.
+func (m *Mock) eventEnvelope(event *driver.Event) []byte {
+	detail := json.RawMessage(event.Detail)
+	if len(detail) == 0 {
+		detail = json.RawMessage("{}")
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"version":     "0",
+		"id":          event.ID,
+		"detail-type": event.DetailType,
+		"source":      event.Source,
+		"account":     m.opts.AccountID,
+		"time":        event.Time.UTC().Format(time.RFC3339),
+		"region":      m.opts.Region,
+		"resources":   event.Resources,
+		"detail":      detail,
+	})
+	if err != nil {
+		return []byte("{}")
+	}
+
+	return body
 }
 
 // GetEventHistory retrieves event history for an event bus.
@@ -561,44 +574,50 @@ func generateEventID(event *driver.Event, now time.Time, index int) string {
 	return fmt.Sprintf("%x", hash[:16])
 }
 
+// matchesPattern reports whether an event satisfies an EventBridge event
+// pattern. An empty pattern matches everything (schedule-only rules). The
+// pattern is evaluated against the full event envelope — source, detail-type,
+// resources, and the nested detail object — using the shared content-filtering
+// engine (exact, nested, prefix/suffix/anything-but/exists/numeric/cidr/wildcard).
 func matchesPattern(event *driver.Event, pattern string) bool {
 	if pattern == "" {
 		return true
 	}
 
-	var p map[string]any
-	if err := json.Unmarshal([]byte(pattern), &p); err != nil {
-		return false
-	}
-
-	if sources, ok := p["source"]; ok {
-		if !matchesField(event.Source, sources) {
-			return false
-		}
-	}
-
-	if detailTypes, ok := p["detail-type"]; ok {
-		if !matchesField(event.DetailType, detailTypes) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func matchesField(value string, allowed any) bool {
-	arr, ok := allowed.([]any)
+	p, ok := eventmatch.ParsePattern(pattern)
 	if !ok {
 		return false
 	}
 
-	for _, v := range arr {
-		if fmt.Sprintf("%v", v) == value {
-			return true
+	return eventmatch.MatchEvent(p, eventObject(event))
+}
+
+// eventObject renders an event into the JSON object shape EventBridge patterns
+// match against. The detail body is parsed so nested "detail" constraints can
+// reach into it; an unparsable detail is treated as an empty object.
+func eventObject(event *driver.Event) map[string]any {
+	obj := map[string]any{
+		"source":      event.Source,
+		"detail-type": event.DetailType,
+	}
+
+	if len(event.Resources) > 0 {
+		res := make([]any, len(event.Resources))
+		for i, r := range event.Resources {
+			res[i] = r
+		}
+
+		obj["resources"] = res
+	}
+
+	if event.Detail != "" {
+		var detail any
+		if err := json.Unmarshal([]byte(event.Detail), &detail); err == nil {
+			obj["detail"] = detail
 		}
 	}
 
-	return false
+	return obj
 }
 
 // UpdateEventBus replaces the mutable fields of an existing event bus —

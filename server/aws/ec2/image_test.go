@@ -309,3 +309,87 @@ func TestRegisterImageDuplicateNameRejected(t *testing.T) {
 		t.Fatalf("RegisterImage error = %v, want InvalidAMIName.Duplicate", err)
 	}
 }
+
+// TestCopyImageCreatesIndependentAMI pins that CopyImage (aws_ami_copy) returns
+// a new AMI id distinct from the source and carrying the requested name.
+func TestCopyImageCreatesIndependentAMI(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+	instID := launchInstanceForImage(t, ctx, client)
+
+	src, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId: aws.String(instID),
+		Name:       aws.String("source-ami"),
+	})
+	if err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+	srcID := aws.ToString(src.ImageId)
+
+	cp, err := client.CopyImage(ctx, &ec2.CopyImageInput{
+		SourceRegion:  aws.String("us-east-1"),
+		SourceImageId: aws.String(srcID),
+		Name:          aws.String("copied-ami"),
+	})
+	if err != nil {
+		t.Fatalf("CopyImage: %v", err)
+	}
+	copyID := aws.ToString(cp.ImageId)
+	if copyID == "" || copyID == srcID {
+		t.Fatalf("CopyImage id = %q, want a new id distinct from %q", copyID, srcID)
+	}
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{copyID}})
+	if err != nil {
+		t.Fatalf("DescribeImages: %v", err)
+	}
+	if len(desc.Images) != 1 || aws.ToString(desc.Images[0].Name) != "copied-ami" {
+		t.Fatalf("copied image = %+v, want name copied-ami", desc.Images)
+	}
+}
+
+// TestModifyImageAttributeLaunchPermission pins the AMI-sharing round-trip
+// aws_ami_launch_permission relies on: adding a launchPermission group=all makes
+// the AMI public and DescribeImageAttribute(launchPermission) returns the grant.
+func TestModifyImageAttributeLaunchPermission(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+	instID := launchInstanceForImage(t, ctx, client)
+
+	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId: aws.String(instID),
+		Name:       aws.String("shared-ami"),
+	})
+	if err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+	imgID := aws.ToString(img.ImageId)
+
+	if _, err := client.ModifyImageAttribute(ctx, &ec2.ModifyImageAttributeInput{
+		ImageId: aws.String(imgID),
+		LaunchPermission: &ec2types.LaunchPermissionModifications{
+			Add: []ec2types.LaunchPermission{{Group: ec2types.PermissionGroupAll}},
+		},
+	}); err != nil {
+		t.Fatalf("ModifyImageAttribute: %v", err)
+	}
+
+	attr, err := client.DescribeImageAttribute(ctx, &ec2.DescribeImageAttributeInput{
+		ImageId:   aws.String(imgID),
+		Attribute: ec2types.ImageAttributeNameLaunchPermission,
+	})
+	if err != nil {
+		t.Fatalf("DescribeImageAttribute: %v", err)
+	}
+	if len(attr.LaunchPermissions) != 1 || attr.LaunchPermissions[0].Group != ec2types.PermissionGroupAll {
+		t.Fatalf("LaunchPermissions = %+v, want one grant group=all", attr.LaunchPermissions)
+	}
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{imgID}})
+	if err != nil {
+		t.Fatalf("DescribeImages: %v", err)
+	}
+	if !aws.ToBool(desc.Images[0].Public) {
+		t.Error("image Public = false after launchPermission group=all, want true")
+	}
+}

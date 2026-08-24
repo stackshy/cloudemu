@@ -30,6 +30,8 @@ const (
 	stateEnabled     = "Enabled"
 	stateDisabled    = "Disabled"
 	timeFormat       = "2006-01-02T15:04:05Z"
+	// tracingModePassThrough is the AWS Lambda default X-Ray tracing mode.
+	tracingModePassThrough = "PassThrough"
 )
 
 // AWS Lambda create-time defaults applied when the client omits the field:
@@ -67,6 +69,9 @@ type funcData struct {
 	concurrency  *driver.ConcurrencyConfig
 	policy       map[string]driver.PermissionStatement
 	urlConfig    *driver.FunctionURLConfig // Lambda Function URL, nil until created
+	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
+	// TracingConfig) applied through the AWSConfigurable optional interface.
+	awsConfig driver.AWSFunctionConfig
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -150,6 +155,9 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		info: info, handler: h, engineBacked: engineBacked,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
+		// AWS always reports a TracingConfig, defaulting to PassThrough when the
+		// client omits it.
+		awsConfig: driver.AWSFunctionConfig{TracingConfig: &driver.TracingConfig{Mode: tracingModePassThrough}},
 	})
 
 	result := info
@@ -362,6 +370,48 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 	if cfg.Tags != nil {
 		info.Tags = maps.Clone(cfg.Tags)
 	}
+}
+
+func cloneVPCConfig(v *driver.VPCConfig) *driver.VPCConfig {
+	if v == nil {
+		return nil
+	}
+
+	out := &driver.VPCConfig{VpcID: v.VpcID}
+	out.SubnetIDs = append([]string(nil), v.SubnetIDs...)
+	out.SecurityGroupIDs = append([]string(nil), v.SecurityGroupIDs...)
+
+	return out
+}
+
+func cloneDeadLetterConfig(d *driver.DeadLetterConfig) *driver.DeadLetterConfig {
+	if d == nil {
+		return nil
+	}
+
+	out := *d
+
+	return &out
+}
+
+func cloneTracingConfig(t *driver.TracingConfig) *driver.TracingConfig {
+	if t == nil {
+		return nil
+	}
+
+	out := *t
+
+	return &out
+}
+
+// tracingConfigOrDefault returns a copy of t, or the AWS default
+// {Mode: "PassThrough"} when the client supplied no tracing configuration.
+func tracingConfigOrDefault(t *driver.TracingConfig) *driver.TracingConfig {
+	if t == nil || t.Mode == "" {
+		return &driver.TracingConfig{Mode: tracingModePassThrough}
+	}
+
+	return cloneTracingConfig(t)
 }
 
 // codeHash returns the base64-encoded SHA-256 of the deployment package, the
