@@ -206,7 +206,7 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		sku = defaultSKU
 	}
 
-	region := cfg.AvailabilityZone
+	region := cfg.Location
 	if region == "" {
 		region = m.opts.Region
 	}
@@ -228,7 +228,8 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		PubliclyAccessible:      cfg.PubliclyAccessible,
 		VPCSecurityGroups:       append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:         cfg.SubnetGroupName,
-		AvailabilityZone:        region,
+		Location:                region,
+		AvailabilityZone:        cfg.AvailabilityZone,
 		HighAvailabilityMode:    cfg.HighAvailabilityMode,
 		StandbyAvailabilityZone: cfg.StandbyAvailabilityZone,
 		CreatedAt:               m.opts.Clock.Now().UTC(),
@@ -614,7 +615,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		Endpoint:         flexibleServerEndpoint(input.NewInstanceID),
 		Port:             defaultPort,
 		State:            rdsdriver.StateAvailable,
-		AvailabilityZone: m.opts.Region,
+		Location:         m.opts.Region,
 		CreatedAt:        now,
 		Tags:             copyTags(input.Tags),
 	}
