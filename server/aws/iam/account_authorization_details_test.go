@@ -3,11 +3,13 @@ package iam_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/smithy-go"
 )
 
 // seedAuthorizationAccount populates a small account: one user (in a group, with
@@ -252,6 +254,26 @@ func TestSDKGetAccountAuthorizationDetailsLocalPolicyFilter(t *testing.T) {
 	if len(out.UserDetailList) != 0 || len(out.RoleDetailList) != 0 || len(out.GroupDetailList) != 0 {
 		t.Fatalf("policy filter leaked entities: users=%d roles=%d groups=%d",
 			len(out.UserDetailList), len(out.RoleDetailList), len(out.GroupDetailList))
+	}
+}
+
+func TestSDKGetAccountAuthorizationDetailsInvalidFilter(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	seedAuthorizationAccount(t, client)
+
+	// An out-of-enum Filter value is rejected by real IAM with ValidationError,
+	// not silently ignored (which would return the whole account).
+	_, err := client.GetAccountAuthorizationDetails(ctx, &iam.GetAccountAuthorizationDetailsInput{
+		Filter: []iamtypes.EntityType{iamtypes.EntityType("Bogus")},
+	})
+	if err == nil {
+		t.Fatal("expected ValidationError for an invalid Filter value, got nil")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationError" {
+		t.Fatalf("got error %v, want ValidationError", err)
 	}
 }
 

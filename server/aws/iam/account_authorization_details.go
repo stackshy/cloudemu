@@ -70,16 +70,20 @@ type roleDetailXML struct {
 }
 
 type managedPolicyDetailXML struct {
-	PolicyName        string                `xml:"PolicyName"`
-	PolicyID          string                `xml:"PolicyId"`
-	Arn               string                `xml:"Arn"`
-	Path              string                `xml:"Path,omitempty"`
-	DefaultVersionID  string                `xml:"DefaultVersionId,omitempty"`
-	AttachmentCount   int                   `xml:"AttachmentCount"`
-	IsAttachable      bool                  `xml:"IsAttachable"`
-	CreateDate        string                `xml:"CreateDate,omitempty"`
-	UpdateDate        string                `xml:"UpdateDate,omitempty"`
-	PolicyVersionList policyVersionsListXML `xml:"PolicyVersionList"`
+	PolicyName       string `xml:"PolicyName"`
+	PolicyID         string `xml:"PolicyId"`
+	Arn              string `xml:"Arn"`
+	Path             string `xml:"Path,omitempty"`
+	DefaultVersionID string `xml:"DefaultVersionId,omitempty"`
+	AttachmentCount  int    `xml:"AttachmentCount"`
+	// PermissionsBoundaryUsageCount is the number of principals using this policy
+	// as a permissions boundary. The emulator does not model permissions
+	// boundaries, so it is always 0 — but real GAAD always emits the element.
+	PermissionsBoundaryUsageCount int                   `xml:"PermissionsBoundaryUsageCount"`
+	IsAttachable                  bool                  `xml:"IsAttachable"`
+	CreateDate                    string                `xml:"CreateDate,omitempty"`
+	UpdateDate                    string                `xml:"UpdateDate,omitempty"`
+	PolicyVersionList             policyVersionsListXML `xml:"PolicyVersionList"`
 }
 
 type userDetailListXML struct {
@@ -124,16 +128,19 @@ type gaadFilter struct {
 	awsPolicies   bool
 }
 
-func parseGAADFilter(form url.Values) gaadFilter {
+// parseGAADFilter maps Filter.member.N values to the selected entity kinds. It
+// returns the first unrecognized value (if any) so the caller can answer with a
+// ValidationError, matching real IAM which rejects an out-of-enum filter.
+func parseGAADFilter(form url.Values) (gaadFilter, string) {
 	indices := awsquery.CollectIndices(form, "Filter.member")
 	if len(indices) == 0 {
-		return gaadFilter{users: true, groups: true, roles: true, localPolicies: true, awsPolicies: true}
+		return gaadFilter{users: true, groups: true, roles: true, localPolicies: true, awsPolicies: true}, ""
 	}
 
 	var f gaadFilter
 
 	for _, n := range indices {
-		switch form.Get("Filter.member." + strconv.Itoa(n)) {
+		switch v := form.Get("Filter.member." + strconv.Itoa(n)); v {
 		case "User":
 			f.users = true
 		case "Group":
@@ -144,15 +151,26 @@ func parseGAADFilter(form url.Values) gaadFilter {
 			f.localPolicies = true
 		case "AWSManagedPolicy":
 			f.awsPolicies = true
+		default:
+			return f, v
 		}
 	}
 
-	return f
+	return f, ""
 }
 
 func (h *Handler) getAccountAuthorizationDetails(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	filter := parseGAADFilter(r.Form)
+
+	filter, invalid := parseGAADFilter(r.Form)
+	if invalid != "" {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError",
+			"Value '"+invalid+"' at 'filter' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: "+
+				"[User, Role, Group, LocalManagedPolicy, AWSManagedPolicy]")
+
+		return
+	}
 
 	var users []userDetailXML
 	if filter.users {
