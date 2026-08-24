@@ -130,6 +130,51 @@ func TestSDKLambdaUpdateVpcTracing(t *testing.T) {
 	}
 }
 
+// TestSDKLambdaUpdateTracingKeepsVpc verifies the AWS partial-update contract for
+// the optional config: an UpdateFunctionConfiguration that changes only
+// TracingConfig leaves a previously configured VpcConfig unchanged (omitted
+// fields are not cleared).
+func TestSDKLambdaUpdateTracingKeepsVpc(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateFunction(ctx, &awslambda.CreateFunctionInput{
+		FunctionName: aws.String("keepvpc"),
+		Runtime:      lambdatypes.RuntimeGo1x,
+		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
+		Handler:      aws.String("main"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("z")},
+		VpcConfig: &lambdatypes.VpcConfig{
+			SubnetIds:        []string{"subnet-keep"},
+			SecurityGroupIds: []string{"sg-keep"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	if _, err := client.UpdateFunctionConfiguration(ctx, &awslambda.UpdateFunctionConfigurationInput{
+		FunctionName:  aws.String("keepvpc"),
+		TracingConfig: &lambdatypes.TracingConfig{Mode: lambdatypes.TracingModeActive},
+	}); err != nil {
+		t.Fatalf("UpdateFunctionConfiguration: %v", err)
+	}
+
+	out, err := client.GetFunctionConfiguration(ctx, &awslambda.GetFunctionConfigurationInput{
+		FunctionName: aws.String("keepvpc"),
+	})
+	if err != nil {
+		t.Fatalf("GetFunctionConfiguration: %v", err)
+	}
+
+	if out.TracingConfig == nil || out.TracingConfig.Mode != lambdatypes.TracingModeActive {
+		t.Fatalf("TracingConfig = %+v, want Active", out.TracingConfig)
+	}
+
+	if out.VpcConfig == nil || len(out.VpcConfig.SubnetIds) != 1 || out.VpcConfig.SubnetIds[0] != "subnet-keep" {
+		t.Fatalf("VpcConfig = %+v, want subnet-keep preserved across a tracing-only update", out.VpcConfig)
+	}
+}
+
 // TestSDKLambdaListLayerVersionsDescending verifies ListLayerVersions returns
 // versions newest-first.
 func TestSDKLambdaListLayerVersionsDescending(t *testing.T) {

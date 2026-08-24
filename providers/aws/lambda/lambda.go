@@ -69,6 +69,9 @@ type funcData struct {
 	concurrency  *driver.ConcurrencyConfig
 	policy       map[string]driver.PermissionStatement
 	urlConfig    *driver.FunctionURLConfig // Lambda Function URL, nil until created
+	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
+	// TracingConfig) applied through the AWSConfigurable optional interface.
+	awsConfig driver.AWSFunctionConfig
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -137,11 +140,6 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		CodeSHA256:   codeHash(cfg.Code), CodeSize: int64(len(cfg.Code)),
 		Version: latestVersion, RevisionID: newRevisionID(),
-		VpcConfig:        cloneVPCConfig(cfg.VpcConfig),
-		DeadLetterConfig: cloneDeadLetterConfig(cfg.DeadLetterConfig),
-		// AWS always reports a TracingConfig, defaulting to PassThrough when the
-		// client omits it.
-		TracingConfig: tracingConfigOrDefault(cfg.TracingConfig),
 	}
 
 	m.handlersMu.RLock()
@@ -157,6 +155,9 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		info: info, handler: h, engineBacked: engineBacked,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
+		// AWS always reports a TracingConfig, defaulting to PassThrough when the
+		// client omits it.
+		awsConfig: driver.AWSFunctionConfig{TracingConfig: &driver.TracingConfig{Mode: tracingModePassThrough}},
 	})
 
 	result := info
@@ -190,9 +191,6 @@ func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo
 	info := fd.info
 	info.Environment = maps.Clone(info.Environment)
 	info.Tags = maps.Clone(info.Tags)
-	info.VpcConfig = cloneVPCConfig(info.VpcConfig)
-	info.DeadLetterConfig = cloneDeadLetterConfig(info.DeadLetterConfig)
-	info.TracingConfig = cloneTracingConfig(info.TracingConfig)
 
 	return &info, nil
 }
@@ -371,26 +369,6 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 
 	if cfg.Tags != nil {
 		info.Tags = maps.Clone(cfg.Tags)
-	}
-
-	applyAWSConfigUpdates(info, cfg)
-}
-
-// applyAWSConfigUpdates overlays the AWS-only optional settings (VpcConfig,
-// DeadLetterConfig, TracingConfig) supplied in an update onto the function info.
-//
-//nolint:gocritic // hugeParam: config passed by value intentionally for snapshot semantics.
-func applyAWSConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
-	if cfg.VpcConfig != nil {
-		info.VpcConfig = cloneVPCConfig(cfg.VpcConfig)
-	}
-
-	if cfg.DeadLetterConfig != nil {
-		info.DeadLetterConfig = cloneDeadLetterConfig(cfg.DeadLetterConfig)
-	}
-
-	if cfg.TracingConfig != nil {
-		info.TracingConfig = cloneTracingConfig(cfg.TracingConfig)
 	}
 }
 

@@ -6,7 +6,9 @@ type envEnvelope struct {
 }
 
 // vpcConfigEnvelope is the Lambda VpcConfig request / VpcConfigResponse shape.
-// VpcId is derived and returned by AWS, never accepted on input.
+// Real AWS resolves VpcId from the configured SubnetIds and echoes it in the
+// response; this emulator does not model the EC2 subnet->VPC mapping, so VpcId
+// is left empty (not accepted on input, never mistaken for AWS-accurate output).
 type vpcConfigEnvelope struct {
 	SubnetIDs        []string `json:"SubnetIds,omitempty"`
 	SecurityGroupIDs []string `json:"SecurityGroupIds,omitempty"`

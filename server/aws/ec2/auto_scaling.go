@@ -188,6 +188,21 @@ func (h *Handler) updateAutoScalingGroup(w http.ResponseWriter, r *http.Request)
 	maxSize := asgFormInt(r.Form, "MaxSize", current.MaxSize)
 	desired := asgFormInt(r.Form, "DesiredCapacity", current.DesiredCapacity)
 
+	// AWS auto-adjusts DesiredCapacity when the client changes the bounds without
+	// specifying a new DesiredCapacity: a new MinSize larger than the current size
+	// raises desired to MinSize; a new MaxSize smaller than the current size lowers
+	// desired to MaxSize. (docs.aws.amazon.com/autoscaling/ec2/APIReference/
+	// API_UpdateAutoScalingGroup.html — "Note the following about changing ...")
+	if _, explicit := r.Form["DesiredCapacity"]; !explicit || r.Form.Get("DesiredCapacity") == "" {
+		if minSize > desired {
+			desired = minSize
+		}
+
+		if maxSize < desired {
+			desired = maxSize
+		}
+	}
+
 	if err := h.compute.UpdateAutoScalingGroup(r.Context(), name, desired, minSize, maxSize); err != nil {
 		writeASGErr(w, err)
 		return
