@@ -111,6 +111,16 @@ func TestReplaceRoute(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidRoute.NotFound" {
 		t.Fatalf("want InvalidRoute.NotFound, got %v", err)
 	}
+
+	// A missing route TABLE is a different error code than a missing route.
+	_, err = c.ReplaceRoute(ctx, &ec2.ReplaceRouteInput{
+		RouteTableId:         aws.String("rtb-doesnotexist"),
+		DestinationCidrBlock: aws.String("10.0.0.0/16"),
+		GatewayId:            aws.String(igw2),
+	})
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidRouteTableID.NotFound" {
+		t.Fatalf("want InvalidRouteTableID.NotFound for a bogus route table, got %v", err)
+	}
 }
 
 // mkIGW creates an internet gateway and returns its id.

@@ -204,6 +204,16 @@ func (h *Handler) replaceRoute(w http.ResponseWriter, r *http.Request) {
 	routeTableID := r.Form.Get("RouteTableId")
 	destinationCIDR := r.Form.Get("DestinationCidrBlock")
 
+	// A missing route TABLE is InvalidRouteTableID.NotFound; a missing ROUTE on an
+	// existing table is InvalidRoute.NotFound. DeleteRoute conflates the two, so
+	// resolve the table first.
+	if rts, _ := h.vpc.DescribeRouteTables(r.Context(), []string{routeTableID}); len(rts) == 0 {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidRouteTableID.NotFound",
+			"The route table ID '"+routeTableID+"' does not exist")
+
+		return
+	}
+
 	if err := h.vpc.DeleteRoute(r.Context(), routeTableID, destinationCIDR); err != nil {
 		writeReplaceRouteErr(w, err)
 		return
