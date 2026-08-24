@@ -198,6 +198,14 @@ func New(d Drivers) http.Handler {
 	// tracks membership by the ids resources already carry.
 	srv.Register(resourcegroups.New())
 
+	// microsoft.insights extension resources (metrics, metricDefinitions,
+	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
+	// those paths before the underlying resource's own handler. Registered first.
+	if d.Monitor != nil {
+		srv.Register(monitor.NewMetricsHandler(d.Monitor))
+		srv.Register(monitor.NewDiagnosticSettingsHandler())
+	}
+
 	// Register more-specific compute resource handlers first so their
 	// resourceType match wins over virtualMachines (which also accepts the
 	// locations sub-path used for async-operation polling).

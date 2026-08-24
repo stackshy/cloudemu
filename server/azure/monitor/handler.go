@@ -1,13 +1,16 @@
-// Package monitor implements the Azure microsoft.insights metric-alerts
-// resource against a CloudEmu monitoring driver. Real armmonitor clients
-// hit this handler the same way they hit management.azure.com.
+// Package monitor implements the Azure microsoft.insights ARM resources
+// (metricAlerts, actionGroups, activityLogAlerts) and the microsoft.insights
+// data-plane (metrics, metricDefinitions) plus diagnosticSettings against a
+// CloudEmu monitoring driver. Real armmonitor clients hit these handlers the
+// same way they hit management.azure.com.
 package monitor
 
 import (
 	"context"
 	"net/http"
+	"sort"
+	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -15,28 +18,56 @@ import (
 const (
 	providerName    = "microsoft.insights"
 	typeAlerts      = "metricAlerts"
-	armNameTag      = "cloudemu:azureAlertName"
+	typeActionGroup = "actionGroups"
+	typeActivityLog = "activityLogAlerts"
 	defaultLocation = "global"
 )
 
-// Handler serves microsoft.insights ARM resources.
+// Handler serves the microsoft.insights ARM resource types: metricAlerts,
+// actionGroups and activityLogAlerts. Each is stored in full so reads round-trip
+// the caller's definition; metricAlerts additionally register the named metric
+// with the driver so the alarm evaluates.
 type Handler struct {
-	mon mondriver.Monitoring
+	mon   mondriver.Monitoring
+	store *resourceStore
 }
 
 // New returns a monitor handler.
 func New(m mondriver.Monitoring) *Handler {
-	return &Handler{mon: m}
+	return &Handler{mon: m, store: newResourceStore()}
 }
 
-// Matches returns true for ARM URLs targeting microsoft.insights/metricAlerts.
+// armType returns the ARM "type" string for a stored resource type.
+func armType(resourceType string) string {
+	return "Microsoft.Insights/" + resourceType
+}
+
+// canonicalType maps an incoming (case-insensitive) resource type to the stored
+// kind, or "" when this handler does not serve it.
+func canonicalType(resourceType string) string {
+	switch strings.ToLower(resourceType) {
+	case strings.ToLower(typeAlerts):
+		return typeAlerts
+	case strings.ToLower(typeActionGroup):
+		return typeActionGroup
+	case strings.ToLower(typeActivityLog):
+		return typeActivityLog
+	default:
+		return ""
+	}
+}
+
+// Matches returns true for ARM URLs targeting a microsoft.insights resource type
+// this handler serves. The provider name is matched case-insensitively because
+// real armmonitor clients emit "Microsoft.Insights" while other tooling emits
+// the lowercase form.
 func (*Handler) Matches(r *http.Request) bool {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		return false
 	}
 
-	return rp.Provider == providerName && rp.ResourceType == typeAlerts
+	return strings.EqualFold(rp.Provider, providerName) && canonicalType(rp.ResourceType) != ""
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,132 +77,100 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	kind := canonicalType(rp.ResourceType)
+	if kind == "" {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown resource type")
+		return
+	}
+
 	if rp.ResourceName == "" {
-		h.list(w, r, rp)
+		h.list(w, &rp, kind)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodPut:
-		h.createOrUpdate(w, r, rp)
+		h.createOrUpdate(w, r, &rp, kind)
 	case http.MethodGet:
-		h.get(w, r, rp)
+		h.get(w, &rp, kind)
 	case http.MethodDelete:
-		h.delete(w, r, rp)
+		h.delete(w, &rp, kind)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, kind string) {
 	if rp.ResourceGroup == "" {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing resourceGroups segment")
 		return
 	}
 
-	var req alertRequest
-
+	var req resourceRequest
 	if !azurearm.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	cfg := mondriver.AlarmConfig{
-		Name:               rp.ResourceName,
-		Namespace:          "azure",
-		MetricName:         "metric",
-		ComparisonOperator: "GreaterThanThreshold",
-		Threshold:          0,
-		Period:             60,
-		EvaluationPeriods:  1,
-		Stat:               "Average",
+	res := &armResource{Location: req.Location, Tags: req.Tags, Properties: req.Properties}
+	if kind == typeAlerts {
+		res.Properties = withProvisioningState(res.Properties)
+
+		if err := h.registerAlarm(r, rp.ResourceName, req.Properties); err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
 	}
 
-	if err := h.mon.CreateAlarm(r.Context(), cfg); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
+	existed := h.store.set(kind, rp.ResourceName, res)
+
+	status := http.StatusCreated
+	if existed {
+		status = http.StatusOK
 	}
 
-	loc := req.Location
-	if loc == "" {
-		loc = defaultLocation
-	}
-
-	azurearm.WriteJSON(w, http.StatusCreated, toAlertResponse(rp, loc, req))
+	azurearm.WriteJSON(w, status, toResourceJSON(rp, kind, res))
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	if err := alarmExists(r.Context(), h.mon, rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
+func (h *Handler) get(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
+	res, ok := h.store.get(kind, rp.ResourceName)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", kind+" "+rp.ResourceName+" not found")
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toAlertResponse(rp, defaultLocation, alertRequest{}))
+	azurearm.WriteJSON(w, http.StatusOK, toResourceJSON(rp, kind, res))
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	alarms, err := h.mon.DescribeAlarms(r.Context(), nil)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
+func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
+	all := h.store.all(kind)
+
+	names := make([]string, 0, len(all))
+	for name := range all {
+		names = append(names, name)
 	}
 
-	out := alertListResponse{}
+	sort.Strings(names)
 
-	for i := range alarms {
-		scope := rp
-		scope.ResourceName = alarms[i].Name
-		out.Value = append(out.Value, toAlertResponse(scope, defaultLocation, alertRequest{}))
+	out := resourceListResponse{Value: make([]resourceResponse, 0, len(names))}
+
+	for _, name := range names {
+		scoped := *rp
+		scoped.ResourceName = name
+		out.Value = append(out.Value, toResourceJSON(&scoped, kind, all[name]))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
 }
 
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	if err := alarmExists(r.Context(), h.mon, rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
+func (h *Handler) delete(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
+	if !h.store.delete(kind, rp.ResourceName) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", kind+" "+rp.ResourceName+" not found")
 		return
 	}
 
-	if err := h.mon.DeleteAlarm(r.Context(), rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
+	if kind == typeAlerts {
+		_ = h.mon.DeleteAlarm(context.Background(), rp.ResourceName)
 	}
 
 	w.WriteHeader(http.StatusOK)
-}
-
-// alarmExists returns nil if an alarm with the given name exists in the
-// driver, NotFound otherwise. Callers only need presence/absence.
-func alarmExists(ctx context.Context, m mondriver.Monitoring, name string) error {
-	alarms, err := m.DescribeAlarms(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	for i := range alarms {
-		if alarms[i].Name == name {
-			return nil
-		}
-	}
-
-	return cerrors.Newf(cerrors.NotFound, "metricAlert %s not found", name)
-}
-
-//nolint:gocritic // rp is a request-scoped value
-func toAlertResponse(rp azurearm.ResourcePath, location string, req alertRequest) alertResponse {
-	return alertResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeAlerts, rp.ResourceName),
-		Name:     rp.ResourceName,
-		Type:     providerName + "/" + typeAlerts,
-		Location: location,
-		Tags:     req.Tags,
-		Properties: alertResponseProps{
-			alertRequestProps: req.Properties,
-			ProvisioningState: "Succeeded",
-		},
-	}
 }
