@@ -3,6 +3,7 @@ package cloudwatchlogs_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -367,6 +368,151 @@ func TestSDKLogStreamFirstEventAndIngestionTime(t *testing.T) {
 	if aws.ToInt64(streams.LogStreams[0].FirstEventTimestamp) != eventTime.UnixMilli() {
 		t.Fatalf("FirstEventTimestamp = %d, want %d",
 			aws.ToInt64(streams.LogStreams[0].FirstEventTimestamp), eventTime.UnixMilli())
+	}
+}
+
+// TestSDKGetLogEventsPagination guards that GetLogEvents honors Limit + nextToken
+// and returns real forward/backward tokens (never the hardcoded "f/0"/"b/0"): the
+// second page must advance past the first, and the terminal call echoes the same
+// forward token so the SDK paginator stops.
+func TestSDKGetLogEventsPagination(t *testing.T) {
+	client := newLogsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateLogGroup(ctx, &cwl.CreateLogGroupInput{LogGroupName: aws.String("/pg/g")}); err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	if _, err := client.CreateLogStream(ctx, &cwl.CreateLogStreamInput{
+		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"),
+	}); err != nil {
+		t.Fatalf("CreateLogStream: %v", err)
+	}
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+
+	events := make([]cwltypes.InputLogEvent, 0, 3)
+	for i := 0; i < 3; i++ {
+		events = append(events, cwltypes.InputLogEvent{
+			Timestamp: aws.Int64(base.Add(time.Duration(i) * time.Second).UnixMilli()),
+			Message:   aws.String(fmt.Sprintf("e%d", i)),
+		})
+	}
+
+	if _, err := client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"), LogEvents: events,
+	}); err != nil {
+		t.Fatalf("PutLogEvents: %v", err)
+	}
+
+	first, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"), Limit: aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents page 1: %v", err)
+	}
+
+	if len(first.Events) != 2 || aws.ToString(first.Events[0].Message) != "e0" {
+		t.Fatalf("page 1 = %+v, want [e0 e1]", first.Events)
+	}
+
+	if aws.ToString(first.NextForwardToken) == "" || aws.ToString(first.NextForwardToken) == "f/0" {
+		t.Fatalf("page 1 NextForwardToken = %q, want a real cursor", aws.ToString(first.NextForwardToken))
+	}
+
+	second, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"),
+		Limit: aws.Int32(2), NextToken: first.NextForwardToken,
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents page 2: %v", err)
+	}
+
+	if len(second.Events) != 1 || aws.ToString(second.Events[0].Message) != "e2" {
+		t.Fatalf("page 2 = %+v, want [e2] (nextToken ignored?)", second.Events)
+	}
+
+	// Terminal page: no more events, forward token echoes the one we passed in.
+	third, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"),
+		Limit: aws.Int32(2), NextToken: second.NextForwardToken,
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents page 3: %v", err)
+	}
+
+	if len(third.Events) != 0 {
+		t.Fatalf("page 3 = %+v, want no events", third.Events)
+	}
+
+	if aws.ToString(third.NextForwardToken) != aws.ToString(second.NextForwardToken) {
+		t.Fatalf("terminal forward token = %q, want same as %q",
+			aws.ToString(third.NextForwardToken), aws.ToString(second.NextForwardToken))
+	}
+}
+
+// TestSDKFilterLogEventsPagination guards that FilterLogEvents honors Limit and
+// hands back a nextToken for the remainder. Without pagination the first page
+// returns every match and nextToken is empty, wedging the SDK paginator.
+func TestSDKFilterLogEventsPagination(t *testing.T) {
+	client := newLogsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateLogGroup(ctx, &cwl.CreateLogGroupInput{LogGroupName: aws.String("/pf/g")}); err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	if _, err := client.CreateLogStream(ctx, &cwl.CreateLogStreamInput{
+		LogGroupName: aws.String("/pf/g"), LogStreamName: aws.String("s1"),
+	}); err != nil {
+		t.Fatalf("CreateLogStream: %v", err)
+	}
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+
+	events := make([]cwltypes.InputLogEvent, 0, 3)
+	for i := 0; i < 3; i++ {
+		events = append(events, cwltypes.InputLogEvent{
+			Timestamp: aws.Int64(base.Add(time.Duration(i) * time.Second).UnixMilli()),
+			Message:   aws.String(fmt.Sprintf("match %d", i)),
+		})
+	}
+
+	if _, err := client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName: aws.String("/pf/g"), LogStreamName: aws.String("s1"), LogEvents: events,
+	}); err != nil {
+		t.Fatalf("PutLogEvents: %v", err)
+	}
+
+	first, err := client.FilterLogEvents(ctx, &cwl.FilterLogEventsInput{
+		LogGroupName: aws.String("/pf/g"), FilterPattern: aws.String("match"), Limit: aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("FilterLogEvents page 1: %v", err)
+	}
+
+	if len(first.Events) != 2 {
+		t.Fatalf("page 1 = %d events, want 2 (Limit ignored?)", len(first.Events))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatalf("page 1 NextToken empty, want a token for the third match")
+	}
+
+	second, err := client.FilterLogEvents(ctx, &cwl.FilterLogEventsInput{
+		LogGroupName: aws.String("/pf/g"), FilterPattern: aws.String("match"),
+		Limit: aws.Int32(2), NextToken: first.NextToken,
+	})
+	if err != nil {
+		t.Fatalf("FilterLogEvents page 2: %v", err)
+	}
+
+	if len(second.Events) != 1 {
+		t.Fatalf("page 2 = %d events, want 1", len(second.Events))
+	}
+
+	if aws.ToString(second.NextToken) != "" {
+		t.Fatalf("page 2 NextToken = %q, want empty (pagination finished)", aws.ToString(second.NextToken))
 	}
 }
 

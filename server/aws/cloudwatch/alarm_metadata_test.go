@@ -125,6 +125,45 @@ func TestSDKDescribeAlarmsFilters(t *testing.T) {
 	}
 }
 
+// TestSDKDescribeAlarmsPagination guards that DescribeAlarms honors MaxRecords
+// and hands back a NextToken the caller can follow. Without pagination the first
+// page returns everything and NextToken is empty, wedging the SDK paginator.
+func TestSDKDescribeAlarmsPagination(t *testing.T) {
+	client, ctx := newCWClient(t)
+	putAlarm(t, client, "pg-a")
+	putAlarm(t, client, "pg-b")
+	putAlarm(t, client, "pg-c")
+
+	first, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{MaxRecords: aws.Int32(2)})
+	if err != nil {
+		t.Fatalf("DescribeAlarms page 1: %v", err)
+	}
+
+	if len(first.MetricAlarms) != 2 {
+		t.Fatalf("page 1 = %d alarms, want 2 (MaxRecords ignored?)", len(first.MetricAlarms))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatalf("page 1 NextToken empty, want a token for the third alarm")
+	}
+
+	second, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{
+		MaxRecords: aws.Int32(2),
+		NextToken:  first.NextToken,
+	})
+	if err != nil {
+		t.Fatalf("DescribeAlarms page 2: %v", err)
+	}
+
+	if len(second.MetricAlarms) != 1 || aws.ToString(second.MetricAlarms[0].AlarmName) != "pg-c" {
+		t.Fatalf("page 2 = %+v, want one alarm pg-c", second.MetricAlarms)
+	}
+
+	if aws.ToString(second.NextToken) != "" {
+		t.Fatalf("page 2 NextToken = %q, want empty (pagination finished)", aws.ToString(second.NextToken))
+	}
+}
+
 // TestSDKDescribeAlarmHistory covers finding 4: transition history recorded on
 // state changes must be readable via DescribeAlarmHistory.
 func TestSDKDescribeAlarmHistory(t *testing.T) {

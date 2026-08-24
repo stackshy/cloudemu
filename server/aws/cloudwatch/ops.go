@@ -208,6 +208,7 @@ type listMetricsInput struct {
 	Namespace  string               `cbor:"Namespace,omitempty"`
 	MetricName string               `cbor:"MetricName,omitempty"`
 	Dimensions []dimensionFilterCBR `cbor:"Dimensions,omitempty"`
+	NextToken  string               `cbor:"NextToken,omitempty"`
 }
 
 type metricCBR struct {
@@ -217,8 +218,12 @@ type metricCBR struct {
 }
 
 type listMetricsOutput struct {
-	Metrics []metricCBR `cbor:"Metrics"`
+	Metrics   []metricCBR `cbor:"Metrics"`
+	NextToken string      `cbor:"NextToken,omitempty"`
 }
+
+// listMetricsPageSize is the number of metrics AWS returns per ListMetrics page.
+const listMetricsPageSize = 500
 
 func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in listMetricsInput
@@ -243,7 +248,32 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byt
 		rows = append(rows, h.ipamMetricRows(r)...)
 	}
 
-	writeCBORResponse(w, listMetricsOutput{Metrics: filterMetricRows(rows, in)})
+	matched := filterMetricRows(rows, in)
+	sort.SliceStable(matched, func(i, j int) bool {
+		return metricRowKey(matched[i]) < metricRowKey(matched[j])
+	})
+
+	from, to, next := pageWindow(len(matched), decodeOffsetToken(in.NextToken), listMetricsPageSize)
+
+	resp := listMetricsOutput{Metrics: matched[from:to]}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	writeCBORResponse(w, resp)
+}
+
+// metricRowKey renders a metric row as a stable sort key over namespace, metric
+// name, then its sorted dimension pairs — a deterministic order for paging.
+func metricRowKey(m metricCBR) string {
+	parts := make([]string, 0, len(m.Dimensions))
+	for _, d := range m.Dimensions {
+		parts = append(parts, d.Name+"="+d.Value)
+	}
+
+	sort.Strings(parts)
+
+	return m.Namespace + "\x00" + m.MetricName + "\x00" + strings.Join(parts, ",")
 }
 
 // filterMetricRows applies the ListMetrics namespace / metric-name / dimension
@@ -431,7 +461,12 @@ type describeAlarmsInput struct {
 	StateValue      string   `cbor:"StateValue,omitempty"`
 	ActionPrefix    string   `cbor:"ActionPrefix,omitempty"`
 	MaxRecords      int      `cbor:"MaxRecords,omitempty"`
+	NextToken       string   `cbor:"NextToken,omitempty"`
 }
+
+// maxAlarmPageSize is the AWS cap on DescribeAlarms MaxRecords, used as the page
+// size when a caller pages with a NextToken but omits MaxRecords.
+const maxAlarmPageSize = 100
 
 type metricAlarmCBR struct {
 	AlarmName               string         `cbor:"AlarmName"`
@@ -456,6 +491,7 @@ type metricAlarmCBR struct {
 
 type describeAlarmsOutput struct {
 	MetricAlarms []metricAlarmCBR `cbor:"MetricAlarms"`
+	NextToken    string           `cbor:"NextToken,omitempty"`
 }
 
 func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -471,21 +507,41 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	out := make([]metricAlarmCBR, 0, len(alarms))
+	matched := make([]metricAlarmCBR, 0, len(alarms))
 
 	for i := range alarms {
 		if !alarmMatchesFilters(&alarms[i], &in) {
 			continue
 		}
 
-		out = append(out, toMetricAlarmCBR(&alarms[i]))
-
-		if in.MaxRecords > 0 && len(out) >= in.MaxRecords {
-			break
-		}
+		matched = append(matched, toMetricAlarmCBR(&alarms[i]))
 	}
 
-	writeCBORResponse(w, describeAlarmsOutput{MetricAlarms: out})
+	// Without paging inputs, preserve the historical "return everything" shape so
+	// existing callers are unaffected. Deterministic ordering only matters once a
+	// caller pages, so sort just in that branch.
+	if in.MaxRecords == 0 && in.NextToken == "" {
+		writeCBORResponse(w, describeAlarmsOutput{MetricAlarms: matched})
+		return
+	}
+
+	sort.SliceStable(matched, func(i, j int) bool {
+		return matched[i].AlarmName < matched[j].AlarmName
+	})
+
+	size := in.MaxRecords
+	if size <= 0 {
+		size = maxAlarmPageSize
+	}
+
+	from, to, next := pageWindow(len(matched), decodeOffsetToken(in.NextToken), size)
+
+	resp := describeAlarmsOutput{MetricAlarms: matched[from:to]}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	writeCBORResponse(w, resp)
 }
 
 // alarmMatchesFilters applies the DescribeAlarms filter fields (name prefix,
