@@ -46,6 +46,39 @@ func TestSDKInvokeEventReturns202(t *testing.T) {
 	}
 }
 
+// TestSDKInvokeDryRunReturns204 covers InvocationType=DryRun: AWS validates the
+// request without executing the function and returns HTTP 204 with no payload.
+func TestSDKInvokeDryRunReturns204(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateFunction(ctx, &awslambda.CreateFunctionInput{
+		FunctionName: aws.String("dry"),
+		Runtime:      lambdatypes.RuntimePython39,
+		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
+		Handler:      aws.String("index.handler"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("z")},
+	}); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	resp, err := client.Invoke(ctx, &awslambda.InvokeInput{
+		FunctionName:   aws.String("dry"),
+		InvocationType: lambdatypes.InvocationTypeDryRun,
+		Payload:        []byte(`{"k":1}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke(DryRun): %v", err)
+	}
+
+	if resp.StatusCode != 204 {
+		t.Fatalf("StatusCode = %d, want 204 for DryRun invocation", resp.StatusCode)
+	}
+	if len(resp.Payload) != 0 {
+		t.Fatalf("Payload = %q, want empty body for DryRun invocation", resp.Payload)
+	}
+}
+
 // TestSDKInvokeRequestResponseReturns200 guards that a synchronous invoke still
 // returns 200 with the payload after the async 202 branch was added.
 func TestSDKInvokeRequestResponseReturns200(t *testing.T) {

@@ -82,6 +82,10 @@ const packageTypeZip = "Zip"
 // returns HTTP 202 with an empty body for it, versus 200 for RequestResponse.
 const invocationTypeEvent = "Event"
 
+// invocationTypeDryRun validates parameters and permissions without running the
+// function. AWS returns HTTP 204 No Content (nothing is executed).
+const invocationTypeDryRun = "DryRun"
+
 // lastUpdateStatusSuccessful is the terminal LastUpdateStatus real AWS reports
 // once a create/update completes. cloudemu settles synchronously, so every
 // config response carries it — this is the value the FunctionUpdatedV2 waiter
@@ -832,6 +836,20 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	invokeType := r.Header.Get("X-Amz-Invocation-Type")
+
+	// A DryRun invocation validates the request without executing the function:
+	// confirm the function exists, then return 204 No Content (real Lambda runs
+	// nothing and returns no payload).
+	if invokeType == invocationTypeDryRun {
+		if _, err = h.fn.GetFunction(r.Context(), name); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
 
 	out, err := h.fn.Invoke(r.Context(), sdrv.InvokeInput{
 		FunctionName: name,
