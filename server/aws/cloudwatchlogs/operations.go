@@ -249,20 +249,25 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, putLogEventsResponse{NextSequenceToken: "0"})
 }
 
-// getLogEventsWindowStart picks the slice offset for a GetLogEvents page over an
-// ascending (oldest→newest) event set. A continuation token carries an absolute
-// position and wins; otherwise the AWS default (startFromHead false) windows from
-// the tail (latest events first) and startFromHead=true windows from the head.
-func getLogEventsWindowStart(nextToken string, startFromHead *bool, total, size int) int {
-	var start int
-
+// getLogEventsWindow picks the [start,end) slice bounds for a GetLogEvents page
+// over an ascending (oldest→newest) event set. A continuation token wins and is
+// direction-aware: a forward token marks the START of the next page, a backward
+// token marks the END (exclusive) of the previous page — so following the
+// backward token yields the older window, not the current one. With no token the
+// AWS default (startFromHead false) returns the tail (latest events first) and
+// startFromHead=true returns the head.
+func getLogEventsWindow(nextToken string, startFromHead *bool, total, size int) (start, end int) {
 	switch {
+	case strings.HasPrefix(nextToken, backwardTokenPrefix):
+		end = decodePositionToken(nextToken)
+		start = end - size
 	case nextToken != "":
 		start = decodePositionToken(nextToken)
+		end = start + size
 	case startFromHead != nil && *startFromHead:
-		start = 0
+		start, end = 0, size
 	default:
-		start = total - size
+		start, end = total-size, total
 	}
 
 	if start < 0 {
@@ -273,7 +278,15 @@ func getLogEventsWindowStart(nextToken string, startFromHead *bool, total, size 
 		start = total
 	}
 
-	return start
+	if end > total {
+		end = total
+	}
+
+	if end < start {
+		end = start
+	}
+
+	return start, end
 }
 
 func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
@@ -301,12 +314,7 @@ func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 		size = defaultEventLimit
 	}
 
-	start := getLogEventsWindowStart(req.NextToken, req.StartFromHead, len(events), size)
-
-	end := start + size
-	if end > len(events) {
-		end = len(events)
-	}
+	start, end := getLogEventsWindow(req.NextToken, req.StartFromHead, len(events), size)
 
 	out := make([]outputLogEvent, 0, end-start)
 	for _, e := range events[start:end] {

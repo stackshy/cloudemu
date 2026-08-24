@@ -502,6 +502,33 @@ func TestSDKGetLogEventsStartFromHeadDefault(t *testing.T) {
 		aws.ToString(out.Events[1].Message) != "e2" {
 		t.Fatalf("default page = %+v, want the latest two [e1 e2]", out.Events)
 	}
+
+	// Backward pagination (the default latest-first direction) must reach OLDER
+	// events, not repeat the current page. Follow NextBackwardToken to page 2.
+	older, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/h/g"), LogStreamName: aws.String("s1"),
+		Limit: aws.Int32(2), NextToken: out.NextBackwardToken,
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents backward page: %v", err)
+	}
+
+	if len(older.Events) != 1 || aws.ToString(older.Events[0].Message) != "e0" {
+		t.Fatalf("backward page = %+v, want the older event [e0] (backward token repeats page?)", older.Events)
+	}
+
+	// One more backward step stabilizes (no events, token echoes).
+	last, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/h/g"), LogStreamName: aws.String("s1"),
+		Limit: aws.Int32(2), NextToken: older.NextBackwardToken,
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents backward terminal: %v", err)
+	}
+
+	if len(last.Events) != 0 {
+		t.Fatalf("backward terminal page = %+v, want no events", last.Events)
+	}
 }
 
 // TestSDKGetLogEventsBeyond100 pins that streams with more than the internal
