@@ -234,8 +234,11 @@ func TestDeleteRouteAndRouteTable(t *testing.T) {
 	after := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"DescribeRouteTables"}, "RouteTableId.1": {rtID},
 	})
-	if strings.Contains(after.Body.String(), rtID) {
-		t.Errorf("route table %s still present after delete: %s", rtID, after.Body.String())
+	// Describing the now-deleted table by its explicit id is a NotFound, matching
+	// real EC2 (an unknown RouteTableId is InvalidRouteTableID.NotFound, not an
+	// empty result set).
+	if after.Code != http.StatusBadRequest || !strings.Contains(after.Body.String(), "InvalidRouteTableID.NotFound") {
+		t.Errorf("describe deleted route table = %d: %s", after.Code, after.Body.String())
 	}
 }
 

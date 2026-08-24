@@ -337,6 +337,37 @@ func TestListObjects(t *testing.T) {
 		_, err := m.ListObjects(ctx, "nope", driver.ListOptions{})
 		assertError(t, err, true)
 	})
+
+	t.Run("start after", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "sab")
+		for _, k := range []string{"a", "b", "c", "d"} {
+			_ = m.PutObject(ctx, "sab", k, []byte("x"), "", nil)
+		}
+
+		result, err := m.ListObjects(ctx, "sab", driver.ListOptions{StartAfter: "b"})
+		requireNoError(t, err)
+		assertEqual(t, 2, len(result.Objects))
+		assertEqual(t, "c", result.Objects[0].Key)
+		assertEqual(t, "d", result.Objects[1].Key)
+	})
+
+	t.Run("start after ignored on resumed page", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "sab2")
+		for _, k := range []string{"a", "b", "c"} {
+			_ = m.PutObject(ctx, "sab2", k, []byte("x"), "", nil)
+		}
+
+		// A PageToken means a resumed listing; StartAfter must not re-filter.
+		first, err := m.ListObjects(ctx, "sab2", driver.ListOptions{MaxKeys: 1})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(first.Objects))
+
+		second, err := m.ListObjects(ctx, "sab2", driver.ListOptions{
+			MaxKeys: 10, PageToken: first.NextPageToken, StartAfter: "z",
+		})
+		requireNoError(t, err)
+		assertEqual(t, 2, len(second.Objects))
+	})
 }
 
 func TestCopyObject(t *testing.T) {

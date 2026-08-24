@@ -157,6 +157,11 @@ func TestDescribeSubnets(t *testing.T) {
 		requireNoError(t, err)
 		assertEqual(t, 1, len(subnets))
 	})
+
+	t.Run("unknown ID", func(t *testing.T) {
+		_, err := m.DescribeSubnets(ctx, []string{"subnet-nope"})
+		assertError(t, err, true)
+	})
 }
 
 func TestCreateSecurityGroup(t *testing.T) {
@@ -701,6 +706,11 @@ func TestDescribeNATGateways(t *testing.T) {
 		assertEqual(t, 1, len(nats))
 		assertEqual(t, nat1.ID, nats[0].ID)
 	})
+
+	t.Run("unknown ID", func(t *testing.T) {
+		_, err := m.DescribeNATGateways(ctx, []string{"nat-nope"})
+		assertError(t, err, true)
+	})
 }
 
 func TestCreateFlowLog(t *testing.T) {
@@ -839,6 +849,11 @@ func TestCreateRouteTable(t *testing.T) {
 
 	t.Run("nonexistent VPC", func(t *testing.T) {
 		_, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: "vpc-nope"})
+		assertError(t, err, true)
+	})
+
+	t.Run("describe unknown ID", func(t *testing.T) {
+		_, err := m.DescribeRouteTables(ctx, []string{"rtb-nope"})
 		assertError(t, err, true)
 	})
 }
@@ -1112,9 +1127,8 @@ func TestInternetGateway(t *testing.T) {
 	})
 
 	t.Run("describe nonexistent ID", func(t *testing.T) {
-		igws, err := m.DescribeInternetGateways(ctx, []string{"igw-nope"})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(igws))
+		_, err := m.DescribeInternetGateways(ctx, []string{"igw-nope"})
+		assertError(t, err, true)
 	})
 }
 
