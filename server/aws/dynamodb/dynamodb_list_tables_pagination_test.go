@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,6 +82,43 @@ func TestDDBListTablesPaginatorWalksAll(t *testing.T) {
 	}
 
 	assert.Equal(t, want, got)
+}
+
+func TestDDBListTablesLimitOutOfRangeRejected(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "t00", "pk", "")
+
+	// DynamoDB validates Limit against [1,100]; an out-of-range value is a
+	// ValidationException rather than being silently clamped to the 100 default.
+	cases := []int32{0, -1, 101, 1000}
+	for _, limit := range cases {
+		_, err := client.ListTables(ctx, &dynamodb.ListTablesInput{
+			Limit: aws.Int32(limit),
+		})
+		require.Error(t, err, "limit=%d must be rejected", limit)
+
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		assert.Equal(t, "ValidationException", apiErr.ErrorCode(), "limit=%d", limit)
+	}
+}
+
+func TestDDBListTablesLimitBoundariesAccepted(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "t00", "pk", "")
+
+	// The inclusive boundaries 1 and 100 are valid.
+	for _, limit := range []int32{1, 100} {
+		out, err := client.ListTables(ctx, &dynamodb.ListTablesInput{
+			Limit: aws.Int32(limit),
+		})
+		require.NoError(t, err, "limit=%d must be accepted", limit)
+		assert.Equal(t, []string{"t00"}, out.TableNames)
+	}
 }
 
 func TestDDBListTablesNoCursorWhenUnderLimit(t *testing.T) {

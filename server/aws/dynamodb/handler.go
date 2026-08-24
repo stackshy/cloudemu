@@ -7,6 +7,7 @@ package dynamodb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -582,10 +583,28 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 		tables = tables[idx:]
 	}
 
-	// Limit defaults to and is capped at 100; values below 1 fall back to 100.
+	// Limit is optional; when present it must be within [1,100]. Out-of-range
+	// values are rejected with a ValidationException, matching real DynamoDB,
+	// rather than being silently clamped to the 100 default.
 	limit := listTablesMaxPageSize
-	if req.Limit != nil && *req.Limit >= 1 && *req.Limit < listTablesMaxPageSize {
-		limit = *req.Limit
+
+	if req.Limit != nil {
+		switch {
+		case *req.Limit < 1:
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+				fmt.Sprintf("1 validation error detected: Value '%d' at 'limit' failed to satisfy constraint: "+
+					"Member must have value greater than or equal to 1", *req.Limit))
+
+			return
+		case *req.Limit > listTablesMaxPageSize:
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+				fmt.Sprintf("1 validation error detected: Value '%d' at 'limit' failed to satisfy constraint: "+
+					"Member must have value less than or equal to 100", *req.Limit))
+
+			return
+		default:
+			limit = *req.Limit
+		}
 	}
 
 	resp := map[string]any{}
