@@ -3,6 +3,7 @@ package lambda_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/smithy-go"
 	"github.com/stackshy/cloudemu/v2"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -481,6 +483,156 @@ func TestSDKEventSourceMappingFunctionArn(t *testing.T) {
 	}
 }
 
+// TestSDKDeleteEventSourceMappingReturnsConfig covers DeleteEventSourceMapping
+// returning the full EventSourceMappingConfiguration with State "Deleting"
+// rather than an empty body, so a caller can read UUID/State off the response.
+func TestSDKDeleteEventSourceMappingReturnsConfig(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+	createBasicFunction(t, client, "delconsumer")
+
+	created, err := client.CreateEventSourceMapping(ctx, &awslambda.CreateEventSourceMappingInput{
+		FunctionName:   aws.String("delconsumer"),
+		EventSourceArn: aws.String("arn:aws:sqs:us-east-1:000000000000:del-queue"),
+	})
+	if err != nil {
+		t.Fatalf("CreateEventSourceMapping: %v", err)
+	}
+
+	del, err := client.DeleteEventSourceMapping(ctx, &awslambda.DeleteEventSourceMappingInput{
+		UUID: created.UUID,
+	})
+	if err != nil {
+		t.Fatalf("DeleteEventSourceMapping: %v", err)
+	}
+
+	if aws.ToString(del.UUID) != aws.ToString(created.UUID) {
+		t.Fatalf("Delete UUID = %q, want %q", aws.ToString(del.UUID), aws.ToString(created.UUID))
+	}
+	if aws.ToString(del.State) != "Deleting" {
+		t.Fatalf("Delete State = %q, want Deleting", aws.ToString(del.State))
+	}
+	if aws.ToString(del.FunctionArn) == "" {
+		t.Fatal("Delete FunctionArn empty, want the full function ARN")
+	}
+
+	// The mapping is gone afterward.
+	if _, err := client.GetEventSourceMapping(ctx, &awslambda.GetEventSourceMappingInput{
+		UUID: created.UUID,
+	}); err == nil {
+		t.Fatal("GetEventSourceMapping after delete = nil error, want ResourceNotFoundException")
+	}
+}
+
+// TestSDKListEventSourceMappingsByEventSourceArn covers the EventSourceArn query
+// filter: listing with an EventSourceArn returns only mappings for that source.
+func TestSDKListEventSourceMappingsByEventSourceArn(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+	createBasicFunction(t, client, "multi")
+
+	const (
+		arnA = "arn:aws:sqs:us-east-1:000000000000:queue-a"
+		arnB = "arn:aws:sqs:us-east-1:000000000000:queue-b"
+	)
+
+	for _, src := range []string{arnA, arnB} {
+		if _, err := client.CreateEventSourceMapping(ctx, &awslambda.CreateEventSourceMappingInput{
+			FunctionName:   aws.String("multi"),
+			EventSourceArn: aws.String(src),
+		}); err != nil {
+			t.Fatalf("CreateEventSourceMapping(%s): %v", src, err)
+		}
+	}
+
+	filtered, err := client.ListEventSourceMappings(ctx, &awslambda.ListEventSourceMappingsInput{
+		EventSourceArn: aws.String(arnA),
+	})
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings(EventSourceArn=A): %v", err)
+	}
+
+	if len(filtered.EventSourceMappings) != 1 {
+		t.Fatalf("filtered mappings = %d, want 1", len(filtered.EventSourceMappings))
+	}
+	if aws.ToString(filtered.EventSourceMappings[0].EventSourceArn) != arnA {
+		t.Fatalf("filtered EventSourceArn = %q, want %q",
+			aws.ToString(filtered.EventSourceMappings[0].EventSourceArn), arnA)
+	}
+
+	// No filter returns both.
+	all, err := client.ListEventSourceMappings(ctx, &awslambda.ListEventSourceMappingsInput{})
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings(all): %v", err)
+	}
+	if len(all.EventSourceMappings) != 2 {
+		t.Fatalf("unfiltered mappings = %d, want 2", len(all.EventSourceMappings))
+	}
+}
+
+// TestSDKCreateAliasRoutingConfigValidation covers RoutingConfig validation:
+// a weight on $LATEST is InvalidParameterValueException, a weight on a
+// nonexistent version is ResourceNotFoundException, and a weight on a real
+// published version succeeds.
+func TestSDKCreateAliasRoutingConfigValidation(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+	createBasicFunction(t, client, "routed")
+
+	for range 2 {
+		if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
+			FunctionName: aws.String("routed"),
+		}); err != nil {
+			t.Fatalf("PublishVersion: %v", err)
+		}
+	}
+
+	// $LATEST in the weights is rejected with InvalidParameterValueException.
+	_, err := client.CreateAlias(ctx, &awslambda.CreateAliasInput{
+		FunctionName:    aws.String("routed"),
+		Name:            aws.String("bad-latest"),
+		FunctionVersion: aws.String("1"),
+		RoutingConfig: &lambdatypes.AliasRoutingConfiguration{
+			AdditionalVersionWeights: map[string]float64{"$LATEST": 0.1},
+		},
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValueException" {
+		t.Fatalf("CreateAlias($LATEST weight) err = %v, want InvalidParameterValueException", err)
+	}
+
+	// A nonexistent version is ResourceNotFoundException.
+	_, err = client.CreateAlias(ctx, &awslambda.CreateAliasInput{
+		FunctionName:    aws.String("routed"),
+		Name:            aws.String("bad-missing"),
+		FunctionVersion: aws.String("1"),
+		RoutingConfig: &lambdatypes.AliasRoutingConfiguration{
+			AdditionalVersionWeights: map[string]float64{"99": 0.1},
+		},
+	})
+
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ResourceNotFoundException" {
+		t.Fatalf("CreateAlias(missing version weight) err = %v, want ResourceNotFoundException", err)
+	}
+
+	// A real version succeeds.
+	created, err := client.CreateAlias(ctx, &awslambda.CreateAliasInput{
+		FunctionName:    aws.String("routed"),
+		Name:            aws.String("good"),
+		FunctionVersion: aws.String("1"),
+		RoutingConfig: &lambdatypes.AliasRoutingConfiguration{
+			AdditionalVersionWeights: map[string]float64{"2": 0.2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateAlias(valid weight): %v", err)
+	}
+	if created.RoutingConfig == nil || created.RoutingConfig.AdditionalVersionWeights["2"] != 0.2 {
+		t.Fatalf("RoutingConfig = %+v, want version 2 weight 0.2", created.RoutingConfig)
+	}
+}
+
 // TestSDKVersionPerVersionAttributes covers PublishVersion/ListVersionsByFunction
 // leaving per-version CodeSha256/RevisionId empty and reusing $LATEST config.
 func TestSDKVersionPerVersionAttributes(t *testing.T) {
@@ -534,10 +686,12 @@ func TestSDKAliasRevisionAndRouting(t *testing.T) {
 	ctx := context.Background()
 	createBasicFunction(t, client, "aliased")
 
-	if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
-		FunctionName: aws.String("aliased"),
-	}); err != nil {
-		t.Fatalf("PublishVersion: %v", err)
+	for range 2 {
+		if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
+			FunctionName: aws.String("aliased"),
+		}); err != nil {
+			t.Fatalf("PublishVersion: %v", err)
+		}
 	}
 
 	created, err := client.CreateAlias(ctx, &awslambda.CreateAliasInput{
@@ -557,7 +711,7 @@ func TestSDKAliasRevisionAndRouting(t *testing.T) {
 		Name:            aws.String("live"),
 		FunctionVersion: aws.String("1"),
 		RoutingConfig: &lambdatypes.AliasRoutingConfiguration{
-			AdditionalVersionWeights: map[string]float64{"$LATEST": 0.1},
+			AdditionalVersionWeights: map[string]float64{"2": 0.1},
 		},
 	})
 	if err != nil {
@@ -566,8 +720,8 @@ func TestSDKAliasRevisionAndRouting(t *testing.T) {
 	if aws.ToString(updated.RevisionId) == aws.ToString(created.RevisionId) {
 		t.Fatal("alias RevisionId unchanged after update")
 	}
-	if updated.RoutingConfig == nil || updated.RoutingConfig.AdditionalVersionWeights["$LATEST"] != 0.1 {
-		t.Fatalf("RoutingConfig = %+v, want $LATEST weight 0.1", updated.RoutingConfig)
+	if updated.RoutingConfig == nil || updated.RoutingConfig.AdditionalVersionWeights["2"] != 0.1 {
+		t.Fatalf("RoutingConfig = %+v, want version 2 weight 0.1", updated.RoutingConfig)
 	}
 }
 

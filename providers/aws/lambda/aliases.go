@@ -24,6 +24,10 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		return nil, cerrors.Newf(cerrors.NotFound, "version %s not found", cfg.FunctionVersion)
 	}
 
+	if err := m.validateRoutingConfig(&fd, cfg.RoutingConfig); err != nil {
+		return nil, err
+	}
+
 	aliasARN := idgen.AWSARN(
 		"lambda", m.opts.Region, m.opts.AccountID,
 		"function:"+cfg.FunctionName+":"+cfg.Name,
@@ -72,6 +76,10 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	}
 
 	if cfg.RoutingConfig != nil {
+		if err := m.validateRoutingConfig(&fd, cfg.RoutingConfig); err != nil {
+			return nil, err
+		}
+
 		ad.alias.RoutingConfig = copyRoutingConfig(cfg.RoutingConfig)
 	}
 
@@ -142,6 +150,27 @@ func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig
 	cp := *rc
 
 	return &cp
+}
+
+// validateRoutingConfig enforces the RoutingConfig.AdditionalVersionWeights
+// rules real Lambda applies: a weighted alias cannot reference $LATEST
+// (InvalidParameterValueException), and the additional version must exist
+// (ResourceNotFoundException). An absent additional version is a no-op.
+func (m *Mock) validateRoutingConfig(fd *funcData, rc *driver.AliasRoutingConfig) error {
+	if rc == nil || rc.AdditionalVersion == "" {
+		return nil
+	}
+
+	if rc.AdditionalVersion == latestVersion {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Alias with weights can not be created with function version $LATEST")
+	}
+
+	if !m.versionExists(fd, rc.AdditionalVersion) {
+		return cerrors.Newf(cerrors.NotFound, "version %s not found", rc.AdditionalVersion)
+	}
+
+	return nil
 }
 
 // versionExists checks whether a version string exists for the given function.
