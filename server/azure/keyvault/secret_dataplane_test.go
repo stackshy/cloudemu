@@ -3,6 +3,7 @@ package keyvault_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,6 +207,33 @@ func TestSDKKeyVaultSoftDeleteAndRecover(t *testing.T) {
 
 	if _, err := client.GetSecret(ctx, "sd", "", nil); err != nil {
 		t.Fatalf("GetSecret after recover: %v", err)
+	}
+}
+
+func TestSDKKeyVaultSetSecretDeletedNameConflict(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.SetSecret(ctx, "conflicted", azsecrets.SetSecretParameters{Value: to.Ptr("v")}, nil); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+
+	if _, err := client.DeleteSecret(ctx, "conflicted", nil); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	// Setting a secret whose name is soft-deleted must fail with 409 Conflict
+	// and the ObjectIsDeletedButRecoverable inner error code — matching real
+	// Key Vault, which forbids reusing the name until recover or purge.
+	_, err := client.SetSecret(ctx, "conflicted", azsecrets.SetSecretParameters{Value: to.Ptr("v2")}, nil)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != 409 {
+		t.Fatalf("SetSecret(deleted name): got %v, want 409 ResponseError", err)
+	}
+
+	if !strings.Contains(respErr.Error(), "ObjectIsDeletedButRecoverable") {
+		t.Fatalf("SetSecret(deleted name): body %q missing ObjectIsDeletedButRecoverable", respErr.Error())
 	}
 }
 

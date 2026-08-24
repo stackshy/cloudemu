@@ -187,6 +187,10 @@ func writeCErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
 		writeErr(w, http.StatusNotFound, "SecretNotFound", err.Error())
+	case cerrors.IsAlreadyExists(err) && strings.Contains(err.Error(), "deleted but recoverable"):
+		// Real Key Vault answers a set/create against a soft-deleted name with
+		// 409 Conflict and inner error code ObjectIsDeletedButRecoverable.
+		writeErrInner(w, http.StatusConflict, "Conflict", err.Error(), "ObjectIsDeletedButRecoverable")
 	case cerrors.IsAlreadyExists(err):
 		writeErr(w, http.StatusConflict, "Conflict", err.Error())
 	case cerrors.IsInvalidArgument(err):
@@ -194,4 +198,19 @@ func writeCErr(w http.ResponseWriter, err error) {
 	default:
 		writeErr(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 	}
+}
+
+// writeErrInner emits a Key Vault-style error body carrying a nested inner
+// error code, matching the shape real vaults return for recoverable conflicts.
+func writeErrInner(w http.ResponseWriter, status int, code, msg, innerCode string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"code":       code,
+			"message":    msg,
+			"innererror": map[string]string{"code": innerCode},
+		},
+	})
 }

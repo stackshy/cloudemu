@@ -86,7 +86,17 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
 	}
 
-	if m.liveSecret(cfg.Name) != nil {
+	if existing, ok := m.secrets.Get(cfg.Name); ok {
+		existing.mu.RLock()
+		deleted := !existing.deletedAt.IsZero()
+		existing.mu.RUnlock()
+
+		if deleted {
+			// Real Key Vault returns 409 Conflict / ObjectIsDeletedButRecoverable:
+			// a soft-deleted name cannot be reused until Recover or Purge.
+			return nil, errors.Newf(errors.AlreadyExists, "secret %q is in a deleted but recoverable state", cfg.Name)
+		}
+
 		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
 	}
 
@@ -208,7 +218,11 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	v := m.appendVersionLocked(sd, driver.KVSetParams{Value: value, Attributes: driver.KVAttributes{Enabled: true}})
+	// PutSecretValue is the shared cross-cloud rotate-value path. Like AWS
+	// Secrets Manager PutSecretValue and GCP AddSecretVersion, adding a version
+	// must not touch resource-level tags — those are managed by separate tag
+	// APIs. Preserve the secret's existing tags rather than clearing them.
+	v := m.appendVersionLocked(sd, driver.KVSetParams{Value: value, Attributes: driver.KVAttributes{Enabled: true}}, false)
 
 	return &driver.SecretVersion{
 		VersionID: v.versionID,
@@ -218,9 +232,12 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 	}, nil
 }
 
-// appendVersionLocked adds a new current version from the given params. The
-// caller must hold sd.mu.
-func (m *Mock) appendVersionLocked(sd *secretData, params driver.KVSetParams) *secretVersion {
+// appendVersionLocked adds a new current version from the given params. When
+// updateSecretTags is true the secret-level tags are replaced with the params'
+// tags (Azure Key Vault SetSecret semantics); otherwise the existing
+// secret-level tags are preserved (shared PutSecretValue semantics). The caller
+// must hold sd.mu.
+func (m *Mock) appendVersionLocked(sd *secretData, params driver.KVSetParams, updateSecretTags bool) *secretVersion {
 	now := m.opts.Clock.Now().UTC()
 
 	for i := range sd.versions {
@@ -244,7 +261,10 @@ func (m *Mock) appendVersionLocked(sd *secretData, params driver.KVSetParams) *s
 
 	sd.versions = append(sd.versions, v)
 	sd.info.UpdatedAt = now.Format(time.RFC3339)
-	sd.info.Tags = copyTags(params.Tags)
+
+	if updateSecretTags {
+		sd.info.Tags = copyTags(params.Tags)
+	}
 
 	return &sd.versions[len(sd.versions)-1]
 }

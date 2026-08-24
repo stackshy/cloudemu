@@ -41,7 +41,7 @@ func (m *Mock) SetKeyVaultSecret(_ context.Context, name string, params driver.K
 			return nil, errors.Newf(errors.AlreadyExists, "secret %q is in a deleted but recoverable state", name)
 		}
 
-		v := m.appendVersionLocked(sd, params)
+		v := m.appendVersionLocked(sd, params, true)
 		kv := v.toKV(name)
 
 		return &kv, nil
