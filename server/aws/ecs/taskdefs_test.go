@@ -107,3 +107,51 @@ func hasRequiredAttr(list []ecstypes.Attribute, name string) bool {
 
 	return false
 }
+
+// TestSDKDeregisterTaskDefinitionRequiresRevision guards that DeregisterTaskDefinition
+// rejects a bare family name. Real ECS requires a specific revision (family:revision
+// or a full ARN) and will not pick one on the caller's behalf, returning a
+// ClientException; cloudemu previously deregistered the latest ACTIVE revision
+// silently.
+func TestSDKDeregisterTaskDefinitionRequiresRevision(t *testing.T) {
+	client := newECSClient(t)
+	ctx := context.Background()
+
+	registerNginx(t, client, ctx)
+
+	_, err := client.DeregisterTaskDefinition(ctx, &awsecs.DeregisterTaskDefinitionInput{
+		TaskDefinition: aws.String("web"),
+	})
+	if err == nil {
+		t.Fatalf("DeregisterTaskDefinition(bare family) = nil error, want ClientException")
+	}
+
+	var ce *ecstypes.ClientException
+	if !errorsAs(err, &ce) {
+		t.Fatalf("DeregisterTaskDefinition error = %T (%v), want *ClientException", err, err)
+	}
+
+	// The named revision must remain ACTIVE — nothing was deregistered.
+	desc, err := client.DescribeTaskDefinition(ctx, &awsecs.DescribeTaskDefinitionInput{
+		TaskDefinition: aws.String("web:1"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeTaskDefinition(web:1): %v", err)
+	}
+
+	if desc.TaskDefinition.Status != ecstypes.TaskDefinitionStatusActive {
+		t.Fatalf("web:1 status = %v, want ACTIVE (untouched)", desc.TaskDefinition.Status)
+	}
+
+	// A specific revision still deregisters normally.
+	dereg, err := client.DeregisterTaskDefinition(ctx, &awsecs.DeregisterTaskDefinitionInput{
+		TaskDefinition: aws.String("web:1"),
+	})
+	if err != nil {
+		t.Fatalf("DeregisterTaskDefinition(web:1): %v", err)
+	}
+
+	if dereg.TaskDefinition.Status != ecstypes.TaskDefinitionStatusInactive {
+		t.Fatalf("web:1 status = %v, want INACTIVE after deregister", dereg.TaskDefinition.Status)
+	}
+}
