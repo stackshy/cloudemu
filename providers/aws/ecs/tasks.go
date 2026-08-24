@@ -428,6 +428,9 @@ func (m *Mock) ListTasks(_ context.Context, cluster, family, desiredStatus, serv
 // DescribeTasks resolves tasks by id or ARN; unresolved ids become failures. A
 // nonexistent cluster is rejected up front with ClusterNotFoundException,
 // matching real ECS (the implicit "default" cluster always resolves).
+// DescribeTasks is cluster-scoped: a task that resolves but belongs to a
+// different cluster than the requested one is reported as a MISSING failure,
+// never as a found task, matching real ECS and the sibling StopTask/ListTasks.
 func (m *Mock) DescribeTasks(_ context.Context, cluster string, ids []string) ([]driver.Task, []driver.Failure, error) {
 	want := resolveClusterName(cluster)
 	if !m.clusterExists(want) {
@@ -438,7 +441,7 @@ func (m *Mock) DescribeTasks(_ context.Context, cluster string, ids []string) ([
 	failures := make([]driver.Failure, 0, len(ids))
 
 	for _, id := range ids {
-		if t, ok := m.resolveTask(id); ok {
+		if t, ok := m.resolveTask(id); ok && clusterNameFromARN(t.ClusterARN) == want {
 			found = append(found, cloneTask(t))
 			continue
 		}

@@ -176,6 +176,11 @@ type ListOptions struct {
 	Delimiter string
 	MaxKeys   int
 	PageToken string
+	// StartAfter makes listing begin strictly after this key (lexicographic),
+	// matching the S3 ListObjectsV2 start-after parameter. It applies only to a
+	// fresh listing (no PageToken); on a resumed page S3 ignores it. Providers
+	// that do not model start-after ignore this field.
+	StartAfter string
 }
 
 // ListResult is the result of a list operation.
