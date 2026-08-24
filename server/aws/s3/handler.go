@@ -970,6 +970,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 		writeError(w, http.StatusBadRequest, "InvalidRequest",
 			"This copy request is illegal because it is trying to copy an object to itself without "+
 				"changing the object's metadata, storage class, website redirect location or encryption attributes.")
+
 		return
 	}
 
