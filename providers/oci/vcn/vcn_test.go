@@ -896,7 +896,7 @@ func TestPublicIPAssignment(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, vcn.LifetimeReserved, ip.AllocationMethod)
 
-	_, err = m.AssociateAddress(ctx, ip.AllocationID, privateIPs[0].ID)
+	_, err = m.AssociateAddress(ctx, ip.AllocationID, driver.AssociateAddressInput{InstanceID: privateIPs[0].ID})
 	require.NoError(t, err)
 
 	err = m.ReleaseAddress(ctx, ip.AllocationID)
@@ -1028,14 +1028,14 @@ func TestPublicIPAssignsOneToOne(t *testing.T) {
 	second, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
 	require.NoError(t, err)
 
-	_, err = m.AssociateAddress(ctx, first.AllocationID, "ocid1.privateip.oc1.iad.missing")
+	_, err = m.AssociateAddress(ctx, first.AllocationID, driver.AssociateAddressInput{InstanceID: "ocid1.privateip.oc1.iad.missing"})
 	require.Error(t, err)
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err), "the assignment target has to exist")
 
-	_, err = m.AssociateAddress(ctx, first.AllocationID, privateIPs[0].ID)
+	_, err = m.AssociateAddress(ctx, first.AllocationID, driver.AssociateAddressInput{InstanceID: privateIPs[0].ID})
 	require.NoError(t, err)
 
-	_, err = m.AssociateAddress(ctx, second.AllocationID, privateIPs[0].ID)
+	_, err = m.AssociateAddress(ctx, second.AllocationID, driver.AssociateAddressInput{InstanceID: privateIPs[0].ID})
 	require.Error(t, err)
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 

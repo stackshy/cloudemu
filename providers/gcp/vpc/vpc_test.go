@@ -1333,7 +1333,7 @@ func TestElasticIP(t *testing.T) {
 
 	t.Run("associate address", func(t *testing.T) {
 		eips, _ := m.DescribeAddresses(ctx, nil)
-		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, driver.AssociateAddressInput{InstanceID: "i-12345"})
 		require.NoError(t, err)
 		assert.NotEmpty(t, assocID)
 
@@ -1369,7 +1369,7 @@ func TestElasticIP(t *testing.T) {
 	})
 
 	t.Run("associate nonexistent allocation", func(t *testing.T) {
-		_, err := m.AssociateAddress(ctx, "eipalloc-missing", "i-12345")
+		_, err := m.AssociateAddress(ctx, "eipalloc-missing", driver.AssociateAddressInput{InstanceID: "i-12345"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
