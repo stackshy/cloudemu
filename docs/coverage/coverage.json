@@ -9495,6 +9495,63 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "KeyVaultKeys",
+        "doc": "KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle",
+        "operations": [
+          {
+            "name": "CreateKey"
+          },
+          {
+            "name": "DecryptKey"
+          },
+          {
+            "name": "DeleteKey"
+          },
+          {
+            "name": "EncryptKey"
+          },
+          {
+            "name": "GetDeletedKey"
+          },
+          {
+            "name": "GetKey"
+          },
+          {
+            "name": "ImportKey"
+          },
+          {
+            "name": "ListDeletedKeys"
+          },
+          {
+            "name": "ListKeyVersions"
+          },
+          {
+            "name": "ListKeys"
+          },
+          {
+            "name": "PurgeDeletedKey"
+          },
+          {
+            "name": "RecoverDeletedKey"
+          },
+          {
+            "name": "SignKey"
+          },
+          {
+            "name": "UnwrapKey"
+          },
+          {
+            "name": "UpdateKey"
+          },
+          {
+            "name": "VerifyKey"
+          },
+          {
+            "name": "WrapKey"
+          }
+        ]
+      },
+      {
         "name": "KeyVaultSecrets",
         "doc": "KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version",
         "operations": [

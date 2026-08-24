@@ -19,6 +19,30 @@ GCP's `secrets` service · portable interface `driver.Secrets` · [GCP index](./
 
 Discovered by type assertion; only some providers implement these.
 
+### KeyVaultKeys
+
+KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
+
+| Operation | Description |
+| --- | --- |
+| `CreateKey` |  |
+| `DecryptKey` |  |
+| `DeleteKey` |  |
+| `EncryptKey` |  |
+| `GetDeletedKey` |  |
+| `GetKey` |  |
+| `ImportKey` |  |
+| `ListDeletedKeys` |  |
+| `ListKeyVersions` |  |
+| `ListKeys` |  |
+| `PurgeDeletedKey` |  |
+| `RecoverDeletedKey` |  |
+| `SignKey` |  |
+| `UnwrapKey` |  |
+| `UpdateKey` |  |
+| `VerifyKey` |  |
+| `WrapKey` |  |
+
 ### KeyVaultSecrets
 
 KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version

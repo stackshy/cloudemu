@@ -72,25 +72,42 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP answers the bearer challenge for unauthenticated requests, then
 // routes on the path and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") == "" {
-		w.Header().Set("WWW-Authenticate",
-			`Bearer authorization="https://login.microsoftonline.com/common", resource="https://vault.azure.net"`)
-		writeErr(w, http.StatusUnauthorized, "Unauthorized", "bearer token required")
+	serveDataPlane(w, r, h.kv == nil, "Key Vault secrets backend unavailable", dataPlaneRoutes{
+		deletedPrefix: deletedPrefix,
+		mainPrefix:    pathPrefix,
+		routeDeleted:  func(tail string) { h.routeDeleted(w, r, tail) },
+		routeMain:     func(tail string) { h.routeSecrets(w, r, tail) },
+	})
+}
 
+// dataPlaneRoutes describes how a Key Vault data-plane handler splits its two
+// path spaces (the live surface and its /deleted… counterpart).
+type dataPlaneRoutes struct {
+	deletedPrefix string
+	mainPrefix    string
+	routeDeleted  func(tail string)
+	routeMain     func(tail string)
+}
+
+// serveDataPlane runs the shared Key Vault data-plane preamble — bearer
+// challenge, backend-availability check, then dispatch to the deleted or main
+// path space — used by both the secrets and keys handlers.
+func serveDataPlane(w http.ResponseWriter, r *http.Request, backendUnavailable bool, unavailableMsg string, routes dataPlaneRoutes) {
+	if bearerChallenge(w, r) {
 		return
 	}
 
-	if h.kv == nil {
-		writeErr(w, http.StatusInternalServerError, "InternalServerError", "Key Vault secrets backend unavailable")
+	if backendUnavailable {
+		writeErr(w, http.StatusInternalServerError, "InternalServerError", unavailableMsg)
 		return
 	}
 
-	if r.URL.Path == deletedPrefix || strings.HasPrefix(r.URL.Path, deletedPrefix+"/") {
-		h.routeDeleted(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, deletedPrefix), "/"))
+	if r.URL.Path == routes.deletedPrefix || strings.HasPrefix(r.URL.Path, routes.deletedPrefix+"/") {
+		routes.routeDeleted(strings.Trim(strings.TrimPrefix(r.URL.Path, routes.deletedPrefix), "/"))
 		return
 	}
 
-	h.routeSecrets(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, pathPrefix), "/"))
+	routes.routeMain(strings.Trim(strings.TrimPrefix(r.URL.Path, routes.mainPrefix), "/"))
 }
 
 // routeSecrets dispatches /secrets[...] requests.
@@ -146,6 +163,8 @@ func (h *Handler) routeBareSecret(w http.ResponseWriter, r *http.Request, name s
 }
 
 // routeDeleted dispatches /deletedsecrets[...] requests.
+//
+//nolint:dupl // parallel soft-delete router for secrets vs keys; the shared shape is intentional
 func (h *Handler) routeDeleted(w http.ResponseWriter, r *http.Request, tail string) {
 	if tail == "" {
 		if r.Method == http.MethodGet {
@@ -170,6 +189,21 @@ func (h *Handler) routeDeleted(w http.ResponseWriter, r *http.Request, tail stri
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
 	}
+}
+
+// bearerChallenge answers an unauthenticated request with the Key Vault bearer
+// challenge and reports whether it handled the request. Key Vault SDKs expect a
+// 401 with a WWW-Authenticate header before retrying with a token.
+func bearerChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Authorization") != "" {
+		return false
+	}
+
+	w.Header().Set("WWW-Authenticate",
+		`Bearer authorization="https://login.microsoftonline.com/common", resource="https://vault.azure.net"`)
+	writeErr(w, http.StatusUnauthorized, "Unauthorized", "bearer token required")
+
+	return true
 }
 
 // writeErr emits a Key Vault-style error body with the given HTTP status.
