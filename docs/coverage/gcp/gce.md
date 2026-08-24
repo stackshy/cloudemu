@@ -49,6 +49,16 @@ GCP's `compute` service · portable interface `driver.Compute` · [GCP index](./
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureVMController
+
+AzureVMController is an optional Azure-only capability supporting the ARM
+
+| Operation | Description |
+| --- | --- |
+| `Deallocate` | Deallocate stops the guest and releases the allocated compute |
+| `PowerOff` | PowerOff stops the guest OS while keeping the VM allocated |
+| `UpdateInstance` | UpdateInstance overwrites the mutable configuration of an existing |
+
 ### ConsoleReader
 
 ConsoleReader is an optional capability a Compute implementation may provide
@@ -64,6 +74,14 @@ ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
 | Operation | Description |
 | --- | --- |
 | `RegisterImage` |  |
+
+### KeyPairGenerator
+
+KeyPairGenerator is an optional Azure-only capability for the ARM
+
+| Operation | Description |
+| --- | --- |
+| `GenerateKeyPair` |  |
 
 ### KeyPairImporter
 

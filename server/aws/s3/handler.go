@@ -435,7 +435,8 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		resp.NextContinuationToken = result.NextPageToken
 	}
 
-	for _, obj := range result.Objects {
+	for i := range result.Objects {
+		obj := &result.Objects[i]
 		resp.Contents = append(resp.Contents, objectXML{
 			Key:          obj.Key,
 			LastModified: obj.LastModified,
@@ -1246,7 +1247,8 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, buc
 		return
 	}
 
-	for _, obj := range result.Objects {
+	for i := range result.Objects {
+		obj := &result.Objects[i]
 		resp.Versions = append(resp.Versions, objectVersionXML{
 			Key: obj.Key, VersionID: "null", IsLatest: true, LastModified: obj.LastModified,
 			ETag: fmt.Sprintf("%q", obj.ETag), Size: obj.Size, StorageClass: "STANDARD",

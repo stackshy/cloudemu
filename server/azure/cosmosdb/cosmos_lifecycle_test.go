@@ -11,15 +11,14 @@
 // journeys mix SDK writes with direct driver calls on the same provider, per
 // the suite SDK-test-setup notes.
 //
+// Item identity is (partition key, id), matching real Cosmos: a duplicate-id
+// create returns 409, and two documents with the same partition key but
+// different ids coexist and point-read independently.
+//
 // Emulator divergences from real Cosmos that these tests pin down (asserting
 // the emulator's actual, documented behavior, marked DIVERGENCE below):
-//   - CreateItem with a duplicate id succeeds (blind upsert; real Cosmos: 409).
 //   - ReplaceItem ignores IfMatchEtag (real Cosmos: 412 on stale etag).
 //   - DeleteItem on a missing document returns 204 (real Cosmos: 404).
-//   - Queries evaluate the SQL WHERE/ORDER BY/projection but treat the
-//     partition key as advisory (cross-partition), since item identity is the
-//     partition-key value only, so two docs with the same pk but different ids
-//     collide (real Cosmos keys on (pk, id)).
 //   - PATCH (PatchItem) is not routed at all (405 MethodNotAllowed).
 //   - NOT over a composite predicate (AND/OR of several fields) uses two-valued
 //     logic, so an absent field is not excluded; NOT over a single-field
@@ -89,8 +88,7 @@ func newCosmosEnv(t *testing.T, opts ...config.Option) *cosmosEnv {
 }
 
 // container creates database db (virtual) and container name with partition
-// key path "/pk" (required — per-document GETs/DELETEs hardcode the "pk"
-// attribute) and returns its client.
+// key path "/pk" and returns its client.
 func (e *cosmosEnv) container(ctx context.Context, t *testing.T, db, name string) *azcosmos.ContainerClient {
 	t.Helper()
 
@@ -346,11 +344,12 @@ func TestCosmosTypedErrors(t *testing.T) {
 	wantRespErr(t, err, 400, "CreateItem without id")
 }
 
-// TestCosmosWriteDivergences pins down the emulator's write
-// semantics where they knowingly diverge from real Cosmos (see file header):
-// duplicate create succeeds, etag preconditions are ignored, deleting a
-// missing document succeeds, PATCH is not routed, and item identity collides
-// on the partition-key value alone.
+// TestCosmosWriteDivergences pins down the emulator's write semantics: the
+// (partition key, id) identity model — duplicate create 409s, an upsert of the
+// same id succeeds, and same-pk/different-id documents coexist — plus the
+// remaining knowing divergences from real Cosmos (see file header): etag
+// preconditions are ignored, deleting a missing document succeeds, and PATCH is
+// not routed.
 func TestCosmosWriteDivergences(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
@@ -359,22 +358,28 @@ func TestCosmosWriteDivergences(t *testing.T) {
 	pk := azcosmos.NewPartitionKeyString("team-a")
 	createDoc(ctx, t, cc, "team-a", map[string]any{"id": "u1", "pk": "team-a", "name": "Alice", "rev": 1})
 
-	// DIVERGENCE: creating the same id again is a blind upsert and succeeds
-	// with 201 (real Cosmos returns 409 Conflict). "Conditional write
-	// failure" is therefore unreachable on this emulator.
+	// Creating the same (pk, id) again is a Conflict, matching real Cosmos.
 	dup, _ := json.Marshal(map[string]any{"id": "u1", "pk": "team-a", "name": "Alice-2", "rev": 2})
 
-	resp, err := cc.CreateItem(ctx, pk, dup, nil)
-	if err != nil {
-		t.Fatalf("duplicate CreateItem (emulator upserts): %v", err)
+	if _, err := cc.CreateItem(ctx, pk, dup, nil); err == nil {
+		t.Fatal("duplicate CreateItem: expected 409 Conflict, got nil error")
+	} else {
+		wantRespErr(t, err, 409, "duplicate CreateItem")
 	}
 
-	if resp.RawResponse.StatusCode != 201 {
-		t.Errorf("duplicate CreateItem status=%d want 201", resp.RawResponse.StatusCode)
+	// The original document is untouched by the rejected create.
+	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(1) {
+		t.Errorf("rev=%v want 1 (rejected create must not overwrite)", got["rev"])
+	}
+
+	// UpsertItem with the same id is a create-or-replace and succeeds.
+	ups, _ := json.Marshal(map[string]any{"id": "u1", "pk": "team-a", "name": "Alice-2", "rev": 2})
+	if _, err := cc.UpsertItem(ctx, pk, ups, nil); err != nil {
+		t.Fatalf("UpsertItem same id: %v", err)
 	}
 
 	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(2) {
-		t.Errorf("rev=%v want 2 (second create should have overwritten)", got["rev"])
+		t.Errorf("rev=%v want 2 (upsert should have overwritten)", got["rev"])
 	}
 
 	// DIVERGENCE: ReplaceItem with a deliberately stale IfMatchEtag succeeds
@@ -395,8 +400,8 @@ func TestCosmosWriteDivergences(t *testing.T) {
 	// supports partial document updates).
 	patch := azcosmos.PatchOperations{}
 	patch.AppendSet("/name", "Patched")
-	_, err = cc.PatchItem(ctx, pk, "u1", patch, nil)
-	wantRespErr(t, err, 405, "PatchItem (unrouted PATCH)")
+	_, patchErr := cc.PatchItem(ctx, pk, "u1", patch, nil)
+	wantRespErr(t, patchErr, 405, "PatchItem (unrouted PATCH)")
 
 	// DIVERGENCE: deleting a document that does not exist succeeds with 204
 	// (real Cosmos returns 404) — the driver delete is idempotent.
@@ -409,16 +414,17 @@ func TestCosmosWriteDivergences(t *testing.T) {
 		t.Errorf("DeleteItem missing doc status=%d want 204", delResp.RawResponse.StatusCode)
 	}
 
-	// DIVERGENCE: item identity is the partition-key value only. Two docs
-	// with the same pk but different ids share one slot, and a point read for
-	// the first id returns the second document (real Cosmos keys on (pk,id)).
+	// Item identity is (pk, id): two docs with the same partition key but
+	// different ids coexist, and each point-reads back independently.
 	createDoc(ctx, t, cc, "shared", map[string]any{"id": "doc-a", "pk": "shared", "who": "first"})
 	createDoc(ctx, t, cc, "shared", map[string]any{"id": "doc-b", "pk": "shared", "who": "second"})
 
-	got := readDoc(ctx, t, cc, "shared", "doc-a")
-	if got["id"] != "doc-b" || got["who"] != "second" {
-		t.Errorf("pk-collision read got id=%v who=%v; emulator keys items by pk only, expected doc-b/second",
-			got["id"], got["who"])
+	if got := readDoc(ctx, t, cc, "shared", "doc-a"); got["id"] != "doc-a" || got["who"] != "first" {
+		t.Errorf("(pk,id) read got id=%v who=%v; want doc-a/first", got["id"], got["who"])
+	}
+
+	if got := readDoc(ctx, t, cc, "shared", "doc-b"); got["id"] != "doc-b" || got["who"] != "second" {
+		t.Errorf("(pk,id) read got id=%v who=%v; want doc-b/second", got["id"], got["who"])
 	}
 }
 
@@ -615,8 +621,9 @@ func TestCosmosTTL(t *testing.T) {
 	wantRespErr(t, err, 404, "ReadItem expired session")
 
 	// Documented quirk: BatchGetItems does NOT check TTL, so the expired s2
-	// (never point-read since expiry) is still returned by a batch get.
-	batch, err := drv.BatchGetItems(ctx, "sessions", []map[string]any{{"pk": "s2"}})
+	// (never point-read since expiry) is still returned by a batch get. The key
+	// carries the full (pk, id) identity the container uses.
+	batch, err := drv.BatchGetItems(ctx, "sessions", []map[string]any{{"pk": "s2", "id": "s2"}})
 	if err != nil {
 		t.Fatalf("BatchGetItems: %v", err)
 	}
