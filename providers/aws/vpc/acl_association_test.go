@@ -78,6 +78,13 @@ func TestNetworkACLAssociationLifecycle(t *testing.T) {
 		t.Fatalf("replace onto bad ACL = %v, want NotFound", err)
 	}
 
+	// The ACL must be in the subnet's VPC: an ACL in another VPC is rejected.
+	otherVPC := createTestVPC(m)
+	otherACL, _ := m.CreateNetworkACL(ctx, otherVPC.ID, nil)
+	if _, err := m.ReplaceNetworkACLAssociation(ctx, newAssoc.ID, otherACL.ID); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("cross-VPC replace = %v, want InvalidArgument", err)
+	}
+
 	// Deleting the subnet clears its association.
 	if err := m.DeleteSubnet(ctx, sub.ID); err != nil {
 		t.Fatalf("DeleteSubnet: %v", err)

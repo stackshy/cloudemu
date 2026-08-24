@@ -244,8 +244,15 @@ func (m *Mock) ReplaceNetworkACLAssociation(
 		return nil, errors.Newf(errors.NotFound, "network ACL association %q not found", associationID)
 	}
 
-	if !m.networkACLs.Has(newACLID) {
+	acl, ok := m.networkACLs.Get(newACLID)
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "network ACL %q not found", newACLID)
+	}
+
+	// Real EC2 requires the network ACL and the subnet to be in the same VPC.
+	if sub, ok := m.subnets.Get(assoc.SubnetID); ok && sub.VPCID != acl.VPCID {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"the network ACL %q and subnet %q are not in the same VPC", newACLID, assoc.SubnetID)
 	}
 
 	m.aclAssocs.Delete(associationID)

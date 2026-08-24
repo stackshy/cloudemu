@@ -258,12 +258,19 @@ func (h *Handler) replaceNetworkACLAssociation(w http.ResponseWriter, r *http.Re
 // real EC2 uses: a missing NetworkAclId -> InvalidNetworkAclID.NotFound, a
 // missing AssociationId -> InvalidAssociationID.NotFound.
 func writeNetworkACLAssocErr(w http.ResponseWriter, err error) {
-	if cerrors.IsNotFound(err) && !strings.Contains(err.Error(), "association") {
+	switch {
+	case cerrors.IsInvalidArgument(err):
+		// Cross-VPC association attempt.
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+	case cerrors.IsNotFound(err) && !strings.Contains(err.Error(), "network ACL association"):
+		// A missing ACL, not a missing association. Matching the contiguous fixed
+		// phrase "network ACL association" is robust: the ACL-not-found message is
+		// `network ACL "<id>" not found`, so a caller-supplied id containing
+		// "association" cannot forge the phrase (the quote breaks it).
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkAclID.NotFound", err.Error())
-		return
+	default:
+		writeErrWithNotFound(w, err, "InvalidAssociationID.NotFound", "DependencyViolation")
 	}
-
-	writeErrWithNotFound(w, err, "InvalidAssociationID.NotFound", "DependencyViolation")
 }
 
 func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
