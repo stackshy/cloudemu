@@ -2,6 +2,7 @@ package notificationhubs
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
+
+// sasKeyBytes is the length of a freshly generated Shared Access key.
+const sasKeyBytes = 32
 
 // Compile-time check that Mock implements the Azure-only optional surface.
 var _ driver.AzureNotificationHubs = (*Mock)(nil)
@@ -123,6 +127,68 @@ func (m *Mock) DeleteSASRule(_ context.Context, resourceKey, ruleName string) er
 	}
 
 	return nil
+}
+
+// RegenerateSASKey rotates a rule's primary or secondary key to a fresh random
+// value and persists it, so subsequent GetSASRule / ListKeys reflect the change.
+func (m *Mock) RegenerateSASKey(
+	_ context.Context, resourceKey, ruleName, policyKey string,
+) (driver.AzureSASRule, error) {
+	key := sasRuleKey(resourceKey, ruleName)
+
+	rule, ok := m.sasRules.Get(key)
+	if !ok {
+		return driver.AzureSASRule{}, errors.Newf(errors.NotFound, "authorization rule %q not found", ruleName)
+	}
+
+	fresh, err := randomKey()
+	if err != nil {
+		return driver.AzureSASRule{}, err
+	}
+
+	switch policyKey {
+	case "PrimaryKey", "":
+		rule.PrimaryKey = fresh
+	case "SecondaryKey":
+		rule.SecondaryKey = fresh
+	default:
+		return driver.AzureSASRule{}, errors.Newf(errors.InvalidArgument,
+			"policyKey must be PrimaryKey or SecondaryKey, got %q", policyKey)
+	}
+
+	m.sasRules.Set(key, rule)
+
+	return rule, nil
+}
+
+// randomKey returns a fresh base64-encoded 256-bit Shared Access key.
+func randomKey() (string, error) {
+	buf := make([]byte, sasKeyBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", errors.Newf(errors.Internal, "generate key: %v", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(buf), nil
+}
+
+// --- PNS credentials ---
+
+// SetPnsCredentials stores a hub's raw PNS credential properties JSON.
+func (m *Mock) SetPnsCredentials(_ context.Context, hubKey, credentialsJSON string) error {
+	m.pnsCreds.Set(hubKey, credentialsJSON)
+
+	return nil
+}
+
+// GetPnsCredentials returns a hub's stored PNS credential properties JSON, or
+// the empty string when none were set.
+func (m *Mock) GetPnsCredentials(_ context.Context, hubKey string) (string, error) {
+	creds, ok := m.pnsCreds.Get(hubKey)
+	if !ok {
+		return "", nil
+	}
+
+	return creds, nil
 }
 
 // --- data-plane device registrations ---

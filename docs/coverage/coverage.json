@@ -7200,6 +7200,9 @@
             "name": "GetNamespaceMeta"
           },
           {
+            "name": "GetPnsCredentials"
+          },
+          {
             "name": "GetRegistration"
           },
           {
@@ -7215,7 +7218,15 @@
             "name": "PutSASRule"
           },
           {
+            "name": "RegenerateSASKey",
+            "doc": "RegenerateSASKey rotates the primary or secondary key of a rule (policyKey"
+          },
+          {
             "name": "SetNamespaceMeta"
+          },
+          {
+            "name": "SetPnsCredentials",
+            "doc": "SetPnsCredentials stores a hub's Platform Notification Service credentials"
           }
         ]
       }

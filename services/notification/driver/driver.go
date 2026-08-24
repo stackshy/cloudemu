@@ -147,9 +147,20 @@ type AzureNotificationHubs interface {
 	GetSASRule(ctx context.Context, resourceKey, ruleName string) (AzureSASRule, error)
 	ListSASRules(ctx context.Context, resourceKey string) (map[string]AzureSASRule, error)
 	DeleteSASRule(ctx context.Context, resourceKey, ruleName string) error
+	// RegenerateSASKey rotates the primary or secondary key of a rule (policyKey
+	// is "PrimaryKey" or "SecondaryKey"), returning the rule with the new key.
+	// The change is durable: later GetSASRule/ListKeys observe the rotated value.
+	RegenerateSASKey(ctx context.Context, resourceKey, ruleName, policyKey string) (AzureSASRule, error)
 
 	CreateRegistration(ctx context.Context, hubKey string, reg AzureRegistration) (AzureRegistration, error)
 	GetRegistration(ctx context.Context, hubKey, registrationID string) (AzureRegistration, error)
 	ListRegistrations(ctx context.Context, hubKey string) ([]AzureRegistration, error)
 	DeleteRegistration(ctx context.Context, hubKey, registrationID string) error
+
+	// SetPnsCredentials stores a hub's Platform Notification Service credentials
+	// as the raw properties JSON supplied at hub create/update time; GetPnsCredentials
+	// returns it (empty when none were set). Opaque like AzureRegistration.Body so
+	// every platform's credential shape round-trips without the driver modeling it.
+	SetPnsCredentials(ctx context.Context, hubKey, credentialsJSON string) error
+	GetPnsCredentials(ctx context.Context, hubKey string) (string, error)
 }

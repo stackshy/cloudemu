@@ -45,6 +45,7 @@ type Mock struct {
 	nsMeta        *memstore.Store[driver.AzureNamespaceMeta]
 	sasRules      *memstore.Store[driver.AzureSASRule]
 	registrations *memstore.Store[driver.AzureRegistration]
+	pnsCreds      *memstore.Store[string]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -82,6 +83,7 @@ func New(opts *config.Options) *Mock {
 		nsMeta:        memstore.New[driver.AzureNamespaceMeta](),
 		sasRules:      memstore.New[driver.AzureSASRule](),
 		registrations: memstore.New[driver.AzureRegistration](),
+		pnsCreds:      memstore.New[string](),
 	}
 }
 

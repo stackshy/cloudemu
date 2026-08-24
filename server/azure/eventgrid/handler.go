@@ -24,37 +24,61 @@ package eventgrid
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 const (
-	providerName = "Microsoft.EventGrid"
-	typeTopics   = "topics"
+	providerName     = "Microsoft.EventGrid"
+	typeTopics       = "topics"
+	typeSystemTopics = "systemTopics"
+	typeDomains      = "domains"
 )
 
-// Handler serves Microsoft.EventGrid/topics ARM requests against an eventbus
-// driver.
+// Handler serves Microsoft.EventGrid ARM requests. Topics (and their event
+// subscriptions) are backed by the eventbus driver. System topics and domains
+// are Event-Grid-only ARM resources with no generic driver equivalent (a system
+// topic wraps an external Azure event source; a domain groups topics and holds
+// its own access keys), so — mirroring the Cosmos /offers precedent in this
+// codebase — the wire handler owns their state in memory.
 type Handler struct {
 	bus ebdriver.EventBus
+
+	mu           sync.RWMutex
+	systemTopics map[string]*systemTopicRecord
+	domains      map[string]*domainRecord
 }
 
 // New returns an Azure Event Grid handler backed by b.
 func New(b ebdriver.EventBus) *Handler {
-	return &Handler{bus: b}
+	return &Handler{
+		bus:          b,
+		systemTopics: make(map[string]*systemTopicRecord),
+		domains:      make(map[string]*domainRecord),
+	}
 }
 
-// Matches claims ARM URLs targeting Microsoft.EventGrid/topics. Disjoint from
-// every other Azure ARM provider, so registration order is unconstrained.
-// Registered before the BlobStorage fallback.
+// Matches claims ARM URLs targeting Microsoft.EventGrid topics, systemTopics,
+// and domains. Disjoint from every other Azure ARM provider, so registration
+// order is unconstrained. Registered before the BlobStorage fallback.
 func (*Handler) Matches(r *http.Request) bool {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		return false
 	}
 
-	return rp.Provider == providerName && rp.ResourceType == typeTopics
+	if rp.Provider != providerName {
+		return false
+	}
+
+	switch rp.ResourceType {
+	case typeTopics, typeSystemTopics, typeDomains:
+		return true
+	default:
+		return false
+	}
 }
 
 // ServeHTTP routes on the parsed path shape and method.
@@ -62,6 +86,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	switch rp.ResourceType {
+	case typeSystemTopics:
+		h.serveSystemTopics(w, r, &rp)
+		return
+	case typeDomains:
+		h.serveDomains(w, r, &rp)
 		return
 	}
 

@@ -161,21 +161,18 @@ func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, rp *azu
 // --- notification hubs ---
 
 func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	var body putBody
+	// Decode with the properties block kept raw so PNS credentials (whose shape
+	// is platform-specific) round-trip verbatim for GetPnsCredentials.
+	var body hubPutBody
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
 	key := hubKey(rp.ResourceName, rp.SubResourceName)
 
-	ttl := ""
-	if body.Properties != nil {
-		ttl = body.Properties.RegistrationTTL
-	}
-
 	cfg := notifdriver.TopicConfig{
 		Name:        key,
-		DisplayName: ttl,
+		DisplayName: body.registrationTTL(),
 		Tags:        body.Tags,
 		Scope:       rpScope(rp),
 		Region:      body.Location,
@@ -187,7 +184,10 @@ func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *
 			azurearm.WriteCErr(w, uerr)
 			return
 		}
+
+		h.storePnsCredentials(r, key, body.Properties)
 		azurearm.WriteJSON(w, http.StatusOK, toHubJSON(rp, rp.ResourceName, rp.SubResourceName, info))
+
 		return
 	}
 
@@ -197,6 +197,7 @@ func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *
 		return
 	}
 
+	h.storePnsCredentials(r, key, body.Properties)
 	azurearm.WriteJSON(w, http.StatusCreated, toHubJSON(rp, rp.ResourceName, rp.SubResourceName, info))
 }
 

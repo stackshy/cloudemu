@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -373,6 +374,31 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 	m.emitMetric("PublishSize", float64(len(input.Message)), "Bytes", dims)
 
 	return &driver.PublishOutput{MessageID: msgID}, nil
+}
+
+// PublishExternal publishes a raw message to the topic identified by its ARN,
+// fanning it out to the topic's subscriptions. It backs cross-service event
+// delivery (e.g. S3 -> SNS notifications). An unknown topic is a no-op so a
+// stale target never fails the caller.
+func (m *Mock) PublishExternal(ctx context.Context, topicARN, message string) error {
+	name := arnResource(topicARN)
+	if _, ok := m.topics.Get(name); !ok {
+		return nil
+	}
+
+	_, err := m.Publish(ctx, driver.PublishInput{TopicID: name, Message: message})
+
+	return err
+}
+
+// arnResource returns the resource segment (after the last colon) of an ARN,
+// e.g. the topic name of arn:aws:sns:us-east-1:000000000000:my-topic.
+func arnResource(arn string) string {
+	if i := strings.LastIndexByte(arn, ':'); i >= 0 {
+		return arn[i+1:]
+	}
+
+	return arn
 }
 
 // fanOutToSQS delivers a published message to every SQS-protocol subscription
