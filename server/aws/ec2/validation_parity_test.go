@@ -107,8 +107,9 @@ func TestRunInstancesCountValidation(t *testing.T) {
 }
 
 // TestCreateTagsRestrictions pins the CreateTags limits real EC2 enforces:
-// at most 50 user tags per resource (TagLimitExceeded) and no key or value in
-// the reserved "aws:" namespace (InvalidParameterValue). Both are HTTP 400.
+// at most 50 user tags per resource (TagLimitExceeded) and no key in the
+// reserved "aws:" namespace (InvalidTagKey.Malformed, HTTP 400). A value that
+// starts with "aws:" is permitted — only the key is restricted.
 func TestCreateTagsRestrictions(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
@@ -135,14 +136,17 @@ func TestCreateTagsRestrictions(t *testing.T) {
 		Resources: []string{id},
 		Tags:      []ec2types.Tag{{Key: aws.String("aws:foo"), Value: aws.String("bar")}},
 	})
-	assertAPIErr(t, err, "InvalidParameterValue")
+	assertAPIErr(t, err, "InvalidTagKey.Malformed")
 
-	// A value in the reserved aws: namespace is rejected.
+	// A value in the reserved aws: namespace is permitted — real EC2 restricts
+	// only the key, so this tag is written successfully.
 	_, err = client.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{id},
 		Tags:      []ec2types.Tag{{Key: aws.String("foo"), Value: aws.String("aws:bar")}},
 	})
-	assertAPIErr(t, err, "InvalidParameterValue")
+	if err != nil {
+		t.Fatalf("CreateTags(value with aws: prefix): %v", err)
+	}
 
 	// A normal small tag set still applies cleanly.
 	_, err = client.CreateTags(ctx, &ec2.CreateTagsInput{

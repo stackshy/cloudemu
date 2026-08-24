@@ -55,3 +55,34 @@ func TestListObjectsV2FetchOwner(t *testing.T) {
 		t.Fatalf("Contents[0].Owner = %+v, want nil without FetchOwner", noOwner.Contents[0].Owner)
 	}
 }
+
+// TestListObjectsV1AlwaysOwner pins that ListObjects (v1) always returns an
+// <Owner> element for each object — v1 has no fetch-owner parameter, so the
+// element is unconditional, unlike ListObjectsV2.
+func TestListObjectsV1AlwaysOwner(t *testing.T) {
+	ctx := context.Background()
+	client := newSDKClient(t)
+
+	const bucket = "owner-bucket-v1"
+	mustCreateBucket(t, client, bucket)
+
+	if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String("k1"),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	out, err := client.ListObjects(ctx, &awss3.ListObjectsInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(out.Contents) != 1 {
+		t.Fatalf("Contents = %d, want 1", len(out.Contents))
+	}
+	if owner := out.Contents[0].Owner; owner == nil || aws.ToString(owner.ID) == "" {
+		t.Fatalf("Contents[0].Owner = %+v, want a populated owner for v1", out.Contents[0].Owner)
+	}
+}

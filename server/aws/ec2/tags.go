@@ -256,18 +256,19 @@ const (
 
 // validateUserTags enforces the CreateTags restrictions real EC2 applies before
 // any tag is written: at most 50 user tags per resource (TagLimitExceeded), and
-// no key or value in the reserved "aws:" namespace (InvalidParameterValue). It
-// returns the wire error code and message plus ok=false when a rule is violated.
+// no key in the reserved "aws:" namespace (InvalidTagKey.Malformed). Only the
+// key is checked — real EC2 permits a value that starts with "aws:". It returns
+// the wire error code and message plus ok=false when a rule is violated.
 func validateUserTags(tags map[string]string) (code, msg string, ok bool) {
 	if len(tags) > maxUserTagsPerResource {
 		return "TagLimitExceeded",
 			"The maximum number of tags per resource is 50", false
 	}
 
-	for k, v := range tags {
-		if strings.HasPrefix(k, reservedTagPrefix) || strings.HasPrefix(v, reservedTagPrefix) {
-			return "InvalidParameterValue",
-				"Tag keys and values starting with 'aws:' are reserved for internal use", false
+	for k := range tags {
+		if strings.HasPrefix(k, reservedTagPrefix) {
+			return "InvalidTagKey.Malformed",
+				"The specified tag key is not valid. Tag keys cannot be empty or null, and cannot start with aws:", false
 		}
 	}
 
