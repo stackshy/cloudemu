@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
 
@@ -81,7 +82,9 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 		PrivateKeyPEM:           mat.keyPEM,
 	}
 
-	m.certs.Set(arn, &certData{cert: cert})
+	window := settle.Pending(driver.StatusPendingValidation, now,
+		m.opts.SettleDuration(settle.DefaultCertificateSettle))
+	m.certs.Set(arn, &certData{cert: cert, settle: window})
 
 	return arn, nil
 }
@@ -121,7 +124,7 @@ func (m *Mock) DescribeCertificate(_ context.Context, arn string) (*driver.Certi
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
 
-	out := copyCert(&cd.cert)
+	out := observeCert(&cd.cert, cd.settle, m.now())
 
 	return &out, nil
 }
@@ -131,12 +134,16 @@ func (m *Mock) ListCertificates(_ context.Context, filter driver.ListFilter) ([]
 	all := m.certs.All()
 	out := make([]driver.Certificate, 0, len(all))
 
+	now := m.now()
+
 	for _, cd := range all {
 		cd.mu.RLock()
-		if statusMatches(cd.cert.Status, filter.Statuses) {
-			out = append(out, copyCert(&cd.cert))
-		}
+		oc := observeCert(&cd.cert, cd.settle, now)
 		cd.mu.RUnlock()
+
+		if statusMatches(oc.Status, filter.Statuses) {
+			out = append(out, oc)
+		}
 	}
 
 	return out, nil
