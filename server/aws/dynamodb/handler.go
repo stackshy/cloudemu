@@ -7,7 +7,9 @@ package dynamodb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -17,6 +19,10 @@ import (
 )
 
 const targetPrefix = "DynamoDB_20120810."
+
+// listTablesMaxPageSize is the maximum number of table names DynamoDB returns
+// in a single ListTables page (also the default when Limit is unset).
+const listTablesMaxPageSize = 100
 
 const (
 	keyTypeHash        = "HASH"
@@ -547,15 +553,71 @@ func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExclusiveStartTableName string `json:"ExclusiveStartTableName"`
+		Limit                   *int   `json:"Limit"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	tables, err := h.db.ListTables(r.Context())
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
-		"TableNames": tables,
-	})
+	// DynamoDB returns table names in a stable (sorted) order so that
+	// ExclusiveStartTableName/LastEvaluatedTableName pagination is repeatable.
+	// The driver hands names back in map-iteration order, so sort here.
+	sort.Strings(tables)
+
+	// ExclusiveStartTableName resumes after the named table (exclusive).
+	if req.ExclusiveStartTableName != "" {
+		idx := sort.SearchStrings(tables, req.ExclusiveStartTableName)
+		if idx < len(tables) && tables[idx] == req.ExclusiveStartTableName {
+			idx++
+		}
+
+		tables = tables[idx:]
+	}
+
+	// Limit is optional; when present it must be within [1,100]. Out-of-range
+	// values are rejected with a ValidationException, matching real DynamoDB,
+	// rather than being silently clamped to the 100 default.
+	limit := listTablesMaxPageSize
+
+	if req.Limit != nil {
+		switch {
+		case *req.Limit < 1:
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+				fmt.Sprintf("1 validation error detected: Value '%d' at 'limit' failed to satisfy constraint: "+
+					"Member must have value greater than or equal to 1", *req.Limit))
+
+			return
+		case *req.Limit > listTablesMaxPageSize:
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+				fmt.Sprintf("1 validation error detected: Value '%d' at 'limit' failed to satisfy constraint: "+
+					"Member must have value less than or equal to 100", *req.Limit))
+
+			return
+		default:
+			limit = *req.Limit
+		}
+	}
+
+	resp := map[string]any{}
+
+	if len(tables) > limit {
+		page := tables[:limit]
+		resp["TableNames"] = page
+		resp["LastEvaluatedTableName"] = page[len(page)-1]
+	} else {
+		resp["TableNames"] = tables
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
@@ -567,6 +629,8 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ReturnValues              string            `json:"ReturnValues"`
 		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
+
+		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -577,7 +641,8 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	vals := fromWireItem(req.ExpressionAttributeValues)
 
 	if !h.gateCondition(r.Context(), w, req.TableName, item,
-		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		req.ConditionExpression, req.ExpressionAttributeNames, vals,
+		req.ReturnValuesOnConditionCheckFailure) {
 		return
 	}
 
@@ -633,6 +698,7 @@ func (h *Handler) gateCondition(
 	condExpr string,
 	names map[string]string,
 	values map[string]any,
+	returnValuesOnCondFail string,
 ) bool {
 	ok, err := h.checkCondition(ctx, table, keySource, condExpr, names, values)
 	if err != nil {
@@ -641,8 +707,18 @@ func (h *Handler) gateCondition(
 	}
 
 	if !ok {
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"ConditionalCheckFailedException", "The conditional request failed")
+		var extra map[string]any
+		// ReturnValuesOnConditionCheckFailure=ALL_OLD asks DynamoDB to return the
+		// conflicting item in the exception's Item member.
+		if strings.EqualFold(returnValuesOnCondFail, "ALL_OLD") {
+			if old := h.previousItem(ctx, table, keySource); old != nil {
+				extra = map[string]any{"Item": toWireItem(old)}
+			}
+		}
+
+		wire.WriteJSONErrorFields(w, http.StatusBadRequest,
+			"ConditionalCheckFailedException", "The conditional request failed", extra)
+
 		return false
 	}
 
@@ -776,6 +852,8 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ReturnValues              string            `json:"ReturnValues"`
 		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
+
+		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -786,7 +864,8 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	vals := fromWireItem(req.ExpressionAttributeValues)
 
 	if !h.gateCondition(r.Context(), w, req.TableName, key,
-		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		req.ConditionExpression, req.ExpressionAttributeNames, vals,
+		req.ReturnValuesOnConditionCheckFailure) {
 		return
 	}
 
