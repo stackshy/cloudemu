@@ -204,13 +204,13 @@ func TestInstanceCount(t *testing.T) {
 		want       int
 		wantErr    bool
 	}{
-		{minS: "1", maxS: "5", want: 5},  // MaxCount wins
-		{minS: "1", maxS: "1", want: 1},  // equal
-		{minS: "", maxS: "3", want: 3},   // min missing → defaults to 1
-		{minS: "2", maxS: "", want: 2},   // max missing → falls back to min
-		{minS: "", maxS: "", want: 1},    // both missing → default 1
-		{minS: "0", maxS: "0", wantErr: true}, // min below 1
-		{minS: "5", maxS: "2", wantErr: true}, // min greater than max
+		{minS: "1", maxS: "5", want: 5},         // MaxCount wins
+		{minS: "1", maxS: "1", want: 1},         // equal
+		{minS: "", maxS: "3", want: 3},          // min missing → defaults to 1
+		{minS: "2", maxS: "", want: 2},          // max missing → falls back to min
+		{minS: "", maxS: "", want: 1},           // both missing → default 1
+		{minS: "0", maxS: "0", wantErr: true},   // min below 1
+		{minS: "5", maxS: "2", wantErr: true},   // min greater than max
 		{minS: "bad", maxS: "2", wantErr: true}, // unparsable min
 		{minS: "2", maxS: "bad", wantErr: true}, // unparsable max
 	}
