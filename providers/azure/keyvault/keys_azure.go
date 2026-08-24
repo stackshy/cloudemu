@@ -83,6 +83,23 @@ func defaultKeyOps(kty string) []string {
 	}
 }
 
+// hsmVariant returns the HSM-protected kty for a software key type. Key Vault
+// stores software and HSM keys identically here (single tier), but the returned
+// kty must preserve the -HSM suffix the caller requested so GetKey/CreateKey
+// round-trip the requested key type instead of silently downgrading it.
+func hsmVariant(kty string) string {
+	switch kty {
+	case ktyRSA:
+		return ktyRSAHSM
+	case ktyEC:
+		return ktyECHSM
+	case ktyOct:
+		return ktyOctHSM
+	default:
+		return kty
+	}
+}
+
 func curveFor(name string) (elliptic.Curve, error) {
 	switch name {
 	case crvP256:
@@ -172,7 +189,8 @@ func generateRSA(v *keyVersion, params *driver.KVCreateKeyParams) error {
 		return errors.Newf(errors.InvalidArgument, "public exponent %d is not supported", params.PublicExponent)
 	}
 
-	v.kty = ktyRSA
+	// v.kty carries the requested kty (RSA or RSA-HSM) from generateVersion;
+	// the -HSM suffix is preserved so the returned key type is not downgraded.
 	v.rsaKey = key
 
 	return nil
@@ -189,7 +207,7 @@ func generateEC(v *keyVersion, params *driver.KVCreateKeyParams) error {
 		return errors.Newf(errors.Internal, "generate EC key: %v", err)
 	}
 
-	v.kty = ktyEC
+	// v.kty carries the requested kty (EC or EC-HSM) from generateVersion.
 	v.curve = params.Curve
 	v.ecKey = key
 
@@ -256,22 +274,24 @@ func (m *Mock) ImportKey(_ context.Context, name string, params *driver.KVImport
 		return nil, err
 	}
 
+	// An explicit hsm=true request imports the key as HSM-protected even when
+	// the JWK kty is a software type; preserve that in the returned key type.
+	if params.HSM {
+		v.kty = hsmVariant(v.kty)
+	}
+
 	return m.storeVersion(name, v)
 }
 
 func importMaterial(v *keyVersion, jwk *driver.KVImportJWK) error {
+	// v.kty keeps the JWK's requested kty (including any -HSM suffix) so the
+	// imported key type is returned as-is instead of being downgraded.
 	switch jwk.Kty {
 	case ktyRSA, ktyRSAHSM:
-		v.kty = ktyRSA
-
 		return importRSA(v, jwk)
 	case ktyEC, ktyECHSM:
-		v.kty = ktyEC
-
 		return importEC(v, jwk)
 	case ktyOct, ktyOctHSM:
-		v.kty = ktyOct
-
 		v.octKey = append([]byte(nil), jwk.K...)
 
 		return nil

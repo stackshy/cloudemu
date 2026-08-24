@@ -349,3 +349,42 @@ func TestSDKKeyVaultKeysErrors(t *testing.T) {
 		t.Fatalf("got error code %q, want KeyNotFound", respErr.ErrorCode)
 	}
 }
+
+func TestSDKKeyVaultHSMKeyTypePreserved(t *testing.T) {
+	client := newKeysClient(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		kty  azkeys.KeyType
+		crv  *azkeys.CurveName
+	}{
+		{name: "rsa-hsm", kty: azkeys.KeyTypeRSAHSM},
+		{name: "ec-hsm", kty: azkeys.KeyTypeECHSM, crv: to.Ptr(azkeys.CurveNameP256)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			created, err := client.CreateKey(ctx, tc.name, azkeys.CreateKeyParameters{
+				Kty:   to.Ptr(tc.kty),
+				Curve: tc.crv,
+			}, nil)
+			if err != nil {
+				t.Fatalf("CreateKey: %v", err)
+			}
+
+			if created.Key.Kty == nil || *created.Key.Kty != tc.kty {
+				t.Fatalf("CreateKey kty = %v, want %v (must not be downgraded)", created.Key.Kty, tc.kty)
+			}
+
+			got, err := client.GetKey(ctx, tc.name, "", nil)
+			if err != nil {
+				t.Fatalf("GetKey: %v", err)
+			}
+
+			if got.Key.Kty == nil || *got.Key.Kty != tc.kty {
+				t.Fatalf("GetKey kty = %v, want %v", got.Key.Kty, tc.kty)
+			}
+		})
+	}
+}

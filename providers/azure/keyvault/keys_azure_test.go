@@ -47,6 +47,76 @@ func TestCreateECKeySignVerify(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestCreateHSMKeyPreservesKty(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	rsa, err := m.CreateKey(ctx, "rsa-hsm",
+		&driver.KVCreateKeyParams{Kty: "RSA-HSM", Attributes: driver.KVKeyAttributes{Enabled: true}})
+	require.NoError(t, err)
+	assert.Equal(t, "RSA-HSM", rsa.Kty)
+
+	got, err := m.GetKey(ctx, "rsa-hsm", "")
+	require.NoError(t, err)
+	assert.Equal(t, "RSA-HSM", got.Kty)
+
+	ec, err := m.CreateKey(ctx, "ec-hsm",
+		&driver.KVCreateKeyParams{Kty: "EC-HSM", Curve: "P-256", Attributes: driver.KVKeyAttributes{Enabled: true}})
+	require.NoError(t, err)
+	assert.Equal(t, "EC-HSM", ec.Kty)
+
+	// HSM keys still perform real crypto (single-tier storage).
+	digest := sha256.Sum256([]byte("data"))
+
+	sig, err := m.SignKey(ctx, "ec-hsm", "", driver.KVCryptoParams{Algorithm: "ES256", Value: digest[:]})
+	require.NoError(t, err)
+
+	ok, err := m.VerifyKey(ctx, "ec-hsm", "", driver.KVCryptoParams{Algorithm: "ES256", Value: digest[:], Signature: sig.Value})
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestImportKeyHSMFlagPromotesKty(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	kek := []byte("0123456789abcdef0123456789abcdef")
+
+	// A software oct JWK imported with HSM:true must round-trip as oct-HSM.
+	imported, err := m.ImportKey(ctx, "kek", &driver.KVImportKeyParams{
+		Key:        driver.KVImportJWK{Kty: "oct", K: kek},
+		HSM:        true,
+		Attributes: driver.KVKeyAttributes{Enabled: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "oct-HSM", imported.Kty)
+
+	// An explicit RSA-HSM JWK is preserved as-is without the HSM flag.
+	src := newTestMock()
+
+	_, err = src.CreateKey(ctx, "orig", &driver.KVCreateKeyParams{Kty: "RSA", Attributes: driver.KVKeyAttributes{Enabled: true}})
+	require.NoError(t, err)
+
+	kd, ok := src.keys.Get("orig")
+	require.True(t, ok)
+
+	priv := kd.versions[0].rsaKey
+
+	rsaHSM, err := m.ImportKey(ctx, "imp", &driver.KVImportKeyParams{
+		Key: driver.KVImportJWK{
+			Kty: "RSA-HSM",
+			N:   priv.N.Bytes(),
+			E:   encodeExponent(priv.E),
+			D:   priv.D.Bytes(),
+			P:   priv.Primes[0].Bytes(),
+			Q:   priv.Primes[1].Bytes(),
+		},
+		Attributes: driver.KVKeyAttributes{Enabled: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "RSA-HSM", rsaHSM.Kty)
+}
+
 func TestUnsupportedCurveRejected(t *testing.T) {
 	m := newTestMock()
 
