@@ -90,7 +90,7 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 			"desiredCount must not be specified for a DAEMON service")
 	}
 
-	svc := serviceFromInput(&in, m.arn, cluster, m.now())
+	svc := serviceFromInput(&in, m.arn, cluster, m.now(), m.rootPrincipalARN())
 
 	if err := m.reserveServiceName(serviceKey(cluster, in.ServiceName), svc); err != nil {
 		return nil, err
@@ -107,7 +107,10 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 
 // serviceFromInput builds the service record (without convergence) from the
 // create input, defaulting the scheduling strategy and deployment controller.
-func serviceFromInput(in *driver.CreateServiceInput, arn func(string) string, cluster, now string) *driver.Service {
+// createdBy is the creating principal ECS records on the service.
+func serviceFromInput(
+	in *driver.CreateServiceInput, arn func(string) string, cluster, now, createdBy string,
+) *driver.Service {
 	sched := in.SchedulingStrategy
 	if sched == "" {
 		sched = schedReplica
@@ -123,6 +126,8 @@ func serviceFromInput(in *driver.CreateServiceInput, arn func(string) string, cl
 		Name:                          in.ServiceName,
 		ClusterARN:                    arn("cluster/" + cluster),
 		TaskDefinition:                in.TaskDefinition,
+		RoleARN:                       in.Role,
+		CreatedBy:                     createdBy,
 		DesiredCount:                  in.DesiredCount,
 		Status:                        statusActive,
 		LaunchType:                    in.LaunchType,

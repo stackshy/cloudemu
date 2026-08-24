@@ -84,7 +84,34 @@ type nodegroupJSON struct {
 	NodeRole       string                      `json:"nodeRole,omitempty"`
 	Labels         map[string]string           `json:"labels,omitempty"`
 	DiskSize       *int32                      `json:"diskSize,omitempty"`
+	Health         *nodegroupHealthJSON        `json:"health,omitempty"`
+	Resources      *nodegroupResourcesJSON     `json:"resources,omitempty"`
 	Tags           map[string]string           `json:"tags,omitempty"`
+}
+
+// nodegroupHealthJSON carries a nodegroup's health issues. A healthy nodegroup
+// reports an empty (but non-nil) issues list, matching real EKS.
+type nodegroupHealthJSON struct {
+	Issues []nodegroupIssueJSON `json:"issues"`
+}
+
+// nodegroupIssueJSON is one health issue on a nodegroup.
+type nodegroupIssueJSON struct {
+	Code        string   `json:"code,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	ResourceIDs []string `json:"resourceIds,omitempty"`
+}
+
+// nodegroupResourcesJSON describes the managed resources EKS provisions for a
+// nodegroup: at least one Auto Scaling group and an optional remote-access SG.
+type nodegroupResourcesJSON struct {
+	AutoScalingGroups         []autoScalingGroupJSON `json:"autoScalingGroups,omitempty"`
+	RemoteAccessSecurityGroup string                 `json:"remoteAccessSecurityGroup,omitempty"`
+}
+
+// autoScalingGroupJSON names one Auto Scaling group backing a nodegroup.
+type autoScalingGroupJSON struct {
+	Name string `json:"name"`
 }
 
 // fargateProfileSelectorJSON matches Pods to a Fargate profile.

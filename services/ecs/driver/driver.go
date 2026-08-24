@@ -392,6 +392,8 @@ type Service struct {
 	Name                          string
 	ClusterARN                    string
 	TaskDefinition                string
+	RoleARN                       string
+	CreatedBy                     string
 	DesiredCount                  int
 	RunningCount                  int
 	PendingCount                  int
@@ -493,6 +495,7 @@ type CreateServiceInput struct {
 	TaskDefinition                string
 	DesiredCount                  int
 	LaunchType                    string
+	Role                          string
 	SchedulingStrategy            string
 	DeploymentController          string
 	PlatformVersion               string
