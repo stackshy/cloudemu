@@ -4,6 +4,7 @@ package elbv2
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -148,10 +149,13 @@ func canonicalHostedZoneID(region string) string {
 }
 
 // DeleteLoadBalancer deletes a load balancer by ARN.
+//
+// ELBv2 DeleteLoadBalancer is idempotent: per the API reference, "if the load
+// balancer does not exist or has already been deleted, the call succeeds." So a
+// second delete (or a delete of an ARN that never existed) returns no error,
+// which keeps idempotent teardown flows (terraform destroy retries) working.
 func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
-	if !m.lbs.Delete(arn) {
-		return errors.Newf(errors.NotFound, "load balancer %q not found", arn)
-	}
+	m.lbs.Delete(arn)
 
 	// Delete all listeners associated with this load balancer.
 	all := m.listeners.All()
@@ -303,10 +307,23 @@ func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
 }
 
 // DeleteTargetGroup deletes a target group by ARN.
+//
+// Per the API reference, a target group can be deleted only if it is not
+// referenced by any actions. A target group that is still the forward target of
+// a listener default action or a rule action fails with ResourceInUse.
+// DeleteTargetGroup is otherwise idempotent — its only documented error is
+// ResourceInUse, so deleting a missing/already-deleted target group succeeds,
+// mirroring DeleteLoadBalancer and keeping teardown-retry flows working.
 func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
-	if !m.tgs.Delete(arn) {
-		return errors.Newf(errors.NotFound, "target group %q not found", arn)
+	if !m.tgs.Has(arn) {
+		return nil
 	}
+
+	if err := m.checkTargetGroupNotInUse(arn); err != nil {
+		return err
+	}
+
+	m.tgs.Delete(arn)
 
 	// Clean up health data.
 	m.healthMu.Lock()
@@ -317,6 +334,29 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 	m.tgAttrsMu.Lock()
 	delete(m.tgAttrs, arn)
 	m.tgAttrsMu.Unlock()
+
+	return nil
+}
+
+// checkTargetGroupNotInUse reports ResourceInUse (via FailedPrecondition) when a
+// target group is still referenced by a listener default action or a rule
+// action, so a delete cannot silently orphan a forward target.
+func (m *Mock) checkTargetGroupNotInUse(arn string) error {
+	for _, li := range m.listeners.All() {
+		if li.TargetGroupARN == arn {
+			return errors.Newf(errors.FailedPrecondition,
+				"target group %q is currently in use by a listener", arn)
+		}
+	}
+
+	for _, r := range m.rules.All() {
+		for _, a := range r.Actions {
+			if a.TargetGroupARN == arn {
+				return errors.Newf(errors.FailedPrecondition,
+					"target group %q is currently in use by a rule", arn)
+			}
+		}
+	}
 
 	return nil
 }
@@ -385,6 +425,12 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
+	// A default action that forwards to a target group must reference one that
+	// exists; real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
+	if cfg.TargetGroupARN != "" && !m.tgs.Has(cfg.TargetGroupARN) {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", cfg.TargetGroupARN)
+	}
+
 	// A listener ARN embeds the load balancer's resource path plus a unique
 	// listener id, never the full load balancer ARN (which would nest a second
 	// "arn:" inside the value and break ARN parsers).
@@ -445,8 +491,26 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 		return nil, errors.Newf(errors.NotFound, "listener %q not found", cfg.ListenerARN)
 	}
 
-	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID,
-		fmt.Sprintf("rule/%s/%s", cfg.ListenerARN, idgen.GenerateID("rule-")))
+	// A forward action must reference an existing target group; real ELBv2
+	// rejects a bogus TargetGroupArn with TargetGroupNotFound.
+	for _, a := range cfg.Actions {
+		if a.TargetGroupARN != "" && !m.tgs.Has(a.TargetGroupARN) {
+			return nil, errors.Newf(errors.NotFound, "target group %q not found", a.TargetGroupARN)
+		}
+	}
+
+	// A listener can't have two rules with the same priority; a reused priority
+	// fails with PriorityInUse.
+	if cfg.Priority != 0 {
+		for _, r := range m.rules.All() {
+			if r.ListenerARN == cfg.ListenerARN && r.Priority == cfg.Priority {
+				return nil, errors.Newf(errors.FailedPrecondition,
+					"priority %d is currently in use", cfg.Priority)
+			}
+		}
+	}
+
+	arn := m.ruleARN(cfg.ListenerARN)
 
 	conditions := make([]driver.RuleCondition, len(cfg.Conditions))
 	copy(conditions, cfg.Conditions)
@@ -468,6 +532,22 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 	result := rule
 
 	return &result, nil
+}
+
+// ruleARN builds a rule ARN from the listener's resource path so it reads
+// arn:aws:elasticloadbalancing:REGION:ACCT:listener-rule/<lb>/<listener-id>/<rule-id>
+// — resource type "listener-rule" with a single "arn:" prefix, never nesting the
+// full listener ARN inside the value (which breaks ARN parsers).
+func (m *Mock) ruleARN(listenerARN string) string {
+	ruleID := idgen.GenerateID("")
+	resource := "listener-rule/" + ruleID
+
+	if idx := strings.Index(listenerARN, ":listener/"); idx != -1 {
+		path := listenerARN[idx+len(":listener/"):]
+		resource = "listener-rule/" + path + "/" + ruleID
+	}
+
+	return idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID, resource)
 }
 
 // DeleteRule deletes a listener rule by ARN.

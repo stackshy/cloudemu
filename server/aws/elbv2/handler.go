@@ -192,10 +192,21 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "ResourceInUse", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, inUseCode(err), err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 	}
+}
+
+// inUseCode picks the AWS "in use" error code for a FailedPrecondition. A
+// listener rule reusing a priority is PriorityInUse; everything else (a target
+// group still referenced by an action) is ResourceInUse.
+func inUseCode(err error) string {
+	if strings.Contains(err.Error(), "priority") {
+		return "PriorityInUse"
+	}
+
+	return "ResourceInUse"
 }
 
 // duplicateNameCode distinguishes a duplicate target-group name from a
