@@ -53,6 +53,13 @@ type secretIDRequest struct {
 	SecretID string `json:"SecretId"`
 }
 
+type listSecretVersionIDsRequest struct {
+	SecretID string `json:"SecretId"`
+	// IncludeDeprecated, when true, also returns versions that carry no staging
+	// labels (deprecated versions). By default AWS omits them.
+	IncludeDeprecated bool `json:"IncludeDeprecated"`
+}
+
 type deleteSecretRequest struct {
 	SecretID string `json:"SecretId"`
 	// RecoveryWindowInDays is a pointer so an absent field (nil) is

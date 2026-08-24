@@ -24,6 +24,14 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		DataType:    req.DataType,
 	})
 	if err != nil {
+		// Changing a parameter's type on an Overwrite update is rejected by
+		// real Parameter Store with HierarchyTypeMismatchException, not the
+		// generic ValidationException.
+		if errors.Is(err, ssmdriver.ErrTypeMismatch) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyTypeMismatchException", err.Error())
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
