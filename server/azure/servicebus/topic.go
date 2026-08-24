@@ -134,15 +134,26 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, sp sbPath, name string) {
 		return
 	}
 
-	if _, ok := ns.Topics[name]; !ok {
+	t, ok := ns.Topics[name]
+	if !ok {
 		h.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 
 		return
 	}
 
+	// Cascade: drop the backing message store of every subscription.
+	urls := make([]string, 0, len(t.Subs))
+	for _, s := range t.Subs {
+		urls = append(urls, s.DriverURL)
+	}
+
 	delete(ns.Topics, name)
 	h.mu.Unlock()
+
+	for _, u := range urls {
+		h.deleteBackingQueue(u)
+	}
 
 	w.WriteHeader(http.StatusOK)
 }

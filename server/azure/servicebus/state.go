@@ -87,6 +87,7 @@ type topicRecord struct {
 
 type subscriptionRecord struct {
 	Name      string
+	DriverURL string
 	Props     subscriptionProperties
 	Rules     map[string]*ruleRecord
 	CreatedAt time.Time

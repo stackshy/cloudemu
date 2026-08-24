@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
 const defaultRuleName = "$Default"
@@ -68,7 +70,15 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 
 	rec, existed := t.Subs[name]
 	if !existed {
-		rec = &subscriptionRecord{Name: name, Rules: map[string]*ruleRecord{}, CreatedAt: now}
+		url, err := h.createSubQueue(r, sp.namespace, topic, name)
+		if err != nil {
+			h.mu.Unlock()
+			azurearm.WriteCErr(w, err)
+
+			return
+		}
+
+		rec = &subscriptionRecord{Name: name, DriverURL: url, Rules: map[string]*ruleRecord{}, CreatedAt: now}
 		rec.Rules[defaultRuleName] = defaultRule()
 		t.Subs[name] = rec
 	}
@@ -97,21 +107,46 @@ func (h *Handler) getSubscription(w http.ResponseWriter, sp sbPath, topic, name 
 
 func (h *Handler) deleteSubscription(w http.ResponseWriter, sp sbPath, topic, name string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	t, ok := h.lookupTopic(sp, topic)
 	if !ok {
+		h.mu.Unlock()
 		writeTopicNotFound(w, topic)
+
 		return
 	}
 
-	if _, ok := t.Subs[name]; !ok {
+	rec, ok := t.Subs[name]
+	if !ok {
+		h.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
+
 		return
 	}
+
+	url := rec.DriverURL
 
 	delete(t.Subs, name)
+	h.mu.Unlock()
+
+	h.deleteBackingQueue(url)
 	w.WriteHeader(http.StatusOK)
+}
+
+// createSubQueue provisions the backing message store for a new subscription.
+func (h *Handler) createSubQueue(r *http.Request, namespace, topic, sub string) (string, error) {
+	name := namespace + "/" + topic + "/" + segSubs + "/" + sub
+
+	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: name})
+	if err != nil && !cerrors.IsAlreadyExists(err) {
+		return "", err
+	}
+
+	if info != nil {
+		return info.URL, nil
+	}
+
+	return "", nil
 }
 
 // lookupTopic returns the topic record; caller must hold h.mu.

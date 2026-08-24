@@ -7,7 +7,11 @@
 // The data-plane azservicebus SDK uses AMQP exclusively and is out of scope;
 // tests that exercise send/receive hit the REST data plane directly with raw
 // HTTP, mirroring Microsoft's "Send/Receive REST" endpoints documented at
-// https://learn.microsoft.com/rest/api/servicebus/.
+// https://learn.microsoft.com/rest/api/servicebus/. The REST data plane
+// addresses both flat queues (/{queue}/messages...) and topic subscriptions
+// (/{topic}/subscriptions/{sub}/messages...): a publish to a topic fans the
+// message out to every subscription's backing store, and each subscription is
+// received from independently.
 //
 // Namespaces own their child entities: queues, topics (which own
 // subscriptions, which own rules) and authorization rules. Every namespace is
@@ -225,9 +229,14 @@ func (h *Handler) listChildren(w http.ResponseWriter, r *http.Request, sp sbPath
 	azurearm.WriteJSON(w, http.StatusOK, paginate(resources))
 }
 
+// nsKey normalizes a namespace name to its store key. Service Bus namespace
+// names map 1:1 to a DNS host (<name>.servicebus.windows.net) and real Azure
+// treats them case-insensitively for uniqueness and lookup.
+func nsKey(name string) string { return strings.ToLower(name) }
+
 // getNS returns the namespace state if it exists and matches the request scope.
 func (h *Handler) getNS(sp sbPath) (*namespaceState, bool) {
-	ns, ok := h.namespaces.Get(sp.namespace)
+	ns, ok := h.namespaces.Get(nsKey(sp.namespace))
 	if !ok {
 		return nil, false
 	}

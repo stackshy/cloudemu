@@ -1,7 +1,6 @@
 package servicebus
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -45,7 +44,7 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, sp sbP
 
 	h.mu.Lock()
 
-	ns, existed := h.namespaces.Get(sp.namespace)
+	ns, existed := h.namespaces.Get(nsKey(sp.namespace))
 	if !existed {
 		ns = &namespaceState{
 			Name:          sp.namespace,
@@ -63,7 +62,7 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, sp sbP
 	ns.Tags = maps.Clone(req.Tags)
 	ns.SKU = normalizeSKU(req.SKU)
 	ns.UpdatedAt = now
-	h.namespaces.Set(sp.namespace, ns)
+	h.namespaces.Set(nsKey(sp.namespace), ns)
 
 	resource := toNamespaceResource(ns)
 	h.mu.Unlock()
@@ -138,17 +137,23 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 		return
 	}
 
-	// Cascade: drop the message store for every child queue.
+	// Cascade: drop the message store for every child queue and subscription.
 	urls := make([]string, 0, len(ns.Queues))
 	for _, q := range ns.Queues {
 		urls = append(urls, q.DriverURL)
 	}
 
-	h.namespaces.Delete(sp.namespace)
+	for _, t := range ns.Topics {
+		for _, s := range t.Subs {
+			urls = append(urls, s.DriverURL)
+		}
+	}
+
+	h.namespaces.Delete(nsKey(sp.namespace))
 	h.mu.Unlock()
 
 	for _, u := range urls {
-		_ = h.mq.DeleteQueue(context.Background(), u)
+		h.deleteBackingQueue(u)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -191,7 +196,7 @@ func (h *Handler) checkNameAvailability(w http.ResponseWriter, r *http.Request) 
 	}
 
 	h.mu.RLock()
-	_, taken := h.namespaces.Get(req.Name)
+	_, taken := h.namespaces.Get(nsKey(req.Name))
 	h.mu.RUnlock()
 
 	result := checkNameResult{NameAvailable: true, Reason: "None"}
