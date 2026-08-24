@@ -4,25 +4,42 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+)
+
+// GetClusterCredentials defaults. DurationSeconds is clamped to [900, 3600]
+// with a 900-second default, matching the real Redshift API.
+const (
+	defaultCredentialDurationSecs = 900
+	minCredentialDurationSecs     = 900
+	maxCredentialDurationSecs     = 3600
+	iamDBUserPrefix               = "IAM:"
+	synthesizedDBPassword         = "cloudemu-temporary-credential" //nolint:gosec // not a real secret; auth is not enforced
 )
 
 // clusterConfigFromForm pulls the relevant Cluster fields out of a form. Used
 // by CreateCluster.
 func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
 	return rdbdriver.ClusterConfig{
-		ID:                 form.Get("ClusterIdentifier"),
-		Engine:             "redshift",
-		EngineVersion:      form.Get("ClusterVersion"),
-		MasterUsername:     form.Get("MasterUsername"),
-		MasterUserPassword: form.Get("MasterUserPassword"),
-		DatabaseName:       form.Get("DBName"),
-		Port:               formInt(form.Get("Port")),
-		VPCSecurityGroups:  awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
-		SubnetGroupName:    form.Get("ClusterSubnetGroupName"),
-		Tags:               parseRedshiftTags(form),
+		ID:                          form.Get("ClusterIdentifier"),
+		Engine:                      "redshift",
+		EngineVersion:               form.Get("ClusterVersion"),
+		MasterUsername:              form.Get("MasterUsername"),
+		MasterUserPassword:          form.Get("MasterUserPassword"),
+		DatabaseName:                form.Get("DBName"),
+		Port:                        formInt(form.Get("Port")),
+		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		SubnetGroupName:             form.Get("ClusterSubnetGroupName"),
+		DBClusterParameterGroupName: form.Get("ClusterParameterGroupName"),
+		NodeType:                    form.Get("NodeType"),
+		NumberOfNodes:               formInt(form.Get("NumberOfNodes")),
+		Encrypted:                   formBool(form.Get("Encrypted")),
+		PubliclyAccessible:          formBool(form.Get("PubliclyAccessible")),
+		AvailabilityZone:            form.Get("AvailabilityZone"),
+		Tags:                        parseRedshiftTags(form),
 	}
 }
 
@@ -262,6 +279,90 @@ func (h *Handler) restoreFromClusterSnapshot(w http.ResponseWriter, r *http.Requ
 	}
 
 	awsquery.WriteXMLResponse(w, restoreFromClusterSnapshotResponse{
+		Xmlns:    Namespace,
+		Result:   clusterResult{Cluster: toClusterXML(cluster)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) getClusterCredentials(w http.ResponseWriter, r *http.Request) {
+	form := r.Form
+
+	id := form.Get("ClusterIdentifier")
+
+	// The cluster must exist; ClusterNotFound (404) otherwise.
+	clusters, err := h.db.DescribeClusters(r.Context(), []string{id})
+	if err != nil || len(clusters) == 0 {
+		writeErr(w, errClusterNotFound(id))
+		return
+	}
+
+	duration := formInt(form.Get("DurationSeconds"))
+	if duration == 0 {
+		duration = defaultCredentialDurationSecs
+	}
+
+	if duration < minCredentialDurationSecs {
+		duration = minCredentialDurationSecs
+	}
+
+	if duration > maxCredentialDurationSecs {
+		duration = maxCredentialDurationSecs
+	}
+
+	expiration := time.Now().UTC().Add(time.Duration(duration) * time.Second)
+
+	awsquery.WriteXMLResponse(w, getClusterCredentialsResponse{
+		Xmlns: Namespace,
+		Result: clusterCredentialsResult{
+			DBUser:     iamDBUserPrefix + form.Get("DbUser"),
+			DBPassword: synthesizedDBPassword,
+			Expiration: expiration.Format("2006-01-02T15:04:05.000Z"),
+		},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+//nolint:dupl // structurally similar to resumeCluster but a distinct action + response type.
+func (h *Handler) pauseCluster(w http.ResponseWriter, r *http.Request) {
+	pauser, ok := h.db.(clusterPauser)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "PauseCluster is not supported")
+		return
+	}
+
+	id := r.Form.Get("ClusterIdentifier")
+
+	cluster, err := pauser.PauseCluster(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, pauseClusterResponse{
+		Xmlns:    Namespace,
+		Result:   clusterResult{Cluster: toClusterXML(cluster)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+//nolint:dupl // structurally similar to pauseCluster but a distinct action + response type.
+func (h *Handler) resumeCluster(w http.ResponseWriter, r *http.Request) {
+	pauser, ok := h.db.(clusterPauser)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "ResumeCluster is not supported")
+		return
+	}
+
+	id := r.Form.Get("ClusterIdentifier")
+
+	cluster, err := pauser.ResumeCluster(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, resumeClusterResponse{
 		Xmlns:    Namespace,
 		Result:   clusterResult{Cluster: toClusterXML(cluster)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},

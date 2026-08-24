@@ -3,8 +3,10 @@ package rds
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -31,6 +33,7 @@ func instanceConfigFromForm(form url.Values) rdsdriver.InstanceConfig {
 		OptionGroupName:      form.Get("OptionGroupName"),
 		ClusterID:            form.Get("DBClusterIdentifier"),
 		AvailabilityZone:     form.Get("AvailabilityZone"),
+		StorageEncrypted:     formBool(form.Get("StorageEncrypted")),
 		Tags:                 parseRDSTags(form),
 	}
 }
@@ -79,7 +82,6 @@ func (h *Handler) createDBInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // shape mirrors describeDBClusters but operates on instances.
 func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBInstanceIdentifier")
 
@@ -94,16 +96,104 @@ func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := dbInstancesXML{DBInstance: make([]dbInstanceXML, 0, len(insts))}
-	for i := range insts {
-		out.DBInstance = append(out.DBInstance, toInstanceXML(&insts[i]))
+	insts = filterInstances(insts, parseInstanceFilters(r.Form))
+
+	// Offset tokens require a stable ordering; sort by identifier before paging.
+	sort.Slice(insts, func(i, j int) bool { return insts[i].ID < insts[j].ID })
+
+	page, err := pagination.Paginate(insts, r.Form.Get("Marker"), formInt(r.Form.Get("MaxRecords")))
+	if err != nil {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", "invalid Marker")
+		return
+	}
+
+	out := dbInstancesXML{DBInstance: make([]dbInstanceXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.DBInstance = append(out.DBInstance, toInstanceXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBInstancesResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstancesResult{DBInstances: out},
+		Result:   dbInstancesResult{Marker: page.NextPageToken, DBInstances: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// parseInstanceFilters reads the Filters.Filter.N.{Name,Values.Value.M} entries
+// into a name→values map. Only the DescribeDBInstances-supported filter names
+// are meaningful; unknown names are kept and simply match nothing.
+func parseInstanceFilters(form url.Values) map[string][]string {
+	indices := awsquery.CollectIndices(form, "Filters.Filter")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make(map[string][]string, len(indices))
+
+	for _, n := range indices {
+		base := "Filters.Filter." + strconv.Itoa(n)
+
+		name := form.Get(base + ".Name")
+		if name == "" {
+			continue
+		}
+
+		out[name] = awsquery.ListStrings(form, base+".Values.Value")
+	}
+
+	return out
+}
+
+// filterInstances keeps only the instances matching every supplied filter (AND
+// across names, OR within a name's values), mirroring RDS filter semantics for
+// db-instance-id, engine and db-cluster-id.
+func filterInstances(insts []rdsdriver.Instance, filters map[string][]string) []rdsdriver.Instance {
+	if len(filters) == 0 {
+		return insts
+	}
+
+	out := make([]rdsdriver.Instance, 0, len(insts))
+
+	for i := range insts {
+		if instanceMatchesFilters(&insts[i], filters) {
+			out = append(out, insts[i])
+		}
+	}
+
+	return out
+}
+
+func instanceMatchesFilters(inst *rdsdriver.Instance, filters map[string][]string) bool {
+	for name, values := range filters {
+		var field string
+
+		switch name {
+		case "db-instance-id":
+			field = inst.ID
+		case "engine":
+			field = inst.Engine
+		case "db-cluster-id":
+			field = inst.ClusterID
+		default:
+			return false
+		}
+
+		if !containsString(values, field) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
@@ -112,18 +202,29 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("DBInstanceIdentifier")
 
 	input := rdsdriver.ModifyInstanceInput{
-		InstanceClass:        form.Get("DBInstanceClass"),
-		AllocatedStorage:     formInt(form.Get("AllocatedStorage")),
-		EngineVersion:        form.Get("EngineVersion"),
-		MasterUserPassword:   form.Get("MasterUserPassword"),
-		DBParameterGroupName: form.Get("DBParameterGroupName"),
-		OptionGroupName:      form.Get("OptionGroupName"),
-		Tags:                 parseRDSTags(form),
+		InstanceClass:              form.Get("DBInstanceClass"),
+		AllocatedStorage:           formInt(form.Get("AllocatedStorage")),
+		EngineVersion:              form.Get("EngineVersion"),
+		MasterUserPassword:         form.Get("MasterUserPassword"),
+		DBParameterGroupName:       form.Get("DBParameterGroupName"),
+		OptionGroupName:            form.Get("OptionGroupName"),
+		NewInstanceID:              form.Get("NewDBInstanceIdentifier"),
+		BackupRetentionPeriod:      formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:      form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
+		StorageType:                form.Get("StorageType"),
+		Iops:                       formInt(form.Get("Iops")),
+		Tags:                       parseRDSTags(form),
 	}
 
 	if v := form.Get("MultiAZ"); v != "" {
 		b := formBool(v)
 		input.MultiAZ = &b
+	}
+
+	if v := form.Get("DeletionProtection"); v != "" {
+		b := formBool(v)
+		input.DeletionProtection = &b
 	}
 
 	inst, err := h.db.ModifyInstance(r.Context(), id, input)
@@ -268,6 +369,9 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
 		SubnetGroupName:             form.Get("DBSubnetGroupName"),
 		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		EngineMode:                  form.Get("EngineMode"),
+		StorageEncrypted:            formBool(form.Get("StorageEncrypted")),
+		AllocatedStorage:            formInt(form.Get("AllocatedStorage")),
 		Tags:                        parseRDSTags(form),
 	}
 
@@ -284,7 +388,6 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // shape mirrors describeDBInstances but operates on clusters.
 func (h *Handler) describeDBClusters(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBClusterIdentifier")
 

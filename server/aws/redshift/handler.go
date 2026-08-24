@@ -42,6 +42,9 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 	"DescribeClusterSnapshots":       {},
 	"DeleteClusterSnapshot":          {},
 	"RestoreFromClusterSnapshot":     {},
+	"GetClusterCredentials":          {},
+	"PauseCluster":                   {},
+	"ResumeCluster":                  {},
 	"CreateClusterParameterGroup":    {},
 	"DescribeClusterParameterGroups": {},
 	"DeleteClusterParameterGroup":    {},
@@ -62,6 +65,14 @@ type clusterGroupManager interface {
 	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
 	DescribeClusterSubnetGroups(ctx context.Context, names []string) ([]redshiftprovider.SubnetGroup, error)
 	DeleteClusterSubnetGroup(ctx context.Context, name string) error
+}
+
+// clusterPauser is the AWS-only PauseCluster/ResumeCluster surface, kept off
+// the shared relationaldb driver; the handler discovers it by type assertion
+// and answers InvalidAction when the backing driver does not implement it.
+type clusterPauser interface {
+	PauseCluster(ctx context.Context, id string) (*rdbdriver.Cluster, error)
+	ResumeCluster(ctx context.Context, id string) (*rdbdriver.Cluster, error)
 }
 
 // resourceTagger is the AWS-specific Redshift tagging surface.
@@ -150,6 +161,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteClusterSnapshot(w, r)
 	case "RestoreFromClusterSnapshot":
 		h.restoreFromClusterSnapshot(w, r)
+	case "GetClusterCredentials":
+		h.getClusterCredentials(w, r)
+	case "PauseCluster":
+		h.pauseCluster(w, r)
+	case "ResumeCluster":
+		h.resumeCluster(w, r)
 	case "CreateClusterParameterGroup":
 		h.createClusterParameterGroup(w, r)
 	case "DescribeClusterParameterGroups":

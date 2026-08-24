@@ -26,6 +26,8 @@ import (
 const (
 	defaultEngine            = "redshift"
 	defaultPort              = 5439
+	singleNodeCount          = 1
+	snapshotBackupSizeMB     = 100.0
 	cpuUtilizationRunning    = 25.0
 	databaseConnectionsRun   = 5.0
 	readIOPSRunning          = 10.0
@@ -324,20 +326,31 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		port = defaultPort
 	}
 
+	numberOfNodes := cfg.NumberOfNodes
+	if numberOfNodes == 0 {
+		numberOfNodes = singleNodeCount
+	}
+
 	cluster := rdbdriver.Cluster{
-		ID:                cfg.ID,
-		ARN:               clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:            engine,
-		EngineVersion:     cfg.EngineVersion,
-		MasterUsername:    cfg.MasterUsername,
-		DatabaseName:      cfg.DatabaseName,
-		Endpoint:          endpointFor(cfg.ID),
-		Port:              port,
-		State:             rdbdriver.StateAvailable,
-		VPCSecurityGroups: append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:   cfg.SubnetGroupName,
-		CreatedAt:         m.opts.Clock.Now().UTC(),
-		Tags:              copyTags(cfg.Tags),
+		ID:                          cfg.ID,
+		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:                      engine,
+		EngineVersion:               cfg.EngineVersion,
+		MasterUsername:              cfg.MasterUsername,
+		DatabaseName:                cfg.DatabaseName,
+		Endpoint:                    endpointFor(cfg.ID),
+		Port:                        port,
+		State:                       rdbdriver.StateAvailable,
+		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:             cfg.SubnetGroupName,
+		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		NodeType:                    cfg.NodeType,
+		NumberOfNodes:               numberOfNodes,
+		Encrypted:                   cfg.Encrypted,
+		PubliclyAccessible:          cfg.PubliclyAccessible,
+		AvailabilityZone:            cfg.AvailabilityZone,
+		CreatedAt:                   m.opts.Clock.Now().UTC(),
+		Tags:                        copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
@@ -535,6 +548,47 @@ func (m *Mock) RebootCluster(_ context.Context, id string) error {
 	return nil
 }
 
+// clusterStatePaused is the Redshift-only lifecycle state a paused cluster
+// reports. PauseCluster/ResumeCluster move a cluster between available and
+// paused; the emulator applies the transition immediately (no pausing/resuming
+// intermediate).
+const clusterStatePaused = "paused"
+
+// PauseCluster suspends an available cluster (available → paused). It is part
+// of the AWS-only optional clusterPauser surface, discovered by the wire
+// handler via type assertion.
+func (m *Mock) PauseCluster(_ context.Context, id string) (*rdbdriver.Cluster, error) {
+	if err := m.transitionCluster(id, rdbdriver.StateAvailable, clusterStatePaused, "pause"); err != nil {
+		return nil, err
+	}
+
+	return m.snapshotCluster(id)
+}
+
+// ResumeCluster resumes a paused cluster (paused → available).
+func (m *Mock) ResumeCluster(_ context.Context, id string) (*rdbdriver.Cluster, error) {
+	if err := m.transitionCluster(id, clusterStatePaused, rdbdriver.StateAvailable, "resume"); err != nil {
+		return nil, err
+	}
+
+	return m.snapshotCluster(id)
+}
+
+// snapshotCluster returns a copy of the stored cluster by id.
+func (m *Mock) snapshotCluster(id string) (*rdbdriver.Cluster, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cluster, ok := m.clusters.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
+	}
+
+	out := cluster
+
+	return &out, nil
+}
+
 func (m *Mock) transitionCluster(id, from, to, verb string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -602,14 +656,18 @@ func (m *Mock) CreateClusterSnapshot(
 	}
 
 	snap := rdbdriver.ClusterSnapshot{
-		ID:            cfg.ID,
-		ARN:           clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		ClusterID:     cfg.ClusterID,
-		Engine:        cluster.Engine,
-		EngineVersion: cluster.EngineVersion,
-		State:         rdbdriver.SnapshotAvailable,
-		CreatedAt:     m.opts.Clock.Now().UTC(),
-		Tags:          copyTags(cfg.Tags),
+		ID:                         cfg.ID,
+		ARN:                        clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ClusterID:                  cfg.ClusterID,
+		Engine:                     cluster.Engine,
+		EngineVersion:              cluster.EngineVersion,
+		State:                      rdbdriver.SnapshotAvailable,
+		NodeType:                   cluster.NodeType,
+		NumberOfNodes:              cluster.NumberOfNodes,
+		Encrypted:                  cluster.Encrypted,
+		TotalBackupSizeInMegaBytes: snapshotBackupSizeMB,
+		CreatedAt:                  m.opts.Clock.Now().UTC(),
+		Tags:                       copyTags(cfg.Tags),
 	}
 
 	m.clusterSnapshots.Set(cfg.ID, snap)
