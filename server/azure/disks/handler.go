@@ -36,6 +36,13 @@ const (
 	// snapshotARMNameTag mirrors the ARM-name tag the snapshots handler stamps,
 	// so a Copy source snapshot can be resolved to its driver volume.
 	snapshotARMNameTag = "cloudemu:azureSnapshotName"
+
+	// accessLevelRead is the default disk SAS access level when none is given.
+	accessLevelRead = "Read"
+
+	// defaultAccessDuration is the SAS lifetime (seconds) applied when the
+	// request omits or zeroes durationInSeconds (Azure's own default is 3600).
+	defaultAccessDuration = 3600
 )
 
 // Handler serves Microsoft.Compute/disks requests.
@@ -72,6 +79,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SAS export/import actions are POST sub-resources on a named disk.
+	if rp.SubResource != "" {
+		h.serveAction(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
@@ -83,6 +96,97 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"not implemented: "+r.Method+" "+r.URL.Path)
 	}
+}
+
+// serveAction dispatches the POST SAS actions on a named disk: beginGetAccess
+// (grant a time-bounded SAS URI) and endGetAccess (revoke it).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
+			"method not allowed: "+r.Method+" "+r.URL.Path)
+
+		return
+	}
+
+	switch strings.ToLower(rp.SubResource) {
+	case "begingetaccess":
+		h.beginGetAccess(w, r, rp)
+	case "endgetaccess":
+		h.endGetAccess(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"not implemented: action "+rp.SubResource)
+	}
+}
+
+// beginGetAccess handles POST .../disks/{name}/beginGetAccess. It issues a
+// time-bounded SAS URI for exporting/importing the disk's contents, returning
+// the AccessUri (accessSAS) real Azure returns.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) beginGetAccess(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	accessor, ok := h.compute.(computedriver.AzureDiskAccessor)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "disk access SAS not supported")
+		return
+	}
+
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	var req grantAccessData
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	access := req.Access
+	if access == "" {
+		access = accessLevelRead
+	}
+
+	duration := req.DurationInSeconds
+	if duration <= 0 {
+		duration = defaultAccessDuration
+	}
+
+	sas, err := accessor.GrantDiskAccess(r.Context(), vol.ID, access, duration)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, accessURIResponse{AccessSAS: sas})
+}
+
+// endGetAccess handles POST .../disks/{name}/endGetAccess, revoking any SAS
+// access previously granted to the disk.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) endGetAccess(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	accessor, ok := h.compute.(computedriver.AzureDiskAccessor)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "disk access SAS not supported")
+		return
+	}
+
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if err := accessor.RevokeDiskAccess(r.Context(), vol.ID); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 //nolint:gocritic // rp is a request-scoped value

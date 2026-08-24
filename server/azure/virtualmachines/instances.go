@@ -9,6 +9,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // armNameTag is the tag key we use to round-trip the ARM resource name
@@ -58,6 +59,14 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	// A networkProfile must reference NICs that already exist. Real Azure
+	// rejects a VM whose networkProfile points at a missing NIC rather than
+	// silently succeeding.
+	if err := h.validateNICs(r.Context(), req.Properties.NetworkProfile); err != nil {
+		azurearm.WriteError(w, http.StatusBadRequest, "NetworkInterfaceNotFound", err.Error())
+		return
+	}
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:       imageRefToID(req.Properties.StorageProfile),
 		InstanceType:  hardwareSize(req.Properties.HardwareProfile),
@@ -91,7 +100,42 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(&instances[0], rp, req))
+	// A create is a long-running operation: the initial response reports
+	// "Creating" (201 Created) and settles to "Succeeded" on the next poll/GET.
+	azurearm.WriteJSON(w, http.StatusCreated, toVMResponse(&instances[0], rp, req, provisioningCreating))
+}
+
+// validateNICs verifies that every NIC referenced by a networkProfile exists.
+// It is a no-op when no networking driver is wired or the driver does not
+// implement the Azure network-interface surface, so handlers configured
+// without networking keep their previous permissive behavior.
+func (h *Handler) validateNICs(ctx context.Context, np *networkProfile) error {
+	if np == nil || len(np.NetworkInterfaces) == 0 || h.net == nil {
+		return nil
+	}
+
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return nil
+	}
+
+	for _, nic := range np.NetworkInterfaces {
+		if nic.ID == "" {
+			continue
+		}
+
+		pp, ok := azurearm.ParsePath(nic.ID)
+		if !ok || pp.ResourceName == "" {
+			return cerrors.Newf(cerrors.InvalidArgument, "malformed networkInterface id %q", nic.ID)
+		}
+
+		if _, err := svc.GetNetworkInterface(ctx, pp.ResourceGroup, pp.ResourceName); err != nil {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"networkProfile references network interface %q which does not exist", pp.ResourceName)
+		}
+	}
+
+	return nil
 }
 
 // updateExisting applies an idempotent CreateOrUpdate to an already-provisioned
@@ -119,7 +163,7 @@ func (h *Handler) updateExisting(
 		existing = updated
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(existing, rp, req))
+	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(existing, rp, req, provisioningSucceeded))
 }
 
 // get handles GET virtualMachines/{name}.
@@ -132,7 +176,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(inst, rp, vmRequest{}))
+	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(inst, rp, vmRequest{}, provisioningSucceeded))
 }
 
 // list handles GET virtualMachines. A resource-group-scoped path
@@ -157,7 +201,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 		name := tagOr(instances[i].Tags, armNameTag, instances[i].ID)
 		scope := rp
 		scope.ResourceName = name
-		out = append(out, toVMResponse(&instances[i], scope, vmRequest{}))
+		out = append(out, toVMResponse(&instances[i], scope, vmRequest{}, provisioningSucceeded))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, vmListResponse{Value: out})
@@ -258,6 +302,96 @@ func (h *Handler) powerAction(
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) restart(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	h.lifecycleAction(w, r, rp, h.compute.RebootInstances)
+}
+
+// generalize handles POST virtualMachines/{name}/generalize. It marks the VM
+// as generalized (OS-specific state removed), a precondition for capturing it
+// into a reusable image. Real Azure returns 200 OK with no body.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) generalize(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	ctrl, ok := h.compute.(computedriver.AzureVMController)
+	if !ok {
+		writeNotImplemented(w, "action: generalize")
+		return
+	}
+
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if err := ctrl.GeneralizeInstance(r.Context(), inst.ID); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// capture handles POST virtualMachines/{name}/capture. It copies the VM's
+// virtual hard disks and returns a template (VirtualMachineCaptureResult) that
+// can recreate similar VMs. The VM must first be generalized — capturing a
+// non-generalized VM is rejected, matching real Azure.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) capture(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	var req captureRequest
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if !inst.Generalized {
+		azurearm.WriteError(w, http.StatusConflict, "OperationNotAllowed",
+			"the virtual machine must be generalized before it can be captured")
+
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, captureResult(inst, rp, req))
+}
+
+// captureResult builds the VirtualMachineCaptureResult template for a captured
+// VM: the ARM deployment-template envelope plus a single virtualMachines/image
+// resource describing the captured VHD.
+//
+//nolint:gocritic // rp/req are request-scoped values
+func captureResult(inst *computedriver.Instance, rp azurearm.ResourcePath, req captureRequest) captureResponse {
+	prefix := req.VhdPrefix
+	if prefix == "" {
+		prefix = "captured"
+	}
+
+	vhdURI := "https://cloudemu.blob.storage.azure.net/" +
+		req.DestinationContainerName + "/" + prefix + "-osdisk.vhd"
+
+	return captureResponse{
+		Schema:         "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+		ContentVersion: "1.0.0.0",
+		Parameters:     map[string]any{},
+		ID:             azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, rp.ResourceName),
+		Resources: []captureResource{{
+			Type:       providerName + "/images",
+			APIVersion: "2023-09-01",
+			Properties: captureResourceProps{
+				StorageProfile: captureStorageProfile{
+					OSDisk: captureOSDisk{
+						OSType: defaultIfEmpty(inst.OSType, "Linux"),
+						Name:   prefix + "-osdisk",
+						Image:  &captureVHD{URI: vhdURI},
+					},
+				},
+			},
+		}},
+	}
 }
 
 // retrieveBootDiagnosticsData handles POST virtualMachines/{name}/retrieveBootDiagnosticsData.
@@ -478,10 +612,19 @@ func tagOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
+// ARM provisioningState values a VM settles through. A create returns
+// "Creating"; a subsequent GET/poll reports "Succeeded".
+const (
+	provisioningCreating  = "Creating"
+	provisioningSucceeded = "Succeeded"
+)
+
 // toVMResponse maps a driver Instance back onto the ARM JSON shape.
+// provisioningState is the properties.provisioningState to report ("Creating"
+// on the initial create response, "Succeeded" thereafter).
 //
 //nolint:gocritic // rp/req are value types passed once per response build
-func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vmRequest) vmResponse {
+func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vmRequest, provisioningState string) vmResponse {
 	name := tagOr(inst.Tags, armNameTag, rp.ResourceName)
 
 	return vmResponse{
@@ -496,18 +639,28 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 		Zones:    inst.Zones,
 		Properties: vmResponseProps{
 			VMID:              inst.ID,
-			ProvisioningState: "Succeeded",
+			ProvisioningState: provisioningState,
 			HardwareProfile:   &hardwareProfile{VMSize: inst.InstanceType},
 			StorageProfile:    osDiskProfile(inst.OSType),
 			Priority:          inst.Priority,
 			LicenseType:       inst.LicenseType,
 			InstanceView: &instanceView{
 				Statuses: []instanceViewStatus{
-					{Code: "ProvisioningState/succeeded", Level: "Info", DisplayStatus: "Provisioning succeeded"},
+					provisioningStatus(provisioningState),
 					{Code: "PowerState/" + powerCode(inst), Level: "Info", DisplayStatus: powerDisplay(inst)},
 				},
 			},
 		},
+	}
+}
+
+// provisioningStatus renders the instanceView ProvisioningState status line for
+// the given provisioningState.
+func provisioningStatus(state string) instanceViewStatus {
+	return instanceViewStatus{
+		Code:          "ProvisioningState/" + strings.ToLower(state),
+		Level:         "Info",
+		DisplayStatus: "Provisioning " + strings.ToLower(state),
 	}
 }
 

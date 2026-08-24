@@ -26,6 +26,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // providerName is the ARM provider this handler serves.
@@ -45,11 +46,17 @@ const resourceTypeLocations = "locations"
 // Handler serves ARM JSON requests for Microsoft.Compute/virtualMachines.
 type Handler struct {
 	compute computedriver.Compute
+	// net is the networking driver used to validate that a VM's networkProfile
+	// references an existing NIC. It is optional: a nil net (or one that does
+	// not implement AzureNetworkInterfaces) skips the existence check.
+	net netdriver.Networking
 }
 
-// New returns a virtualMachines handler backed by c.
-func New(c computedriver.Compute) *Handler {
-	return &Handler{compute: c}
+// New returns a virtualMachines handler backed by c. net is the networking
+// driver used to validate networkProfile NIC references; pass nil to disable
+// the check (e.g. when no networking driver is wired).
+func New(c computedriver.Compute, net netdriver.Networking) *Handler {
+	return &Handler{compute: c, net: net}
 }
 
 // Matches returns true for ARM URLs targeting Microsoft.Compute/virtualMachines
@@ -171,6 +178,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 		return
 	}
 
+	h.servePostAction(w, r, rp)
+}
+
+// servePostAction dispatches the POST sub-resource actions on a named VM.
+//
+//nolint:gocritic // rp travels through the dispatch chain once per request
+func (h *Handler) servePostAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	switch strings.ToLower(rp.SubResource) {
 	case "start":
 		h.start(w, r, rp)
@@ -180,6 +194,10 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 		h.deallocate(w, r, rp)
 	case "restart":
 		h.restart(w, r, rp)
+	case "generalize":
+		h.generalize(w, r, rp)
+	case "capture":
+		h.capture(w, r, rp)
 	case "retrievebootdiagnosticsdata":
 		h.retrieveBootDiagnosticsData(w, r, rp)
 	default:

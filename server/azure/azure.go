@@ -379,7 +379,7 @@ func New(d Drivers) http.Handler {
 	}
 
 	if d.VirtualMachines != nil {
-		srv.Register(virtualmachines.New(d.VirtualMachines))
+		srv.Register(virtualmachines.New(d.VirtualMachines, d.Network))
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
