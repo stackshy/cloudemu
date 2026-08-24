@@ -275,6 +275,10 @@ func positionFor(shard *shardState, in *driver.GetShardIteratorInput) (int, erro
 	case driver.IteratorLatest:
 		return len(shard.records), nil
 	case driver.IteratorAtTimestamp:
+		if in.Timestamp.IsZero() {
+			return 0, invalidArg("AT_TIMESTAMP shard iterator type requires a Timestamp value")
+		}
+
 		return indexByTimestamp(shard.records, in.Timestamp), nil
 	case driver.IteratorAtSequenceNumber:
 		return indexBySeq(shard.records, in.StartingSequenceNumber, false)

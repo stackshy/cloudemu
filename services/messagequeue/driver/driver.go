@@ -24,6 +24,10 @@ type QueueConfig struct {
 	ReceiveMessageWaitTimeSeconds int
 	ContentBasedDeduplication     bool
 	RedrivePolicy                 string // raw JSON, echoed by GetQueueAttributes
+	// RedriveAllowPolicy is the raw JSON DLQ redrive-permission document
+	// (redrivePermission=allowAll|denyAll|byQueue + sourceQueueArns). It is
+	// persisted and echoed by GetQueueAttributes.
+	RedriveAllowPolicy string
 	// VisibilityTimeoutSet reports that VisibilityTimeout was supplied explicitly,
 	// so the AWS provider can distinguish an explicit 0 (kept as 0) from an
 	// omitted value (defaulted to 30). The wire handler sets it from attribute
@@ -64,6 +68,9 @@ type SendMessageInput struct {
 	Attributes      map[string]string
 	// MessageAttributes are typed user attributes (AWS SQS). Non-AWS providers ignore them.
 	MessageAttributes map[string]MessageAttributeValue
+	// SystemAttributes are SQS message system attributes (AWS SQS; the only
+	// supported key is AWSTraceHeader). Non-AWS providers ignore them.
+	SystemAttributes map[string]MessageAttributeValue
 }
 
 // SendMessageOutput is the result of sending a message.
@@ -158,6 +165,7 @@ type QueueAttributes struct {
 	FifoQueue                  bool
 	ContentBasedDeduplication  bool
 	RedrivePolicy              string // JSON string pointing to DLQ
+	RedriveAllowPolicy         string // JSON DLQ redrive-permission document
 
 	ReceiveMessageWaitTimeSeconds int
 	ApproximateDelayedCount       int

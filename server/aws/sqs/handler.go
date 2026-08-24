@@ -122,6 +122,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 		ReceiveMessageWaitTimeSeconds: atoiAttr(req.Attributes, "ReceiveMessageWaitTimeSeconds"),
 		ContentBasedDeduplication:     req.Attributes["ContentBasedDeduplication"] == attrTrue,
 		RedrivePolicy:                 req.Attributes["RedrivePolicy"],
+		RedriveAllowPolicy:            req.Attributes["RedriveAllowPolicy"],
 	}
 
 	info, err := h.mq.CreateQueue(r.Context(), cfg)
@@ -245,6 +246,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		GroupID           string                          `json:"MessageGroupId"`
 		DeduplicationID   string                          `json:"MessageDeduplicationId"`
 		MessageAttributes map[string]wireMessageAttribute `json:"MessageAttributes"`
+		SystemAttributes  map[string]wireMessageAttribute `json:"MessageSystemAttributes"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -252,6 +254,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msgAttrs := toDriverMessageAttributes(req.MessageAttributes)
+	sysAttrs := toDriverMessageAttributes(req.SystemAttributes)
 
 	out, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
 		QueueURL:          req.QueueURL,
@@ -260,6 +263,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		GroupID:           req.GroupID,
 		DeduplicationID:   req.DeduplicationID,
 		MessageAttributes: msgAttrs,
+		SystemAttributes:  sysAttrs,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -272,6 +276,10 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if md5Attrs := md5OfMessageAttributes(msgAttrs); md5Attrs != "" {
 		resp["MD5OfMessageAttributes"] = md5Attrs
+	}
+
+	if md5Sys := md5OfMessageAttributes(sysAttrs); md5Sys != "" {
+		resp["MD5OfMessageSystemAttributes"] = md5Sys
 	}
 
 	if out.SequenceNumber != "" {
@@ -935,6 +943,10 @@ func (h *Handler) getQueueAttributes(w http.ResponseWriter, r *http.Request) {
 
 	if attrs.RedrivePolicy != "" {
 		all["RedrivePolicy"] = attrs.RedrivePolicy
+	}
+
+	if attrs.RedriveAllowPolicy != "" {
+		all["RedriveAllowPolicy"] = attrs.RedriveAllowPolicy
 	}
 
 	if attrs.Policy != "" {
