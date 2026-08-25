@@ -3,8 +3,10 @@ package functions
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 )
 
 // AppServicePlan is an Azure App Service plan (Microsoft.Web/serverfarms) — the
@@ -87,13 +89,44 @@ func (m *Mock) GetAppServicePlan(_ context.Context, subscription, resourceGroup,
 }
 
 // DeleteAppServicePlan removes one App Service plan scoped to the given
-// subscription and resource group, or NotFound.
+// subscription and resource group, or NotFound. A plan that still has a Web App
+// assigned to it (any site whose ServerFarmID targets the plan's ARM id) cannot
+// be deleted — real Azure answers 409 Conflict ("Server farm ... cannot be
+// deleted because it has web app(s) assigned to it"), so the delete is rejected
+// with FailedPrecondition (mapped to 409 by the wire layer) rather than
+// silently leaving every site pointing at a plan that no longer exists.
 func (m *Mock) DeleteAppServicePlan(_ context.Context, subscription, resourceGroup, name string) error {
-	if !m.plans.Delete(planKey(subscription, resourceGroup, name)) {
+	if _, ok := m.plans.Get(planKey(subscription, resourceGroup, name)); !ok {
 		return cerrors.Newf(cerrors.NotFound, "app service plan %s not found", name)
 	}
 
+	if site := m.planAssignedSite(subscription, resourceGroup, name); site != "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Server farm %q cannot be deleted because it has web app(s) assigned to it (site %q)", name, site)
+	}
+
+	m.plans.Delete(planKey(subscription, resourceGroup, name))
+
 	return nil
+}
+
+// planAssignedSite returns the name of a site still assigned to the named plan
+// (its ServerFarmID equal to the plan's ARM id), or "" when none reference it.
+// A site's plan may live in a different resource group than the site, so every
+// site in the subscription is a candidate — the join mirrors listPlanWebApps.
+func (m *Mock) planAssignedSite(subscription, resourceGroup, name string) string {
+	planID := idgen.AzureID(subscription, resourceGroup, "Microsoft.Web", "serverfarms", name)
+
+	m.sitesMu.RLock()
+	defer m.sitesMu.RUnlock()
+
+	for _, meta := range m.sites.SortedValues() {
+		if strings.EqualFold(meta.ServerFarmID, planID) {
+			return meta.Name
+		}
+	}
+
+	return ""
 }
 
 // ListAppServicePlans returns the App Service plans in the given resource
