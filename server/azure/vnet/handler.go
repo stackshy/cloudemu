@@ -512,19 +512,110 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 	writeAcceptedAsync(w, r, rp.Subscription, "vnet-delete-"+rp.ResourceName, nil)
 }
 
-// PurgeResourceGroup deletes every virtual network (with its subnets) and
-// network security group this handler owns in the given resource group. It
-// backs the resource-group cascade delete: when an RG is removed, the resources
+// PurgeResourceGroup deletes every Microsoft.Network resource this handler owns
+// in the given resource group: network interfaces, NAT gateways, public IPs,
+// virtual networks (with their subnets) and network security groups. It backs
+// the resource-group cascade delete: when an RG is removed, the resources
 // created under it must go too rather than lingering as globally addressable
 // orphans. Deletion is forceful (the in-use guards that gate an individual
 // DELETE do not apply — the whole group is going away), and best-effort: a
 // single driver-level failure is returned but does not stop the remaining
 // teardown. The subscription is unused (the emulator is single-estate).
+//
+// Order matters for the reference chains the emulator models: NICs come first
+// (the owning VMs are purged by the compute purger before this one runs, so a
+// NIC's virtualMachine back-reference is already cleared and its DELETE
+// succeeds); NAT gateways next (deleting one frees the Elastic IP association it
+// holds); then public IPs (now unassociated, so ReleaseAddress succeeds); and
+// finally the virtual networks and NSGs.
 func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
-	firstErr := h.purgeVNets(ctx, resourceGroup)
+	var firstErr error
 
-	if err := h.purgeNSGs(ctx, resourceGroup); err != nil && firstErr == nil {
-		firstErr = err
+	recordErr := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	recordErr(h.purgeNICs(ctx, resourceGroup))
+	recordErr(h.purgeNATGateways(ctx, resourceGroup))
+	recordErr(h.purgePublicIPs(ctx, resourceGroup))
+	recordErr(h.purgeVNets(ctx, resourceGroup))
+	recordErr(h.purgeNSGs(ctx, resourceGroup))
+
+	return firstErr
+}
+
+// purgeNICs deletes every network interface in the resource group. NICs are
+// stored resource-group-natively (not tag-scoped), so the driver list already
+// filters to the group. The owning VMs are torn down by the compute purger
+// first, so each NIC's virtualMachine back-reference is cleared and the delete
+// is not blocked by the attached-NIC guard.
+func (h *Handler) purgeNICs(ctx context.Context, resourceGroup string) error {
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return nil
+	}
+
+	nics, err := svc.ListNetworkInterfaces(ctx, resourceGroup)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range nics {
+		if derr := svc.DeleteNetworkInterface(ctx, nics[i].ResourceGroup, nics[i].Name); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+	}
+
+	return firstErr
+}
+
+// purgeNATGateways deletes every NAT gateway tagged for the resource group,
+// freeing any Elastic IP allocation each one held so the public IPs can then be
+// released.
+func (h *Handler) purgeNATGateways(ctx context.Context, resourceGroup string) error {
+	nats, err := h.net.DescribeNATGateways(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range nats {
+		if !strings.EqualFold(tagOr(nats[i].Tags, armNATGatewayRGTag, ""), resourceGroup) {
+			continue
+		}
+
+		if derr := h.net.DeleteNATGateway(ctx, nats[i].ID); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+	}
+
+	return firstErr
+}
+
+// purgePublicIPs releases every public IP tagged for the resource group. NAT
+// gateways are purged first, so a public IP that backed one is no longer
+// associated and ReleaseAddress succeeds.
+func (h *Handler) purgePublicIPs(ctx context.Context, resourceGroup string) error {
+	eips, err := h.net.DescribeAddresses(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range eips {
+		if !strings.EqualFold(tagOr(eips[i].Tags, armPublicIPRGTag, ""), resourceGroup) {
+			continue
+		}
+
+		if derr := h.net.ReleaseAddress(ctx, eips[i].AllocationID); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
 	}
 
 	return firstErr

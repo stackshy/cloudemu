@@ -97,6 +97,41 @@ func (h *Handler) deleteLoadBalancer(w http.ResponseWriter, r *http.Request, rp 
 	w.WriteHeader(http.StatusOK)
 }
 
+// PurgeResourceGroup deletes every load balancer stored under the given resource
+// group, backing the resource-group cascade delete: an RG is a pure container,
+// so removing it must remove the load balancers created under it rather than
+// leaving them as globally addressable orphans. Load balancers are stored
+// resource-group-natively (keyed by resourceGroup+name), so ListAzureLoadBalancers
+// already scopes to the group. Each delete also drops the minimal cross-cloud
+// discovery record, mirroring deleteLoadBalancer. Best-effort: a single failure
+// is returned but does not stop the remaining teardown. The subscription is
+// unused (the emulator is single-estate).
+func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	az, ok := h.azureLB()
+	if !ok {
+		return nil
+	}
+
+	lbs, err := az.ListAzureLoadBalancers(ctx, resourceGroup)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range lbs {
+		if derr := az.DeleteAzureLoadBalancer(ctx, lbs[i].ResourceGroup, lbs[i].Name); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+
+		if generic, ferr := h.findGenericLB(ctx, lbs[i].Name); ferr == nil {
+			_ = h.lb.DeleteLoadBalancer(ctx, generic.ARN)
+		}
+	}
+
+	return firstErr
+}
+
 func (h *Handler) listLoadBalancers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	az, ok := h.azureLB()
 	if !ok {
