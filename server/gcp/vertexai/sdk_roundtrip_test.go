@@ -95,18 +95,89 @@ func TestEndpointDeployPredict(t *testing.T) {
 	epName := op["response"].(map[string]any)["name"].(string)
 	require.NotEmpty(t, epName)
 
-	do(t, http.MethodPost, url+"/v1/"+epName+":deployModel", map[string]any{
-		"deployedModel": map[string]any{"model": base + "/models/m", "displayName": "v1"},
+	// A model must be uploaded before it can be deployed.
+	mop := do(t, http.MethodPost, url+base+"/models:upload", map[string]any{
+		"model": map[string]any{"displayName": "m", "containerSpec": map[string]any{"imageUri": "img:latest"}},
 	})
+	modelName := mop["response"].(map[string]any)["name"].(string)
+	require.NotEmpty(t, modelName)
+
+	dep := do(t, http.MethodPost, url+"/v1/"+epName+":deployModel", map[string]any{
+		"deployedModel": map[string]any{
+			"model": modelName, "displayName": "v1",
+			"dedicatedResources": map[string]any{
+				"machineSpec":     map[string]any{"machineType": "n1-standard-4"},
+				"minReplicaCount": 2, "maxReplicaCount": 5,
+			},
+		},
+	})
+	// The deployModel response echoes the deployed model with its dedicatedResources.
+	deployed := dep["response"].(map[string]any)["deployedModel"].(map[string]any)
+	assert.NotEmpty(t, deployed["createTime"])
+	dr := deployed["dedicatedResources"].(map[string]any)
+	assert.EqualValues(t, 2, dr["minReplicaCount"])
+	assert.Equal(t, "n1-standard-4", dr["machineSpec"].(map[string]any)["machineType"])
 
 	got := do(t, http.MethodGet, url+"/v1/"+epName, nil)
-	assert.Len(t, got["deployedModels"], 1)
+	require.Len(t, got["deployedModels"], 1)
+	// Get must round-trip dedicatedResources / createTime.
+	gotDM := got["deployedModels"].([]any)[0].(map[string]any)
+	assert.NotEmpty(t, gotDM["createTime"])
+	assert.EqualValues(t, 5, gotDM["dedicatedResources"].(map[string]any)["maxReplicaCount"])
 
 	pred := do(t, http.MethodPost, url+"/v1/"+epName+":predict", map[string]any{
 		"instances": []any{map[string]any{"x": 1}},
 	})
 	assert.Len(t, pred["predictions"], 1)
 	assert.NotEmpty(t, pred["deployedModelId"])
+}
+
+// doErr issues a request expecting a non-2xx status and returns the HTTP code.
+func doErr(t *testing.T, method, url string, body any) int {
+	t.Helper()
+
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	_, _ = io.ReadAll(resp.Body)
+
+	return resp.StatusCode
+}
+
+// TestPredictNoDeployedModels: :predict on an endpoint with no deployed models
+// is a 400 FAILED_PRECONDITION, not a 200 echo.
+func TestPredictNoDeployedModels(t *testing.T) {
+	url := newServer(t)
+
+	op := do(t, http.MethodPost, url+base+"/endpoints", map[string]any{"displayName": "ep"})
+	epName := op["response"].(map[string]any)["name"].(string)
+
+	code := doErr(t, http.MethodPost, url+"/v1/"+epName+":predict", map[string]any{
+		"instances": []any{map[string]any{"x": 1}},
+	})
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+// TestDeployUnknownModel: deploying a model resource that was never uploaded is
+// a 404 NOT_FOUND.
+func TestDeployUnknownModel(t *testing.T) {
+	url := newServer(t)
+
+	op := do(t, http.MethodPost, url+base+"/endpoints", map[string]any{"displayName": "ep"})
+	epName := op["response"].(map[string]any)["name"].(string)
+
+	code := doErr(t, http.MethodPost, url+"/v1/"+epName+":deployModel", map[string]any{
+		"deployedModel": map[string]any{"model": base + "/models/9999999", "displayName": "v1"},
+	})
+	assert.Equal(t, http.StatusNotFound, code)
 }
 
 func TestPublishersGenerateContent(t *testing.T) {

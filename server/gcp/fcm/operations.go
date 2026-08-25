@@ -50,20 +50,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request, rt route) 
 		return
 	}
 
-	// FCM requires exactly one target — token, topic, or condition. Reject a
-	// message that sets more than one (real FCM returns INVALID_ARGUMENT).
-	targets := 0
-
-	for _, t := range []string{body.Message.Token, body.Message.Topic, body.Message.Condition} {
-		if t != "" {
-			targets++
-		}
-	}
-
-	if targets > 1 {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
-			"exactly one of token, topic, condition may be set")
-
+	if !validTarget(w, body.Message) {
 		return
 	}
 
@@ -114,6 +101,35 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request, rt route) 
 	gcprest.WriteJSON(w, http.StatusOK, messageResponse{
 		Name: "projects/" + rt.project + "/messages/" + out.MessageID,
 	})
+}
+
+// validTarget enforces FCM's "exactly one of token, topic, condition" rule.
+// On violation it writes a 400 INVALID_ARGUMENT and returns false; real FCM
+// rejects a message that names none or more than one target.
+func validTarget(w http.ResponseWriter, m *fcmMessage) bool {
+	targets := 0
+
+	for _, t := range []string{m.Token, m.Topic, m.Condition} {
+		if t != "" {
+			targets++
+		}
+	}
+
+	if targets == 0 {
+		gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"exactly one of token, topic, condition is required")
+
+		return false
+	}
+
+	if targets > 1 {
+		gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"exactly one of token, topic, condition may be set")
+
+		return false
+	}
+
+	return true
 }
 
 // ensureTopic creates the target topic if it does not already exist. Errors

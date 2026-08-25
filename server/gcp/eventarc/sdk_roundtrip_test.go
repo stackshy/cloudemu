@@ -190,3 +190,142 @@ func TestSDKEventarcErrors(t *testing.T) {
 		t.Fatalf("duplicate Create: got %v, want 409", err)
 	}
 }
+
+// TestSDKEventarcMissingDestination: a trigger with no destination is a 400
+// INVALID_ARGUMENT, not a silently-stored dead route.
+func TestSDKEventarcMissingDestination(t *testing.T) {
+	svc := newEventarcService(t)
+	ctx := context.Background()
+
+	trigger := &eventarc.Trigger{
+		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "google.cloud.storage.object.v1.finalized"}},
+	}
+
+	_, err := svc.Projects.Locations.Triggers.Create(parent(), trigger).
+		TriggerId("no-dest").Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("Create(no destination): got %v, want 400", err)
+	}
+}
+
+// TestSDKEventarcServerFields: create assigns a uid, etag, and an
+// auto-provisioned Pub/Sub transport topic that round-trip on Get.
+func TestSDKEventarcServerFields(t *testing.T) {
+	svc := newEventarcService(t)
+	ctx := context.Background()
+
+	trigger := &eventarc.Trigger{
+		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "google.cloud.storage.object.v1.finalized"}},
+		Destination:  &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "svc", Region: testLocation}},
+	}
+
+	if _, err := svc.Projects.Locations.Triggers.Create(parent(), trigger).
+		TriggerId("fields").Context(ctx).Do(); err != nil {
+		t.Fatalf("Triggers.Create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Triggers.Get(parent() + "/triggers/fields").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Triggers.Get: %v", err)
+	}
+
+	if got.Uid == "" {
+		t.Error("uid empty, want a server-assigned uid")
+	}
+
+	if got.Etag == "" {
+		t.Error("etag empty, want a server-assigned etag")
+	}
+
+	if got.Transport == nil || got.Transport.Pubsub == nil || got.Transport.Pubsub.Topic == "" {
+		t.Fatalf("transport = %+v, want an auto-provisioned pubsub topic", got.Transport)
+	}
+}
+
+// TestSDKEventarcPatch: updateTrigger changes the destination (and etag) via the
+// updateMask, previously a 404.
+func TestSDKEventarcPatch(t *testing.T) {
+	svc := newEventarcService(t)
+	ctx := context.Background()
+
+	trigger := &eventarc.Trigger{
+		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "google.cloud.storage.object.v1.finalized"}},
+		Destination:  &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "old", Region: testLocation}},
+	}
+
+	if _, err := svc.Projects.Locations.Triggers.Create(parent(), trigger).
+		TriggerId("patch-me").Context(ctx).Do(); err != nil {
+		t.Fatalf("Triggers.Create: %v", err)
+	}
+
+	name := parent() + "/triggers/patch-me"
+
+	before, err := svc.Projects.Locations.Triggers.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Triggers.Get (before): %v", err)
+	}
+
+	upd := &eventarc.Trigger{
+		Destination: &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "new", Region: testLocation}},
+	}
+
+	op, err := svc.Projects.Locations.Triggers.Patch(name, upd).
+		UpdateMask("destination").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Triggers.Patch: %v", err)
+	}
+
+	if !op.Done {
+		t.Fatalf("Patch operation not done: %+v", op)
+	}
+
+	after, err := svc.Projects.Locations.Triggers.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Triggers.Get (after): %v", err)
+	}
+
+	if after.Destination == nil || after.Destination.CloudRun == nil || after.Destination.CloudRun.Service != "new" {
+		t.Fatalf("destination = %+v, want cloudRun service new", after.Destination)
+	}
+
+	if after.Etag == before.Etag {
+		t.Errorf("etag unchanged after patch: %q", after.Etag)
+	}
+}
+
+// TestSDKEventarcListPagination: pageSize splits the results and a pageToken
+// walks to the next page.
+func TestSDKEventarcListPagination(t *testing.T) {
+	svc := newEventarcService(t)
+	ctx := context.Background()
+
+	for _, id := range []string{"a", "b", "c"} {
+		tr := &eventarc.Trigger{
+			Destination: &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "s", Region: testLocation}},
+		}
+		if _, err := svc.Projects.Locations.Triggers.Create(parent(), tr).TriggerId(id).Context(ctx).Do(); err != nil {
+			t.Fatalf("Create(%s): %v", id, err)
+		}
+	}
+
+	first, err := svc.Projects.Locations.Triggers.List(parent()).PageSize(2).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("List(page 1): %v", err)
+	}
+
+	if len(first.Triggers) != 2 || first.NextPageToken == "" {
+		t.Fatalf("page 1 = %d triggers, token=%q; want 2 + a continuation token", len(first.Triggers), first.NextPageToken)
+	}
+
+	second, err := svc.Projects.Locations.Triggers.List(parent()).
+		PageSize(2).PageToken(first.NextPageToken).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("List(page 2): %v", err)
+	}
+
+	if len(second.Triggers) != 1 {
+		t.Fatalf("page 2 = %d triggers, want 1", len(second.Triggers))
+	}
+}

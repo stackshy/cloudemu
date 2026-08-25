@@ -45,7 +45,10 @@ func TestEndpointDeployAndPredict(t *testing.T) {
 	_, ep, err := m.CreateEndpoint(ctx, driver.EndpointConfig{Location: "us-central1", DisplayName: "ep"})
 	require.NoError(t, err)
 
-	_, _, err = m.DeployModel(ctx, ep.Name, driver.DeployedModel{Model: "projects/proj/locations/us-central1/models/m", DisplayName: "v1"})
+	_, model, err := m.UploadModel(ctx, driver.ModelConfig{Location: "us-central1", DisplayName: "m"})
+	require.NoError(t, err)
+
+	_, _, err = m.DeployModel(ctx, ep.Name, driver.DeployedModel{Model: model.Name, DisplayName: "v1"})
 	require.NoError(t, err)
 
 	got, err := m.GetEndpoint(ctx, ep.Name)
@@ -212,10 +215,15 @@ func TestDeployModelKeepsTrafficForAllModels(t *testing.T) {
 	_, ep, err := m.CreateEndpoint(ctx, driver.EndpointConfig{Location: "us-central1", DisplayName: "ep"})
 	require.NoError(t, err)
 
-	_, _, err = m.DeployModel(ctx, ep.Name, driver.DeployedModel{ID: "A", Model: "m/A"})
+	_, modelA, err := m.UploadModel(ctx, driver.ModelConfig{Location: "us-central1", DisplayName: "A"})
+	require.NoError(t, err)
+	_, modelB, err := m.UploadModel(ctx, driver.ModelConfig{Location: "us-central1", DisplayName: "B"})
 	require.NoError(t, err)
 
-	_, after, err := m.DeployModel(ctx, ep.Name, driver.DeployedModel{ID: "B", Model: "m/B"})
+	_, _, err = m.DeployModel(ctx, ep.Name, driver.DeployedModel{ID: "A", Model: modelA.Name})
+	require.NoError(t, err)
+
+	_, after, err := m.DeployModel(ctx, ep.Name, driver.DeployedModel{ID: "B", Model: modelB.Name})
 	require.NoError(t, err)
 
 	require.Len(t, after.DeployedModels, 2)

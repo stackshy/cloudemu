@@ -210,7 +210,7 @@ func (h *Handler) serveCustomMethod(w http.ResponseWriter, r *http.Request, scop
 
 // ----- searchAllResources -----
 
-func (h *Handler) searchAllResources(w http.ResponseWriter, r *http.Request, _ string) {
+func (h *Handler) searchAllResources(w http.ResponseWriter, r *http.Request, scope string) {
 	// Real Cloud Asset takes filter as a query param OR body field. Support
 	// both; body wins if both supplied.
 	body := readJSONBody(r)
@@ -235,15 +235,7 @@ func (h *Handler) searchAllResources(w http.ResponseWriter, r *http.Request, _ s
 		return
 	}
 
-	out := make([]map[string]any, 0, len(results))
-	for i := range results {
-		res := resourceToSearchResult(&results[i], h.projectID)
-		if !matchesAssetTypes(res["assetType"], assetTypes) {
-			continue
-		}
-
-		out = append(out, res)
-	}
+	out := h.formatSearchResults(results, scope, assetTypes)
 
 	// Offset-based pagination: pageToken carries the next start index.
 	start := decodePageToken(strParam(r, body, "pageToken"))
@@ -333,7 +325,9 @@ func (h *Handler) exportAssets(w http.ResponseWriter, r *http.Request, scope str
 		}
 	}
 
-	op := h.buildAndCacheExportOperation(scope, results)
+	outputConfig, _ := body["outputConfig"].(map[string]any)
+
+	op := h.buildAndCacheExportOperation(scope, results, outputConfig)
 	writeJSON(w, http.StatusOK, op)
 }
 
@@ -341,13 +335,15 @@ func (h *Handler) exportAssets(w http.ResponseWriter, r *http.Request, scope str
 // its name so a subsequent Operations.Get can find it. The operation is
 // scope-prefixed (projects/X/operations/cloudemu-export-...) so the path
 // matcher in ServeHTTP routes the poll back to this handler.
-func (h *Handler) buildAndCacheExportOperation(scope string, results []resourcediscovery.Resource) map[string]any {
+func (h *Handler) buildAndCacheExportOperation(
+	scope string, results []resourcediscovery.Resource, outputConfig map[string]any,
+) map[string]any {
 	if scope == "" {
 		scope = "projects/" + h.projectID
 	}
 
 	name := scope + "/operations/" + operationNamePrefix + strconv.FormatInt(time.Now().UnixNano(), 10)
-	op := completedExportOperation(name, results)
+	op := completedExportOperation(name, results, outputConfig)
 
 	h.mu.Lock()
 	h.operations[name] = op
@@ -362,10 +358,29 @@ func (h *Handler) buildAndCacheExportOperation(scope string, results []resourced
 // asset list inline so most callers (which call .Do() and check Done)
 // work without polling, AND caches the response under name so callers
 // that DO poll via Operations.Get find a matching entry.
-func completedExportOperation(name string, results []resourcediscovery.Resource) map[string]any {
+func completedExportOperation(
+	name string, results []resourcediscovery.Resource, outputConfig map[string]any,
+) map[string]any {
 	assets := make([]map[string]any, 0, len(results))
 	for i := range results {
 		assets = append(assets, resourceToAsset(&results[i]))
+	}
+
+	response := map[string]any{
+		"@type":    "type.googleapis.com/google.cloud.asset.v1.ExportAssetsResponse",
+		"readTime": time.Now().UTC().Format(time.RFC3339Nano),
+		"assets":   assets,
+	}
+
+	// Reflect the caller's requested destination instead of a fixed
+	// placeholder: real Cloud Asset echoes the outputConfig and reports the
+	// written location in outputResult.
+	if outputConfig != nil {
+		response["outputConfig"] = outputConfig
+
+		if res := exportOutputResult(outputConfig); res != nil {
+			response["outputResult"] = res
+		}
 	}
 
 	return map[string]any{
@@ -374,13 +389,34 @@ func completedExportOperation(name string, results []resourcediscovery.Resource)
 		"metadata": map[string]any{
 			"@type": "type.googleapis.com/google.cloud.asset.v1.ExportAssetsRequest",
 		},
-		"response": map[string]any{
-			"@type":           "type.googleapis.com/google.cloud.asset.v1.ExportAssetsResponse",
-			"readTime":        time.Now().UTC().Format(time.RFC3339Nano),
-			"assets":          assets,
-			"outputUriPrefix": "cloudemu://in-memory",
-		},
+		"response": response,
 	}
+}
+
+// exportOutputResult derives the ExportAssetsResponse.outputResult from the
+// requested outputConfig: a GCS destination reports the written object uri(s),
+// a BigQuery destination reports the target dataset.
+func exportOutputResult(outputConfig map[string]any) map[string]any {
+	if gcs, ok := outputConfig["gcsDestination"].(map[string]any); ok {
+		uri := strOrEmpty(gcs["uri"])
+		if uri == "" {
+			// A uriPrefix destination lands one object per asset type; report
+			// the prefix as the written location.
+			uri = strOrEmpty(gcs["uriPrefix"])
+		}
+
+		if uri != "" {
+			return map[string]any{"gcsResult": map[string]any{"uriList": []string{uri}}}
+		}
+	}
+
+	if bq, ok := outputConfig["bigqueryDestination"].(map[string]any); ok {
+		if dataset := strOrEmpty(bq["dataset"]); dataset != "" {
+			return map[string]any{"bigqueryResult": map[string]any{"dataset": dataset}}
+		}
+	}
+
+	return nil
 }
 
 // getOperation serves Operations.Get for export operations cached by an
@@ -733,13 +769,77 @@ func nowRFC() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
+// scopeProject extracts the project id from a "projects/{p}" scope. It returns
+// "" for folder/organization scopes (or a malformed scope), signaling the
+// caller to fall back to the handler's default project.
+func scopeProject(scope string) string {
+	const prefix = "projects/"
+	if !strings.HasPrefix(scope, prefix) {
+		return ""
+	}
+
+	rest := strings.TrimPrefix(scope, prefix)
+	if rest == "" || strings.ContainsRune(rest, '/') {
+		return ""
+	}
+
+	return rest
+}
+
+// formatSearchResults rescopes each result to the queried scope's project and
+// filters by assetType. Real Cloud Asset reports asset names under the
+// requested scope, not a fixed default project.
+func (h *Handler) formatSearchResults(
+	results []resourcediscovery.Resource, scope string, assetTypes []string,
+) []map[string]any {
+	target := scopeProject(scope)
+	arnProject := h.arnProject()
+
+	displayProject := h.projectID
+	if target != "" {
+		displayProject = target
+	}
+
+	out := make([]map[string]any, 0, len(results))
+
+	for i := range results {
+		res := resourceToSearchResult(&results[i], arnProject, target, displayProject)
+		if matchesAssetTypes(res["assetType"], assetTypes) {
+			out = append(out, res)
+		}
+	}
+
+	return out
+}
+
+// arnProject is the project id embedded in the engine's GCP self-links
+// (idgen.GCPID uses the engine account id). It is the segment rescopeName must
+// rewrite; it falls back to the handler's configured project.
+func (h *Handler) arnProject() string {
+	if h.engine != nil {
+		if id := h.engine.AccountID(); id != "" {
+			return id
+		}
+	}
+
+	return h.projectID
+}
+
 // resourceToSearchResult formats one Resource for the searchAllResources
-// response. GCP uses a "name" of //service/path.
-func resourceToSearchResult(r *resourcediscovery.Resource, project string) map[string]any {
+// response. GCP uses a "name" of //service/path. When target is a non-empty
+// project distinct from the one embedded in the asset self-link (arnProject),
+// the asset name is rescoped to it so results reflect the queried scope;
+// displayProject is reported verbatim in the "project" field.
+func resourceToSearchResult(r *resourcediscovery.Resource, arnProject, target, displayProject string) map[string]any {
+	name := gcpResourceName(r)
+	if target != "" && target != arnProject {
+		name = strings.ReplaceAll(name, "projects/"+arnProject+"/", "projects/"+target+"/")
+	}
+
 	return map[string]any{
-		"name":        gcpResourceName(r),
+		"name":        name,
 		"assetType":   portableToGCPAssetType(r.Service, r.Type),
-		"project":     "projects/" + project,
+		"project":     "projects/" + displayProject,
 		"location":    r.Region,
 		"displayName": r.ID,
 		"labels":      labelsOrEmpty(r.Tags),
