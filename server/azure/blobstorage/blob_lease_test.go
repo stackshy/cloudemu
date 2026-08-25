@@ -114,6 +114,55 @@ func TestSDKLeaseGatesWrites(t *testing.T) {
 	}
 }
 
+// TestSDKLeasedWritePreservesLease is the regression test for the lease-destroyed-
+// on-write blocker: an authorized write (with the correct lease id) used to
+// rebuild the blob object and drop its lease fields, leaving the blob unleased.
+// After the fix the lease survives the write — Renew still works and a
+// subsequent no-lease write is still rejected.
+func TestSDKLeasedWritePreservesLease(t *testing.T) {
+	e := newBlobEnv(t)
+	ctx := context.Background()
+
+	if _, err := e.svc.UploadBuffer(ctx, "c1", "k1", []byte("v1"), nil); err != nil {
+		t.Fatalf("UploadBuffer: %v", err)
+	}
+
+	bc := e.blob(t, "/c1/k1")
+
+	lc, err := lease.NewBlobClient(bc, nil)
+	if err != nil {
+		t.Fatalf("lease.NewBlobClient: %v", err)
+	}
+
+	if _, err := lc.AcquireLease(ctx, -1, nil); err != nil {
+		t.Fatalf("AcquireLease: %v", err)
+	}
+
+	// Authorized write with the correct lease id.
+	bb := e.blockBlob(t, "/c1/k1")
+	rightCond := &blockblob.UploadOptions{
+		AccessConditions: &blob.AccessConditions{LeaseAccessConditions: &blob.LeaseAccessConditions{LeaseID: lc.LeaseID()}},
+	}
+	if _, err := bb.Upload(ctx, streaming.NopCloser(bytes.NewReader([]byte("v2"))), rightCond); err != nil {
+		t.Fatalf("Upload with correct lease id: %v", err)
+	}
+
+	// The lease must still be present after the write: Renew succeeds.
+	if _, err := lc.RenewLease(ctx, nil); err != nil {
+		t.Fatalf("RenewLease after authorized write: %v (lease was destroyed by the write)", err)
+	}
+
+	// And the blob is still protected: a no-lease write is rejected.
+	_, err = e.svc.UploadBuffer(ctx, "c1", "k1", []byte("no-lease-overwrite"), nil)
+	if !bloberror.HasCode(err, bloberror.LeaseIDMissing) {
+		t.Fatalf("no-lease write after authorized write: err = %v, want LeaseIdMissing (blob left unleased)", err)
+	}
+
+	if got := e.download(t, "k1"); got != "v2" {
+		t.Errorf("blob content = %q, want v2 (rejected no-lease write must not overwrite)", got)
+	}
+}
+
 // TestSDKLeaseAcquireAlreadyPresentConflicts checks that acquiring a lease
 // against an already-leased blob with a different (or no) proposed id fails
 // with LeaseAlreadyPresent, per the Lease Blob acquire-outcome table.

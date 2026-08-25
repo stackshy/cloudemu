@@ -380,6 +380,7 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		obj.Data = dataCopy
 	}
 
+	m.carryOverLease(ctr, key, obj)
 	ctr.objects.Set(key, obj)
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
@@ -610,6 +611,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		dstObj.Data = dataCopy
 	}
 
+	m.carryOverLease(dstCtr, dstKey, dstObj)
 	dstCtr.objects.Set(dstKey, dstObj)
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})

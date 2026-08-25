@@ -96,6 +96,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Ms-Version", xmsVersion)
 
+	if enforceSAS(w, r, blob) {
+		return
+	}
+
 	switch {
 	case container == "" && q.Get("comp") == compList:
 		h.listContainers(w, r)
