@@ -6,7 +6,15 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
+
+// requestScope builds the subscription/resource-group filter a server must
+// live in to be visible under rp's path — a MySQL Flexible Server created
+// under one resource group must not resolve, list, or delete under another.
+func requestScope(rp *azurearm.ResourcePath) scope.Scope {
+	return scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+}
 
 // ---- Server lifecycle ----
 
@@ -44,6 +52,7 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 		Engine:   "MySQL",
 		Location: body.Location,
 		Tags:     body.Tags,
+		Scope:    requestScope(rp),
 	}
 
 	if body.SKU != nil {
@@ -130,6 +139,11 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
+// getServer handles GET on a single server — Servers.Get. The driver keys
+// servers by name alone, so the handler enforces the request's resource-group
+// scope: a server created in one subscription/resource group must not resolve
+// under a different one in the URL (real ARM answers 404, since the id would
+// contradict the request path).
 func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	insts, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
 	if err != nil {
@@ -137,7 +151,7 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 		return
 	}
 
-	if len(insts) == 0 {
+	if len(insts) == 0 || !insts[0].Scope.Matches(requestScope(rp)) {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "server "+rp.ResourceName+" not found")
 		return
 	}
@@ -145,8 +159,20 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(&insts[0], rp.Subscription, rp.ResourceGroup))
 }
 
+// deleteServer handles DELETE — Servers.Delete. When the backend implements
+// ScopedDelete (MySQL Flex always does), the scope check and the delete happen
+// atomically so a cross-tenant DELETE can never remove another resource
+// group's server; otherwise DeleteInstance runs unscoped.
 func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.db.DeleteInstance(r.Context(), rp.ResourceName); err != nil {
+	var err error
+
+	if sd, ok := h.db.(rdsdriver.ScopedDelete); ok {
+		err = sd.DeleteInstanceInScope(r.Context(), rp.ResourceName, requestScope(rp))
+	} else {
+		err = h.db.DeleteInstance(r.Context(), rp.ResourceName)
+	}
+
+	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -154,6 +180,10 @@ func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azure
 	w.WriteHeader(http.StatusOK)
 }
 
+// listServers handles GET on the collection — Servers.ListByResourceGroup /
+// ListBySubscription. The filter carries the path's subscription and, for
+// RG-level lists, its resource group; subscription-level lists leave the
+// resource group empty so the filter spans the subscription's groups.
 func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	insts, err := h.db.DescribeInstances(r.Context(), nil)
 	if err != nil {
@@ -161,8 +191,15 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 		return
 	}
 
+	filter := requestScope(rp)
+
 	out := make([]armServer, 0, len(insts))
+
 	for i := range insts {
+		if !insts[i].Scope.Matches(filter) {
+			continue
+		}
+
 		out = append(out, toARMServer(&insts[i], rp.Subscription, rp.ResourceGroup))
 	}
 
@@ -189,7 +226,39 @@ func (h *Handler) stopServer(w http.ResponseWriter, r *http.Request, rp *azurear
 	h.respondWithServer(w, r, rp)
 }
 
+// restartWithFailoverEnabled is the ServerRestartParameter.restartWithFailover
+// EnableStatusEnum value that routes a restart through failover to the
+// standby instead of a plain in-place restart.
+const restartWithFailoverEnabled = "Enabled"
+
+// restartServer handles POST .../restart — Servers.BeginRestart. The request
+// body is a ServerRestartParameter: restartWithFailover=="Enabled" routes the
+// restart through FailoverInstance (so it inherits the standby precondition)
+// instead of a plain in-place reboot; maxFailoverSeconds bounds the SDK
+// poller's wait and is accepted without further effect on the synchronous mock.
 func (h *Handler) restartServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body armServerRestartParameter
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if body.RestartWithFailover == restartWithFailoverEnabled {
+		fo, ok := h.failoverCap()
+		if !ok {
+			writeUnsupported(w, "restartWithFailover")
+			return
+		}
+
+		if err := fo.FailoverInstance(r.Context(), rp.ResourceName); err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		h.respondWithServer(w, r, rp)
+
+		return
+	}
+
 	if err := h.db.RebootInstance(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return

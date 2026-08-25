@@ -297,6 +297,14 @@ ReplicaPromotion is an OPTIONAL capability that promotes a read replica to a
 | --- | --- |
 | `PromoteReplica` |  |
 
+### ScopedDelete
+
+ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
+
+| Operation | Description |
+| --- | --- |
+| `DeleteInstanceInScope` |  |
+
 ### SslCerts
 
 SslCerts is an OPTIONAL capability for managing client SSL certificates,

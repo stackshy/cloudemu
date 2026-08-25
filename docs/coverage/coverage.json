@@ -8170,6 +8170,15 @@
         ]
       },
       {
+        "name": "ScopedDelete",
+        "doc": "ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets",
+        "operations": [
+          {
+            "name": "DeleteInstanceInScope"
+          }
+        ]
+      },
+      {
         "name": "SslCerts",
         "doc": "SslCerts is an OPTIONAL capability for managing client SSL certificates,",
         "operations": [
