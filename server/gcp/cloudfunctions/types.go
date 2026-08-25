@@ -3,20 +3,24 @@ package cloudfunctions
 // cloudFunction is the v1 GCP Cloud Functions resource shape returned by
 // Get / Create / Update.
 type cloudFunction struct {
-	Name             string            `json:"name"`
-	Description      string            `json:"description,omitempty"`
-	SourceArchiveURL string            `json:"sourceArchiveUrl,omitempty"`
-	SourceUploadURL  string            `json:"sourceUploadUrl,omitempty"`
-	HTTPSTrigger     *httpsTrigger     `json:"httpsTrigger,omitempty"`
-	Status           string            `json:"status"`
-	EntryPoint       string            `json:"entryPoint,omitempty"`
-	Runtime          string            `json:"runtime,omitempty"`
-	Timeout          string            `json:"timeout,omitempty"`
-	AvailableMemory  int               `json:"availableMemoryMb,omitempty"`
-	Labels           map[string]string `json:"labels,omitempty"`
-	EnvVariables     map[string]string `json:"environmentVariables,omitempty"`
-	UpdateTime       string            `json:"updateTime,omitempty"`
-	VersionID        string            `json:"versionId,omitempty"`
+	Name                string            `json:"name"`
+	Description         string            `json:"description,omitempty"`
+	SourceArchiveURL    string            `json:"sourceArchiveUrl,omitempty"`
+	SourceUploadURL     string            `json:"sourceUploadUrl,omitempty"`
+	HTTPSTrigger        *httpsTrigger     `json:"httpsTrigger,omitempty"`
+	Status              string            `json:"status"`
+	EntryPoint          string            `json:"entryPoint,omitempty"`
+	Runtime             string            `json:"runtime,omitempty"`
+	Timeout             string            `json:"timeout,omitempty"`
+	AvailableMemory     int               `json:"availableMemoryMb,omitempty"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	EnvVariables        map[string]string `json:"environmentVariables,omitempty"`
+	UpdateTime          string            `json:"updateTime,omitempty"`
+	VersionID           string            `json:"versionId,omitempty"`
+	ServiceAccountEmail string            `json:"serviceAccountEmail,omitempty"`
+	IngressSettings     string            `json:"ingressSettings,omitempty"`
+	DockerRegistry      string            `json:"dockerRegistry,omitempty"`
+	BuildID             string            `json:"buildId,omitempty"`
 }
 
 type httpsTrigger struct {
@@ -26,7 +30,20 @@ type httpsTrigger struct {
 // listFunctionsResponse is the {functions: [...]} envelope returned by
 // projects.locations.functions.list.
 type listFunctionsResponse struct {
-	Functions []cloudFunction `json:"functions"`
+	Functions     []cloudFunction `json:"functions"`
+	NextPageToken string          `json:"nextPageToken,omitempty"`
+}
+
+// testIamPermissionsRequest / testIamPermissionsResponse are the bodies of
+// functions/{name}:testIamPermissions. Real GCP returns the subset of the
+// requested permissions the caller holds; CloudEmu does not enforce IAM (any
+// credential is treated as an owner) so it echoes back the full requested set.
+type testIamPermissionsRequest struct {
+	Permissions []string `json:"permissions,omitempty"`
+}
+
+type testIamPermissionsResponse struct {
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // operation is the google.longrunning.Operation envelope used by mutating
