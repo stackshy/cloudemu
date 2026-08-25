@@ -20,6 +20,8 @@
 //	POST           .../topics/{t}/listKeys                  — Topics.ListSharedAccessKeys
 //	PUT/GET/DELETE .../topics/{t}/eventSubscriptions/{s}    — TopicEventSubscriptions CRUD
 //	GET            .../topics/{t}/eventSubscriptions        — TopicEventSubscriptions.List
+//	PUT/GET/DELETE .../domains/{d}/topics/{t}               — DomainTopics CRUD
+//	GET            .../domains/{d}/topics                   — DomainTopics.ListByDomain
 package eventgrid
 
 import (

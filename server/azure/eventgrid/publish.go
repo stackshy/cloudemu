@@ -91,6 +91,7 @@ func (h *PublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Detail:     string(events[i].Data),
 			Time:       parseEventTime(events[i].EventTime),
 			EventBus:   topic,
+			Subject:    events[i].Subject,
 		})
 	}
 

@@ -31,6 +31,12 @@ type domainRecord struct {
 	tags     map[string]string
 	key1     string
 	key2     string
+	// topics holds the DomainTopics sub-resources created under this domain.
+	// A domain topic carries no state of its own beyond existing (real Event
+	// Grid domain topics are typically auto-created on first publish and
+	// exist only to route to per-topic subscriptions), so presence in this
+	// set is all CRUD needs to track.
+	topics map[string]struct{}
 }
 
 type domainJSON struct {
@@ -115,6 +121,11 @@ func (h *Handler) serveDomains(w http.ResponseWriter, r *http.Request, rp *azure
 		h.listDomainKeys(w, r, rp)
 	case subActionRegenerateKey:
 		h.regenerateDomainKey(w, r, rp)
+	case typeTopics:
+		// domains/{domain}/topics[/{topicName}] — DomainTopics, a distinct
+		// sub-resource from the top-level Microsoft.EventGrid/topics
+		// collection sharing the same "topics" path segment.
+		h.serveDomainTopics(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported domain sub-resource")
 	}
@@ -151,11 +162,12 @@ func (h *Handler) createOrUpdateDomain(w http.ResponseWriter, r *http.Request, r
 	rec := h.domains[key]
 	if rec == nil {
 		rec = &domainRecord{
-			name: rp.ResourceName,
-			sub:  rp.Subscription,
-			rg:   rp.ResourceGroup,
-			key1: domainKey(rp.ResourceName, "key1", 0),
-			key2: domainKey(rp.ResourceName, "key2", 0),
+			name:   rp.ResourceName,
+			sub:    rp.Subscription,
+			rg:     rp.ResourceGroup,
+			key1:   domainKey(rp.ResourceName, "key1", 0),
+			key2:   domainKey(rp.ResourceName, "key2", 0),
+			topics: make(map[string]struct{}),
 		}
 		h.domains[key] = rec
 	}

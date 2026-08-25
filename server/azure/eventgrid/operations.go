@@ -19,10 +19,11 @@ func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	cfg := ebdriver.EventBusConfig{
-		Name:   rp.ResourceName,
-		Tags:   tagsFromPtr(body.Tags),
-		Scope:  scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
-		Region: body.Location,
+		Name:        rp.ResourceName,
+		Tags:        tagsFromPtr(body.Tags),
+		Scope:       scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+		Region:      body.Location,
+		InputSchema: inputSchemaFromBody(&body),
 	}
 
 	if _, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err == nil {
@@ -46,6 +47,19 @@ func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp
 	// 201 Created with a terminal provisioningState completes the SDK's LRO
 	// poller on the first response.
 	azurearm.WriteJSON(w, http.StatusCreated, toTopicJSON(rp, info))
+}
+
+// inputSchemaFromBody reads the caller's requested InputSchema off a Topics
+// CreateOrUpdate request body. CreateEventBus falls back to the real default
+// (EventGridSchema) when this is empty; UpdateEventBus never sets it, so an
+// update request's value is intentionally ignored — Event Grid does not allow
+// changing a topic's input schema after creation.
+func inputSchemaFromBody(body *topicJSON) string {
+	if body.Properties == nil {
+		return ""
+	}
+
+	return body.Properties.InputSchema
 }
 
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
