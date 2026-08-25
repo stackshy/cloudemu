@@ -12,10 +12,9 @@
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/start — start
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/stop  — stop
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/reset — reset
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/{verb} — setLabels/setMetadata/setTags/setMachineType/attachDisk/detachDisk
+//	GET    /compute/v1/projects/{p}/aggregated/instances             — aggregatedList (grouped by zone)
 //	GET    /compute/v1/projects/{p}/zones/{z}/operations/{name}      — get operation (always DONE)
-//
-// Less-used surfaces (aggregated list, snapshots, disks, images) are not yet
-// wired and return 501 Not Implemented.
 package compute
 
 import (
@@ -72,28 +71,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rp.ResourceType == resourceOperations {
-		serveOperations(w, r, rp)
+	if rp.Scope == gcprest.ScopeAggregated {
+		h.serveAggregated(w, r, rp)
 		return
 	}
 
-	if rp.ResourceType == resourceDisks {
-		h.serveDisksRoute(w, r, rp)
-		return
-	}
-
-	if rp.ResourceType == resourceSnapshots {
-		h.serveSnapshotsRoute(w, r, rp)
-		return
-	}
-
-	if rp.ResourceType == resourceImages {
-		h.serveImagesRoute(w, r, rp)
-		return
-	}
-
-	if rp.ResourceType == resourceMachineTyp {
-		serveMachineTypesRoute(w, r, rp)
+	if h.routeResource(w, r, rp) {
 		return
 	}
 
@@ -105,6 +88,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.serveInstanceCollection(w, r, rp)
 	}
+}
+
+// serveAggregated handles the /aggregated/{type} scope (currently only
+// instances, which gcloud uses when no zone is given).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if r.Method == http.MethodGet && rp.ResourceType == resourceInstances {
+		h.aggregatedListInstances(w, r, rp)
+		return
+	}
+
+	writeNotImplemented(w, r.Method+" "+r.URL.Path)
+}
+
+// routeResource dispatches the non-instance resource types (operations, disks,
+// snapshots, images, machineTypes), returning true when it handled the request.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) bool {
+	switch rp.ResourceType {
+	case resourceOperations:
+		serveOperations(w, r, rp)
+	case resourceDisks:
+		h.serveDisksRoute(w, r, rp)
+	case resourceSnapshots:
+		h.serveSnapshotsRoute(w, r, rp)
+	case resourceImages:
+		h.serveImagesRoute(w, r, rp)
+	case resourceMachineTyp:
+		serveMachineTypesRoute(w, r, rp)
+	default:
+		return false
+	}
+
+	return true
 }
 
 //nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
@@ -226,6 +245,14 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	h.dispatchInstanceVerb(w, r, rp)
+}
+
+// dispatchInstanceVerb routes the POST instance verbs (lifecycle + GCP-specific
+// mutations) to their handlers.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) dispatchInstanceVerb(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	switch strings.ToLower(rp.Action) {
 	case "start":
 		h.startInstance(w, r, rp)
@@ -233,6 +260,18 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, rp
 		h.stopInstance(w, r, rp)
 	case "reset":
 		h.resetInstance(w, r, rp)
+	case "setlabels":
+		h.setLabels(w, r, rp)
+	case "setmetadata":
+		h.setMetadata(w, r, rp)
+	case "settags":
+		h.setTags(w, r, rp)
+	case "setmachinetype":
+		h.setMachineType(w, r, rp)
+	case "attachdisk":
+		h.attachDisk(w, r, rp)
+	case "detachdisk":
+		h.detachDisk(w, r, rp)
 	default:
 		writeNotImplemented(w, "action: "+rp.Action)
 	}
