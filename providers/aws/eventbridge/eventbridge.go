@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/eventmatch"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -48,12 +49,36 @@ type SQSDeliverer interface {
 	DeliverExternal(ctx context.Context, queueARN, body string) error
 }
 
+// LambdaInvoker asynchronously invokes a Lambda function target by ARN with the
+// event envelope. The Lambda mock satisfies this, enabling EventBridge -> Lambda
+// (ASYNC) delivery.
+type LambdaInvoker interface {
+	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+}
+
+// SNSPublisher publishes the event envelope to an SNS topic target by ARN. The
+// SNS mock satisfies this, enabling EventBridge -> SNS delivery.
+type SNSPublisher interface {
+	PublishExternal(ctx context.Context, topicARN, message string) error
+}
+
+// StepFunctionsStarter starts a Step Functions state-machine execution for a
+// state-machine target by ARN, passing the event envelope as the execution
+// input. The Step Functions mock satisfies this, enabling EventBridge -> Step
+// Functions (ASYNC) delivery.
+type StepFunctionsStarter interface {
+	StartExternal(ctx context.Context, stateMachineARN, input string) error
+}
+
 // Mock is an in-memory mock implementation of AWS EventBridge.
 type Mock struct {
 	buses      *memstore.Store[*busData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	sqs        SQSDeliverer
+	lambda     LambdaInvoker
+	sns        SNSPublisher
+	sfn        StepFunctionsStarter
 	tagsByARN  tagStore
 }
 
@@ -65,6 +90,22 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 // SetSQSDeliverer wires the SQS backend so PutEvents delivers to SQS targets.
 func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
 	m.sqs = d
+}
+
+// SetLambdaInvoker wires the Lambda backend so PutEvents invokes Lambda targets.
+func (m *Mock) SetLambdaInvoker(i LambdaInvoker) {
+	m.lambda = i
+}
+
+// SetSNSPublisher wires the SNS backend so PutEvents publishes to SNS targets.
+func (m *Mock) SetSNSPublisher(p SNSPublisher) {
+	m.sns = p
+}
+
+// SetStepFunctionsStarter wires the Step Functions backend so PutEvents starts
+// state-machine targets.
+func (m *Mock) SetStepFunctionsStarter(s StepFunctionsStarter) {
+	m.sfn = s
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
@@ -464,15 +505,19 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 	return result, nil
 }
 
-// deliverToTargets delivers an event to the SQS targets of matched rules. The
-// body delivered to each target is the event envelope by default, but is
+// deliverToTargets delivers an event to the targets of matched rules, dispatched
+// by the target ARN's service: SQS queue, Lambda function (ASYNC), SNS topic, and
+// Step Functions state machine (ASYNC) are all first-class EventBridge targets.
+// The body delivered to each target is the event envelope by default, but is
 // replaced by the target's Input (constant), InputPath (selected subtree), or
 // InputTransformer (templated) when one is configured — matching how real
 // EventBridge shapes each target's payload independently.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
-	if m.sqs == nil {
-		return
-	}
+	// Decouple delivery from the caller's cancellation/deadline (real EventBridge
+	// delivery is asynchronous) while carrying forward the re-entrant delivery
+	// depth so a Lambda target that re-publishes an event stays bounded (the guard
+	// lives in lambda.InvokeExternal).
+	dctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(ctx))
 
 	envelope := m.eventEnvelope(event)
 
@@ -480,13 +525,35 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, even
 		reserved := m.reservedVars(&matched[i], event, envelope)
 
 		for _, t := range matched[i].Targets {
-			if t.ARN == "" || !strings.Contains(t.ARN, ":sqs:") {
+			if t.ARN == "" {
 				continue
 			}
 
-			body := targetBody(&t, envelope, reserved)
+			m.dispatchTarget(dctx, t.ARN, targetBody(&t, envelope, reserved))
+		}
+	}
+}
 
-			_ = m.sqs.DeliverExternal(ctx, t.ARN, body)
+// dispatchTarget routes a rendered payload to a single target by the service in
+// its ARN. Unknown/unsupported target services are silently ignored (matching
+// EventBridge accepting the target but this emulator not modeling that sink).
+func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) {
+	switch {
+	case strings.Contains(arn, ":sqs:"):
+		if m.sqs != nil {
+			_ = m.sqs.DeliverExternal(ctx, arn, body)
+		}
+	case strings.Contains(arn, ":lambda:"):
+		if m.lambda != nil {
+			_ = m.lambda.InvokeExternal(ctx, arn, []byte(body))
+		}
+	case strings.Contains(arn, ":sns:"):
+		if m.sns != nil {
+			_ = m.sns.PublishExternal(ctx, arn, body)
+		}
+	case strings.Contains(arn, ":states:"):
+		if m.sfn != nil {
+			_ = m.sfn.StartExternal(ctx, arn, body)
 		}
 	}
 }

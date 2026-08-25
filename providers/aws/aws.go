@@ -271,8 +271,14 @@ func New(opts ...config.Option) *Provider {
 	p.CloudWatch.SetSNSPublisher(p.SNS)
 	// SNS -> SQS fan-out: publishes deliver to SQS-protocol subscriptions.
 	p.SNS.SetSQSDeliverer(p.SQS)
-	// EventBridge -> SQS: matched rules deliver events to SQS targets.
+	// EventBridge -> targets: matched rules deliver events to their first-class
+	// target types — SQS queues, Lambda functions (ASYNC), SNS topics, and Step
+	// Functions state machines (ASYNC). Lambda reuses the shared InvokeExternal
+	// choke point so its recursion guard bounds re-entrant event loops.
 	p.EventBridge.SetSQSDeliverer(p.SQS)
+	p.EventBridge.SetLambdaInvoker(p.Lambda)
+	p.EventBridge.SetSNSPublisher(p.SNS)
+	p.EventBridge.SetStepFunctionsStarter(p.SFN)
 	// S3 event notifications deliver to their configured targets: SQS queues,
 	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
