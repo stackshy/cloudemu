@@ -78,6 +78,15 @@ func run() error {
 
 	fmt.Printf("coveragegen: wrote coverage for %d services\n", len(ordered))
 
+	warnings, checkErr := checkRegistrations(root, ordered)
+	if checkErr != nil {
+		return checkErr
+	}
+
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
+
 	return nil
 }
 
