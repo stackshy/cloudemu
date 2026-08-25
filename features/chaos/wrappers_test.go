@@ -412,22 +412,24 @@ func TestWrapDatabaseScanChaos(t *testing.T) {
 // Helper from chaos_test.go was here previously; we keep it co-located so
 // wrapper tests are self-contained.
 type computeConfigCompat = struct {
-	ImageID        string
-	InstanceType   string
-	Tags           map[string]string
-	SubnetID       string
-	SecurityGroups []string
-	KeyName        string
-	UserData       string
-	Managed        bool
-	Principal      string
-	OSType         string
-	Priority       string
-	LicenseType    string
-	Zones          []string
-	Region         string
-	ResourceGroup  string
-	ClientToken    string
+	ImageID                string
+	InstanceType           string
+	Tags                   map[string]string
+	SubnetID               string
+	SecurityGroups         []string
+	KeyName                string
+	UserData               string
+	Managed                bool
+	Principal              string
+	OSType                 string
+	Priority               string
+	LicenseType            string
+	Zones                  []string
+	Region                 string
+	ResourceGroup          string
+	ClientToken            string
+	IamInstanceProfileARN  string
+	IamInstanceProfileName string
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

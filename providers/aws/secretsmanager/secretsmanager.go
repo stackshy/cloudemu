@@ -82,6 +82,7 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		Tags:        tags,
+		KMSKeyID:    cfg.KMSKeyID,
 	}
 
 	data := make([]byte, len(value))

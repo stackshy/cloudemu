@@ -83,6 +83,15 @@ type metadataOptionsXML struct {
 	InstanceMetadataTags    string `xml:"instanceMetadataTags,omitempty"`
 }
 
+// iamInstanceProfileXML is the nested <iamInstanceProfile> element carrying the
+// IAM instance profile attached to an instance. The child element names (arn,
+// id) match the ec2 IamInstanceProfile response shape the aws-sdk-go-v2
+// deserializer binds to Instance.IamInstanceProfile.
+type iamInstanceProfileXML struct {
+	ARN string `xml:"arn,omitempty"`
+	ID  string `xml:"id,omitempty"`
+}
+
 // instanceENIAttachmentXML is the primary ENI's <attachment> (deviceIndex 0).
 type instanceENIAttachmentXML struct {
 	DeviceIndex int    `xml:"deviceIndex"`
@@ -117,31 +126,32 @@ type operatorXML struct {
 // DescribeInstances responses. We populate only the fields the SDK reliably
 // consumes and real apps actually read; unused AWS fields are omitted.
 type instanceXML struct {
-	InstanceID         string              `xml:"instanceId"`
-	ImageID            string              `xml:"imageId"`
-	State              instanceState       `xml:"instanceState"`
-	InstanceType       string              `xml:"instanceType"`
-	LaunchTime         string              `xml:"launchTime,omitempty"`
-	SubnetID           string              `xml:"subnetId,omitempty"`
-	VPCID              string              `xml:"vpcId,omitempty"`
-	PrivateIP          string              `xml:"privateIpAddress,omitempty"`
-	PublicIP           string              `xml:"ipAddress,omitempty"`
-	PrivateDNSName     string              `xml:"privateDnsName,omitempty"`
-	PublicDNSName      string              `xml:"dnsName,omitempty"`
-	KeyName            string              `xml:"keyName,omitempty"`
-	AmiLaunchIndex     int                 `xml:"amiLaunchIndex"`
-	Architecture       string              `xml:"architecture,omitempty"`
-	RootDeviceType     string              `xml:"rootDeviceType,omitempty"`
-	RootDeviceName     string              `xml:"rootDeviceName,omitempty"`
-	VirtualizationType string              `xml:"virtualizationType,omitempty"`
-	Hypervisor         string              `xml:"hypervisor,omitempty"`
-	Placement          *placementXML       `xml:"placement,omitempty"`
-	Monitoring         *monitoringXML      `xml:"monitoring,omitempty"`
-	MetadataOptions    *metadataOptionsXML `xml:"metadataOptions,omitempty"`
-	Groups             []groupItem         `xml:"groupSet>item,omitempty"`
-	NetworkInterfaces  []instanceENIXML    `xml:"networkInterfaceSet>item,omitempty"`
-	Tags               []tagItem           `xml:"tagSet>item,omitempty"`
-	Operator           *operatorXML        `xml:"operator,omitempty"`
+	InstanceID         string                 `xml:"instanceId"`
+	ImageID            string                 `xml:"imageId"`
+	State              instanceState          `xml:"instanceState"`
+	InstanceType       string                 `xml:"instanceType"`
+	LaunchTime         string                 `xml:"launchTime,omitempty"`
+	SubnetID           string                 `xml:"subnetId,omitempty"`
+	VPCID              string                 `xml:"vpcId,omitempty"`
+	PrivateIP          string                 `xml:"privateIpAddress,omitempty"`
+	PublicIP           string                 `xml:"ipAddress,omitempty"`
+	PrivateDNSName     string                 `xml:"privateDnsName,omitempty"`
+	PublicDNSName      string                 `xml:"dnsName,omitempty"`
+	KeyName            string                 `xml:"keyName,omitempty"`
+	AmiLaunchIndex     int                    `xml:"amiLaunchIndex"`
+	Architecture       string                 `xml:"architecture,omitempty"`
+	RootDeviceType     string                 `xml:"rootDeviceType,omitempty"`
+	RootDeviceName     string                 `xml:"rootDeviceName,omitempty"`
+	VirtualizationType string                 `xml:"virtualizationType,omitempty"`
+	Hypervisor         string                 `xml:"hypervisor,omitempty"`
+	Placement          *placementXML          `xml:"placement,omitempty"`
+	Monitoring         *monitoringXML         `xml:"monitoring,omitempty"`
+	MetadataOptions    *metadataOptionsXML    `xml:"metadataOptions,omitempty"`
+	IamInstanceProfile *iamInstanceProfileXML `xml:"iamInstanceProfile,omitempty"`
+	Groups             []groupItem            `xml:"groupSet>item,omitempty"`
+	NetworkInterfaces  []instanceENIXML       `xml:"networkInterfaceSet>item,omitempty"`
+	Tags               []tagItem              `xml:"tagSet>item,omitempty"`
+	Operator           *operatorXML           `xml:"operator,omitempty"`
 }
 
 // runInstancesResponse is the XML body for RunInstances.

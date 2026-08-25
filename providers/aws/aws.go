@@ -251,6 +251,9 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
+	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
+	// role->profile->instance chain reads back on DescribeInstances.
+	p.EC2.SetInstanceProfileResolver(p.IAM)
 	p.SSM.SetInstanceResolver(p.EC2)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).

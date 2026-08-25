@@ -172,6 +172,14 @@ func applyRunInstancesForm(cfg *computedriver.InstanceConfig, form url.Values) {
 
 	cfg.ClientToken = form.Get("ClientToken")
 
+	if v := form.Get("IamInstanceProfile.Arn"); v != "" {
+		cfg.IamInstanceProfileARN = v
+	}
+
+	if v := form.Get("IamInstanceProfile.Name"); v != "" {
+		cfg.IamInstanceProfileName = v
+	}
+
 	if tags := mergeTagSpecs(awsquery.TagSpecs(form), "instance"); len(tags) > 0 {
 		cfg.Tags = tags
 	}
@@ -717,6 +725,13 @@ func instanceXMLFor(inst *computedriver.Instance, names map[string]string) insta
 
 	for k, v := range inst.Tags {
 		xi.Tags = append(xi.Tags, tagItem{Key: k, Value: v})
+	}
+
+	if inst.IamInstanceProfile != nil {
+		xi.IamInstanceProfile = &iamInstanceProfileXML{
+			ARN: inst.IamInstanceProfile.ARN,
+			ID:  inst.IamInstanceProfile.ID,
+		}
 	}
 
 	if inst.Operator != nil {

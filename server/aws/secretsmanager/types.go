@@ -29,6 +29,9 @@ type secretListEntryJSON struct {
 	// DeletedDate is set only for a secret scheduled for deletion: the date the
 	// secret is scheduled to be removed (delete request + RecoveryWindowInDays).
 	DeletedDate float64 `json:"DeletedDate,omitempty"`
+	// KmsKeyId is the customer KMS key the secret is encrypted with, echoed on
+	// DescribeSecret. Omitted when the default aws/secretsmanager key is used.
+	KmsKeyID string `json:"KmsKeyId,omitempty"`
 
 	VersionIDsToStages map[string][]string `json:"VersionIdsToStages,omitempty"`
 }
@@ -47,6 +50,7 @@ type createSecretRequest struct {
 	SecretString string    `json:"SecretString"`
 	SecretBinary []byte    `json:"SecretBinary"`
 	Tags         []tagJSON `json:"Tags"`
+	KmsKeyID     string    `json:"KmsKeyId"`
 }
 
 type secretIDRequest struct {
@@ -263,5 +267,6 @@ func toSecretListEntry(info *secretsdriver.SecretInfo) secretListEntryJSON {
 		Tags:            mapToTags(info.Tags),
 		CreatedDate:     epochSeconds(info.CreatedAt),
 		LastChangedDate: epochSeconds(info.UpdatedAt),
+		KmsKeyID:        info.KMSKeyID,
 	}
 }
