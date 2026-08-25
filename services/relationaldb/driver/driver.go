@@ -423,6 +423,10 @@ type DatabaseConfig struct {
 	SKUName       string
 	SKUTier       string
 	ZoneRedundant bool
+	// ElasticPoolID is the Azure SQL elastic pool this database belongs to (a
+	// bare pool name or a full ARM resource ID); empty for a standalone
+	// database. Set via properties.elasticPoolId on the ARM request body.
+	ElasticPoolID string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -442,6 +446,9 @@ type Database struct {
 	SKUName       string
 	SKUTier       string
 	ZoneRedundant bool
+	// ElasticPoolID echoes the elastic pool this database belongs to on read
+	// (properties.elasticPoolId); empty for a standalone database.
+	ElasticPoolID string
 }
 
 // Databases is an OPTIONAL capability for managing the logical databases inside

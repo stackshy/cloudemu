@@ -135,6 +135,8 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 
 	if body.Properties != nil {
 		cfg.Collation = body.Properties.Collation
+		cfg.ElasticPoolID = body.Properties.ElasticPoolID
+
 		if body.Properties.ZoneRedundant != nil {
 			cfg.ZoneRedundant = *body.Properties.ZoneRedundant
 		}
@@ -180,18 +182,13 @@ func (*Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm
 	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
 }
 
-// replaceDatabase merges the request body over the stored database and
-// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
-// HA while leaving omitted fields intact.
-func replaceDatabase(
-	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
-) (*rdsdriver.Database, error) {
-	existing, err := db.GetDatabase(ctx, cfg.Server, cfg.Name)
-	if err != nil {
-		return nil, err
-	}
-
+// mergeDatabaseFields overlays the non-empty fields of cfg (and body's
+// pointer-only properties) onto existing, leaving fields the request omitted
+// untouched. Split out of replaceDatabase to keep that function's
+// cyclomatic complexity down — this is pure field merging, no I/O.
+func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *rdsdriver.DatabaseConfig) rdsdriver.Database {
 	merged := *existing
+
 	if cfg.SKUName != "" {
 		merged.SKUName = cfg.SKUName
 	}
@@ -212,9 +209,29 @@ func replaceDatabase(
 		merged.Tags = cfg.Tags
 	}
 
+	if cfg.ElasticPoolID != "" {
+		merged.ElasticPoolID = cfg.ElasticPoolID
+	}
+
 	if body.Properties != nil && body.Properties.ZoneRedundant != nil {
 		merged.ZoneRedundant = *body.Properties.ZoneRedundant
 	}
+
+	return merged
+}
+
+// replaceDatabase merges the request body over the stored database and
+// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
+// HA while leaving omitted fields intact.
+func replaceDatabase(
+	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
+) (*rdsdriver.Database, error) {
+	existing, err := db.GetDatabase(ctx, cfg.Server, cfg.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	merged := mergeDatabaseFields(existing, body, cfg)
 
 	if err := db.DeleteDatabase(ctx, cfg.Server, cfg.Name); err != nil {
 		return nil, err
@@ -230,6 +247,7 @@ func replaceDatabase(
 		SKUName:       merged.SKUName,
 		SKUTier:       merged.SKUTier,
 		ZoneRedundant: merged.ZoneRedundant,
+		ElasticPoolID: merged.ElasticPoolID,
 	})
 }
 
