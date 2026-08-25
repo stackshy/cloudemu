@@ -284,7 +284,13 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
-	expiresAt := computeExpiry(now, input.MessageTTLSeconds)
+	// TimeToLive is measured from when the message becomes active (its enqueue
+	// time), not from submit. For a scheduled message (ScheduledEnqueueTimeUtc in
+	// the future, carried here as a delivery delay) the effective enqueue time is
+	// visibleAt, so a message scheduled for T+delay with a TTL shorter than the
+	// delay still survives until at least T+delay and then lives for its full TTL.
+	// For a non-scheduled send visibleAt == now, so this is unchanged.
+	expiresAt := computeExpiry(visibleAt, input.MessageTTLSeconds)
 
 	msg := &sbMessage{
 		ID:              msgID,
