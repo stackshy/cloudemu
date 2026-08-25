@@ -14,11 +14,12 @@ import (
 )
 
 // Compile-time checks that Mock implements the shared Secrets driver and the
-// Azure-specific KeyVaultSecrets and KeyVaultKeys surfaces.
+// Azure-specific KeyVaultSecrets, KeyVaultKeys and KeyVaultCertificates surfaces.
 var (
-	_ driver.Secrets         = (*Mock)(nil)
-	_ driver.KeyVaultSecrets = (*Mock)(nil)
-	_ driver.KeyVaultKeys    = (*Mock)(nil)
+	_ driver.Secrets              = (*Mock)(nil)
+	_ driver.KeyVaultSecrets      = (*Mock)(nil)
+	_ driver.KeyVaultKeys         = (*Mock)(nil)
+	_ driver.KeyVaultCertificates = (*Mock)(nil)
 )
 
 // purgeWindowDays is the soft-delete retention window Key Vault schedules
@@ -47,19 +48,22 @@ type secretData struct {
 	mu             sync.RWMutex
 }
 
-// vaultData is one Key Vault vault's isolated secrets/keys namespace. The
-// KeyVaultSecrets and KeyVaultKeys surfaces (server/azure/keyvault) each
-// resolve the caller's vault name to one of these before touching storage, so
-// a secret or key created in one vault is never visible through another.
+// vaultData is one Key Vault vault's isolated secrets/keys/certificates
+// namespace. The KeyVaultSecrets, KeyVaultKeys and KeyVaultCertificates
+// surfaces (server/azure/keyvault) each resolve the caller's vault name to one
+// of these before touching storage, so an object created in one vault is never
+// visible through another.
 type vaultData struct {
 	secrets *memstore.Store[*secretData]
 	keys    *memstore.Store[*keyData]
+	certs   *memstore.Store[*certData]
 }
 
 func newVaultData() *vaultData {
 	return &vaultData{
 		secrets: memstore.New[*secretData](),
 		keys:    memstore.New[*keyData](),
+		certs:   memstore.New[*certData](),
 	}
 }
 
@@ -93,7 +97,7 @@ func New(opts *config.Options) *Mock {
 	keys := memstore.New[*keyData]()
 
 	vaults := memstore.New[*vaultData]()
-	vaults.Set(defaultVault, &vaultData{secrets: secrets, keys: keys})
+	vaults.Set(defaultVault, &vaultData{secrets: secrets, keys: keys, certs: memstore.New[*certData]()})
 
 	return &Mock{
 		secrets: secrets,

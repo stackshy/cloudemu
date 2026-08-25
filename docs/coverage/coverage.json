@@ -9552,6 +9552,39 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "KeyVaultCertificates",
+        "doc": "KeyVaultCertificates is the Azure Key Vault-specific certificate data-plane",
+        "operations": [
+          {
+            "name": "CreateCertificate"
+          },
+          {
+            "name": "DeleteCertificate"
+          },
+          {
+            "name": "GetCertificate"
+          },
+          {
+            "name": "GetDeletedCertificate"
+          },
+          {
+            "name": "ListCertificateVersions"
+          },
+          {
+            "name": "ListCertificates"
+          },
+          {
+            "name": "ListDeletedCertificates"
+          },
+          {
+            "name": "PurgeDeletedCertificate"
+          },
+          {
+            "name": "RecoverDeletedCertificate"
+          }
+        ]
+      },
+      {
         "name": "KeyVaultKeys",
         "doc": "KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle",
         "operations": [

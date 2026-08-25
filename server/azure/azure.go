@@ -492,6 +492,14 @@ func New(d Drivers) http.Handler {
 		if _, ok := d.KeyVault.(secretsdriver.KeyVaultKeys); ok {
 			srv.Register(keyvaultsrv.NewKeys(d.KeyVault))
 		}
+		// Certificates data-plane matches /certificates and /deletedcertificates.
+		// Registering here — before the permissive Table/Blob storage fallbacks
+		// below — is the routing fix: without it certificate requests fall
+		// through to storage and return an odata error instead of a Key Vault
+		// response. Registered only when the backend implements the surface.
+		if _, ok := d.KeyVault.(secretsdriver.KeyVaultCertificates); ok {
+			srv.Register(keyvaultsrv.NewCerts(d.KeyVault))
+		}
 	}
 
 	// Table Storage matches the OData table surface (/Tables, /Tables('name'),
