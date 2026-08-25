@@ -95,9 +95,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	if r.Method == http.MethodGet && rp.ResourceType == resourceInstances {
-		h.aggregatedListInstances(w, r, rp)
-		return
+	if r.Method == http.MethodGet {
+		switch rp.ResourceType {
+		case resourceInstances:
+			h.aggregatedListInstances(w, r, rp)
+			return
+		case resourceDisks:
+			h.aggregatedListDisks(w, r, rp)
+			return
+		}
 	}
 
 	writeNotImplemented(w, r.Method+" "+r.URL.Path)
@@ -176,7 +182,7 @@ func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gc
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
@@ -188,6 +194,11 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 			writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		}
 
+		return
+	}
+
+	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "resize") {
+		h.resizeDisk(w, r, rp)
 		return
 	}
 

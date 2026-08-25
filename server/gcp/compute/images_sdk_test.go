@@ -33,6 +33,82 @@ func newImagesSDKClient(t *testing.T, ts *httptest.Server) *gcpcompute.ImagesCli
 	return client
 }
 
+// TestSDKImageSourceDiskFields proves images.get reflects sourceDisk, family,
+// and diskSizeGb (resolved from the source disk) plus a creationTimestamp —
+// all previously dropped.
+func TestSDKImageSourceDiskFields(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Compute: cloudP.GCE})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+
+	disksClient, err := gcpcompute.NewDisksRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewDisksRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = disksClient.Close() })
+
+	diskOp, err := disksClient.Insert(ctx, &computepb.InsertDiskRequest{
+		Project: testProject, Zone: testZone,
+		DiskResource: &computepb.Disk{Name: ptrStr("imgsrc"), SizeGb: ptrInt64(40)},
+	})
+	if err != nil {
+		t.Fatalf("disk Insert: %v", err)
+	}
+
+	if err := diskOp.Wait(ctx); err != nil {
+		t.Fatalf("disk wait: %v", err)
+	}
+
+	const wantSourceDisk = "projects/" + testProject + "/zones/" + testZone + "/disks/imgsrc"
+
+	imgClient := newImagesSDKClient(t, ts)
+
+	imgOp, err := imgClient.Insert(ctx, &computepb.InsertImageRequest{
+		Project: testProject,
+		ImageResource: &computepb.Image{
+			Name:       ptrStr("img-from-disk"),
+			SourceDisk: ptrStr(wantSourceDisk),
+			Family:     ptrStr("my-family"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("image Insert: %v", err)
+	}
+
+	if err := imgOp.Wait(ctx); err != nil {
+		t.Fatalf("image wait: %v", err)
+	}
+
+	got, err := imgClient.Get(ctx, &computepb.GetImageRequest{
+		Project: testProject, Image: "img-from-disk",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetSourceDisk() != wantSourceDisk {
+		t.Errorf("sourceDisk=%q want %q", got.GetSourceDisk(), wantSourceDisk)
+	}
+
+	if got.GetFamily() != "my-family" {
+		t.Errorf("family=%q want my-family", got.GetFamily())
+	}
+
+	if got.GetDiskSizeGb() != 40 {
+		t.Errorf("diskSizeGb=%d want 40", got.GetDiskSizeGb())
+	}
+
+	if got.GetCreationTimestamp() == "" {
+		t.Error("creationTimestamp is empty")
+	}
+}
+
 func TestSDKImageRoundTripGCP(t *testing.T) {
 	cloudP := cloudemu.NewGCP()
 	srv := gcpserver.New(gcpserver.Drivers{Compute: cloudP.GCE})
