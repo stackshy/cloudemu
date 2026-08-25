@@ -138,7 +138,15 @@ func (h *Handler) databaseExists(account, db string) bool {
 // account, keeping single-account and official-emulator usage working. The
 // returned rest is the remaining path with the account segment removed ("/" for
 // a bare account probe).
-func splitAccount(p string) (account, rest string) {
+//
+// The leading segment is peeled as an account ONLY when it names a Cosmos
+// databaseAccount actually registered through the shared ARM control plane
+// (isAccount). Any other first segment — "dbs"/"offers" of the default account,
+// or a blob container/virtual-directory prefix when blob and cosmos share one
+// listener — is left unpeeled so Matches declines it and the request falls
+// through to the blob handler. This keeps an account literally named "dbs" or
+// "offers" reachable while never stealing a blob path.
+func (h *Handler) splitAccount(p string) (account, rest string) {
 	trimmed := strings.Trim(p, "/")
 	if trimmed == "" {
 		return "", "/"
@@ -149,9 +157,7 @@ func splitAccount(p string) (account, rest string) {
 		first = trimmed[:i]
 	}
 
-	// A leading "dbs" or "offers" is a data-plane resource of the default
-	// account, not an account name.
-	if first == "dbs" || first == "offers" {
+	if !h.isAccount(first) {
 		return "", p
 	}
 
@@ -163,11 +169,41 @@ func splitAccount(p string) (account, rest string) {
 	return first, rest
 }
 
+// accountLister is the optional capability the shared database driver exposes to
+// enumerate the Cosmos databaseAccounts registered through the ARM control
+// plane (providers/azure/cosmosdb implements it; DynamoDB/Firestore don't).
+type accountLister interface {
+	AccountTables() []string
+}
+
+// isAccount reports whether name is a registered Cosmos databaseAccount. The
+// data-plane handler shares the very driver the account control plane writes to,
+// so it can distinguish a real account prefix from an unrelated leading segment
+// (a blob container, a default-account "dbs"/"offers") and only peel the former.
+func (h *Handler) isAccount(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	lister, ok := h.db.(accountLister)
+	if !ok {
+		return false
+	}
+
+	for _, a := range lister.AccountTables() {
+		if a == name {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Matches returns true for the Cosmos data plane URLs we serve: the account
 // root probe (GET / or GET /{account}), the /dbs/... resource tree, and the
 // /offers throughput resource — each optionally under a /{account} prefix.
-func (*Handler) Matches(r *http.Request) bool {
-	account, rest := splitAccount(r.URL.Path)
+func (h *Handler) Matches(r *http.Request) bool {
+	account, rest := h.splitAccount(r.URL.Path)
 
 	// A bare "/{account}" carrying a query string is more likely a blob
 	// container/root operation than a Cosmos account probe (which carries none),
@@ -183,7 +219,7 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP routes the request based on URL path shape, after peeling off the
 // optional /{account} prefix that scopes the data plane to one account.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	account, rest := splitAccount(r.URL.Path)
+	account, rest := h.splitAccount(r.URL.Path)
 
 	if rest == "/" {
 		h.accountProperties(w, r)
