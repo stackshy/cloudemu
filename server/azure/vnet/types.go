@@ -43,8 +43,9 @@ type subnetRequest struct {
 }
 
 type subnetRequestProps struct {
-	AddressPrefix string    `json:"addressPrefix,omitempty"`
-	NatGateway    *armIDRef `json:"natGateway,omitempty"`
+	AddressPrefix        string    `json:"addressPrefix,omitempty"`
+	NatGateway           *armIDRef `json:"natGateway,omitempty"`
+	NetworkSecurityGroup *armIDRef `json:"networkSecurityGroup,omitempty"`
 }
 
 type subnetResponse struct {
@@ -55,9 +56,10 @@ type subnetResponse struct {
 }
 
 type subnetResponseProps struct {
-	ProvisioningState string    `json:"provisioningState"`
-	AddressPrefix     string    `json:"addressPrefix,omitempty"`
-	NatGateway        *armIDRef `json:"natGateway,omitempty"`
+	ProvisioningState    string    `json:"provisioningState"`
+	AddressPrefix        string    `json:"addressPrefix,omitempty"`
+	NatGateway           *armIDRef `json:"natGateway,omitempty"`
+	NetworkSecurityGroup *armIDRef `json:"networkSecurityGroup,omitempty"`
 }
 
 type subnetListResponse struct {
@@ -107,6 +109,47 @@ type nsgResponseProps struct {
 	ProvisioningState    string         `json:"provisioningState"`
 	SecurityRules        []securityRule `json:"securityRules"`
 	DefaultSecurityRules []securityRule `json:"defaultSecurityRules,omitempty"`
+	// Subnets and NetworkInterfaces are the read-only back-references real ARM
+	// reports on a networkSecurityGroups GET once the NSG is associated with a
+	// subnet or NIC (server-side scans, mirroring vnetResponse's subnet scan and
+	// publicIPConfigurationRef's NIC scan).
+	Subnets           []armIDRef `json:"subnets,omitempty"`
+	NetworkInterfaces []armIDRef `json:"networkInterfaces,omitempty"`
+}
+
+// securityRuleListResponse is the collection envelope for the securityRules
+// sub-resource List operation.
+type securityRuleListResponse struct {
+	Value []securityRule `json:"value"`
+}
+
+// Effective-security-rules (InterfacesClient.BeginListEffectiveNetworkSecurityGroups).
+
+type effectiveNSGListResponse struct {
+	Value []effectiveNSG `json:"value"`
+}
+
+type effectiveNSG struct {
+	Association            effectiveNSGAssociation `json:"association"`
+	EffectiveSecurityRules []effectiveSecurityRule `json:"effectiveSecurityRules"`
+	NetworkSecurityGroup   armIDRef                `json:"networkSecurityGroup"`
+}
+
+type effectiveNSGAssociation struct {
+	NetworkInterface *armIDRef `json:"networkInterface,omitempty"`
+	Subnet           *armIDRef `json:"subnet,omitempty"`
+}
+
+type effectiveSecurityRule struct {
+	Name                     string `json:"name"`
+	Protocol                 string `json:"protocol"`
+	SourcePortRange          string `json:"sourcePortRange"`
+	DestinationPortRange     string `json:"destinationPortRange"`
+	SourceAddressPrefix      string `json:"sourceAddressPrefix"`
+	DestinationAddressPrefix string `json:"destinationAddressPrefix"`
+	Access                   string `json:"access"`
+	Priority                 int    `json:"priority"`
+	Direction                string `json:"direction"`
 }
 
 type nsgListResponse struct {

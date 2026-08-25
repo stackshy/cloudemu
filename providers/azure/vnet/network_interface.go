@@ -28,17 +28,18 @@ const (
 
 // nicData is the stored Azure network interface, keyed by (resourceGroup, name).
 type nicData struct {
-	Name              string
-	ResourceGroup     string
-	Location          string
-	Tags              map[string]string
-	IPConfigs         []driver.AzureIPConfig
-	IPForwarding      bool
-	MACAddress        string
-	ResourceGUID      string
-	ProvisioningState string
-	ETag              string
-	VirtualMachineID  string
+	Name                   string
+	ResourceGroup          string
+	Location               string
+	Tags                   map[string]string
+	IPConfigs              []driver.AzureIPConfig
+	IPForwarding           bool
+	NetworkSecurityGroupID string
+	MACAddress             string
+	ResourceGUID           string
+	ProvisioningState      string
+	ETag                   string
+	VirtualMachineID       string
 }
 
 // nicKey composes the store key from the ARM addressing pair. Resource-group
@@ -74,14 +75,15 @@ func (m *Mock) CreateOrUpdateNetworkInterface(
 	}
 
 	nic := &nicData{
-		Name:              name,
-		ResourceGroup:     resourceGroup,
-		Location:          cfg.Location,
-		Tags:              copyTags(cfg.Tags),
-		IPConfigs:         ipConfigs,
-		IPForwarding:      cfg.IPForwarding,
-		ProvisioningState: "Succeeded",
-		ETag:              `W/"` + idgen.GenerateID("etag-") + `"`,
+		Name:                   name,
+		ResourceGroup:          resourceGroup,
+		Location:               cfg.Location,
+		Tags:                   copyTags(cfg.Tags),
+		IPConfigs:              ipConfigs,
+		IPForwarding:           cfg.IPForwarding,
+		NetworkSecurityGroupID: cfg.NetworkSecurityGroupID,
+		ProvisioningState:      "Succeeded",
+		ETag:                   `W/"` + idgen.GenerateID("etag-") + `"`,
 	}
 
 	if isUpdate {
@@ -272,17 +274,18 @@ func toAzureNIC(n *nicData) driver.AzureNIC {
 	copy(configs, n.IPConfigs)
 
 	return driver.AzureNIC{
-		Name:              n.Name,
-		ResourceGroup:     n.ResourceGroup,
-		Location:          n.Location,
-		Tags:              copyTags(n.Tags),
-		IPConfigs:         configs,
-		IPForwarding:      n.IPForwarding,
-		MACAddress:        n.MACAddress,
-		ResourceGUID:      n.ResourceGUID,
-		ProvisioningState: n.ProvisioningState,
-		ETag:              n.ETag,
-		VirtualMachineID:  n.VirtualMachineID,
+		Name:                   n.Name,
+		ResourceGroup:          n.ResourceGroup,
+		Location:               n.Location,
+		Tags:                   copyTags(n.Tags),
+		IPConfigs:              configs,
+		IPForwarding:           n.IPForwarding,
+		NetworkSecurityGroupID: n.NetworkSecurityGroupID,
+		MACAddress:             n.MACAddress,
+		ResourceGUID:           n.ResourceGUID,
+		ProvisioningState:      n.ProvisioningState,
+		ETag:                   n.ETag,
+		VirtualMachineID:       n.VirtualMachineID,
 	}
 }
 

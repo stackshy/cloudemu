@@ -57,4 +57,14 @@ type AzureNetworkMetadata interface {
 	PutAzureNSGMetadata(ctx context.Context, id string, meta AzureNSGMetadata) error
 	GetAzureNSGMetadata(ctx context.Context, id string) (AzureNSGMetadata, bool)
 	DeleteAzureNSGMetadata(ctx context.Context, id string)
+
+	// UpsertAzureNSGRule creates or replaces a single custom security rule by
+	// name, leaving every sibling rule untouched — the atomic read-modify-write
+	// the SecurityRules sub-resource CRUD (securityRules/{ruleName}) needs.
+	// Returns NotFound when the network security group itself doesn't exist.
+	UpsertAzureNSGRule(ctx context.Context, id string, rule AzureNSGRule) (AzureNSGMetadata, error)
+	// DeleteAzureNSGRule removes a single custom security rule by name, leaving
+	// every sibling rule untouched. Returns NotFound when either the network
+	// security group or the named rule doesn't exist.
+	DeleteAzureNSGRule(ctx context.Context, id string, ruleName string) error
 }

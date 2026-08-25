@@ -42,8 +42,14 @@ const (
 	// property), so both the subnet response and the NAT gateway's
 	// read-only subnets list can reflect the association.
 	armSubnetNATTag = "cloudemu:azureSubnetNATGateway"
-	defaultLoc      = "eastus"
-	subResSubnets   = "subnets"
+	// armSubnetNSGTag stores the full ARM resource id of the network security
+	// group a subnet is associated with (set via the subnet's own
+	// networkSecurityGroup property), mirroring armSubnetNATTag.
+	armSubnetNSGTag     = "cloudemu:azureSubnetNSG"
+	defaultLoc          = "eastus"
+	subResSubnets       = "subnets"
+	subResSecurityRules = "securityRules"
+	subResCheckIPAvail  = "CheckIPAddressAvailability"
 )
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
@@ -119,6 +125,22 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
+	// CheckIPAddressAvailability is a GET action on the vnet itself
+	// (.../virtualNetworks/{name}/CheckIPAddressAvailability?ipAddress=...),
+	// not a nested resource — route it before the plain vnet GET/PUT/DELETE
+	// switch below, or it falls through and answers with the vnet body instead
+	// of an IPAddressAvailabilityResult.
+	if strings.EqualFold(rp.SubResource, subResCheckIPAvail) {
+		if r.Method != http.MethodGet {
+			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+			return
+		}
+
+		h.checkIPAddressAvailability(w, r, rp)
+
+		return
+	}
+
 	if rp.ResourceName == "" {
 		h.listVNets(w, r, rp)
 		return
@@ -159,6 +181,16 @@ func (h *Handler) routeSubnet(w http.ResponseWriter, r *http.Request, rp azurear
 func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listNSGs(w, r, rp)
+		return
+	}
+
+	// SecurityRule sub-resource (SecurityRulesClient / azurerm_network_security_rule):
+	// SubResource="securityRules", SubResourceName="{ruleName}". Routed before
+	// the whole-NSG method switch below so a standalone rule PUT/GET/DELETE
+	// never hits createNSG/getNSG/deleteNSG, which are scoped to rp.ResourceName
+	// (the NSG's own name, not a rule).
+	if rp.SubResource == subResSecurityRules {
+		h.routeSecurityRule(w, r, rp)
 		return
 	}
 
@@ -208,9 +240,19 @@ func (h *Handler) createVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 	}
 
 	// Materialize any inline subnets so they become real, addressable children
-	// (Subnets.Get resolves them) rather than a body-only echo.
+	// (Subnets.Get resolves them) rather than a body-only echo, and make this
+	// PUT authoritative over the whole subnets collection.
 	if err := h.materializeSubnets(r.Context(), info.ID, req.Properties.Subnets); err != nil {
-		azurearm.WriteCErr(w, err)
+		// A subnet this PUT's body omits but that's still in use by a NIC: ARM
+		// answers 400 InUseSubnetCannotBeDeleted, not the generic 409 WriteCErr
+		// would emit for FailedPrecondition.
+		if cerrors.IsFailedPrecondition(err) {
+			azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted", err.Error())
+			return
+		}
+
+		writeSubnetValidationError(w, err)
+
 		return
 	}
 
@@ -254,10 +296,24 @@ func (h *Handler) upsertVNet(ctx context.Context, name string, prefixes []string
 	})
 }
 
-// materializeSubnets creates the inline subnets carried in a vnet PUT body,
-// skipping any that already exist (idempotent re-PUT).
+// materializeSubnets makes a whole-VNet PUT authoritative over its subnets
+// collection, matching real ARM's full-replace semantics for
+// VirtualNetworksClient.BeginCreateOrUpdate: a subnet present in this PUT's
+// body but not yet stored is created; a subnet already stored but omitted
+// from this PUT's body is deleted (refused with the same in-use guard
+// deleteSubnet applies, so a body that silently drops a live subnet fails the
+// whole PUT rather than orphaning a NIC's reference).
+//
+// subs == nil (the properties.subnets key was absent from the JSON body
+// entirely, not sent as []) leaves every existing subnet untouched — Azure
+// added this exact carve-out so tag-only/address-space-only updates don't
+// need to round-trip the subnet list. See "Azure Virtual Network now supports
+// updates without subnet property" (Microsoft Community Hub). An explicit
+// empty array, by contrast, is a request to delete every subnet — nil vs.
+// non-nil is exactly what encoding/json's Unmarshal already distinguishes for
+// a JSON array field, so no extra presence-tracking is needed here.
 func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []subnetRequest) error {
-	if len(subs) == 0 {
+	if subs == nil {
 		return nil
 	}
 
@@ -266,28 +322,89 @@ func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []s
 		return err
 	}
 
-	have := make(map[string]struct{})
+	haveByName := make(map[string]netdriver.SubnetInfo, len(existing))
 
 	for i := range existing {
 		if existing[i].VPCID == vpcID {
-			have[tagOr(existing[i].Tags, armSubnetTag, "")] = struct{}{}
+			haveByName[tagOr(existing[i].Tags, armSubnetTag, "")] = existing[i]
 		}
 	}
+
+	wanted, err := h.createMissingSubnets(ctx, vpcID, subs, haveByName)
+	if err != nil {
+		return err
+	}
+
+	return h.deleteOmittedSubnets(ctx, haveByName, wanted)
+}
+
+// createMissingSubnets creates every named subnet in subs that isn't already
+// in haveByName, validating its CIDR first, and returns the set of names this
+// PUT's body wants — the input deleteOmittedSubnets needs to find what to
+// remove.
+func (h *Handler) createMissingSubnets(
+	ctx context.Context, vpcID string, subs []subnetRequest, haveByName map[string]netdriver.SubnetInfo,
+) (map[string]struct{}, error) {
+	wanted := make(map[string]struct{}, len(subs))
 
 	for i := range subs {
 		if subs[i].Name == "" {
 			continue
 		}
 
-		if _, ok := have[subs[i].Name]; ok {
+		wanted[subs[i].Name] = struct{}{}
+
+		if _, ok := haveByName[subs[i].Name]; ok {
 			continue
+		}
+
+		if verr := h.validateSubnetCIDR(ctx, vpcID, subs[i].Name, subs[i].Properties.AddressPrefix); verr != nil {
+			return nil, verr
 		}
 
 		if _, err := h.net.CreateSubnet(ctx, netdriver.SubnetConfig{
 			VPCID:     vpcID,
 			CIDRBlock: subs[i].Properties.AddressPrefix,
-			Tags:      mergeTags(nil, armSubnetTag, subs[i].Name),
+			Tags:      inlineSubnetTags(&subs[i]),
 		}); err != nil {
+			return nil, err
+		}
+	}
+
+	return wanted, nil
+}
+
+// inlineSubnetTags builds the tag set for a subnet materialized from a
+// whole-VNet PUT body, carrying over its NAT gateway / NSG references.
+func inlineSubnetTags(sub *subnetRequest) map[string]string {
+	tags := mergeTags(nil, armSubnetTag, sub.Name)
+
+	if sub.Properties.NatGateway != nil {
+		tags = mergeTags(tags, armSubnetNATTag, sub.Properties.NatGateway.ID)
+	}
+
+	if sub.Properties.NetworkSecurityGroup != nil {
+		tags = mergeTags(tags, armSubnetNSGTag, sub.Properties.NetworkSecurityGroup.ID)
+	}
+
+	return tags
+}
+
+// deleteOmittedSubnets removes every previously-existing subnet whose name
+// isn't in wanted, refusing (without deleting anything further) the first one
+// still in use by a NIC — the same guard deleteSubnet applies standalone.
+func (h *Handler) deleteOmittedSubnets(ctx context.Context, haveByName map[string]netdriver.SubnetInfo, wanted map[string]struct{}) error {
+	for name, info := range haveByName {
+		if _, ok := wanted[name]; ok {
+			continue
+		}
+
+		if h.subnetInUseByNICs(ctx, info.ID) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"subnet %q is in use by a network interface and cannot be deleted", name)
+		}
+
+		if err := h.net.DeleteSubnet(ctx, info.ID); err != nil {
 			return err
 		}
 	}
@@ -423,24 +540,22 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
-	var natGatewayID string
-
-	if req.Properties.NatGateway != nil {
-		ngRP, ok := azurearm.ParsePath(req.Properties.NatGateway.ID)
-		if !ok || ngRP.ResourceType != typeNATGateway {
-			azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed natGateway id")
-			return
-		}
-
-		if _, ngErr := findNATGatewayByName(r.Context(), h.net, ngRP.ResourceGroup, ngRP.ResourceName); ngErr != nil {
-			azurearm.WriteCErr(w, ngErr)
-			return
-		}
-
-		natGatewayID = req.Properties.NatGateway.ID
+	natGatewayID, ok := h.resolveSubnetNATGateway(w, r, req.Properties.NatGateway)
+	if !ok {
+		return
 	}
 
-	info, err := h.upsertSubnet(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix, natGatewayID)
+	nsgID, ok := h.resolveSubnetNSG(w, r, req.Properties.NetworkSecurityGroup)
+	if !ok {
+		return
+	}
+
+	if verr := h.validateSubnetCIDR(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix); verr != nil {
+		writeSubnetValidationError(w, verr)
+		return
+	}
+
+	info, err := h.upsertSubnet(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix, natGatewayID, nsgID)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -451,23 +566,81 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 	writeAcceptedAsync(w, r, rp.Subscription, "subnet-create-"+rp.SubResourceName, body)
 }
 
+// resolveSubnetNATGateway validates and resolves an optional natGateway
+// reference on a subnet PUT body, writing the appropriate error response
+// itself. ok is false when a response was already written and the caller
+// must stop.
+func (h *Handler) resolveSubnetNATGateway(w http.ResponseWriter, r *http.Request, ref *armIDRef) (id string, ok bool) {
+	if ref == nil {
+		return "", true
+	}
+
+	ngRP, parsed := azurearm.ParsePath(ref.ID)
+	if !parsed || ngRP.ResourceType != typeNATGateway {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed natGateway id")
+		return "", false
+	}
+
+	if _, err := findNATGatewayByName(r.Context(), h.net, ngRP.ResourceGroup, ngRP.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return "", false
+	}
+
+	return ref.ID, true
+}
+
+// resolveSubnetNSG validates and resolves an optional networkSecurityGroup
+// reference on a subnet PUT body, writing the appropriate error response
+// itself. ok is false when a response was already written and the caller
+// must stop.
+func (h *Handler) resolveSubnetNSG(w http.ResponseWriter, r *http.Request, ref *armIDRef) (id string, ok bool) {
+	if ref == nil {
+		return "", true
+	}
+
+	nsgRP, parsed := azurearm.ParsePath(ref.ID)
+	if !parsed || nsgRP.ResourceType != typeNSG {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed networkSecurityGroup id")
+		return "", false
+	}
+
+	if _, err := findNSGByName(r.Context(), h.net, nsgRP.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return "", false
+	}
+
+	return ref.ID, true
+}
+
 // upsertSubnet creates the named subnet, or — when it already exists — merges
-// in a NAT gateway reference so a subnet can be attached to a NAT gateway via
-// a second PUT (armnetwork's SubnetsClient.BeginCreateOrUpdate, the real ARM
-// mechanism: the association lives on the subnet's natGateway property, not
-// on the NAT gateway). Other subnet properties are not merged on update,
-// matching this handler's existing create-only behavior for subnets.
-func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewayID string) (*netdriver.SubnetInfo, error) {
+// in a NAT gateway and/or NSG reference so a subnet can be attached via a
+// second PUT (armnetwork's SubnetsClient.BeginCreateOrUpdate, the real ARM
+// mechanism: both associations live on the subnet's own natGateway /
+// networkSecurityGroup properties). Other subnet properties are not merged on
+// update, matching this handler's existing create-only behavior for subnets.
+func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewayID, nsgID string) (*netdriver.SubnetInfo, error) {
 	if existing, err := findSubnetInVNet(ctx, h.net, vpcID, name); err == nil {
-		if natGatewayID == "" {
+		merge := make(map[string]string)
+
+		if natGatewayID != "" {
+			merge[armSubnetNATTag] = natGatewayID
+		}
+
+		if nsgID != "" {
+			merge[armSubnetNSGTag] = nsgID
+		}
+
+		if len(merge) == 0 {
 			return existing, nil
 		}
 
-		if err := h.net.UpdateSubnetTags(ctx, existing.ID, map[string]string{armSubnetNATTag: natGatewayID}); err != nil {
+		if err := h.net.UpdateSubnetTags(ctx, existing.ID, merge); err != nil {
 			return nil, err
 		}
 
-		existing.Tags = mergeTags(existing.Tags, armSubnetNATTag, natGatewayID)
+		for k, v := range merge {
+			existing.Tags = mergeTags(existing.Tags, k, v)
+		}
 
 		return existing, nil
 	}
@@ -475,6 +648,10 @@ func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewa
 	tags := mergeTags(nil, armSubnetTag, name)
 	if natGatewayID != "" {
 		tags = mergeTags(tags, armSubnetNATTag, natGatewayID)
+	}
+
+	if nsgID != "" {
+		tags = mergeTags(tags, armSubnetNSGTag, nsgID)
 	}
 
 	return h.net.CreateSubnet(ctx, netdriver.SubnetConfig{
@@ -539,12 +716,75 @@ func (h *Handler) deleteSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
+	// A subnet still bound to a NIC ipConfiguration cannot be deleted; real
+	// ARM answers 400 InUseSubnetCannotBeDeleted (verified against the real
+	// error: https://learn.microsoft.com/en-us/troubleshoot/azure/azure-kubernetes/error-codes/publicipaddr-inusesubnet-netsecgrp-error).
+	if h.subnetInUseByNICs(r.Context(), info.ID) {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted",
+			"subnet "+rp.SubResourceName+" is in use by a network interface and cannot be deleted")
+
+		return
+	}
+
 	if err := h.net.DeleteSubnet(r.Context(), info.ID); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
 	writeAcceptedAsync(w, r, rp.Subscription, "subnet-delete-"+rp.SubResourceName, nil)
+}
+
+// subnetInUseByNICs reports whether any network interface's ipConfiguration
+// references the subnet with the given driver id, resolving each NIC's
+// ARM subnet reference the same way subnetCIDR does.
+func (h *Handler) subnetInUseByNICs(ctx context.Context, subnetDriverID string) bool {
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return false
+	}
+
+	nics, err := svc.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return false
+	}
+
+	subs, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return false
+	}
+
+	for i := range nics {
+		for j := range nics[i].IPConfigs {
+			if resolveSubnetDriverID(ctx, h.net, subs, nics[i].IPConfigs[j].SubnetID) == subnetDriverID {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// resolveSubnetDriverID maps an ARM subnet resource id
+// (.../virtualNetworks/{vn}/subnets/{name}) to the driver's own subnet id, or
+// "" if it doesn't resolve to any known subnet.
+func resolveSubnetDriverID(ctx context.Context, n netdriver.Networking, subs []netdriver.SubnetInfo, armSubnetID string) string {
+	sp, ok := azurearm.ParsePath(armSubnetID)
+	if !ok || sp.ResourceType != typeVNet || sp.SubResource != subResSubnets {
+		return ""
+	}
+
+	vnet, err := findVNetByName(ctx, n, sp.ResourceName)
+	if err != nil {
+		return ""
+	}
+
+	for i := range subs {
+		if subs[i].VPCID == vnet.ID && tagOr(subs[i].Tags, armSubnetTag, "") == sp.SubResourceName {
+			return subs[i].ID
+		}
+	}
+
+	return ""
 }
 
 // NSG operations.
@@ -562,6 +802,13 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
+	rules := toAzureNSGRules(req.Properties.SecurityRules)
+
+	if verr := validateSecurityRuleBatch(rules); verr != nil {
+		azurearm.WriteCErr(w, verr)
+		return
+	}
+
 	info, err := h.upsertNSG(r.Context(), rp.ResourceName, req.Tags)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -576,7 +823,7 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 	if meta, ok := h.azureMeta(); ok {
 		_ = meta.PutAzureNSGMetadata(r.Context(), info.ID, netdriver.AzureNSGMetadata{
 			Location:      loc,
-			SecurityRules: toAzureNSGRules(req.Properties.SecurityRules),
+			SecurityRules: rules,
 		})
 	}
 
@@ -969,6 +1216,10 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 		out.Properties.NatGateway = &armIDRef{ID: ngID}
 	}
 
+	if nsgID := tagOr(info.Tags, armSubnetNSGTag, ""); nsgID != "" {
+		out.Properties.NetworkSecurityGroup = &armIDRef{ID: nsgID}
+	}
+
 	return out
 }
 
@@ -1001,8 +1252,93 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 			ProvisioningState:    "Succeeded",
 			SecurityRules:        rules,
 			DefaultSecurityRules: defaultSecurityRules(id),
+			Subnets:              h.nsgAssociatedSubnets(ctx, id),
+			NetworkInterfaces:    h.nsgAssociatedNICs(ctx, id),
 		},
 	}
+}
+
+// nsgAssociatedSubnets scans every subnet for a networkSecurityGroup
+// reference (armSubnetNSGTag) matching nsgARMID, the read-only back-reference
+// real ARM reports on a networkSecurityGroups GET.
+func (h *Handler) nsgAssociatedSubnets(ctx context.Context, nsgARMID string) []armIDRef {
+	subs, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
+	vnetNames := make(map[string]string)
+
+	var out []armIDRef
+
+	for i := range subs {
+		if !strings.EqualFold(tagOr(subs[i].Tags, armSubnetNSGTag, ""), nsgARMID) {
+			continue
+		}
+
+		vnetName, ok := vnetNames[subs[i].VPCID]
+		if !ok {
+			vnet, verr := h.net.DescribeVPCs(ctx, []string{subs[i].VPCID})
+			if verr != nil || len(vnet) == 0 {
+				continue
+			}
+
+			vnetName = tagOr(vnet[0].Tags, armNameTag, vnet[0].ID)
+			vnetNames[subs[i].VPCID] = vnetName
+		}
+
+		out = append(out, armIDRef{ID: subnetResourceID(nsgARMID, vnetName, tagOr(subs[i].Tags, armSubnetTag, ""))})
+	}
+
+	return out
+}
+
+// nsgAssociatedNICs scans every network interface for a top-level
+// networkSecurityGroup reference matching nsgARMID.
+func (h *Handler) nsgAssociatedNICs(ctx context.Context, nsgARMID string) []armIDRef {
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return nil
+	}
+
+	nics, err := svc.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return nil
+	}
+
+	var out []armIDRef
+
+	for i := range nics {
+		if strings.EqualFold(nics[i].NetworkSecurityGroupID, nsgARMID) {
+			out = append(out, armIDRef{ID: nicResourceID(nsgARMID, nics[i].ResourceGroup, nics[i].Name)})
+		}
+	}
+
+	return out
+}
+
+// subnetResourceID builds a subnet ARM id sharing the subscription of
+// nsgARMID (both resources live in the same ARM path shape), used only for
+// the NSG's read-only associated-subnets back-reference.
+func subnetResourceID(nsgARMID, vnetName, subnetName string) string {
+	nsgRP, ok := azurearm.ParsePath(nsgARMID)
+	if !ok {
+		return ""
+	}
+
+	return azurearm.BuildResourceID(nsgRP.Subscription, nsgRP.ResourceGroup, providerName, typeVNet, vnetName) +
+		"/subnets/" + subnetName
+}
+
+// nicResourceID builds a NIC ARM id sharing the subscription of nsgARMID,
+// used only for the NSG's read-only associated-NICs back-reference.
+func nicResourceID(nsgARMID, nicResourceGroup, nicName string) string {
+	nsgRP, ok := azurearm.ParsePath(nsgARMID)
+	if !ok {
+		return ""
+	}
+
+	return azurearm.BuildResourceID(nsgRP.Subscription, nicResourceGroup, providerName, typeNIC, nicName)
 }
 
 //nolint:gocritic // rp is a request-scoped value

@@ -12,6 +12,10 @@ import (
 
 const typeNIC = "networkInterfaces"
 
+// subResEffectiveNSGs is the POST action segment InterfacesClient.
+// BeginListEffectiveNetworkSecurityGroups sends: .../networkInterfaces/{nic}/effectiveNetworkSecurityGroups.
+const subResEffectiveNSGs = "effectiveNetworkSecurityGroups"
+
 // ARM JSON shapes for Microsoft.Network/networkInterfaces.
 
 type nicRequest struct {
@@ -21,8 +25,9 @@ type nicRequest struct {
 }
 
 type nicRequestProps struct {
-	IPConfigurations   []nicIPConfigRequest `json:"ipConfigurations"`
-	EnableIPForwarding bool                 `json:"enableIPForwarding,omitempty"`
+	IPConfigurations     []nicIPConfigRequest `json:"ipConfigurations"`
+	EnableIPForwarding   bool                 `json:"enableIPForwarding,omitempty"`
+	NetworkSecurityGroup *armIDRef            `json:"networkSecurityGroup,omitempty"`
 }
 
 type nicIPConfigRequest struct {
@@ -53,12 +58,13 @@ type nicResponse struct {
 }
 
 type nicResponseProps struct {
-	ProvisioningState  string                `json:"provisioningState"`
-	ResourceGUID       string                `json:"resourceGuid,omitempty"`
-	MACAddress         string                `json:"macAddress,omitempty"`
-	EnableIPForwarding bool                  `json:"enableIPForwarding"`
-	IPConfigurations   []nicIPConfigResponse `json:"ipConfigurations"`
-	VirtualMachine     *armIDRef             `json:"virtualMachine,omitempty"`
+	ProvisioningState    string                `json:"provisioningState"`
+	ResourceGUID         string                `json:"resourceGuid,omitempty"`
+	MACAddress           string                `json:"macAddress,omitempty"`
+	EnableIPForwarding   bool                  `json:"enableIPForwarding"`
+	IPConfigurations     []nicIPConfigResponse `json:"ipConfigurations"`
+	NetworkSecurityGroup *armIDRef             `json:"networkSecurityGroup,omitempty"`
+	VirtualMachine       *armIDRef             `json:"virtualMachine,omitempty"`
 }
 
 type nicIPConfigResponse struct {
@@ -95,6 +101,20 @@ func (h *Handler) routeNIC(w http.ResponseWriter, r *http.Request, rp azurearm.R
 
 	if rp.ResourceName == "" {
 		h.listNICs(w, r, rp, svc)
+		return
+	}
+
+	// InterfacesClient.BeginListEffectiveNetworkSecurityGroups: a POST action
+	// on the NIC, not a nested collection — routed before the whole-NIC method
+	// switch so it never falls through to createNIC/getNIC/deleteNIC.
+	if strings.EqualFold(rp.SubResource, subResEffectiveNSGs) {
+		if r.Method != http.MethodPost {
+			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+			return
+		}
+
+		h.listEffectiveNSGs(w, r, rp, svc)
+
 		return
 	}
 
@@ -137,11 +157,29 @@ func (h *Handler) createNIC(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
+	var nsgID string
+
+	if req.Properties.NetworkSecurityGroup != nil {
+		nsgRP, ok := azurearm.ParsePath(req.Properties.NetworkSecurityGroup.ID)
+		if !ok || nsgRP.ResourceType != typeNSG {
+			azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed networkSecurityGroup id")
+			return
+		}
+
+		if _, nsgErr := findNSGByName(r.Context(), h.net, nsgRP.ResourceName); nsgErr != nil {
+			azurearm.WriteCErr(w, nsgErr)
+			return
+		}
+
+		nsgID = req.Properties.NetworkSecurityGroup.ID
+	}
+
 	cfg := netdriver.AzureNICConfig{
-		Location:     req.Location,
-		Tags:         req.Tags,
-		IPConfigs:    ipConfigs,
-		IPForwarding: req.Properties.EnableIPForwarding,
+		Location:               req.Location,
+		Tags:                   req.Tags,
+		IPConfigs:              ipConfigs,
+		IPForwarding:           req.Properties.EnableIPForwarding,
+		NetworkSecurityGroupID: nsgID,
 	}
 
 	nic, err := svc.CreateOrUpdateNetworkInterface(r.Context(), rp.ResourceGroup, rp.ResourceName, cfg)
@@ -377,6 +415,10 @@ func toNICResponse(nic *netdriver.AzureNIC, rp azurearm.ResourcePath) nicRespons
 		}
 
 		out.Properties.IPConfigurations = append(out.Properties.IPConfigurations, rc)
+	}
+
+	if nic.NetworkSecurityGroupID != "" {
+		out.Properties.NetworkSecurityGroup = &armIDRef{ID: nic.NetworkSecurityGroupID}
 	}
 
 	if nic.VirtualMachineID != "" {
