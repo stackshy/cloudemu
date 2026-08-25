@@ -378,6 +378,9 @@ func (m *Mock) GetLaunchTemplateData(_ context.Context, instanceID string) (*dri
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+
 	sg := make([]string, len(inst.SecurityGroups))
 	copy(sg, inst.SecurityGroups)
 

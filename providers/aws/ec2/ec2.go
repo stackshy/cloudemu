@@ -141,9 +141,21 @@ var (
 )
 
 type instanceData struct {
-	ID             string
-	ImageID        string
-	InstanceType   string
+	// mu guards every field below that is mutated after the instance is first
+	// published to m.instances (State, settle, Tags, InstanceType,
+	// SecurityGroups, VPCID and the ModifyInstanceAttribute-backed flags). Any
+	// path that reads or writes those fields on a stored instance MUST hold mu
+	// for the duration — memstore only makes the map lookup atomic, not the
+	// pointed-to struct (see docs/architecture.md, "Concurrency & thread
+	// safety"). The exemplar is providers/aws/sqs.queueData.mu.
+	mu           sync.Mutex
+	ID           string
+	ImageID      string
+	InstanceType string
+	// State is the readable instance state. The authoritative transition
+	// validator is m.sm (internal/statemachine, itself locked); State is the
+	// synchronized mirror rendered by Describe, and is only ever written under
+	// mu in lockstep with an m.sm transition.
 	State          string
 	PrivateIP      string
 	PublicIP       string
@@ -195,6 +207,32 @@ type instanceData struct {
 type operatorData struct {
 	Managed   bool
 	Principal string
+}
+
+// terminationProtected reports the DisableApiTermination flag under mu.
+func (d *instanceData) terminationProtected() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.disableAPITermination
+}
+
+// isEngineBacked reports whether a real compute engine backs this instance,
+// read under mu.
+func (d *instanceData) isEngineBacked() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.engineBacked
+}
+
+// clearEngineBacked drops the engine-backed flag under mu, after the backing
+// has been deprovisioned.
+func (d *instanceData) clearEngineBacked() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.engineBacked = false
 }
 
 type asgData struct {
@@ -355,6 +393,9 @@ func (m *Mock) nextIP() string {
 // account-level managed-resource-visibility ("hidden") resolved once by the
 // caller, so this never touches m.mu (avoiding nested read locks).
 func toInstance(d *instanceData, hidden bool, now time.Time) driver.Instance {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	sg := make([]string, len(d.SecurityGroups))
 	copy(sg, d.SecurityGroups)
 
@@ -415,6 +456,9 @@ func (m *Mock) ModifyInstanceMetadataOptions(
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
+
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
 
 	opts := inst.metadataOptions
 	if opts.State == "" {
@@ -547,12 +591,14 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 			inst.engineBacked = true
 		}
 
-		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
 		inst.settle = settle.Pending(compute.StatePending, m.opts.Clock.Now(),
 			m.opts.SettleDuration(settle.DefaultInstanceSettle))
+		// Publish only after the instance is fully initialized so a concurrent
+		// Describe can never observe a half-written State/settle.
+		m.instances.Set(id, inst)
 		results = append(results, toInstance(inst, hidden, m.opts.Clock.Now()))
 		created = append(created, inst)
 
@@ -696,32 +742,50 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
 		}
 
-		// Real AWS EC2 documents Start/Stop as idempotent on the target
-		// state. Skip the state machine and return success without changing
-		// state when we're already there.
-		if isIdempotent(inst.State, t.idempotentStates) {
-			continue
+		changed, err := m.transitionOne(inst, id, t)
+		if err != nil {
+			return err
 		}
-
-		if err := m.sm.Transition(id, t.intermediateState); err != nil {
-			return cerrors.Newf(cerrors.FailedPrecondition, "cannot %s instance %q: %v", t.errVerb, id, err)
-		}
-
-		inst.State = t.intermediateState
-		_ = m.sm.Transition(id, t.finalState)
-		inst.State = t.finalState
-		// A lifecycle transition supersedes any post-launch settle window, so the
-		// instance reports its new terminal state rather than a stale "pending".
-		inst.settle = settle.Window{}
 
 		// Managed instances are hidden from Describe; keep them out of metrics
-		// too so a hidden instance isn't observable via CloudWatch.
-		if !isManaged(inst) {
+		// too so a hidden instance isn't observable via CloudWatch. Emitted
+		// outside inst.mu so a metrics callback can't deadlock against it.
+		if changed && !isManaged(inst) {
 			m.emitLifecycleMetrics(ctx, id, t.metricValues)
 		}
 	}
 
 	return nil
+}
+
+// transitionOne applies one lifecycle transition to inst under its own lock,
+// keeping inst.State in lockstep with the m.sm transition. It reports whether
+// the state actually changed (false when the request was idempotent).
+//
+//nolint:gocritic // t is a small read-only config; copying once per call is fine.
+func (m *Mock) transitionOne(inst *instanceData, id string, t lifecycleTransition) (bool, error) {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+
+	// Real AWS EC2 documents Start/Stop as idempotent on the target state. Skip
+	// the state machine and return success without changing state when we're
+	// already there.
+	if isIdempotent(inst.State, t.idempotentStates) {
+		return false, nil
+	}
+
+	if err := m.sm.Transition(id, t.intermediateState); err != nil {
+		return false, cerrors.Newf(cerrors.FailedPrecondition, "cannot %s instance %q: %v", t.errVerb, id, err)
+	}
+
+	inst.State = t.intermediateState
+	_ = m.sm.Transition(id, t.finalState)
+	inst.State = t.finalState
+	// A lifecycle transition supersedes any post-launch settle window, so the
+	// instance reports its new terminal state rather than a stale "pending".
+	inst.settle = settle.Window{}
+
+	return true, nil
 }
 
 func isIdempotent(state string, idempotentStates []string) bool {
@@ -750,7 +814,7 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	// Termination protection: real EC2 rejects the whole call with
 	// OperationNotPermitted if any target has DisableApiTermination set.
 	for _, id := range instanceIDs {
-		if inst, ok := m.instances.Get(id); ok && inst.disableAPITermination {
+		if inst, ok := m.instances.Get(id); ok && inst.terminationProtected() {
 			return cerrors.Newf(cerrors.PermissionDenied,
 				"instance %q may not be terminated: termination protection is enabled", id)
 		}
@@ -772,18 +836,20 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
-		if !ok || !inst.engineBacked {
+		if !ok || !inst.isEngineBacked() {
 			continue
 		}
 
 		di := driver.Instance{ID: inst.ID}
+		// Deprovision is a potentially blocking engine call, so it runs outside
+		// inst.mu; only the flag flip is taken under the lock.
 		if err := computeengine.Deprovision(ctx, engine, &di); err != nil {
 			errs = append(errs, err)
 
 			continue
 		}
 
-		inst.engineBacked = false
+		inst.clearEngineBacked()
 		m.instances.Set(id, inst)
 	}
 
@@ -799,7 +865,7 @@ func (m *Mock) GetConsoleOutput(ctx context.Context, instanceID string) ([]byte,
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
-	if !inst.engineBacked {
+	if !inst.isEngineBacked() {
 		return nil, nil
 	}
 
@@ -892,6 +958,11 @@ func (m *Mock) visibility() string {
 }
 
 func matchesFilters(inst *instanceData, filters []driver.DescribeFilter, now time.Time) bool {
+	// Filters read mutable fields (State, settle, InstanceType, Tags), so match
+	// under the instance's own lock to stay consistent with concurrent writers.
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+
 	for _, f := range filters {
 		if !matchesSingleFilter(inst, f, now) {
 			return false
@@ -945,6 +1016,9 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+
 	if inst.State != compute.StateStopped {
 		return cerrors.Newf(cerrors.FailedPrecondition, "instance %q must be stopped to modify", instanceID)
 	}
@@ -954,6 +1028,10 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 	}
 
 	if input.Tags != nil {
+		if inst.Tags == nil {
+			inst.Tags = map[string]string{}
+		}
+
 		for k, v := range input.Tags {
 			inst.Tags[k] = v
 		}
@@ -984,6 +1062,9 @@ func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value s
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
+
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
 
 	switch name {
 	case attrDisableAPITermination:
@@ -1022,7 +1103,10 @@ func (m *Mock) SetInstanceSecurityGroups(_ context.Context, instanceID string, g
 
 	sg := make([]string, len(groupIDs))
 	copy(sg, groupIDs)
+
+	inst.mu.Lock()
 	inst.SecurityGroups = sg
+	inst.mu.Unlock()
 
 	return nil
 }
@@ -1034,6 +1118,9 @@ func (m *Mock) GetInstanceAttribute(_ context.Context, instanceID, name string) 
 	if !ok {
 		return "", cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
+
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
 
 	switch name {
 	case attrDisableAPITermination:
@@ -1061,7 +1148,9 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
+	inst.mu.Lock()
 	inst.VPCID = vpcID
+	inst.mu.Unlock()
 
 	return nil
 }

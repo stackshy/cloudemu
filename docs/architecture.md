@@ -113,6 +113,19 @@ p.GCE.SetMonitoring(p.CloudMonitoring)     // GCP
 
 The source tree mirrors the layers — `services/<svc>/` (portable API + `driver/`), `providers/<cloud>/<service>/` (mocks), `server/<cloud>/<service>/` (wire handlers) — plus the `contrib/*` sibling modules. See [STRUCTURE.md](STRUCTURE.md) for the full layout, naming rules, and where new code goes.
 
+## Concurrency & thread safety
+
+Mocks are hit concurrently — the wire server serves requests on many goroutines, and SDK/CLI callers fan out. `internal/memstore.Store[V]` makes only the **map operations** (`Get`/`Set`/`Delete`/`All`/…) atomic. When a store holds pointers (`Store[*fooData]`), the pointed-to struct has **no** synchronization of its own: two goroutines mutating the same entity's fields, or one mutating while another reads, is a data race.
+
+So the rule for any entity that is stored as a pointer and mutated after it is first put in the store:
+
+- **Give the stored struct its own `sync.Mutex` (or `RWMutex`) and hold it around every read and write of its mutable fields.** The exemplar is `providers/aws/sqs.queueData.mu`; `providers/aws/ec2.instanceData.mu` follows the same pattern (it also keeps the readable `State` field in lockstep, under the lock, with the authoritative `statemachine.Machine` transition). Initialize an entity fully **before** `Set`-ing it into the store, so a concurrent reader can never observe a half-written struct.
+- **Or** apply the change through `memstore.Store.Update(key, fn)`, which performs the read-modify-write while holding the store lock.
+
+Never do `v, _ := store.Get(k); mutate(v); store.Set(k, v)` as a way to "update" shared state. Beyond the field-level race, `Get`-then-`Set` is a **lost-update** race: two callers read the same value, each mutates its copy, and the second `Set` silently clobbers the first. This is a logical check-then-act race that the `-race` detector does **not** catch (no conflicting memory access on the same address), so it will not show up in CI — use `Update` or a per-entity lock instead.
+
+An advisory `go test -race ./...` job runs in CI while the per-entity locking is rolled out mock by mock (see #587).
+
 ## Fourth provider: OCI (in progress)
 
 OCI (`providers/oci/`) follows the same three-layer shape: a `memstore`-backed mock per service implementing the shared driver, plus a `server/oci/<service>/` handler. Its foundation is in place (identity options, OCID generation in `internal/idgen/ocid.go`, `services/scope` compartment scoping, the `server/wire/ocirest` format, and the `server/oci/workrequest` async envelope); services land one PR at a time — see [oci-conventions.md](oci-conventions.md).
