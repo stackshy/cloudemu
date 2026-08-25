@@ -2,6 +2,7 @@ package servicebus_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -145,5 +146,42 @@ func TestDataPlaneScheduledMessageDelayed(t *testing.T) {
 	early := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/sched/messages/head", "")
 	if early.StatusCode != http.StatusNoContent {
 		t.Fatalf("receive before scheduled time = %d, want 204 (not yet enqueued)", early.StatusCode)
+	}
+}
+
+// TestDataPlaneScheduledMessageTTLFromEnqueue is the regression for silent loss
+// of a scheduled message whose TTL is shorter than the schedule delay: a message
+// scheduled for +120s with a 30s TimeToLive must still be delivered once it
+// becomes active, because expires-at-utc is enqueued-time + TTL, not submit + TTL.
+// The buggy path expired it at submit+30s, before it was ever visible.
+func TestDataPlaneScheduledMessageTTLFromEnqueue(t *testing.T) {
+	srv, clk := newClockServer(t)
+	seedNamespace(t, srv)
+
+	if r := doRequest(t, srv, http.MethodPut, queueURL("schedttl")+apiVer, `{"properties":{}}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("create queue = %d", r.StatusCode)
+	}
+
+	// The dataplane derives the delivery delay from ScheduledEnqueueTimeUtc via the
+	// wall clock, while TTL reaping runs on the FakeClock (both anchored at start).
+	schedule := time.Now().Add(120 * time.Second).UTC().Format(time.RFC3339)
+	broker := fmt.Sprintf(`{"ScheduledEnqueueTimeUtc":%q,"TimeToLive":30}`, schedule)
+
+	send := doRequest(t, srv, http.MethodPost, "/"+nsName+"/schedttl/messages", "future",
+		map[string]string{"BrokerProperties": broker})
+	if send.StatusCode != http.StatusCreated {
+		t.Fatalf("send = %d, want 201", send.StatusCode)
+	}
+
+	// Advance past the scheduled enqueue time (and well past submit+TTL).
+	clk.Advance(121 * time.Second)
+
+	got := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/schedttl/messages/head", "")
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("receive after enqueue = %d, want 200 (delivered, not lost to TTL)", got.StatusCode)
+	}
+
+	if body := readBody(t, got); body != "future" {
+		t.Fatalf("body = %q, want future", body)
 	}
 }
