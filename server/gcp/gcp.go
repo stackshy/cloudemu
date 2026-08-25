@@ -139,11 +139,21 @@ func New(d Drivers) *server.Server {
 
 	srv := server.New()
 
-	// Shared location-operations poller. Registered FIRST so it owns every
-	// GET /v1/projects/{p}/locations/{l}/operations/{op} uniformly, instead of
-	// alloydb/gke greedily claiming (and 404ing) operations created by
-	// artifactregistry, eventarc, memorystore, etc. All emulated ops are
-	// synchronous, so a done response is always correct.
+	// GKE registers ahead of the shared LRO poller because it answers a richer
+	// operation shape (operationType/targetLink/selfLink/zone/timestamps) for
+	// its OWN operations. Its Matches claims a named operation poll only when
+	// the op was recorded by the GKE mock, so foreign location operations still
+	// fall through to lro below — no shadowing.
+	if d.GKE != nil {
+		srv.Register(gke.New(d.GKE))
+	}
+
+	// Shared location-operations poller. Registered ahead of the remaining
+	// service handlers so it owns every GET /v1/projects/{p}/locations/{l}/
+	// operations/{op} uniformly, instead of alloydb greedily claiming (and
+	// 404ing) operations created by artifactregistry, eventarc, memorystore,
+	// etc. All emulated ops are synchronous, so a done response is always
+	// correct.
 	srv.Register(lro.New())
 
 	if d.Compute != nil {
@@ -227,11 +237,8 @@ func New(d Drivers) *server.Server {
 		srv.Register(alloydbsrv.New(d.AlloyDB))
 	}
 
-	// GKE matches /v1/projects/{p}/locations/{l}/{clusters|operations}/...;
-	// same /v1/projects/ space as Firestore, so register first.
-	if d.GKE != nil {
-		srv.Register(gke.New(d.GKE))
-	}
+	// GKE is registered ahead of the LRO poller above (see the top of New) so
+	// its richer operation shape wins for its own operations.
 
 	// Vertex AI matches /v1/projects/{p}/locations/{l}/{models|endpoints|datasets|
 	// customJobs|batchPredictionJobs}/... and /v1/publishers/...:generateContent.

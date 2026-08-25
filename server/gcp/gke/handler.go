@@ -54,10 +54,11 @@ const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 1 << 20
 
-	resourceClusters   = "clusters"
-	resourceNodePools  = "nodePools"
-	resourceOperations = "operations"
-	locationsSeg       = "locations"
+	resourceClusters     = "clusters"
+	resourceNodePools    = "nodePools"
+	resourceOperations   = "operations"
+	resourceServerConfig = "serverConfig"
+	locationsSeg         = "locations"
 
 	// actionResX values tag the resource an action applies to.
 	actionResCluster    = "cluster"
@@ -76,35 +77,37 @@ func New(m *gke.Mock) *Handler {
 	return &Handler{gke: m}
 }
 
-// Matches accepts /v1/projects/{p}/locations/{l}/{clusters|operations}/...
-// paths. Anything else (functions, instances, databases) belongs to a
-// different handler and falls through.
-func (*Handler) Matches(r *http.Request) bool {
+// Matches accepts /v1/projects/{p}/locations/{l}/{clusters|operations|
+// serverConfig}/... paths. Anything else (functions, instances, databases)
+// belongs to a different handler and falls through.
+//
+// For a named operation poll it claims ONLY operations this GKE mock recorded,
+// so the shared LRO handler still answers foreign location operations
+// (artifactregistry, eventarc, memorystore, …). This lets the handler register
+// ahead of the LRO poller and return GKE's richer operation shape for its own
+// ops without shadowing everyone else's.
+func (h *Handler) Matches(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
 	}
 
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
-
-	const (
-		idxScope    = 1 // "locations"
-		idxResource = 3 // "clusters" | "operations"
-	)
-
-	if len(parts) <= idxResource {
+	p, ok := parsePath(r.URL.Path)
+	if !ok {
 		return false
 	}
 
-	if parts[idxScope] != locationsSeg {
+	switch p.resource {
+	case resourceClusters, resourceServerConfig:
+		return true
+	case resourceOperations:
+		if p.name != "" && p.action == "" {
+			return h.gke.HasOperation(p.name)
+		}
+
+		return true
+	default:
 		return false
 	}
-
-	res := parts[idxResource]
-	if i := strings.Index(res, ":"); i >= 0 {
-		res = res[:i]
-	}
-
-	return res == resourceClusters || res == resourceOperations
 }
 
 // gkePath holds the parsed components of a GKE URL.
@@ -222,9 +225,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveClusters(w, r, &p)
 	case resourceOperations:
 		h.serveOperations(w, r, &p)
+	case resourceServerConfig:
+		h.serveServerConfig(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported resource: "+p.resource)
 	}
+}
+
+// serveServerConfig answers GET /v1/projects/{p}/locations/{l}/serverConfig
+// with the default/valid cluster and node versions, so `gcloud container
+// get-server-config` and SDK version validation succeed.
+func (*Handler) serveServerConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, defaultServerConfig())
 }
 
 func (h *Handler) serveClusters(w http.ResponseWriter, r *http.Request, p *gkePath) {
