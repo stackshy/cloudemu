@@ -5811,6 +5811,44 @@
         "doc": "UpdateLogGroup replaces the mutable fields (retention, tags) of an"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "GCPLogging",
+        "doc": "GCPLogging is an optional interface implemented by the GCP logging backend for",
+        "operations": [
+          {
+            "name": "CreateLogMetric"
+          },
+          {
+            "name": "CreateSink"
+          },
+          {
+            "name": "DeleteLogMetric"
+          },
+          {
+            "name": "DeleteSink"
+          },
+          {
+            "name": "GetLogMetric"
+          },
+          {
+            "name": "GetSink"
+          },
+          {
+            "name": "ListLogMetrics"
+          },
+          {
+            "name": "ListSinks"
+          },
+          {
+            "name": "UpdateLogMetric"
+          },
+          {
+            "name": "UpdateSink"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",

@@ -42,6 +42,12 @@ type Mock struct {
 	groups     *memstore.Store[*logGroup]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// sinks and metrics back the GCP-only resource surfaces (export sinks and
+	// log-based metrics). They are keyed by "{project}/{name}" so a single mock
+	// can hold resources for more than one project.
+	sinks   *memstore.Store[*driver.LogSink]
+	metrics *memstore.Store[*driver.LogBasedMetric]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -69,8 +75,10 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 // New creates a new Cloud Logging mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		groups: memstore.New[*logGroup](),
-		opts:   opts,
+		groups:  memstore.New[*logGroup](),
+		opts:    opts,
+		sinks:   memstore.New[*driver.LogSink](),
+		metrics: memstore.New[*driver.LogBasedMetric](),
 	}
 }
 

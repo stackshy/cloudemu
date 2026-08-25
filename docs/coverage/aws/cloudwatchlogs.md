@@ -22,6 +22,27 @@ AWS's `logging` service · portable interface `driver.Logging` · [AWS index](./
 | `PutMetricFilter` |  |
 | `UpdateLogGroup` | UpdateLogGroup replaces the mutable fields (retention, tags) of an |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### GCPLogging
+
+GCPLogging is an optional interface implemented by the GCP logging backend for
+
+| Operation | Description |
+| --- | --- |
+| `CreateLogMetric` |  |
+| `CreateSink` |  |
+| `DeleteLogMetric` |  |
+| `DeleteSink` |  |
+| `GetLogMetric` |  |
+| `GetSink` |  |
+| `ListLogMetrics` |  |
+| `ListSinks` |  |
+| `UpdateLogMetric` |  |
+| `UpdateSink` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
