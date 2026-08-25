@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -60,12 +61,22 @@ const (
 // also implements the AlloyDB optional capability.
 type Handler struct {
 	db rdsdriver.RelationalDB
+
+	// ops records created operations with the shared poller so a client that
+	// polls the returned operation name gets the typed response (and unknown
+	// names 404). Nil in a standalone package server, where this handler serves
+	// its own /operations/ poll.
+	ops *lro.Registry
 }
 
 // New returns an AlloyDB handler backed by db.
 func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
 }
+
+// SetOperationRegistry wires the shared LRO poller so created operations are
+// resolvable (with their response) through the full server's operations host.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 
 // Matches claims /v1/projects/{p}/locations/{l}/{clusters|backups|operations}
 // paths. Everything else under /v1/projects/ falls through to other GCP

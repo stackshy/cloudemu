@@ -80,7 +80,7 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, triggerID,
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, triggerID,
 		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
 }
 
@@ -177,7 +177,7 @@ func (h *Handler) deleteTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, rt.trigger, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger, nil))
 }
 
 // patchTrigger applies an updateTrigger call. Only the fields named in
@@ -236,7 +236,7 @@ func (h *Handler) patchTrigger(w http.ResponseWriter, r *http.Request, rt *route
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, rt.trigger,
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger,
 		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
 }
 
@@ -306,10 +306,15 @@ func (h *Handler) ensureChannel(r *http.Request, rt *route, bus string) error {
 	return nil
 }
 
-// doneOperation builds a completed long-running operation envelope.
-func doneOperation(rt *route, id string, response any) operationJSON {
+// doneOperation builds a completed long-running operation envelope and records
+// it with the shared LRO poller so a client polling the returned name resolves
+// the same done operation (with its typed response) in the full server.
+func (h *Handler) doneOperation(rt *route, id string, response any) operationJSON {
+	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id
+	h.ops.Register(name, response)
+
 	return operationJSON{
-		Name:     "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id,
+		Name:     name,
 		Done:     true,
 		Response: response,
 	}

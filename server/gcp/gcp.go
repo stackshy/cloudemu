@@ -152,9 +152,11 @@ func New(d Drivers) *server.Server {
 	// service handlers so it owns every GET /v1/projects/{p}/locations/{l}/
 	// operations/{op} uniformly, instead of alloydb greedily claiming (and
 	// 404ing) operations created by artifactregistry, eventarc, memorystore,
-	// etc. All emulated ops are synchronous, so a done response is always
-	// correct.
-	srv.Register(lro.New())
+	// etc. Each service registers the operations it creates into opsReg so the
+	// poller replays their typed response and 404s an operation name that was
+	// never created (as real GCP does).
+	opsReg := lro.NewRegistry()
+	srv.Register(lro.New(opsReg))
 
 	if d.Compute != nil {
 		srv.Register(compute.New(d.Compute))
@@ -234,7 +236,9 @@ func New(d Drivers) *server.Server {
 	// the two are mutually exclusive on one server. Registered before GKE so an
 	// AlloyDB-configured server (GKE nil) works; DriversFrom leaves AlloyDB nil.
 	if d.AlloyDB != nil {
-		srv.Register(alloydbsrv.New(d.AlloyDB))
+		alloyH := alloydbsrv.New(d.AlloyDB)
+		alloyH.SetOperationRegistry(opsReg)
+		srv.Register(alloyH)
 	}
 
 	// GKE is registered ahead of the LRO poller above (see the top of New) so
@@ -270,7 +274,9 @@ func New(d Drivers) *server.Server {
 	// — disjoint from IAM (serviceAccounts|roles) and Cloud Asset. Registered
 	// among the /v1/projects/ family, before Firestore's catch-all.
 	if d.ArtifactRegistry != nil {
-		srv.Register(artifactregistry.New(d.ArtifactRegistry))
+		arH := artifactregistry.New(d.ArtifactRegistry)
+		arH.SetOperationRegistry(opsReg)
+		srv.Register(arH)
 	}
 
 	// Secret Manager matches /v1/projects/{p}/secrets[/…] — disjoint from IAM
@@ -285,7 +291,9 @@ func New(d Drivers) *server.Server {
 	// GKE, and the rest of the /v1/projects/ family. Registered before
 	// Firestore's catch-all.
 	if d.Eventarc != nil {
-		srv.Register(eventarc.New(d.Eventarc))
+		eaH := eventarc.New(d.Eventarc)
+		eaH.SetOperationRegistry(opsReg)
+		srv.Register(eaH)
 	}
 
 	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...] — a distinct
@@ -310,7 +318,9 @@ func New(d Drivers) *server.Server {
 	// registration order among them is unconstrained. Registered before
 	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
 	if d.Memorystore != nil {
-		srv.Register(memorystoresrv.New(d.Memorystore))
+		msH := memorystoresrv.New(d.Memorystore)
+		msH.SetOperationRegistry(opsReg)
+		srv.Register(msH)
 	}
 
 	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other

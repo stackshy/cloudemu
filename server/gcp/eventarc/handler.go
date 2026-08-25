@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
@@ -62,12 +63,21 @@ const minTriggersCollectionParts = 5
 // eventbus driver.
 type Handler struct {
 	bus ebdriver.EventBus
+
+	// ops records created operations with the shared poller so a client that
+	// polls the returned operation name gets the typed response (and unknown
+	// names 404). Nil in a standalone package server.
+	ops *lro.Registry
 }
 
 // New returns an Eventarc handler backed by b.
 func New(b ebdriver.EventBus) *Handler {
 	return &Handler{bus: b}
 }
+
+// SetOperationRegistry wires the shared LRO poller so created operations are
+// resolvable (with their response) through the full server's operations host.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 
 type route struct {
 	project   string

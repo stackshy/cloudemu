@@ -44,7 +44,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	op := doneOperation(rt.project, rt.location, "create-"+instanceID, raw)
+	op := h.doneOperation(rt.project, rt.location, "create-"+instanceID, raw)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -119,7 +119,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt.project, rt.location, "update-"+rt.name, raw))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt.project, rt.location, "update-"+rt.name, raw))
 }
 
 // deleteInstance handles DELETE .../instances/{i} — Delete. The operation
@@ -130,7 +130,7 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	op := doneOperation(rt.project, rt.location, "delete-"+rt.name, json.RawMessage("{}"))
+	op := h.doneOperation(rt.project, rt.location, "delete-"+rt.name, json.RawMessage("{}"))
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }

@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
@@ -55,12 +56,22 @@ type Handler struct {
 	// google_artifact_registry_repository_iam_* flow).
 	mu       sync.RWMutex
 	policies map[string]*iamPolicy
+
+	// ops records created operations with the shared poller so a client that
+	// polls the returned operation name gets the typed response (and unknown
+	// names 404). Nil in a standalone package server, where this handler serves
+	// its own /operations/ poll.
+	ops *lro.Registry
 }
 
 // New returns an Artifact Registry handler backed by reg.
 func New(reg crdriver.ContainerRegistry) *Handler {
 	return &Handler{registry: reg, policies: make(map[string]*iamPolicy)}
 }
+
+// SetOperationRegistry wires the shared LRO poller so created operations are
+// resolvable (with their response) through the full server's operations host.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 
 type route struct {
 	project    string
