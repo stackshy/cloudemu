@@ -7036,6 +7036,15 @@
         ]
       },
       {
+        "name": "NetworkInterfaceModifier",
+        "doc": "NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface",
+        "operations": [
+          {
+            "name": "ModifyNetworkInterfaceAttribute"
+          }
+        ]
+      },
+      {
         "name": "NetworkInterfaces",
         "doc": "NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.",
         "operations": [

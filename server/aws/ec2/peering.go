@@ -218,6 +218,9 @@ func peeringStatusMessage(code string) string {
 	}
 }
 
+// writePeeringErr maps peering errors. A state precondition (accepting/rejecting
+// a connection that is not pending-acceptance) is InvalidStateTransition — real
+// EC2's code for "not in the correct state" — not a dependency violation.
 func writePeeringErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidVpcPeeringConnectionID.NotFound", "DependencyViolation")
+	writeErrWithNotFound(w, err, "InvalidVpcPeeringConnectionID.NotFound", "InvalidStateTransition")
 }

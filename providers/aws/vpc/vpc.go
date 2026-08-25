@@ -30,6 +30,10 @@ const (
 	// resource-specific InvalidVpcRange code (mirrors the InvalidSubnet.* prefix
 	// convention used for subnet CIDR conflicts).
 	vpcRangeErrPrefix = "InvalidVpcRange: "
+	// subnetRangeErrPrefix marks a subnet CIDR that falls outside the VPC's CIDR
+	// block so the wire layer can emit the resource-specific InvalidSubnet.Range
+	// code (mirrors the InvalidSubnet.Conflict prefix convention).
+	subnetRangeErrPrefix = "InvalidSubnet.Range: "
 )
 
 // Default security group identity. EC2 gives every VPC a group named "default"
@@ -46,6 +50,7 @@ const (
 var (
 	_ driver.Networking                 = (*Mock)(nil)
 	_ driver.NetworkInterfaces          = (*Mock)(nil)
+	_ driver.NetworkInterfaceModifier   = (*Mock)(nil)
 	_ driver.NetworkACLAssociator       = (*Mock)(nil)
 	_ driver.VPCAttributes              = (*Mock)(nil)
 	_ driver.SubnetAttributes           = (*Mock)(nil)
@@ -155,6 +160,11 @@ type Mock struct {
 	// re-derived from VPCs/subnets on every read. Guarded by mu.
 	ipamResourceOverrides map[string]ipamResourceOverride
 
+	// eniIPCounters tracks the next private-IP offset handed out per subnet when
+	// a standalone ENI is created, so each interface gets a distinct address.
+	// Guarded by mu.
+	eniIPCounters map[string]int
+
 	opts *config.Options
 }
 
@@ -253,6 +263,7 @@ func New(opts *config.Options) *Mock {
 		ipamPoolByCidr:        map[string]string{},
 		ipamPoolByAllocation:  map[string]string{},
 		ipamResourceOverrides: map[string]ipamResourceOverride{},
+		eniIPCounters:         map[string]int{},
 
 		opts: opts,
 	}
@@ -505,7 +516,8 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 		return nil, errors.Newf(errors.InvalidArgument, "CIDR block is required")
 	}
 
-	if !m.vpcs.Has(cfg.VPCID) {
+	v, ok := m.vpcs.Get(cfg.VPCID)
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "vpc %q not found", cfg.VPCID)
 	}
 
@@ -514,6 +526,13 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	} else if conflict != "" {
 		return nil, errors.Newf(errors.AlreadyExists,
 			"InvalidSubnet.Conflict: subnet CIDR %q conflicts with existing subnet %q", cfg.CIDRBlock, conflict)
+	}
+
+	// A subnet's CIDR must sit entirely inside the VPC's CIDR block; real EC2
+	// rejects an out-of-range block with InvalidSubnet.Range.
+	if !cidrWithinVPC(cfg.CIDRBlock, v.CIDRBlock) {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"%sThe CIDR '%s' is invalid", subnetRangeErrPrefix, cfg.CIDRBlock)
 	}
 
 	id := idgen.GenerateID("subnet-")
@@ -600,6 +619,28 @@ func validateVPCCIDR(cidr string) error {
 	}
 
 	return nil
+}
+
+// cidrWithinVPC reports whether the subnet CIDR sits entirely inside the VPC's
+// CIDR block: its network address must fall within the VPC block and its prefix
+// must be at least as long (a smaller-or-equal block). An unparseable subnet CIDR
+// is not contained; an unparseable VPC CIDR does not block (validation happens at
+// VPC-create time).
+func cidrWithinVPC(subnetCIDR, vpcCIDR string) bool {
+	_, subnet, err := net.ParseCIDR(subnetCIDR)
+	if err != nil {
+		return false
+	}
+
+	_, vpcNet, err := net.ParseCIDR(vpcCIDR)
+	if err != nil {
+		return true
+	}
+
+	subnetOnes, _ := subnet.Mask.Size()
+	vpcOnes, _ := vpcNet.Mask.Size()
+
+	return subnetOnes >= vpcOnes && vpcNet.Contains(subnet.IP)
 }
 
 // subnetCIDRConflict reports an existing subnet in the same VPC whose CIDR

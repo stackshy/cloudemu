@@ -3,7 +3,9 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -180,7 +182,7 @@ func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
 		r.Form.Get("DestinationCidrBlock"),
 		target, targetType)
 	if err != nil {
-		writeRouteTableErr(w, err)
+		writeCreateRouteErr(w, err)
 		return
 	}
 
@@ -239,7 +241,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	err := h.vpc.DeleteRoute(r.Context(),
 		r.Form.Get("RouteTableId"), r.Form.Get("DestinationCidrBlock"))
 	if err != nil {
-		writeRouteTableErr(w, err)
+		writeDeleteRouteErr(w, err)
 		return
 	}
 
@@ -465,9 +467,68 @@ func writeRouteTableErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidRouteTableID.NotFound", "DependencyViolation")
 }
 
+// writeCreateRouteErr maps CreateRoute's resource-specific errors: a destination
+// CIDR that already exists is RouteAlreadyExists (not the generic
+// ResourceAlreadyExists), and a route pointing at a gateway / NAT / peering that
+// does not exist maps to that target's not-found code. A missing route table
+// still falls through to InvalidRouteTableID.NotFound.
+func writeCreateRouteErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "RouteAlreadyExists", cerrors.Message(err))
+		return
+	}
+
+	if code, ok := routeTargetNotFoundCode(err); ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, code, cerrors.Message(err))
+		return
+	}
+
+	writeRouteTableErr(w, err)
+}
+
+// writeDeleteRouteErr maps a miss on an existing route table to
+// InvalidRoute.NotFound (the route is what's absent), while a missing route table
+// still maps to InvalidRouteTableID.NotFound. The provider's message
+// disambiguates the two ("not found in route table" is the route miss).
+func writeDeleteRouteErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "not found in route table") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidRoute.NotFound", cerrors.Message(err))
+		return
+	}
+
+	writeRouteTableErr(w, err)
+}
+
 // writeReplaceRouteErr maps a NotFound to InvalidRoute.NotFound: ReplaceRoute's
 // precondition is that the route already exists, so the delete-step miss reports
-// the missing route, matching real EC2, rather than the route-table code.
+// the missing route, matching real EC2, rather than the route-table code. A
+// re-create pointing at a nonexistent target still maps to that target's code.
 func writeReplaceRouteErr(w http.ResponseWriter, err error) {
+	if code, ok := routeTargetNotFoundCode(err); ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, code, cerrors.Message(err))
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidRoute.NotFound", "DependencyViolation")
+}
+
+// routeTargetNotFoundCode reports the target-specific EC2 error code a CreateRoute
+// carries when its gateway / NAT / peering target does not exist. The provider
+// marks each with the code as a message prefix.
+func routeTargetNotFoundCode(err error) (string, bool) {
+	if !cerrors.IsNotFound(err) {
+		return "", false
+	}
+
+	for _, code := range []string{
+		"InvalidInternetGatewayID.NotFound",
+		"InvalidNatGatewayID.NotFound",
+		"InvalidVpcPeeringConnectionID.NotFound",
+	} {
+		if strings.Contains(err.Error(), code+":") {
+			return code, true
+		}
+	}
+
+	return "", false
 }

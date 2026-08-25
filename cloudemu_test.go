@@ -4811,8 +4811,17 @@ func TestRouteTables(t *testing.T) {
 				t.Errorf("expected VPC %s, got %s", vpcInfo.ID, rt.VPCID)
 			}
 
-			// Create route
-			err = p.d.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+			// Create route. The AWS provider validates that the gateway target
+			// exists, so attach a real internet gateway to point the route at.
+			igw, err := p.d.CreateInternetGateway(ctx, netdriver.InternetGatewayConfig{})
+			if err != nil {
+				t.Fatalf("CreateInternetGateway: %v", err)
+			}
+			if err = p.d.AttachInternetGateway(ctx, igw.ID, vpcInfo.ID); err != nil {
+				t.Fatalf("AttachInternetGateway: %v", err)
+			}
+
+			err = p.d.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igw.ID, "gateway")
 			if err != nil {
 				t.Fatalf("CreateRoute: %v", err)
 			}

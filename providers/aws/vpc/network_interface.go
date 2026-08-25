@@ -2,6 +2,8 @@ package vpc
 
 import (
 	"context"
+	"fmt"
+	"net"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -12,19 +14,42 @@ import (
 const (
 	ENIStatusAvailable = "available"
 	ENIStatusInUse     = "in-use"
+
+	// eniFirstHostOffset is the offset of the first ENI-assignable host address
+	// inside a subnet CIDR. EC2 reserves the first four addresses (.0-.3) of
+	// every subnet, so the first usable host is at offset 4.
+	eniFirstHostOffset = 4
+
+	// eniMACPrefix is the OUI ENI MACs carry; 0a is a locally-administered
+	// address, matching the shape real EC2 hands back.
+	eniMACPrefix = "0a"
+	// macByteCount is the number of hashed bytes after the fixed OUI prefix,
+	// macHashPrime seeds the rolling hash, and bitsPerByte splits the hash into
+	// address octets.
+	macByteCount = 5
+	macHashPrime = 131
+	bitsPerByte  = 8
+
+	// eniInUseErrPrefix marks the delete-while-attached precondition so the wire
+	// layer can emit InvalidNetworkInterface.InUse rather than the generic
+	// DependencyViolation.
+	eniInUseErrPrefix = "InvalidNetworkInterface.InUse: "
 )
 
 type eniData struct {
-	ID             string
-	VPCID          string
-	SubnetID       string
-	Status         string
-	AttachmentID   string
-	InstanceID     string
-	DeviceIndex    int
-	Description    string
-	SecurityGroups []string
-	Tags           map[string]string
+	ID              string
+	VPCID           string
+	SubnetID        string
+	Status          string
+	AttachmentID    string
+	InstanceID      string
+	DeviceIndex     int
+	Description     string
+	PrivateIP       string
+	MacAddress      string
+	SourceDestCheck bool
+	SecurityGroups  []string
+	Tags            map[string]string
 }
 
 // CreateNetworkInterface creates a standalone, unattached ENI in the given
@@ -44,13 +69,19 @@ func (m *Mock) CreateNetworkInterface(
 
 	id := idgen.GenerateID("eni-")
 	eni := &eniData{
-		ID:             id,
-		VPCID:          sub.VPCID,
-		SubnetID:       subnetID,
-		Status:         ENIStatusAvailable,
-		Description:    description,
-		SecurityGroups: append([]string(nil), groups...),
-		Tags:           copyTags(tags),
+		ID:       id,
+		VPCID:    sub.VPCID,
+		SubnetID: subnetID,
+		Status:   ENIStatusAvailable,
+		// Real EC2 auto-assigns a private IPv4 from the subnet, a MAC address,
+		// and defaults source/dest check on. IaC tools (aws_network_interface)
+		// read all three straight off the create/describe response.
+		PrivateIP:       m.allocateENIPrivateIP(subnetID, sub.CIDRBlock),
+		MacAddress:      mockMAC(id),
+		SourceDestCheck: true,
+		Description:     description,
+		SecurityGroups:  append([]string(nil), groups...),
+		Tags:            copyTags(tags),
 	}
 	m.enis.Set(id, eni)
 
@@ -148,12 +179,98 @@ func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
 
 	if eni.AttachmentID != "" {
 		return errors.Newf(errors.FailedPrecondition,
-			"network interface %q is still attached", id)
+			"%snetwork interface %q is currently in use and cannot be deleted", eniInUseErrPrefix, id)
 	}
 
 	m.enis.Delete(id)
 
 	return nil
+}
+
+// ModifyNetworkInterfaceAttribute changes one or more ENI attributes
+// (ec2:ModifyNetworkInterfaceAttribute). A nil field in update leaves that
+// attribute untouched, matching an API that accepts one attribute per call.
+// SourceDestCheck=false is the required step for a NAT-instance / firewall /
+// router VM; Groups swaps the interface's security groups; Description renames it.
+func (m *Mock) ModifyNetworkInterfaceAttribute(
+	_ context.Context, id string, update driver.NetworkInterfaceAttributeUpdate,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	eni, ok := m.enis.Get(id)
+	if !ok {
+		return errors.Newf(errors.NotFound, "network interface %q not found", id)
+	}
+
+	if update.SourceDestCheck != nil {
+		eni.SourceDestCheck = *update.SourceDestCheck
+	}
+
+	if update.Description != nil {
+		eni.Description = *update.Description
+	}
+
+	if update.Groups != nil {
+		eni.SecurityGroups = append([]string(nil), update.Groups...)
+	}
+
+	return nil
+}
+
+// allocateENIPrivateIP hands out the next private IPv4 inside the subnet's CIDR,
+// skipping the four addresses EC2 reserves at the front of every subnet. The
+// caller already holds m.mu. An unparseable CIDR yields an empty string rather
+// than a bogus address.
+func (m *Mock) allocateENIPrivateIP(subnetID, cidr string) string {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+
+	base := ipNet.IP.To4()
+	if base == nil {
+		return ""
+	}
+
+	if m.eniIPCounters == nil {
+		m.eniIPCounters = map[string]int{}
+	}
+
+	offset := m.eniIPCounters[subnetID] + eniFirstHostOffset
+	m.eniIPCounters[subnetID]++
+
+	host := make(net.IP, len(base))
+	copy(host, base)
+
+	carry := offset
+	for i := len(host) - 1; i >= 0 && carry > 0; i-- {
+		sum := int(host[i]) + carry
+		host[i] = byte(sum % maxOctetValue) //nolint:gosec // sum%256 is always in [0,255]
+		carry = sum / maxOctetValue
+	}
+
+	if !ipNet.Contains(host) {
+		return ""
+	}
+
+	return host.String()
+}
+
+// mockMAC derives a stable locally-administered MAC address from an ENI id, so
+// the same interface always reports the same address across describes.
+func mockMAC(seed string) string {
+	var sum uint64
+	for _, c := range []byte(seed) {
+		sum = sum*macHashPrime + uint64(c)
+	}
+
+	b := make([]byte, macByteCount)
+	for i := range b {
+		b[i] = byte(sum >> (uint(i) * bitsPerByte)) //nolint:gosec // byte() intentionally truncates to one octet
+	}
+
+	return fmt.Sprintf("%s:%02x:%02x:%02x:%02x:%02x", eniMACPrefix, b[0], b[1], b[2], b[3], b[4])
 }
 
 // attachManagedENI records the interface a managed resource (NAT gateway,
@@ -190,14 +307,17 @@ func (m *Mock) releaseManagedENIs(description string) {
 
 func toENIInfo(e *eniData) driver.NetworkInterface {
 	return driver.NetworkInterface{
-		ID:           e.ID,
-		VPCID:        e.VPCID,
-		SubnetID:     e.SubnetID,
-		Status:       e.Status,
-		AttachmentID: e.AttachmentID,
-		InstanceID:   e.InstanceID,
-		DeviceIndex:  e.DeviceIndex,
-		Description:  e.Description,
-		Tags:         copyTags(e.Tags),
+		ID:              e.ID,
+		VPCID:           e.VPCID,
+		SubnetID:        e.SubnetID,
+		Status:          e.Status,
+		AttachmentID:    e.AttachmentID,
+		InstanceID:      e.InstanceID,
+		DeviceIndex:     e.DeviceIndex,
+		Description:     e.Description,
+		PrivateIP:       e.PrivateIP,
+		MacAddress:      e.MacAddress,
+		SourceDestCheck: e.SourceDestCheck,
+		Tags:            copyTags(e.Tags),
 	}
 }

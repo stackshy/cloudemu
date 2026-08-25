@@ -548,6 +548,8 @@ func (h *Handler) routeVPCNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 		h.detachNetworkInterface(w, r)
 	case "DeleteNetworkInterface":
 		h.deleteNetworkInterface(w, r)
+	case "ModifyNetworkInterfaceAttribute":
+		h.modifyNetworkInterfaceAttribute(w, r)
 	default:
 		return false
 	}

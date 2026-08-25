@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -272,12 +273,20 @@ func writeSubnetErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidSubnetID.NotFound", "DependencyViolation")
 }
 
-// writeCreateSubnetErr adds the CreateSubnet-only InvalidSubnet.Conflict code
-// for an overlapping CIDR (surfaced as AlreadyExists by the driver), falling
-// back to the shared subnet error mapping otherwise.
+// writeCreateSubnetErr adds the CreateSubnet-only codes: InvalidSubnet.Conflict
+// for an overlapping CIDR (surfaced as AlreadyExists by the driver) and
+// InvalidSubnet.Range for a CIDR outside the VPC block, falling back to the
+// shared subnet error mapping otherwise.
 func writeCreateSubnetErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Conflict", err.Error())
+		return
+	}
+
+	// A subnet CIDR outside the VPC's CIDR block is InvalidSubnet.Range, not the
+	// generic InvalidParameterValue the shared mapper would emit.
+	if cerrors.IsInvalidArgument(err) && strings.Contains(err.Error(), "InvalidSubnet.Range:") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Range", cerrors.Message(err))
 		return
 	}
 
