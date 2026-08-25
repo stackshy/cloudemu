@@ -6,6 +6,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 func newMetaMock() *Mock {
@@ -136,5 +137,149 @@ func TestSiteFunctionsLifecycle(t *testing.T) {
 	// Operations on a missing site are NotFound.
 	if _, err := m.CreateSiteFunction(ctx, "ghost", SiteFunction{Name: "fn"}); !cerrors.IsNotFound(err) {
 		t.Fatalf("create on missing site = %v, want NotFound", err)
+	}
+}
+
+// TestGetSiteMetaScoped covers the deep-sweep BLOCKER: a site must only be
+// visible through the subscription/resource group it was created in.
+func TestGetSiteMetaScoped(t *testing.T) {
+	m := newMetaMock()
+	ctx := context.Background()
+
+	if _, err := m.UpsertSiteMeta(ctx, SiteMeta{Name: "app1", Subscription: "sub1", ResourceGroup: "rgA"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	if _, err := m.GetSiteMeta(ctx, "sub1", "rgA", "app1"); err != nil {
+		t.Fatalf("get in owning rg: %v", err)
+	}
+
+	if _, err := m.GetSiteMeta(ctx, "sub1", "rgB", "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("get from wrong rg = %v, want NotFound", err)
+	}
+
+	if _, err := m.GetSiteMeta(ctx, "sub2", "rgA", "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("get from wrong subscription = %v, want NotFound", err)
+	}
+}
+
+// TestDeleteSiteMetaScoped covers the deep-sweep BLOCKER: DELETE against the
+// wrong resource group must not remove another resource group's site.
+func TestDeleteSiteMetaScoped(t *testing.T) {
+	m := newMetaMock()
+	ctx := context.Background()
+
+	if _, err := m.UpsertSiteMeta(ctx, SiteMeta{Name: "app1", Subscription: "sub1", ResourceGroup: "rgA"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	if err := m.DeleteSiteMeta(ctx, "sub1", "rgB", "app1"); err != nil {
+		t.Fatalf("delete from wrong rg returned error: %v", err)
+	}
+
+	if _, err := m.GetSiteMeta(ctx, "sub1", "rgA", "app1"); err != nil {
+		t.Fatalf("site deleted from wrong rg's request: %v", err)
+	}
+
+	if err := m.DeleteSiteMeta(ctx, "sub1", "rgA", "app1"); err != nil {
+		t.Fatalf("delete in owning rg: %v", err)
+	}
+
+	if _, err := m.GetSiteMeta(ctx, "sub1", "rgA", "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("get after delete = %v, want NotFound", err)
+	}
+}
+
+// TestGetFunctionScopedAndDeleteFunctionScoped covers the deep-sweep BLOCKER
+// end to end: the portable function record is only reachable/deletable
+// through the resource group its site was created in.
+func TestGetFunctionScopedAndDeleteFunctionScoped(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateFunction(ctx, driver.FunctionConfig{Name: "app1", Runtime: "dotnet6"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := m.UpsertSiteMeta(ctx, SiteMeta{Name: "app1", Subscription: "sub1", ResourceGroup: "rgA"}); err != nil {
+		t.Fatalf("upsert site meta: %v", err)
+	}
+
+	if _, err := m.GetFunctionScoped(ctx, "sub1", "rgB", "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("get from wrong rg = %v, want NotFound", err)
+	}
+
+	info, err := m.GetFunctionScoped(ctx, "sub1", "rgA", "app1")
+	if err != nil {
+		t.Fatalf("get from owning rg: %v", err)
+	}
+
+	if info.Name != "app1" {
+		t.Fatalf("info.Name = %q, want app1", info.Name)
+	}
+
+	if err := m.DeleteFunctionScoped(ctx, "sub1", "rgB", "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("delete from wrong rg = %v, want NotFound", err)
+	}
+
+	// The function must still exist — a delete against the wrong resource
+	// group must not have removed it.
+	if _, err := m.GetFunctionScoped(ctx, "sub1", "rgA", "app1"); err != nil {
+		t.Fatalf("function removed by wrong-rg delete: %v", err)
+	}
+
+	if err := m.DeleteFunctionScoped(ctx, "sub1", "rgA", "app1"); err != nil {
+		t.Fatalf("delete from owning rg: %v", err)
+	}
+
+	if _, err := m.GetFunctionScoped(ctx, "sub1", "rgA", "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("get after delete = %v, want NotFound", err)
+	}
+
+	if _, err := m.GetFunction(ctx, "app1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("underlying function survived scoped delete: %v", err)
+	}
+}
+
+// TestUpdateAppSettingsScoped covers the tractable HIGH finding: PUT
+// config/appsettings must persist the settings and must not touch a
+// same-named site in a different resource group.
+func TestUpdateAppSettingsScoped(t *testing.T) {
+	m := newMetaMock()
+	ctx := context.Background()
+
+	if _, err := m.UpsertSiteMeta(ctx, SiteMeta{
+		Name: "app1", Subscription: "sub1", ResourceGroup: "rgA",
+		Location: "eastus", AppSettings: map[string]string{"FOO": "orig"},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	updated, err := m.UpdateAppSettings(ctx, "sub1", "rgA", "app1", map[string]string{"FOO": "bar", "BAZ": "qux"})
+	if err != nil {
+		t.Fatalf("update app settings: %v", err)
+	}
+
+	if updated.AppSettings["FOO"] != "bar" || updated.AppSettings["BAZ"] != "qux" {
+		t.Fatalf("app settings not updated: %+v", updated.AppSettings)
+	}
+
+	// Every other field must survive untouched (a PUT config/appsettings
+	// replaces only the app settings, not the whole site).
+	if updated.Location != "eastus" {
+		t.Fatalf("Location changed by app-settings update: %q", updated.Location)
+	}
+
+	if _, err := m.UpdateAppSettings(ctx, "sub1", "rgB", "app1", map[string]string{"FOO": "hijacked"}); !cerrors.IsNotFound(err) {
+		t.Fatalf("update from wrong rg = %v, want NotFound", err)
+	}
+
+	unchanged, err := m.GetSiteMeta(ctx, "sub1", "rgA", "app1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if unchanged.AppSettings["FOO"] != "bar" {
+		t.Fatalf("wrong-rg update leaked through: %+v", unchanged.AppSettings)
 	}
 }

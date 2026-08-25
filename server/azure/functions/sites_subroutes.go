@@ -1,6 +1,8 @@
 package functions
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	azfunctions "github.com/stackshy/cloudemu/v2/providers/azure/functions"
@@ -57,6 +59,8 @@ func (*Handler) serveConfig(w http.ResponseWriter, r *http.Request, rp azurearm.
 		getConfigWeb(w, r, rp, store)
 	case rp.SubResourceName == configNameAppSettings && rp.SubResourceAction == actionList && r.Method == http.MethodPost:
 		listAppSettings(w, r, rp, store)
+	case rp.SubResourceName == configNameAppSettings && rp.SubResourceAction == "" && r.Method == http.MethodPut:
+		updateAppSettings(w, r, rp, store)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "unsupported config route")
 	}
@@ -64,7 +68,7 @@ func (*Handler) serveConfig(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
 func getConfigWeb(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps) {
-	meta, err := store.GetSiteMeta(r.Context(), rp.ResourceName)
+	meta, err := store.GetSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -83,7 +87,7 @@ func getConfigWeb(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePa
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
 func listAppSettings(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps) {
-	meta, err := store.GetSiteMeta(r.Context(), rp.ResourceName)
+	meta, err := store.GetSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -103,6 +107,35 @@ func listAppSettings(w http.ResponseWriter, r *http.Request, rp azurearm.Resourc
 	})
 }
 
+// updateAppSettings serves PUT .../config/appsettings — WebApps_
+// UpdateApplicationSettings. Per the ARM contract, this replaces the app's
+// entire settings map (not a merge) and echoes it back in the response.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func updateAppSettings(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxControlBytes)
+
+	var req stringDictionary
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
+		return
+	}
+
+	meta, err := store.UpdateAppSettings(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, req.Properties)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, stringDictionary{
+		ID:         siteID(rp) + "/config/appsettings",
+		Name:       configNameAppSettings,
+		Type:       configResourceType,
+		Kind:       "app",
+		Properties: nonNilMap(meta.AppSettings),
+	})
+}
+
 //nolint:gocritic // rp travels the dispatch chain once per request.
 func (*Handler) serveHostKeys(
 	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps,
@@ -112,7 +145,7 @@ func (*Handler) serveHostKeys(
 		return
 	}
 
-	meta, err := store.GetSiteMeta(r.Context(), rp.ResourceName)
+	meta, err := store.GetSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -132,7 +165,7 @@ func (h *Handler) serveRestart(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
-	if _, err := h.fn.GetFunction(r.Context(), rp.ResourceName); err != nil {
+	if _, err := h.getFunction(r.Context(), rp); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}

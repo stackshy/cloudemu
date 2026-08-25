@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 // keyBytes is the entropy of a generated function/host key before base64.
@@ -108,24 +109,102 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 	return meta.clone(), nil
 }
 
-// GetSiteMeta returns the site metadata, or NotFound.
-func (m *Mock) GetSiteMeta(_ context.Context, name string) (*SiteMeta, error) {
+// GetSiteMeta returns the site metadata, scoped to the given subscription and
+// resource group. Azure Web App names are globally unique, so this is a plain
+// name lookup guarded by a scope check (not a composite-keyed lookup): a site
+// that exists under a different subscription/resource group than requested is
+// NotFound here, exactly as real ARM answers a GET against the wrong
+// resourceGroups segment.
+func (m *Mock) GetSiteMeta(_ context.Context, subscription, resourceGroup, name string) (*SiteMeta, error) {
 	m.sitesMu.RLock()
 	defer m.sitesMu.RUnlock()
 
 	meta, ok := m.sites.Get(name)
-	if !ok {
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
 		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
 	}
 
 	return meta.clone(), nil
 }
 
-// DeleteSiteMeta removes the site metadata. Missing sites are ignored so it can
-// trail a portable DeleteFunction without racing.
-func (m *Mock) DeleteSiteMeta(_ context.Context, name string) error {
+// DeleteSiteMeta removes the site metadata, scoped to the given subscription
+// and resource group (see GetSiteMeta). A site that exists under a different
+// scope is left untouched — a DELETE against the wrong resourceGroups segment
+// must not delete another resource group's site. A site that doesn't exist at
+// all is also left untouched (ignored) so this can trail a portable
+// DeleteFunction without racing.
+func (m *Mock) DeleteSiteMeta(_ context.Context, subscription, resourceGroup, name string) error {
 	m.sitesMu.Lock()
 	defer m.sitesMu.Unlock()
+
+	meta, ok := m.sites.Get(name)
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+		return nil
+	}
+
+	m.sites.Delete(name)
+
+	return nil
+}
+
+// UpdateAppSettings replaces a site's app settings only, preserving every
+// other stored field. This is the ARM contract for PUT .../config/appsettings
+// ("Replaces the application settings of an app" — not the whole site), and
+// is scoped exactly like GetSiteMeta/DeleteSiteMeta.
+func (m *Mock) UpdateAppSettings(
+	_ context.Context, subscription, resourceGroup, name string, settings map[string]string,
+) (*SiteMeta, error) {
+	m.sitesMu.Lock()
+	defer m.sitesMu.Unlock()
+
+	meta, ok := m.sites.Get(name)
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
+	}
+
+	meta.AppSettings = maps.Clone(settings)
+	m.sites.Set(name, meta)
+
+	return meta.clone(), nil
+}
+
+// GetFunctionScoped returns the function only when it belongs to the given
+// subscription and resource group. The underlying portable function record
+// (m.funcs, driver.Serverless) is keyed by name alone across every resource
+// group — matching real Azure's globally-unique Web App names — so scope is
+// enforced here via the site metadata before ever touching that store,
+// closing the gap where an ARM GET against the wrong resourceGroups segment
+// would otherwise return another resource group's site.
+func (m *Mock) GetFunctionScoped(ctx context.Context, subscription, resourceGroup, name string) (*driver.FunctionInfo, error) {
+	m.sitesMu.RLock()
+	meta, ok := m.sites.Get(name)
+	m.sitesMu.RUnlock()
+
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
+	}
+
+	return m.GetFunction(ctx, name)
+}
+
+// DeleteFunctionScoped deletes the function and its site metadata only when
+// the site belongs to the given subscription and resource group (see
+// GetFunctionScoped). The scope check, function delete and site-metadata
+// delete run under a single sitesMu hold so a concurrent
+// UpsertSiteMeta/DeleteSiteMeta for the same name can't interleave and shift
+// which resource group "owns" the name mid-operation.
+func (m *Mock) DeleteFunctionScoped(ctx context.Context, subscription, resourceGroup, name string) error {
+	m.sitesMu.Lock()
+	defer m.sitesMu.Unlock()
+
+	meta, ok := m.sites.Get(name)
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+		return cerrors.Newf(cerrors.NotFound, "site %s not found", name)
+	}
+
+	if err := m.DeleteFunction(ctx, name); err != nil {
+		return err
+	}
 
 	m.sites.Delete(name)
 
