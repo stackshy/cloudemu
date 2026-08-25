@@ -42,11 +42,13 @@ func readOnlyKeysResult(name string) armReadOnlyKeysResult {
 }
 
 // connectionStringsResult builds the four SQL-API connection strings, one per
-// key kind, matching the DatabaseAccountListConnectionStringsResult shape.
-func connectionStringsResult(name string) armConnectionStringsResult {
+// key kind, matching the DatabaseAccountListConnectionStringsResult shape. base
+// is the emulator's scheme://host, so the embedded AccountEndpoint resolves back
+// to the emulator (see documentEndpoint).
+func connectionStringsResult(base, name string) armConnectionStringsResult {
 	entry := func(desc, key, kind string) armConnectionString {
 		return armConnectionString{
-			ConnectionString: "AccountEndpoint=" + documentEndpoint(name) + ";AccountKey=" + key + ";",
+			ConnectionString: "AccountEndpoint=" + documentEndpoint(base, name) + ";AccountKey=" + key + ";",
 			Description:      desc,
 			KeyKind:          kind,
 			Type:             "Sql",

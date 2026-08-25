@@ -20,6 +20,10 @@ type containerAttrs struct {
 	// are then inert, matching real Cosmos.
 	defaultTTL *int32
 	uniqueKeys []uniqueKeyDef
+	// indexingPolicy is ContainerProperties.IndexingPolicy, kept verbatim so it
+	// round-trips on a container read/list (the generic driver has no indexing
+	// concept, same as TTL and unique keys). nil when none was declared.
+	indexingPolicy map[string]any
 }
 
 // attrsStore tracks containerAttrs plus the per-item TTL bookkeeping needed to
@@ -39,14 +43,14 @@ func newAttrsStore() *attrsStore {
 	return &attrsStore{attrs: make(map[string]containerAttrs), expiry: make(map[string]time.Time)}
 }
 
-func (s *attrsStore) set(table string, ttl *int32, uk *uniqueKeyPolicy) {
+func (s *attrsStore) set(table string, ttl *int32, uk *uniqueKeyPolicy, indexing map[string]any) {
 	var keys []uniqueKeyDef
 	if uk != nil {
 		keys = uk.UniqueKeys
 	}
 
 	s.mu.Lock()
-	s.attrs[table] = containerAttrs{defaultTTL: ttl, uniqueKeys: keys}
+	s.attrs[table] = containerAttrs{defaultTTL: ttl, uniqueKeys: keys, indexingPolicy: indexing}
 	s.mu.Unlock()
 }
 

@@ -68,9 +68,11 @@ func parseOfferHeaders(r *http.Request) (offerState, bool) {
 
 // serveOffers routes the /offers throughput resource: POST /offers is the
 // offer query the SDK fires to locate a container's offer; GET/PUT /offers/{id}
-// read and replace it.
-func (h *Handler) serveOffers(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == offersPath {
+// read and replace it. path is the request path with any /{account} prefix
+// already peeled off; the offer id itself encodes the account (see
+// containerRID / qualify), so offers need no separate account dimension.
+func (h *Handler) serveOffers(w http.ResponseWriter, r *http.Request, path string) {
+	if path == offersPath {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 			return
@@ -81,7 +83,7 @@ func (h *Handler) serveOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rid := strings.TrimPrefix(r.URL.Path, offersPathPrefix)
+	rid := strings.TrimPrefix(path, offersPathPrefix)
 
 	switch r.Method {
 	case http.MethodGet:

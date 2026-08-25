@@ -135,7 +135,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 	case "readonlykeys":
 		azurearm.WriteJSON(w, http.StatusOK, readOnlyKeysResult(rp.ResourceName))
 	case "listconnectionstrings":
-		azurearm.WriteJSON(w, http.StatusOK, connectionStringsResult(rp.ResourceName))
+		azurearm.WriteJSON(w, http.StatusOK, connectionStringsResult(requestBaseURL(r), rp.ResourceName))
 	case "regeneratekey":
 		var body armRegenerateKey
 		if !azurearm.DecodeJSON(w, r, &body) {
@@ -150,6 +150,19 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported action: "+rp.SubResource)
 	}
+}
+
+// requestBaseURL reconstructs the scheme://host the client reached this handler
+// on, so the account's documentEndpoint (and per-region and connection-string
+// endpoints) point back at the live emulator rather than a public-DNS
+// *.documents.azure.com host that never resolves to it.
+func requestBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	return scheme + "://" + r.Host
 }
 
 func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -191,7 +204,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		h.attrs.SetTableAttributes(name, attrs)
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
+	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), requestBaseURL(r), rp))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -200,7 +213,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
+	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), requestBaseURL(r), rp))
 }
 
 // list serves the collection paths: GET .../databaseAccounts (subscription) and
@@ -229,7 +242,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp *azurearm.Reso
 			continue
 		}
 
-		out.Value = append(out.Value, renderAccount(rp.Subscription, name, attrs))
+		out.Value = append(out.Value, renderAccount(rp.Subscription, requestBaseURL(r), name, attrs))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -247,7 +260,7 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 // toARMAccount renders the ARM databaseAccounts wire shape, reading the stored
 // attributes (kind / offer type / free tier / capabilities / location / tags)
 // back through the driver.
-func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) armAccount {
+func (h *Handler) toARMAccount(ctx context.Context, base string, rp *azurearm.ResourcePath) armAccount {
 	attrs := dbdriver.AccountAttributes{Kind: "GlobalDocumentDB", OfferType: "Standard"}
 	if h.attrs != nil {
 		if a, err := h.attrs.TableAttributes(ctx, rp.ResourceName); err == nil {
@@ -261,14 +274,15 @@ func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) a
 		attrs.ResourceGroup = rp.ResourceGroup
 	}
 
-	return renderAccount(rp.Subscription, rp.ResourceName, attrs)
+	return renderAccount(rp.Subscription, base, rp.ResourceName, attrs)
 }
 
 // renderAccount builds the ARM account body from stored attributes. Used by
-// get/create (path-derived subscription) and by list.
+// get/create (path-derived subscription) and by list. base is the emulator's
+// scheme://host, so every endpoint it emits resolves back to the emulator.
 //
 //nolint:gocritic // attrs mirrors the driver value type.
-func renderAccount(subscription, name string, attrs dbdriver.AccountAttributes) armAccount {
+func renderAccount(subscription, base, name string, attrs dbdriver.AccountAttributes) armAccount {
 	location := attrs.Location
 	if location == "" {
 		location = defaultLocation
@@ -281,8 +295,8 @@ func renderAccount(subscription, name string, attrs dbdriver.AccountAttributes) 
 		locations = []dbdriver.AccountLocation{{Name: location, FailoverPriority: 0}}
 	}
 
-	all := toArmLocations(name, locations)
-	writeLocs := writeLocations(name, locations, attrs.EnableMultipleWriteLocations)
+	all := toArmLocations(base, name, locations)
+	writeLocs := writeLocations(base, name, locations, attrs.EnableMultipleWriteLocations)
 
 	return armAccount{
 		ID:       azurearm.BuildResourceID(subscription, attrs.ResourceGroup, providerName, resourceType, name),
@@ -296,7 +310,7 @@ func renderAccount(subscription, name string, attrs dbdriver.AccountAttributes) 
 			EnableFreeTier:           attrs.EnableFreeTier,
 			Capabilities:             toCapabilities(attrs.Capabilities),
 			ProvisioningState:        "Succeeded",
-			DocumentEndpoint:         documentEndpoint(name),
+			DocumentEndpoint:         documentEndpoint(base, name),
 			Locations:                all,
 			ReadLocations:            all,
 			WriteLocations:           writeLocs,
@@ -344,8 +358,11 @@ func sortedLocations(locs []dbdriver.AccountLocation) []dbdriver.AccountLocation
 
 // toArmLocations renders every declared region as an armLocation entry,
 // ordered by failover priority — the shape shared by properties.locations
-// and properties.readLocations (every region is readable).
-func toArmLocations(name string, locs []dbdriver.AccountLocation) []armLocation {
+// and properties.readLocations (every region is readable). Every region's
+// endpoint points at the same emulator host (which serves all regions), so the
+// per-region DocumentEndpoint resolves rather than pointing at a public-DNS
+// *.documents.azure.com host.
+func toArmLocations(base, name string, locs []dbdriver.AccountLocation) []armLocation {
 	sorted := sortedLocations(locs)
 	out := make([]armLocation, 0, len(sorted))
 
@@ -353,7 +370,7 @@ func toArmLocations(name string, locs []dbdriver.AccountLocation) []armLocation 
 		out = append(out, armLocation{
 			ID:                name + "-" + l.Name,
 			LocationName:      l.Name,
-			DocumentEndpoint:  "https://" + name + "-" + l.Name + ".documents.azure.com:443/",
+			DocumentEndpoint:  documentEndpoint(base, name),
 			ProvisioningState: "Succeeded",
 			FailoverPriority:  l.FailoverPriority,
 			IsZoneRedundant:   l.IsZoneRedundant,
@@ -365,9 +382,9 @@ func toArmLocations(name string, locs []dbdriver.AccountLocation) []armLocation 
 
 // writeLocations returns the regions that accept writes: every region when
 // multi-write is enabled, otherwise only the single failoverPriority-0 region.
-func writeLocations(name string, locs []dbdriver.AccountLocation, multiWrite bool) []armLocation {
+func writeLocations(base, name string, locs []dbdriver.AccountLocation, multiWrite bool) []armLocation {
 	if multiWrite {
-		return toArmLocations(name, locs)
+		return toArmLocations(base, name, locs)
 	}
 
 	sorted := sortedLocations(locs)
@@ -375,7 +392,7 @@ func writeLocations(name string, locs []dbdriver.AccountLocation, multiWrite boo
 		return nil
 	}
 
-	return toArmLocations(name, sorted[:1])
+	return toArmLocations(base, name, sorted[:1])
 }
 
 // toFailoverPolicies renders properties.failoverPolicies: every region,
@@ -477,9 +494,14 @@ func accountRegion(props *armAccountCreateProps) string {
 	return ""
 }
 
-// documentEndpoint is the account's global connection endpoint.
-func documentEndpoint(name string) string {
-	return "https://" + name + ".documents.azure.com:443/"
+// documentEndpoint is the account's global connection endpoint. It is derived
+// from the emulator's base URL (scheme://host) with the account name as a path
+// segment, so a client that connects to the returned endpoint reaches the
+// emulator and the data plane resolves the account from that /{account} prefix
+// (see the cosmosdb data-plane splitAccount). Real Azure returns
+// https://{name}.documents.azure.com:443/, which never resolves to the emulator.
+func documentEndpoint(base, name string) string {
+	return base + "/" + name + "/"
 }
 
 func capabilityNames(caps []armCapability) []string {

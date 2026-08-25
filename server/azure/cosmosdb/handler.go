@@ -57,11 +57,12 @@ type Handler struct {
 	offerMu sync.RWMutex
 	offers  map[string]offerState
 
-	// databases tracks the Cosmos databases that exist. The generic driver has a
-	// flat table namespace with no database grouping, so the wire handler models
-	// the database layer: it records which databases were created and qualifies
-	// every container's driver-table name by its database (see qualify), giving
-	// each database an isolated container namespace.
+	// databases tracks the Cosmos databases that exist, keyed by their
+	// account-qualified identity (see dbNS). The generic driver has a flat table
+	// namespace with no account or database grouping, so the wire handler models
+	// both layers: it records which databases were created and qualifies every
+	// container's driver-table name by its account and database (see qualify),
+	// giving each account an isolated database/container namespace.
 	dbMu      sync.RWMutex
 	databases map[string]struct{}
 
@@ -87,66 +88,170 @@ func New(db dbdriver.Database) *Handler {
 	}
 }
 
-// qualify maps a (database, container) pair onto the flat driver table name that
-// backs it. Cosmos container ids cannot contain '/', so "{db}/{coll}" is an
-// unambiguous, collision-free key: a container in one database is unreachable
-// through another, and deleting a database can find its containers by prefix.
-func qualify(db, coll string) string {
-	return db + "/" + coll
+// nsPrefix returns the driver-table namespace prefix for an account. The
+// default account (empty name — the legacy single-account and official-emulator
+// "https://host:port/" usage) has no prefix, so its tables keep the historical
+// "{db}/{coll}" names; a named account (addressed via the
+// {account}.documents.azure.com host, modeled here as a leading /{account} path
+// segment) prefixes every table with "{account}/", giving each ARM-created
+// account an isolated namespace.
+func nsPrefix(account string) string {
+	if account == "" {
+		return ""
+	}
+
+	return account + "/"
 }
 
-// databaseExists reports whether database db has been created.
-func (h *Handler) databaseExists(db string) bool {
+// qualify maps an (account, database, container) triple onto the flat driver
+// table name that backs it. Account names and Cosmos ids cannot contain '/', so
+// "{account}/{db}/{coll}" is an unambiguous, collision-free key: a container is
+// reachable only through its own account and database, and an account's or
+// database's tables can be found by prefix.
+func qualify(account, db, coll string) string {
+	return nsPrefix(account) + db + "/" + coll
+}
+
+// dbNS is the account-qualified database identity: the databases-set key, the
+// database's shared-throughput offer key, and the prefix under which
+// deleteDatabase reaps the database's container tables.
+func dbNS(account, db string) string {
+	return nsPrefix(account) + db
+}
+
+// databaseExists reports whether database db has been created in account.
+func (h *Handler) databaseExists(account, db string) bool {
 	h.dbMu.RLock()
-	_, ok := h.databases[db]
+	_, ok := h.databases[dbNS(account, db)]
 	h.dbMu.RUnlock()
 
 	return ok
 }
 
-// Matches returns true for the Cosmos data plane URLs we serve: the account
-// root probe (GET /), the /dbs/... resource tree, and the /offers throughput
-// resource.
-func (*Handler) Matches(r *http.Request) bool {
-	p := r.URL.Path
+// splitAccount separates an optional leading /{account} segment from the Cosmos
+// resource path. The real azcosmos SDK derives the account from the
+// {account}.documents.azure.com host; the emulator collapses every account onto
+// one listener, so the ARM control plane hands clients a documentEndpoint whose
+// path carries the account ("https://host/{account}/"), and the SDK preserves
+// that prefix on every data-plane request (on failover it swaps only the Host).
+// A request with no such prefix ("/dbs/...", "/offers", "/") targets the default
+// account, keeping single-account and official-emulator usage working. The
+// returned rest is the remaining path with the account segment removed ("/" for
+// a bare account probe).
+//
+// The leading segment is peeled as an account ONLY when it names a Cosmos
+// databaseAccount actually registered through the shared ARM control plane
+// (isAccount). Any other first segment — "dbs"/"offers" of the default account,
+// or a blob container/virtual-directory prefix when blob and cosmos share one
+// listener — is left unpeeled so Matches declines it and the request falls
+// through to the blob handler. This keeps an account literally named "dbs" or
+// "offers" reachable while never stealing a blob path.
+func (h *Handler) splitAccount(p string) (account, rest string) {
+	trimmed := strings.Trim(p, "/")
+	if trimmed == "" {
+		return "", "/"
+	}
 
-	return p == "/" || p == "/dbs" || strings.HasPrefix(p, "/dbs/") ||
-		p == offersPath || strings.HasPrefix(p, offersPathPrefix)
+	first := trimmed
+	if i := strings.IndexByte(trimmed, '/'); i >= 0 {
+		first = trimmed[:i]
+	}
+
+	if !h.isAccount(first) {
+		return "", p
+	}
+
+	rest = strings.TrimPrefix(p, "/"+first)
+	if rest == "" {
+		rest = "/"
+	}
+
+	return first, rest
 }
 
-// ServeHTTP routes the request based on URL path shape.
+// accountLister is the optional capability the shared database driver exposes to
+// enumerate the Cosmos databaseAccounts registered through the ARM control
+// plane (providers/azure/cosmosdb implements it; DynamoDB/Firestore don't).
+type accountLister interface {
+	AccountTables() []string
+}
+
+// isAccount reports whether name is a registered Cosmos databaseAccount. The
+// data-plane handler shares the very driver the account control plane writes to,
+// so it can distinguish a real account prefix from an unrelated leading segment
+// (a blob container, a default-account "dbs"/"offers") and only peel the former.
+func (h *Handler) isAccount(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	lister, ok := h.db.(accountLister)
+	if !ok {
+		return false
+	}
+
+	for _, a := range lister.AccountTables() {
+		if a == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Matches returns true for the Cosmos data plane URLs we serve: the account
+// root probe (GET / or GET /{account}), the /dbs/... resource tree, and the
+// /offers throughput resource — each optionally under a /{account} prefix.
+func (h *Handler) Matches(r *http.Request) bool {
+	account, rest := h.splitAccount(r.URL.Path)
+
+	// A bare "/{account}" carrying a query string is more likely a blob
+	// container/root operation than a Cosmos account probe (which carries none),
+	// so decline it and let the blob handler, registered after this one, serve it.
+	if account != "" && rest == "/" && r.URL.RawQuery != "" {
+		return false
+	}
+
+	return rest == "/" || rest == "/dbs" || strings.HasPrefix(rest, "/dbs/") ||
+		rest == offersPath || strings.HasPrefix(rest, offersPathPrefix)
+}
+
+// ServeHTTP routes the request based on URL path shape, after peeling off the
+// optional /{account} prefix that scopes the data plane to one account.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" {
+	account, rest := h.splitAccount(r.URL.Path)
+
+	if rest == "/" {
 		h.accountProperties(w, r)
 		return
 	}
 
-	if r.URL.Path == offersPath || strings.HasPrefix(r.URL.Path, offersPathPrefix) {
-		h.serveOffers(w, r)
+	if rest == offersPath || strings.HasPrefix(rest, offersPathPrefix) {
+		h.serveOffers(w, r, rest)
 		return
 	}
 
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
 
 	switch len(parts) {
 	case 1:
 		// /dbs
-		h.databaseCollection(w, r)
+		h.databaseCollection(w, r, account)
 	case pathDBOnly:
 		// /dbs/{db}
-		h.databaseResource(w, r, parts[1])
+		h.databaseResource(w, r, account, parts[1])
 	case pathColls:
 		// /dbs/{db}/colls
-		h.containerCollection(w, r, parts[1])
+		h.containerCollection(w, r, account, parts[1])
 	case pathContainerOrDocsCol:
 		// /dbs/{db}/colls/{coll}
-		h.containerResource(w, r, parts[1], parts[3])
+		h.containerResource(w, r, account, parts[1], parts[3])
 	case pathDocsCol:
 		// /dbs/{db}/colls/{coll}/docs
-		h.documentCollection(w, r, parts[1], parts[3])
+		h.documentCollection(w, r, account, parts[1], parts[3])
 	case pathDocResource:
 		// /dbs/{db}/colls/{coll}/docs/{id}
-		h.documentResource(w, r, parts[1], parts[3], parts[5])
+		h.documentResource(w, r, account, parts[1], parts[3], parts[5])
 	default:
 		writeError(w, http.StatusNotFound, "NotFound", "unsupported Cosmos path")
 	}
@@ -205,7 +310,7 @@ func (*Handler) accountProperties(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, props)
 }
 
-func (h *Handler) databaseCollection(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) databaseCollection(w http.ResponseWriter, r *http.Request, account string) {
 	switch r.Method {
 	case http.MethodPost:
 		// Cosmos overloads POST /dbs: a create (JSON body with an id) or, when the
@@ -213,20 +318,20 @@ func (h *Handler) databaseCollection(w http.ResponseWriter, r *http.Request) {
 		// query body but ignore its predicate — we list all databases.
 		if isQuery(r) {
 			_, _ = decodeQueryBody(w, r)
-			h.writeDatabaseList(w)
+			h.writeDatabaseList(w, account)
 
 			return
 		}
 
-		h.createDatabase(w, r)
+		h.createDatabase(w, r, account)
 	case http.MethodGet:
-		h.writeDatabaseList(w)
+		h.writeDatabaseList(w, account)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request, account string) {
 	var body struct {
 		ID string `json:"id"`
 	}
@@ -240,8 +345,10 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := dbNS(account, body.ID)
+
 	h.dbMu.Lock()
-	if _, exists := h.databases[body.ID]; exists {
+	if _, exists := h.databases[key]; exists {
 		h.dbMu.Unlock()
 		writeError(w, http.StatusConflict, "Conflict",
 			"Database with specified id already exists.")
@@ -249,25 +356,32 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.databases[body.ID] = struct{}{}
+	h.databases[key] = struct{}{}
 	h.dbMu.Unlock()
 
 	// A database created with ThroughputProperties (shared, database-level
 	// provisioned throughput) gets its own offer, keyed by the same _rid
-	// makeDatabaseResource assigns it — recordOffer's containerRID(id) derives
-	// exactly that "rid-{id}" key, so ReadThroughput round-trips without a
-	// container ever having been created.
-	h.recordOffer(body.ID, r)
+	// makeDatabaseResource assigns it — recordOffer's containerRID(dbNS) derives
+	// exactly that "rid-{account-qualified-db}" key, so ReadThroughput round-trips
+	// without a container ever having been created.
+	h.recordOffer(key, r)
 
-	writeJSON(w, http.StatusCreated, makeDatabaseResource(body.ID))
+	writeJSON(w, http.StatusCreated, makeDatabaseResource(account, body.ID))
 }
 
-func (h *Handler) writeDatabaseList(w http.ResponseWriter) {
+func (h *Handler) writeDatabaseList(w http.ResponseWriter, account string) {
 	h.dbMu.RLock()
 	names := make([]string, 0, len(h.databases))
 
-	for name := range h.databases {
-		names = append(names, name)
+	for key := range h.databases {
+		// Only list databases in this account's namespace. The default account's
+		// keys ("{db}") must not leak into a named account and vice versa.
+		id, ok := accountDBName(key, account)
+		if !ok {
+			continue
+		}
+
+		names = append(names, id)
 	}
 
 	h.dbMu.RUnlock()
@@ -275,34 +389,50 @@ func (h *Handler) writeDatabaseList(w http.ResponseWriter) {
 
 	list := databasesList{RID: "cloudemu", Databases: make([]databaseResource, 0, len(names))}
 	for _, name := range names {
-		list.Databases = append(list.Databases, makeDatabaseResource(name))
+		list.Databases = append(list.Databases, makeDatabaseResource(account, name))
 	}
 
 	list.Count = len(list.Databases)
 	writeJSON(w, http.StatusOK, list)
 }
 
-func (h *Handler) databaseResource(w http.ResponseWriter, r *http.Request, db string) {
+// accountDBName reports whether databases-set key belongs to account and, if so,
+// returns the bare database id. A named account owns keys "{account}/{db}"; the
+// default account owns keys "{db}" that carry no further '/'.
+func accountDBName(key, account string) (string, bool) {
+	if account == "" {
+		if strings.ContainsRune(key, '/') {
+			return "", false
+		}
+
+		return key, true
+	}
+
+	return strings.CutPrefix(key, account+"/")
+}
+
+func (h *Handler) databaseResource(w http.ResponseWriter, r *http.Request, account, db string) {
 	switch r.Method {
 	case http.MethodGet:
-		if !h.databaseExists(db) {
+		if !h.databaseExists(account, db) {
 			writeError(w, http.StatusNotFound, "NotFound", "database not found")
 			return
 		}
 
-		writeJSON(w, http.StatusOK, makeDatabaseResource(db))
+		writeJSON(w, http.StatusOK, makeDatabaseResource(account, db))
 	case http.MethodDelete:
-		h.deleteDatabase(w, r, db)
+		h.deleteDatabase(w, r, account, db)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
 // deleteDatabase removes a database and every container inside it. Because the
-// driver namespace is flat and keyed by qualify(db, coll), the database's
-// containers are exactly the tables whose name starts with "{db}/".
-func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, db string) {
-	if !h.databaseExists(db) {
+// driver namespace is flat and keyed by qualify(account, db, coll), the
+// database's containers are exactly the tables whose name starts with the
+// account-qualified "{ns}/" prefix.
+func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, account, db string) {
+	if !h.databaseExists(account, db) {
 		writeError(w, http.StatusNotFound, "NotFound", "database not found")
 		return
 	}
@@ -313,7 +443,8 @@ func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, db stri
 		return
 	}
 
-	prefix := db + "/"
+	ns := dbNS(account, db)
+	prefix := ns + "/"
 
 	for _, t := range tables {
 		if !strings.HasPrefix(t, prefix) {
@@ -329,27 +460,27 @@ func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, db stri
 		h.attrs.delete(t)
 	}
 
-	h.deleteOffer(db) // the database's own shared-throughput offer, if any
+	h.deleteOffer(ns) // the database's own shared-throughput offer, if any
 	h.dbMu.Lock()
-	delete(h.databases, db)
+	delete(h.databases, ns)
 	h.dbMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) containerCollection(w http.ResponseWriter, r *http.Request, db string) {
+func (h *Handler) containerCollection(w http.ResponseWriter, r *http.Request, account, db string) {
 	switch r.Method {
 	case http.MethodPost:
-		h.createContainer(w, r, db)
+		h.createContainer(w, r, account, db)
 	case http.MethodGet:
-		h.listContainers(w, r, db)
+		h.listContainers(w, r, account, db)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db string) {
-	if !h.databaseExists(db) {
+func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, account, db string) {
+	if !h.databaseExists(account, db) {
 		writeError(w, http.StatusNotFound, "NotFound", "database not found")
 		return
 	}
@@ -368,7 +499,7 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db str
 	pkAttr := partitionKeyAttribute(body.PartitionKey)
 
 	cfg := dbdriver.TableConfig{
-		Name:         qualify(db, body.ID),
+		Name:         qualify(account, db, body.ID),
 		PartitionKey: pkAttr,
 	}
 
@@ -385,15 +516,16 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db str
 		return
 	}
 
-	table := qualify(db, body.ID)
+	table := qualify(account, db, body.ID)
 	h.recordOffer(table, r)
-	h.attrs.set(table, body.DefaultTTL, body.UniqueKeyPolicy)
+	h.attrs.set(table, body.DefaultTTL, body.UniqueKeyPolicy, body.IndexingPolicy)
 
-	writeJSON(w, http.StatusCreated, makeContainerResource(db, body.ID, body.PartitionKey, body.DefaultTTL, body.UniqueKeyPolicy))
+	writeJSON(w, http.StatusCreated,
+		makeContainerResource(account, db, body.ID, body.PartitionKey, body.DefaultTTL, body.UniqueKeyPolicy, body.IndexingPolicy))
 }
 
-func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db string) {
-	if !h.databaseExists(db) {
+func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, account, db string) {
+	if !h.databaseExists(account, db) {
 		writeError(w, http.StatusNotFound, "NotFound", "database not found")
 		return
 	}
@@ -405,7 +537,7 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 	}
 
 	out := containersList{RID: "cloudemu"}
-	prefix := db + "/"
+	prefix := dbNS(account, db) + "/"
 
 	for _, t := range tables {
 		if !strings.HasPrefix(t, prefix) {
@@ -423,7 +555,8 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 
 		attrs := h.attrs.get(t)
 		out.DocumentCollections = append(out.DocumentCollections,
-			makeContainerResource(db, coll, pk, attrs.defaultTTL, uniqueKeyPolicyFromDef(attrs.uniqueKeys)))
+			makeContainerResource(account, db, coll, pk, attrs.defaultTTL,
+				uniqueKeyPolicyFromDef(attrs.uniqueKeys), attrs.indexingPolicy))
 	}
 
 	out.Count = len(out.DocumentCollections)
@@ -431,8 +564,8 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, coll string) {
-	table := qualify(db, coll)
+func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, account, db, coll string) {
+	table := qualify(account, db, coll)
 
 	switch r.Method {
 	case http.MethodGet:
@@ -448,7 +581,9 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 		}
 
 		attrs := h.attrs.get(table)
-		writeJSON(w, http.StatusOK, makeContainerResource(db, coll, pk, attrs.defaultTTL, uniqueKeyPolicyFromDef(attrs.uniqueKeys)))
+		writeJSON(w, http.StatusOK,
+			makeContainerResource(account, db, coll, pk, attrs.defaultTTL,
+				uniqueKeyPolicyFromDef(attrs.uniqueKeys), attrs.indexingPolicy))
 	case http.MethodDelete:
 		if err := h.db.DeleteTable(r.Context(), table); err != nil {
 			writeErr(w, err)
@@ -463,8 +598,8 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 	}
 }
 
-func (h *Handler) documentCollection(w http.ResponseWriter, r *http.Request, db, coll string) {
-	table := qualify(db, coll)
+func (h *Handler) documentCollection(w http.ResponseWriter, r *http.Request, account, db, coll string) {
+	table := qualify(account, db, coll)
 
 	switch r.Method {
 	case http.MethodPost:
@@ -748,8 +883,8 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 	writeJSON(w, http.StatusOK, documentsList{RID: "cloudemu", Documents: page, Count: len(page)})
 }
 
-func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, db, coll, id string) {
-	coll = qualify(db, coll)
+func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, account, db, coll, id string) {
+	coll = qualify(account, db, coll)
 
 	cfg, derr := h.db.DescribeTable(r.Context(), coll)
 	if derr != nil {
@@ -863,8 +998,12 @@ func defaultPartitionKey() *partitionKeyDef {
 	return &partitionKeyDef{Paths: []string{"/id"}, Kind: "Hash"}
 }
 
-func makeDatabaseResource(id string) databaseResource {
-	rid := "rid-" + id
+func makeDatabaseResource(account, id string) databaseResource {
+	// The _rid doubles as the database's offer resource id (see createDatabase /
+	// containerRID). Qualifying by account keeps it unique across accounts so a
+	// shared-throughput offer never collides between two accounts' same-named
+	// databases; the displayed id stays the bare database name.
+	rid := "rid-" + dbNS(account, id)
 
 	return databaseResource{
 		resource: resource{
@@ -880,11 +1019,13 @@ func makeDatabaseResource(id string) databaseResource {
 	}
 }
 
-func makeContainerResource(db, id string, pk *partitionKeyDef, defaultTTL *int32, uk *uniqueKeyPolicy) containerResource {
+func makeContainerResource(
+	account, db, id string, pk *partitionKeyDef, defaultTTL *int32, uk *uniqueKeyPolicy, indexing map[string]any,
+) containerResource {
 	// The container's _rid doubles as its offer resource id: the SDK reads _rid
-	// off the container, then queries /offers by it. Qualifying by database keeps
-	// the offer key unique across databases (see recordOffer / qualify).
-	rid := containerRID(qualify(db, id))
+	// off the container, then queries /offers by it. Qualifying by account and
+	// database keeps the offer key unique across both (see recordOffer / qualify).
+	rid := containerRID(qualify(account, db, id))
 
 	if pk == nil {
 		pk = defaultPartitionKey()
@@ -905,6 +1046,7 @@ func makeContainerResource(db, id string, pk *partitionKeyDef, defaultTTL *int32
 		UDFs:            "udfs/",
 		Conflicts:       "conflicts/",
 		PartitionKey:    pk,
+		IndexingPolicy:  indexing,
 		DefaultTTL:      defaultTTL,
 		UniqueKeyPolicy: uk,
 	}
