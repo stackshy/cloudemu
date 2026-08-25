@@ -5,10 +5,14 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"maps"
+	"net/http"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
@@ -18,6 +22,23 @@ const (
 	blobTypeAppend = "AppendBlob"
 	snapshotFormat = "2006-01-02T15:04:05."
 	octetStream    = "application/octet-stream"
+
+	accessTierHot     = "Hot"
+	accessTierCool    = "Cool"
+	accessTierCold    = "Cold"
+	accessTierArchive = "Archive"
+
+	// Lease Blob states. See
+	// https://learn.microsoft.com/en-us/rest/api/storageservices/lease-blob.
+	leaseStateAvailable = ""
+	leaseStateLeased    = "leased"
+	leaseStateBreaking  = "breaking"
+	leaseStateBroken    = "broken"
+	leaseStateExpired   = "expired"
+
+	leaseDurationInfinite int32 = -1
+	leaseDurationMinSec   int32 = 15
+	leaseDurationMaxSec   int32 = 60
 )
 
 // Compile-time check that Mock satisfies the optional AzureBlobExtensions
@@ -56,7 +77,7 @@ func (m *Mock) CommitBlockList(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
-	data, err := assembleStagedBlocks(ctr, blob, blockIDs)
+	data, blocks, err := assembleStagedBlocks(ctr, blob, blockIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +90,7 @@ func (m *Mock) CommitBlockList(
 		Key: blob, Size: int64(len(data)), ContentType: contentType,
 		LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
 		Metadata:     maps.Clone(metadata), BlobType: blobTypeBlock,
+		CommittedBlocks: blocks,
 	}
 	obj.ETag = fmt.Sprintf("%x", sha256.Sum256(data))
 
@@ -92,11 +114,12 @@ func (m *Mock) CommitBlockList(
 	return &info, nil
 }
 
-// assembleStagedBlocks concatenates the named staged blocks in order.
-func assembleStagedBlocks(ctr *containerMeta, blob string, blockIDs []string) ([]byte, error) {
+// assembleStagedBlocks concatenates the named staged blocks in order and
+// records each block's id/size for Get Block List.
+func assembleStagedBlocks(ctr *containerMeta, blob string, blockIDs []string) ([]byte, []driver.BlockInfo, error) {
 	stg, ok := ctr.staging.Get(blob)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "no staged blocks for blob %q", blob)
+		return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "no staged blocks for blob %q", blob)
 	}
 
 	stg.mu.Lock()
@@ -104,16 +127,19 @@ func assembleStagedBlocks(ctr *containerMeta, blob string, blockIDs []string) ([
 
 	var data []byte
 
+	blocks := make([]driver.BlockInfo, 0, len(blockIDs))
+
 	for _, id := range blockIDs {
 		block, ok := stg.blocks[id]
 		if !ok {
-			return nil, cerrors.Newf(cerrors.InvalidArgument, "block %q not staged for blob %q", id, blob)
+			return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "block %q not staged for blob %q", id, blob)
 		}
 
 		data = append(data, block...)
+		blocks = append(blocks, driver.BlockInfo{Name: id, Size: int64(len(block))})
 	}
 
-	return data, nil
+	return data, blocks, nil
 }
 
 // SetBlobMetadata replaces only a blob's metadata, preserving its content.
@@ -159,17 +185,45 @@ func (m *Mock) SetBlobProperties(_ context.Context, container, blob string, prop
 }
 
 // SetBlobTier sets a blob's access tier, preserving its content and ETag.
-func (m *Mock) SetBlobTier(_ context.Context, container, blob, tier string) error {
+// Valid tiers for a block blob are Hot/Cool/Cold/Archive; anything else is
+// rejected. Moving a blob out of Archive returns 202 (rehydration pending)
+// rather than 200, matching real Azure's status-code table.
+// https://learn.microsoft.com/en-us/rest/api/storageservices/set-blob-tier
+func (m *Mock) SetBlobTier(_ context.Context, container, blob, tier string) (int, error) {
+	if !validAccessTier(tier) {
+		return 0, cerrors.Newf(cerrors.InvalidArgument,
+			"invalid x-ms-access-tier %q: must be one of Hot, Cool, Cold, Archive", tier)
+	}
+
 	obj, err := m.getBlobObject(container, blob)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	obj.mu.Lock()
-	obj.AccessTier = tier
-	obj.mu.Unlock()
+	defer obj.mu.Unlock()
 
-	return nil
+	status := http.StatusOK
+	if obj.AccessTier == accessTierArchive && tier != accessTierArchive {
+		status = http.StatusAccepted
+	}
+
+	obj.AccessTier = tier
+
+	return status, nil
+}
+
+// validAccessTier reports whether tier is one of the four block-blob access
+// tiers cloudemu supports (Hot/Cool/Cold/Archive). Real Azure also accepts
+// premium page-blob tiers (P4..P60) and the Smart preview tier; cloudemu's
+// in-memory blobs are block blobs only, so those are rejected here.
+func validAccessTier(tier string) bool {
+	switch tier {
+	case accessTierHot, accessTierCool, accessTierCold, accessTierArchive:
+		return true
+	default:
+		return false
+	}
 }
 
 // CreateBlobSnapshot captures an immutable snapshot of a blob. Snapshots are
@@ -346,4 +400,429 @@ func computeBlobETag(obj *blobObject) string {
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// GetBlockList returns the blob's committed blocks (from the most recent Put
+// Block List commit) and its currently staged, uncommitted blocks.
+func (m *Mock) GetBlockList(_ context.Context, container, blob string) (committed, uncommitted []driver.BlockInfo, err error) {
+	ctr, ok := m.containers.Get(container)
+	if !ok {
+		return nil, nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
+	}
+
+	obj, objOk := ctr.objects.Get(blob)
+	stg, stgOk := ctr.staging.Get(blob)
+
+	if !objOk && !stgOk {
+		return nil, nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", blob, container)
+	}
+
+	if objOk && obj.BlobType == blobTypeBlock {
+		committed = append(committed, obj.CommittedBlocks...)
+	}
+
+	if stgOk {
+		stg.mu.Lock()
+		for id, data := range stg.blocks {
+			uncommitted = append(uncommitted, driver.BlockInfo{Name: id, Size: int64(len(data))})
+		}
+		stg.mu.Unlock()
+
+		// Real Azure returns the uncommitted list in alphabetical order.
+		sort.Slice(uncommitted, func(i, j int) bool { return uncommitted[i].Name < uncommitted[j].Name })
+	}
+
+	return committed, uncommitted, nil
+}
+
+// effectiveLeaseState computes a blob's current lease state, lazily applying
+// the leased->expired and breaking->broken transitions that real Azure ties
+// to elapsed time rather than to an explicit call. Pure: callers persist any
+// resulting transition themselves when they need to (lease-management calls
+// do; read-only checks don't need to).
+func effectiveLeaseState(obj *blobObject, now time.Time) string {
+	switch obj.leaseState {
+	case leaseStateLeased:
+		if !obj.leaseExpiresAt.IsZero() && !now.Before(obj.leaseExpiresAt) {
+			return leaseStateExpired
+		}
+
+		return leaseStateLeased
+	case leaseStateBreaking:
+		if !obj.leaseBreakAt.IsZero() && !now.Before(obj.leaseBreakAt) {
+			return leaseStateBroken
+		}
+
+		return leaseStateBreaking
+	case leaseStateBroken:
+		return leaseStateBroken
+	default:
+		return leaseStateAvailable
+	}
+}
+
+// resetLease clears a blob's lease state entirely (Available, no lease id).
+func resetLease(obj *blobObject) {
+	obj.leaseState = leaseStateAvailable
+	obj.leaseID = ""
+	obj.leaseDurationSec = 0
+	obj.leaseExpiresAt = time.Time{}
+	obj.leaseBreakAt = time.Time{}
+	obj.leaseModTimeAtAcquire = ""
+}
+
+// grantLease puts a blob into the Leased state under leaseID for
+// durationSeconds, starting from now.
+func grantLease(obj *blobObject, now time.Time, leaseID string, durationSeconds int32) {
+	obj.leaseState = leaseStateLeased
+	obj.leaseID = leaseID
+	obj.leaseDurationSec = durationSeconds
+
+	if durationSeconds == leaseDurationInfinite {
+		obj.leaseExpiresAt = time.Time{}
+	} else {
+		obj.leaseExpiresAt = now.Add(time.Duration(durationSeconds) * time.Second)
+	}
+
+	obj.leaseBreakAt = time.Time{}
+	obj.leaseModTimeAtAcquire = obj.LastModified
+}
+
+// leaseManagementError builds the 409 Conflict cloudemu returns for a
+// lease-management call (acquire/renew/change/release/break) that cannot
+// proceed given the blob's current lease state.
+func leaseManagementError(code, msg string) error {
+	return &driver.BlobOpError{Status: http.StatusConflict, Code: code, Message: msg}
+}
+
+// AcquireLease acquires a lease on a blob. See
+// https://learn.microsoft.com/en-us/rest/api/storageservices/lease-blob for
+// the full acquire-outcome table this follows.
+func (m *Mock) AcquireLease(
+	_ context.Context, container, blob string, durationSeconds int32, proposedLeaseID string,
+) (*driver.BlobLeaseResult, error) {
+	if durationSeconds != leaseDurationInfinite &&
+		(durationSeconds < leaseDurationMinSec || durationSeconds > leaseDurationMaxSec) {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"x-ms-lease-duration must be -1 or between %d and %d seconds", leaseDurationMinSec, leaseDurationMaxSec)
+	}
+
+	obj, err := m.getBlobObject(container, blob)
+	if err != nil {
+		return nil, err
+	}
+
+	obj.mu.Lock()
+	defer obj.mu.Unlock()
+
+	now := m.opts.Clock.Now().UTC()
+	state := effectiveLeaseState(obj, now)
+
+	switch state {
+	case leaseStateBreaking:
+		return nil, leaseManagementError("LeaseAlreadyPresent", "there is already a lease present")
+	case leaseStateLeased:
+		if proposedLeaseID == "" || proposedLeaseID != obj.leaseID {
+			return nil, leaseManagementError("LeaseAlreadyPresent", "there is already a lease present")
+		}
+	}
+
+	leaseID := proposedLeaseID
+	if leaseID == "" {
+		leaseID = idgen.SyntheticGUID(idgen.GenerateID("lease-"))
+	}
+
+	grantLease(obj, now, leaseID, durationSeconds)
+
+	return &driver.BlobLeaseResult{LeaseID: leaseID, ETag: obj.ETag, LastModified: obj.LastModified}, nil
+}
+
+// RenewLease renews the blob's current lease, resetting its duration clock.
+func (m *Mock) RenewLease(_ context.Context, container, blob, leaseID string) (*driver.BlobLeaseResult, error) {
+	obj, err := m.getBlobObject(container, blob)
+	if err != nil {
+		return nil, err
+	}
+
+	obj.mu.Lock()
+	defer obj.mu.Unlock()
+
+	now := m.opts.Clock.Now().UTC()
+	state := effectiveLeaseState(obj, now)
+
+	if state == leaseStateAvailable || state == leaseStateBroken || state == leaseStateBreaking {
+		return nil, leaseManagementError("LeaseNotPresentWithLeaseOperation", "there is currently no lease on the blob")
+	}
+
+	if leaseID == "" || leaseID != obj.leaseID {
+		return nil, leaseManagementError("LeaseIdMismatchWithLeaseOperation",
+			"the lease id specified did not match the lease id for the blob")
+	}
+
+	// A lease that has merely expired (not released) can still be renewed with
+	// its old id, but only if the blob hasn't changed since — otherwise someone
+	// else has taken and released the blob in between.
+	if state == leaseStateExpired && obj.leaseModTimeAtAcquire != obj.LastModified {
+		return nil, leaseManagementError("LeaseIdMismatchWithLeaseOperation",
+			"the blob has been modified since the lease was last active")
+	}
+
+	grantLease(obj, now, obj.leaseID, obj.leaseDurationSec)
+
+	return &driver.BlobLeaseResult{LeaseID: obj.leaseID, ETag: obj.ETag, LastModified: obj.LastModified}, nil
+}
+
+// ChangeLease changes the blob's lease id from leaseID to proposedLeaseID.
+func (m *Mock) ChangeLease(
+	_ context.Context, container, blob, leaseID, proposedLeaseID string,
+) (*driver.BlobLeaseResult, error) {
+	if proposedLeaseID == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "x-ms-proposed-lease-id is required for change")
+	}
+
+	obj, err := m.getBlobObject(container, blob)
+	if err != nil {
+		return nil, err
+	}
+
+	obj.mu.Lock()
+	defer obj.mu.Unlock()
+
+	now := m.opts.Clock.Now().UTC()
+	state := effectiveLeaseState(obj, now)
+
+	if state != leaseStateLeased || leaseID == "" || leaseID != obj.leaseID {
+		return nil, leaseManagementError("LeaseIdMismatchWithLeaseOperation",
+			"the lease id specified did not match the lease id for the blob")
+	}
+
+	obj.leaseID = proposedLeaseID
+
+	return &driver.BlobLeaseResult{LeaseID: proposedLeaseID, ETag: obj.ETag, LastModified: obj.LastModified}, nil
+}
+
+// ReleaseLease releases the blob's current lease, making it immediately
+// available for a new Acquire.
+func (m *Mock) ReleaseLease(_ context.Context, container, blob, leaseID string) (*driver.BlobLeaseResult, error) {
+	obj, err := m.getBlobObject(container, blob)
+	if err != nil {
+		return nil, err
+	}
+
+	obj.mu.Lock()
+	defer obj.mu.Unlock()
+
+	now := m.opts.Clock.Now().UTC()
+	state := effectiveLeaseState(obj, now)
+
+	if state == leaseStateAvailable || leaseID == "" || leaseID != obj.leaseID {
+		return nil, leaseManagementError("LeaseIdMismatchWithLeaseOperation",
+			"the lease id specified did not match the lease id for the blob")
+	}
+
+	etag, lastModified := obj.ETag, obj.LastModified
+	resetLease(obj)
+
+	return &driver.BlobLeaseResult{ETag: etag, LastModified: lastModified}, nil
+}
+
+// BreakLease breaks the blob's current lease. When breakPeriod is nil, a
+// fixed-duration lease breaks after its remaining time and an infinite lease
+// breaks immediately; when set, it caps (but for an already-breaking lease,
+// can only shorten) the wait.
+func (m *Mock) BreakLease(_ context.Context, container, blob string, breakPeriod *int32) (int32, error) {
+	obj, err := m.getBlobObject(container, blob)
+	if err != nil {
+		return 0, err
+	}
+
+	obj.mu.Lock()
+	defer obj.mu.Unlock()
+
+	now := m.opts.Clock.Now().UTC()
+	state := effectiveLeaseState(obj, now)
+
+	switch state {
+	case leaseStateAvailable:
+		return 0, leaseManagementError("LeaseNotPresentWithLeaseOperation", "there is currently no lease on the blob")
+	case leaseStateBroken:
+		return 0, nil // idempotent: breaking an already-broken lease succeeds as a no-op.
+	case leaseStateExpired:
+		obj.leaseState = leaseStateBroken
+		obj.leaseBreakAt = time.Time{}
+
+		return 0, nil
+	}
+
+	breakAfter := computeBreakAfter(obj, now, breakPeriod)
+	if state == leaseStateBreaking {
+		if remaining := obj.leaseBreakAt.Sub(now); remaining > 0 && breakAfter > remaining {
+			breakAfter = remaining
+		}
+	}
+
+	if breakAfter <= 0 {
+		obj.leaseState = leaseStateBroken
+		obj.leaseBreakAt = time.Time{}
+
+		return 0, nil
+	}
+
+	obj.leaseState = leaseStateBreaking
+	obj.leaseBreakAt = now.Add(breakAfter)
+
+	return int32(breakAfter.Seconds()), nil
+}
+
+// computeBreakAfter resolves how long from now a Leased/Breaking lease should
+// take to break, applying the break-period cap described in the Lease Blob
+// remarks: a break period only shortens a fixed-duration lease's remaining
+// time, never lengthens it, and an infinite lease with no period breaks
+// immediately.
+func computeBreakAfter(obj *blobObject, now time.Time, breakPeriod *int32) time.Duration {
+	var remaining time.Duration
+	if obj.leaseDurationSec != leaseDurationInfinite && !obj.leaseExpiresAt.IsZero() {
+		if remaining = obj.leaseExpiresAt.Sub(now); remaining < 0 {
+			remaining = 0
+		}
+	}
+
+	if breakPeriod == nil {
+		return remaining // infinite lease: 0 (immediate); fixed lease: its remaining time.
+	}
+
+	candidate := time.Duration(*breakPeriod) * time.Second
+
+	if obj.leaseDurationSec != leaseDurationInfinite && candidate > remaining {
+		return remaining
+	}
+
+	return candidate
+}
+
+// writeLeaseError builds the write-gating error a blob operation that
+// requires a lease id returns. Real Azure always answers 412 here (see the
+// Delete Blob / Put Blob docs), unlike the 409s lease-management calls use.
+// https://learn.microsoft.com/en-us/rest/api/storageservices/delete-blob
+func writeLeaseError(code, msg string) error {
+	return &driver.BlobOpError{Status: http.StatusPreconditionFailed, Code: code, Message: msg}
+}
+
+// CheckBlobLease validates a write/delete request's x-ms-lease-id header
+// against any active lease on the blob.
+func (m *Mock) CheckBlobLease(_ context.Context, container, blob, headerLeaseID string) error {
+	ctr, ok := m.containers.Get(container)
+	if !ok {
+		return nil // let the caller's own existence check surface NotFound.
+	}
+
+	obj, ok := ctr.objects.Get(blob)
+	if !ok {
+		return nil
+	}
+
+	obj.mu.Lock()
+	defer obj.mu.Unlock()
+
+	state := effectiveLeaseState(obj, m.opts.Clock.Now().UTC())
+
+	switch state {
+	case leaseStateLeased, leaseStateBreaking:
+		if headerLeaseID == "" {
+			return writeLeaseError("LeaseIdMissing", "there is currently a lease on the blob and no lease id was specified")
+		}
+
+		if headerLeaseID != obj.leaseID {
+			return writeLeaseError("LeaseIdMismatchWithBlobOperation",
+				"the lease id specified did not match the lease id for the blob")
+		}
+
+		return nil
+	default: // Available, Broken, Expired: any lease id supplied here is stale/invalid.
+		if headerLeaseID != "" {
+			return writeLeaseError("LeaseNotPresentWithBlobOperation", "there is currently no lease on the blob")
+		}
+
+		return nil
+	}
+}
+
+// DeleteBlobSnapshots applies the Azure delete-snapshots directive ahead of a
+// Delete Blob. See
+// https://learn.microsoft.com/en-us/rest/api/storageservices/delete-blob.
+func (m *Mock) DeleteBlobSnapshots(_ context.Context, container, blob, mode string) (bool, error) {
+	ctr, ok := m.containers.Get(container)
+	if !ok {
+		return false, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
+	}
+
+	prefix := snapshotKey(blob, "")
+
+	var snapKeys []string
+
+	for _, k := range ctr.snapshots.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			snapKeys = append(snapKeys, k)
+		}
+	}
+
+	switch mode {
+	case "":
+		if len(snapKeys) > 0 {
+			return false, &driver.BlobOpError{
+				Status: http.StatusConflict, Code: "SnapshotsPresent",
+				Message: "the specified blob has snapshots and no x-ms-delete-snapshots header was specified",
+			}
+		}
+
+		return true, nil
+	case "only":
+		for _, k := range snapKeys {
+			ctr.snapshots.Delete(k)
+		}
+
+		return false, nil
+	case "include":
+		for _, k := range snapKeys {
+			ctr.snapshots.Delete(k)
+		}
+
+		return true, nil
+	default:
+		return false, cerrors.Newf(cerrors.InvalidArgument, "invalid x-ms-delete-snapshots value %q", mode)
+	}
+}
+
+// SetContainerAccessPolicy sets a container's public access level and stored
+// access policies.
+func (m *Mock) SetContainerAccessPolicy(
+	_ context.Context, container, publicAccess string, policies []driver.SignedIdentifier,
+) error {
+	ctr, ok := m.containers.Get(container)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", container)
+	}
+
+	ctr.mu.Lock()
+	defer ctr.mu.Unlock()
+
+	ctr.publicAccess = publicAccess
+
+	ctr.accessPolicies = append([]driver.SignedIdentifier(nil), policies...)
+
+	return nil
+}
+
+// ContainerAccessPolicy returns a container's public access level and stored
+// access policies.
+func (m *Mock) ContainerAccessPolicy(_ context.Context, container string) (string, []driver.SignedIdentifier, error) {
+	ctr, ok := m.containers.Get(container)
+	if !ok {
+		return "", nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
+	}
+
+	ctr.mu.Lock()
+	defer ctr.mu.Unlock()
+
+	return ctr.publicAccess, append([]driver.SignedIdentifier(nil), ctr.accessPolicies...), nil
 }

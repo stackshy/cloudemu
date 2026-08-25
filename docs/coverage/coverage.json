@@ -10324,12 +10324,32 @@
         "doc": "AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,",
         "operations": [
           {
+            "name": "AcquireLease",
+            "doc": "AcquireLease acquires a lease on a blob (Lease Blob, ?comp=lease,"
+          },
+          {
             "name": "AppendBlock",
             "doc": "AppendBlock appends a block to the end of an append blob (Append Block,"
           },
           {
+            "name": "BreakLease",
+            "doc": "BreakLease breaks the blob's current lease. breakPeriod is nil when the"
+          },
+          {
+            "name": "ChangeLease",
+            "doc": "ChangeLease changes the blob's lease ID."
+          },
+          {
+            "name": "CheckBlobLease",
+            "doc": "CheckBlobLease validates a write/delete request's x-ms-lease-id header"
+          },
+          {
             "name": "CommitBlockList",
             "doc": "CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist)"
+          },
+          {
+            "name": "ContainerAccessPolicy",
+            "doc": "ContainerAccessPolicy returns a container's public access level and"
           },
           {
             "name": "ContainerMetadata",
@@ -10344,8 +10364,24 @@
             "doc": "CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob,"
           },
           {
+            "name": "DeleteBlobSnapshots",
+            "doc": "DeleteBlobSnapshots applies the Azure delete-snapshots directive"
+          },
+          {
             "name": "GetBlobSnapshot",
             "doc": "GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…)."
+          },
+          {
+            "name": "GetBlockList",
+            "doc": "GetBlockList returns the blob's committed and uncommitted blocks (Get"
+          },
+          {
+            "name": "ReleaseLease",
+            "doc": "ReleaseLease releases the blob's current lease."
+          },
+          {
+            "name": "RenewLease",
+            "doc": "RenewLease renews the blob's current lease."
           },
           {
             "name": "SetBlobMetadata",
@@ -10358,6 +10394,10 @@
           {
             "name": "SetBlobTier",
             "doc": "SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier),"
+          },
+          {
+            "name": "SetContainerAccessPolicy",
+            "doc": "SetContainerAccessPolicy sets a container's public access level and"
           },
           {
             "name": "SetContainerMetadata",

@@ -17,7 +17,11 @@ import (
 type blobExt = storagedriver.AzureBlobExtensions
 
 // stageBlock handles PUT /{container}/{blob}?comp=block&blockid=….
-func (*Handler) stageBlock(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) stageBlock(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	blockID := r.URL.Query().Get("blockid")
 	if blockID == "" {
 		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", "missing blockid")
@@ -39,7 +43,11 @@ func (*Handler) stageBlock(w http.ResponseWriter, r *http.Request, ext blobExt, 
 }
 
 // commitBlockList handles PUT /{container}/{blob}?comp=blocklist.
-func (*Handler) commitBlockList(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) commitBlockList(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	body, ok := readLimitedBody(w, r)
 	if !ok {
 		return
@@ -61,7 +69,11 @@ func (*Handler) commitBlockList(w http.ResponseWriter, r *http.Request, ext blob
 }
 
 // setBlobMetadata handles PUT /{container}/{blob}?comp=metadata.
-func (*Handler) setBlobMetadata(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) setBlobMetadata(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	info, err := ext.SetBlobMetadata(r.Context(), container, blob, extractMetadata(r.Header))
 	if err != nil {
 		writeErr(w, err)
@@ -72,7 +84,11 @@ func (*Handler) setBlobMetadata(w http.ResponseWriter, r *http.Request, ext blob
 }
 
 // setBlobProperties handles PUT /{container}/{blob}?comp=properties.
-func (*Handler) setBlobProperties(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) setBlobProperties(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	props := &storagedriver.BlobProperties{
 		ContentType:        r.Header.Get("x-ms-blob-content-type"),
 		ContentEncoding:    r.Header.Get("x-ms-blob-content-encoding"),
@@ -98,12 +114,13 @@ func (*Handler) setBlobTier(w http.ResponseWriter, r *http.Request, ext blobExt,
 		return
 	}
 
-	if err := ext.SetBlobTier(r.Context(), container, blob, tier); err != nil {
+	status, err := ext.SetBlobTier(r.Context(), container, blob, tier)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 }
 
 // snapshotBlob handles PUT /{container}/{blob}?comp=snapshot.
@@ -119,7 +136,11 @@ func (*Handler) snapshotBlob(w http.ResponseWriter, r *http.Request, ext blobExt
 }
 
 // createAppendBlob handles PUT /{container}/{blob} with x-ms-blob-type: AppendBlob.
-func (*Handler) createAppendBlob(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) createAppendBlob(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	info, err := ext.CreateAppendBlob(r.Context(), container, blob, blobContentType(r), extractMetadata(r.Header))
 	if err != nil {
 		writeErr(w, err)
@@ -131,7 +152,11 @@ func (*Handler) createAppendBlob(w http.ResponseWriter, r *http.Request, ext blo
 }
 
 // appendBlock handles PUT /{container}/{blob}?comp=appendblock.
-func (*Handler) appendBlock(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) appendBlock(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	data, ok := readLimitedBody(w, r)
 	if !ok {
 		return

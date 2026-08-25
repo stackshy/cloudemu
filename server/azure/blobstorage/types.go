@@ -59,6 +59,7 @@ type blobPropsXML struct {
 	ContentLength int64  `xml:"Content-Length"`
 	ContentType   string `xml:"Content-Type"`
 	BlobType      string `xml:"BlobType"`
+	AccessTier    string `xml:"AccessTier,omitempty"`
 }
 
 type blobPrefixXML struct {
@@ -92,4 +93,34 @@ type errorXML struct {
 	XMLName xml.Name `xml:"Error"`
 	Code    string   `xml:"Code"`
 	Message string   `xml:"Message"`
+}
+
+// blockListResult is the body for GET /{container}/{blob}?comp=blocklist.
+type blockListResult struct {
+	XMLName           xml.Name   `xml:"BlockList"`
+	CommittedBlocks   []blockXML `xml:"CommittedBlocks>Block"`
+	UncommittedBlocks []blockXML `xml:"UncommittedBlocks>Block"`
+}
+
+type blockXML struct {
+	Name string `xml:"Name"`
+	Size int64  `xml:"Size"`
+}
+
+// signedIdentifiersXML is the request/response body for PUT and GET
+// /{container}?restype=container&comp=acl.
+type signedIdentifiersXML struct {
+	XMLName     xml.Name              `xml:"SignedIdentifiers"`
+	Identifiers []signedIdentifierXML `xml:"SignedIdentifier"`
+}
+
+type signedIdentifierXML struct {
+	ID           string          `xml:"Id"`
+	AccessPolicy accessPolicyXML `xml:"AccessPolicy"`
+}
+
+type accessPolicyXML struct {
+	Start      string `xml:"Start,omitempty"`
+	Expiry     string `xml:"Expiry,omitempty"`
+	Permission string `xml:"Permission,omitempty"`
 }

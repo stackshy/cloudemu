@@ -3,6 +3,7 @@ package driver
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -84,6 +85,46 @@ type BlobProperties struct {
 	CacheControl       string
 }
 
+// BlobOpError reports an Azure Blob operation failure that carries an exact
+// HTTP status and x-ms-error-code the wire layer must echo verbatim. Several
+// blob operations (Lease Blob, Delete Blob with snapshots present, Get Blob on
+// an archived blob) don't fit the canonical cerrors taxonomy: the same
+// underlying condition maps to different statuses depending on the operation
+// (e.g. a lease mismatch is 412 for a blob write but 409 for a lease-management
+// call), so those providers return this directly instead of a cerrors code.
+type BlobOpError struct {
+	Status  int // HTTP status code, e.g. 409, 412
+	Code    string
+	Message string
+}
+
+func (e *BlobOpError) Error() string { return fmt.Sprintf("%s: %s", e.Code, e.Message) }
+
+// BlockInfo describes one block in a block blob's committed or uncommitted
+// block list (Put Block List / Get Block List).
+type BlockInfo struct {
+	Name string
+	Size int64
+}
+
+// BlobLeaseResult is the outcome of a successful Lease Blob acquire, renew, or
+// change operation.
+type BlobLeaseResult struct {
+	LeaseID      string
+	ETag         string
+	LastModified string
+}
+
+// SignedIdentifier is one stored access policy entry on a container (Set/Get
+// Container ACL, ?restype=container&comp=acl). Start/Expiry are RFC3339
+// timestamps, empty when unset.
+type SignedIdentifier struct {
+	ID         string
+	Start      string
+	Expiry     string
+	Permission string
+}
+
 // AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 // discovered by type assertion. It covers operations with no AWS/GCS equivalent
 // (block staging + commit, metadata/properties/tier updates, snapshots, append
@@ -106,8 +147,11 @@ type AzureBlobExtensions interface {
 	// Properties, ?comp=properties), preserving its content.
 	SetBlobProperties(ctx context.Context, container, blob string, props *BlobProperties) (*ObjectInfo, error)
 	// SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier),
-	// preserving its content and ETag.
-	SetBlobTier(ctx context.Context, container, blob, tier string) error
+	// preserving its content and ETag. tier must be one of Hot/Cool/Cold/
+	// Archive; any other value is an InvalidArgument error. statusCode is 200
+	// when the new tier takes effect immediately or 202 when a blob is
+	// rehydrating out of Archive.
+	SetBlobTier(ctx context.Context, container, blob, tier string) (statusCode int, err error)
 
 	// CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob,
 	// ?comp=snapshot) of a blob, preserving the base blob, and returns the
@@ -132,6 +176,47 @@ type AzureBlobExtensions interface {
 	// ContainerMetadata returns a container's metadata (Get Container Properties /
 	// Get Container Metadata).
 	ContainerMetadata(ctx context.Context, container string) (map[string]string, error)
+
+	// GetBlockList returns the blob's committed and uncommitted blocks (Get
+	// Block List, GET ?comp=blocklist).
+	GetBlockList(ctx context.Context, container, blob string) (committed, uncommitted []BlockInfo, err error)
+
+	// AcquireLease acquires a lease on a blob (Lease Blob, ?comp=lease,
+	// x-ms-lease-action: acquire). durationSeconds is -1 for an infinite lease
+	// or 15-60 for a fixed duration; proposedLeaseID may be empty to let the
+	// provider generate one.
+	AcquireLease(ctx context.Context, container, blob string, durationSeconds int32, proposedLeaseID string) (*BlobLeaseResult, error)
+	// RenewLease renews the blob's current lease.
+	RenewLease(ctx context.Context, container, blob, leaseID string) (*BlobLeaseResult, error)
+	// ChangeLease changes the blob's lease ID.
+	ChangeLease(ctx context.Context, container, blob, leaseID, proposedLeaseID string) (*BlobLeaseResult, error)
+	// ReleaseLease releases the blob's current lease.
+	ReleaseLease(ctx context.Context, container, blob, leaseID string) (*BlobLeaseResult, error)
+	// BreakLease breaks the blob's current lease. breakPeriod is nil when the
+	// caller omitted x-ms-lease-break-period. Returns the seconds remaining
+	// until a new lease may be acquired.
+	BreakLease(ctx context.Context, container, blob string, breakPeriod *int32) (leaseTimeSeconds int32, err error)
+	// CheckBlobLease validates a write/delete request's x-ms-lease-id header
+	// against any active lease on the blob, returning a *BlobOpError when the
+	// request must be rejected. A blob with no active lease and no header
+	// always passes (nil), as does a blob that doesn't exist yet.
+	CheckBlobLease(ctx context.Context, container, blob, headerLeaseID string) error
+
+	// DeleteBlobSnapshots applies the Azure delete-snapshots directive
+	// (x-ms-delete-snapshots: "" | "include" | "only") ahead of a Delete Blob.
+	// mode "" with existing snapshots fails with SnapshotsPresent (409); modes
+	// "include"/"only" delete the blob's snapshots. deleteBaseBlob reports
+	// whether the caller must still delete the base blob itself via
+	// Bucket.DeleteObject (false only for mode "only").
+	DeleteBlobSnapshots(ctx context.Context, container, blob, mode string) (deleteBaseBlob bool, err error)
+
+	// SetContainerAccessPolicy sets a container's public access level and
+	// stored access policies (Set Container ACL,
+	// ?restype=container&comp=acl).
+	SetContainerAccessPolicy(ctx context.Context, container, publicAccess string, policies []SignedIdentifier) error
+	// ContainerAccessPolicy returns a container's public access level and
+	// stored access policies (Get Container ACL).
+	ContainerAccessPolicy(ctx context.Context, container string) (publicAccess string, policies []SignedIdentifier, err error)
 }
 
 // BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
