@@ -2,10 +2,13 @@ package functions_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v3"
 	"github.com/stackshy/cloudemu/v2"
@@ -154,7 +157,13 @@ func TestSDKAppServicePlanDeleteAndListWebApps(t *testing.T) {
 		}
 	}
 
-	// DELETE the plan.
+	// The plan cannot be deleted while it still hosts a site (guarded, see
+	// TestSDKAppServicePlanDeleteRejectedWhileSiteAssigned) — remove the site
+	// first, then DELETE the plan.
+	if _, err := webAppsClient.Delete(ctx, rgName, "sdk-plan-site", nil); err != nil {
+		t.Fatalf("Sites Delete: %v", err)
+	}
+
 	if _, err := plansClient.Delete(ctx, rgName, "sdk-plan-2", nil); err != nil {
 		t.Fatalf("Plans Delete: %v", err)
 	}
@@ -166,6 +175,84 @@ func TestSDKAppServicePlanDeleteAndListWebApps(t *testing.T) {
 	// Deleting again is a 404, not a panic or 500.
 	if _, err := plansClient.Delete(ctx, rgName, "sdk-plan-2", nil); err == nil {
 		t.Fatal("second Delete returned nil error, want 404")
+	}
+}
+
+// TestSDKAppServicePlanDeleteRejectedWhileSiteAssigned covers the data-corruption
+// finding: deleting an App Service plan that still hosts a Web App must 409
+// Conflict (real Azure: "Server farm ... cannot be deleted because it has web
+// app(s) assigned to it"), not silently succeed and leave the site pointing at a
+// plan that no longer exists. Once the site is deleted, the plan delete succeeds.
+func TestSDKAppServicePlanDeleteRejectedWhileSiteAssigned(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
+	t.Cleanup(ts.Close)
+
+	plansClient := newPlansClient(t, ts)
+	webAppsClient := newWebAppsClient(t, ts)
+	ctx := context.Background()
+
+	planPoller, err := plansClient.BeginCreateOrUpdate(ctx, rgName, "sdk-guard-plan",
+		armappservice.Plan{
+			Kind:     to.Ptr("linux"),
+			Location: to.Ptr("eastus"),
+			SKU:      &armappservice.SKUDescription{Name: to.Ptr("B1"), Tier: to.Ptr("Basic")},
+		}, nil)
+	if err != nil {
+		t.Fatalf("Plans BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err = planPoller.PollUntilDone(ctx, &runtimePollerOptions); err != nil {
+		t.Fatalf("Plans PollUntilDone: %v", err)
+	}
+
+	serverFarmID := fmt.Sprintf(
+		"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/serverfarms/sdk-guard-plan", subID, rgName)
+
+	sitePoller, err := webAppsClient.BeginCreateOrUpdate(ctx, rgName, "sdk-guard-site",
+		armappservice.Site{
+			Kind:     to.Ptr("app"),
+			Location: to.Ptr("eastus"),
+			Properties: &armappservice.SiteProperties{
+				ServerFarmID: to.Ptr(serverFarmID),
+				SiteConfig:   &armappservice.SiteConfig{},
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("Sites BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err = sitePoller.PollUntilDone(ctx, &runtimePollerOptions); err != nil {
+		t.Fatalf("Sites PollUntilDone: %v", err)
+	}
+
+	// Deleting the plan while the site is still assigned must 409 Conflict.
+	_, err = plansClient.Delete(ctx, rgName, "sdk-guard-plan", nil)
+	if err == nil {
+		t.Fatal("Plans Delete with an assigned site returned nil error, want 409 Conflict")
+	}
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != http.StatusConflict {
+		t.Fatalf("Plans Delete error = %v, want 409 Conflict", err)
+	}
+
+	// The plan (and the site's reference to it) must survive the rejected delete.
+	if _, err := plansClient.Get(ctx, rgName, "sdk-guard-plan", nil); err != nil {
+		t.Fatalf("plan removed by rejected delete: %v", err)
+	}
+
+	// After the site is deleted, deleting the plan succeeds.
+	if _, err := webAppsClient.Delete(ctx, rgName, "sdk-guard-site", nil); err != nil {
+		t.Fatalf("Sites Delete: %v", err)
+	}
+
+	if _, err := plansClient.Delete(ctx, rgName, "sdk-guard-plan", nil); err != nil {
+		t.Fatalf("Plans Delete after site removed: %v", err)
+	}
+
+	if _, err := plansClient.Get(ctx, rgName, "sdk-guard-plan", nil); err == nil {
+		t.Fatal("post-delete Plans Get returned nil error, want 404")
 	}
 }
 

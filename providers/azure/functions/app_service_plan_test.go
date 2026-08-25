@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 )
 
 func TestCreateAppServicePlanDefaults(t *testing.T) {
@@ -77,6 +78,38 @@ func TestListAppServicePlansRoundTrip(t *testing.T) {
 // resource groups (even in the same subscription) each naming a plan
 // "default" must not collide, and neither Get nor Delete nor a resource-group
 // scoped List may see the other resource group's plan.
+func TestDeleteAppServicePlanRejectedWhileSiteAssigned(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateAppServicePlan(ctx, AppServicePlan{
+		Name: "plan1", Subscription: "sub1", ResourceGroup: "rgA", SKUName: "B1",
+	})
+	require.NoError(t, err)
+
+	// A site assigned to the plan (ServerFarmID = the plan's ARM id) blocks
+	// the delete, even though the site lives in a different resource group.
+	_, err = m.UpsertSiteMeta(ctx, SiteMeta{
+		Name: "site1", Subscription: "sub1", ResourceGroup: "rgB",
+		ServerFarmID: idgen.AzureID("sub1", "rgA", "Microsoft.Web", "serverfarms", "plan1"),
+	})
+	require.NoError(t, err)
+
+	err = m.DeleteAppServicePlan(ctx, "sub1", "rgA", "plan1")
+	require.True(t, cerrors.IsFailedPrecondition(err), "want FailedPrecondition, got %v", err)
+
+	// The plan must survive the rejected delete.
+	_, err = m.GetAppServicePlan(ctx, "sub1", "rgA", "plan1")
+	require.NoError(t, err)
+
+	// Once the site is gone, the plan deletes cleanly.
+	require.NoError(t, m.DeleteSiteMeta(ctx, "sub1", "rgB", "site1"))
+	require.NoError(t, m.DeleteAppServicePlan(ctx, "sub1", "rgA", "plan1"))
+
+	_, err = m.GetAppServicePlan(ctx, "sub1", "rgA", "plan1")
+	require.True(t, cerrors.IsNotFound(err))
+}
+
 func TestAppServicePlanResourceGroupIsolation(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
