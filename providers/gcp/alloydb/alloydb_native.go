@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -128,6 +129,7 @@ func (m *Mock) CreateAlloyDBCluster(
 		AutomatedBackupEnabled: cfg.AutomatedBackupEnabled,
 		ContinuousBackup:       cfg.ContinuousBackup,
 		MaintenanceDay:         cfg.MaintenanceDay,
+		DisplayName:            cfg.DisplayName,
 	}
 
 	if cfg.InitialUser != "" {
@@ -208,6 +210,7 @@ func (m *Mock) PromoteCluster(_ context.Context, id string) (*rdsdriver.Cluster,
 
 	extra.ClusterType = clusterTypePrimary
 	extra.PrimaryCluster = ""
+	extra.UpdatedAt = m.opts.Clock.Now().UTC()
 	m.clusterExtra[id] = extra
 
 	out := cloneCluster(cluster)
@@ -336,11 +339,19 @@ func (m *Mock) AlloyDBClusterInfo(_ context.Context, id string) (*rdsdriver.Allo
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if !m.clusters.Has(id) {
+	c, ok := m.clusters.Get(id)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "AlloyDB cluster %q not found", id)
 	}
 
 	e := m.clusterExtra[id]
+
+	// A cluster not yet modified reports its creation time as the update time,
+	// matching real AlloyDB where updateTime == createTime on a fresh resource.
+	updated := e.UpdatedAt
+	if updated.IsZero() {
+		updated = c.CreatedAt
+	}
 
 	return &rdsdriver.AlloyDBClusterInfo{
 		ClusterType:            e.ClusterType,
@@ -350,6 +361,10 @@ func (m *Mock) AlloyDBClusterInfo(_ context.Context, id string) (*rdsdriver.Allo
 		ContinuousBackup:       e.ContinuousBackup,
 		MaintenanceDay:         e.MaintenanceDay,
 		PrimaryCluster:         e.PrimaryCluster,
+		UID:                    idgen.SyntheticGUID(c.ARN),
+		DisplayName:            e.DisplayName,
+		CreateTime:             c.CreatedAt,
+		UpdateTime:             updated,
 	}, nil
 }
 
@@ -361,11 +376,18 @@ func (m *Mock) AlloyDBInstanceInfo(
 	defer m.mu.RUnlock()
 
 	key := instanceKey(clusterID, instanceID)
-	if !m.instances.Has(key) {
+
+	inst, ok := m.instances.Get(key)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "AlloyDB instance %q not found in cluster %q", instanceID, clusterID)
 	}
 
 	e := m.instanceExtra[key]
+
+	updated := e.UpdatedAt
+	if updated.IsZero() {
+		updated = inst.CreatedAt
+	}
 
 	return &rdsdriver.AlloyDBInstanceInfo{
 		InstanceType:     e.InstanceType,
@@ -374,5 +396,7 @@ func (m *Mock) AlloyDBInstanceInfo(
 		AvailabilityType: e.AvailabilityType,
 		IPAddress:        e.IPAddress,
 		GceZone:          e.GceZone,
+		CreateTime:       inst.CreatedAt,
+		UpdateTime:       updated,
 	}, nil
 }
