@@ -447,6 +447,25 @@ func portableToAzureType(service, typ string) string {
 	return strings.ToLower(key)
 }
 
+// AzureType translates an engine Resource's (Service, Type) into the ARM type
+// string a real Azure client expects (e.g. "compute"/"Instance" ->
+// "microsoft.compute/virtualmachines"). Exported so other Azure handlers that
+// render resourcediscovery.Resource rows into Azure-shaped output — e.g. the
+// resource-groups exportTemplate — use the same naming Resource Graph does,
+// rather than a second, possibly-diverging mapping.
+func AzureType(service, typ string) string {
+	return portableToAzureType(service, typ)
+}
+
+// ResourceGroupOf reports the resource group embedded in an Azure resource ID,
+// or "default" for an ID that doesn't carry one. Exported for the same reason
+// as AzureType: other Azure handlers that need "which group does this
+// resource belong to" (e.g. exportTemplate) reuse the parsing Resource Graph
+// and the generic-resources listing already rely on.
+func ResourceGroupOf(id string) string {
+	return resourceGroupOrDefault(id)
+}
+
 // Compile-time check that Handler implements the Matches+ServeHTTP pair the
 // dispatch chain expects.
 var _ interface {

@@ -13,12 +13,25 @@
 package resourcegroups
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
+
+// templateAPIVersion is the apiVersion stamped onto every resource entry in an
+// exported template. Real ARM resolves this per resource type from the
+// provider's registered API versions; the emulator has no such registry, so —
+// mirroring the same fixed-apiVersion approach the VM capture template already
+// uses (server/azure/virtualmachines/instances.go's captureResult) — every
+// entry gets one reasonable, recent Resource Manager API version rather than a
+// second per-type table to maintain.
+const templateAPIVersion = "2021-04-01"
 
 const resourceGroupType = "Microsoft.Resources/resourceGroups"
 
@@ -37,11 +50,20 @@ type Handler struct {
 	// stored lowercased because ARM resolves a resource group case-insensitively
 	// (create "myRG", get "MYRG"); the body keeps the original-cased name.
 	groups map[string]map[string]map[string]any
+	// engine backs exportTemplate: the emulator tracks group membership by the
+	// resource group segment already embedded in each resource's own id, so
+	// enumerating "what's in this group" means walking the same cross-service
+	// inventory Resource Graph and the generic resources listing already read
+	// from. Nil disables exportTemplate's resource enumeration (it still
+	// returns a valid, empty template) — callers that don't wire discovery.
+	engine *resourcediscovery.Engine
 }
 
-// New returns a resource-group handler.
-func New() *Handler {
-	return &Handler{groups: map[string]map[string]map[string]any{}}
+// New returns a resource-group handler. engine is the cross-service inventory
+// engine exportTemplate enumerates a group's resources from; nil is accepted
+// (exportTemplate then reports an empty resources[]).
+func New(engine *resourcediscovery.Engine) *Handler {
+	return &Handler{groups: map[string]map[string]map[string]any{}, engine: engine}
 }
 
 // routeKind classifies a resource-group request path.
@@ -258,6 +280,17 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request, sub, name strin
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// exportTemplateRequest is the exportTemplate POST body: see
+// https://learn.microsoft.com/en-us/rest/api/resources/resource-groups/export-template
+// ("ExportTemplateRequest"). Resources is an allowlist of resource IDs to
+// export, or a single "*" entry for the whole group; Options is a CSV of
+// parameterization flags this emulator does not act on (the export already
+// bakes in literal names rather than parameterizing them).
+type exportTemplateRequest struct {
+	Resources []string `json:"resources"`
+	Options   string   `json:"options"`
+}
+
 func (h *Handler) serveExport(w http.ResponseWriter, r *http.Request, sub, name string) {
 	if r.Method != http.MethodPost {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "POST required")
@@ -275,18 +308,134 @@ func (h *Handler) serveExport(w http.ResponseWriter, r *http.Request, sub, name 
 		return
 	}
 
-	// The emulator does not track per-group resource membership here, so the
-	// exported template is a valid, empty ARM template skeleton.
+	req := decodeExportRequest(r)
+
+	resources, err := h.exportResources(r.Context(), name, req.Resources)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
 		"template": map[string]any{
 			"$schema":        "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
 			"contentVersion": "1.0.0.0",
 			"parameters":     map[string]any{},
 			"variables":      map[string]any{},
-			"resources":      []any{},
+			"resources":      resources,
 			"outputs":        map[string]any{},
 		},
 	})
+}
+
+// decodeExportRequest best-effort decodes the exportTemplate POST body. Both
+// fields are optional per the ARM contract (a bare POST with no body is a
+// valid "export everything" request), so a missing or malformed body is
+// treated as no filter rather than failing the request.
+func decodeExportRequest(r *http.Request) exportTemplateRequest {
+	var req exportTemplateRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	return req
+}
+
+// exportResources enumerates the resources belonging to group, rendered as
+// ARM template resource entries. The emulator has no dedicated group-
+// membership store: group ownership is read off the same resource-group
+// segment already embedded in every resource's id, via the cross-service
+// discovery engine that Resource Graph and the generic resources listing
+// (GET .../resourceGroups/{rg}/resources) already read from — so exportTemplate
+// stays consistent with what those two report the group contains. A nil
+// engine (discovery not wired) yields an empty slice, matching the previous
+// always-empty behavior for callers who don't opt in to discovery.
+func (h *Handler) exportResources(ctx context.Context, group string, filter []string) ([]map[string]any, error) {
+	out := []map[string]any{}
+
+	if h.engine == nil {
+		return out, nil
+	}
+
+	all, err := h.engine.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	byID := !wantsAllResources(filter)
+
+	for i := range all {
+		res := &all[i]
+		if !strings.EqualFold(resourcegraph.ResourceGroupOf(res.ARN), group) {
+			continue
+		}
+
+		if byID && !containsFold(filter, res.ARN) {
+			continue
+		}
+
+		out = append(out, exportResourceEntry(res))
+	}
+
+	return out, nil
+}
+
+// wantsAllResources reports whether an exportTemplate request's resources
+// filter selects the whole group: no filter was supplied, or it names the "*"
+// wildcard the ARM contract documents for "export everything".
+func wantsAllResources(resources []string) bool {
+	if len(resources) == 0 {
+		return true
+	}
+
+	for _, id := range resources {
+		if id == "*" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsFold reports whether want is present in list, case-insensitively —
+// ARM resource IDs are case-insensitive.
+func containsFold(list []string, want string) bool {
+	for _, s := range list {
+		if strings.EqualFold(s, want) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// exportResourceEntry renders one discovered resource as an ARM template
+// resource entry: type + apiVersion + name + location + properties, the
+// fields every real exportTemplate response carries (id/subscriptionId are
+// not part of a template resource — a template is meant to be redeployable
+// under any subscription/resource group). properties defaults to an empty
+// object rather than being omitted, matching the shape of a real response.
+func exportResourceEntry(r *resourcediscovery.Resource) map[string]any {
+	entry := map[string]any{
+		"type":       resourcegraph.AzureType(r.Service, r.Type),
+		"apiVersion": templateAPIVersion,
+		"name":       r.ID,
+		"properties": map[string]any{},
+	}
+
+	if r.Region != "" {
+		entry["location"] = r.Region
+	}
+
+	if len(r.Properties) > 0 {
+		entry["properties"] = r.Properties
+	}
+
+	if len(r.Tags) > 0 {
+		entry["tags"] = r.Tags
+	}
+
+	return entry
 }
 
 // store writes the group under a case-insensitive key and reports whether a
