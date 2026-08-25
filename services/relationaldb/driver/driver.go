@@ -323,7 +323,11 @@ type RestoreInstanceInput struct {
 	NewInstanceID string
 	SnapshotID    string
 	InstanceClass string
-	Tags          map[string]string
+	// Port overrides the restored instance's connection port. Zero means "no
+	// override": AWS falls back to the same port as the original DB instance
+	// the snapshot was taken from, not the engine default.
+	Port int
+	Tags map[string]string
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.
@@ -886,7 +890,11 @@ type ReadReplicaConfig struct {
 	AvailabilityZone   string
 	Port               int
 	PubliclyAccessible bool
-	Tags               map[string]string
+	// DBParameterGroupName overrides the replica's parameter group. Empty
+	// means "no override": AWS inherits the source instance's DBParameterGroup
+	// for a same-Region replica.
+	DBParameterGroupName string
+	Tags                 map[string]string
 }
 
 // ReadReplicas is an OPTIONAL capability for creating and promoting read

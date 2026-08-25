@@ -1233,12 +1233,25 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		instanceClass = defaultInstanceClass
 	}
 
-	// Inherit the source instance's master login so the restored database is
-	// reachable with the same credentials; fall back to engine defaults when the
-	// source is gone. The password is remembered under the snapshot's source id.
-	var username string
+	// Inherit the source instance's master login, DBName, and port so the
+	// restored database matches the original's shape; fall back to engine
+	// defaults when the source is gone. The password is remembered under the
+	// snapshot's source id.
+	var username, dbName string
+
+	port := input.Port
+
 	if src, ok := m.instances.Get(snap.InstanceID); ok {
 		username = src.MasterUsername
+		dbName = src.DBName
+
+		if port == 0 {
+			port = src.Port
+		}
+	}
+
+	if port == 0 {
+		port = defaultPortFor(snap.Engine)
 	}
 
 	password := m.rootPasswords[snap.InstanceID]
@@ -1252,8 +1265,9 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		AllocatedStorage: snap.AllocatedStorage,
 		StorageType:      defaultStorageType,
 		MasterUsername:   username,
+		DBName:           dbName,
 		Endpoint:         endpointFor(input.NewInstanceID, m.opts.Region, "abcd1234"),
-		Port:             defaultPortFor(snap.Engine),
+		Port:             port,
 		State:            rdsdriver.StateAvailable,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(input.Tags),

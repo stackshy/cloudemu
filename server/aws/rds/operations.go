@@ -649,6 +649,7 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 		NewInstanceID: form.Get("DBInstanceIdentifier"),
 		SnapshotID:    form.Get("DBSnapshotIdentifier"),
 		InstanceClass: form.Get("DBInstanceClass"),
+		Port:          formInt(form.Get("Port")),
 		Tags:          parseRDSTags(form),
 	}
 
