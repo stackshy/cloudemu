@@ -10,8 +10,8 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
-	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 // newClient wires the real google.golang.org/api/monitoring/v3 REST client at
