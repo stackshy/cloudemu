@@ -323,6 +323,13 @@ func checkPrecondition(w http.ResponseWriter, pc *precondition, exists bool, nam
 // mergeMasked builds the merged item for a masked update: it starts from the
 // stored document (preserving unmasked fields and the reserved keys), then for
 // each masked path writes the new value or deletes it when absent from body.
+//
+// A dotted field path (e.g. "profile.age") addresses a NESTED field: the path
+// is split into segments, intermediate maps are descended (created as needed),
+// and the leaf is set or deleted. This matches real Firestore's updateMask
+// semantics — a masked nested path present in the body is written, and a masked
+// nested path absent from the body deletes just that nested leaf while sibling
+// fields are left untouched.
 func mergeMasked(existing, body map[string]any, id string, paths []string) map[string]any {
 	merged := map[string]any{fieldID: id}
 	for k, v := range existing {
@@ -330,14 +337,116 @@ func mergeMasked(existing, body map[string]any, id string, paths []string) map[s
 	}
 
 	for _, path := range paths {
-		if v, ok := body[path]; ok {
-			merged[path] = v
+		segs := splitFieldPath(path)
+		if v, ok := getNestedPath(body, segs); ok {
+			setNestedPath(merged, segs, v)
 		} else {
-			delete(merged, path)
+			deleteNestedPath(merged, segs)
 		}
 	}
 
 	return merged
+}
+
+// splitFieldPath splits a Firestore field-path string on its unescaped '.'
+// separators. A segment wrapped in backticks may contain '.' literally; the
+// backticks are stripped. Examples: "a.b" → ["a","b"]; "`a.b`.c" → ["a.b","c"].
+// (Backslash-escaped backticks inside a quoted segment are not handled; the
+// common unescaped and backtick-quoted cases are.)
+func splitFieldPath(path string) []string {
+	var (
+		segs   []string
+		b      strings.Builder
+		inTick bool
+	)
+
+	for _, r := range path {
+		switch {
+		case r == '`':
+			inTick = !inTick
+		case r == '.' && !inTick:
+			segs = append(segs, b.String())
+			b.Reset()
+		default:
+			b.WriteRune(r)
+		}
+	}
+
+	return append(segs, b.String())
+}
+
+// getNestedPath returns the value at segs within m (descending nested maps),
+// reporting whether the full path was present.
+func getNestedPath(m map[string]any, segs []string) (any, bool) {
+	var cur any = m
+
+	for _, s := range segs {
+		cm, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+
+		v, ok := cm[s]
+		if !ok {
+			return nil, false
+		}
+
+		cur = v
+	}
+
+	return cur, true
+}
+
+// setNestedPath sets val at the segmented path within m, cloning maps along the
+// descent so the stored (shared) document is never mutated in place. Missing or
+// non-map intermediate values are replaced by a fresh map, matching Firestore's
+// behavior of overwriting a scalar when a nested path is written through it.
+func setNestedPath(m map[string]any, segs []string, val any) {
+	if len(segs) == 1 {
+		m[segs[0]] = val
+		return
+	}
+
+	child := cloneStringMap(m[segs[0]])
+	m[segs[0]] = child
+	setNestedPath(child, segs[1:], val)
+}
+
+// deleteNestedPath removes the leaf at the segmented path within m, cloning
+// maps along the descent so the stored document is not mutated in place. A path
+// whose intermediates are absent is a no-op.
+func deleteNestedPath(m map[string]any, segs []string) {
+	if len(segs) == 1 {
+		delete(m, segs[0])
+		return
+	}
+
+	existing, ok := m[segs[0]].(map[string]any)
+	if !ok {
+		return
+	}
+
+	child := cloneStringMap(existing)
+	m[segs[0]] = child
+	deleteNestedPath(child, segs[1:])
+}
+
+// cloneStringMap returns a shallow copy of v when it is a map[string]any, or a
+// fresh empty map otherwise. Cloning the immediate level is enough: descent
+// re-clones each deeper level it walks into, so a stored map is never aliased
+// and mutated.
+func cloneStringMap(v any) map[string]any {
+	src, ok := v.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+
+	dst := make(map[string]any, len(src))
+	for k, val := range src {
+		dst[k] = val
+	}
+
+	return dst
 }
 
 // batchGet handles POST .../documents:batchGet — the batched-read endpoint.
@@ -871,7 +980,9 @@ func parseOrderBy(orderBy string) []sortKey {
 }
 
 // applyFieldMask trims a document's fields to the requested mask paths. An
-// empty mask leaves the document unchanged (all fields returned).
+// empty mask leaves the document unchanged (all fields returned). A dotted mask
+// path (e.g. "profile.age") projects the nested leaf, rebuilding the enclosing
+// mapValues so sibling nested fields are excluded.
 func applyFieldMask(doc *document, mask []string) {
 	if len(mask) == 0 || doc.Fields == nil {
 		return
@@ -880,12 +991,38 @@ func applyFieldMask(doc *document, mask []string) {
 	kept := make(map[string]value, len(mask))
 
 	for _, path := range mask {
-		if v, ok := doc.Fields[path]; ok {
-			kept[path] = v
-		}
+		projectFieldPath(doc.Fields, kept, splitFieldPath(path))
 	}
 
 	doc.Fields = kept
+}
+
+// projectFieldPath copies the value at segs from src into dst, materializing
+// nested mapValues along the way. A missing path is skipped.
+func projectFieldPath(src, dst map[string]value, segs []string) {
+	head := segs[0]
+
+	sv, ok := src[head]
+	if !ok {
+		return
+	}
+
+	if len(segs) == 1 {
+		dst[head] = sv
+		return
+	}
+
+	if sv.MapValue == nil {
+		return
+	}
+
+	node, exists := dst[head]
+	if !exists || node.MapValue == nil {
+		node = value{MapValue: &mapValue{Fields: make(map[string]value)}}
+		dst[head] = node
+	}
+
+	projectFieldPath(sv.MapValue.Fields, node.MapValue.Fields, segs[1:])
 }
 
 // atoiOr parses s as an int, returning def when s is empty or invalid.
