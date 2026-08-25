@@ -25,7 +25,7 @@ const (
 // from routeNSG before any whole-NSG handler ever sees the request, so a
 // standalone rule op mutates only the addressed rule and preserves siblings.
 //
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; mirrors routeVNetPeering over a distinct sub-resource by design
 func (h *Handler) routeSecurityRule(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {

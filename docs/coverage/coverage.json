@@ -6476,10 +6476,22 @@
             "name": "DeleteAzureVNetMetadata"
           },
           {
+            "name": "DeleteAzureVNetPeering",
+            "doc": "DeleteAzureVNetPeering removes a single peering by name, leaving every"
+          },
+          {
             "name": "GetAzureNSGMetadata"
           },
           {
             "name": "GetAzureVNetMetadata"
+          },
+          {
+            "name": "GetAzureVNetPeering",
+            "doc": "GetAzureVNetPeering returns one stored peering by name."
+          },
+          {
+            "name": "ListAzureVNetPeerings",
+            "doc": "ListAzureVNetPeerings returns every peering stored for a VNet, ordered by"
           },
           {
             "name": "PutAzureNSGMetadata"
@@ -6488,8 +6500,16 @@
             "name": "PutAzureVNetMetadata"
           },
           {
+            "name": "SetAzureVNetPeeringState",
+            "doc": "SetAzureVNetPeeringState atomically updates just the peeringState field of"
+          },
+          {
             "name": "UpsertAzureNSGRule",
             "doc": "UpsertAzureNSGRule creates or replaces a single custom security rule by"
+          },
+          {
+            "name": "UpsertAzureVNetPeering",
+            "doc": "UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings"
           }
         ]
       },

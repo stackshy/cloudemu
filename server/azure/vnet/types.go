@@ -208,3 +208,39 @@ type publicIPDNSSettings struct {
 type publicIPListResponse struct {
 	Value []publicIPResponse `json:"value"`
 }
+
+// VirtualNetworkPeerings sub-resource (VirtualNetworkPeeringsClient).
+
+type vnetPeeringRequest struct {
+	Properties vnetPeeringRequestProps `json:"properties"`
+}
+
+type vnetPeeringRequestProps struct {
+	RemoteVirtualNetwork      *armIDRef `json:"remoteVirtualNetwork,omitempty"`
+	AllowVirtualNetworkAccess *bool     `json:"allowVirtualNetworkAccess,omitempty"`
+	AllowForwardedTraffic     *bool     `json:"allowForwardedTraffic,omitempty"`
+	AllowGatewayTransit       *bool     `json:"allowGatewayTransit,omitempty"`
+	UseRemoteGateways         *bool     `json:"useRemoteGateways,omitempty"`
+}
+
+type vnetPeeringResponse struct {
+	ID         string                   `json:"id"`
+	Name       string                   `json:"name"`
+	Etag       string                   `json:"etag,omitempty"`
+	Properties vnetPeeringResponseProps `json:"properties"`
+}
+
+type vnetPeeringResponseProps struct {
+	ProvisioningState         string        `json:"provisioningState"`
+	PeeringState              string        `json:"peeringState"`
+	RemoteVirtualNetwork      *armIDRef     `json:"remoteVirtualNetwork,omitempty"`
+	RemoteAddressSpace        *addressSpace `json:"remoteAddressSpace,omitempty"`
+	AllowVirtualNetworkAccess bool          `json:"allowVirtualNetworkAccess"`
+	AllowForwardedTraffic     bool          `json:"allowForwardedTraffic"`
+	AllowGatewayTransit       bool          `json:"allowGatewayTransit"`
+	UseRemoteGateways         bool          `json:"useRemoteGateways"`
+}
+
+type vnetPeeringListResponse struct {
+	Value []vnetPeeringResponse `json:"value"`
+}

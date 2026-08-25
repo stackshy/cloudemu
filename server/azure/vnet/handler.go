@@ -14,6 +14,8 @@
 //	GET .../networkSecurityGroups                        — list NSGs
 //	PUT/GET/DELETE  .../networkInterfaces/{name}         — NIC CRUD
 //	GET .../networkInterfaces                            — list NICs
+//	PUT/GET/DELETE  .../virtualNetworks/{vn}/virtualNetworkPeerings/{n} — peering CRUD
+//	GET .../virtualNetworks/{vn}/virtualNetworkPeerings  — list peerings
 package vnet
 
 import (
@@ -49,6 +51,7 @@ const (
 	defaultLoc          = "eastus"
 	subResSubnets       = "subnets"
 	subResSecurityRules = "securityRules"
+	subResVNetPeerings  = "virtualNetworkPeerings"
 	subResCheckIPAvail  = "CheckIPAddressAvailability"
 )
 
@@ -122,6 +125,17 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 	// Subnet sub-resource: SubResource="subnets", SubResourceName="{name}".
 	if rp.SubResource == subResSubnets {
 		h.routeSubnet(w, r, rp)
+		return
+	}
+
+	// VirtualNetworkPeerings sub-resource (VirtualNetworkPeeringsClient):
+	// SubResource="virtualNetworkPeerings", SubResourceName="{peeringName}".
+	// Routed before the whole-VNet method switch below — BLOCKER fix: without
+	// this, a peering PUT/GET/DELETE fell through to createVNet/getVNet/deleteVNet
+	// keyed on rp.ResourceName (the parent VNet's own name), so a peering DELETE
+	// deleted the entire virtual network instead of just the peering.
+	if rp.SubResource == subResVNetPeerings {
+		h.routeVNetPeering(w, r, rp)
 		return
 	}
 
