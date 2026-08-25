@@ -141,9 +141,12 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 
 	var data []mondriver.MetricDatum
 
+	// Backfill the 5 datapoints going backward from launch time so they land in
+	// the recent past. Forward-dating would place them in the future, where a
+	// metrics query ending at "now" filters them out.
 	for i, metricName := range metrics {
 		for j := 0; j < 5; j++ {
-			ts := lt.Add(time.Duration(j) * time.Minute)
+			ts := lt.Add(-time.Duration(j) * time.Minute)
 			data = append(data, mondriver.MetricDatum{
 				Namespace:  "compute.googleapis.com",
 				MetricName: metricName,

@@ -2083,7 +2083,7 @@ func TestCloudWatchMetricsFlow(t *testing.T) {
 		Statistics: []cwtypes.Statistic{cwtypes.StatisticAverage},
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, out.Datapoints, "CPUUtilization should have datapoints after RunInstances")
+	require.NotEmpty(t, out.Datapoints, "CPUUtilization should have datapoints after RunInstances")
 	assert.Greater(t, aws.ToFloat64(out.Datapoints[0].Average), 0.0)
 }
 
