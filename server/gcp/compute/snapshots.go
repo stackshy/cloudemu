@@ -14,6 +14,11 @@ import (
 // gcpSnapshotNameTag is the tag we round-trip the snapshot name through.
 const gcpSnapshotNameTag = "cloudemu:gcpSnapshotName"
 
+// gcpSnapshotSourceDiskTag round-trips the caller's sourceDisk URL so a read
+// echoes it verbatim (real GCP returns the source disk the caller passed,
+// not our driver-internal disk id).
+const gcpSnapshotSourceDiskTag = "cloudemu:gcpSnapshotSourceDisk"
+
 // snapshotRequest mirrors the subset of compute#snapshot we accept.
 type snapshotRequest struct {
 	Name       string            `json:"name"`
@@ -22,14 +27,16 @@ type snapshotRequest struct {
 }
 
 type snapshotResponse struct {
-	Kind       string            `json:"kind"`
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	SourceDisk string            `json:"sourceDisk,omitempty"`
-	DiskSizeGb string            `json:"diskSizeGb"`
-	Status     string            `json:"status"`
-	SelfLink   string            `json:"selfLink"`
-	Labels     map[string]string `json:"labels,omitempty"`
+	Kind              string            `json:"kind"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	SourceDisk        string            `json:"sourceDisk,omitempty"`
+	SourceDiskID      string            `json:"sourceDiskId,omitempty"`
+	DiskSizeGb        string            `json:"diskSizeGb"`
+	Status            string            `json:"status"`
+	SelfLink          string            `json:"selfLink"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 }
 
 type snapshotListResponse struct {
@@ -57,6 +64,10 @@ func (h *Handler) insertSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	if _, err := findSnapshotByName(r.Context(), h.compute, req.Name); conflictIfExists(w, err, "snapshot "+req.Name+" already exists") {
+		return
+	}
+
 	driverDiskID, err := h.resolveSourceDiskID(r.Context(), req.SourceDisk)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
@@ -66,7 +77,7 @@ func (h *Handler) insertSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 	cfg := computedriver.SnapshotConfig{
 		VolumeID:    driverDiskID,
 		Description: req.Name,
-		Tags:        mergeSnapshotTags(req.Labels, req.Name),
+		Tags:        mergeSnapshotTags(req.Labels, req.Name, req.SourceDisk),
 	}
 
 	if _, err := h.compute.CreateSnapshot(r.Context(), cfg); err != nil {
@@ -185,20 +196,31 @@ func (h *Handler) resolveSourceDiskID(ctx context.Context, sourceDisk string) (s
 func toSnapshotResponse(snap *computedriver.SnapshotInfo, rp gcprest.ResourcePath, host string) snapshotResponse {
 	name := tagOr(snap.Tags, gcpSnapshotNameTag, rp.ResourceName)
 
-	return snapshotResponse{
-		Kind:       "compute#snapshot",
-		ID:         numericID(snap.ID),
-		Name:       name,
-		SourceDisk: snap.VolumeID,
-		DiskSizeGb: strconv.Itoa(snap.Size),
-		Status:     "READY",
-		SelfLink:   gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", name),
-		Labels:     stripInternalSnapshotTags(snap.Tags),
+	// Echo the caller's sourceDisk URL when recorded; fall back to the
+	// driver-internal disk id for snapshots created directly on the driver.
+	sourceDisk := tagOr(snap.Tags, gcpSnapshotSourceDiskTag, snap.VolumeID)
+
+	resp := snapshotResponse{
+		Kind:              "compute#snapshot",
+		ID:                numericID(snap.ID),
+		Name:              name,
+		SourceDisk:        sourceDisk,
+		DiskSizeGb:        strconv.Itoa(snap.Size),
+		Status:            "READY",
+		SelfLink:          gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", name),
+		Labels:            userLabels(snap.Tags),
+		CreationTimestamp: snap.CreatedAt,
 	}
+
+	if snap.VolumeID != "" {
+		resp.SourceDiskID = numericID(snap.VolumeID)
+	}
+
+	return resp
 }
 
-func mergeSnapshotTags(in map[string]string, name string) map[string]string {
-	out := make(map[string]string, len(in)+1)
+func mergeSnapshotTags(in map[string]string, name, sourceDisk string) map[string]string {
+	out := make(map[string]string, len(in)+internalTagCap)
 
 	for k, v := range in {
 		out[k] = v
@@ -206,26 +228,8 @@ func mergeSnapshotTags(in map[string]string, name string) map[string]string {
 
 	out[gcpSnapshotNameTag] = name
 
-	return out
-}
-
-func stripInternalSnapshotTags(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make(map[string]string, len(in))
-
-	for k, v := range in {
-		if k == gcpSnapshotNameTag {
-			continue
-		}
-
-		out[k] = v
-	}
-
-	if len(out) == 0 {
-		return nil
+	if sourceDisk != "" {
+		out[gcpSnapshotSourceDiskTag] = sourceDisk
 	}
 
 	return out

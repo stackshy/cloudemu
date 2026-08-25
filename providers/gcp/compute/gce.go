@@ -629,6 +629,22 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 	return describeResources(m.volumes, ids), nil
 }
 
+// ResizeVolumeGCP grows the disk to sizeGb (a no-op when already that large).
+// GCP forbids shrinking, so the wire handler rejects smaller sizes before this
+// is reached. GCP-specific; reached via a type assertion from the GCE handler.
+func (m *Mock) ResizeVolumeGCP(volumeID string, sizeGb int) error {
+	vol, ok := m.volumes.Get(volumeID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
+	}
+
+	if sizeGb > vol.Size {
+		vol.Size = sizeGb
+	}
+
+	return nil
+}
+
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
 	vol, ok := m.volumes.Get(volumeID)
 	if !ok {
