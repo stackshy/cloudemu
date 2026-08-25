@@ -230,6 +230,79 @@ func TestSDKEventSubscriptionTopicExtensionForm(t *testing.T) {
 	}
 }
 
+// TestSDKEventSubscriptionGlobalListsExcludeResourceScoped proves that regional
+// (resource-scoped) event subscriptions do NOT leak into the global list
+// operations. Per Azure, ListGlobalBySubscription / ListGlobalByResourceGroup
+// return only global (subscription / resource-group scoped) subscriptions; a
+// storage-account resource-scoped sub is regional and belongs to ListByResource.
+func TestSDKEventSubscriptionGlobalListsExcludeResourceScoped(t *testing.T) {
+	client := newEventGridFactory(t).NewEventSubscriptionsClient()
+
+	subScope := "/subscriptions/" + testSub
+	rgScope := subScope + "/resourceGroups/" + testRG
+	resScope := rgScope + "/providers/Microsoft.Storage/storageAccounts/acct1"
+
+	createEventSubscription(t, client, subScope, "at-sub", "/a")
+	createEventSubscription(t, client, rgScope, "at-rg", "/b")
+	createEventSubscription(t, client, resScope, "at-res", "/c")
+
+	// ListGlobalBySubscription: only the global subs (sub + RG scope).
+	subNames := listGlobalBySubscription(t, client)
+	if len(subNames) != 2 || subNames[0] != "at-rg" || subNames[1] != "at-sub" {
+		t.Fatalf("ListGlobalBySubscription = %v, want [at-rg at-sub] (no at-res)", subNames)
+	}
+
+	// ListGlobalByResourceGroup: only the RG-scope sub, not the resource-scoped.
+	rgNames := listGlobalByResourceGroup(t, client, testRG)
+	if len(rgNames) != 1 || rgNames[0] != "at-rg" {
+		t.Fatalf("ListGlobalByResourceGroup = %v, want [at-rg] (no at-res)", rgNames)
+	}
+
+	// ListByResource: exactly the resource-scoped sub.
+	resNames := listByResource(t, client, testRG, "Microsoft.Storage", "storageAccounts", "acct1")
+	if len(resNames) != 1 || resNames[0] != "at-res" {
+		t.Fatalf("ListByResource = %v, want [at-res]", resNames)
+	}
+}
+
+func listGlobalBySubscription(t *testing.T, c *armeventgrid.EventSubscriptionsClient) []string {
+	t.Helper()
+	ctx := context.Background()
+
+	var names []string
+	pager := c.NewListGlobalBySubscriptionPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("ListGlobalBySubscription: %v", err)
+		}
+		for _, es := range page.Value {
+			names = append(names, *es.Name)
+		}
+	}
+
+	return names
+}
+
+func listByResource(t *testing.T, c *armeventgrid.EventSubscriptionsClient, rg, ns, resType, resName string) []string {
+	t.Helper()
+	ctx := context.Background()
+
+	var names []string
+	pager := c.NewListByResourcePager(rg, ns, resType, resName, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("ListByResource: %v", err)
+		}
+		for _, es := range page.Value {
+			names = append(names, *es.Name)
+		}
+	}
+
+	return names
+}
+
 func listGlobalByResourceGroup(t *testing.T, c *armeventgrid.EventSubscriptionsClient, rg string) []string {
 	t.Helper()
 	ctx := context.Background()

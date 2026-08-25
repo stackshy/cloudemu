@@ -231,12 +231,18 @@ func (h *Handler) listScopedEventSubscriptions(w http.ResponseWriter, sp *scoped
 }
 
 // scopedSubInListScope reports whether rec belongs in the list requested at sp.
-// A resource-extension scope (containing a nested /providers/) matches exactly;
-// a resource-group scope matches subscription+group; a subscription scope
-// matches the subscription (ListGlobalBySubscription).
+// A resource-extension scope (containing a nested /providers/) matches exactly
+// (ListByResource). The global list operations (ListGlobalBySubscription /
+// ListGlobalByResourceGroup) return only global subscription/resource-group
+// scoped subs, never regional resource-scoped ones — so those branches exclude
+// records whose own scope carries a nested resource /providers/ segment.
 func scopedSubInListScope(rec *scopedSubRecord, sp *scopedSubPath) bool {
 	if strings.Contains(sp.scope, "/providers/") {
 		return rec.scope == sp.scope
+	}
+
+	if isResourceScoped(rec.scope) {
+		return false
 	}
 
 	if sp.resourceGroup != "" {
@@ -244,6 +250,14 @@ func scopedSubInListScope(rec *scopedSubRecord, sp *scopedSubPath) bool {
 	}
 
 	return rec.subscription == sp.subscription
+}
+
+// isResourceScoped reports whether scope is a regional resource-extension scope
+// (e.g. .../providers/Microsoft.Storage/storageAccounts/acct1) rather than a
+// global subscription (/subscriptions/{s}) or resource-group
+// (/subscriptions/{s}/resourceGroups/{rg}) scope.
+func isResourceScoped(scope string) bool {
+	return strings.Contains(scope, "/providers/")
 }
 
 func toScopedSubJSON(rec *scopedSubRecord) eventSubscriptionJSON {
