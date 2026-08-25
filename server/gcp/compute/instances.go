@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -17,6 +18,13 @@ const gcpNameTag = "cloudemu:gcpName"
 
 // statusTerminated is GCP Compute's status for stopped/terminated instances.
 const statusTerminated = "TERMINATED"
+
+// statusRunning is GCP Compute's status for a running instance.
+const statusRunning = "RUNNING"
+
+// defaultDiskSizeGb is the boot-disk size GCP reports when the caller did not
+// request one.
+const defaultDiskSizeGb = "10"
 
 // insertInstance handles POST .../instances. Maps the GCP body to an
 // InstanceConfig, runs RunInstances(count=1), returns a DONE Operation
@@ -40,11 +48,19 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	// Real GCP rejects a duplicate name in the same zone with 409 alreadyExists.
+	if existing, err := findInZone(r.Context(), h.compute, req.Name, rp.ScopeName); err == nil && existing != nil {
+		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
+			"The resource 'projects/"+rp.Project+"/zones/"+rp.ScopeName+"/instances/"+req.Name+"' already exists")
+
+		return
+	}
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:      bootImage(req.Disks),
 		InstanceType: machineTypeShort(req.MachineType),
 		SubnetID:     firstSubnet(req.NetworkInterfaces),
-		Tags:         mergeTags(req.Labels, req.Name),
+		Tags:         insertTags(&req, rp.ScopeName),
 		UserData:     startupScript(req.Metadata),
 	}
 
@@ -69,17 +85,17 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, toInstanceResponse(inst, rp, hostFromRequest(r)))
+	gcprest.WriteJSON(w, http.StatusOK, toInstanceResponse(inst, rp.Project, hostFromRequest(r)))
 }
 
-// listInstances handles GET .../instances. Returns all driver instances; the
-// mock isn't project/zone scoped.
+// listInstances handles GET .../instances. Scopes to the requested zone and
+// applies the filter / maxResults / pageToken query parameters.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -90,19 +106,66 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	host := hostFromRequest(r)
+	pred := parseFilter(r.URL.Query().Get("filter"))
+
 	out := make([]instanceResponse, 0, len(instances))
 
 	for i := range instances {
-		scope := rp
-		scope.ResourceName = tagOr(instances[i].Tags, gcpNameTag, instances[i].ID)
-		out = append(out, toInstanceResponse(&instances[i], scope, host))
+		if !instanceInZone(&instances[i], rp.ScopeName) {
+			continue
+		}
+
+		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		if pred(&resp) {
+			out = append(out, resp)
+		}
+	}
+
+	page, err := pagination.PaginateSorted(out,
+		func(a, b instanceResponse) bool { return a.Name < b.Name },
+		r.URL.Query().Get("pageToken"), parseMaxResults(r.URL.Query().Get("maxResults")))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, instanceListResponse{
-		Kind:     "compute#instanceList",
-		ID:       "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/instances",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", ""),
+		Kind:          "compute#instanceList",
+		ID:            "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/instances",
+		Items:         page.Items,
+		NextPageToken: page.NextPageToken,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", ""),
+	})
+}
+
+// aggregatedListInstances handles GET .../aggregated/instances: every instance
+// grouped by its "zones/{zone}" scope, the shape gcloud uses when no zone is
+// given.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	instances, err := h.compute.DescribeInstances(r.Context(), nil, nil)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	host := hostFromRequest(r)
+	items := make(map[string]instancesScopedList)
+
+	for i := range instances {
+		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		scope := "zones/" + tagOr(instances[i].Tags, keyZone, "unknown")
+		bucket := items[scope]
+		bucket.Instances = append(bucket.Instances, resp)
+		items[scope] = bucket
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, aggregatedListResponse{
+		Kind:     "compute#instanceAggregatedList",
+		ID:       "projects/" + rp.Project + "/aggregated/instances",
+		Items:    items,
+		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/instances",
 	})
 }
 
@@ -110,7 +173,7 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -163,7 +226,7 @@ func (h *Handler) action(
 	w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, opType string,
 	op func(ctx context.Context, ids []string) error,
 ) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -180,14 +243,11 @@ func (h *Handler) action(
 	gcprest.WriteJSON(w, http.StatusOK, doneOp)
 }
 
-// getSerialPortOutput handles GET .../instances/{name}/serialPort. It mirrors
-// instances.getSerialPortOutput: the instance's serial console output (the boot
-// script's captured output when a real compute engine backs the instance) is
-// returned in the "contents" field of a compute#serialPortOutput resource.
+// getSerialPortOutput handles GET .../instances/{name}/serialPort.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getSerialPortOutput(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -221,8 +281,16 @@ type instanceRemover interface {
 	RemoveInstance(ctx context.Context, instanceID string) error
 }
 
-// startupScript extracts the GCE boot script from instance metadata. GCE
-// carries it as the metadata item keyed "startup-script"; empty when absent.
+// instanceMutator is a GCP-local capability the GCE Mock implements: it mutates
+// an already-running instance (setLabels/setMetadata/setTags/setMachineType/
+// attachDisk/detachDisk all apply to running VMs, unlike ModifyInstance which
+// requires a stopped instance). set entries are merged into the tag map,
+// remove keys are deleted, and machineType is set when non-empty.
+type instanceMutator interface {
+	MutateInstanceGCP(instanceID string, set map[string]string, remove []string, machineType string) error
+}
+
+// startupScript extracts the GCE boot script from instance metadata.
 func startupScript(md metadataBlock) string {
 	for _, item := range md.Items {
 		if item.Key == "startup-script" {
@@ -233,15 +301,55 @@ func startupScript(md metadataBlock) string {
 	return ""
 }
 
-// findByName looks up an instance by its GCP-tagged name.
-func findByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.Instance, error) {
+// insertTags builds the driver tag map from the GCP insert body: the user
+// labels, plus the internal keys that round-trip GCP-specific state (name,
+// disks, network tags, metadata, network self-link, launch zone).
+func insertTags(req *instanceRequest, zone string) map[string]string {
+	out := make(map[string]string, len(req.Labels)+internalTagCap)
+
+	for k, v := range req.Labels {
+		out[k] = v
+	}
+
+	out[gcpNameTag] = req.Name
+	out[keyZone] = zone
+
+	if len(req.Disks) > 0 {
+		out[keyDisks] = encodeJSON(req.Disks)
+	}
+
+	if len(req.Tags.Items) > 0 {
+		out[keyNetTags] = encodeJSON(req.Tags.Items)
+	}
+
+	if len(req.Metadata.Items) > 0 {
+		out[keyMetadata] = encodeJSON(req.Metadata.Items)
+	}
+
+	if net := firstNetwork(req.NetworkInterfaces); net != "" {
+		out[keyNetwork] = net
+	}
+
+	return out
+}
+
+// findInZone looks up an instance by GCP name, scoped to zone. An instance with
+// no recorded zone (created directly through the driver) matches any zone so
+// non-wire callers stay visible.
+func findInZone(
+	ctx context.Context, c computedriver.Compute, name, zone string,
+) (*computedriver.Instance, error) {
 	instances, err := c.DescribeInstances(ctx, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range instances {
-		if tagOr(instances[i].Tags, gcpNameTag, "") == name {
+		if tagOr(instances[i].Tags, gcpNameTag, "") != name {
+			continue
+		}
+
+		if instanceInZone(&instances[i], zone) {
 			return &instances[i], nil
 		}
 	}
@@ -249,12 +357,19 @@ func findByName(ctx context.Context, c computedriver.Compute, name string) (*com
 	return nil, cerrors.Newf(cerrors.NotFound, "instance %s not found", name)
 }
 
+// instanceInZone reports whether inst belongs to zone. An instance with no
+// recorded zone matches any zone (defensive for driver-created instances).
+func instanceInZone(inst *computedriver.Instance, zone string) bool {
+	stored := tagOr(inst.Tags, keyZone, "")
+	return zone == "" || stored == "" || stored == zone
+}
+
 // Helpers that map between GCP REST shapes and the driver model.
 
 func bootImage(disks []attachedDisk) string {
-	for _, d := range disks {
-		if d.Boot && d.InitializeParams != nil {
-			return d.InitializeParams.SourceImage
+	for i := range disks {
+		if disks[i].Boot && disks[i].InitializeParams != nil {
+			return disks[i].InitializeParams.SourceImage
 		}
 	}
 
@@ -285,16 +400,14 @@ func firstSubnet(nics []networkInterface) string {
 	return ""
 }
 
-func mergeTags(in map[string]string, gcpName string) map[string]string {
-	out := make(map[string]string, len(in)+1)
-
-	for k, v := range in {
-		out[k] = v
+func firstNetwork(nics []networkInterface) string {
+	for _, n := range nics {
+		if n.Network != "" {
+			return n.Network
+		}
 	}
 
-	out[gcpNameTag] = gcpName
-
-	return out
+	return ""
 }
 
 func tagOr(m map[string]string, key, fallback string) string {
@@ -303,44 +416,6 @@ func tagOr(m map[string]string, key, fallback string) string {
 	}
 
 	return fallback
-}
-
-// toInstanceResponse maps a driver Instance back to GCP's REST shape. The
-// ID field is uint64-shaped because GCP's protobuf JSON unmarshaller rejects
-// non-numeric strings — we hash the driver ID into a stable numeric value.
-//
-//nolint:gocritic // rp is a request-scoped value passed once per response build
-func toInstanceResponse(inst *computedriver.Instance, rp gcprest.ResourcePath, host string) instanceResponse {
-	name := tagOr(inst.Tags, gcpNameTag, rp.ResourceName)
-
-	return instanceResponse{
-		Kind:              "compute#instance",
-		ID:                numericID(inst.ID),
-		Name:              name,
-		MachineType:       gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "machineTypes", inst.InstanceType),
-		Status:            gcpStatusFor(inst.State),
-		Zone:              host + "/compute/v1/projects/" + rp.Project + "/zones/" + rp.ScopeName,
-		SelfLink:          gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", name),
-		NetworkInterfaces: instanceNICs(inst),
-		Labels:            stripInternalTags(inst.Tags),
-	}
-}
-
-// instanceNICs echoes back the network interface the instance was created
-// with. The driver stores the subnetwork the client set plus the private IP it
-// assigned; a read must return them (real GCP always reports a NIC), otherwise
-// a client that sets a subnet reads back an empty interface list.
-func instanceNICs(inst *computedriver.Instance) []networkInterface {
-	if inst.SubnetID == "" && inst.PrivateIP == "" && inst.VPCID == "" {
-		return nil
-	}
-
-	return []networkInterface{{
-		Name:       "nic0",
-		Network:    inst.VPCID,
-		Subnetwork: inst.SubnetID,
-		NetworkIP:  inst.PrivateIP,
-	}}
 }
 
 // numericID returns a stable uint64-shaped string derived from a driver
@@ -360,35 +435,11 @@ func numericID(driverID string) string {
 	return strconv.FormatUint(h, 10)
 }
 
-func stripInternalTags(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make(map[string]string, len(in))
-
-	for k, v := range in {
-		if k == gcpNameTag {
-			continue
-		}
-
-		out[k] = v
-	}
-
-	if len(out) == 0 {
-		return nil
-	}
-
-	return out
-}
-
 // gcpStatusFor maps driver states to GCP Compute Engine instance status.
-// GCP's documented values: PROVISIONING, STAGING, RUNNING, STOPPING,
-// STOPPED, SUSPENDING, SUSPENDED, REPAIRING, TERMINATED.
 func gcpStatusFor(state string) string {
 	switch state {
 	case "running":
-		return "RUNNING"
+		return statusRunning
 	case "pending":
 		return "PROVISIONING"
 	case "stopping":

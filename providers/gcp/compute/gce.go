@@ -443,6 +443,37 @@ func (m *Mock) RemoveInstance(ctx context.Context, instanceID string) error {
 	return nil
 }
 
+// MutateInstanceGCP applies a GCP-specific instance mutation used by the GCE
+// wire handler for setLabels/setMetadata/setTags/setMachineType/attachDisk/
+// detachDisk. Unlike ModifyInstance (which requires a stopped instance), these
+// GCP verbs apply to running VMs. set entries are merged into the tag map,
+// remove keys are deleted, and machineType replaces the instance type when
+// non-empty. GCP-specific; reached via a type assertion from the GCE handler.
+func (m *Mock) MutateInstanceGCP(instanceID string, set map[string]string, remove []string, machineType string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if inst.Tags == nil {
+		inst.Tags = make(map[string]string)
+	}
+
+	for k, v := range set {
+		inst.Tags[k] = v
+	}
+
+	for _, k := range remove {
+		delete(inst.Tags, k)
+	}
+
+	if machineType != "" {
+		inst.InstanceType = machineType
+	}
+
+	return nil
+}
+
 func (m *Mock) DescribeInstances(
 	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
 ) ([]driver.Instance, error) {

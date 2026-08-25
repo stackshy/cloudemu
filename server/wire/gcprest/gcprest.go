@@ -35,9 +35,10 @@ const BasePrefix = "/compute/v1/"
 
 // Scope values used in GCP REST URL paths.
 const (
-	ScopeZones   = "zones"
-	ScopeRegions = "regions"
-	ScopeGlobal  = "global"
+	ScopeZones      = "zones"
+	ScopeRegions    = "regions"
+	ScopeGlobal     = "global"
+	ScopeAggregated = "aggregated"
 )
 
 // scopePairLen is the number of path segments consumed by a scope/{name} pair
@@ -99,6 +100,10 @@ func parseScope(parts []string, i int, rp *ResourcePath) (int, bool) {
 		return i + scopePairLen, true
 	case ScopeGlobal:
 		rp.Scope = ScopeGlobal
+
+		return i + 1, true
+	case ScopeAggregated:
+		rp.Scope = ScopeAggregated
 
 		return i + 1, true
 	default:
