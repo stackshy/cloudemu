@@ -526,7 +526,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("DeleteRequests", 1, "Count", dims)
 
-	m.notifyObjectRemoved(ctx, bkt, bucket, key, vid)
+	m.notifyObjectRemoved(ctx, bkt, bucket, key, vid, deleteMarker)
 
 	return nil
 }
@@ -1385,8 +1385,16 @@ func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID s
 	defer bkt.versionsMu.Unlock()
 
 	if versionID == "" {
-		vid, marker, _ := m.deleteTopLevelLocked(bkt, key)
+		vid, marker, existed := m.deleteTopLevelLocked(bkt, key)
+		if !existed {
+			// Unversioned bucket, key never existed: a no-op idempotent delete,
+			// matching real S3 — nothing was removed, so no event fires.
+			return "", false, nil
+		}
+
 		_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
+
+		m.notifyObjectRemoved(ctx, bkt, bucket, key, vid, marker)
 
 		return vid, marker, nil
 	}
@@ -1415,6 +1423,11 @@ func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID s
 	m.recomputeCurrentLocked(bkt, key)
 
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key, Version: versionID})
+
+	// An explicit versionId always permanently removes that version — even when
+	// the removed version was itself a delete marker — so this always fires
+	// ObjectRemoved:Delete, never DeleteMarkerCreated.
+	m.notifyObjectRemoved(ctx, bkt, bucket, key, versionID, false)
 
 	return versionID, removed.deleteMarker, nil
 }

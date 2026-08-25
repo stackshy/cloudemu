@@ -1436,6 +1436,10 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if info.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
+	}
+
 	wire.WriteXML(w, http.StatusOK, completeMultipartUploadResult{
 		Xmlns:    xmlns,
 		Location: "/" + bucket + "/" + key,
