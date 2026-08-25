@@ -1960,7 +1960,8 @@
         "name": "DescribeVolumes"
       },
       {
-        "name": "DetachVolume"
+        "name": "DetachVolume",
+        "doc": "DetachVolume detaches a volume. When instanceID or device is non-empty it"
       },
       {
         "name": "ExecuteScalingPolicy"
