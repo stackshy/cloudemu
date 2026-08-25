@@ -18,6 +18,7 @@ type DeployedModel struct {
 	MachineType     string
 	MinReplicaCount int
 	MaxReplicaCount int
+	CreateTime      string
 }
 
 // Endpoint serves online predictions for one or more deployed models.
