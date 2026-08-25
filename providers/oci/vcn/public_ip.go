@@ -28,6 +28,8 @@ type publicIPData struct {
 
 // AllocateAddress reserves a public IP. cfg.AllocationMethod carries OCI's
 // lifetime, defaulting to RESERVED.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AllocateAddress(_ context.Context, cfg driver.ElasticIPConfig) (*driver.ElasticIP, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

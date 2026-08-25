@@ -17,6 +17,8 @@ type eipData struct {
 }
 
 // AllocateAddress reserves a new external IP address.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AllocateAddress(
 	_ context.Context, cfg driver.ElasticIPConfig,
 ) (*driver.ElasticIP, error) {
