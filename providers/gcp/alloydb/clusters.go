@@ -129,6 +129,10 @@ func (m *Mock) ModifyCluster(
 		c.Tags = copyTags(input.Tags)
 	}
 
+	extra := m.clusterExtra[id]
+	extra.UpdatedAt = m.opts.Clock.Now().UTC()
+	m.clusterExtra[id] = extra
+
 	m.clusters.Set(id, c)
 
 	out := cloneCluster(c)
@@ -163,11 +167,14 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 // ghost primary (the replica-linkage class from #303). The caller holds the
 // write lock.
 func (m *Mock) detachSecondaries(primaryID string) {
-	for cid, extra := range m.clusterExtra {
-		if extra.PrimaryCluster == primaryID {
-			extra.PrimaryCluster = ""
-			m.clusterExtra[cid] = extra
+	for cid := range m.clusterExtra {
+		extra := m.clusterExtra[cid]
+		if extra.PrimaryCluster != primaryID {
+			continue
 		}
+
+		extra.PrimaryCluster = ""
+		m.clusterExtra[cid] = extra
 	}
 }
 

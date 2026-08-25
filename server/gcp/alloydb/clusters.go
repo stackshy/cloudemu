@@ -44,6 +44,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *alloy
 
 	cfg := rdsdriver.AlloyDBClusterConfig{
 		ID:              r.URL.Query().Get("clusterId"),
+		DisplayName:     body.DisplayName,
 		DatabaseVersion: body.DatabaseVersion,
 		Network:         body.Network,
 		Tags:            body.Labels,

@@ -1262,6 +1262,7 @@ type Tagging interface {
 // AlloyDBClusterConfig carries AlloyDB-specific cluster-create fields.
 type AlloyDBClusterConfig struct {
 	ID                     string
+	DisplayName            string // user-settable; echoed only when the caller sets it
 	DatabaseVersion        string // "POSTGRES_15", …
 	Network                string
 	InitialUser            string
@@ -1300,6 +1301,14 @@ type AlloyDBClusterInfo struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string
 	PrimaryCluster         string // set for a SECONDARY cluster
+	// UID is the server-generated system UID (distinct from the resource id).
+	UID string
+	// DisplayName is the caller-supplied display name, empty when unset.
+	DisplayName string
+	// CreateTime / UpdateTime are the cluster's creation and last-modification
+	// timestamps.
+	CreateTime time.Time
+	UpdateTime time.Time
 }
 
 // AlloyDBInstanceInfo is the AlloyDB-native view of an instance's extra
@@ -1311,6 +1320,10 @@ type AlloyDBInstanceInfo struct {
 	AvailabilityType string
 	IPAddress        string
 	GceZone          string
+	// CreateTime / UpdateTime are the instance's creation and last-modification
+	// timestamps.
+	CreateTime time.Time
+	UpdateTime time.Time
 }
 
 // AlloyDB is an OPTIONAL capability for AlloyDB-specific cluster/instance

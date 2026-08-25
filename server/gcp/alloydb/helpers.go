@@ -3,6 +3,7 @@ package alloydb
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	alloydb "google.golang.org/api/alloydb/v1"
 
@@ -96,12 +97,15 @@ func (h *Handler) usersCap() (rdsdriver.Users, bool) {
 func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClusterInfo) *alloydb.Cluster {
 	out := &alloydb.Cluster{
 		Name:            c.ARN,
-		DisplayName:     c.ID,
+		DisplayName:     info.DisplayName,
 		DatabaseVersion: info.DatabaseVersion,
 		Network:         info.Network,
 		ClusterType:     info.ClusterType,
 		State:           alloyDBState(c.State),
-		Uid:             c.ID,
+		Uid:             info.UID,
+		Labels:          c.Tags,
+		CreateTime:      formatTime(info.CreateTime),
+		UpdateTime:      formatTime(info.UpdateTime),
 		ContinuousBackupConfig: &alloydb.ContinuousBackupConfig{
 			Enabled: info.ContinuousBackup,
 		},
@@ -117,6 +121,16 @@ func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClust
 	return out
 }
 
+// formatTime renders t as an RFC3339Nano timestamp, matching AlloyDB's
+// output-only createTime/updateTime; a zero time renders as the empty string.
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDBInstanceInfo) *alloydb.Instance {
 	return &alloydb.Instance{
 		Name:             inst.ARN,
@@ -127,6 +141,8 @@ func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDB
 		GceZone:          info.GceZone,
 		State:            alloyDBState(inst.State),
 		Uid:              inst.ID,
+		CreateTime:       formatTime(info.CreateTime),
+		UpdateTime:       formatTime(info.UpdateTime),
 		MachineConfig:    &alloydb.MachineConfig{CpuCount: int64(info.CPUCount)},
 	}
 }
