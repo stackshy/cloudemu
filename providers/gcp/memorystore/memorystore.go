@@ -4,6 +4,7 @@ package memorystore
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"maps"
 	"path"
 	"strconv"
@@ -20,6 +21,24 @@ import (
 )
 
 const defaultRedisPort = 6379
+
+// privateHostIP derives a deterministic private IPv4 in the 10/8 block for a
+// Memorystore instance's exposed Redis endpoint. Real Memorystore hands clients
+// a private IP from the reserved /29 range (never a public hostname); the octets
+// are derived from the instance name so Get/List report a stable address. Host
+// is placed at the .3 offset of a /29 block, mirroring GCP's allocation.
+func privateHostIP(name string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	sum := h.Sum32()
+
+	const octetMask = 0xFF
+
+	second := (sum >> 16) & octetMask
+	third := (sum >> 8) & octetMask
+
+	return fmt.Sprintf("10.%d.%d.3", second, third)
+}
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -94,7 +113,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	selfLink := idgen.GCPID(m.opts.ProjectID, "instances", cfg.Name)
-	endpoint := fmt.Sprintf("%s.redis.%s.gcp.cloud:%d", cfg.Name, m.opts.Region, defaultRedisPort)
+	endpoint := fmt.Sprintf("%s:%d", privateHostIP(cfg.Name), defaultRedisPort)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
