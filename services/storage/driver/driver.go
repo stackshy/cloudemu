@@ -46,6 +46,10 @@ type AccountAttributes struct {
 	// Location is the account's region (e.g. westus2). Empty until an ARM
 	// create-or-update stamps it; the handler falls back to a default.
 	Location string
+	// ResourceGroup is the Azure resource group the account was created under.
+	// Recorded on the ARM create-or-update so a resource-group cascade delete can
+	// find the accounts it must remove; empty for non-ARM (S3/GCS) buckets.
+	ResourceGroup string
 	// Tags are the ARM resource tags submitted on create-or-update, round-tripped
 	// back on GET / list.
 	Tags map[string]string

@@ -264,7 +264,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		return
 	}
 
-	attrs := storagedriver.AccountAttributes{Kind: body.Kind, Location: body.Location, Tags: body.Tags}
+	attrs := storagedriver.AccountAttributes{
+		Kind: body.Kind, Location: body.Location, ResourceGroup: rp.ResourceGroup, Tags: body.Tags,
+	}
 	if body.SKU != nil {
 		attrs.SKU = body.SKU.Name
 	}
@@ -322,7 +324,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 		if _, err := h.attrs.UpdateBucketAttributes(r.Context(), rp.ResourceName, func(
 			cur storagedriver.AccountAttributes,
 		) storagedriver.AccountAttributes {
-			return applyAccountUpdate(cur, &body)
+			applyAccountUpdate(&cur, &body)
+
+			return cur
 		}); err != nil {
 			azurearm.WriteCErr(w, err)
 			return
@@ -342,9 +346,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
 }
 
-// applyAccountUpdate merges the fields present on a PATCH body onto cur,
-// leaving every field the request omitted untouched.
-func applyAccountUpdate(cur storagedriver.AccountAttributes, body *armAccountUpdate) storagedriver.AccountAttributes {
+// applyAccountUpdate merges the fields present on a PATCH body onto cur in
+// place, leaving every field the request omitted untouched.
+func applyAccountUpdate(cur *storagedriver.AccountAttributes, body *armAccountUpdate) {
 	if body.Kind != "" {
 		cur.Kind = body.Kind
 	}
@@ -360,8 +364,6 @@ func applyAccountUpdate(cur storagedriver.AccountAttributes, body *armAccountUpd
 	if body.Properties != nil && body.Properties.AccessTier != "" {
 		cur.AccessTier = body.Properties.AccessTier
 	}
-
-	return cur
 }
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -371,6 +373,58 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// PurgeResourceGroup deletes every storage account created under the given
+// resource group, backing the resource-group cascade delete. Accounts record
+// their group via AccountAttributes.ResourceGroup on create-or-update; a driver
+// with no attribute capability tracks no group, so nothing matches (safe). A
+// per-account delete failure is returned but does not stop the sweep; an
+// already-gone account is not an error. The subscription is unused (the
+// emulator is single-estate).
+func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	if h.attrs == nil {
+		return nil
+	}
+
+	buckets, err := h.bucket.ListBuckets(ctx)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range buckets {
+		if pErr := h.purgeAccountIfInGroup(ctx, buckets[i].Name, resourceGroup); pErr != nil && firstErr == nil {
+			firstErr = pErr
+		}
+	}
+
+	return firstErr
+}
+
+// purgeAccountIfInGroup deletes one storage account when it belongs to rg, and
+// is a no-op otherwise. An account that vanished between listing and deletion is
+// not an error (the desired end state already holds).
+func (h *Handler) purgeAccountIfInGroup(ctx context.Context, name, rg string) error {
+	attrs, err := h.attrs.BucketAttributes(ctx, name)
+	if err != nil {
+		if cerrors.IsNotFound(err) {
+			return nil
+		}
+
+		return err
+	}
+
+	if !strings.EqualFold(attrs.ResourceGroup, rg) {
+		return nil
+	}
+
+	if err := h.bucket.DeleteBucket(ctx, name); err != nil && !cerrors.IsNotFound(err) {
+		return err
+	}
+
+	return nil
 }
 
 func (h *Handler) bucketExists(ctx context.Context, name string) bool {

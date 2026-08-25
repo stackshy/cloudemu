@@ -211,10 +211,39 @@ func New(d Drivers) http.Handler {
 	// before the permissive blob fallback so it isn't swallowed as a blob call.
 	srv.Register(tenants.New(tenantID))
 
+	// Build the per-service handlers that own resource-group-scoped resources up
+	// front so they can be handed to the resource-group cascade below and then
+	// registered at their normal positions. A resource group is a pure
+	// container, so deleting it must delete the resources created under it;
+	// each of these handlers implements ResourceGroupPurger to tear its own
+	// resources down. Other resource types are not cascaded yet.
+	var (
+		vnetHandler    *vnet.Handler
+		vmHandler      *virtualmachines.Handler
+		storageHandler *storageaccountsrv.Handler
+		rgPurgers      []resourcegroups.ResourceGroupPurger
+	)
+
+	if d.Network != nil {
+		vnetHandler = vnet.New(d.Network)
+		rgPurgers = append(rgPurgers, vnetHandler)
+	}
+
+	if d.VirtualMachines != nil {
+		vmHandler = virtualmachines.New(d.VirtualMachines, d.Network)
+		rgPurgers = append(rgPurgers, vmHandler)
+	}
+
+	if d.BlobStorage != nil {
+		storageHandler = storageaccountsrv.New(d.BlobStorage)
+		rgPurgers = append(rgPurgers, storageHandler)
+	}
+
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
-	// discovery engine (nil-safe) lets exportTemplate enumerate that membership.
-	srv.Register(resourcegroups.New(d.ResourceDiscovery))
+	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
+	// the purgers cascade a group delete into its resources.
+	srv.Register(resourcegroups.New(d.ResourceDiscovery, rgPurgers...))
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -264,8 +293,8 @@ func New(d Drivers) http.Handler {
 		srv.Register(cosmospostgresql.New(d.CosmosPostgreSQL))
 	}
 
-	if d.Network != nil {
-		srv.Register(vnet.New(d.Network))
+	if vnetHandler != nil {
+		srv.Register(vnetHandler)
 	}
 
 	// Azure DNS shares the Microsoft.Network ARM provider with the network
@@ -396,8 +425,8 @@ func New(d Drivers) http.Handler {
 		srv.Register(azuresearchserver.NewDataPlane(d.SearchDataPlane))
 	}
 
-	if d.VirtualMachines != nil {
-		srv.Register(virtualmachines.New(d.VirtualMachines, d.Network))
+	if vmHandler != nil {
+		srv.Register(vmHandler)
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
@@ -478,8 +507,8 @@ func New(d Drivers) http.Handler {
 	// Claims only the /providers/Microsoft.Storage/storageAccounts/ management
 	// path (which starts with /subscriptions/), disjoint from the blob
 	// data-plane fallback below, so it must register before that fallback.
-	if d.BlobStorage != nil {
-		srv.Register(storageaccountsrv.New(d.BlobStorage))
+	if storageHandler != nil {
+		srv.Register(storageHandler)
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

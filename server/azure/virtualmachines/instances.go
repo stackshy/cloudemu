@@ -558,6 +558,32 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	writeAcceptedAsync(w, r, rp.Subscription, "delete-"+rp.ResourceName)
 }
 
+// PurgeResourceGroup terminates every virtual machine created under the given
+// resource group, backing the resource-group cascade delete. Instances record
+// their group (Instance.ResourceGroup) on the ARM create path, so membership is
+// an exact match. Resource-group comparison is case-insensitive, matching ARM.
+// The subscription is unused (the emulator is single-estate).
+func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	ids := make([]string, 0, len(instances))
+
+	for i := range instances {
+		if strings.EqualFold(instances[i].ResourceGroup, resourceGroup) {
+			ids = append(ids, instances[i].ID)
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	return h.compute.TerminateInstances(ctx, ids)
+}
+
 // start handles POST virtualMachines/{name}/start.
 //
 //nolint:gocritic // rp is a request-scoped value
