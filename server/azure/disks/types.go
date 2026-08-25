@@ -31,11 +31,15 @@ type diskSKU struct {
 }
 
 type diskResponse struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Location   string            `json:"location"`
-	SKU        *diskSKU          `json:"sku,omitempty"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Type     string   `json:"type"`
+	Location string   `json:"location"`
+	SKU      *diskSKU `json:"sku,omitempty"`
+	// ManagedBy is the ARM resource ID of the VM the disk is attached to
+	// (armcompute.Disk.ManagedBy is a top-level, read-only field — not under
+	// properties). Empty when the disk is unattached.
+	ManagedBy  string            `json:"managedBy,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties diskResponseProps `json:"properties"`
 }

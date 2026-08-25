@@ -266,7 +266,9 @@ func TestVMLifecycleActions(t *testing.T) {
 func TestVMUnsupportedMethod(t *testing.T) {
 	ts := newAzureTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPatch, ts.URL+armBasePath("x")+apiVersion, http.NoBody)
+	// PATCH is now a supported operation (Update); POST directly on a named
+	// VM resource (no sub-resource action) remains unsupported.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+armBasePath("x")+apiVersion, http.NoBody)
 
 	resp, err := ts.Client().Do(req)
 	if err != nil {

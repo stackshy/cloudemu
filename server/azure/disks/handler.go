@@ -30,6 +30,15 @@ const (
 	sourceIDTag     = "cloudemu:sourceResourceId"
 	defaultLocation = "eastus"
 
+	// vmARMNameTag mirrors the constant in server/azure/virtualmachines so a
+	// disk's AttachedTo (a driver compute instance ID) can be resolved to the
+	// attaching VM's ARM resource ID for the disk's managedBy field.
+	vmARMNameTag = "cloudemu:azureName"
+
+	// vmResourceType is the ARM resource type of the VM a disk's managedBy
+	// field points at.
+	vmResourceType = "virtualMachines"
+
 	// createOptionEmpty is the default disk createOption (an empty disk).
 	createOptionEmpty = "Empty"
 
@@ -214,7 +223,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 		name := tagOr(vols[i].Tags, armNameTag, vols[i].ID)
 		scope := rp
 		scope.ResourceName = name
-		out = append(out, toDiskResponse(&vols[i], scope, ""))
+		out = append(out, h.toDiskResponse(r.Context(), &vols[i], scope, ""))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, diskListResponse{Value: out})
@@ -266,7 +275,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		location = defaultLocation
 	}
 
-	body := toDiskResponse(vol, rp, location)
+	body := h.toDiskResponse(r.Context(), vol, rp, location)
 	body.SKU = req.SKU
 
 	writeDiskAsync(w, r, rp.Subscription, "disk-create-"+rp.ResourceName, body)
@@ -345,7 +354,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toDiskResponse(vol, rp, ""))
+	azurearm.WriteJSON(w, http.StatusOK, h.toDiskResponse(r.Context(), vol, rp, ""))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -416,7 +425,9 @@ func writeDiskAsync(w http.ResponseWriter, r *http.Request, sub, opID string, bo
 // toDiskResponse maps a driver VolumeInfo to an ARM disk JSON body.
 //
 //nolint:gocritic // rp is a request-scoped value
-func toDiskResponse(vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, location string) diskResponse {
+func (h *Handler) toDiskResponse(
+	ctx context.Context, vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, location string,
+) diskResponse {
 	if location == "" {
 		location = defaultLocation
 	}
@@ -436,12 +447,13 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, loc
 	}
 
 	return diskResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
-		Name:     name,
-		Type:     providerName + "/" + resourceType,
-		Location: location,
-		SKU:      sku,
-		Tags:     stripInternalDiskTags(vol.Tags),
+		ID:        azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
+		Name:      name,
+		Type:      providerName + "/" + resourceType,
+		Location:  location,
+		SKU:       sku,
+		ManagedBy: h.managedByID(ctx, rp.Subscription, vol.AttachedTo),
+		Tags:      stripInternalDiskTags(vol.Tags),
 		Properties: diskResponseProps{
 			ProvisioningState: "Succeeded",
 			DiskSizeGB:        vol.Size,
@@ -454,6 +466,29 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, loc
 			UniqueID:          diskUniqueID(vol.ID),
 		},
 	}
+}
+
+// managedByID resolves a disk's AttachedTo (a driver compute instance ID) to
+// the ARM resource ID of the VM it is attached to, for the disk's managedBy
+// field (armcompute.Disk.ManagedBy: "a relative URI containing the ID of the
+// VM that has the disk attached"). Returns "" when the disk is unattached or
+// the attaching instance can't be resolved to an ARM VM name.
+func (h *Handler) managedByID(ctx context.Context, subscription, attachedTo string) string {
+	if attachedTo == "" {
+		return ""
+	}
+
+	insts, err := h.compute.DescribeInstances(ctx, []string{attachedTo}, nil)
+	if err != nil || len(insts) == 0 {
+		return ""
+	}
+
+	name := tagOr(insts[0].Tags, vmARMNameTag, "")
+	if name == "" {
+		return ""
+	}
+
+	return azurearm.BuildResourceID(subscription, insts[0].ResourceGroup, providerName, vmResourceType, name)
 }
 
 // diskUniqueID derives a stable GUID-shaped uniqueId from the driver volume id,

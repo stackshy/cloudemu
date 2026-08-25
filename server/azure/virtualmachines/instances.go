@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -15,6 +17,15 @@ import (
 // armNameTag is the tag key we use to round-trip the ARM resource name
 // through the driver, since the driver indexes by its own ID.
 const armNameTag = "cloudemu:azureName"
+
+// diskARMNameTag and diskRGTag mirror the constants in server/azure/disks so
+// a storageProfile.dataDisks managedDisk.id can be resolved to its driver
+// volume, and an attached volume's driver Device (the LUN we pass to
+// AttachVolume) can be echoed back on GET/LIST/CreateOrUpdate/Update.
+const (
+	diskARMNameTag = "cloudemu:azureDiskName"
+	diskRGTag      = "cloudemu:azureRG"
+)
 
 // URL schemes for building absolute self-referential URLs (async operation
 // status, boot-diagnostics serial log) against the incoming request.
@@ -106,9 +117,17 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	// storageProfile.dataDisks is the VM's complete desired data-disk state on
+	// PUT (real Azure's full-replace semantics): attach every referenced
+	// managed disk not yet attached.
+	if err := h.applyDataDisks(r.Context(), instances[0].ID, dataDisksOf(req.Properties.StorageProfile), true); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	// A create is a long-running operation: the initial response reports
 	// "Creating" (201 Created) and settles to "Succeeded" on the next poll/GET.
-	azurearm.WriteJSON(w, http.StatusCreated, toVMResponse(&instances[0], rp, req, provisioningCreating))
+	azurearm.WriteJSON(w, http.StatusCreated, h.buildVMResponse(r.Context(), &instances[0], rp, req, provisioningCreating))
 }
 
 // validateNICs verifies that every NIC referenced by a networkProfile exists.
@@ -169,7 +188,255 @@ func (h *Handler) updateExisting(
 		existing = updated
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(existing, rp, req, provisioningSucceeded))
+	// storageProfile.dataDisks is the VM's complete desired data-disk state on
+	// PUT: attach newly-referenced managed disks and detach any previously
+	// attached disk whose LUN is no longer present in the request.
+	if err := h.applyDataDisks(r.Context(), existing.ID, dataDisksOf(req.Properties.StorageProfile), true); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, h.buildVMResponse(r.Context(), existing, rp, req, provisioningSucceeded))
+}
+
+// update handles PATCH virtualMachines/{name} — ARM's BeginUpdate. Unlike PUT,
+// Update is a merge-patch: only the sections present in the body are applied,
+// and everything else is left untouched. We scope this to the operation's
+// primary real-world use — storageProfile.dataDisks attach/detach, the
+// standard non-recreating disk-attach path — rather than routing through
+// UpdateInstance (whose cfg-replace semantics assume PUT's full-body shape and
+// would blank tags/priority/licenseType a partial PATCH body omits).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	var req vmRequest
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	// Update's dataDisks is merge-patch, not declarative: a disk is only
+	// detached when its entry explicitly sets toBeDetached (real Azure's
+	// Update semantics), never by omission.
+	if err = h.applyDataDisks(r.Context(), inst.ID, dataDisksOf(req.Properties.StorageProfile), false); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	updated, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, h.buildVMResponse(r.Context(), updated, rp, req, provisioningSucceeded))
+}
+
+// dataDisksOf safely reads storageProfile.dataDisks, tolerating a request
+// whose storageProfile was omitted entirely.
+func dataDisksOf(s *storageProfile) []dataDisk {
+	if s == nil {
+		return nil
+	}
+
+	return s.DataDisks
+}
+
+// applyDataDisks reconciles instanceID's attached data disks against disks,
+// the request's storageProfile.dataDisks. declarative selects PUT
+// CreateOrUpdate's full-replace semantics — the array is the VM's complete
+// desired data-disk state, so any currently attached disk whose LUN is absent
+// from disks is detached — versus PATCH Update's merge-patch semantics, where
+// a disk is detached only when its own entry sets toBeDetached and entries
+// absent from the request are left untouched. Both paths attach any entry
+// whose managedDisk.id resolves to a disk not yet attached at that LUN.
+func (h *Handler) applyDataDisks(ctx context.Context, instanceID string, disks []dataDisk, declarative bool) error {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	attached := attachedDisksByLUN(vols, instanceID)
+	seen := make(map[int]bool, len(disks))
+
+	for i := range disks {
+		seen[disks[i].Lun] = true
+
+		if err := h.applyDataDisk(ctx, instanceID, &disks[i], vols, attached); err != nil {
+			return err
+		}
+	}
+
+	if !declarative {
+		return nil
+	}
+
+	return detachUnlistedDisks(ctx, h.compute, attached, seen)
+}
+
+// applyDataDisk applies one storageProfile.dataDisks entry: detaches the disk
+// currently attached at d.Lun when d.ToBeDetached is set, otherwise attaches
+// the managed disk resolveAttachDiskID resolves d to — a no-op when that disk
+// is already attached at d.Lun, or when d falls into one of
+// resolveAttachDiskID's DEFERRED createOption cases and resolves to "".
+func (h *Handler) applyDataDisk(
+	ctx context.Context, instanceID string, d *dataDisk, vols []computedriver.VolumeInfo, attached map[int]string,
+) error {
+	if d.ToBeDetached {
+		volID, ok := attached[d.Lun]
+		if !ok {
+			return nil
+		}
+
+		return h.compute.DetachVolume(ctx, volID)
+	}
+
+	volID, err := resolveAttachDiskID(d, vols)
+	if err != nil {
+		return err
+	}
+
+	if volID == "" || attached[d.Lun] == volID {
+		return nil
+	}
+
+	return h.compute.AttachVolume(ctx, volID, instanceID, strconv.Itoa(d.Lun))
+}
+
+// detachUnlistedDisks detaches every attached disk whose LUN is absent from
+// seen — the declarative-PUT half of applyDataDisks' reconciliation.
+func detachUnlistedDisks(ctx context.Context, c computedriver.Compute, attached map[int]string, seen map[int]bool) error {
+	for lun, volID := range attached {
+		if seen[lun] {
+			continue
+		}
+
+		if err := c.DetachVolume(ctx, volID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// attachedDisksByLUN indexes the volumes currently attached to instanceID by
+// the LUN AttachVolume was called with (recovered from the driver's Device
+// field), for reconciling against a request's desired dataDisks.
+func attachedDisksByLUN(vols []computedriver.VolumeInfo, instanceID string) map[int]string {
+	byLUN := make(map[int]string)
+
+	for i := range vols {
+		if vols[i].AttachedTo != instanceID {
+			continue
+		}
+
+		if lun, ok := parseLUN(vols[i].Device); ok {
+			byLUN[lun] = vols[i].ID
+		}
+	}
+
+	return byLUN
+}
+
+// parseLUN recovers the integer LUN AttachVolume was called with from a
+// volume's driver Device field (applyDataDisks passes strconv.Itoa(lun) as
+// the device on attach). A non-numeric Device reports false so the volume is
+// excluded from LUN-keyed reconciliation.
+func parseLUN(device string) (int, bool) {
+	lun, err := strconv.Atoi(device)
+	if err != nil {
+		return 0, false
+	}
+
+	return lun, true
+}
+
+// resolveAttachDiskID resolves the volume ID a dataDisk entry's managedDisk.id
+// references. Only createOption "Attach" references an existing managed disk;
+// Empty/FromImage/Copy/Restore implicitly provision a brand-new disk from the
+// VM's storageProfile, which cloudemu does not yet create (DEFERRED — create
+// the managed disk first via PUT .../disks/{name}, then reference it here with
+// createOption "Attach"). Such entries resolve to "" and are silently skipped
+// rather than erroring, so a request that also sets an unsupported implicit
+// disk alongside a supported Attach entry still succeeds for the latter.
+func resolveAttachDiskID(d *dataDisk, vols []computedriver.VolumeInfo) (string, error) {
+	if !strings.EqualFold(d.CreateOption, "Attach") {
+		return "", nil
+	}
+
+	if d.ManagedDisk == nil || d.ManagedDisk.ID == "" {
+		return "", cerrors.Newf(cerrors.InvalidArgument,
+			"dataDisk lun %d: createOption Attach requires managedDisk.id", d.Lun)
+	}
+
+	pp, ok := azurearm.ParsePath(d.ManagedDisk.ID)
+	if !ok || pp.ResourceName == "" {
+		return "", cerrors.Newf(cerrors.InvalidArgument, "malformed managed disk id %q", d.ManagedDisk.ID)
+	}
+
+	for i := range vols {
+		if tagOr(vols[i].Tags, diskARMNameTag, "") != pp.ResourceName {
+			continue
+		}
+
+		if pp.ResourceGroup != "" && tagOr(vols[i].Tags, diskRGTag, "") != pp.ResourceGroup {
+			continue
+		}
+
+		return vols[i].ID, nil
+	}
+
+	return "", cerrors.Newf(cerrors.NotFound, "managed disk %q not found", pp.ResourceName)
+}
+
+// attachedDataDisks builds the storageProfile.dataDisks response entries for
+// every managed disk currently attached to instanceID, so GET/LIST/
+// CreateOrUpdate/Update responses reflect real attachment state regardless of
+// what a particular request body asked for.
+//
+//nolint:gocritic // rp is a request-scoped value; pointer chain isn't worth the noise
+func (h *Handler) attachedDataDisks(ctx context.Context, rp azurearm.ResourcePath, instanceID string) []dataDisk {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
+	out := make([]dataDisk, 0, len(vols))
+
+	for i := range vols {
+		if vols[i].AttachedTo != instanceID {
+			continue
+		}
+
+		lun, ok := parseLUN(vols[i].Device)
+		if !ok {
+			continue
+		}
+
+		name := tagOr(vols[i].Tags, diskARMNameTag, vols[i].ID)
+		diskRG := tagOr(vols[i].Tags, diskRGTag, rp.ResourceGroup)
+
+		out = append(out, dataDisk{
+			Lun:          lun,
+			Name:         name,
+			CreateOption: "Attach",
+			DiskSizeGB:   vols[i].Size,
+			ManagedDisk: &managedDiskParameters{
+				ID:                 azurearm.BuildResourceID(rp.Subscription, diskRG, providerName, "disks", name),
+				StorageAccountType: vols[i].VolumeType,
+			},
+		})
+	}
+
+	sort.Slice(out, func(a, b int) bool { return out[a].Lun < out[b].Lun })
+
+	return out
 }
 
 // get handles GET virtualMachines/{name}.
@@ -182,7 +449,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toVMResponse(inst, rp, vmRequest{}, provisioningSucceeded))
+	azurearm.WriteJSON(w, http.StatusOK, h.buildVMResponse(r.Context(), inst, rp, vmRequest{}, provisioningSucceeded))
 }
 
 // list handles GET virtualMachines. A resource-group-scoped path
@@ -207,7 +474,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 		name := tagOr(instances[i].Tags, armNameTag, instances[i].ID)
 		scope := rp
 		scope.ResourceName = name
-		out = append(out, toVMResponse(&instances[i], scope, vmRequest{}, provisioningSucceeded))
+		out = append(out, h.buildVMResponse(r.Context(), &instances[i], scope, vmRequest{}, provisioningSucceeded))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, vmListResponse{Value: out})
@@ -615,11 +882,7 @@ func mergeTags(in map[string]string, armName string) map[string]string {
 	return out
 }
 
-// tagOr returns the tag value for key, or fallback when absent. The key
-// parameter is kept for signature parity with the sibling azure compute
-// handlers even though this package only reads the ARM-name tag.
-//
-//nolint:unparam // uniform tag-helper signature across azure compute handlers
+// tagOr returns the tag value for key, or fallback when absent.
 func tagOr(m map[string]string, key, fallback string) string {
 	if v, ok := m[key]; ok {
 		return v
@@ -634,6 +897,29 @@ const (
 	provisioningCreating  = "Creating"
 	provisioningSucceeded = "Succeeded"
 )
+
+// buildVMResponse builds the ARM vmResponse for inst, augmenting
+// storageProfile.dataDisks with the disks actually attached to it (via
+// attachedDataDisks) so every response reflects real attachment state —
+// including a disk attached by an earlier request, not just the one that
+// produced this particular response.
+//
+//nolint:gocritic // rp/req are value types passed once per response build
+func (h *Handler) buildVMResponse(
+	ctx context.Context, inst *computedriver.Instance, rp azurearm.ResourcePath, req vmRequest, provisioningState string,
+) vmResponse {
+	resp := toVMResponse(inst, rp, req, provisioningState)
+
+	if disks := h.attachedDataDisks(ctx, rp, inst.ID); len(disks) > 0 {
+		if resp.Properties.StorageProfile == nil {
+			resp.Properties.StorageProfile = &storageProfile{}
+		}
+
+		resp.Properties.StorageProfile.DataDisks = disks
+	}
+
+	return resp
+}
 
 // toVMResponse maps a driver Instance back onto the ARM JSON shape.
 // provisioningState is the properties.provisioningState to report ("Creating"
