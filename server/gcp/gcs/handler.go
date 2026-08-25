@@ -21,9 +21,11 @@ package gcs
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -55,16 +57,29 @@ const (
 	pathBucket = 2
 	// pathBO is /b/{bucket}/o = 3 segments.
 	pathBO = 3
+
+	// subresIAM is the /b/{bucket}/iam sub-collection segment.
+	subresIAM = "iam"
+	// defaultLocation / defaultStorageClass are the GCS defaults a bucket reads
+	// back when none was set at create.
+	defaultLocation     = "US"
+	defaultStorageClass = "STANDARD"
 )
 
 // Handler serves GCS JSON REST requests against a storage.Bucket driver.
 type Handler struct {
 	bucket storagedriver.Bucket
+	// ext is the optional GCS-specific capability (nil when the backing driver
+	// doesn't implement it), covering preconditions, generation, compose,
+	// object patch, versioned listing, and bucket location/IAM/metageneration.
+	ext storagedriver.GCSExtensions
 }
 
 // New returns a GCS handler backed by b.
 func New(b storagedriver.Bucket) *Handler {
-	return &Handler{bucket: b}
+	ext, _ := b.(storagedriver.GCSExtensions)
+
+	return &Handler{bucket: b, ext: ext}
 }
 
 // Matches returns true for /storage/v1/, /upload/storage/v1/, and direct
@@ -151,22 +166,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case pathBucket:
 		h.bucketResource(w, r, parts[1])
 	case pathBO:
-		// /b/{bucket}/o — list objects
-		if parts[2] != "o" {
+		// /b/{bucket}/o — list objects; /b/{bucket}/iam — bucket IAM policy.
+		switch parts[2] {
+		case "o":
+			h.listObjects(w, r, parts[1])
+		case subresIAM:
+			h.bucketIAM(w, r, parts[1])
+		default:
 			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
-			return
 		}
-
-		h.listObjects(w, r, parts[1])
 	default:
-		// /b/{bucket}/o/{obj}[/...]
-		if parts[2] != "o" {
+		// /b/{bucket}/o/{obj}[/...] or /b/{bucket}/iam/testPermissions
+		switch {
+		case parts[2] == "o":
+			h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
+		case parts[2] == subresIAM && parts[3] == "testPermissions":
+			h.testIAMPermissions(w, r, parts[1])
+		default:
 			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
-			return
 		}
-
-		objAndRest := strings.Join(parts[3:], "/")
-		h.objectOp(w, r, parts[1], objAndRest)
 	}
 }
 
@@ -220,12 +238,15 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		_ = h.bucket.SetBucketVersioning(r.Context(), body.Name, true)
 	}
 
-	res := h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339))
-	if body.Location != "" {
-		res.Location = body.Location
+	if h.ext != nil {
+		_ = h.ext.SetBucketAttrsGCS(r.Context(), body.Name, body.Location, body.StorageClass)
 	}
 
-	writeJSON(w, http.StatusOK, res)
+	if body.Lifecycle != nil {
+		_ = h.bucket.PutLifecycleConfig(r.Context(), body.Name, toLifecycleConfig(body.Lifecycle))
+	}
+
+	writeJSON(w, http.StatusOK, h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339)))
 }
 
 func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
@@ -237,14 +258,7 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 
 	out := bucketsListResponse{Kind: "storage#buckets"}
 	for _, b := range buckets {
-		out.Items = append(out.Items, bucketResource{
-			Kind:        "storage#bucket",
-			ID:          b.Name,
-			Name:        b.Name,
-			SelfLink:    selfLink(r, "/storage/v1/b/"+b.Name),
-			Location:    "US",
-			TimeCreated: b.CreatedAt,
-		})
+		out.Items = append(out.Items, h.bucketView(r, b.Name, b.CreatedAt))
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -267,18 +281,26 @@ func (h *Handler) getBucket(w http.ResponseWriter, r *http.Request, name string)
 	writeError(w, http.StatusNotFound, "notFound", "bucket "+name+" not found")
 }
 
-// bucketView builds the bucket JSON with its configured versioning + labels
-// reflected (real GCS returns these; the driver stores them so a read must
-// surface them).
+// bucketView builds the bucket JSON with its configured versioning, labels,
+// location, storage class, lifecycle, IAM config, and metageneration/etag/
+// updated reflected — real GCS returns these, and the driver stores them so a
+// read must surface them instead of a hardcoded US/STANDARD default.
 func (h *Handler) bucketView(r *http.Request, name, created string) bucketResource {
+	location, storageClass, metageneration, updated := h.resolveBucketAttrs(r, name, created)
+
 	res := bucketResource{
-		Kind:         "storage#bucket",
-		ID:           name,
-		Name:         name,
-		SelfLink:     selfLink(r, "/storage/v1/b/"+name),
-		Location:     "US",
-		StorageClass: "STANDARD",
-		TimeCreated:  created,
+		Kind:             "storage#bucket",
+		ID:               name,
+		Name:             name,
+		SelfLink:         selfLink(r, "/storage/v1/b/"+name),
+		Location:         location,
+		LocationType:     locationType(location),
+		StorageClass:     storageClass,
+		Metageneration:   strconv.FormatInt(metageneration, 10),
+		Etag:             name + "/" + strconv.FormatInt(metageneration, 10),
+		TimeCreated:      created,
+		Updated:          updated,
+		IamConfiguration: &iamConfiguration{PublicAccessPrevention: "inherited"},
 	}
 
 	if enabled, err := h.bucket.GetBucketVersioning(r.Context(), name); err == nil && enabled {
@@ -289,7 +311,105 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		res.Labels = labels
 	}
 
+	if cfg, err := h.bucket.GetLifecycleConfig(r.Context(), name); err == nil && cfg != nil && len(cfg.Rules) > 0 {
+		res.Lifecycle = fromLifecycleConfig(cfg)
+	}
+
 	return res
+}
+
+// resolveBucketAttrs returns the bucket's location, storage class,
+// metageneration, and updated timestamp, falling back to the GCS defaults when
+// the backing driver doesn't record them.
+func (h *Handler) resolveBucketAttrs(
+	r *http.Request, name, created string,
+) (location, storageClass string, metageneration int64, updated string) {
+	location, storageClass, metageneration, updated = defaultLocation, defaultStorageClass, 1, created
+
+	if h.ext == nil {
+		return location, storageClass, metageneration, updated
+	}
+
+	attrs, err := h.ext.BucketAttrsGCS(r.Context(), name)
+	if err != nil {
+		return location, storageClass, metageneration, updated
+	}
+
+	if attrs.Location != "" {
+		location = attrs.Location
+	}
+
+	if attrs.StorageClass != "" {
+		storageClass = attrs.StorageClass
+	}
+
+	if attrs.Metageneration > 0 {
+		metageneration = attrs.Metageneration
+	}
+
+	if attrs.Updated != "" {
+		updated = attrs.Updated
+	}
+
+	return location, storageClass, metageneration, updated
+}
+
+// locationType classifies a GCS location as a multi-region or a region, which
+// real GCS reports in the locationType field.
+func locationType(location string) string {
+	switch strings.ToUpper(location) {
+	case "US", "EU", "ASIA":
+		return "multi-region"
+	default:
+		return "region"
+	}
+}
+
+// toLifecycleConfig converts the GCS lifecycle JSON into the driver's rule set.
+// Delete → object expiration; SetStorageClass → a class transition.
+func toLifecycleConfig(lc *bucketLifecycle) storagedriver.LifecycleConfig {
+	cfg := storagedriver.LifecycleConfig{Rules: make([]storagedriver.LifecycleRule, 0, len(lc.Rule))}
+
+	for i, r := range lc.Rule {
+		rule := storagedriver.LifecycleRule{
+			ID:      strconv.Itoa(i),
+			Enabled: true,
+		}
+
+		switch r.Action.Type {
+		case "Delete":
+			rule.ExpirationDays = r.Condition.Age
+		case "SetStorageClass":
+			rule.TransitionDays = r.Condition.Age
+			rule.TransitionStorageClass = r.Action.StorageClass
+		}
+
+		cfg.Rules = append(cfg.Rules, rule)
+	}
+
+	return cfg
+}
+
+// fromLifecycleConfig renders the driver's lifecycle rules back into GCS JSON.
+func fromLifecycleConfig(cfg *storagedriver.LifecycleConfig) *bucketLifecycle {
+	lc := &bucketLifecycle{Rule: make([]lifecycleRule, 0, len(cfg.Rules))}
+
+	for _, rule := range cfg.Rules {
+		switch {
+		case rule.TransitionStorageClass != "":
+			lc.Rule = append(lc.Rule, lifecycleRule{
+				Action:    lifecycleAction{Type: "SetStorageClass", StorageClass: rule.TransitionStorageClass},
+				Condition: lifecycleCondition{Age: rule.TransitionDays},
+			})
+		case rule.ExpirationDays > 0:
+			lc.Rule = append(lc.Rule, lifecycleRule{
+				Action:    lifecycleAction{Type: "Delete"},
+				Condition: lifecycleCondition{Age: rule.ExpirationDays},
+			})
+		}
+	}
+
+	return lc
 }
 
 // patchBucket applies a bucket configuration update (versioning + labels),
@@ -315,6 +435,21 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		}
 	}
 
+	if body.Lifecycle != nil {
+		if err := h.bucket.PutLifecycleConfig(r.Context(), name, toLifecycleConfig(body.Lifecycle)); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	if h.ext != nil {
+		if body.StorageClass != "" {
+			_ = h.ext.SetBucketAttrsGCS(r.Context(), name, "", body.StorageClass)
+		}
+
+		_ = h.ext.TouchBucket(r.Context(), name)
+	}
+
 	writeJSON(w, http.StatusOK, h.bucketView(r, name, ""))
 }
 
@@ -325,6 +460,106 @@ func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name stri
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// bucketIAM serves /b/{bucket}/iam — GET returns the bucket's IAM policy (a
+// default empty policy when none was set), PUT/POST replaces it.
+func (h *Handler) bucketIAM(w http.ResponseWriter, r *http.Request, name string) {
+	if !h.bucketExists(r, name) {
+		writeError(w, http.StatusNotFound, "notFound", "bucket "+name+" not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getBucketIAM(w, r, name)
+	case http.MethodPut, http.MethodPost:
+		h.setBucketIAM(w, r, name)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+	}
+}
+
+func (h *Handler) getBucketIAM(w http.ResponseWriter, r *http.Request, name string) {
+	if h.ext != nil {
+		if raw, err := h.ext.BucketIAMPolicy(r.Context(), name); err == nil {
+			writeRawJSON(w, raw)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, defaultIAMPolicy(name))
+}
+
+func (h *Handler) setBucketIAM(w http.ResponseWriter, r *http.Request, name string) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPutBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", "could not read body")
+		return
+	}
+
+	// Validate it is a JSON policy before storing.
+	var policy iamPolicyResource
+	if uErr := json.Unmarshal(raw, &policy); uErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid", uErr.Error())
+		return
+	}
+
+	if h.ext != nil {
+		if sErr := h.ext.SetBucketIAMPolicy(r.Context(), name, raw); sErr != nil {
+			writeErr(w, sErr)
+			return
+		}
+	}
+
+	writeRawJSON(w, raw)
+}
+
+// testIAMPermissions serves /b/{bucket}/iam/testPermissions — the mock grants
+// every requested permission back.
+func (h *Handler) testIAMPermissions(w http.ResponseWriter, r *http.Request, name string) {
+	if !h.bucketExists(r, name) {
+		writeError(w, http.StatusNotFound, "notFound", "bucket "+name+" not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, testPermissionsResponse{
+		Kind:        "storage#testIamPermissionsResponse",
+		Permissions: r.URL.Query()["permissions"],
+	})
+}
+
+func (h *Handler) bucketExists(r *http.Request, name string) bool {
+	buckets, err := h.bucket.ListBuckets(r.Context())
+	if err != nil {
+		return false
+	}
+
+	for _, b := range buckets {
+		if b.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func defaultIAMPolicy(bucket string) iamPolicyResource {
+	return iamPolicyResource{
+		Kind:       "storage#policy",
+		ResourceID: "projects/_/buckets/" + bucket,
+		Version:    1,
+		Bindings:   []iamPolicyBind{},
+		Etag:       "CAE=",
+	}
+}
+
+func writeRawJSON(w http.ResponseWriter, raw []byte) {
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	// raw is an IAM policy document validated as JSON before storage and served
+	// as application/json, not HTML — no XSS surface.
+	_, _ = w.Write(raw) //nolint:gosec // validated JSON policy, served as application/json
 }
 
 // upload handles POST /upload/storage/v1/b/{bucket}/o?uploadType=media&name={obj}.
@@ -354,6 +589,70 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parsePrecondition extracts the GCS write preconditions from the request query
+// (ifGenerationMatch/ifGenerationNotMatch/ifMetagenerationMatch/
+// ifMetagenerationNotMatch). Each is a nil pointer when absent.
+func parsePrecondition(q url.Values) storagedriver.GCSPrecondition {
+	return storagedriver.GCSPrecondition{
+		IfGenerationMatch:        parseInt64Ptr(q.Get("ifGenerationMatch")),
+		IfGenerationNotMatch:     parseInt64Ptr(q.Get("ifGenerationNotMatch")),
+		IfMetagenerationMatch:    parseInt64Ptr(q.Get("ifMetagenerationMatch")),
+		IfMetagenerationNotMatch: parseInt64Ptr(q.Get("ifMetagenerationNotMatch")),
+	}
+}
+
+func parseInt64Ptr(s string) *int64 {
+	if s == "" {
+		return nil
+	}
+
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return nil
+	}
+
+	return &n
+}
+
+// storeObject writes an object through the preconditioned GCS path when the
+// backing driver supports it (returning a 412 on a failed precondition), else
+// falls back to the plain Bucket.PutObject.
+func (h *Handler) storeObject(
+	w http.ResponseWriter, r *http.Request, bucket, name, contentType string, data []byte, metadata map[string]string,
+) {
+	if h.ext != nil {
+		info, err := h.ext.PutObjectGCS(r.Context(), bucket, name, data, contentType, metadata, parsePrecondition(r.URL.Query()))
+		if err != nil {
+			var preErr *storagedriver.GCSPreconditionError
+			if errors.As(err, &preErr) {
+				writeError(w, http.StatusPreconditionFailed, "conditionNotMet", preErr.Error())
+				return
+			}
+
+			writeErr(w, err)
+
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+
+		return
+	}
+
+	if putErr := h.bucket.PutObject(r.Context(), bucket, name, data, contentType, metadata); putErr != nil {
+		writeErr(w, putErr)
+		return
+	}
+
+	info, err := h.bucket.HeadObject(r.Context(), bucket, name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+}
+
 func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request, bucket, name string) {
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "invalid", "name query parameter required")
@@ -373,18 +672,7 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request, bucket, na
 		contentType = contentTypeBinary
 	}
 
-	if putErr := h.bucket.PutObject(r.Context(), bucket, name, data, contentType, nil); putErr != nil {
-		writeErr(w, putErr)
-		return
-	}
-
-	info, err := h.bucket.HeadObject(r.Context(), bucket, name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+	h.storeObject(w, r, bucket, name, contentType, data, nil)
 }
 
 // uploadMultipart parses a multipart/related body where the first part is a
@@ -421,18 +709,7 @@ func (h *Handler) uploadMultipart(w http.ResponseWriter, r *http.Request, bucket
 		payloadCT = contentTypeBinary
 	}
 
-	if putErr := h.bucket.PutObject(r.Context(), bucket, meta.Name, payload, payloadCT, meta.Metadata); putErr != nil {
-		writeErr(w, putErr)
-		return
-	}
-
-	info, err := h.bucket.HeadObject(r.Context(), bucket, meta.Name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+	h.storeObject(w, r, bucket, meta.Name, payloadCT, payload, meta.Metadata)
 }
 
 func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -458,7 +735,14 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		PageToken: q.Get("pageToken"),
 	}
 
-	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
+	// versions=true lists every generation (current + archived), not just the
+	// live objects — real GCS retains prior generations on a versioned bucket.
+	listFn := h.bucket.ListObjects
+	if q.Get("versions") == "true" && h.ext != nil {
+		listFn = h.ext.ListObjectGenerations
+	}
+
+	result, err := listFn(r.Context(), bucket, opts)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -478,14 +762,21 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 }
 
 func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, objAndRest string) {
-	// Detect rewriteTo / copyTo sub-resources, e.g. "k1/rewriteTo/b/dstb/o/dstk"
+	// Detect rewriteTo / copyTo / compose sub-resources, e.g.
+	// "k1/rewriteTo/b/dstb/o/dstk" or "dst/compose".
 	parts := strings.Split(objAndRest, "/")
 
 	for i, p := range parts {
-		if p == "rewriteTo" || p == "copyTo" {
-			obj := strings.Join(parts[:i], "/")
-			h.copyObject(w, r, bucket, obj, parts[i+1:])
+		if i == 0 {
+			continue // the object key itself is never a sub-resource verb
+		}
 
+		switch p {
+		case "rewriteTo", "copyTo":
+			h.copyObject(w, r, bucket, strings.Join(parts[:i], "/"), parts[i+1:])
+			return
+		case "compose":
+			h.composeObject(w, r, bucket, strings.Join(parts[:i], "/"))
 			return
 		}
 	}
@@ -498,11 +789,87 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, objAn
 		}
 
 		h.getObjectMetadata(w, r, bucket, objAndRest)
+	case http.MethodPatch, http.MethodPut:
+		h.updateObject(w, r, bucket, objAndRest)
 	case http.MethodDelete:
 		h.deleteObject(w, r, bucket, objAndRest)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 	}
+}
+
+// updateObject handles PATCH/PUT /b/{bucket}/o/{obj} — an Objects: patch/update
+// that mutates system properties and/or custom metadata without touching data.
+func (h *Handler) updateObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if h.ext == nil {
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "object update not supported")
+		return
+	}
+
+	var body objectPatchBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	info, err := h.ext.UpdateObjectGCS(r.Context(), bucket, key, storagedriver.GCSObjectUpdate{
+		ContentType:        body.ContentType,
+		CacheControl:       body.CacheControl,
+		ContentEncoding:    body.ContentEncoding,
+		ContentDisposition: body.ContentDisposition,
+		ContentLanguage:    body.ContentLanguage,
+		Metadata:           body.Metadata,
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+}
+
+// composeObject handles POST /b/{bucket}/o/{dst}/compose — concatenating the
+// named source objects' bytes into the destination.
+func (h *Handler) composeObject(w http.ResponseWriter, r *http.Request, bucket, dstKey string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		return
+	}
+
+	if h.ext == nil {
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "compose not supported")
+		return
+	}
+
+	var body composeRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	srcKeys := make([]string, 0, len(body.SourceObjects))
+	for _, s := range body.SourceObjects {
+		srcKeys = append(srcKeys, s.Name)
+	}
+
+	contentType := ""
+	if body.Destination != nil {
+		contentType = body.Destination.ContentType
+	}
+
+	info, err := h.ext.ComposeObjectGCS(r.Context(), bucket, dstKey, srcKeys, contentType, destinationMetadata(body.Destination))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+}
+
+func destinationMetadata(dst *objectResource) map[string]string {
+	if dst == nil {
+		return nil
+	}
+
+	return dst.Metadata
 }
 
 func (h *Handler) getObjectMetadata(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -611,22 +978,40 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, srcBucket, 
 }
 
 func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Request) objectResource {
+	generation := info.Generation
+	if generation == 0 {
+		generation = 1
+	}
+
+	metageneration := info.Metageneration
+	if metageneration == 0 {
+		metageneration = 1
+	}
+
+	genStr := strconv.FormatInt(generation, 10)
+
 	return objectResource{
-		Kind:           "storage#object",
-		ID:             bucket + "/" + info.Key + "/1",
-		Name:           info.Key,
-		Bucket:         bucket,
-		Generation:     "1",
-		Metageneration: "1",
-		ContentType:    info.ContentType,
-		Size:           strconv.FormatInt(info.Size, 10),
-		ETag:           info.ETag,
-		StorageClass:   "STANDARD",
-		TimeCreated:    info.LastModified,
-		Updated:        info.LastModified,
-		Metadata:       info.Metadata,
-		SelfLink:       selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
-		MediaLink:      selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key+"?alt=media"),
+		Kind:               "storage#object",
+		ID:                 bucket + "/" + info.Key + "/" + genStr,
+		Name:               info.Key,
+		Bucket:             bucket,
+		Generation:         genStr,
+		Metageneration:     strconv.FormatInt(metageneration, 10),
+		ContentType:        info.ContentType,
+		Size:               strconv.FormatInt(info.Size, 10),
+		MD5Hash:            info.MD5,
+		CRC32C:             info.CRC32C,
+		ETag:               info.ETag,
+		StorageClass:       "STANDARD",
+		CacheControl:       info.CacheControl,
+		ContentEncoding:    info.ContentEncoding,
+		ContentDisposition: info.ContentDisposition,
+		ContentLanguage:    info.ContentLanguage,
+		TimeCreated:        info.LastModified,
+		Updated:            info.LastModified,
+		Metadata:           info.Metadata,
+		SelfLink:           selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
+		MediaLink:          selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key+"?alt=media"),
 	}
 }
 

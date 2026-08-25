@@ -301,6 +301,27 @@ type ObjectInfo struct {
 	// AccessTier is the Azure blob access tier (Hot/Cool/Cold/Archive), set by
 	// Set Blob Tier. Empty when unset; non-Azure providers leave it empty.
 	AccessTier string
+	// Generation is the GCS object generation — a unique, monotonically
+	// increasing id minted on every write of the object's data. Zero for
+	// providers that don't model generations (S3/Azure).
+	Generation int64
+	// Metageneration is the GCS object metageneration — starts at 1 for each
+	// generation and increments on each metadata-only update. Zero for
+	// non-GCS providers.
+	Metageneration int64
+	// MD5 is the base64-encoded MD5 digest of the object bytes (GCS md5Hash).
+	// Empty for providers that don't compute it.
+	MD5 string
+	// CRC32C is the base64-encoded big-endian CRC32C (Castagnoli) of the object
+	// bytes (GCS crc32c). Empty for providers that don't compute it.
+	CRC32C string
+	// CacheControl / ContentEncoding / ContentDisposition / ContentLanguage are
+	// GCS/S3 system object properties, settable via an object metadata update.
+	// Empty when unset.
+	CacheControl       string
+	ContentEncoding    string
+	ContentDisposition string
+	ContentLanguage    string
 }
 
 // Object is an object with its data.
@@ -601,4 +622,95 @@ type Bucket interface {
 	PutBucketTagging(ctx context.Context, bucket string, tags map[string]string) error
 	GetBucketTagging(ctx context.Context, bucket string) (map[string]string, error)
 	DeleteBucketTagging(ctx context.Context, bucket string) error
+}
+
+// GCSPrecondition carries the GCS write preconditions
+// (ifGenerationMatch/ifGenerationNotMatch/ifMetagenerationMatch/
+// ifMetagenerationNotMatch query parameters). A nil pointer means the caller
+// did not send that precondition. ifGenerationMatch == 0 means "the object must
+// not already exist" (create-if-absent).
+type GCSPrecondition struct {
+	IfGenerationMatch        *int64
+	IfGenerationNotMatch     *int64
+	IfMetagenerationMatch    *int64
+	IfMetagenerationNotMatch *int64
+}
+
+// GCSPreconditionError signals a failed GCS write precondition. Real GCS answers
+// with 412 Precondition Failed and reason "conditionNotMet", which does NOT map
+// to the canonical FailedPrecondition→409 the storage wire layer uses elsewhere,
+// so providers return this typed error and the GCS handler matches it with
+// errors.As to emit the exact 412 response.
+type GCSPreconditionError struct {
+	Message string
+}
+
+func (e *GCSPreconditionError) Error() string {
+	if e.Message == "" {
+		return "conditionNotMet"
+	}
+
+	return e.Message
+}
+
+// GCSObjectUpdate carries the mutable properties an Objects: patch/update sets.
+// A nil pointer field leaves that property unchanged; a nil Metadata map leaves
+// custom metadata unchanged, while a non-nil map is merged (a nil value deletes
+// that key).
+type GCSObjectUpdate struct {
+	ContentType        *string
+	CacheControl       *string
+	ContentEncoding    *string
+	ContentDisposition *string
+	ContentLanguage    *string
+	Metadata           map[string]*string
+}
+
+// GCSBucketMeta are the GCS-specific bucket attributes the shared BucketInfo
+// doesn't carry: multi-region/region location, default storage class, and the
+// metageneration/updated pair that back etag/ifMetagenerationMatch concurrency.
+type GCSBucketMeta struct {
+	Location       string
+	StorageClass   string
+	Metageneration int64
+	Updated        string
+}
+
+// GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
+// assertion (like VersionedBucket). It persists GCS bucket/object behaviors the
+// shared Bucket interface can't express: preconditioned writes with generation
+// minting, object metadata patch, server-side compose, versioned (all-
+// generation) listing, and bucket location/storageClass/IAM + metageneration.
+// S3/Azure don't implement it and keep their own semantics.
+type GCSExtensions interface {
+	// PutObjectGCS writes an object honoring pre (a failed condition returns a
+	// *GCSPreconditionError) and returns the stored object's info with the newly
+	// minted generation.
+	PutObjectGCS(
+		ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string, pre GCSPrecondition,
+	) (*ObjectInfo, error)
+	// UpdateObjectGCS mutates an existing object's system properties and/or
+	// custom metadata without touching its data, bumping metageneration.
+	UpdateObjectGCS(ctx context.Context, bucket, key string, upd GCSObjectUpdate) (*ObjectInfo, error)
+	// ComposeObjectGCS concatenates the source objects' bytes (in order) into
+	// dstKey, minting a new generation for the destination.
+	ComposeObjectGCS(
+		ctx context.Context, bucket, dstKey string, srcKeys []string, contentType string, metadata map[string]string,
+	) (*ObjectInfo, error)
+	// ListObjectGenerations returns every generation (current + archived) of the
+	// objects matching opts, for a versions=true listing.
+	ListObjectGenerations(ctx context.Context, bucket string, opts ListOptions) (*ListResult, error)
+
+	// SetBucketAttrsGCS records the bucket's location and default storage class
+	// (empty values leave the current value unchanged).
+	SetBucketAttrsGCS(ctx context.Context, bucket, location, storageClass string) error
+	// BucketAttrsGCS returns the bucket's GCS-specific attributes.
+	BucketAttrsGCS(ctx context.Context, bucket string) (GCSBucketMeta, error)
+	// TouchBucket bumps the bucket's metageneration and updated timestamp,
+	// called after any bucket configuration change.
+	TouchBucket(ctx context.Context, bucket string) error
+	// SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM
+	// policy document verbatim (Buckets: setIamPolicy / getIamPolicy).
+	SetBucketIAMPolicy(ctx context.Context, bucket string, policyJSON []byte) error
+	BucketIAMPolicy(ctx context.Context, bucket string) ([]byte, error)
 }
