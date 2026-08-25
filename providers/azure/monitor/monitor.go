@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -471,15 +472,54 @@ func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) (
 }
 
 // matchDimensions returns true if the data point dimensions contain all of the
-// requested filter dimensions.
+// requested filter dimensions. The "resourceId" dimension is compared with
+// resourceIDMatch rather than exact equality: cloudemu does not enforce a
+// single subscription across a deployment (the wire layer accepts requests
+// under any subscription id), so the subscription segment of an ARM resource
+// id can legitimately differ between how a resource was minted and how a
+// caller's request path addresses it.
 func matchDimensions(dataDims, filterDims map[string]string) bool {
 	for k, v := range filterDims {
+		if k == "resourceId" {
+			if !resourceIDMatch(dataDims[k], v) {
+				return false
+			}
+
+			continue
+		}
+
 		if dataDims[k] != v {
 			return false
 		}
 	}
 
 	return true
+}
+
+// resourceIDMatch compares two Azure ARM resource ids by their
+// "resourceGroups/..." tail (case-insensitive), ignoring the leading
+// "/subscriptions/{id}" segment and any case difference in between.
+func resourceIDMatch(a, b string) bool {
+	if a == "" || b == "" {
+		return a == b
+	}
+
+	return strings.EqualFold(resourceScope(a), resourceScope(b))
+}
+
+// resourceScope returns the portion of an ARM resource id starting at
+// "resourceGroups/...", or the id unchanged when that marker isn't found
+// (e.g. a bare internal instance id from a caller that bypassed the ARM
+// wire layer).
+func resourceScope(id string) string {
+	const marker = "/resourcegroups/"
+
+	idx := strings.Index(strings.ToLower(id), marker)
+	if idx < 0 {
+		return id
+	}
+
+	return id[idx+1:]
 }
 
 // computeStat computes the requested statistic over a slice of values.
@@ -537,12 +577,25 @@ func maxValue(values []float64) float64 {
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {
+	dims := make(map[string]string, len(a.Dimensions))
+	for k, v := range a.Dimensions {
+		dims[k] = v
+	}
+
 	return driver.AlarmInfo{
-		Name:               a.Name,
-		Namespace:          a.Namespace,
-		MetricName:         a.MetricName,
-		State:              a.State,
-		ComparisonOperator: a.ComparisonOperator,
-		Threshold:          a.Threshold,
+		Name:                    a.Name,
+		Namespace:               a.Namespace,
+		MetricName:              a.MetricName,
+		State:                   a.State,
+		ComparisonOperator:      a.ComparisonOperator,
+		Threshold:               a.Threshold,
+		StateReason:             a.StateReason,
+		Period:                  a.Period,
+		EvaluationPeriods:       a.EvaluationPeriods,
+		Statistic:               a.Stat,
+		AlarmActions:            append([]string{}, a.AlarmActions...),
+		OKActions:               append([]string{}, a.OKActions...),
+		InsufficientDataActions: append([]string{}, a.InsufficientDataActions...),
+		Dimensions:              dims,
 	}
 }

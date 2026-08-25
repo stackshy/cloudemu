@@ -33,9 +33,37 @@ func (h *Handler) registerAlarm(r *http.Request, name string, props map[string]a
 		Period:             windowSeconds(props),
 		EvaluationPeriods:  1,
 		Stat:               mapAggregation(c.timeAggregation),
+		AlarmActions:       actionGroupIDs(props),
 	}
 
 	return h.mon.CreateAlarm(r.Context(), cfg)
+}
+
+// actionGroupIDs extracts properties.actions[].actionGroupId — the action
+// group resource ids a metric alert notifies on state change — so a breaching
+// metric actually fires the linked action group (mirrors the AWS CloudWatch
+// alarm -> SNS AlarmActions wiring). Entries with no actionGroupId are
+// skipped rather than producing an empty AlarmActions entry.
+func actionGroupIDs(props map[string]any) []string {
+	actions, ok := props["actions"].([]any)
+	if !ok {
+		return nil
+	}
+
+	ids := make([]string, 0, len(actions))
+
+	for _, a := range actions {
+		item, ok := a.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if id := stringField(item, "actionGroupId"); id != "" {
+			ids = append(ids, id)
+		}
+	}
+
+	return ids
 }
 
 // criterion is one parsed static-threshold metric criterion.

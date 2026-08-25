@@ -121,18 +121,22 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		}
 	}
 
-	existed := h.store.set(kind, rp.ResourceName, res)
+	existed := h.store.set(rp.Subscription, rp.ResourceGroup, kind, rp.ResourceName, res)
 
-	status := http.StatusCreated
-	if existed {
-		status = http.StatusOK
+	// Metric Alerts - Create Or Update documents a single response: 200 OK,
+	// for both a first create and a subsequent update (unlike actionGroups and
+	// activityLogAlerts, which the REST reference documents as 201 Created on
+	// first create / 200 OK on update).
+	status := http.StatusOK
+	if kind != typeAlerts && !existed {
+		status = http.StatusCreated
 	}
 
 	azurearm.WriteJSON(w, status, toResourceJSON(rp, kind, res))
 }
 
 func (h *Handler) get(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
-	res, ok := h.store.get(kind, rp.ResourceName)
+	res, ok := h.store.get(rp.Subscription, rp.ResourceGroup, kind, rp.ResourceName)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", kind+" "+rp.ResourceName+" not found")
 		return
@@ -142,7 +146,7 @@ func (h *Handler) get(w http.ResponseWriter, rp *azurearm.ResourcePath, kind str
 }
 
 func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
-	all := h.store.all(kind)
+	all := h.store.all(rp.Subscription, rp.ResourceGroup, kind)
 
 	names := make([]string, 0, len(all))
 	for name := range all {
@@ -165,7 +169,7 @@ func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath, kind st
 func (h *Handler) delete(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
 	// Azure DELETE is idempotent: a missing metricAlert/actionGroup/activityLogAlert
 	// returns 204 No Content ("resource does not exist"), not a 404 error body.
-	if !h.store.delete(kind, rp.ResourceName) {
+	if !h.store.delete(rp.Subscription, rp.ResourceGroup, kind, rp.ResourceName) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

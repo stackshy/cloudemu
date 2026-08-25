@@ -105,9 +105,14 @@ func (h *MetricsHandler) listMetrics(w http.ResponseWriter, r *http.Request) {
 	aggs := aggregations(r.URL.Query().Get("aggregation"))
 	names := splitCSV(r.URL.Query().Get("metricnames"))
 
+	// The resourceId a compute/storage/etc. mock stamps on its datapoints is
+	// the ARM resource id (leading slash, "/subscriptions/.../providers/...");
+	// uri is that same path with the leading slash trimmed off.
+	resourceID := "/" + uri
+
 	value := make([]map[string]any, 0, len(names))
 	for _, name := range names {
-		value = append(value, h.metricEntry(r.Context(), uri, namespace, name, aggs))
+		value = append(value, h.metricEntry(r.Context(), resourceID, uri, namespace, name, aggs))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
@@ -121,8 +126,8 @@ func (h *MetricsHandler) listMetrics(w http.ResponseWriter, r *http.Request) {
 
 // metricEntry builds one Metric object with a single timeseries whose datapoints
 // carry each requested aggregation.
-func (h *MetricsHandler) metricEntry(ctx context.Context, uri, namespace, name string, aggs []string) map[string]any {
-	data := h.timeseriesData(ctx, namespace, name, aggs)
+func (h *MetricsHandler) metricEntry(ctx context.Context, resourceID, uri, namespace, name string, aggs []string) map[string]any {
+	data := h.timeseriesData(ctx, resourceID, namespace, name, aggs)
 
 	return map[string]any{
 		"id":         uri + metricsSuffix + "/" + name,
