@@ -115,37 +115,41 @@ type ContainerInstances interface {
 	// the returned state reflects the engine's observed states/exit codes.
 	CreateContainerGroup(ctx context.Context, cfg ContainerGroupConfig) (*ContainerGroup, error)
 
-	// GetContainerGroup returns the recorded group, or a NotFound error.
-	GetContainerGroup(ctx context.Context, name string) (*ContainerGroup, error)
+	// GetContainerGroup returns the recorded group scoped to subscription and
+	// resourceGroup, or a NotFound error. A container group's ARM identity is
+	// {subscription, resourceGroup, name} — the same name in a different
+	// resource group (or subscription) is a different resource.
+	GetContainerGroup(ctx context.Context, subscription, resourceGroup, name string) (*ContainerGroup, error)
 
-	// DeleteContainerGroup removes the group, tearing down any engine-backed
-	// workload first. Returns NotFound when the group does not exist.
-	DeleteContainerGroup(ctx context.Context, name string) error
+	// DeleteContainerGroup removes the group scoped to subscription and
+	// resourceGroup, tearing down any engine-backed workload first. Returns
+	// NotFound when the group does not exist.
+	DeleteContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error
 
 	// ListContainerGroups returns the groups visible under filter.
 	ListContainerGroups(ctx context.Context, filter scope.Scope) ([]ContainerGroup, error)
 
 	// StartContainerGroup starts all containers in a stopped group, allocating
 	// compute again. Returns NotFound when the group does not exist.
-	StartContainerGroup(ctx context.Context, name string) error
+	StartContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error
 
 	// StopContainerGroup stops all containers in the group and deallocates
 	// compute, tearing down any engine-backed workload. Returns NotFound when the
 	// group does not exist.
-	StopContainerGroup(ctx context.Context, name string) error
+	StopContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error
 
 	// RestartContainerGroup restarts all containers in the group. Returns NotFound
 	// when the group does not exist.
-	RestartContainerGroup(ctx context.Context, name string) error
+	RestartContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error
 
 	// ExecContainer opens an exec session on one container in the group and
 	// returns its websocket URI and password. When the group is engine-backed the
 	// command is run for real on the engine. Returns NotFound when the group or
 	// container does not exist.
-	ExecContainer(ctx context.Context, group, container string, command []string) (*ExecSession, error)
+	ExecContainer(ctx context.Context, subscription, resourceGroup, group, container string, command []string) (*ExecSession, error)
 
 	// ContainerLogs returns the captured stdout/stderr for one container in the
 	// group. A non-positive tail returns the full log. It is empty for a group
 	// that is not engine-backed.
-	ContainerLogs(ctx context.Context, group, container string, tail int) (string, error)
+	ContainerLogs(ctx context.Context, subscription, resourceGroup, group, container string, tail int) (string, error)
 }

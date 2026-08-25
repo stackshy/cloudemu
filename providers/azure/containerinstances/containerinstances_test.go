@@ -50,6 +50,11 @@ func (e *recordingEngine) Stop(_ context.Context, handle string) error {
 	return nil
 }
 
+const (
+	testSub = "sub1"
+	testRG  = "rg1"
+)
+
 func sampleConfig() driver.ContainerGroupConfig {
 	return driver.ContainerGroupConfig{
 		Name:          "cg1",
@@ -64,7 +69,7 @@ func sampleConfig() driver.ContainerGroupConfig {
 			MemoryInGB: 1.5,
 			Env:        []driver.EnvVar{{Name: "FOO", Value: "bar"}},
 		}},
-		Scope: scope.Scope{Subscription: "sub1", ResourceGroup: "rg1"},
+		Scope: scope.Scope{Subscription: testSub, ResourceGroup: testRG},
 	}
 }
 
@@ -238,7 +243,7 @@ func TestGetSurfacesEngineState(t *testing.T) {
 		t.Fatalf("Always restart policy should run detached")
 	}
 
-	got, err := m.GetContainerGroup(context.Background(), "cg1")
+	got, err := m.GetContainerGroup(context.Background(), testSub, testRG, "cg1")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -268,7 +273,7 @@ func TestContainerLogsReturnEngineOutput(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	out, err := m.ContainerLogs(context.Background(), "cg1", "app", 10)
+	out, err := m.ContainerLogs(context.Background(), testSub, testRG, "cg1", "app", 10)
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}
@@ -293,7 +298,7 @@ func TestDeleteStopsEngineWorkload(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if err := m.DeleteContainerGroup(context.Background(), "cg1"); err != nil {
+	if err := m.DeleteContainerGroup(context.Background(), testSub, testRG, "cg1"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
@@ -301,7 +306,7 @@ func TestDeleteStopsEngineWorkload(t *testing.T) {
 		t.Fatalf("engine workload not stopped: %v", eng.stopped)
 	}
 
-	if _, err := m.GetContainerGroup(context.Background(), "cg1"); !cerrors.IsNotFound(err) {
+	if _, err := m.GetContainerGroup(context.Background(), testSub, testRG, "cg1"); !cerrors.IsNotFound(err) {
 		t.Fatalf("group should be gone after delete, got %v", err)
 	}
 }
@@ -325,7 +330,7 @@ func TestNilEngineStaysSynthetic(t *testing.T) {
 	}
 
 	// Logs are empty and no engine call is made for a synthetic group.
-	out, err := m.ContainerLogs(context.Background(), "cg1", "app", 0)
+	out, err := m.ContainerLogs(context.Background(), testSub, testRG, "cg1", "app", 0)
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}
@@ -358,5 +363,57 @@ func TestListFiltersByScope(t *testing.T) {
 
 	if len(otherRG) != 0 {
 		t.Fatalf("expected 0 groups in other rg, got %d", len(otherRG))
+	}
+}
+
+// TestSameNameGroupsIsolatedAcrossResourceGroups is a regression test for the
+// cross-RG collision bug: a container group's ARM identity is
+// {subscription, resourceGroup, name}, so a same-named group in a different
+// resource group (or subscription) must not alias, leak into, or be deleted by
+// operations on the other.
+func TestSameNameGroupsIsolatedAcrossResourceGroups(t *testing.T) {
+	m := New(config.NewOptions())
+	ctx := context.Background()
+
+	cfg1 := sampleConfig()
+	cfg1.Location = "eastus"
+
+	cfg2 := sampleConfig()
+	cfg2.Location = "westus2"
+	cfg2.Scope = scope.Scope{Subscription: testSub, ResourceGroup: "rg2"}
+
+	if _, err := m.CreateContainerGroup(ctx, cfg1); err != nil {
+		t.Fatalf("create rg1: %v", err)
+	}
+
+	if _, err := m.CreateContainerGroup(ctx, cfg2); err != nil {
+		t.Fatalf("create rg2: %v", err)
+	}
+
+	g1, err := m.GetContainerGroup(ctx, testSub, testRG, "cg1")
+	if err != nil {
+		t.Fatalf("get rg1: %v", err)
+	}
+
+	g2, err := m.GetContainerGroup(ctx, testSub, "rg2", "cg1")
+	if err != nil {
+		t.Fatalf("get rg2: %v", err)
+	}
+
+	if g1.Location != "eastus" || g2.Location != "westus2" {
+		t.Fatalf("groups aliased across resource groups: rg1=%q rg2=%q", g1.Location, g2.Location)
+	}
+
+	// Deleting the rg1 group must not remove the same-named rg2 group.
+	if err := m.DeleteContainerGroup(ctx, testSub, testRG, "cg1"); err != nil {
+		t.Fatalf("delete rg1: %v", err)
+	}
+
+	if _, err := m.GetContainerGroup(ctx, testSub, testRG, "cg1"); !cerrors.IsNotFound(err) {
+		t.Fatalf("rg1 group should be gone, got %v", err)
+	}
+
+	if _, err := m.GetContainerGroup(ctx, testSub, "rg2", "cg1"); err != nil {
+		t.Fatalf("rg2 group should still exist after rg1 delete: %v", err)
 	}
 }
