@@ -107,7 +107,9 @@ func (h *Handler) listSubResource(w http.ResponseWriter, r *http.Request, rp *az
 
 	lbID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeLBs, rp.ResourceName)
 
-	azurearm.WriteJSON(w, http.StatusOK, subResourceListResult{Value: listChildren(lbID, lb, kind)})
+	members := h.poolMembers(r.Context(), rp.Subscription)
+
+	azurearm.WriteJSON(w, http.StatusOK, subResourceListResult{Value: listChildren(lbID, lb, kind, members)})
 }
 
 // getSubResource handles GET .../loadBalancers/{name}/{kind}/{childName} — the
@@ -127,7 +129,7 @@ func (h *Handler) getSubResource(w http.ResponseWriter, r *http.Request, rp *azu
 
 	lbID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeLBs, rp.ResourceName)
 
-	child, found := findChild(lbID, lb, kind, rp.SubResourceName)
+	child, found := findChild(lbID, lb, kind, rp.SubResourceName, h.poolMembers(r.Context(), rp.Subscription))
 	if !found {
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
 			rp.SubResource+" "+rp.SubResourceName+" not found")
@@ -161,7 +163,7 @@ func (h *Handler) putSubResource(w http.ResponseWriter, r *http.Request, rp *azu
 
 	switch kind {
 	case kindBackendAddressPools:
-		putBackendPool(w, r, rp, az, lbID)
+		h.putBackendPool(w, r, rp, az, lbID)
 	case kindInboundNatRules:
 		putNatRule(w, r, rp, az, lbID)
 	case kindUnknown, kindFrontendIPConfigurations, kindLoadBalancingRules, kindProbes, kindOutboundRules:
@@ -169,7 +171,7 @@ func (h *Handler) putSubResource(w http.ResponseWriter, r *http.Request, rp *azu
 	}
 }
 
-func putBackendPool(
+func (h *Handler) putBackendPool(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, az lbdriver.AzureLoadBalancers, lbID string,
 ) {
 	var body backendPoolJSON
@@ -183,7 +185,8 @@ func putBackendPool(
 		return
 	}
 
-	child, found := findChild(lbID, lb, kindBackendAddressPools, rp.SubResourceName)
+	child, found := findChild(lbID, lb, kindBackendAddressPools, rp.SubResourceName,
+		h.poolMembers(r.Context(), rp.Subscription))
 	if !found {
 		azurearm.WriteError(w, http.StatusInternalServerError, "InternalError", "backend address pool not found after create")
 		return
@@ -211,7 +214,7 @@ func putNatRule(
 		return
 	}
 
-	child, found := findChild(lbID, lb, kindInboundNatRules, rp.SubResourceName)
+	child, found := findChild(lbID, lb, kindInboundNatRules, rp.SubResourceName, nil)
 	if !found {
 		azurearm.WriteError(w, http.StatusInternalServerError, "InternalError", "inbound NAT rule not found after create")
 		return
@@ -257,13 +260,14 @@ func (h *Handler) deleteSubResource(w http.ResponseWriter, r *http.Request, rp *
 }
 
 // listChildren builds the full JSON slice for kind from lb, for the
-// collection-list response envelope.
-func listChildren(lbID string, lb *lbdriver.AzureLoadBalancer, kind subResourceKind) any {
+// collection-list response envelope. members supplies backend-pool membership
+// (nil when unavailable).
+func listChildren(lbID string, lb *lbdriver.AzureLoadBalancer, kind subResourceKind, members map[string][]string) any {
 	switch kind {
 	case kindFrontendIPConfigurations:
 		return frontendsJSON(lbID, lb.Frontends)
 	case kindBackendAddressPools:
-		return poolsJSON(lbID, lb.BackendPools)
+		return poolsJSON(lbID, lb.BackendPools, members)
 	case kindLoadBalancingRules:
 		return rulesJSON(lbID, lb.Rules)
 	case kindProbes:
@@ -280,13 +284,16 @@ func listChildren(lbID string, lb *lbdriver.AzureLoadBalancer, kind subResourceK
 }
 
 // findChild locates the single named child of kind on lb and returns its JSON
-// representation. found is false when no child of that name exists.
-func findChild(lbID string, lb *lbdriver.AzureLoadBalancer, kind subResourceKind, name string) (any, bool) {
+// representation. found is false when no child of that name exists. members
+// supplies backend-pool membership (nil when unavailable).
+func findChild(
+	lbID string, lb *lbdriver.AzureLoadBalancer, kind subResourceKind, name string, members map[string][]string,
+) (any, bool) {
 	switch kind {
 	case kindFrontendIPConfigurations:
 		return findFrontend(lbID, lb.Frontends, name)
 	case kindBackendAddressPools:
-		return findPool(lbID, lb.BackendPools, name)
+		return findPool(lbID, lb.BackendPools, name, members)
 	case kindLoadBalancingRules:
 		return findRule(lbID, lb.Rules, name)
 	case kindProbes:
@@ -312,10 +319,10 @@ func findFrontend(lbID string, in []lbdriver.AzureLBFrontend, name string) (any,
 	return nil, false
 }
 
-func findPool(lbID string, in []string, name string) (any, bool) {
+func findPool(lbID string, in []string, name string, members map[string][]string) (any, bool) {
 	for _, p := range in {
 		if p == name {
-			return poolsJSON(lbID, []string{p})[0], true
+			return poolsJSON(lbID, []string{p}, members)[0], true
 		}
 	}
 

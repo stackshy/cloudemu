@@ -47,7 +47,13 @@ type subResource struct {
 // --- backend address pools (→ pool names) ---
 
 type backendPoolProps struct {
-	ProvisioningState string `json:"provisioningState,omitempty"`
+	// BackendIPConfigurations is the read-only set of NIC ipConfiguration
+	// references that have joined this pool (BackendAddressPoolPropertiesFormat.
+	// backendIPConfigurations). It is projected on read from the NIC side of the
+	// association rather than stored on the pool, so it always agrees with each
+	// NIC's loadBalancerBackendAddressPools.
+	BackendIPConfigurations []subResource `json:"backendIPConfigurations,omitempty"`
+	ProvisioningState       string        `json:"provisioningState,omitempty"`
 }
 
 type backendPoolJSON struct {

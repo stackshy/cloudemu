@@ -56,7 +56,7 @@ func (h *Handler) createOrUpdateLoadBalancer(w http.ResponseWriter, r *http.Requ
 	// load balancer; its rich shape lives in the native store.
 	h.syncGenericLB(r.Context(), rp.ResourceName, &body)
 
-	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored))
+	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored, h.poolMembers(r.Context(), rp.Subscription)))
 }
 
 func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -72,7 +72,7 @@ func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *az
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored))
+	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored, h.poolMembers(r.Context(), rp.Subscription)))
 }
 
 // deleteLoadBalancer removes the load balancer from both the native store and
@@ -110,13 +110,15 @@ func (h *Handler) listLoadBalancers(w http.ResponseWriter, r *http.Request, rp *
 		return
 	}
 
+	members := h.poolMembers(r.Context(), rp.Subscription)
+
 	out := lbListResult{Value: make([]loadBalancerJSON, 0, len(stored))}
 
 	for i := range stored {
 		scope := *rp
 		scope.ResourceGroup = stored[i].ResourceGroup
 		scope.ResourceName = stored[i].Name
-		out.Value = append(out.Value, toLBJSON(&scope, &stored[i]))
+		out.Value = append(out.Value, toLBJSON(&scope, &stored[i], members))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -326,14 +328,16 @@ func buildOutboundRules(in []outboundRuleJSON) []lbdriver.AzureLBOutboundRule {
 // --- native model → response ---
 
 // toLBJSON reconstructs the nested ARM load balancer body from the stored
-// native model, stamping ids, etags and terminal provisioning states.
-func toLBJSON(rp *azurearm.ResourcePath, lb *lbdriver.AzureLoadBalancer) loadBalancerJSON {
+// native model, stamping ids, etags and terminal provisioning states. members
+// maps a backend pool's ARM id to the ipConfigurations that joined it (nil when
+// membership projection is unavailable).
+func toLBJSON(rp *azurearm.ResourcePath, lb *lbdriver.AzureLoadBalancer, members map[string][]string) loadBalancerJSON {
 	lbID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeLBs, rp.ResourceName)
 
 	props := &loadBalancerProps{
 		ProvisioningState:        provisioningStateSucceeded,
 		FrontendIPConfigurations: frontendsJSON(lbID, lb.Frontends),
-		BackendAddressPools:      poolsJSON(lbID, lb.BackendPools),
+		BackendAddressPools:      poolsJSON(lbID, lb.BackendPools, members),
 		Probes:                   probesJSON(lbID, lb.Probes),
 		LoadBalancingRules:       rulesJSON(lbID, lb.Rules),
 		InboundNatRules:          natRulesJSON(lbID, lb.NatRules),
@@ -381,14 +385,20 @@ func frontendsJSON(lbID string, in []lbdriver.AzureLBFrontend) []frontendIPJSON 
 	return out
 }
 
-func poolsJSON(lbID string, names []string) []backendPoolJSON {
+func poolsJSON(lbID string, names []string, members map[string][]string) []backendPoolJSON {
 	out := make([]backendPoolJSON, 0, len(names))
 
 	for _, name := range names {
 		id := lbID + "/backendAddressPools/" + name
+		props := &backendPoolProps{ProvisioningState: provisioningStateSucceeded}
+
+		for _, ipCfgID := range members[strings.ToLower(id)] {
+			props.BackendIPConfigurations = append(props.BackendIPConfigurations, subResource{ID: ipCfgID})
+		}
+
 		out = append(out, backendPoolJSON{
 			ID: id, Name: name, Type: poolResourceType, Etag: weakETag(id),
-			Properties: &backendPoolProps{ProvisioningState: provisioningStateSucceeded},
+			Properties: props,
 		})
 	}
 
