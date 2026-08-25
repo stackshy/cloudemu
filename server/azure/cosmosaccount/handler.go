@@ -29,6 +29,7 @@ package cosmosaccount
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -144,6 +145,8 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 		// synchronously with an empty 200 so the SDK's poller terminates. Keys
 		// are deterministic per account, so there is nothing to persist.
 		w.WriteHeader(http.StatusOK)
+	case "failoverprioritychange":
+		h.failoverPriorityChange(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported action: "+rp.SubResource)
 	}
@@ -180,6 +183,8 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		attrs.OfferType = body.Properties.DatabaseAccountOfferType
 		attrs.EnableFreeTier = body.Properties.EnableFreeTier
 		attrs.Capabilities = capabilityNames(body.Properties.Capabilities)
+		attrs.Locations = toAccountLocations(body.Properties.Locations)
+		attrs.EnableMultipleWriteLocations = body.Properties.EnableMultipleWriteLocations
 	}
 
 	if h.attrs != nil {
@@ -269,6 +274,16 @@ func renderAccount(subscription, name string, attrs dbdriver.AccountAttributes) 
 		location = defaultLocation
 	}
 
+	locations := attrs.Locations
+	if len(locations) == 0 {
+		// Single-region account (or one created before multi-region support):
+		// synthesize the one entry from Location so every array is still populated.
+		locations = []dbdriver.AccountLocation{{Name: location, FailoverPriority: 0}}
+	}
+
+	all := toArmLocations(name, locations)
+	writeLocs := writeLocations(name, locations, attrs.EnableMultipleWriteLocations)
+
 	return armAccount{
 		ID:       azurearm.BuildResourceID(subscription, attrs.ResourceGroup, providerName, resourceType, name),
 		Name:     name,
@@ -282,12 +297,153 @@ func renderAccount(subscription, name string, attrs dbdriver.AccountAttributes) 
 			Capabilities:             toCapabilities(attrs.Capabilities),
 			ProvisioningState:        "Succeeded",
 			DocumentEndpoint:         documentEndpoint(name),
-			Locations:                []armLocation{regionEntry(name, location)},
-			ReadLocations:            []armLocation{regionEntry(name, location)},
-			WriteLocations:           []armLocation{regionEntry(name, location)},
-			FailoverPolicies:         []armFailover{failoverEntry(name, location)},
+			Locations:                all,
+			ReadLocations:            all,
+			WriteLocations:           writeLocs,
+			FailoverPolicies:         toFailoverPolicies(name, locations),
 		},
 	}
+}
+
+// toAccountLocations converts the ARM create-request locations into the
+// driver's provider-agnostic AccountLocation list. Real clients always send
+// an explicit failoverPriority per entry (see the armcosmos Location docs),
+// so no ordering inference is needed here.
+func toAccountLocations(locs []armLocation) []dbdriver.AccountLocation {
+	if len(locs) == 0 {
+		return nil
+	}
+
+	out := make([]dbdriver.AccountLocation, 0, len(locs))
+
+	for _, l := range locs {
+		if l.LocationName == "" {
+			continue
+		}
+
+		out = append(out, dbdriver.AccountLocation{
+			Name:             l.LocationName,
+			FailoverPriority: l.FailoverPriority,
+			IsZoneRedundant:  l.IsZoneRedundant,
+		})
+	}
+
+	return out
+}
+
+// sortedLocations returns locs ordered by ascending failover priority
+// (priority 0 — the write region — first), matching how Azure orders every
+// location array it returns.
+func sortedLocations(locs []dbdriver.AccountLocation) []dbdriver.AccountLocation {
+	out := make([]dbdriver.AccountLocation, len(locs))
+	copy(out, locs)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].FailoverPriority < out[j].FailoverPriority })
+
+	return out
+}
+
+// toArmLocations renders every declared region as an armLocation entry,
+// ordered by failover priority — the shape shared by properties.locations
+// and properties.readLocations (every region is readable).
+func toArmLocations(name string, locs []dbdriver.AccountLocation) []armLocation {
+	sorted := sortedLocations(locs)
+	out := make([]armLocation, 0, len(sorted))
+
+	for _, l := range sorted {
+		out = append(out, armLocation{
+			ID:                name + "-" + l.Name,
+			LocationName:      l.Name,
+			DocumentEndpoint:  "https://" + name + "-" + l.Name + ".documents.azure.com:443/",
+			ProvisioningState: "Succeeded",
+			FailoverPriority:  l.FailoverPriority,
+			IsZoneRedundant:   l.IsZoneRedundant,
+		})
+	}
+
+	return out
+}
+
+// writeLocations returns the regions that accept writes: every region when
+// multi-write is enabled, otherwise only the single failoverPriority-0 region.
+func writeLocations(name string, locs []dbdriver.AccountLocation, multiWrite bool) []armLocation {
+	if multiWrite {
+		return toArmLocations(name, locs)
+	}
+
+	sorted := sortedLocations(locs)
+	if len(sorted) == 0 {
+		return nil
+	}
+
+	return toArmLocations(name, sorted[:1])
+}
+
+// toFailoverPolicies renders properties.failoverPolicies: every region,
+// ordered by failover priority.
+func toFailoverPolicies(name string, locs []dbdriver.AccountLocation) []armFailover {
+	sorted := sortedLocations(locs)
+	out := make([]armFailover, 0, len(sorted))
+
+	for _, l := range sorted {
+		out = append(out, armFailover{
+			ID:               name + "-" + l.Name,
+			LocationName:     l.Name,
+			FailoverPriority: l.FailoverPriority,
+		})
+	}
+
+	return out
+}
+
+// failoverPriorityChange reorders an account's failover priorities. Real
+// Azure runs this as a long-running operation and only accepts a 202 or 204
+// response (200 fails client-side response validation); the emulator
+// completes it synchronously with an empty 204 so the SDK's poller
+// terminates on the first response.
+func (h *Handler) failoverPriorityChange(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if h.attrs == nil {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "account attributes unavailable")
+		return
+	}
+
+	var body armFailoverPolicies
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	attrs, err := h.attrs.TableAttributes(r.Context(), rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	reordered := make([]dbdriver.AccountLocation, 0, len(body.FailoverPolicies))
+
+	for _, fp := range body.FailoverPolicies {
+		if fp.LocationName == "" {
+			continue
+		}
+
+		loc := dbdriver.AccountLocation{Name: fp.LocationName, FailoverPriority: fp.FailoverPriority}
+
+		for _, existing := range attrs.Locations {
+			if strings.EqualFold(existing.Name, fp.LocationName) {
+				loc.IsZoneRedundant = existing.IsZoneRedundant
+				break
+			}
+		}
+
+		reordered = append(reordered, loc)
+	}
+
+	attrs.Locations = reordered
+	if len(reordered) > 0 {
+		attrs.Location = sortedLocations(reordered)[0].Name
+	}
+
+	h.attrs.SetTableAttributes(rp.ResourceName, attrs)
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func kindOrDefault(kind string) string {
@@ -324,26 +480,6 @@ func accountRegion(props *armAccountCreateProps) string {
 // documentEndpoint is the account's global connection endpoint.
 func documentEndpoint(name string) string {
 	return "https://" + name + ".documents.azure.com:443/"
-}
-
-// regionEntry builds a single-region Location record for the account's
-// read/write/location arrays.
-func regionEntry(name, location string) armLocation {
-	return armLocation{
-		ID:                name + "-" + location,
-		LocationName:      location,
-		DocumentEndpoint:  "https://" + name + "-" + location + ".documents.azure.com:443/",
-		ProvisioningState: "Succeeded",
-		FailoverPriority:  0,
-	}
-}
-
-func failoverEntry(name, location string) armFailover {
-	return armFailover{
-		ID:               name + "-" + location,
-		LocationName:     location,
-		FailoverPriority: 0,
-	}
 }
 
 func capabilityNames(caps []armCapability) []string {

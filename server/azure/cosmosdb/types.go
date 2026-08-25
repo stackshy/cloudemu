@@ -27,14 +27,31 @@ type databasesList struct {
 
 type containerResource struct {
 	resource
-	Docs            string           `json:"_docs,omitempty"`
-	Sprocs          string           `json:"_sprocs,omitempty"`
-	Triggers        string           `json:"_triggers,omitempty"`
-	UDFs            string           `json:"_udfs,omitempty"`
-	Conflicts       string           `json:"_conflicts,omitempty"`
-	PartitionKey    *partitionKeyDef `json:"partitionKey,omitempty"`
-	IndexingPolicy  map[string]any   `json:"indexingPolicy,omitempty"`
-	UniqueKeyPolicy map[string]any   `json:"uniqueKeyPolicy,omitempty"`
+	Docs           string           `json:"_docs,omitempty"`
+	Sprocs         string           `json:"_sprocs,omitempty"`
+	Triggers       string           `json:"_triggers,omitempty"`
+	UDFs           string           `json:"_udfs,omitempty"`
+	Conflicts      string           `json:"_conflicts,omitempty"`
+	PartitionKey   *partitionKeyDef `json:"partitionKey,omitempty"`
+	IndexingPolicy map[string]any   `json:"indexingPolicy,omitempty"`
+	// DefaultTTL is ContainerProperties.DefaultTimeToLive: nil means TTL is
+	// disabled for the container (the real API's default), -1 means enabled
+	// with no automatic expiry (an item's own "ttl" can still opt in), and a
+	// positive value is the default expiry in seconds since last modified.
+	DefaultTTL      *int32           `json:"defaultTtl,omitempty"`
+	UniqueKeyPolicy *uniqueKeyPolicy `json:"uniqueKeyPolicy,omitempty"`
+}
+
+// uniqueKeyPolicy is the Cosmos UniqueKeyPolicy wire shape: a set of unique
+// key constraints, each scoped to a single partition-key value.
+type uniqueKeyPolicy struct {
+	UniqueKeys []uniqueKeyDef `json:"uniqueKeys,omitempty"`
+}
+
+// uniqueKeyDef is one compound unique-key constraint: the tuple of document
+// paths (e.g. "/email") that together must be unique within a partition.
+type uniqueKeyDef struct {
+	Paths []string `json:"paths"`
 }
 
 type partitionKeyDef struct {

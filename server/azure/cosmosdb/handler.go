@@ -64,6 +64,16 @@ type Handler struct {
 	// each database an isolated container namespace.
 	dbMu      sync.RWMutex
 	databases map[string]struct{}
+
+	// attrs tracks the Cosmos-only container properties the generic driver has
+	// no concept of (default TTL, unique key policy) plus the per-item TTL
+	// bookkeeping needed to enforce it. See container_attrs.go.
+	attrs *attrsStore
+
+	// writeMu serializes item mutations and TTL reaping per container. A create's
+	// uniqueness check and its insert must be one uninterruptible step (see
+	// keyedMutex), and a lazy TTL sweep must not race a concurrent write.
+	writeMu *keyedMutex
 }
 
 // New returns a Cosmos handler backed by db.
@@ -72,6 +82,8 @@ func New(db dbdriver.Database) *Handler {
 		db:        db,
 		offers:    make(map[string]offerState),
 		databases: make(map[string]struct{}),
+		attrs:     newAttrsStore(),
+		writeMu:   newKeyedMutex(),
 	}
 }
 
@@ -240,6 +252,13 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request) {
 	h.databases[body.ID] = struct{}{}
 	h.dbMu.Unlock()
 
+	// A database created with ThroughputProperties (shared, database-level
+	// provisioned throughput) gets its own offer, keyed by the same _rid
+	// makeDatabaseResource assigns it — recordOffer's containerRID(id) derives
+	// exactly that "rid-{id}" key, so ReadThroughput round-trips without a
+	// container ever having been created.
+	h.recordOffer(body.ID, r)
+
 	writeJSON(w, http.StatusCreated, makeDatabaseResource(body.ID))
 }
 
@@ -307,8 +326,10 @@ func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, db stri
 		}
 
 		h.deleteOffer(t)
+		h.attrs.delete(t)
 	}
 
+	h.deleteOffer(db) // the database's own shared-throughput offer, if any
 	h.dbMu.Lock()
 	delete(h.databases, db)
 	h.dbMu.Unlock()
@@ -364,9 +385,11 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, db str
 		return
 	}
 
-	h.recordOffer(qualify(db, body.ID), r)
+	table := qualify(db, body.ID)
+	h.recordOffer(table, r)
+	h.attrs.set(table, body.DefaultTTL, body.UniqueKeyPolicy)
 
-	writeJSON(w, http.StatusCreated, makeContainerResource(db, body.ID, body.PartitionKey))
+	writeJSON(w, http.StatusCreated, makeContainerResource(db, body.ID, body.PartitionKey, body.DefaultTTL, body.UniqueKeyPolicy))
 }
 
 func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db string) {
@@ -398,8 +421,9 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, db stri
 			pk = &partitionKeyDef{Paths: []string{"/" + cfg.PartitionKey}, Kind: "Hash"}
 		}
 
+		attrs := h.attrs.get(t)
 		out.DocumentCollections = append(out.DocumentCollections,
-			makeContainerResource(db, coll, pk))
+			makeContainerResource(db, coll, pk, attrs.defaultTTL, uniqueKeyPolicyFromDef(attrs.uniqueKeys)))
 	}
 
 	out.Count = len(out.DocumentCollections)
@@ -423,7 +447,8 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 			pk = &partitionKeyDef{Paths: []string{"/" + cfg.PartitionKey}, Kind: "Hash"}
 		}
 
-		writeJSON(w, http.StatusOK, makeContainerResource(db, coll, pk))
+		attrs := h.attrs.get(table)
+		writeJSON(w, http.StatusOK, makeContainerResource(db, coll, pk, attrs.defaultTTL, uniqueKeyPolicyFromDef(attrs.uniqueKeys)))
 	case http.MethodDelete:
 		if err := h.db.DeleteTable(r.Context(), table); err != nil {
 			writeErr(w, err)
@@ -431,6 +456,7 @@ func (h *Handler) containerResource(w http.ResponseWriter, r *http.Request, db, 
 		}
 
 		h.deleteOffer(table)
+		h.attrs.delete(table)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
@@ -474,21 +500,76 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, coll st
 		return
 	}
 
-	// A plain create (not an upsert) must fail if a document with the same
-	// (partition key, id) already exists, matching real Cosmos's 409 Conflict.
-	if !isUpsert(r) && h.documentExists(r.Context(), coll, cfg, item) {
-		writeError(w, http.StatusConflict, "Conflict",
-			"Resource with specified id or name already exists.")
-		return
-	}
-
-	if err := h.db.PutItem(r.Context(), coll, item); err != nil {
+	if err := h.insertDocument(r.Context(), coll, cfg, item, isUpsert(r)); err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	addSystemProps(item)
 	writeJSON(w, http.StatusCreated, item)
+}
+
+// insertDocument performs the duplicate-id check, unique-key check and PutItem
+// as one atomic step under the container's write lock, so two concurrent
+// creates carrying the same (partition, unique-key value) cannot both pass the
+// checks and both insert. On upsert the duplicate-id check is skipped (create
+// becomes create-or-replace). Conflicts are returned as AlreadyExists so the
+// wire layer maps them to a 409.
+func (h *Handler) insertDocument(
+	ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any, upsert bool,
+) error {
+	unlock := h.writeMu.lock(coll)
+	defer unlock()
+
+	// A plain create (not an upsert) must fail if a document with the same
+	// (partition key, id) already exists, matching real Cosmos's 409 Conflict.
+	if !upsert && h.documentExists(ctx, coll, cfg, item) {
+		return cerrors.New(cerrors.AlreadyExists, "Resource with specified id or name already exists.")
+	}
+
+	if err := h.checkUniqueKeys(ctx, coll, cfg, item); err != nil {
+		return err
+	}
+
+	if err := h.db.PutItem(ctx, coll, item); err != nil {
+		return err
+	}
+
+	h.attrs.recordWrite(coll, cfg, item)
+
+	return nil
+}
+
+// replaceDocument overwrites a document and refreshes its TTL bookkeeping under
+// the container's write lock, so a concurrent TTL reap cannot delete the item
+// between the write and the expiry update.
+func (h *Handler) replaceDocument(ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any) error {
+	unlock := h.writeMu.lock(coll)
+	defer unlock()
+
+	if err := h.db.PutItem(ctx, coll, item); err != nil {
+		return err
+	}
+
+	h.attrs.recordWrite(coll, cfg, item)
+
+	return nil
+}
+
+// deleteDocument removes a document and its TTL bookkeeping under the
+// container's write lock, keeping the delete and forget serialized against
+// creates, replaces and TTL reaps.
+func (h *Handler) deleteDocument(ctx context.Context, coll string, cfg *dbdriver.TableConfig, keyMap map[string]any) error {
+	unlock := h.writeMu.lock(coll)
+	defer unlock()
+
+	if err := h.db.DeleteItem(ctx, coll, keyMap); err != nil {
+		return err
+	}
+
+	h.attrs.forget(coll, cfg, keyMap)
+
+	return nil
 }
 
 // documentExists reports whether a document with item's (partition key, id)
@@ -504,6 +585,88 @@ func (h *Handler) documentExists(
 	_, err := h.db.GetItem(ctx, coll, key)
 
 	return err == nil
+}
+
+// readDocument serves the GET case of documentResource: a point read that
+// also enforces per-item TTL, lazily reaping an expired document the same way
+// a real Cosmos TTL background sweep would already have removed it.
+func (h *Handler) readDocument(w http.ResponseWriter, r *http.Request, coll string, cfg *dbdriver.TableConfig, keyMap map[string]any) {
+	item, expired, err := h.pointRead(r.Context(), coll, cfg, keyMap)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if expired {
+		writeError(w, http.StatusNotFound, "NotFound", "item not found")
+		return
+	}
+
+	addSystemProps(item)
+	writeJSON(w, http.StatusOK, item)
+}
+
+// pointRead fetches a document and, when its TTL has elapsed, reaps it under the
+// container's write lock (reporting expired=true) so the read-time expiry check
+// and the delete are atomic against a concurrent create/replace.
+func (h *Handler) pointRead(
+	ctx context.Context, coll string, cfg *dbdriver.TableConfig, keyMap map[string]any,
+) (item map[string]any, expired bool, err error) {
+	unlock := h.writeMu.lock(coll)
+	defer unlock()
+
+	item, err = h.db.GetItem(ctx, coll, keyMap)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if h.attrs.expired(coll, cfg, item) {
+		h.reapExpired(ctx, coll, cfg, item)
+		return nil, true, nil
+	}
+
+	return item, false, nil
+}
+
+// dropExpired filters out items whose TTL has elapsed AND reaps them from the
+// store — deleting the document and forgetting its TTL bookkeeping — matching a
+// real Cosmos TTL background sweep, which does not merely hide expired items but
+// removes them. Reaping runs under the container's write lock so a document a
+// concurrent create/replace just wrote is never mistaken for the expired one
+// and deleted.
+func (h *Handler) dropExpired(ctx context.Context, coll string, items []map[string]any) []map[string]any {
+	cfg, err := h.db.DescribeTable(ctx, coll)
+	if err != nil || cfg == nil {
+		return items
+	}
+
+	unlock := h.writeMu.lock(coll)
+	defer unlock()
+
+	out := make([]map[string]any, 0, len(items))
+
+	for _, it := range items {
+		if h.attrs.expired(coll, cfg, it) {
+			h.reapExpired(ctx, coll, cfg, it)
+			continue
+		}
+
+		out = append(out, it)
+	}
+
+	return out
+}
+
+// reapExpired deletes an expired document from the store and forgets its TTL
+// bookkeeping. The caller must already hold the container's write lock.
+func (h *Handler) reapExpired(ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any) {
+	key := map[string]any{idAttr: item[idAttr]}
+	if cfg.PartitionKey != "" && cfg.PartitionKey != idAttr {
+		key[cfg.PartitionKey] = item[cfg.PartitionKey]
+	}
+
+	_ = h.db.DeleteItem(ctx, coll, key)
+	h.attrs.forget(coll, cfg, item)
 }
 
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll string) {
@@ -527,11 +690,13 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll str
 		return
 	}
 
-	docs := make([]any, 0, len(result.Items))
+	items := h.dropExpired(r.Context(), coll, result.Items)
 
-	for i := range result.Items {
-		addSystemProps(result.Items[i])
-		docs = append(docs, result.Items[i])
+	docs := make([]any, 0, len(items))
+
+	for i := range items {
+		addSystemProps(items[i])
+		docs = append(docs, items[i])
 	}
 
 	if result.NextPageToken != "" {
@@ -541,7 +706,7 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll str
 	writeJSON(w, http.StatusOK, documentsList{
 		RID:       "cloudemu",
 		Documents: docs,
-		Count:     result.Count,
+		Count:     len(docs),
 	})
 }
 
@@ -564,7 +729,9 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 		return
 	}
 
-	matched, ferr := cosmosFilter(result.Items, stmt.Where)
+	items := h.dropExpired(r.Context(), coll, result.Items)
+
+	matched, ferr := cosmosFilter(items, stmt.Where)
 	if ferr != nil {
 		writeErr(w, ferr)
 		return
@@ -595,14 +762,7 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, db, c
 
 	switch r.Method {
 	case http.MethodGet:
-		item, err := h.db.GetItem(r.Context(), coll, keyMap)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		addSystemProps(item)
-		writeJSON(w, http.StatusOK, item)
+		h.readDocument(w, r, coll, cfg, keyMap)
 	case http.MethodPut:
 		// Replace document.
 		item, ok := decodeAnyJSON(w, r)
@@ -614,7 +774,7 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, db, c
 			item[idAttr] = id
 		}
 
-		if err := h.db.PutItem(r.Context(), coll, item); err != nil {
+		if err := h.replaceDocument(r.Context(), coll, cfg, item); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -622,7 +782,7 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, db, c
 		addSystemProps(item)
 		writeJSON(w, http.StatusOK, item)
 	case http.MethodDelete:
-		if err := h.db.DeleteItem(r.Context(), coll, keyMap); err != nil {
+		if err := h.deleteDocument(r.Context(), coll, cfg, keyMap); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -720,7 +880,7 @@ func makeDatabaseResource(id string) databaseResource {
 	}
 }
 
-func makeContainerResource(db, id string, pk *partitionKeyDef) containerResource {
+func makeContainerResource(db, id string, pk *partitionKeyDef, defaultTTL *int32, uk *uniqueKeyPolicy) containerResource {
 	// The container's _rid doubles as its offer resource id: the SDK reads _rid
 	// off the container, then queries /offers by it. Qualifying by database keeps
 	// the offer key unique across databases (see recordOffer / qualify).
@@ -739,13 +899,27 @@ func makeContainerResource(db, id string, pk *partitionKeyDef) containerResource
 			TS:    time.Now().Unix(),
 			Attac: "attachments/",
 		},
-		Docs:         "docs/",
-		Sprocs:       "sprocs/",
-		Triggers:     "triggers/",
-		UDFs:         "udfs/",
-		Conflicts:    "conflicts/",
-		PartitionKey: pk,
+		Docs:            "docs/",
+		Sprocs:          "sprocs/",
+		Triggers:        "triggers/",
+		UDFs:            "udfs/",
+		Conflicts:       "conflicts/",
+		PartitionKey:    pk,
+		DefaultTTL:      defaultTTL,
+		UniqueKeyPolicy: uk,
 	}
+}
+
+// uniqueKeyPolicyFromDef re-wraps the attrsStore's flat []uniqueKeyDef back
+// into the wire uniqueKeyPolicy shape for a Read/List response; nil when the
+// container declared no unique keys, so the field is omitted rather than
+// echoed as an empty policy.
+func uniqueKeyPolicyFromDef(keys []uniqueKeyDef) *uniqueKeyPolicy {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	return &uniqueKeyPolicy{UniqueKeys: keys}
 }
 
 func addSystemProps(item map[string]any) {

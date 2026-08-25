@@ -280,6 +280,15 @@ type IndexInfo struct {
 	Status       string // "ACTIVE", "CREATING", "DELETING"
 }
 
+// AccountLocation is one region entry in a Cosmos account's declared
+// topology, mirroring the ARM `Location` shape (locationName +
+// failoverPriority + isZoneRedundant) without depending on any ARM wire type.
+type AccountLocation struct {
+	Name             string // region name, e.g. "westus2"
+	FailoverPriority int32  // 0 = write region; must be unique per account
+	IsZoneRedundant  bool
+}
+
 // AccountAttributes are the Cosmos-DB-account cost/identity attributes a real
 // Azure `documentdb/databaseaccounts` resource carries but a DynamoDB/Firestore
 // table does not. Surfaced through the optional TableAttributes capability.
@@ -288,9 +297,17 @@ type AccountAttributes struct {
 	OfferType      string            // databaseAccountOfferType (Standard)
 	EnableFreeTier bool              // free-tier flag (cost)
 	Capabilities   []string          // e.g. EnableServerless (cost)
-	Location       string            // creation region (e.g. eastus)
+	Location       string            // creation region (e.g. eastus) — first/write location
 	ResourceGroup  string            // owning resource group (for byRG listing)
 	Tags           map[string]string // user-supplied resource tags
+	// Locations is the full multi-region topology declared at create time (or
+	// last reordered by failoverPriorityChange). Locations/readLocations/
+	// writeLocations/failoverPolicies are all derived from this one list.
+	// Empty means the account is single-region, using Location above.
+	Locations []AccountLocation
+	// EnableMultipleWriteLocations mirrors the ARM property of the same name:
+	// when true every declared location accepts writes, not just priority 0.
+	EnableMultipleWriteLocations bool
 }
 
 // TableAttributes is an OPTIONAL capability, discovered by type assertion (like
