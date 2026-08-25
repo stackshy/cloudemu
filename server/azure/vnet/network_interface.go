@@ -36,11 +36,12 @@ type nicIPConfigRequest struct {
 }
 
 type nicIPConfigRequestProps struct {
-	PrivateIPAddress          string    `json:"privateIPAddress,omitempty"`
-	PrivateIPAllocationMethod string    `json:"privateIPAllocationMethod,omitempty"`
-	Primary                   bool      `json:"primary,omitempty"`
-	Subnet                    *armIDRef `json:"subnet,omitempty"`
-	PublicIPAddress           *armIDRef `json:"publicIPAddress,omitempty"`
+	PrivateIPAddress                string     `json:"privateIPAddress,omitempty"`
+	PrivateIPAllocationMethod       string     `json:"privateIPAllocationMethod,omitempty"`
+	Primary                         bool       `json:"primary,omitempty"`
+	Subnet                          *armIDRef  `json:"subnet,omitempty"`
+	PublicIPAddress                 *armIDRef  `json:"publicIPAddress,omitempty"`
+	LoadBalancerBackendAddressPools []armIDRef `json:"loadBalancerBackendAddressPools,omitempty"`
 }
 
 type armIDRef struct {
@@ -73,12 +74,13 @@ type nicIPConfigResponse struct {
 }
 
 type nicIPConfigResponseProps struct {
-	ProvisioningState         string    `json:"provisioningState"`
-	PrivateIPAddress          string    `json:"privateIPAddress,omitempty"`
-	PrivateIPAllocationMethod string    `json:"privateIPAllocationMethod"`
-	Primary                   bool      `json:"primary"`
-	Subnet                    *armIDRef `json:"subnet,omitempty"`
-	PublicIPAddress           *armIDRef `json:"publicIPAddress,omitempty"`
+	ProvisioningState               string     `json:"provisioningState"`
+	PrivateIPAddress                string     `json:"privateIPAddress,omitempty"`
+	PrivateIPAllocationMethod       string     `json:"privateIPAllocationMethod"`
+	Primary                         bool       `json:"primary"`
+	Subnet                          *armIDRef  `json:"subnet,omitempty"`
+	PublicIPAddress                 *armIDRef  `json:"publicIPAddress,omitempty"`
+	LoadBalancerBackendAddressPools []armIDRef `json:"loadBalancerBackendAddressPools,omitempty"`
 }
 
 type nicListResponse struct {
@@ -265,6 +267,7 @@ func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []n
 			PrivateIP:        p.PrivateIPAddress,
 			AllocationMethod: p.PrivateIPAllocationMethod,
 			Primary:          p.Primary,
+			LBBackendPoolIDs: backendPoolIDs(p.LoadBalancerBackendAddressPools),
 		}
 
 		if p.Subnet != nil {
@@ -300,6 +303,30 @@ func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []n
 	}
 
 	return out, nil
+}
+
+// backendPoolIDs extracts the referenced load-balancer backend-pool ARM ids
+// from an ipConfiguration's loadBalancerBackendAddressPools, dropping empty
+// references. It returns nil when none are present so an unassociated
+// ipConfiguration carries no membership.
+func backendPoolIDs(refs []armIDRef) []string {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(refs))
+
+	for i := range refs {
+		if refs[i].ID != "" {
+			out = append(out, refs[i].ID)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // checkPublicIPNotAttached rejects attaching armID to (rg, nicName) when it is
@@ -412,6 +439,11 @@ func toNICResponse(nic *netdriver.AzureNIC, rp azurearm.ResourcePath) nicRespons
 
 		if c.PublicIPID != "" {
 			rc.Properties.PublicIPAddress = &armIDRef{ID: c.PublicIPID}
+		}
+
+		for _, poolID := range c.LBBackendPoolIDs {
+			rc.Properties.LoadBalancerBackendAddressPools = append(
+				rc.Properties.LoadBalancerBackendAddressPools, armIDRef{ID: poolID})
 		}
 
 		out.Properties.IPConfigurations = append(out.Properties.IPConfigurations, rc)

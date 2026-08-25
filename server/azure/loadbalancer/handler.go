@@ -55,22 +55,78 @@
 package loadbalancer
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Handler serves Microsoft.Network/loadBalancers ARM requests against a
 // loadbalancer driver.
 type Handler struct {
 	lb lbdriver.LoadBalancer
+	// nics resolves NIC ipConfigurations so a backend address pool can project
+	// its read-only backendIPConfigurations from the NIC side of the
+	// association. Optional: nil when the networking driver is absent, in which
+	// case pools report no members. Wired via SetNICResolver.
+	nics netdriver.AzureNetworkInterfaces
 }
 
 // New returns an Azure Load Balancer handler backed by lb.
 func New(lb lbdriver.LoadBalancer) *Handler {
 	return &Handler{lb: lb}
+}
+
+// SetNICResolver wires the Azure network-interface surface so a backend
+// address pool can project the ipConfigurations that reference it into its
+// read-only backendIPConfigurations. Without it, pools resolve with no members.
+func (h *Handler) SetNICResolver(nics netdriver.AzureNetworkInterfaces) {
+	h.nics = nics
+}
+
+// poolMembers builds a lookup from a backend address pool's ARM id (lower-cased,
+// since ARM ids are case-insensitive) to the ipConfiguration ARM ids that have
+// joined it, scanning every NIC's stored loadBalancerBackendAddressPools. It
+// returns nil when no NIC resolver is wired, so pools simply carry no members.
+func (h *Handler) poolMembers(ctx context.Context, subscription string) map[string][]string {
+	if h.nics == nil {
+		return nil
+	}
+
+	nics, err := h.nics.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return nil
+	}
+
+	members := make(map[string][]string)
+
+	for i := range nics {
+		nic := &nics[i]
+
+		for j := range nic.IPConfigs {
+			cfg := &nic.IPConfigs[j]
+			ipCfgID := nicIPConfigID(subscription, nic.ResourceGroup, nic.Name, cfg.Name)
+
+			for _, poolID := range cfg.LBBackendPoolIDs {
+				key := strings.ToLower(poolID)
+				members[key] = append(members[key], ipCfgID)
+			}
+		}
+	}
+
+	return members
+}
+
+// nicIPConfigID builds the nested ARM resource id of a NIC ipConfiguration,
+// used as a backend address pool's backendIPConfigurations reference.
+func nicIPConfigID(subscription, resourceGroup, nicName, configName string) string {
+	return "/subscriptions/" + subscription +
+		"/resourceGroups/" + resourceGroup +
+		"/providers/" + providerName + "/networkInterfaces/" +
+		nicName + "/ipConfigurations/" + configName
 }
 
 // isLBsType reports whether the ARM resource type is loadBalancers,

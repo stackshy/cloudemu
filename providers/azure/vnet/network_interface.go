@@ -326,7 +326,8 @@ func (m *Mock) usedPrivateIPs(subnetID, selfKey string) map[string]bool {
 			continue
 		}
 
-		for _, ipc := range nic.IPConfigs {
+		for i := range nic.IPConfigs {
+			ipc := &nic.IPConfigs[i]
 			if ipc.SubnetID == subnetID && ipc.PrivateIP != "" {
 				used[ipc.PrivateIP] = true
 			}
@@ -355,6 +356,12 @@ func addHost(base net.IP, n int) net.IP {
 func toAzureNIC(n *nicData) driver.AzureNIC {
 	configs := make([]driver.AzureIPConfig, len(n.IPConfigs))
 	copy(configs, n.IPConfigs)
+
+	// Deep-copy each ipConfiguration's backend-pool membership so a caller
+	// mutating the returned slice cannot reach back into stored state.
+	for i := range configs {
+		configs[i].LBBackendPoolIDs = append([]string(nil), n.IPConfigs[i].LBBackendPoolIDs...)
+	}
 
 	return driver.AzureNIC{
 		Name:                   n.Name,

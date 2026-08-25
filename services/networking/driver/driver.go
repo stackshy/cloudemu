@@ -379,6 +379,14 @@ type AzureIPConfig struct {
 	AllocationMethod string // "Dynamic" (default) or "Static"
 	PublicIPID       string // ARM resource id of an associated public IP, optional
 	Primary          bool
+	// LBBackendPoolIDs are the ARM resource ids of the load-balancer backend
+	// address pools this ipConfiguration has joined
+	// (properties.loadBalancerBackendAddressPools). This is the single source of
+	// truth for NIC↔LB backend-pool membership: the NIC echoes these back on
+	// GET, and a load balancer projects each backend pool's read-only
+	// backendIPConfigurations by reverse-lookup against this field, so both
+	// sides of the association resolve consistently from one stored reference.
+	LBBackendPoolIDs []string
 }
 
 // AzureNICConfig is the create-or-update payload for an Azure network interface.

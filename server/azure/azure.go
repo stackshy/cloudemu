@@ -283,7 +283,16 @@ func New(d Drivers) http.Handler {
 	// locations / dnsZones), so registration order relative to them is
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.LB != nil {
-		srv.Register(lbsrv.New(d.LB))
+		lbHandler := lbsrv.New(d.LB)
+
+		// Project a backend address pool's read-only backendIPConfigurations from
+		// the NIC side of the association, so NIC↔LB pool membership reflects on
+		// both sides. Only wired when the networking driver exposes NICs.
+		if nics, ok := d.Network.(netdriver.AzureNetworkInterfaces); ok {
+			lbHandler.SetNICResolver(nics)
+		}
+
+		srv.Register(lbHandler)
 	}
 
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
