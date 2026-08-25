@@ -44,6 +44,35 @@ type AzureNSGMetadata struct {
 	SecurityRules []AzureNSGRule
 }
 
+// Azure virtual-network peering states, matching Microsoft.Network's
+// VirtualNetworkPeeringState. A peering reports Initiated until its
+// reciprocal peering (a peering on the remote VNet pointing back at this
+// one) also exists, at which point both report Connected. See "Virtual
+// network peering" (learn.microsoft.com/azure/virtual-network/
+// virtual-network-peering-overview) and the VirtualNetworkPeeringPropertiesFormat
+// REST shape (learn.microsoft.com/rest/api/virtualnetwork/virtual-network-peerings/create-or-update).
+const (
+	AzurePeeringStateInitiated    = "Initiated"
+	AzurePeeringStateConnected    = "Connected"
+	AzurePeeringStateDisconnected = "Disconnected"
+)
+
+// AzureVNetPeering is one Azure virtualNetworkPeerings sub-resource: a
+// one-sided link from its parent virtual network to a remote one. Unlike the
+// cross-cloud PeeringConnection (a single symmetric object linking two VPCs),
+// ARM models each direction of a VNet peering as its own resource, addressed
+// by (parent VNet, peering name) and carrying its own traffic/gateway flags.
+type AzureVNetPeering struct {
+	Name                      string
+	RemoteVirtualNetworkID    string
+	RemoteAddressSpace        []string
+	AllowVirtualNetworkAccess bool
+	AllowForwardedTraffic     bool
+	AllowGatewayTransit       bool
+	UseRemoteGateways         bool
+	PeeringState              string
+}
+
 // AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 // provider stores the ARM-specific virtual-network and network-security-group
 // fields the cross-cloud Networking interface cannot represent, keyed by the
@@ -67,4 +96,26 @@ type AzureNetworkMetadata interface {
 	// every sibling rule untouched. Returns NotFound when either the network
 	// security group or the named rule doesn't exist.
 	DeleteAzureNSGRule(ctx context.Context, id string, ruleName string) error
+
+	// UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings
+	// sub-resource by name on the VNet with the given driver id, leaving every
+	// sibling peering untouched — the atomic read-modify-write the peerings
+	// sub-resource CRUD needs. Returns NotFound when the virtual network itself
+	// doesn't exist.
+	UpsertAzureVNetPeering(ctx context.Context, vnetID string, peering AzureVNetPeering) (AzureVNetPeering, error)
+	// GetAzureVNetPeering returns one stored peering by name.
+	GetAzureVNetPeering(ctx context.Context, vnetID, peeringName string) (AzureVNetPeering, bool)
+	// ListAzureVNetPeerings returns every peering stored for a VNet, ordered by
+	// name.
+	ListAzureVNetPeerings(ctx context.Context, vnetID string) []AzureVNetPeering
+	// DeleteAzureVNetPeering removes a single peering by name, leaving every
+	// sibling peering untouched. Returns NotFound when either the virtual
+	// network or the named peering doesn't exist.
+	DeleteAzureVNetPeering(ctx context.Context, vnetID, peeringName string) error
+	// SetAzureVNetPeeringState atomically updates just the peeringState field of
+	// one stored peering, used to sync the reciprocal side of a two-way peering
+	// once it also exists, without touching that peering's other properties.
+	// Returns NotFound when either the virtual network or the named peering
+	// doesn't exist.
+	SetAzureVNetPeeringState(ctx context.Context, vnetID, peeringName, state string) error
 }

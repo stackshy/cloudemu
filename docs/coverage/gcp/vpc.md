@@ -89,11 +89,16 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `DeleteAzureNSGMetadata` |  |
 | `DeleteAzureNSGRule` | DeleteAzureNSGRule removes a single custom security rule by name, leaving |
 | `DeleteAzureVNetMetadata` |  |
+| `DeleteAzureVNetPeering` | DeleteAzureVNetPeering removes a single peering by name, leaving every |
 | `GetAzureNSGMetadata` |  |
 | `GetAzureVNetMetadata` |  |
+| `GetAzureVNetPeering` | GetAzureVNetPeering returns one stored peering by name. |
+| `ListAzureVNetPeerings` | ListAzureVNetPeerings returns every peering stored for a VNet, ordered by |
 | `PutAzureNSGMetadata` |  |
 | `PutAzureVNetMetadata` |  |
+| `SetAzureVNetPeeringState` | SetAzureVNetPeeringState atomically updates just the peeringState field of |
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
+| `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 
 ### ClientVPN
 
