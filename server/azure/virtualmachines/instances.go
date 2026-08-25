@@ -294,9 +294,31 @@ func (h *Handler) applyDataDisk(
 			return nil
 		}
 
-		return h.compute.DetachVolume(ctx, volID)
+		if err := h.compute.DetachVolume(ctx, volID); err != nil {
+			return err
+		}
+
+		delete(attached, d.Lun)
+
+		return nil
 	}
 
+	return h.attachDataDisk(ctx, instanceID, d, vols, attached)
+}
+
+// attachDataDisk attaches the managed disk resolveAttachDiskID resolves d to.
+// Real Azure's dataDisks are keyed by lun: re-declaring a lun with a
+// different managedDisk.id implicitly detaches whatever disk currently
+// occupies it (clearing that disk's managedBy/diskState) before attaching the
+// new one, rather than mapping two disks onto one lun. When attached[d.Lun]
+// already holds a different volume, we detach it first and update the attached
+// bookkeeping so the rest of this reconciliation pass (and detachUnlistedDisks)
+// sees the new occupant, not the stale one. A no-op when the resolved disk is
+// already attached at d.Lun, or when d falls into one of resolveAttachDiskID's
+// DEFERRED createOption cases and resolves to "".
+func (h *Handler) attachDataDisk(
+	ctx context.Context, instanceID string, d *dataDisk, vols []computedriver.VolumeInfo, attached map[int]string,
+) error {
 	volID, err := resolveAttachDiskID(d, vols)
 	if err != nil {
 		return err
@@ -306,7 +328,19 @@ func (h *Handler) applyDataDisk(
 		return nil
 	}
 
-	return h.compute.AttachVolume(ctx, volID, instanceID, strconv.Itoa(d.Lun))
+	if prevVolID, ok := attached[d.Lun]; ok && prevVolID != volID {
+		if err := h.compute.DetachVolume(ctx, prevVolID); err != nil {
+			return err
+		}
+	}
+
+	if err := h.compute.AttachVolume(ctx, volID, instanceID, strconv.Itoa(d.Lun)); err != nil {
+		return err
+	}
+
+	attached[d.Lun] = volID
+
+	return nil
 }
 
 // detachUnlistedDisks detaches every attached disk whose LUN is absent from

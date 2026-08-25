@@ -202,6 +202,142 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 	}
 }
 
+// TestSDKVMDataDiskAttach_ReplaceAtSameLUN is the regression test for the
+// LUN-replacement fix: PUTting a VM whose dataDisks references a different
+// managed disk at a LUN that already has one attached must detach the old
+// disk (clearing its managedBy) before attaching the new one, rather than
+// leaving both disks mapped to the same LUN.
+func TestSDKVMDataDiskAttach_ReplaceAtSameLUN(t *testing.T) {
+	vmClient, diskClient := newDataDiskTestServer(t)
+	ctx := context.Background()
+
+	vmPoller, err := vmClient.BeginCreateOrUpdate(ctx, "rg-1", "vm-relun",
+		armcompute.VirtualMachine{
+			Location: to.Ptr("eastus"),
+			Properties: &armcompute.VirtualMachineProperties{
+				HardwareProfile: &armcompute.HardwareProfile{
+					VMSize: to.Ptr(armcompute.VirtualMachineSizeTypesStandardD2SV3),
+				},
+				StorageProfile: &armcompute.StorageProfile{
+					ImageReference: &armcompute.ImageReference{
+						Publisher: to.Ptr("Canonical"), Offer: to.Ptr("UbuntuServer"),
+						SKU: to.Ptr("22.04-LTS"), Version: to.Ptr("latest"),
+					},
+				},
+				OSProfile: &armcompute.OSProfile{ComputerName: to.Ptr("vm-relun"), AdminUsername: to.Ptr("azureuser")},
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate VM: %v", err)
+	}
+
+	if _, err := pollUntilDone(ctx, vmPoller); err != nil {
+		t.Fatalf("CreateOrUpdate VM poll: %v", err)
+	}
+
+	diskA, err := createDataDisk(ctx, t, diskClient, "disk-a")
+	if err != nil {
+		t.Fatalf("create disk-a: %v", err)
+	}
+
+	diskB, err := createDataDisk(ctx, t, diskClient, "disk-b")
+	if err != nil {
+		t.Fatalf("create disk-b: %v", err)
+	}
+
+	// Attach disk A at lun 0.
+	attachPoller, err := vmClient.BeginCreateOrUpdate(ctx, "rg-1", "vm-relun",
+		armcompute.VirtualMachine{
+			Location: to.Ptr("eastus"),
+			Properties: &armcompute.VirtualMachineProperties{
+				HardwareProfile: &armcompute.HardwareProfile{
+					VMSize: to.Ptr(armcompute.VirtualMachineSizeTypesStandardD2SV3),
+				},
+				StorageProfile: &armcompute.StorageProfile{
+					DataDisks: []*armcompute.DataDisk{{
+						Lun:          to.Ptr[int32](0),
+						CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
+						ManagedDisk:  &armcompute.ManagedDiskParameters{ID: diskA.ID},
+					}},
+				},
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate attach disk-a: %v", err)
+	}
+
+	if _, err := pollUntilDone(ctx, attachPoller); err != nil {
+		t.Fatalf("CreateOrUpdate attach disk-a poll: %v", err)
+	}
+
+	// Re-declaring lun 0 with disk B must detach disk A first — not leave
+	// both disks mapped to lun 0.
+	replacePoller, err := vmClient.BeginCreateOrUpdate(ctx, "rg-1", "vm-relun",
+		armcompute.VirtualMachine{
+			Location: to.Ptr("eastus"),
+			Properties: &armcompute.VirtualMachineProperties{
+				HardwareProfile: &armcompute.HardwareProfile{
+					VMSize: to.Ptr(armcompute.VirtualMachineSizeTypesStandardD2SV3),
+				},
+				StorageProfile: &armcompute.StorageProfile{
+					DataDisks: []*armcompute.DataDisk{{
+						Lun:          to.Ptr[int32](0),
+						CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
+						ManagedDisk:  &armcompute.ManagedDiskParameters{ID: diskB.ID},
+					}},
+				},
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate replace lun0 with disk-b: %v", err)
+	}
+
+	got, err := pollUntilDone(ctx, replacePoller)
+	if err != nil {
+		t.Fatalf("CreateOrUpdate replace lun0 poll: %v", err)
+	}
+
+	// Exactly one disk at lun 0.
+	assertDataDiskLUNs(t, got.Properties.StorageProfile, 0)
+
+	if len(got.Properties.StorageProfile.DataDisks) != 1 {
+		t.Fatalf("dataDisks=%d entries, want exactly 1", len(got.Properties.StorageProfile.DataDisks))
+	}
+
+	gotLunDisk := got.Properties.StorageProfile.DataDisks[0]
+	if gotLunDisk.ManagedDisk == nil || gotLunDisk.ManagedDisk.ID == nil || *gotLunDisk.ManagedDisk.ID != *diskB.ID {
+		t.Errorf("lun 0 managedDisk.id=%v, want disk-b %v", gotLunDisk.ManagedDisk, *diskB.ID)
+	}
+
+	// Disk A must be detached: managedBy cleared, diskState back to Unattached.
+	gotDiskA, err := diskClient.Get(ctx, "rg-1", "disk-a", nil)
+	if err != nil {
+		t.Fatalf("Get disk-a: %v", err)
+	}
+
+	if gotDiskA.ManagedBy != nil && *gotDiskA.ManagedBy != "" {
+		t.Errorf("disk-a managedBy=%v after replacement, want empty", *gotDiskA.ManagedBy)
+	}
+
+	if gotDiskA.Properties == nil || gotDiskA.Properties.DiskState == nil || *gotDiskA.Properties.DiskState != armcompute.DiskStateUnattached {
+		t.Errorf("disk-a diskState=%v, want Unattached", diskStateOf(gotDiskA))
+	}
+
+	// Disk B must be attached at lun 0.
+	gotDiskB, err := diskClient.Get(ctx, "rg-1", "disk-b", nil)
+	if err != nil {
+		t.Fatalf("Get disk-b: %v", err)
+	}
+
+	if gotDiskB.ManagedBy == nil || *gotDiskB.ManagedBy != *got.ID {
+		t.Errorf("disk-b managedBy=%v, want %v", derefStr(gotDiskB.ManagedBy), *got.ID)
+	}
+
+	if gotDiskB.Properties == nil || gotDiskB.Properties.DiskState == nil || *gotDiskB.Properties.DiskState != armcompute.DiskStateAttached {
+		t.Errorf("disk-b diskState=%v, want Attached", diskStateOf(gotDiskB))
+	}
+}
+
 func createDataDisk(ctx context.Context, t *testing.T, diskClient *armcompute.DisksClient, name string) (armcompute.Disk, error) {
 	t.Helper()
 
