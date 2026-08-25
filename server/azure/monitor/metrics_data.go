@@ -77,8 +77,11 @@ func localizable(v string) map[string]string {
 
 // timeseriesData builds the datapoint array for one metric, one row per bucket
 // timestamp, carrying every requested aggregation. Buckets are keyed by
-// timestamp so multiple aggregation queries align.
-func (h *MetricsHandler) timeseriesData(ctx context.Context, namespace, name string, aggs []string) []map[string]any {
+// timestamp so multiple aggregation queries align. resourceID scopes the
+// query to the one resource the metrics were requested against (the ARM
+// resourceUri the request path hangs off of) so two resources sharing a
+// namespace+metric name never bleed into each other's datapoints.
+func (h *MetricsHandler) timeseriesData(ctx context.Context, resourceID, namespace, name string, aggs []string) []map[string]any {
 	start := time.Unix(0, 0)
 	end := time.Now().AddDate(wideWindowYears, 0, 0)
 
@@ -90,6 +93,7 @@ func (h *MetricsHandler) timeseriesData(ctx context.Context, namespace, name str
 		res, err := h.mon.GetMetricData(ctx, mondriver.GetMetricInput{
 			Namespace:  namespace,
 			MetricName: name,
+			Dimensions: map[string]string{"resourceId": resourceID},
 			StartTime:  start,
 			EndTime:    end,
 			Period:     defaultIntervalS,

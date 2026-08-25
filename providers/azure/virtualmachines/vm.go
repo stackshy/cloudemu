@@ -170,18 +170,41 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
-func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime string) {
+// armNameTag mirrors server/azure/virtualmachines.armNameTag: the tag key the
+// ARM wire handler stores the caller's ARM resource name under (the driver
+// itself indexes instances by an internally generated id, not the ARM name).
+// It is duplicated here, not imported, because the driver layer must not
+// depend on the wire server layer.
+const armNameTag = "cloudemu:azureName"
+
+// armResourceID builds the full Azure ARM resource id for inst, the same
+// shape (and value) that a real armmonitor client sees in a metrics query's
+// resourceUri path. Metrics are stamped with this as the "resourceId"
+// dimension so Microsoft.Insights/metrics can scope a query to one resource.
+// When inst was created directly through the portable driver (no ARM name
+// tag recorded), the internal instance id is used instead.
+func (m *Mock) armResourceID(inst *instanceData) string {
+	name := inst.Tags[armNameTag]
+	if name == "" {
+		name = inst.ID
+	}
+
+	return idgen.AzureID(m.opts.AccountID, inst.ResourceGroup, "Microsoft.Compute", "virtualMachines", name)
+}
+
+func (m *Mock) emitInstanceMetrics(ctx context.Context, inst *instanceData) {
 	if m.monitoring == nil {
 		return
 	}
 
-	lt, err := time.Parse("2006-01-02T15:04:05Z", launchTime)
+	lt, err := time.Parse("2006-01-02T15:04:05Z", inst.LaunchTime)
 	if err != nil {
 		lt = m.opts.Clock.Now()
 	}
 
 	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
 	values := []float64{25.0, 1024.0, 512.0, 100.0, 50.0}
+	resourceID := m.armResourceID(inst)
 
 	var data []mondriver.MetricDatum
 
@@ -196,7 +219,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 				MetricName: metricName,
 				Value:      values[i],
 				Unit:       "None",
-				Dimensions: map[string]string{"resourceId": instanceID},
+				Dimensions: map[string]string{"resourceId": resourceID},
 				Timestamp:  ts,
 			})
 		}
@@ -205,13 +228,14 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
-func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, values []float64) {
+func (m *Mock) emitLifecycleMetrics(ctx context.Context, inst *instanceData, values []float64) {
 	if m.monitoring == nil {
 		return
 	}
 
 	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
 	now := m.opts.Clock.Now()
+	resourceID := m.armResourceID(inst)
 	data := make([]mondriver.MetricDatum, len(metrics))
 
 	for i, metricName := range metrics {
@@ -220,7 +244,7 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, valu
 			MetricName: metricName,
 			Value:      values[i],
 			Unit:       "None",
-			Dimensions: map[string]string{"resourceId": instanceID},
+			Dimensions: map[string]string{"resourceId": resourceID},
 			Timestamp:  now,
 		}
 	}
@@ -344,7 +368,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		inst.State = compute.StateRunning
 		results = append(results, toInstance(inst))
 		created = append(created, inst)
-		m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
+		m.emitInstanceMetrics(ctx, inst)
 	}
 
 	return results, nil
@@ -387,7 +411,7 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 			inst.PowerState = t.powerState
 		}
 
-		m.emitLifecycleMetrics(ctx, id, t.metricValues)
+		m.emitLifecycleMetrics(ctx, inst, t.metricValues)
 	}
 
 	return nil

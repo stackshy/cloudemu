@@ -91,8 +91,10 @@ func TestMetricAlertPersistence(t *testing.T) {
 		}
 	}`
 
-	if code, _ := doJSON(t, ts, http.MethodPut, url, body); code != http.StatusCreated {
-		t.Fatalf("PUT status = %d, want 201", code)
+	// Metric Alerts - Create Or Update documents a single response, 200 OK,
+	// for both a first create and a subsequent update.
+	if code, _ := doJSON(t, ts, http.MethodPut, url, body); code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200", code)
 	}
 
 	code, got := doJSON(t, ts, http.MethodGet, url, "")
@@ -145,8 +147,8 @@ func TestMetricAlertEvaluatesMetric(t *testing.T) {
 		}
 	}`
 
-	if code, _ := doJSON(t, ts, http.MethodPut, url, body); code != http.StatusCreated {
-		t.Fatalf("PUT status = %d, want 201", code)
+	if code, _ := doJSON(t, ts, http.MethodPut, url, body); code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200", code)
 	}
 
 	// The VM pushes Percentage CPU=25 datapoints, which drives the just-created
@@ -168,6 +170,90 @@ func TestMetricAlertEvaluatesMetric(t *testing.T) {
 
 	if alarms[0].State != "ALARM" {
 		t.Fatalf("alarm state = %q, want ALARM (metric not evaluated)", alarms[0].State)
+	}
+}
+
+// TestMetricAlertActionsWireActionGroup covers the actions finding:
+// properties.actions[].actionGroupId must reach the driver's AlarmActions so
+// a breaching alert can actually notify the linked action group, mirroring
+// the AWS CloudWatch alarm -> SNS AlarmActions wiring.
+func TestMetricAlertActionsWireActionGroup(t *testing.T) {
+	ts, cloudP := newMonitorServer(t)
+	ctx := context.Background()
+
+	const actionGroupID = "/subscriptions/sub-1/resourceGroups/rg-1/providers/microsoft.insights/actionGroups/ag1"
+
+	const url = "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/metricAlerts/cpu-notify" + apiVer
+
+	body := `{
+		"location": "global",
+		"properties": {
+			"windowSize": "PT5M",
+			"actions": [{"actionGroupId": "` + actionGroupID + `", "webHookProperties": {"k": "v"}}],
+			"criteria": {"allOf": [{
+				"metricName": "Percentage CPU",
+				"metricNamespace": "Microsoft.Compute/virtualMachines",
+				"operator": "GreaterThan",
+				"threshold": 20,
+				"timeAggregation": "Average"
+			}]}
+		}
+	}`
+
+	if code, _ := doJSON(t, ts, http.MethodPut, url, body); code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200", code)
+	}
+
+	alarms, err := cloudP.Monitor.DescribeAlarms(ctx, []string{"cpu-notify"})
+	if err != nil {
+		t.Fatalf("DescribeAlarms: %v", err)
+	}
+
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(alarms))
+	}
+
+	if len(alarms[0].AlarmActions) != 1 || alarms[0].AlarmActions[0] != actionGroupID {
+		t.Fatalf("AlarmActions = %v, want [%s] (actionGroupId dropped)", alarms[0].AlarmActions, actionGroupID)
+	}
+}
+
+// TestMetricAlertListScopedToResourceGroup covers the store-isolation finding:
+// a metricAlert created in rg-2 must not appear in a list scoped to rg-1, and
+// a metricAlert of the same name in both resource groups must not collide.
+func TestMetricAlertListScopedToResourceGroup(t *testing.T) {
+	ts, _ := newMonitorServer(t)
+
+	body := `{"location":"global","properties":{"windowSize":"PT5M",
+		"criteria":{"allOf":[{"metricName":"Percentage CPU","operator":"GreaterThan","threshold":20,"timeAggregation":"Average"}]}}}`
+
+	rg1URL := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/metricAlerts/shared-name" + apiVer
+	rg2URL := "/subscriptions/sub-1/resourceGroups/rg-2/providers/Microsoft.Insights/metricAlerts/shared-name" + apiVer
+
+	if code, _ := doJSON(t, ts, http.MethodPut, rg1URL, body); code != http.StatusOK {
+		t.Fatalf("PUT rg-1 status = %d, want 200", code)
+	}
+
+	if code, _ := doJSON(t, ts, http.MethodPut, rg2URL, body); code != http.StatusOK {
+		t.Fatalf("PUT rg-2 status = %d, want 200", code)
+	}
+
+	listRG1URL := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/metricAlerts" + apiVer
+
+	_, listed := doJSON(t, ts, http.MethodGet, listRG1URL, "")
+
+	value, _ := listed["value"].([]any)
+	if len(value) != 1 {
+		t.Fatalf("rg-1 list len = %d, want 1 (rg-2's alert leaked in, or rg-1's was lost to the name collision)", len(value))
+	}
+
+	// Deleting the rg-2 alert must not remove rg-1's same-named alert.
+	if code, _ := doJSON(t, ts, http.MethodDelete, rg2URL, ""); code != http.StatusOK {
+		t.Fatalf("DELETE rg-2 status = %d, want 200", code)
+	}
+
+	if code, _ := doJSON(t, ts, http.MethodGet, rg1URL, ""); code != http.StatusOK {
+		t.Fatalf("GET rg-1 after deleting rg-2's same-named alert status = %d, want 200 (cross-resource-group delete)", code)
 	}
 }
 
