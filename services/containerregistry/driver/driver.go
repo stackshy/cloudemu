@@ -7,9 +7,13 @@ import (
 
 // Repository represents a container repository.
 type Repository struct {
-	Name       string
-	URI        string
-	CreatedAt  string
+	Name      string
+	URI       string
+	CreatedAt string
+	// UpdatedAt is the last-modified timestamp. Providers that support in-place
+	// updates (GCP Artifact Registry patch) advance it; others leave it equal to
+	// CreatedAt.
+	UpdatedAt  string
 	Tags       map[string]string
 	ImageCount int
 	// Arn is the provider-native resource identifier (AWS ECR ARN). Optional

@@ -99,11 +99,13 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 	tags := copyTags(cfg.Tags)
 	uri := fmt.Sprintf("%s-docker.pkg.dev/%s/%s", m.opts.Region, m.opts.ProjectID, cfg.Name)
 	selfLink := idgen.GCPID(m.opts.ProjectID, "repositories", cfg.Name)
+	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 
 	info := driver.Repository{
 		Name:       selfLink,
 		URI:        uri,
-		CreatedAt:  m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		CreatedAt:  now,
+		UpdatedAt:  now,
 		Tags:       tags,
 		ImageCount: 0,
 	}
@@ -145,6 +147,29 @@ func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", name)
 	}
+
+	result := rd.info
+	result.ImageCount = rd.images.Len()
+
+	return &result, nil
+}
+
+// UpdateRepository replaces a repository's tag set (used by the GCP Artifact
+// Registry wire layer to persist label/description/mode patches) and advances
+// UpdatedAt. It is a GCP-specific extension not part of the shared driver
+// interface; the wire handler reaches it via an optional interface assertion.
+func (m *Mock) UpdateRepository(_ context.Context, name string, tags map[string]string) (*driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", name)
+	}
+
+	rd.info.Tags = copyTags(tags)
+	rd.info.UpdatedAt = m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	m.repos.Set(name, rd)
 
 	result := rd.info
 	result.ImageCount = rd.images.Len()

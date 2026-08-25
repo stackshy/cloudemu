@@ -1,15 +1,24 @@
 // Package artifactregistry implements the artifactregistry.googleapis.com v1
 // REST API as a server.Handler. Real google.golang.org/api/artifactregistry/v1
-// clients pointed at this server CRUD repositories and list docker images
-// end-to-end against the shared containerregistry driver.
+// clients pointed at this server CRUD repositories, patch them, manage repo
+// IAM, and list docker images / packages / versions / tags / files end-to-end
+// against the shared containerregistry driver.
 //
 // Coverage (v1 REST):
 //
-//	POST   /v1/projects/{p}/locations/{l}/repositories?repositoryId={id}        — Create repo (async)
-//	GET    /v1/projects/{p}/locations/{l}/repositories/{id}                     — Get repo
-//	GET    /v1/projects/{p}/locations/{l}/repositories                          — List repos
-//	DELETE /v1/projects/{p}/locations/{l}/repositories/{id}                     — Delete repo (async)
-//	GET    /v1/projects/{p}/locations/{l}/repositories/{id}/dockerImages        — List docker images
+//	POST   .../repositories?repositoryId={id}              — Create repo (async)
+//	GET    .../repositories/{id}                           — Get repo
+//	GET    .../repositories                                — List repos (paged)
+//	PATCH  .../repositories/{id}                           — Update labels/description/mode
+//	DELETE .../repositories/{id}                           — Delete repo (async)
+//	GET/POST .../repositories/{id}:{get,set}IamPolicy      — Repo IAM
+//	POST   .../repositories/{id}:testIamPermissions        — Repo IAM
+//	GET    .../repositories/{id}/dockerImages             — List docker images (paged)
+//	GET    .../repositories/{id}/packages                 — List packages (paged)
+//	GET    .../repositories/{id}/packages/{pkg}           — Get package
+//	GET    .../repositories/{id}/packages/{pkg}/versions  — List versions (paged)
+//	GET    .../repositories/{id}/packages/{pkg}/tags      — List tags (paged)
+//	GET    .../repositories/{id}/files                    — List files (paged)
 //
 // The driver has no location dimension, so {l} is accepted and echoed but not
 // used to partition state.
@@ -18,6 +27,7 @@ package artifactregistry
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -38,18 +48,30 @@ const minRepoCollectionParts = 5
 // Handler serves artifactregistry.googleapis.com v1 requests.
 type Handler struct {
 	registry crdriver.ContainerRegistry
+
+	// policies stores repo IAM policies set via :setIamPolicy, keyed by the
+	// repository resource name. CloudEmu does not enforce IAM; it stores the
+	// policy so setIamPolicy → getIamPolicy round-trips (Terraform's
+	// google_artifact_registry_repository_iam_* flow).
+	mu       sync.RWMutex
+	policies map[string]*iamPolicy
 }
 
 // New returns an Artifact Registry handler backed by reg.
 func New(reg crdriver.ContainerRegistry) *Handler {
-	return &Handler{registry: reg}
+	return &Handler{registry: reg, policies: make(map[string]*iamPolicy)}
 }
 
 type route struct {
 	project    string
 	location   string
 	repository string // repo id; empty for the collection
-	sub        string // "dockerImages" or ""
+	verb       string // colon action on the repository (getIamPolicy, ...)
+	sub        string // "dockerImages" | "packages" | "files" | ""
+	pkg        string // package id (when sub == packages)
+	pkgSub     string // "versions" | "tags" | ""
+	pkgSubID   string // version or tag id (when pkgSub set)
+	fileID     string // file id (when sub == files)
 	operation  string // operation id when this is an /operations/{op} path
 }
 
@@ -60,7 +82,7 @@ func parseRoute(urlPath string) (route, bool) {
 	}
 
 	parts := strings.Split(strings.TrimPrefix(urlPath, "/v1/"), "/")
-	// parts: [projects, {p}, locations, {l}, {repositories|operations}, {id}?, {sub}?]
+	// parts: [projects, {p}, locations, {l}, {repositories|operations}, ...]
 	if len(parts) < minRepoCollectionParts ||
 		parts[0] != "projects" || parts[2] != locationsSeg {
 		return route{}, false
@@ -69,7 +91,8 @@ func parseRoute(urlPath string) (route, bool) {
 	rt := route{project: parts[1], location: parts[3]}
 
 	// LRO polling: GAPIC clients (.Wait()) GET the operation returned by a
-	// create/delete. Without this route those polls 404.
+	// create/delete. The shared lro handler (registered first) owns these, but
+	// keep the route so a standalone AR handler still answers polls.
 	if parts[4] == operationsSeg {
 		if len(parts) > minRepoCollectionParts {
 			rt.operation = parts[5]
@@ -82,16 +105,62 @@ func parseRoute(urlPath string) (route, bool) {
 		return route{}, false
 	}
 
-	if len(parts) > minRepoCollectionParts {
-		rt.repository = parts[5]
-	}
-
-	const subIdx = 6
-	if len(parts) > subIdx {
-		rt.sub = parts[subIdx]
-	}
+	parseRepoTail(parts, &rt)
 
 	return rt, true
+}
+
+// parseRepoTail fills the repository, colon-verb, and sub-collection fields from
+// the path segments after "repositories".
+func parseRepoTail(parts []string, rt *route) {
+	const (
+		repoIdx = 5
+		subIdx  = 6
+		idIdx   = 7
+		pkgIdx  = 8
+	)
+
+	if len(parts) <= repoIdx {
+		return
+	}
+
+	// A colon verb (repositories/{id}:getIamPolicy) attaches to the repo id.
+	rt.repository, rt.verb = splitVerb(parts[repoIdx])
+
+	if len(parts) <= subIdx {
+		return
+	}
+
+	rt.sub = parts[subIdx]
+
+	switch rt.sub {
+	case packagesSeg:
+		if len(parts) > idIdx {
+			rt.pkg = parts[idIdx]
+		}
+
+		if len(parts) > pkgIdx {
+			rt.pkgSub = parts[pkgIdx]
+		}
+
+		const pkgIDIdx = 9
+		if len(parts) > pkgIDIdx {
+			rt.pkgSubID = parts[pkgIDIdx]
+		}
+	case filesSeg:
+		if len(parts) > idIdx {
+			rt.fileID = parts[idIdx]
+		}
+	}
+}
+
+// splitVerb separates a "resource:verb" segment into its parts.
+func splitVerb(seg string) (resource, verb string) {
+	if idx := strings.LastIndex(seg, ":"); idx >= 0 {
+		return seg[:idx], seg[idx+1:]
+	}
+
+	return seg, ""
 }
 
 // Matches claims artifactregistry v1 repository paths. Disjoint from the IAM
@@ -110,14 +179,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rt.operation != "" {
-		// The mock completes operations synchronously, so any poll resolves to
-		// a done operation. This unblocks GAPIC .Wait() callers. Echo the exact
-		// operation name that was polled.
 		gcprest.WriteJSON(w, http.StatusOK, operationJSON{
 			Name: "projects/" + rt.project + "/locations/" + rt.location + "/operations/" + rt.operation,
 			Done: true,
 		})
 
+		return
+	}
+
+	if rt.verb != "" {
+		h.serveIAM(w, r, &rt)
 		return
 	}
 
@@ -141,25 +212,41 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rt *ro
 	}
 }
 
-// serveResource handles a single repository and its dockerImages sub-collection.
+// serveResource handles a single repository and its sub-collections.
 func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rt *route) {
-	if rt.sub == dockerImagesSeg {
-		if r.Method == http.MethodGet {
-			h.listDockerImages(w, r, rt)
-			return
-		}
-
-		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported dockerImages operation")
-
+	if rt.sub != "" {
+		h.serveSub(w, r, rt)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet:
 		h.getRepository(w, r, rt)
+	case http.MethodPatch:
+		h.patchRepository(w, r, rt)
 	case http.MethodDelete:
 		h.deleteRepository(w, r, rt)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported repository operation")
+	}
+}
+
+// serveSub dispatches the repository sub-collections (docker images, packages,
+// versions, tags, files). All are read-only GETs.
+func (h *Handler) serveSub(w http.ResponseWriter, r *http.Request, rt *route) {
+	if r.Method != http.MethodGet {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported "+rt.sub+" operation")
+		return
+	}
+
+	switch rt.sub {
+	case dockerImagesSeg:
+		h.listDockerImages(w, r, rt)
+	case packagesSeg:
+		h.servePackages(w, r, rt)
+	case filesSeg:
+		h.listFiles(w, r, rt)
+	default:
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported sub-collection "+rt.sub)
 	}
 }
