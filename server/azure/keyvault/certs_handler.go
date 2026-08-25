@@ -109,6 +109,24 @@ func (h *CertsHandler) routeBareCert(w http.ResponseWriter, r *http.Request, nam
 // routeNamedCert dispatches /certificates/{name}/{sub} requests. sub is a
 // reserved segment (create/versions/policy/pending) or a certificate version.
 func (h *CertsHandler) routeNamedCert(w http.ResponseWriter, r *http.Request, name, sub string) {
+	if h.routeReservedCertSub(w, r, name, sub) {
+		return
+	}
+
+	switch {
+	case strings.Contains(sub, "/"):
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+	case r.Method == http.MethodGet:
+		h.getCertificate(w, r, name, sub)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+	}
+}
+
+// routeReservedCertSub handles the reserved sub-segments of
+// /certificates/{name} (create/versions/policy/pending), returning true when it
+// served the request.
+func (h *CertsHandler) routeReservedCertSub(w http.ResponseWriter, r *http.Request, name, sub string) bool {
 	switch {
 	case sub == createSeg && r.Method == http.MethodPost:
 		h.createCertificate(w, r, name)
@@ -118,13 +136,11 @@ func (h *CertsHandler) routeNamedCert(w http.ResponseWriter, r *http.Request, na
 		h.getCertificatePolicy(w, r, name)
 	case sub == pendingSeg && r.Method == http.MethodGet:
 		h.getCertificateOperation(w, r, name)
-	case strings.Contains(sub, "/"):
-		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
-	case r.Method == http.MethodGet:
-		h.getCertificate(w, r, name, sub)
 	default:
-		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+		return false
 	}
+
+	return true
 }
 
 // routeDeleted dispatches /deletedcertificates[...] requests. It mirrors the

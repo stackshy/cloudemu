@@ -105,6 +105,8 @@ func (m *Mock) SetKeyVaultSecret(_ context.Context, vault, name string, params d
 }
 
 // GetKeyVaultSecret returns one secret version. Empty version returns current.
+//
+//nolint:dupl // parallel certificate/secret version accessor; the shared shape is intentional
 func (m *Mock) GetKeyVaultSecret(_ context.Context, vault, name, version string) (*driver.KVSecret, error) {
 	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
@@ -284,6 +286,8 @@ func (m *Mock) ListDeletedKeyVaultSecrets(_ context.Context, vault string) ([]dr
 }
 
 // RecoverDeletedKeyVaultSecret clears the soft-delete state of a secret.
+//
+//nolint:dupl // parallel certificate/secret recover; the shared shape is intentional
 func (m *Mock) RecoverDeletedKeyVaultSecret(_ context.Context, vault, name string) (*driver.KVSecret, error) {
 	sd, ok := m.vault(vault).secrets.Get(name)
 	if !ok {

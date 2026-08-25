@@ -55,7 +55,7 @@ type KVDeletedCertificate struct {
 // the same certificate name in two different vaults refers to two different
 // certificates.
 type KeyVaultCertificates interface {
-	CreateCertificate(ctx context.Context, vault, name string, params KVCreateCertificateParams) (*KVCertificate, error)
+	CreateCertificate(ctx context.Context, vault, name string, params *KVCreateCertificateParams) (*KVCertificate, error)
 	GetCertificate(ctx context.Context, vault, name, version string) (*KVCertificate, error)
 	ListCertificates(ctx context.Context, vault string) ([]KVCertificate, error)
 	ListCertificateVersions(ctx context.Context, vault, name string) ([]KVCertificate, error)

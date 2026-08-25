@@ -251,6 +251,8 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeCErr maps a canonical cloudemu error to a Key Vault error response.
+//
+//nolint:dupl // parallel certificate/secret error mapper; the shared shape is intentional
 func writeCErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):

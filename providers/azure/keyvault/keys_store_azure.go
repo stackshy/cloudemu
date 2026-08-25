@@ -195,6 +195,8 @@ func applyKeyPatch(v *keyVersion, patch driver.KVKeyPatch) {
 }
 
 // DeleteKey soft-deletes a key and returns its deleted view.
+//
+//nolint:dupl // parallel certificate/key soft-delete; the shared shape is intentional
 func (m *Mock) DeleteKey(_ context.Context, vault, name string) (*driver.KVDeletedKey, error) {
 	kd := liveKey(m.vault(vault).keys, name)
 	if kd == nil {

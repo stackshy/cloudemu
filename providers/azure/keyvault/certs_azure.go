@@ -115,7 +115,9 @@ func commonName(subject, fallback string) string {
 // generateSelfSigned builds a self-signed X.509 certificate for the subject and
 // SAN DNS names, valid for months from now, returning its DER encoding and the
 // not-before/not-after instants.
-func generateSelfSigned(subject, name string, dnsNames []string, months int, now time.Time) ([]byte, time.Time, time.Time, error) {
+func generateSelfSigned(
+	subject, name string, dnsNames []string, months int, now time.Time,
+) (der []byte, notBefore, notAfter time.Time, err error) {
 	key, err := rsa.GenerateKey(rand.Reader, certRSABits)
 	if err != nil {
 		return nil, time.Time{}, time.Time{}, err
@@ -128,8 +130,8 @@ func generateSelfSigned(subject, name string, dnsNames []string, months int, now
 		return nil, time.Time{}, time.Time{}, err
 	}
 
-	notBefore := now
-	notAfter := now.AddDate(0, months, 0)
+	notBefore = now
+	notAfter = now.AddDate(0, months, 0)
 
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
@@ -142,7 +144,7 @@ func generateSelfSigned(subject, name string, dnsNames []string, months int, now
 		DNSNames:              dnsNames,
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	der, err = x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		return nil, time.Time{}, time.Time{}, err
 	}
@@ -153,7 +155,7 @@ func generateSelfSigned(subject, name string, dnsNames []string, months int, now
 // CreateCertificate generates a self-signed certificate and stores it as the
 // current version, appending a new version when the name already exists.
 func (m *Mock) CreateCertificate(
-	_ context.Context, vault, name string, params driver.KVCreateCertificateParams,
+	_ context.Context, vault, name string, params *driver.KVCreateCertificateParams,
 ) (*driver.KVCertificate, error) {
 	if name == "" {
 		return nil, errors.New(errors.InvalidArgument, "certificate name is required")
@@ -218,6 +220,8 @@ func (m *Mock) CreateCertificate(
 
 // GetCertificate returns one certificate version. Empty version returns the
 // current version.
+//
+//nolint:dupl // parallel certificate/secret version accessor; the shared shape is intentional
 func (m *Mock) GetCertificate(_ context.Context, vault, name, version string) (*driver.KVCertificate, error) {
 	cd := liveCert(m.vault(vault).certs, name)
 	if cd == nil {
@@ -275,6 +279,8 @@ func (m *Mock) ListCertificateVersions(_ context.Context, vault, name string) ([
 }
 
 // DeleteCertificate soft-deletes a certificate and returns its deleted view.
+//
+//nolint:dupl // parallel certificate/key soft-delete; the shared shape is intentional
 func (m *Mock) DeleteCertificate(_ context.Context, vault, name string) (*driver.KVDeletedCertificate, error) {
 	cd := liveCert(m.vault(vault).certs, name)
 	if cd == nil {
@@ -344,6 +350,8 @@ func (m *Mock) ListDeletedCertificates(_ context.Context, vault string) ([]drive
 }
 
 // RecoverDeletedCertificate clears the soft-delete state of a certificate.
+//
+//nolint:dupl // parallel certificate/secret recover; the shared shape is intentional
 func (m *Mock) RecoverDeletedCertificate(_ context.Context, vault, name string) (*driver.KVCertificate, error) {
 	cd, ok := m.vault(vault).certs.Get(name)
 	if !ok {

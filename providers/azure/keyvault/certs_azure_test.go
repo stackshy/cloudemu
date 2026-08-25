@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createParams() driver.KVCreateCertificateParams {
-	return driver.KVCreateCertificateParams{
+func createParams() *driver.KVCreateCertificateParams {
+	return &driver.KVCreateCertificateParams{
 		Subject:     "CN=mycert.example.com",
 		DNSNames:    []string{"mycert.example.com"},
 		ContentType: "application/x-pkcs12",
