@@ -223,6 +223,33 @@ jobs:
       # -race in CI rather than being inert.
       - run: go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
 
+  race:
+    name: Race (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+      # Advisory whole-tree race detector. -race is 2-10x slower and much of the
+      # codebase is not race-clean yet (mutable entities held as *T behind
+      # memstore.Store have their fields mutated without per-entity sync), so this
+      # is non-blocking for now: it surfaces data races as warnings while the
+      # per-entity-mutex idiom (see SQS queueData.mu; use memstore.Update, never
+      # Get+Set) is rolled out provider-by-provider. Flip to blocking once green.
+      # Tracking: github issue "Architecture Theme 1".
+      - name: go test -race ./... (advisory)
+        run: go test -race -timeout 20m ./... || echo '::warning::go test -race reported findings (advisory; concurrency hardening in progress)'
+
   tidy:
     name: Tidy
     runs-on: ubuntu-latest
