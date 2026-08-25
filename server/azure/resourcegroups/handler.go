@@ -43,6 +43,17 @@ const (
 	partsOperation  = 4 // /subscriptions/{sub}/operationresults/{id}
 )
 
+// ResourceGroupPurger deletes every resource one service handler owns in a given
+// resource group. It backs the resource-group cascade delete: an RG is a pure
+// container, so deleting it must delete the resources created under it rather
+// than leaving them as globally addressable orphans. Each per-service ARM
+// handler that stores its resources resource-group-scoped (compute, networking,
+// storage today) implements it; a handler that does not is simply not passed to
+// New, so its resource type is not cascaded (a documented, extensible gap).
+type ResourceGroupPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
 // Handler serves the resource-group collection and its members.
 type Handler struct {
 	mu sync.RWMutex
@@ -57,13 +68,17 @@ type Handler struct {
 	// from. Nil disables exportTemplate's resource enumeration (it still
 	// returns a valid, empty template) — callers that don't wire discovery.
 	engine *resourcediscovery.Engine
+	// purgers cascade a resource-group delete into the resources it contains.
+	purgers []ResourceGroupPurger
 }
 
 // New returns a resource-group handler. engine is the cross-service inventory
 // engine exportTemplate enumerates a group's resources from; nil is accepted
-// (exportTemplate then reports an empty resources[]).
-func New(engine *resourcediscovery.Engine) *Handler {
-	return &Handler{groups: map[string]map[string]map[string]any{}, engine: engine}
+// (exportTemplate then reports an empty resources[]). purgers cascade a group
+// delete into the resources created under it; pass the per-service handlers
+// that own resource-group-scoped resources.
+func New(engine *resourcediscovery.Engine, purgers ...ResourceGroupPurger) *Handler {
+	return &Handler{groups: map[string]map[string]map[string]any{}, engine: engine, purgers: purgers}
 }
 
 // routeKind classifies a resource-group request path.
@@ -272,12 +287,29 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request, sub, name strin
 		return
 	}
 
+	// Cascade: a resource group is a container, so deleting it deletes every
+	// resource created under it. Each purger tears down its own service's
+	// resources in this group; a purge failure is best-effort (the group is
+	// already gone and the ARM delete contract is a fire-and-forget 202), so it
+	// does not fail the response.
+	h.cascade(r.Context(), sub, name)
+
 	// Real ARM deletes a resource group asynchronously: 202 with a Location the
 	// SDK polls until it returns a terminal status. The delete already ran in
 	// memory, so the poll endpoint reports success immediately.
 	w.Header().Set("Location", absoluteURL(r, "/subscriptions/"+sub+"/operationresults/"+strings.ToLower(name)))
 	w.Header().Set("Retry-After", "0")
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// cascade fans a resource-group delete out to every registered purger so the
+// resources created under the group are torn down with it. Best-effort: a
+// purger error is swallowed (there is no channel to report it on an async
+// fire-and-forget delete, and a partial teardown must not block the rest).
+func (h *Handler) cascade(ctx context.Context, sub, name string) {
+	for _, p := range h.purgers {
+		_ = p.PurgeResourceGroup(ctx, sub, name)
+	}
 }
 
 // exportTemplateRequest is the exportTemplate POST body: see

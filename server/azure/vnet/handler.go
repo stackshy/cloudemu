@@ -39,6 +39,16 @@ const (
 	armNSGTag        = "cloudemu:azureNSGName"
 	armPublicIPTag   = "cloudemu:azurePublicIP"
 	armPublicIPRGTag = "cloudemu:azurePublicIPResourceGroup"
+	// armVNetRGTag / armNSGRGTag record the resource group a virtual network or
+	// network security group was created under. The cross-cloud networking
+	// driver has a single flat namespace, so without this a resource is globally
+	// name-addressable and a GET/DELETE under the wrong resource group would
+	// resolve it and echo back that wrong group. Scoping the direct CRUD lookups
+	// by this tag makes a same-named resource in a different group a 404, the
+	// same way NAT gateways (armNATGatewayRGTag) and public IPs (armPublicIPRGTag)
+	// are already scoped.
+	armVNetRGTag = "cloudemu:azureVNetResourceGroup"
+	armNSGRGTag  = "cloudemu:azureNSGResourceGroup"
 	// armSubnetNATTag stores the full ARM resource id of the NAT gateway a
 	// subnet is associated with (set via the subnet's own natGateway
 	// property), so both the subnet response and the NAT gateway's
@@ -237,7 +247,7 @@ func (h *Handler) createVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 
 	prefixes := vnetPrefixes(&req)
 
-	info, err := h.upsertVNet(r.Context(), rp.ResourceName, prefixes, req.Tags)
+	info, err := h.upsertVNet(r.Context(), rp.ResourceGroup, rp.ResourceName, prefixes, req.Tags)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -284,14 +294,14 @@ func vnetPrefixes(req *vnetRequest) []string {
 
 // upsertVNet reuses an existing virtual network of the same name (so a repeated
 // PUT updates in place rather than creating a duplicate) or creates a new one.
-func (h *Handler) upsertVNet(ctx context.Context, name string, prefixes []string,
+func (h *Handler) upsertVNet(ctx context.Context, rg, name string, prefixes []string,
 	tags map[string]string,
 ) (*netdriver.VPCInfo, error) {
-	if existing, err := findVNetByName(ctx, h.net, name); err == nil {
+	if existing, err := findVNetInGroup(ctx, h.net, rg, name); err == nil {
 		if len(tags) > 0 {
 			_ = h.net.UpdateVPCTags(ctx, existing.ID, tags)
 
-			if refreshed, rerr := findVNetByName(ctx, h.net, name); rerr == nil {
+			if refreshed, rerr := findVNetInGroup(ctx, h.net, rg, name); rerr == nil {
 				existing = refreshed
 			}
 		}
@@ -306,7 +316,7 @@ func (h *Handler) upsertVNet(ctx context.Context, name string, prefixes []string
 
 	return h.net.CreateVPC(ctx, netdriver.VPCConfig{
 		CIDRBlock: cidr,
-		Tags:      mergeTags(tags, armNameTag, name),
+		Tags:      mergeTags(mergeTags(tags, armNameTag, name), armVNetRGTag, rg),
 	})
 }
 
@@ -428,7 +438,7 @@ func (h *Handler) deleteOmittedSubnets(ctx context.Context, haveByName map[strin
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getVNet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -448,8 +458,21 @@ func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.
 	out := vnetListResponse{}
 
 	for i := range infos {
+		itemRG := tagOr(infos[i].Tags, armVNetRGTag, "")
+		// An RG-scoped list (rp.ResourceGroup set) returns only that group's
+		// networks; a subscription-scoped list (empty) returns all, each stamped
+		// with its own group so the response ids are correct.
+		if rp.ResourceGroup != "" && !strings.EqualFold(itemRG, rp.ResourceGroup) {
+			continue
+		}
+
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, armNameTag, infos[i].ID)
+
+		if scope.ResourceGroup == "" {
+			scope.ResourceGroup = itemRG
+		}
+
 		out.Value = append(out.Value, h.vnetResponse(r.Context(), &infos[i], scope))
 	}
 
@@ -458,7 +481,7 @@ func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -487,6 +510,80 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 	}
 
 	writeAcceptedAsync(w, r, rp.Subscription, "vnet-delete-"+rp.ResourceName, nil)
+}
+
+// PurgeResourceGroup deletes every virtual network (with its subnets) and
+// network security group this handler owns in the given resource group. It
+// backs the resource-group cascade delete: when an RG is removed, the resources
+// created under it must go too rather than lingering as globally addressable
+// orphans. Deletion is forceful (the in-use guards that gate an individual
+// DELETE do not apply — the whole group is going away), and best-effort: a
+// single driver-level failure is returned but does not stop the remaining
+// teardown. The subscription is unused (the emulator is single-estate).
+func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	firstErr := h.purgeVNets(ctx, resourceGroup)
+
+	if err := h.purgeNSGs(ctx, resourceGroup); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	return firstErr
+}
+
+// purgeVNets deletes every virtual network (with its subnets and metadata) in
+// the resource group, returning the first delete error encountered.
+func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
+	vpcs, err := h.net.DescribeVPCs(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range vpcs {
+		if !strings.EqualFold(tagOr(vpcs[i].Tags, armVNetRGTag, ""), resourceGroup) {
+			continue
+		}
+
+		h.deleteChildSubnets(ctx, vpcs[i].ID)
+
+		if meta, ok := h.azureMeta(); ok {
+			meta.DeleteAzureVNetMetadata(ctx, vpcs[i].ID)
+		}
+
+		if derr := h.net.DeleteVPC(ctx, vpcs[i].ID); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+	}
+
+	return firstErr
+}
+
+// purgeNSGs deletes every network security group (with its metadata) in the
+// resource group, returning the first delete error encountered.
+func (h *Handler) purgeNSGs(ctx context.Context, resourceGroup string) error {
+	nsgs, err := h.net.DescribeSecurityGroups(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range nsgs {
+		if !strings.EqualFold(tagOr(nsgs[i].Tags, armNSGRGTag, ""), resourceGroup) {
+			continue
+		}
+
+		if meta, ok := h.azureMeta(); ok {
+			meta.DeleteAzureNSGMetadata(ctx, nsgs[i].ID)
+		}
+
+		if derr := h.net.DeleteSecurityGroup(ctx, nsgs[i].ID); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+	}
+
+	return firstErr
 }
 
 // deleteChildSubnets removes every subnet that belongs to the given vnet.
@@ -542,7 +639,7 @@ func subnetVNetName(subnetID string) string {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	vnet, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -694,7 +791,16 @@ func findSubnetInVNet(ctx context.Context, n netdriver.Networking, vpcID, name s
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getSubnet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findSubnetByName(r.Context(), h.net, rp.SubResourceName)
+	// A subnet is addressed under its parent virtual network; resolve that vnet
+	// scoped to the request's resource group so a subnet is not readable under
+	// the wrong group (the parent vnet gates the child).
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	info, err := findSubnetInVNet(r.Context(), h.net, vnet.ID, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -724,7 +830,13 @@ func (h *Handler) listSubnets(w http.ResponseWriter, r *http.Request, rp azurear
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteSubnet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findSubnetByName(r.Context(), h.net, rp.SubResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	info, err := findSubnetInVNet(r.Context(), h.net, vnet.ID, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -823,7 +935,7 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	info, err := h.upsertNSG(r.Context(), rp.ResourceName, req.Tags)
+	info, err := h.upsertNSG(r.Context(), rp.ResourceGroup, rp.ResourceName, req.Tags)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -847,10 +959,10 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 // upsertNSG reuses an existing NSG of the same name (idempotent re-PUT) or
 // creates one, anchoring the driver security group to any VPC (creating a
 // synthetic one when none exists, as the driver requires a VPC id).
-func (h *Handler) upsertNSG(ctx context.Context, name string,
+func (h *Handler) upsertNSG(ctx context.Context, rg, name string,
 	tags map[string]string,
 ) (*netdriver.SecurityGroupInfo, error) {
-	if existing, err := findNSGByName(ctx, h.net, name); err == nil {
+	if existing, err := findNSGInGroup(ctx, h.net, rg, name); err == nil {
 		return existing, nil
 	}
 
@@ -872,13 +984,13 @@ func (h *Handler) upsertNSG(ctx context.Context, name string,
 	return h.net.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
 		Name:  name,
 		VPCID: anchor,
-		Tags:  mergeTags(tags, armNSGTag, name),
+		Tags:  mergeTags(mergeTags(tags, armNSGTag, name), armNSGRGTag, rg),
 	})
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getNSG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findNSGByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findNSGInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -898,8 +1010,20 @@ func (h *Handler) listNSGs(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	out := nsgListResponse{}
 
 	for i := range infos {
+		itemRG := tagOr(infos[i].Tags, armNSGRGTag, "")
+		// An RG-scoped list returns only that group's NSGs; a subscription-scoped
+		// list returns all, each stamped with its own group.
+		if rp.ResourceGroup != "" && !strings.EqualFold(itemRG, rp.ResourceGroup) {
+			continue
+		}
+
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, armNSGTag, infos[i].ID)
+
+		if scope.ResourceGroup == "" {
+			scope.ResourceGroup = itemRG
+		}
+
 		out.Value = append(out.Value, h.nsgResponse(r.Context(), &infos[i], scope))
 	}
 
@@ -908,7 +1032,7 @@ func (h *Handler) listNSGs(w http.ResponseWriter, r *http.Request, rp azurearm.R
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findNSGByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findNSGInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -1090,19 +1214,56 @@ func findVNetByName(ctx context.Context, n netdriver.Networking, name string) (*
 	return nil, cerrors.Newf(cerrors.NotFound, "virtualNetwork %s not found", name)
 }
 
-func findSubnetByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.SubnetInfo, error) {
-	infos, err := n.DescribeSubnets(ctx, nil)
+// findVNetInGroup resolves a virtual network by both its ARM name and resource
+// group, so a same-named vnet in a different group is not returned. rg == ""
+// falls back to name-only (an unscoped lookup, e.g. a legacy path with no
+// group). Resource-group comparison is case-insensitive, matching ARM.
+//
+//nolint:dupl // mirrors findNSGInGroup over a distinct resource type and tag by design
+func findVNetInGroup(ctx context.Context, n netdriver.Networking, rg, name string) (*netdriver.VPCInfo, error) {
+	infos, err := n.DescribeVPCs(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range infos {
-		if tagOr(infos[i].Tags, armSubnetTag, "") == name {
-			return &infos[i], nil
+		if tagOr(infos[i].Tags, armNameTag, "") != name {
+			continue
 		}
+
+		if rg != "" && !strings.EqualFold(tagOr(infos[i].Tags, armVNetRGTag, ""), rg) {
+			continue
+		}
+
+		return &infos[i], nil
 	}
 
-	return nil, cerrors.Newf(cerrors.NotFound, "subnet %s not found", name)
+	return nil, cerrors.Newf(cerrors.NotFound, "virtualNetwork %s not found", name)
+}
+
+// findNSGInGroup resolves a network security group by both its ARM name and
+// resource group; see findVNetInGroup for the rg semantics.
+//
+//nolint:dupl // mirrors findVNetInGroup over a distinct resource type and tag by design
+func findNSGInGroup(ctx context.Context, n netdriver.Networking, rg, name string) (*netdriver.SecurityGroupInfo, error) {
+	infos, err := n.DescribeSecurityGroups(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range infos {
+		if tagOr(infos[i].Tags, armNSGTag, "") != name {
+			continue
+		}
+
+		if rg != "" && !strings.EqualFold(tagOr(infos[i].Tags, armNSGRGTag, ""), rg) {
+			continue
+		}
+
+		return &infos[i], nil
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "networkSecurityGroup %s not found", name)
 }
 
 func findNSGByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.SecurityGroupInfo, error) {
