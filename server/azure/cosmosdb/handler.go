@@ -485,6 +485,14 @@ type accountPurger interface {
 // starts from an empty namespace. It is idempotent — purging an unknown account
 // is a no-op.
 func (h *Handler) PurgeAccount(ctx context.Context, account string) {
+	// Guard against an empty account: nsPrefix("")=="" makes HasPrefix always
+	// true, so an empty account would match and reap every container's
+	// bookkeeping (and, via the driver, every table) — a match-all data-loss
+	// footgun. Purging the empty/default account is a no-op.
+	if account == "" {
+		return
+	}
+
 	// Reap the offer + TTL/attrs bookkeeping for every container table in the
 	// account's namespace before the driver drops the tables underneath us.
 	prefix := nsPrefix(account)
