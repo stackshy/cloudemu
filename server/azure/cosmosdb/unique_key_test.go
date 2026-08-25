@@ -8,8 +8,13 @@ package cosmosdb_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos"
 )
 
@@ -105,4 +110,110 @@ func TestSDKUniqueKeyMissingFieldAllowed(t *testing.T) {
 
 	createDoc(ctx, t, cc, "team-a", map[string]any{"id": "u1", "pk": "team-a"})
 	createDoc(ctx, t, cc, "team-a", map[string]any{"id": "u2", "pk": "team-a"})
+}
+
+// TestSDKUniqueKeyConcurrentCreateSingleWinner is the regression test for the
+// check-then-act race in unique-key enforcement: checkUniqueKeys scans the
+// container and decides, then PutItem writes, with nothing held across the two.
+// Two concurrent creates carrying the same (partition, unique-key value) could
+// both pass the scan and both insert, so more than one 201 was returned instead
+// of a single winner and 409s for the rest. It fires N concurrent creates that
+// all share one (partition="team-a", email="race@example.com") and asserts
+// EXACTLY one succeeds. Filler documents widen the scan window the race lives
+// in. This is a logical (check-then-act) race, so -race does not surface it —
+// the assertion on the winner count is what fails pre-fix.
+func TestSDKUniqueKeyConcurrentCreateSingleWinner(t *testing.T) {
+	ctx := context.Background()
+	e := newCosmosEnv(t)
+
+	const (
+		dbName   = "ukracedb"
+		collName = "users"
+		fillers  = 3000
+		racers   = 50
+	)
+
+	cc := uniqueKeyContainer(ctx, t, e, dbName, collName)
+
+	// Preload filler docs straight through the shared driver (fast, in-memory).
+	// They share partition "team-a" with distinct emails, so none collide with
+	// each other or the racers — they only make checkUniqueKeys' full-table Scan
+	// walk more items, widening the check-then-write window.
+	table := dbName + "/" + collName
+
+	for i := range fillers {
+		filler := map[string]any{
+			"id":    fmt.Sprintf("filler-%d", i),
+			"pk":    "team-a",
+			"email": fmt.Sprintf("filler-%d@example.com", i),
+		}
+		if err := e.provider.CosmosDB.PutItem(ctx, table, filler); err != nil {
+			t.Fatalf("preload filler %d: %v", i, err)
+		}
+	}
+
+	var (
+		wg        sync.WaitGroup
+		successes atomic.Int32
+		conflicts atomic.Int32
+		others    atomic.Int32
+	)
+
+	start := make(chan struct{})
+
+	for i := range racers {
+		wg.Add(1)
+
+		go func(idx int) {
+			defer wg.Done()
+
+			doc := map[string]any{
+				"id":    fmt.Sprintf("racer-%d", idx),
+				"pk":    "team-a",
+				"email": "race@example.com",
+			}
+
+			b, err := json.Marshal(doc)
+			if err != nil {
+				others.Add(1)
+				return
+			}
+
+			<-start // release all goroutines together to maximize overlap
+
+			resp, cerr := cc.CreateItem(ctx, azcosmos.NewPartitionKeyString("team-a"), b, nil)
+
+			switch {
+			case cerr == nil && resp.RawResponse.StatusCode == 201:
+				successes.Add(1)
+			case isRespStatus(cerr, 409):
+				conflicts.Add(1)
+			default:
+				others.Add(1)
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	if got := successes.Load(); got != 1 {
+		t.Errorf("concurrent same-unique-key create: %d succeeded, want exactly 1", got)
+	}
+
+	if got := conflicts.Load(); got != racers-1 {
+		t.Errorf("concurrent same-unique-key create: %d got 409, want %d", got, racers-1)
+	}
+
+	if got := others.Load(); got != 0 {
+		t.Errorf("concurrent same-unique-key create: %d unexpected outcomes, want 0", got)
+	}
+}
+
+// isRespStatus reports whether err is an azcore.ResponseError with the given
+// HTTP status. Unlike wantRespErr it returns a bool, so a goroutine can classify
+// an outcome without failing the test from a non-test goroutine.
+func isRespStatus(err error, status int) bool {
+	var respErr *azcore.ResponseError
+	return errors.As(err, &respErr) && respErr.StatusCode == status
 }
