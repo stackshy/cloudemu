@@ -206,7 +206,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		Group:             spec.group,
 		StartedBy:         spec.startedBy,
 		CreatedAt:         m.now(),
-		Containers:        containersFor(spec.td),
+		Containers:        m.containersFor(spec.td),
 		Tags:              copyTags(spec.tags),
 	}
 
@@ -241,10 +241,16 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 	return &clone, nil
 }
 
-// markContainers sets every container's last status.
+// markContainers sets every container's last status. A container marked
+// PENDING (EC2 capacity shortfall) never actually reserved a host port, so its
+// speculative network bindings are cleared rather than reporting a phantom one.
 func markContainers(task *driver.Task, status string) {
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = status
+
+		if status == statusPending {
+			task.Containers[i].NetworkBindings = nil
+		}
 	}
 }
 
@@ -319,12 +325,63 @@ func (m *Mock) placeOnInstance(
 	return failure
 }
 
-func containersFor(td *driver.TaskDefinition) []driver.Container {
+// containersFor builds the RUNNING containers for a newly launched task,
+// resolving each container's bridge/host network bindings (awsvpc/Fargate
+// tasks carry none — traffic reaches the container directly through its ENI).
+func (m *Mock) containersFor(td *driver.TaskDefinition) []driver.Container {
 	out := make([]driver.Container, 0, len(td.ContainerDefinitions))
 
 	for i := range td.ContainerDefinitions {
 		cd := &td.ContainerDefinitions[i]
-		out = append(out, driver.Container{Name: cd.Name, Image: cd.Image, LastStatus: statusRunning})
+		out = append(out, driver.Container{
+			Name:            cd.Name,
+			Image:           cd.Image,
+			LastStatus:      statusRunning,
+			NetworkBindings: m.networkBindingsFor(td.NetworkMode, cd.PortMappings),
+		})
+	}
+
+	return out
+}
+
+// defaultProtocol is the ECS network-binding protocol assumed when a port
+// mapping leaves Protocol unset, matching the AWS default.
+const defaultProtocol = "tcp"
+
+// networkBindingsFor resolves the host IP/port ECS binds for each container
+// port mapping under the task's network mode. Host mode always binds the host
+// port to the same value as the container port; bridge mode uses the caller's
+// explicit hostPort or, when left 0, a dynamically assigned one. awsvpc mode
+// (Fargate or EC2 trunking) carries no bindings — the container's ENI IP is
+// addressed directly.
+func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapping) []driver.NetworkBinding {
+	if networkMode == networkModeAwsvpc || len(mappings) == 0 {
+		return nil
+	}
+
+	out := make([]driver.NetworkBinding, 0, len(mappings))
+
+	for _, pm := range mappings {
+		hostPort := pm.HostPort
+
+		switch {
+		case networkMode == networkModeHost:
+			hostPort = pm.ContainerPort
+		case hostPort == 0:
+			hostPort = m.nextEphemeralPort()
+		}
+
+		protocol := pm.Protocol
+		if protocol == "" {
+			protocol = defaultProtocol
+		}
+
+		out = append(out, driver.NetworkBinding{
+			BindIP:        "0.0.0.0",
+			ContainerPort: pm.ContainerPort,
+			HostPort:      hostPort,
+			Protocol:      protocol,
+		})
 	}
 
 	return out

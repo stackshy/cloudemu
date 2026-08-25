@@ -14,6 +14,14 @@ const (
 	launchExternal = "EXTERNAL"
 
 	networkModeAwsvpc = "awsvpc"
+	networkModeHost   = "host"
+
+	// ephemeralPortBase / ephemeralPortSpan bound the dynamic host-port range ECS
+	// assigns a bridge-mode container port mapping left with hostPort unset,
+	// matching the Linux ephemeral-port range (32768-65535) real ECS agents draw
+	// from.
+	ephemeralPortBase = 32768
+	ephemeralPortSpan = 65536 - ephemeralPortBase
 
 	// ecsServicePrincipal / managedLaunchTag mark a container instance's backing
 	// EC2 instance as managed by ECS (composing #159 with #300).

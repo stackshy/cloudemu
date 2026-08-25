@@ -187,13 +187,32 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-// cloneTask deep-copies a task's Containers, Attachments (including each
-// attachment's Details), and Tags slices.
+// cloneTask deep-copies a task's Containers (including each container's
+// NetworkBindings), Attachments (including each attachment's Details), and
+// Tags slices.
 func cloneTask(t *driver.Task) driver.Task {
 	out := *t
-	out.Containers = append([]driver.Container(nil), t.Containers...)
+	out.Containers = cloneContainers(t.Containers)
 	out.Attachments = cloneAttachments(t.Attachments)
 	out.Tags = copyTags(t.Tags)
+
+	return out
+}
+
+// cloneContainers deep-copies a slice of containers and each container's
+// NetworkBindings slice.
+func cloneContainers(in []driver.Container) []driver.Container {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]driver.Container, len(in))
+
+	for i := range in {
+		c := in[i]
+		c.NetworkBindings = append([]driver.NetworkBinding(nil), in[i].NetworkBindings...)
+		out[i] = c
+	}
 
 	return out
 }

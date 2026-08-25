@@ -234,6 +234,8 @@ func (m *Mock) converge(
 
 		if task.LastStatus == statusRunning {
 			running++
+
+			m.registerTaskTargets(ctx, svc, td, task)
 		} else {
 			pending++
 		}
@@ -271,6 +273,7 @@ func (m *Mock) drainService(ctx context.Context, svc *driver.Service) {
 			continue
 		}
 
+		m.deregisterTaskTargets(ctx, svc, t)
 		_, _ = m.StopTask(ctx, cluster, t.ARN, serviceStoppedReason)
 	}
 }
