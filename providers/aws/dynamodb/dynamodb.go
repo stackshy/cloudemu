@@ -407,38 +407,13 @@ func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 	return names, nil
 }
 
+// PutItem writes item unconditionally. It is the empty-condition case of
+// PutItemConditional, so the conditional and unconditional paths share one atomic
+// implementation.
 func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) error {
-	m.mu.Lock()
+	_, err := m.PutItemConditional(ctx, table, item, driver.Condition{})
 
-	td, exists := m.tables[table]
-	if !exists {
-		m.mu.Unlock()
-		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
-	}
-
-	if err := validateItemKeys(td.config, item); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-
-	if err := validateItemSize(item); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-
-	key := itemKey(td.config, item)
-	oldItem, hadOld := td.items.Get(key)
-	item = maps.Clone(item)
-	td.items.Set(key, item)
-	m.recordStreamEvent(td, oldItem, item, hadOld)
-	m.mu.Unlock()
-	m.flushStreamDeliveries(ctx)
-
-	dims := map[string]string{"TableName": table}
-	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
-
-	return nil
+	return err
 }
 
 func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map[string]any, error) {
@@ -469,91 +444,22 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 	return maps.Clone(item), nil
 }
 
-// UpdateItem applies partial updates to an existing item.
+// UpdateItem applies partial updates to an item (upserting when absent). It is
+// the empty-condition case of UpdateItemConditional.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateItem(ctx context.Context, input driver.UpdateItemInput) (map[string]any, error) {
-	m.mu.Lock()
+	updated, _, err := m.UpdateItemConditional(ctx, input, driver.Condition{})
 
-	td, exists := m.tables[input.Table]
-	if !exists {
-		m.mu.Unlock()
-		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", input.Table)
-	}
-
-	if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, input.Key); err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-
-	k := itemKey(td.config, input.Key)
-	item, ok := td.items.Get(k)
-
-	// Real DynamoDB UpdateItem upserts: a missing item is created from the key
-	// attributes and the update expression, rather than erroring. Any
-	// ConditionExpression has already been evaluated by the caller (the wire
-	// handler / transaction), so applying here is unconditional.
-	var base, oldItem map[string]any
-	if ok {
-		base = copyItem(item)
-		oldItem = copyItem(item)
-	} else {
-		base = copyItem(input.Key)
-	}
-
-	updated, err := driver.ApplyUpdate(base, input)
-	if err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-
-	if err := validateItemSize(updated); err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-
-	td.items.Set(k, updated)
-	m.recordStreamEvent(td, oldItem, updated, true)
-	m.mu.Unlock()
-	m.flushStreamDeliveries(ctx)
-
-	dims := map[string]string{"TableName": input.Table}
-	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
-
-	return maps.Clone(updated), nil
+	return updated, err
 }
 
+// DeleteItem removes the item at key unconditionally. It is the empty-condition
+// case of DeleteItemConditional.
 func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any) error {
-	m.mu.Lock()
+	_, err := m.DeleteItemConditional(ctx, table, key, driver.Condition{})
 
-	td, exists := m.tables[table]
-	if !exists {
-		m.mu.Unlock()
-		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
-	}
-
-	if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, key); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-
-	k := itemKey(td.config, key)
-	oldItem, hadOld := td.items.Get(k)
-	td.items.Delete(k)
-
-	if hadOld {
-		m.recordStreamRemove(td, oldItem)
-	}
-
-	m.mu.Unlock()
-	m.flushStreamDeliveries(ctx)
-
-	dims := map[string]string{"TableName": table}
-	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
-
-	return nil
+	return err
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.

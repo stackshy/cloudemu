@@ -50,9 +50,72 @@ func projectionBlock(projType string, nonKey []string) map[string]any {
 	return block
 }
 
+// conditionalWriter is the optional provider capability backing ATOMIC
+// conditional writes and transactions. Discovered by type assertion (like
+// throughputUpdater / pitrController) so it stays off the cross-cloud Database
+// interface — only the AWS mock implements it. Each method evaluates the
+// ConditionExpression(s) and applies the mutation under a single hold of the
+// table lock, closing the check-then-act TOCTOU window a handler-level
+// pre-check would leave open. A failed condition surfaces as a
+// *dbdriver.ConditionalCheckFailed (single write) or *dbdriver.TransactionCanceled
+// (transaction).
+type conditionalWriter interface {
+	PutItemConditional(ctx context.Context, table string, item map[string]any, cond dbdriver.Condition) (map[string]any, error)
+	DeleteItemConditional(ctx context.Context, table string, key map[string]any, cond dbdriver.Condition) (map[string]any, error)
+	UpdateItemConditional(
+		ctx context.Context, input dbdriver.UpdateItemInput, cond dbdriver.Condition,
+	) (updated, old map[string]any, err error)
+	TransactWrite(ctx context.Context, ops []dbdriver.TransactOp) error
+}
+
 // Handler serves DynamoDB JSON-RPC requests against a database.Database driver.
 type Handler struct {
 	db dbdriver.Database
+}
+
+// writer returns the atomic conditional-write capability. The AWS mock always
+// implements it; a driver that does not is a programming error (the AWS wire
+// handler is only ever wired to the AWS mock).
+func (h *Handler) writer() conditionalWriter {
+	w, ok := h.db.(conditionalWriter)
+	if !ok {
+		panic("dynamodb: driver does not implement conditionalWriter")
+	}
+
+	return w
+}
+
+// writeConditionalCheckFailed emits the ConditionalCheckFailedException. When the
+// request asked for ReturnValuesOnConditionCheckFailure=ALL_OLD and a conflicting
+// item exists, it is echoed in the exception's Item member.
+func writeConditionalCheckFailed(w http.ResponseWriter, conflict map[string]any, returnValuesOnCondFail string) {
+	var extra map[string]any
+	if strings.EqualFold(returnValuesOnCondFail, "ALL_OLD") && conflict != nil {
+		extra = map[string]any{"Item": toWireItem(conflict)}
+	}
+
+	wire.WriteJSONErrorFields(w, http.StatusBadRequest,
+		"ConditionalCheckFailedException", "The conditional request failed", extra)
+}
+
+// handleConditionalError writes the response for an error returned by a
+// conditional write, returning true when it handled one. A
+// *dbdriver.ConditionalCheckFailed becomes a ConditionalCheckFailedException;
+// anything else is mapped by writeErr.
+func handleConditionalError(w http.ResponseWriter, err error, returnValuesOnCondFail string) bool {
+	if err == nil {
+		return false
+	}
+
+	var ccf *dbdriver.ConditionalCheckFailed
+	if errors.As(err, &ccf) {
+		writeConditionalCheckFailed(w, ccf.Item, returnValuesOnCondFail)
+		return true
+	}
+
+	writeErr(w, err)
+
+	return true
 }
 
 // New returns a DynamoDB handler backed by db.
@@ -620,157 +683,60 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, resp)
 }
 
-func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TableName                 string            `json:"TableName"`
-		Item                      map[string]any    `json:"Item"`
-		ConditionExpression       string            `json:"ConditionExpression"`
-		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
-		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
-		ReturnValues              string            `json:"ReturnValues"`
-		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
+// writeItemRequest is the shared wire shape of PutItem and DeleteItem: both carry
+// a ConditionExpression plus the ReturnValues / ReturnValuesOnConditionCheckFailure
+// controls. PutItem populates Item (the full item); DeleteItem populates Key.
+type writeItemRequest struct {
+	TableName                 string            `json:"TableName"`
+	Item                      map[string]any    `json:"Item"`
+	Key                       map[string]any    `json:"Key"`
+	ConditionExpression       string            `json:"ConditionExpression"`
+	ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+	ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+	ReturnValues              string            `json:"ReturnValues"`
+	ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
 
-		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
+	ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
+}
+
+// condition builds the driver Condition carried down for atomic evaluation.
+func (req *writeItemRequest) condition() dbdriver.Condition {
+	return dbdriver.Condition{
+		Expression: req.ConditionExpression,
+		Names:      req.ExpressionAttributeNames,
+		Values:     fromWireItem(req.ExpressionAttributeValues),
 	}
+}
 
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	item := fromWireItem(req.Item)
-	vals := fromWireItem(req.ExpressionAttributeValues)
-
-	if !h.gateCondition(r.Context(), w, req.TableName, item,
-		req.ConditionExpression, req.ExpressionAttributeNames, vals,
-		req.ReturnValuesOnConditionCheckFailure) {
+// writeConditionalResult writes the response shared by PutItem and DeleteItem: it
+// maps a failed condition to ConditionalCheckFailedException, otherwise echoes the
+// prior item under ReturnValues=ALL_OLD plus the consumed-capacity block. old is
+// the item as it stood before the (successful) mutation.
+func writeConditionalResult(w http.ResponseWriter, req *writeItemRequest, old map[string]any, err error) {
+	if handleConditionalError(w, err, req.ReturnValuesOnConditionCheckFailure) {
 		return
 	}
 
 	resp := map[string]any{}
-
-	// ReturnValues=ALL_OLD returns the item as it was before the overwrite, so
-	// read it before the mutation.
-	if strings.EqualFold(req.ReturnValues, "ALL_OLD") {
-		if old := h.previousItem(r.Context(), req.TableName, item); old != nil {
-			resp["Attributes"] = toWireItem(old)
-		}
-	}
-
-	if err := h.db.PutItem(r.Context(), req.TableName, item); err != nil {
-		writeErr(w, err)
-		return
+	if old != nil && strings.EqualFold(req.ReturnValues, "ALL_OLD") {
+		resp["Attributes"] = toWireItem(old)
 	}
 
 	addConsumedCapacity(resp, req.ReturnConsumedCapacity, req.TableName)
 	wire.WriteJSON(w, resp)
 }
 
-// previousItem fetches the stored item identified by keySource's key attributes,
-// returning nil when the table or item is missing. Used to satisfy
-// ReturnValues=ALL_OLD on Put/Delete without surfacing a lookup error.
-func (h *Handler) previousItem(ctx context.Context, table string, keySource map[string]any) map[string]any {
-	cfg, err := h.db.DescribeTable(ctx, table)
-	if err != nil {
-		return nil
+func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
+	var req writeItemRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
 	}
 
-	key := map[string]any{cfg.PartitionKey: keySource[cfg.PartitionKey]}
-	if cfg.SortKey != "" {
-		key[cfg.SortKey] = keySource[cfg.SortKey]
-	}
-
-	old, err := h.db.GetItem(ctx, table, key)
-	if err != nil {
-		return nil
-	}
-
-	return old
-}
-
-// gateCondition evaluates a ConditionExpression and, on failure, writes the
-// matching DynamoDB error response. It returns true when the caller should
-// proceed with the mutation. Shared by PutItem, UpdateItem and DeleteItem.
-func (h *Handler) gateCondition(
-	ctx context.Context,
-	w http.ResponseWriter,
-	table string,
-	keySource map[string]any,
-	condExpr string,
-	names map[string]string,
-	values map[string]any,
-	returnValuesOnCondFail string,
-) bool {
-	ok, err := h.checkCondition(ctx, table, keySource, condExpr, names, values)
-	if err != nil {
-		writeErr(w, err)
-		return false
-	}
-
-	if !ok {
-		var extra map[string]any
-		// ReturnValuesOnConditionCheckFailure=ALL_OLD asks DynamoDB to return the
-		// conflicting item in the exception's Item member.
-		if strings.EqualFold(returnValuesOnCondFail, "ALL_OLD") {
-			if old := h.previousItem(ctx, table, keySource); old != nil {
-				extra = map[string]any{"Item": toWireItem(old)}
-			}
-		}
-
-		wire.WriteJSONErrorFields(w, http.StatusBadRequest,
-			"ConditionalCheckFailedException", "The conditional request failed", extra)
-
-		return false
-	}
-
-	return true
-}
-
-// checkCondition evaluates a DynamoDB ConditionExpression against the current
-// stored item, using the full expression grammar (functions, boolean
-// operators, IN/BETWEEN, size(), type-aware comparisons). keySource carries
-// the item's key attributes (the full item for PutItem, the Key map for
-// Update/Delete). A missing item is evaluated against an empty item, so
-// attribute_not_exists is true and attribute_exists is false — matching real
-// DynamoDB create-if-absent semantics. A malformed expression is a
-// cerrors.InvalidArgument; a well-formed but unmet condition returns false.
-func (h *Handler) checkCondition(
-	ctx context.Context,
-	table string,
-	keySource map[string]any,
-	condExpr string,
-	names map[string]string,
-	values map[string]any,
-) (bool, error) {
-	condExpr = strings.TrimSpace(condExpr)
-	if condExpr == "" {
-		return true, nil
-	}
-
-	cfg, err := h.db.DescribeTable(ctx, table)
-	if err != nil {
-		return false, err
-	}
-
-	key := map[string]any{cfg.PartitionKey: keySource[cfg.PartitionKey]}
-	if cfg.SortKey != "" {
-		key[cfg.SortKey] = keySource[cfg.SortKey]
-	}
-
-	existing, err := h.db.GetItem(ctx, table, key)
-	if err != nil && !cerrors.IsNotFound(err) {
-		return false, err
-	}
-
-	node, err := expr.ParseCondition(condExpr, names, values)
-	if err != nil {
-		return false, err
-	}
-
-	if existing == nil {
-		existing = map[string]any{}
-	}
-
-	return expr.Eval(node, existing)
+	// The condition is evaluated and the write applied atomically inside the
+	// provider (single lock hold), so two concurrent conditional puts on one key
+	// cannot both succeed.
+	old, err := h.writer().PutItemConditional(r.Context(), req.TableName, fromWireItem(req.Item), req.condition())
+	writeConditionalResult(w, &req, old, err)
 }
 
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
@@ -844,47 +810,14 @@ func addConsumedCapacity(resp map[string]any, returnConsumed, table string) {
 }
 
 func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TableName                 string            `json:"TableName"`
-		Key                       map[string]any    `json:"Key"`
-		ConditionExpression       string            `json:"ConditionExpression"`
-		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
-		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
-		ReturnValues              string            `json:"ReturnValues"`
-		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
-
-		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
-	}
-
+	var req writeItemRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	key := fromWireItem(req.Key)
-	vals := fromWireItem(req.ExpressionAttributeValues)
-
-	if !h.gateCondition(r.Context(), w, req.TableName, key,
-		req.ConditionExpression, req.ExpressionAttributeNames, vals,
-		req.ReturnValuesOnConditionCheckFailure) {
-		return
-	}
-
-	resp := map[string]any{}
-
-	// ReturnValues=ALL_OLD returns the deleted item, so read it before removal.
-	if strings.EqualFold(req.ReturnValues, "ALL_OLD") {
-		if old := h.previousItem(r.Context(), req.TableName, key); old != nil {
-			resp["Attributes"] = toWireItem(old)
-		}
-	}
-
-	if err := h.db.DeleteItem(r.Context(), req.TableName, key); err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	addConsumedCapacity(resp, req.ReturnConsumedCapacity, req.TableName)
-	wire.WriteJSON(w, resp)
+	// Condition eval + delete are atomic inside the provider (single lock hold).
+	old, err := h.writer().DeleteItemConditional(r.Context(), req.TableName, fromWireItem(req.Key), req.condition())
+	writeConditionalResult(w, &req, old, err)
 }
 
 func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
