@@ -104,6 +104,7 @@ func (m *Mock) CommitBlockList(
 		obj.Data = data
 	}
 
+	m.carryOverLease(ctr, blob, obj)
 	ctr.objects.Set(blob, obj)
 	ctr.staging.Delete(blob)
 
@@ -458,6 +459,37 @@ func effectiveLeaseState(obj *blobObject, now time.Time) string {
 		return leaseStateBroken
 	default:
 		return leaseStateAvailable
+	}
+}
+
+// carryOverLease copies an existing blob's lease bookkeeping onto the
+// replacement object built by an overwrite (Put Blob / Commit Block List /
+// Copy Blob), so an authorized write does not silently clear an active lease.
+// Real Azure keeps a fixed or infinite lease active across writes made with
+// the correct lease id; without this the lease evaporates after the first
+// write and any no-lease writer can then overwrite the blob.
+func (m *Mock) carryOverLease(ctr *containerMeta, key string, next *blobObject) {
+	prev, ok := ctr.objects.Get(key)
+	if !ok {
+		return
+	}
+
+	prev.mu.Lock()
+	defer prev.mu.Unlock()
+
+	next.leaseState = prev.leaseState
+	next.leaseID = prev.leaseID
+	next.leaseDurationSec = prev.leaseDurationSec
+	next.leaseExpiresAt = prev.leaseExpiresAt
+	next.leaseBreakAt = prev.leaseBreakAt
+	next.leaseModTimeAtAcquire = prev.leaseModTimeAtAcquire
+
+	// A write authorized under an active lease advances the blob's
+	// last-modified; record it as the lease's reference time so a later renew
+	// of that same lease (after it expires) still treats the blob as
+	// unmodified by anyone else.
+	if s := effectiveLeaseState(prev, m.opts.Clock.Now().UTC()); s == leaseStateLeased || s == leaseStateBreaking {
+		next.leaseModTimeAtAcquire = next.LastModified
 	}
 }
 
