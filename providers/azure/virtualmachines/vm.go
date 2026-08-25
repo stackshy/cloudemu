@@ -525,13 +525,18 @@ func (m *Mock) detachNICs(ctx context.Context, inst *instanceData) error {
 }
 
 // rollbackInstances best-effort tears down instances already provisioned earlier
-// in a RunInstances batch that then failed: each engine-backed instance is
-// deprovisioned (so no live container remains) and every instance is dropped from
-// the store and the state machine (so no half-tracked state remains).
+// in a RunInstances batch that then failed: every NIC the instance attached at
+// launch is detached (so no NIC keeps a virtualMachine back-reference to a VM
+// that's about to vanish, which would strand it as permanently "in use"), each
+// engine-backed instance is deprovisioned (so no live container remains) and
+// every instance is dropped from the store and the state machine (so no
+// half-tracked state remains).
 func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 	engine := m.opts.ComputeEngine
 
 	for _, inst := range created {
+		_ = m.detachNICs(ctx, inst)
+
 		if inst.engineBacked {
 			di := driver.Instance{ID: inst.ID}
 			_ = computeengine.Deprovision(ctx, engine, &di)
