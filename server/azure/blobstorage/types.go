@@ -107,6 +107,18 @@ type blockXML struct {
 	Size int64  `xml:"Size"`
 }
 
+// blobTagsXML is the request body for Set Blob Tags and the response body for
+// Get Blob Tags (PUT/GET /{container}/{blob}?comp=tags).
+type blobTagsXML struct {
+	XMLName xml.Name `xml:"Tags"`
+	TagSet  []tagXML `xml:"TagSet>Tag"`
+}
+
+type tagXML struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
 // signedIdentifiersXML is the request/response body for PUT and GET
 // /{container}?restype=container&comp=acl.
 type signedIdentifiersXML struct {
