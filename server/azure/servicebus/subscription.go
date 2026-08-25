@@ -67,10 +67,11 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 	}
 
 	now := time.Now().UTC()
+	lockSeconds := lockDurationSeconds(req.Properties.LockDuration)
 
 	rec, existed := t.Subs[name]
 	if !existed {
-		url, err := h.createSubQueue(r, sp.namespace, topic, name)
+		url, err := h.createSubQueue(r, sp.namespace, topic, name, lockSeconds)
 		if err != nil {
 			h.mu.Unlock()
 			azurearm.WriteCErr(w, err)
@@ -81,6 +82,10 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 		rec = &subscriptionRecord{Name: name, DriverURL: url, Rules: map[string]*ruleRecord{}, CreatedAt: now}
 		rec.Rules[defaultRuleName] = defaultRule()
 		t.Subs[name] = rec
+	} else if rec.DriverURL != "" {
+		// PUT is create-or-update: honor a LockDuration change on an existing
+		// subscription's peek-lock visibility window too.
+		_ = h.mq.SetQueueAttributes(r.Context(), rec.DriverURL, map[string]int{"VisibilityTimeout": lockSeconds})
 	}
 
 	rec.Props = buildSubProps(&req.Properties, rec.CreatedAt, now)
@@ -133,11 +138,12 @@ func (h *Handler) deleteSubscription(w http.ResponseWriter, sp sbPath, topic, na
 	w.WriteHeader(http.StatusOK)
 }
 
-// createSubQueue provisions the backing message store for a new subscription.
-func (h *Handler) createSubQueue(r *http.Request, namespace, topic, sub string) (string, error) {
+// createSubQueue provisions the backing message store for a new subscription,
+// honoring its configured LockDuration for peek-lock visibility.
+func (h *Handler) createSubQueue(r *http.Request, namespace, topic, sub string, lockSeconds int) (string, error) {
 	name := namespace + "/" + topic + "/" + segSubs + "/" + sub
 
-	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: name})
+	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: name, VisibilityTimeout: lockSeconds})
 	if err != nil && !cerrors.IsAlreadyExists(err) {
 		return "", err
 	}

@@ -213,7 +213,10 @@ func TestDataPlaneSendToMissingQueue(t *testing.T) {
 
 // helpers --------------------------------------------------------------------
 
-func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) *http.Response {
+// doRequest issues a raw HTTP request against the test server. Trailing
+// headers maps, if any, are merged onto the request (e.g. a data-plane send's
+// BrokerProperties header).
+func doRequest(t *testing.T, srv *httptest.Server, method, path, body string, headers ...map[string]string) *http.Response {
 	t.Helper()
 
 	var rdr io.Reader
@@ -224,6 +227,12 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) *h
 	req, _ := http.NewRequestWithContext(context.Background(), method, srv.URL+path, rdr)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for _, hs := range headers {
+		for k, v := range hs {
+			req.Header.Set(k, v)
+		}
 	}
 
 	resp, err := http.DefaultClient.Do(req)

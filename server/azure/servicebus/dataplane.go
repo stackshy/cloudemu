@@ -126,7 +126,7 @@ func (h *Handler) serveEntityData(w http.ResponseWriter, r *http.Request, tgt *d
 		return
 	}
 
-	subURLs, ok := h.resolveTopicSubURLs(tgt.namespace, tgt.entity)
+	targets, ok := h.resolveTopicSubURLs(tgt.namespace, tgt.entity)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "entity not found: "+tgt.entity)
 		return
@@ -139,7 +139,7 @@ func (h *Handler) serveEntityData(w http.ResponseWriter, r *http.Request, tgt *d
 		return
 	}
 
-	h.dataPlaneTopicSend(w, r, subURLs)
+	h.dataPlaneTopicSend(w, r, targets)
 }
 
 // serveSubscriptionData routes a "/{topic}/subscriptions/{sub}/messages"
@@ -205,10 +205,17 @@ func (h *Handler) resolveQueueURL(namespace, queue string) (string, bool) {
 	return "", false
 }
 
-// resolveTopicSubURLs returns the backing driver URLs of every subscription on
-// a topic (the fan-out targets for a topic publish), and whether the topic
-// exists.
-func (h *Handler) resolveTopicSubURLs(namespace, topic string) ([]string, bool) {
+// topicSubTarget is one subscription fan-out target: its backing queue URL
+// plus a snapshot of its rules' filter properties, evaluated against each
+// published message to decide whether that subscription receives it.
+type topicSubTarget struct {
+	url   string
+	rules []ruleProperties
+}
+
+// resolveTopicSubURLs returns the fan-out targets of every subscription on a
+// topic, and whether the topic exists.
+func (h *Handler) resolveTopicSubURLs(namespace, topic string) ([]topicSubTarget, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -218,12 +225,20 @@ func (h *Handler) resolveTopicSubURLs(namespace, topic string) ([]string, bool) 
 			continue
 		}
 
-		urls := make([]string, 0, len(t.Subs))
+		targets := make([]topicSubTarget, 0, len(t.Subs))
+
 		for _, n := range sortedKeys(t.Subs) {
-			urls = append(urls, t.Subs[n].DriverURL)
+			sub := t.Subs[n]
+
+			rules := make([]ruleProperties, 0, len(sub.Rules))
+			for _, rn := range sortedKeys(sub.Rules) {
+				rules = append(rules, sub.Rules[rn].Props)
+			}
+
+			targets = append(targets, topicSubTarget{url: sub.DriverURL, rules: rules})
 		}
 
-		return urls, true
+		return targets, true
 	}
 
 	return nil, false
@@ -307,23 +322,36 @@ func (h *Handler) dataPlaneSend(w http.ResponseWriter, r *http.Request, url stri
 	w.WriteHeader(http.StatusCreated)
 }
 
-// dataPlaneTopicSend fans a published message out to every subscription's
-// backing queue. A topic with no subscriptions still returns 201 (the message
-// is accepted and dropped), matching Azure.
-func (h *Handler) dataPlaneTopicSend(w http.ResponseWriter, r *http.Request, subURLs []string) {
+// dataPlaneTopicSend fans a published message out to every subscription whose
+// rules it matches (each subscription's filter-only rules are OR'd, mirroring
+// real Service Bus). A topic with no subscriptions, or with none whose rules
+// match, still returns 201 (the message is accepted and dropped), matching
+// Azure.
+//
+// DEFER: only the system properties parseBrokerProperties recognizes are
+// evaluated; arbitrary custom application-property headers are not parsed, so
+// a SqlFilter or CorrelationFilter predicate over a user-defined property
+// cannot disqualify a subscription yet.
+func (h *Handler) dataPlaneTopicSend(w http.ResponseWriter, r *http.Request, targets []topicSubTarget) {
 	if r.Method != http.MethodPost {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "send requires POST")
 		return
 	}
+
+	props := parseBrokerProperties(r)
 
 	body, ok := readSendBody(w, r)
 	if !ok {
 		return
 	}
 
-	for _, url := range subURLs {
+	for _, tgt := range targets {
+		if !rulesMatch(tgt.rules, &props) {
+			continue
+		}
+
 		if _, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
-			QueueURL: url, Body: body,
+			QueueURL: tgt.url, Body: body,
 		}); err != nil {
 			azurearm.WriteCErr(w, err)
 			return

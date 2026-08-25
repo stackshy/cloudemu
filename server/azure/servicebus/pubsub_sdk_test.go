@@ -137,6 +137,63 @@ func TestSDKTopicSubscriptionRule(t *testing.T) {
 	}
 }
 
+// TestSDKCorrelationFilterRule drives a CorrelationFilter rule through the
+// real armservicebus SDK, confirming the filter fields round-trip and that
+// FilterType defaults from a set CorrelationFilter when the caller omits it.
+func TestSDKCorrelationFilterRule(t *testing.T) {
+	ts := pubsubServer(t)
+	cf := newClientFactory(t, ts)
+	ctx := context.Background()
+
+	createNS(t, cf.NewNamespacesClient(), rgName, nsName, nil)
+
+	if _, err := cf.NewTopicsClient().CreateOrUpdate(ctx, rgName, nsName, "orders",
+		armservicebus.SBTopic{}, nil); err != nil {
+		t.Fatalf("topic CreateOrUpdate: %v", err)
+	}
+
+	if _, err := cf.NewSubscriptionsClient().CreateOrUpdate(ctx, rgName, nsName, "orders", "billing",
+		armservicebus.SBSubscription{}, nil); err != nil {
+		t.Fatalf("subscription CreateOrUpdate: %v", err)
+	}
+
+	rules := cf.NewRulesClient()
+
+	made, err := rules.CreateOrUpdate(ctx, rgName, nsName, "orders", "billing", "urgent", armservicebus.Rule{
+		Properties: &armservicebus.Ruleproperties{
+			CorrelationFilter: &armservicebus.CorrelationFilter{
+				CorrelationID: to.Ptr("urgent"),
+				Label:         to.Ptr("invoice"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("rule CreateOrUpdate: %v", err)
+	}
+
+	if made.Properties == nil || made.Properties.FilterType == nil ||
+		*made.Properties.FilterType != armservicebus.FilterTypeCorrelationFilter {
+		t.Fatalf("filterType = %v, want CorrelationFilter (defaulted)", made.Properties)
+	}
+
+	cfilter := made.Properties.CorrelationFilter
+	if cfilter == nil || cfilter.CorrelationID == nil || *cfilter.CorrelationID != "urgent" ||
+		cfilter.Label == nil || *cfilter.Label != "invoice" {
+		t.Fatalf("correlationFilter = %v, want CorrelationId=urgent Label=invoice", cfilter)
+	}
+
+	got, err := rules.Get(ctx, rgName, nsName, "orders", "billing", "urgent", nil)
+	if err != nil {
+		t.Fatalf("rule Get: %v", err)
+	}
+
+	if got.Properties == nil || got.Properties.CorrelationFilter == nil ||
+		got.Properties.CorrelationFilter.CorrelationID == nil ||
+		*got.Properties.CorrelationFilter.CorrelationID != "urgent" {
+		t.Fatalf("rule Get correlationFilter = %v", got.Properties)
+	}
+}
+
 // TestSDKAuthorizationRulesAndKeys covers the default RootManageSharedAccessKey,
 // listKeys, a custom rule, and regenerateKeys.
 func TestSDKAuthorizationRulesAndKeys(t *testing.T) {
