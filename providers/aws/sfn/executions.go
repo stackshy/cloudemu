@@ -131,6 +131,24 @@ func (m *Mock) StartExecution(_ context.Context, in driver.StartExecutionInput) 
 	return m.runExecution(in, true)
 }
 
+// StartExternal starts a state-machine execution on behalf of a cross-service
+// event source (e.g. an EventBridge rule whose target is this state machine).
+// It is the SFN counterpart to the SQS/SNS/Lambda external-delivery choke
+// points: an unknown state machine is a no-op so a stale target never fails the
+// caller. The event envelope is passed through as the execution input.
+func (m *Mock) StartExternal(ctx context.Context, stateMachineARN, input string) error {
+	if _, err := m.getSM(stateMachineARN); err != nil {
+		return nil
+	}
+
+	_, err := m.StartExecution(ctx, driver.StartExecutionInput{
+		StateMachineArn: stateMachineARN,
+		Input:           input,
+	})
+
+	return err
+}
+
 func (m *Mock) StartSyncExecution(_ context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
 	return m.runExecution(in, false)
 }
