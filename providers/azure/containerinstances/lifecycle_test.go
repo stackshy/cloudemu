@@ -70,33 +70,33 @@ func TestStopStartRestartStateTransitions(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if err := m.StopContainerGroup(ctx, "cg1"); err != nil {
+	if err := m.StopContainerGroup(ctx, testSub, testRG, "cg1"); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 
-	g, _ := m.GetContainerGroup(ctx, "cg1")
+	g, _ := m.GetContainerGroup(ctx, testSub, testRG, "cg1")
 	if g.State != groupStateStopped || g.Containers[0].Current.State != containerStateTerminated {
 		t.Fatalf("after stop: group=%q container=%q", g.State, g.Containers[0].Current.State)
 	}
 
-	if err := m.StartContainerGroup(ctx, "cg1"); err != nil {
+	if err := m.StartContainerGroup(ctx, testSub, testRG, "cg1"); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
-	g, _ = m.GetContainerGroup(ctx, "cg1")
+	g, _ = m.GetContainerGroup(ctx, testSub, testRG, "cg1")
 	if g.State != groupStateRunning {
 		t.Fatalf("after start: group state = %q, want Running", g.State)
 	}
 
-	if err := m.RestartContainerGroup(ctx, "cg1"); err != nil {
+	if err := m.RestartContainerGroup(ctx, testSub, testRG, "cg1"); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
 
 	// Missing group → NotFound for each verb.
 	for _, err := range []error{
-		m.StopContainerGroup(ctx, "ghost"),
-		m.StartContainerGroup(ctx, "ghost"),
-		m.RestartContainerGroup(ctx, "ghost"),
+		m.StopContainerGroup(ctx, testSub, testRG, "ghost"),
+		m.StartContainerGroup(ctx, testSub, testRG, "ghost"),
+		m.RestartContainerGroup(ctx, testSub, testRG, "ghost"),
 	} {
 		if !cerrors.IsNotFound(err) {
 			t.Fatalf("lifecycle on missing group = %v, want NotFound", err)
@@ -113,7 +113,7 @@ func TestExecValidatesAndDrivesEngine(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	session, err := m.ExecContainer(ctx, "cg1", "app", []string{"ls", "-la"})
+	session, err := m.ExecContainer(ctx, testSub, testRG, "cg1", "app", []string{"ls", "-la"})
 	if err != nil {
 		t.Fatalf("exec: %v", err)
 	}
@@ -127,12 +127,12 @@ func TestExecValidatesAndDrivesEngine(t *testing.T) {
 	}
 
 	// Unknown container → NotFound.
-	if _, err := m.ExecContainer(ctx, "cg1", "ghost", []string{"ls"}); !cerrors.IsNotFound(err) {
+	if _, err := m.ExecContainer(ctx, testSub, testRG, "cg1", "ghost", []string{"ls"}); !cerrors.IsNotFound(err) {
 		t.Fatalf("exec on missing container = %v, want NotFound", err)
 	}
 
 	// Unknown group → NotFound.
-	if _, err := m.ExecContainer(ctx, "ghost", "app", []string{"ls"}); !cerrors.IsNotFound(err) {
+	if _, err := m.ExecContainer(ctx, testSub, testRG, "ghost", "app", []string{"ls"}); !cerrors.IsNotFound(err) {
 		t.Fatalf("exec on missing group = %v, want NotFound", err)
 	}
 }

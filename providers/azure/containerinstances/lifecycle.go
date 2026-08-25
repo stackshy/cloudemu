@@ -77,87 +77,99 @@ func synthPublicIP(seed string) string {
 }
 
 // StartContainerGroup restarts the group's workload and returns it to Running.
-func (m *Mock) StartContainerGroup(ctx context.Context, name string) error {
+func (m *Mock) StartContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, ok := m.groups.Get(name)
-	if !ok {
+	key := groupKey(subscription, resourceGroup, name)
+
+	if !m.groups.Has(key) {
 		return cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
 	}
 
-	return m.runGroup(ctx, data)
+	return m.runGroup(ctx, key)
 }
 
 // StopContainerGroup tears down the workload and marks the group Stopped.
-func (m *Mock) StopContainerGroup(ctx context.Context, name string) error {
+func (m *Mock) StopContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, ok := m.groups.Get(name)
+	key := groupKey(subscription, resourceGroup, name)
+
+	data, ok := m.groups.Get(key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
 	}
 
 	m.stopWorkload(ctx, data)
-	data.engineBacked = false
-	data.handle = ""
-	data.group.State = groupStateStopped
 
-	for i := range data.group.Containers {
-		data.group.Containers[i].Current = driver.ContainerState{State: containerStateTerminated}
-	}
+	m.groups.Update(key, func(d *groupData) *groupData {
+		d.engineBacked = false
+		d.handle = ""
+		d.group.State = groupStateStopped
 
-	m.groups.Set(name, data)
+		for i := range d.group.Containers {
+			d.group.Containers[i].Current = driver.ContainerState{State: containerStateTerminated}
+		}
+
+		return d
+	})
 
 	return nil
 }
 
 // RestartContainerGroup tears the workload down and runs it again.
-func (m *Mock) RestartContainerGroup(ctx context.Context, name string) error {
+func (m *Mock) RestartContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, ok := m.groups.Get(name)
+	key := groupKey(subscription, resourceGroup, name)
+
+	data, ok := m.groups.Get(key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
 	}
 
 	m.stopWorkload(ctx, data)
 
-	return m.runGroup(ctx, data)
+	return m.runGroup(ctx, key)
 }
 
-// runGroup resets the group to a fresh Running state and re-runs it on the
-// engine (a no-op when none is configured), reflecting the observed state back.
-func (m *Mock) runGroup(ctx context.Context, data *groupData) error {
-	cfg := driver.ContainerGroupConfig{
-		Name:          data.group.Name,
-		RestartPolicy: data.group.RestartPolicy,
-		Containers:    configsFromInstances(data.group.Containers),
-	}
+// runGroup resets the group at key to a fresh Running state and re-runs it on
+// the engine (a no-op when none is configured), reflecting the observed state
+// back.
+func (m *Mock) runGroup(ctx context.Context, key string) error {
+	var runErr error
 
-	data.group.State = groupStateRunning
-	data.group.Containers = synthContainers(cfg.Containers)
-	data.engineBacked = false
-	data.handle = ""
+	m.groups.Update(key, func(data *groupData) *groupData {
+		cfg := driver.ContainerGroupConfig{
+			Name:          data.group.Name,
+			RestartPolicy: data.group.RestartPolicy,
+			Containers:    configsFromInstances(data.group.Containers),
+			Scope:         data.group.Scope,
+		}
 
-	if err := m.backWithEngine(ctx, &cfg, data); err != nil {
-		return err
-	}
+		data.group.State = groupStateRunning
+		data.group.Containers = synthContainers(cfg.Containers)
+		data.engineBacked = false
+		data.handle = ""
 
-	m.groups.Set(cfg.Name, data)
+		runErr = m.backWithEngine(ctx, &cfg, data)
 
-	return nil
+		return data
+	})
+
+	return runErr
 }
 
 // ExecContainer opens an exec session on one container. When the group is
 // engine-backed the command runs for real on the engine before the session
 // descriptor is returned.
 func (m *Mock) ExecContainer(
-	ctx context.Context, group, container string, command []string,
+	ctx context.Context, subscription, resourceGroup, group, container string, command []string,
 ) (*driver.ExecSession, error) {
-	data, ok := m.groups.Get(group)
+	data, ok := m.groups.Get(groupKey(subscription, resourceGroup, group))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container group %q not found", group)
 	}

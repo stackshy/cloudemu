@@ -19,7 +19,7 @@ func (h *Handler) createOrUpdateGroup(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	_, getErr := h.aci.GetContainerGroup(r.Context(), rp.ResourceName)
+	_, getErr := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	existed := getErr == nil
 
 	group, err := h.aci.CreateContainerGroup(r.Context(), toConfig(rp, &body))
@@ -44,11 +44,11 @@ func (h *Handler) lifecycleGroup(w http.ResponseWriter, r *http.Request, rp *azu
 
 	switch rp.SubResource {
 	case subActionStart:
-		err = h.aci.StartContainerGroup(r.Context(), rp.ResourceName)
+		err = h.aci.StartContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	case subActionStop:
-		err = h.aci.StopContainerGroup(r.Context(), rp.ResourceName)
+		err = h.aci.StopContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	case subActionRestart:
-		err = h.aci.RestartContainerGroup(r.Context(), rp.ResourceName)
+		err = h.aci.RestartContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	}
 
 	if err != nil {
@@ -74,7 +74,8 @@ func (h *Handler) execContainer(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	session, err := h.aci.ExecContainer(r.Context(), rp.ResourceName, rp.SubResourceName, strings.Fields(req.Command))
+	session, err := h.aci.ExecContainer(
+		r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, strings.Fields(req.Command))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 
@@ -89,7 +90,7 @@ func (h *Handler) execContainer(w http.ResponseWriter, r *http.Request, rp *azur
 
 // getGroup handles GET on a single resource — ContainerGroups.Get.
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	group, err := h.aci.GetContainerGroup(r.Context(), rp.ResourceName)
+	group, err := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 
@@ -102,14 +103,14 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.
 // deleteGroup handles DELETE — ContainerGroups.BeginDelete. Returning 200 with
 // the deleted resource body completes the SDK's poller on the first response.
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	group, err := h.aci.GetContainerGroup(r.Context(), rp.ResourceName)
+	group, err := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 
 		return
 	}
 
-	if derr := h.aci.DeleteContainerGroup(r.Context(), rp.ResourceName); derr != nil {
+	if derr := h.aci.DeleteContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); derr != nil {
 		azurearm.WriteCErr(w, derr)
 
 		return
@@ -148,7 +149,8 @@ func (h *Handler) containerLogs(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	content, err := h.aci.ContainerLogs(r.Context(), rp.ResourceName, rp.SubResourceName, tailParam(r))
+	content, err := h.aci.ContainerLogs(
+		r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, tailParam(r))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 
