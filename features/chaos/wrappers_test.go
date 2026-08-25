@@ -10,6 +10,7 @@ import (
 	awsdynamo "github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	awsec2 "github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	awss3 "github.com/stackshy/cloudemu/v2/providers/aws/s3"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -430,6 +431,7 @@ type computeConfigCompat = struct {
 	ClientToken            string
 	IamInstanceProfileARN  string
 	IamInstanceProfileName string
+	Identity               *computedriver.ManagedIdentity
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

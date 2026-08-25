@@ -42,6 +42,12 @@ type InstanceConfig struct {
 	// reference to the profile's ARN and ID. Ignored by Azure/GCP.
 	IamInstanceProfileARN  string
 	IamInstanceProfileName string
+	// Identity is the ARM managed-identity block to attach at launch (Azure
+	// VM identity.type / identity.userAssignedIdentities), when set. Only
+	// Type and UserAssigned (the caller-supplied identity resource IDs) are
+	// meaningful on input — PrincipalID/TenantID/ClientID are provider-
+	// synthesized output, ignored here. Ignored by AWS/GCP.
+	Identity *ManagedIdentity
 }
 
 // IamInstanceProfile is the IAM instance profile association reported on an EC2
@@ -49,6 +55,31 @@ type InstanceConfig struct {
 type IamInstanceProfile struct {
 	ARN string
 	ID  string
+}
+
+// ManagedIdentity models an Azure VM managed-identity block: system-assigned
+// and/or user-assigned identity configuration. Ignored by AWS/GCP.
+type ManagedIdentity struct {
+	// Type is one of "None", "SystemAssigned", "UserAssigned",
+	// "SystemAssigned,UserAssigned".
+	Type string
+	// PrincipalID/TenantID are synthesized for a system-assigned identity
+	// (empty otherwise or on input).
+	PrincipalID string
+	TenantID    string
+	// UserAssigned holds the attached user-assigned identities, keyed by
+	// their full ARM resource ID. On input, only the key (the identity to
+	// attach) matters; the provider fills in each entry's synthesized
+	// PrincipalID/ClientID for output.
+	UserAssigned map[string]UserAssignedIdentity
+}
+
+// UserAssignedIdentity is one entry of ManagedIdentity.UserAssigned: the
+// synthesized principal/client id pair Azure reports for an attached
+// user-assigned identity.
+type UserAssignedIdentity struct {
+	PrincipalID string
+	ClientID    string
 }
 
 // Instance describes a running virtual machine.
@@ -106,6 +137,9 @@ type Instance struct {
 	// IamInstanceProfile is the IAM instance profile attached to the instance
 	// (AWS), nil when none is attached.
 	IamInstanceProfile *IamInstanceProfile
+	// Identity is the resolved managed-identity block (Azure), nil when no
+	// identity is attached (identity.type "None" or unset).
+	Identity *ManagedIdentity
 }
 
 // MetadataOptions is an instance's IMDS (instance metadata service)

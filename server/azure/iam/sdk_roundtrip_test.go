@@ -227,6 +227,94 @@ func TestSDKAzureIAMRoleAssignmentLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKAzureIAMRoleDefinitionListScopeAndAbove verifies real Azure's
+// documented RoleDefinitions List semantics (MS Learn:
+// rest/api/authorization/role-definitions/list — "Get all role definitions
+// that are applicable at scope and above"): a list at a scope returns role
+// definitions scoped to that scope and its ancestors, never one scoped only
+// to a descendant resource beneath it.
+func TestSDKAzureIAMRoleDefinitionListScopeAndAbove(t *testing.T) {
+	roleDefs, _ := newSDKClients(t)
+	ctx := context.Background()
+
+	const (
+		subRoleID = "11111111-aaaa-aaaa-aaaa-111111111111"
+		rgRoleID  = "22222222-bbbb-bbbb-bbbb-222222222222"
+		vmRoleID  = "33333333-cccc-cccc-cccc-333333333333"
+	)
+
+	rgScope := testScope + "/resourceGroups/rg1"
+	vmScope := rgScope + "/providers/Microsoft.Compute/virtualMachines/vm1"
+
+	mustCreateRole(t, roleDefs, ctx, testScope, subRoleID, "Sub Role")
+	mustCreateRole(t, roleDefs, ctx, rgScope, rgRoleID, "RG Role")
+	mustCreateRole(t, roleDefs, ctx, vmScope, vmRoleID, "VM Role")
+
+	// Listing at the subscription scope must return only the subscription-
+	// scoped role — the RG- and VM-scoped roles are descendants, not
+	// ancestors, of the subscription.
+	names := listRoleNames(t, roleDefs, testScope)
+	if !names[subRoleID] {
+		t.Fatalf("list at subscription scope missing sub-scoped role: %v", names)
+	}
+	if names[rgRoleID] || names[vmRoleID] {
+		t.Fatalf("list at subscription scope leaked a descendant-scoped role: %v", names)
+	}
+
+	// Listing at the resource-group scope must return the RG-scoped role and
+	// its subscription ancestor, but not the VM-scoped descendant.
+	names = listRoleNames(t, roleDefs, rgScope)
+	if !names[subRoleID] || !names[rgRoleID] {
+		t.Fatalf("list at RG scope missing scope-and-above roles: %v", names)
+	}
+	if names[vmRoleID] {
+		t.Fatalf("list at RG scope leaked the VM-scoped descendant role: %v", names)
+	}
+
+	// Listing at the VM scope must return all three: itself and both ancestors.
+	names = listRoleNames(t, roleDefs, vmScope)
+	if !names[subRoleID] || !names[rgRoleID] || !names[vmRoleID] {
+		t.Fatalf("list at VM scope missing scope-and-above roles: %v", names)
+	}
+}
+
+func mustCreateRole(
+	t *testing.T, roleDefs *armauthorization.RoleDefinitionsClient, ctx context.Context, scope, id, name string,
+) {
+	t.Helper()
+
+	if _, err := roleDefs.CreateOrUpdate(ctx, scope, id, armauthorization.RoleDefinition{
+		Properties: &armauthorization.RoleDefinitionProperties{
+			RoleName:         to.Ptr(name),
+			RoleType:         to.Ptr("CustomRole"),
+			AssignableScopes: []*string{to.Ptr(scope)},
+		},
+	}, nil); err != nil {
+		t.Fatalf("CreateOrUpdate role definition %s at scope %s: %v", id, scope, err)
+	}
+}
+
+func listRoleNames(t *testing.T, roleDefs *armauthorization.RoleDefinitionsClient, scope string) map[string]bool {
+	t.Helper()
+
+	ctx := context.Background()
+	pager := roleDefs.NewListPager(scope, nil)
+	out := make(map[string]bool)
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("ListPager.NextPage at scope %s: %v", scope, err)
+		}
+
+		for _, rd := range page.Value {
+			out[getStringPtr(rd.Name)] = true
+		}
+	}
+
+	return out
+}
+
 func getStringPtr(p *string) string {
 	if p == nil {
 		return ""

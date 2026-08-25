@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +43,12 @@ const (
 	ipSegmentSize  = 256
 	stateAvailable = "available"
 	stateInUse     = "in-use"
+	// identityTypeNone mirrors the ARM ResourceIdentityType "None" value: no
+	// managed identity attached.
+	identityTypeNone = "None"
+	// emulatorTenantID is the single Azure AD directory all emulated
+	// resources belong to.
+	emulatorTenantID = "11111111-1111-1111-1111-111111111111"
 )
 
 type lifecycleTransition struct {
@@ -145,6 +152,9 @@ type instanceData struct {
 	// Generalized is true once the VM has been generalized (Azure Generalize
 	// action), a precondition for capturing it into a reusable image.
 	Generalized bool
+	// Identity is the resolved managed-identity block, nil when no identity
+	// is attached.
+	Identity *driver.ManagedIdentity
 	// engineBacked is true when a real config.ComputeEngine backs this
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
@@ -306,7 +316,60 @@ func toInstance(d *instanceData) driver.Instance {
 		Region: d.Region, ResourceGroup: d.ResourceGroup,
 		PowerState:  d.PowerState,
 		Generalized: d.Generalized,
+		Identity:    copyIdentity(d.Identity),
 	}
+}
+
+// copyIdentity deep-copies a ManagedIdentity so a caller holding the returned
+// driver.Instance cannot mutate the stored instanceData through it.
+func copyIdentity(in *driver.ManagedIdentity) *driver.ManagedIdentity {
+	if in == nil {
+		return nil
+	}
+
+	out := *in
+
+	if len(in.UserAssigned) > 0 {
+		out.UserAssigned = make(map[string]driver.UserAssignedIdentity, len(in.UserAssigned))
+		for k, v := range in.UserAssigned {
+			out.UserAssigned[k] = v
+		}
+	}
+
+	return &out
+}
+
+// resolveIdentity normalizes a caller-supplied managed identity: for a
+// system-assigned identity it synthesizes a deterministic principal/tenant
+// GUID pair (as Azure does on assignment), and for each user-assigned
+// identity it synthesizes a deterministic principal/client GUID pair, keyed
+// by the seed (the owning instance's id) so the same instance always reports
+// the same identity across GET/List. A nil or "None" identity resolves to
+// nil (no identity attached).
+func resolveIdentity(in *driver.ManagedIdentity, seed string) *driver.ManagedIdentity {
+	if in == nil || in.Type == "" || strings.EqualFold(in.Type, identityTypeNone) {
+		return nil
+	}
+
+	out := &driver.ManagedIdentity{Type: in.Type}
+
+	if strings.Contains(strings.ToLower(in.Type), "systemassigned") {
+		out.PrincipalID = idgen.SyntheticGUID("principal/vm/" + seed)
+		out.TenantID = emulatorTenantID
+	}
+
+	if len(in.UserAssigned) > 0 {
+		out.UserAssigned = make(map[string]driver.UserAssignedIdentity, len(in.UserAssigned))
+
+		for id := range in.UserAssigned {
+			out.UserAssigned[id] = driver.UserAssignedIdentity{
+				PrincipalID: idgen.SyntheticGUID("principal/uai/" + id),
+				ClientID:    idgen.SyntheticGUID("client/uai/" + id),
+			}
+		}
+	}
+
+	return out
 }
 
 // RunInstances creates and starts the specified number of virtual machine instances.
@@ -358,6 +421,8 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			ResourceGroup: cfg.ResourceGroup,
 			PowerState:    powerStateRunning,
 		}
+
+		inst.Identity = resolveIdentity(cfg.Identity, id)
 
 		// Back the instance with a real compute engine when one is configured.
 		// The engine runs the decoded customData as the boot script and may
@@ -490,39 +555,49 @@ func (m *Mock) Deallocate(ctx context.Context, instanceID string) error {
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateInstance(_ context.Context, instanceID string, cfg driver.InstanceConfig) error {
-	inst, ok := m.instances.Get(instanceID)
+	ok := m.instances.Update(instanceID, func(inst *instanceData) *instanceData {
+		if cfg.InstanceType != "" {
+			inst.InstanceType = cfg.InstanceType
+		}
+
+		if cfg.ImageID != "" {
+			inst.ImageID = cfg.ImageID
+		}
+
+		if cfg.SubnetID != "" {
+			inst.SubnetID = cfg.SubnetID
+		}
+
+		if cfg.OSType != "" {
+			inst.OSType = cfg.OSType
+		}
+
+		inst.Priority = cfg.Priority
+		inst.LicenseType = cfg.LicenseType
+
+		if len(cfg.Zones) > 0 {
+			inst.Zones = append([]string(nil), cfg.Zones...)
+		}
+
+		if cfg.Region != "" {
+			inst.Region = cfg.Region
+		}
+
+		inst.Tags = copyTags(cfg.Tags)
+
+		// A nil cfg.Identity means the request omitted the identity block
+		// entirely (real Azure preserves the existing identity in that case);
+		// a non-nil one (including an explicit "None") replaces it.
+		if cfg.Identity != nil {
+			inst.Identity = resolveIdentity(cfg.Identity, instanceID)
+		}
+
+		return inst
+	})
+
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
-
-	if cfg.InstanceType != "" {
-		inst.InstanceType = cfg.InstanceType
-	}
-
-	if cfg.ImageID != "" {
-		inst.ImageID = cfg.ImageID
-	}
-
-	if cfg.SubnetID != "" {
-		inst.SubnetID = cfg.SubnetID
-	}
-
-	if cfg.OSType != "" {
-		inst.OSType = cfg.OSType
-	}
-
-	inst.Priority = cfg.Priority
-	inst.LicenseType = cfg.LicenseType
-
-	if len(cfg.Zones) > 0 {
-		inst.Zones = append([]string(nil), cfg.Zones...)
-	}
-
-	if cfg.Region != "" {
-		inst.Region = cfg.Region
-	}
-
-	inst.Tags = copyTags(cfg.Tags)
 
 	return nil
 }

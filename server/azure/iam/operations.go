@@ -449,9 +449,12 @@ func decodeRoleProperties(doc string) (roleDefinitionProperties, error) {
 
 // scopeMatches returns true when a stored role's scope is acceptable for a
 // query scope. Empty query returns everything (azure SDK calls this with no
-// scope for "list all in subscription"). Exact-match or ancestor prefix is
-// allowed; we err on the permissive side rather than mirror Azure's exact
-// inheritance semantics, which the SDK doesn't enforce client-side.
+// scope for "list all in subscription"). Real Azure's RoleDefinitions List
+// returns definitions "applicable at scope and above" (MS Learn:
+// rest/api/authorization/role-definitions/list) — the query scope itself or
+// one of its ancestors (management group / subscription / resource group)
+// — never a definition scoped only to a descendant resource; that requires
+// the separate atScopeAndBelow $filter, which we don't model.
 func scopeMatches(query, stored string) bool {
 	if query == "" || query == "/" {
 		return true
@@ -461,11 +464,7 @@ func scopeMatches(query, stored string) bool {
 		return true
 	}
 
-	if strings.HasPrefix(query, stored+"/") {
-		return true
-	}
-
-	return strings.HasPrefix(stored, query+"/")
+	return strings.HasPrefix(query, stored+"/")
 }
 
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
