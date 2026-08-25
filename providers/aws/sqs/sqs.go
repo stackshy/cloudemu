@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -77,8 +78,18 @@ type queueData struct {
 	seqCounter         atomic.Uint64
 }
 
-// LambdaTrigger is a function that gets called when a message is sent to a queue.
-type LambdaTrigger func(queueURL string, message driver.Message)
+// EventSourceInvoker delivers an SQS event-source-mapping batch to whatever
+// Lambda ESM(s) target the queue identified by eventSourceARN. delivered
+// reports whether any enabled mapping actually targeted the queue at all —
+// with none configured, SendMessage must leave the message queued rather than
+// treat "nothing happened" as a processed batch. err reports a targeted
+// mapping's handler failure, so the caller can decide whether to delete the
+// message (success) or leave it for redrive (failure). The Lambda mock
+// satisfies it, enabling real SQS -> Lambda invocation (mirroring the
+// DynamoDB Streams -> Lambda StreamEventInvoker wiring).
+type EventSourceInvoker interface {
+	DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) (delivered bool, err error)
+}
 
 // Mock is an in-memory mock implementation of the AWS SQS service.
 type Mock struct {
@@ -86,7 +97,7 @@ type Mock struct {
 	moveTasks  *memstore.Store[*moveTask]
 	opts       *config.Options
 	mu         sync.RWMutex
-	triggers   map[string]LambdaTrigger // queueURL -> trigger
+	esmInvoker EventSourceInvoker
 	monitoring mondriver.Monitoring
 }
 
@@ -112,25 +123,16 @@ func New(opts *config.Options) *Mock {
 		queues:    memstore.New[*queueData](),
 		moveTasks: memstore.New[*moveTask](),
 		opts:      opts,
-		triggers:  make(map[string]LambdaTrigger),
 	}
 }
 
-// SetTrigger registers a Lambda trigger for a queue. When a message is sent to the
-// queue, the trigger function is called automatically.
-func (m *Mock) SetTrigger(queueURL string, fn LambdaTrigger) {
+// SetEventSourceInvoker wires the Lambda backend so a message sent to a queue
+// invokes the queue's Lambda event-source-mapping target(s).
+func (m *Mock) SetEventSourceInvoker(i EventSourceInvoker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.triggers[queueURL] = fn
-}
-
-// RemoveTrigger removes a Lambda trigger from a queue.
-func (m *Mock) RemoveTrigger(queueURL string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.triggers, queueURL)
+	m.esmInvoker = i
 }
 
 // DeliverExternal enqueues body into the queue identified by ARN. It is used
@@ -377,16 +379,16 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 // SendMessage sends a message to the specified SQS queue.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
+func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", input.QueueURL)
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
 
 	if qd.maxMessageSize > 0 && len(input.Body) > qd.maxMessageSize {
+		qd.mu.Unlock()
 		return nil, errors.Newf(errors.InvalidArgument,
 			"One or more parameters are invalid. Reason: Message must be shorter than %d bytes.", qd.maxMessageSize)
 	}
@@ -394,6 +396,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	input.DeduplicationID = effectiveDedupID(qd, &input)
 
 	if err := validateFIFORequirements(qd, &input); err != nil {
+		qd.mu.Unlock()
 		return nil, err
 	}
 
@@ -401,6 +404,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	// FIFO deduplication: check if same DeduplicationID was sent within 5-min window.
 	if existingID, found := findDuplicate(qd, &input, now); found {
+		qd.mu.Unlock()
 		return &driver.SendMessageOutput{MessageID: existingID}, nil
 	}
 
@@ -414,31 +418,179 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		qd.deduplicationIndex[input.DeduplicationID] = now
 	}
 
-	// Fire Lambda trigger if registered.
-	m.mu.RLock()
-	trigger := m.triggers[input.QueueURL]
-	m.mu.RUnlock()
-
-	if trigger != nil {
-		triggerMsg := driver.Message{
-			MessageID:         msgID,
-			Body:              input.Body,
-			Attributes:        msg.Attributes,
-			MessageAttributes: msg.MessageAttributes,
-			GroupID:           input.GroupID,
-		}
-
-		trigger(input.QueueURL, triggerMsg)
-	}
-
 	dims := map[string]string{"QueueName": qd.info.Name}
+	qd.mu.Unlock()
+
 	m.emitMetric("NumberOfMessagesSent", 1, "Count", dims)
 	m.emitMetric("SentMessageSize", float64(len(input.Body)), "Bytes", dims)
+
+	// Deliver to any Lambda event-source-mapping targeting this queue. Runs
+	// outside qd.mu so a handler that calls back into SQS (SendMessage,
+	// ReceiveMessage, DeleteMessage against this or another queue) never
+	// deadlocks on it.
+	m.deliverToESM(ctx, qd, msg)
 
 	return &driver.SendMessageOutput{
 		MessageID:      msgID,
 		SequenceNumber: seqNum,
 	}, nil
+}
+
+// deliverToESM synchronously delivers a newly sent message to the Lambda
+// event-source-mapping(s) targeting this queue, mirroring real SQS ESM
+// polling collapsed into the SendMessage call since the emulator has no
+// background poller. Each pass builds a trial "received" view of the message
+// (a fresh ReceiptHandle, ReceiveCount+1) without touching the stored message
+// yet, and only commits that receive once DeliverEventSourceBatch reports
+// delivered=true — i.e. a mapping actually exists for this queue's ARN. A
+// queue with no ESM configured at all must therefore leave the message
+// completely untouched, rather than have "nothing happened" misread as a
+// processed batch.
+//
+// Once a mapping has genuinely consumed the message: on success it is
+// deleted, matching "When your function successfully processes a batch,
+// Lambda deletes its messages from the queue"
+// (https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html). On failure it
+// is left in the queue (invisible until the visibility timeout, as in real
+// SQS) unless a RedrivePolicy is configured, in which case delivery retries
+// in a synchronous loop until it either succeeds or exceedsMaxReceive is
+// reached, at which point the same DLQ-redrive threshold ReceiveMessages
+// honors (see collectVisibleMessages) moves the message to the dead-letter
+// queue. A no-op when no invoker is wired.
+//
+// callerCtx is SendMessage's own context, used only to read the re-entrant
+// delivery depth (internal/recursionguard): a mapped handler commonly
+// re-sends to the very queue that triggered it, re-entering here through the
+// same synchronous call chain (SendMessage -> deliver -> Invoke -> handler ->
+// SendMessage -> ...). Delivery itself always runs on a fresh background
+// context, decoupled from callerCtx's cancellation/deadline (delivery must
+// still complete once the SendMessage call has already returned), carrying
+// forward only the depth so the chain stays bounded.
+func (m *Mock) deliverToESM(callerCtx context.Context, qd *queueData, msg *sqsMessage) {
+	if m.esmInvoker == nil {
+		return
+	}
+
+	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
+
+	for {
+		qd.mu.Lock()
+
+		if !containsMessage(qd, msg) {
+			qd.mu.Unlock()
+			return
+		}
+
+		trialCount := msg.ReceiveCount + 1
+
+		// A receive that would cross MaxReceiveCount is redirected to the DLQ
+		// without ever invoking Lambda for it, mirroring collectVisibleMessages
+		// (the receive that crosses the threshold never reaches the consumer
+		// there either). This can only fire once at least one earlier attempt
+		// in this same call has already been delivered: ReceiveCount starts at
+		// 0 for a freshly sent message, so its first attempt (trialCount=1)
+		// can never exceed a MaxReceiveCount >= 1.
+		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && trialCount > qd.dlqConfig.MaxReceiveCount {
+			msg.ReceiveCount = trialCount
+			removeQueuedMessage(qd, msg)
+			dlqURL, sourceURL := qd.dlqConfig.TargetQueueURL, qd.info.URL
+			qd.mu.Unlock()
+			m.moveToDLQ(dlqURL, sourceURL, msg)
+
+			return
+		}
+
+		trial := *msg
+		trial.ReceiveCount = trialCount
+		received := buildReceivedMessage(&trial, qd.visibilityTimeout, m.opts.Clock.Now())
+		arn := qd.info.ARN
+		region := m.opts.Region
+		qd.mu.Unlock()
+
+		payload := driver.BuildLambdaSQSEvent(arn, region, []driver.Message{received})
+
+		delivered, deliverErr := m.esmInvoker.DeliverEventSourceBatch(ctx, arn, payload)
+		if !delivered {
+			// No event-source-mapping targets this queue: the send is unaffected.
+			return
+		}
+
+		if m.commitESMReceive(qd, msg, &trial, deliverErr) {
+			return
+		}
+	}
+}
+
+// commitESMReceive applies a trial receive (built by deliverToESM once a
+// mapping is known to have actually consumed the message) onto the real
+// stored message, then resolves the outcome: delete on success, DLQ-redrive
+// once exceedsMaxReceive, leave in place with no DLQ configured, or signal
+// the caller to retry. It reports whether deliverToESM's loop should stop.
+func (m *Mock) commitESMReceive(qd *queueData, msg, trial *sqsMessage, deliverErr error) (done bool) {
+	qd.mu.Lock()
+
+	if !containsMessage(qd, msg) {
+		qd.mu.Unlock()
+		return true
+	}
+
+	msg.ReceiveCount = trial.ReceiveCount
+	msg.ReceiptHandle = trial.ReceiptHandle
+	msg.VisibleAt = trial.VisibleAt
+	msg.FirstReceivedAt = trial.FirstReceivedAt
+
+	if deliverErr == nil {
+		removeQueuedMessage(qd, msg)
+		qd.mu.Unlock()
+		m.emitMetric("NumberOfMessagesDeleted", 1, "Count", map[string]string{"QueueName": qd.info.Name})
+
+		return true
+	}
+
+	// deliverToESM's upfront check already redirects a receive that would
+	// cross the threshold before ever invoking Lambda for it; this only fires
+	// if a concurrent SetQueueAttributesRaw shrank MaxReceiveCount between
+	// that check and this commit.
+	if exceedsMaxReceive(qd, msg) {
+		removeQueuedMessage(qd, msg)
+		dlqURL, sourceURL := qd.dlqConfig.TargetQueueURL, qd.info.URL
+		qd.mu.Unlock()
+		m.moveToDLQ(dlqURL, sourceURL, msg)
+
+		return true
+	}
+
+	hasDLQ := qd.dlqConfig != nil
+	qd.mu.Unlock()
+
+	// No DLQ configured: one delivery attempt only. The message stays in the
+	// queue, invisible until the visibility timeout just set expires, exactly
+	// as an unconfigured real SQS/Lambda ESM leaves a failed batch for the
+	// next poll. A DLQ that hasn't hit its threshold yet retries immediately.
+	return !hasDLQ
+}
+
+// containsMessage reports whether the given message pointer is still queued.
+// Caller must hold qd.mu.
+func containsMessage(qd *queueData, target *sqsMessage) bool {
+	for _, msg := range qd.messages {
+		if msg == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+// removeQueuedMessage removes the given message pointer from the queue's
+// backlog, if still present. Caller must hold qd.mu.
+func removeQueuedMessage(qd *queueData, target *sqsMessage) {
+	for i, msg := range qd.messages {
+		if msg == target {
+			qd.messages = append(qd.messages[:i], qd.messages[i+1:]...)
+			return
+		}
+	}
 }
 
 // effectiveDedupID returns the deduplication ID to use, deriving it from the
@@ -640,7 +792,7 @@ func (m *Mock) collectVisibleMessages(
 		msg.ReceiveCount++
 
 		// Check if message exceeded max receive count - move to DLQ.
-		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount {
+		if exceedsMaxReceive(qd, msg) {
 			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, qd.info.URL, msg)
 
 			toRemove = append(toRemove, i)
@@ -702,6 +854,14 @@ func buildReceivedMessage(msg *sqsMessage, visibilityTimeout int, now time.Time)
 		SequenceNumber:    msg.SequenceNumber,
 		GroupID:           msg.GroupID,
 	}
+}
+
+// exceedsMaxReceive reports whether msg's receive count has now exceeded the
+// queue's configured DLQ MaxReceiveCount. Shared by ReceiveMessages (see
+// collectVisibleMessages) and Lambda event-source-mapping delivery (see
+// deliverToESM) so both polling paths honor the same redrive threshold.
+func exceedsMaxReceive(qd *queueData, msg *sqsMessage) bool {
+	return qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount
 }
 
 // moveToDLQ moves a message to the dead-letter queue, recording the source

@@ -278,6 +278,10 @@ func New(opts ...config.Option) *Provider {
 	// DynamoDB Streams -> Lambda: writes to a stream-enabled table invoke the
 	// stream's event-source-mapping targets (mirrors the S3 -> Lambda wiring).
 	p.DynamoDB.SetStreamInvoker(p.Lambda)
+	// SQS -> Lambda: a message sent to a queue invokes the queue's
+	// event-source-mapping target(s), deleting the message on success or
+	// leaving it for DLQ redrive on failure (mirrors the DynamoDB Streams wiring).
+	p.SQS.SetEventSourceInvoker(p.Lambda)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),

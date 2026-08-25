@@ -338,8 +338,14 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 
 // InvokeExternal asynchronously invokes the function identified by its ARN with
 // the given event payload. It backs cross-service event delivery (e.g. S3 ->
-// Lambda notifications, DynamoDB Streams -> Lambda event source mappings). An
-// unknown function is a no-op so a stale target never fails the caller.
+// Lambda notifications, DynamoDB Streams / SQS event source mappings). An
+// unknown function is a no-op so a stale target never fails the caller. A
+// handler that runs but raises (StatusCode 500 / a non-empty FunctionError,
+// exactly as Invoke reports it — see invoke's X-Amz-Function-Error semantics)
+// is surfaced here as a genuine error, unlike Invoke itself: callers that only
+// care whether delivery succeeded (S3, DynamoDB Streams) already discard
+// InvokeExternal's error, while a caller that must react to handler failure
+// (SQS: delete the message on success, leave it for redrive on failure) can.
 //
 // It is also the single choke point every such delivery path funnels through,
 // so it carries the recursive-loop guard: a mapped/notified handler commonly
@@ -366,9 +372,16 @@ func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload [
 
 	ctx = recursionguard.WithDepth(ctx, depth+1)
 
-	_, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: name, Payload: payload, InvokeType: "Event"})
+	out, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: name, Payload: payload, InvokeType: "Event"})
+	if err != nil {
+		return err
+	}
 
-	return err
+	if out != nil && out.Error != "" {
+		return cerrors.Newf(cerrors.Internal, "function %s returned an error: %s", name, out.Error)
+	}
+
+	return nil
 }
 
 // functionNameFromARN extracts the function name from a Lambda ARN

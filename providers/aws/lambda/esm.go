@@ -84,22 +84,38 @@ func (m *Mock) functionARN(nameOrARN string) string {
 // InvokeExternal wiring: the source records a change and calls this so the
 // mapped function actually runs. A disabled mapping is skipped; an unknown
 // target function is a no-op (InvokeExternal), so stale mappings never error.
+// Every matching mapping is invoked regardless of an earlier one's outcome
+// (each is an independent poller against the same source in real AWS); if any
+// invocation fails, its error is returned after all mappings have run, so a
+// caller such as the SQS mock can tell success from failure (delete the
+// message vs. leave it for redrive) without silently starving other mappings.
+//
+// delivered reports whether at least one enabled mapping matched eventSourceARN
+// at all, distinct from err: a source with no ESM configured must be a true
+// no-op to its caller (e.g. SQS must not delete a message nobody consumed),
+// which a nil error alone cannot express since "no mapping" and "mapping
+// succeeded" would otherwise look identical.
+//
 // ctx's re-entrant delivery depth is enforced inside InvokeExternal (see
 // internal/recursionguard), which is the single choke point every delivery
 // path funnels through, so a handler that writes back into its own event
 // source cannot recurse this call chain unboundedly.
-func (m *Mock) DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) error {
+func (m *Mock) DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) (delivered bool, err error) {
+	var deliveryErr error
+
 	for _, info := range m.mappings.All() {
 		if info.State != stateEnabled || info.EventSourceArn != eventSourceARN {
 			continue
 		}
 
-		if err := m.InvokeExternal(ctx, info.FunctionArn, payload); err != nil {
-			return err
+		delivered = true
+
+		if invokeErr := m.InvokeExternal(ctx, info.FunctionArn, payload); invokeErr != nil {
+			deliveryErr = invokeErr
 		}
 	}
 
-	return nil
+	return delivered, deliveryErr
 }
 
 // DeleteEventSourceMapping deletes an event source mapping by UUID.
