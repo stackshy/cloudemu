@@ -139,3 +139,52 @@ func TestSDKCosmosAccountDeleteTearsDownNamespace(t *testing.T) {
 	require.NoError(t, json.Unmarshal(readK.Value, &gotK))
 	assert.Equal(t, "keeper", gotK["who"], "the other account's item is unchanged")
 }
+
+// TestSDKCosmosAccountDeletePrefixSubset locks the foo-vs-foobar prefix-safety
+// guarantee end-to-end: deleting account "foo" must not touch account "foobar",
+// whose name merely starts with "foo". The teardown matches on the "{account}/"
+// separator, so "foobar/…" tables never fall inside "foo"'s namespace. A bare
+// HasPrefix(name, "foo") would wrongly reap foobar's data — this is the wire-level
+// CI guard against that regression class.
+func TestSDKCosmosAccountDeletePrefixSubset(t *testing.T) {
+	ctx := context.Background()
+	stack := newCosmosStack(t)
+
+	// foo and foobar: distinct accounts whose names share the "foo" prefix. Each
+	// gets its own appdb/users and one item.
+	epFoo := stack.createAccountEndpoint(t, "rg-foo", "foo")
+	epFoobar := stack.createAccountEndpoint(t, "rg-foobar", "foobar")
+
+	clientFoo := stack.dataClient(t, epFoo)
+	usersFoo := makeUsersContainer(ctx, t, clientFoo)
+	putUser(ctx, t, usersFoo, "f1", "team-foo", "foo-data")
+
+	clientFoobar := stack.dataClient(t, epFoobar)
+	usersFoobar := makeUsersContainer(ctx, t, clientFoobar)
+	putUser(ctx, t, usersFoobar, "b1", "team-bar", "foobar-data")
+
+	// Delete only "foo".
+	poller, err := stack.arm.BeginDelete(ctx, "rg-foo", "foo", nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	// foo is gone: no List ghost, GET 404s.
+	names := listAccountNames(ctx, t, stack)
+	assert.False(t, names["foo"], "deleted account must not linger in List (ghost)")
+	assert.True(t, names["foobar"], "prefix-sharing account must survive the delete")
+
+	_, err = stack.arm.Get(ctx, "rg-foo", "foo", nil)
+	wantStatus(t, err, 404, "GET on deleted account")
+
+	// foobar is entirely untouched: its database, container and item all survive.
+	assert.Equal(t, []string{"appdb"}, databaseIDs(ctx, t, clientFoobar),
+		"prefix-sharing account keeps its database")
+
+	readBar, err := usersFoobar.ReadItem(ctx, azcosmos.NewPartitionKeyString("team-bar"), "b1", nil)
+	require.NoError(t, err, "prefix-sharing account's item must survive")
+
+	var gotBar map[string]any
+	require.NoError(t, json.Unmarshal(readBar.Value, &gotBar))
+	assert.Equal(t, "foobar-data", gotBar["who"], "prefix-sharing account's item is unchanged")
+}

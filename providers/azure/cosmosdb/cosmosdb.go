@@ -204,6 +204,13 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 // a deleted account stop listing and a same-name recreate start from an empty
 // namespace.
 func (m *Mock) PurgeAccount(account string) {
+	// Guard against an empty account: prefix "" makes HasPrefix always true, so an
+	// empty account would match and delete every table (a match-all data-loss
+	// footgun). Purging the empty/default account is a no-op.
+	if account == "" {
+		return
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
