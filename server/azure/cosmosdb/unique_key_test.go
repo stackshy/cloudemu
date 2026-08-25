@@ -129,8 +129,12 @@ func TestSDKUniqueKeyConcurrentCreateSingleWinner(t *testing.T) {
 	const (
 		dbName   = "ukracedb"
 		collName = "users"
-		fillers  = 3000
-		racers   = 50
+		// fillers is deliberately large: checkUniqueKeys does a full-table Scan,
+		// so a big container widens the check-then-write window enough that the
+		// pre-fix (unlocked) race reproduces on every run — a handful of fillers
+		// leaves the window too narrow to reliably catch the bug.
+		fillers = 40000
+		racers  = 50
 	)
 
 	cc := uniqueKeyContainer(ctx, t, e, dbName, collName)
