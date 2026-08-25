@@ -24,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,8 +37,10 @@ import (
 
 const (
 	pathPrefix      = "/v1/projects/"
+	v2PathPrefix    = "/v2/projects/"
 	functionsSeg    = "functions"
 	locationsSeg    = "locations"
+	operationsSeg   = "operations"
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 5 << 20
 	// maxUploadBytes bounds a source-zip PUT; real gen1 caps uploads at 100 MiB.
@@ -57,6 +60,22 @@ const (
 	// actionGetIamPolicy / actionSetIamPolicy are the IAM invoker-policy verbs.
 	actionGetIamPolicy = "getIamPolicy"
 	actionSetIamPolicy = "setIamPolicy"
+	// actionTestIamPermissions returns the caller's held permission subset.
+	actionTestIamPermissions = "testIamPermissions"
+	// gen2OpPrefix namespaces the v2 (gen2) long-running-operation ids this
+	// handler mints so its operation polls stay disjoint from Cloud Run's, which
+	// also matches /v2/projects/{p}/locations/{l}/operations/... paths.
+	gen2OpPrefix = "cf2-"
+	// gen1 defaults populated onto a v1 function's output-only metadata.
+	defaultIngress        = "ALLOW_ALL"
+	defaultDockerRegistry = "ARTIFACT_REGISTRY"
+	// gen2ServiceAccountSuffix / gen1ServiceAccountSuffix are the default runtime
+	// service accounts real GCP assigns (compute default SA for gen2, App Engine
+	// default SA for gen1).
+	gen2DefaultMemory  = "256M"
+	gen2DefaultCPU     = "0.1666"
+	gen2DefaultTimeout = 60
+	buildIDBytes       = 8
 )
 
 // ObjectStore is the slice of the in-process GCS backend the handler needs to
@@ -77,13 +96,26 @@ type Handler struct {
 	// in-process GCS backend. Nil when no GCS backend is wired; an archive deploy
 	// then fails loudly rather than silently falling back to the echo stub.
 	objects ObjectStore
-	// mu guards policies.
+	// mu guards policies, gen1Meta, gen2 and operations.
 	mu sync.RWMutex
 	// policies stores the IAM policy set via setIamPolicy, keyed by the function's
 	// canonical resource name. CloudEmu does not enforce IAM; the policy is stored
 	// verbatim so Terraform's setIamPolicy → getIamPolicy round-trips (the standard
 	// way to grant roles/cloudfunctions.invoker to allUsers for a public function).
 	policies map[string]*iamPolicy
+	// gen1Meta holds the GCP-specific gen1 (v1) output-only metadata that has no
+	// portable Serverless-driver equivalent — serviceAccountEmail, ingressSettings,
+	// dockerRegistry, buildId and the monotonically increasing versionId. Keyed by
+	// the function's canonical resource name; populated on create and bumped on
+	// update so a real client's Get reflects the deploy generation.
+	gen1Meta map[string]*gen1Meta
+	// gen2 holds gen2 (v2 API) functions, which are an entirely different resource
+	// shape (buildConfig/serviceConfig/eventTrigger, Cloud Run-backed) with no
+	// portable-driver representation. Keyed by canonical resource name.
+	gen2 map[string]*gen2Function
+	// operations caches completed v2 LROs so a client that polls the returned
+	// operation name (Terraform, apiv2 .Wait) sees the same done=true response.
+	operations map[string]operation
 }
 
 // Option configures a Handler.
@@ -97,7 +129,14 @@ func WithObjectStore(s ObjectStore) Option {
 
 // New returns a Cloud Functions handler backed by fn.
 func New(fn sdrv.Serverless, opts ...Option) *Handler {
-	h := &Handler{fn: fn, uploads: newUploadStaging(), policies: make(map[string]*iamPolicy)}
+	h := &Handler{
+		fn:         fn,
+		uploads:    newUploadStaging(),
+		policies:   make(map[string]*iamPolicy),
+		gen1Meta:   make(map[string]*gen1Meta),
+		gen2:       make(map[string]*gen2Function),
+		operations: make(map[string]operation),
+	}
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -112,6 +151,10 @@ func New(fn sdrv.Serverless, opts ...Option) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/v1/operations/") {
 		return true
+	}
+
+	if strings.HasPrefix(r.URL.Path, v2PathPrefix) {
+		return matchesV2(r.URL.Path)
 	}
 
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
@@ -147,6 +190,11 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP routes requests by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, v2PathPrefix) {
+		h.serveV2(w, r)
+		return
+	}
+
 	if strings.HasPrefix(r.URL.Path, "/v1/operations/") {
 		h.serveOperation(w, r)
 		return
@@ -187,6 +235,12 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, p function
 		}
 
 		h.serveIamPolicy(w, r, p)
+	case actionTestIamPermissions:
+		if p.name == "" {
+			return false
+		}
+
+		h.serveTestIamPermissions(w, r, p)
 	case actionGenerateUploadURL:
 		h.generateUploadURL(w, r, p)
 	case actionUploadSource:
@@ -243,15 +297,19 @@ func (h *Handler) generateUploadURL(w http.ResponseWriter, r *http.Request, p fu
 	// upload against an unknown token is rejected.
 	h.uploads.stage(token, nil)
 
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-
-	uploadURL := scheme + "://" + r.Host + pathPrefix + p.project + "/" + locationsSeg + "/" + p.location +
+	uploadURL := requestScheme(r) + "://" + r.Host + pathPrefix + p.project + "/" + locationsSeg + "/" + p.location +
 		"/" + functionsSeg + ":" + actionUploadSource + "?token=" + token
 
 	writeJSON(w, http.StatusOK, map[string]string{"uploadUrl": uploadURL})
+}
+
+// requestScheme returns the URL scheme the request arrived on.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
 }
 
 // uploadSource accepts the PUT of a source zip to a generated upload URL and
@@ -458,7 +516,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 		return
 	}
 
-	resource := toCloudFunction(info, p)
+	scope := p
+	scope.name = name
+	h.putGen1Meta(scope.fullName(), newGen1Meta(&body, p.project))
+
+	resource := h.toCloudFunction(info, p)
 
 	writeJSON(w, http.StatusOK, operation{
 		Name:     "operations/create-" + name + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
@@ -474,7 +536,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, p functionPath) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toCloudFunction(info, p))
+	writeJSON(w, http.StatusOK, h.toCloudFunction(info, p))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, p functionPath) {
@@ -484,9 +546,19 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, p functionPath) {
 		return
 	}
 
-	out := listFunctionsResponse{Functions: make([]cloudFunction, 0, len(infos))}
-	for i := range infos {
-		out.Functions = append(out.Functions, toCloudFunction(&infos[i], p))
+	// Sort by name so pagination over the base64 offset token is stable across
+	// calls (the provider store iterates a map in unspecified order).
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+
+	page, next := paginate(len(infos), r.URL.Query())
+
+	out := listFunctionsResponse{
+		Functions:     make([]cloudFunction, 0, page.end-page.start),
+		NextPageToken: next,
+	}
+
+	for i := page.start; i < page.end; i++ {
+		out.Functions = append(out.Functions, h.toCloudFunction(&infos[i], p))
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -524,7 +596,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 		return
 	}
 
-	resource := toCloudFunction(info, p)
+	// A deploy bumps versionId and cuts a fresh build, matching real Cloud
+	// Functions, and applies any changed gen1 metadata carried in the PATCH body.
+	h.bumpGen1Meta(p.fullName(), &body, p.project)
+
+	resource := h.toCloudFunction(info, p)
 	writeJSON(w, http.StatusOK, operation{
 		Name:     "operations/update-" + p.name,
 		Done:     true,
@@ -537,6 +613,13 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath)
 		writeErr(w, err)
 		return
 	}
+
+	key := p.fullName()
+
+	h.mu.Lock()
+	delete(h.gen1Meta, key)
+	delete(h.policies, key)
+	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, operation{
 		Name: "operations/delete-" + p.name,
@@ -673,20 +756,26 @@ func parseTimeoutSeconds(t string) int {
 	return n
 }
 
-func toCloudFunction(info *sdrv.FunctionInfo, p functionPath) cloudFunction {
+func (h *Handler) toCloudFunction(info *sdrv.FunctionInfo, p functionPath) cloudFunction {
 	scope := p
 	scope.name = info.Name
 
+	meta := h.gen1MetaFor(scope.fullName(), p.project)
+
 	cf := cloudFunction{
-		Name:            scope.fullName(),
-		Status:          "ACTIVE",
-		Runtime:         info.Runtime,
-		EntryPoint:      info.Handler,
-		AvailableMemory: info.Memory,
-		Labels:          info.Tags,
-		EnvVariables:    info.Environment,
-		UpdateTime:      info.LastModified,
-		VersionID:       "1",
+		Name:                scope.fullName(),
+		Status:              "ACTIVE",
+		Runtime:             info.Runtime,
+		EntryPoint:          info.Handler,
+		AvailableMemory:     info.Memory,
+		Labels:              info.Tags,
+		EnvVariables:        info.Environment,
+		UpdateTime:          info.LastModified,
+		VersionID:           strconv.FormatInt(meta.versionID, 10),
+		ServiceAccountEmail: meta.serviceAccountEmail,
+		IngressSettings:     meta.ingressSettings,
+		DockerRegistry:      meta.dockerRegistry,
+		BuildID:             meta.buildID,
 		// Real Cloud Functions always advertises the HTTPS trigger URL; clients
 		// read it to invoke the function.
 		HTTPSTrigger: &httpsTrigger{
