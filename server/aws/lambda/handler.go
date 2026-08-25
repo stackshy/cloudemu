@@ -102,9 +102,9 @@ const (
 // driver — resource policies are a Lambda concept — so the handler type-asserts
 // for it rather than requiring every cloud's function provider to implement it.
 type policyManager interface {
-	AddPermission(ctx context.Context, functionName string, stmt sdrv.PermissionStatement) error
-	RemovePermission(ctx context.Context, functionName, statementID string) error
-	GetPolicy(ctx context.Context, functionName string) (string, error)
+	AddPermission(ctx context.Context, functionName, qualifier string, stmt sdrv.PermissionStatement) error
+	RemovePermission(ctx context.Context, functionName, qualifier, statementID string) error
+	GetPolicy(ctx context.Context, functionName, qualifier string) (string, error)
 }
 
 // functionTagger is the AWS-specific Lambda tagging surface (not part of the
@@ -363,6 +363,8 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
+	qualifier := r.URL.Query().Get("Qualifier")
+
 	switch r.Method {
 	case http.MethodPost:
 		var req addPermissionRequest
@@ -370,7 +372,7 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 			return
 		}
 
-		err := pm.AddPermission(r.Context(), name, sdrv.PermissionStatement{
+		err := pm.AddPermission(r.Context(), name, qualifier, sdrv.PermissionStatement{
 			StatementID: req.StatementID, Action: req.Action,
 			Principal: req.Principal, SourceARN: req.SourceArn,
 		})
@@ -379,20 +381,18 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 			return
 		}
 
-		stmt, jerr := json.Marshal(map[string]any{
-			"Sid":       req.StatementID,
-			"Effect":    "Allow",
-			"Principal": map[string]string{"Service": req.Principal},
-			"Action":    req.Action,
-		})
-		if jerr != nil {
-			writeErr(w, jerr)
+		// Echo the statement exactly as GetPolicy renders it (correct per-type
+		// Principal shape, qualified Resource) rather than re-deriving it here, so
+		// the AddPermission response and a subsequent GetPolicy agree.
+		stmt, err := addedStatement(r.Context(), pm, name, qualifier, req.StatementID)
+		if err != nil {
+			writeErr(w, err)
 			return
 		}
 
-		writeJSON(w, http.StatusCreated, map[string]string{"Statement": string(stmt)})
+		writeJSON(w, http.StatusCreated, map[string]string{"Statement": stmt})
 	case http.MethodGet:
-		policy, err := pm.GetPolicy(r.Context(), name)
+		policy, err := pm.GetPolicy(r.Context(), name, qualifier)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -402,6 +402,36 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
+}
+
+// addedStatement returns the JSON of the single statement just added, pulled
+// back out of the qualifier-scoped policy so the AddPermission echo matches the
+// GetPolicy rendering (Principal shape, Resource ARN) instead of duplicating it.
+func addedStatement(ctx context.Context, pm policyManager, name, qualifier, statementID string) (string, error) {
+	policy, err := pm.GetPolicy(ctx, name, qualifier)
+	if err != nil {
+		return "", err
+	}
+
+	var doc struct {
+		Statement []json.RawMessage `json:"Statement"`
+	}
+
+	if err := json.Unmarshal([]byte(policy), &doc); err != nil {
+		return "", err
+	}
+
+	for _, raw := range doc.Statement {
+		var peek struct {
+			Sid string `json:"Sid"`
+		}
+
+		if json.Unmarshal(raw, &peek) == nil && peek.Sid == statementID {
+			return string(raw), nil
+		}
+	}
+
+	return "", cerrors.Newf(cerrors.NotFound, "statement %s not found", statementID)
 }
 
 // serveRemovePermission handles DELETE .../{name}/policy/{statementId}.
@@ -417,7 +447,7 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if err := pm.RemovePermission(r.Context(), name, statementID); err != nil {
+	if err := pm.RemovePermission(r.Context(), name, r.URL.Query().Get("Qualifier"), statementID); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -431,13 +461,13 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 // UpdateFunctionConfiguration.
 func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method == http.MethodGet {
-		info, err := h.fn.GetFunction(r.Context(), name)
+		cfg, err := h.resolvedConfiguration(r.Context(), name, r.URL.Query().Get("Qualifier"))
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toConfiguration(info, h.awsFnConfig(r.Context(), name)))
+		writeJSON(w, http.StatusOK, cfg)
 
 		return
 	}
@@ -822,8 +852,14 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	cfg, err := h.resolvedConfiguration(r.Context(), name, r.URL.Query().Get("Qualifier"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, functionResource{
-		Configuration: toConfiguration(info, h.awsFnConfig(r.Context(), name)),
+		Configuration: cfg,
 		Code: codeLocation{
 			RepositoryType: "S3",
 			Location:       "https://cloudemu-mock/" + name,
@@ -831,6 +867,65 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {
 		Concurrency: h.reservedConcurrency(r.Context(), name),
 		Tags:        info.Tags,
 	})
+}
+
+// resolvedConfiguration renders a function's configuration for an optional
+// Qualifier. An empty or "$LATEST" qualifier returns the mutable $LATEST config;
+// a version number returns that published version's snapshot (its own
+// CodeSha256/Runtime/Timeout and a version-qualified ARN); an alias resolves to
+// its target version's config but keeps the alias-qualified ARN. A qualifier
+// that names neither an alias nor a published version is a
+// ResourceNotFoundException, matching real Lambda.
+func (h *Handler) resolvedConfiguration(ctx context.Context, name, qualifier string) (functionConfiguration, error) {
+	info, err := h.fn.GetFunction(ctx, name)
+	if err != nil {
+		return functionConfiguration{}, err
+	}
+
+	awsCfg := h.awsFnConfig(ctx, name)
+
+	if qualifier == "" || qualifier == latestVersion {
+		return toConfiguration(info, awsCfg), nil
+	}
+
+	// An alias resolves one hop to its target version's config; the ARN keeps the
+	// alias qualifier rather than the target version number.
+	if a, aerr := h.fn.GetAlias(ctx, name, qualifier); aerr == nil {
+		ver, verr := h.findVersion(ctx, name, a.FunctionVersion)
+		if verr != nil {
+			return functionConfiguration{}, verr
+		}
+
+		cfg := toVersionConfiguration(info, ver, awsCfg)
+		cfg.FunctionArn = info.ARN + ":" + qualifier
+
+		return cfg, nil
+	}
+
+	ver, verr := h.findVersion(ctx, name, qualifier)
+	if verr != nil {
+		return functionConfiguration{}, cerrors.Newf(cerrors.NotFound,
+			"function version or alias %q not found for %s", qualifier, name)
+	}
+
+	return toVersionConfiguration(info, ver, awsCfg), nil
+}
+
+// findVersion returns the published version (or $LATEST) snapshot matching
+// version, or a NotFound error.
+func (h *Handler) findVersion(ctx context.Context, name, version string) (*sdrv.FunctionVersion, error) {
+	vers, err := h.fn.ListVersions(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range vers {
+		if vers[i].Version == version {
+			return &vers[i], nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "version %s not found for %s", version, name)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

@@ -28,6 +28,13 @@ func (m *Mock) CreateEventSourceMapping(
 		return nil, cerrors.New(cerrors.InvalidArgument, "event source ARN is required")
 	}
 
+	// The target function must exist. Real Lambda rejects an event-source mapping
+	// whose FunctionName points at a missing function with ResourceNotFoundException
+	// rather than creating a mapping that silently never fires.
+	if _, ok := m.funcs.Get(functionNameFromARN(cfg.FunctionName)); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "Function not found: %s", cfg.FunctionName)
+	}
+
 	batchSize := cfg.BatchSize
 	if batchSize == 0 {
 		batchSize = defaultBatchSize

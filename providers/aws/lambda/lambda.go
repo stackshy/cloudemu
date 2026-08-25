@@ -82,8 +82,11 @@ type funcData struct {
 	nextVersion  int
 	aliases      *memstore.Store[*aliasData]
 	concurrency  *driver.ConcurrencyConfig
-	policy       map[string]driver.PermissionStatement
-	urlConfig    *driver.FunctionURLConfig // Lambda Function URL, nil until created
+	// policies is the resource-based policy keyed by qualifier (normalized via
+	// policyKey: "" and "$LATEST" collapse to the unqualified function policy),
+	// then by statement id. AWS keeps a separate policy per version/alias.
+	policies  map[string]map[string]driver.PermissionStatement
+	urlConfig *driver.FunctionURLConfig // Lambda Function URL, nil until created
 	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
 	// TracingConfig) applied through the AWSConfigurable optional interface.
 	awsConfig driver.AWSFunctionConfig
