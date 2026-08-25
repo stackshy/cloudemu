@@ -72,7 +72,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceBackendServices, resourceForwardingRules:
+	case resourceBackendServices, resourceForwardingRules,
+		resourceHealthChecks, resourceTargetPools, resourceURLMaps:
 		return true
 	}
 
@@ -92,12 +93,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeBackendServices(w, r, rp)
 	case resourceForwardingRules:
 		h.routeForwardingRules(w, r, rp)
+	case resourceHealthChecks, resourceTargetPools, resourceURLMaps:
+		h.routeGCPResource(w, r, rp)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unknown resource type")
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
@@ -115,6 +118,8 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 	switch r.Method {
 	case http.MethodGet:
 		h.getBackendService(w, r, rp)
+	case http.MethodPatch, http.MethodPut:
+		h.patchBackendService(w, r, rp)
 	case http.MethodDelete:
 		h.deleteBackendService(w, r, rp)
 	default:
