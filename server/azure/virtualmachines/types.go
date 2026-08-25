@@ -32,11 +32,34 @@ type hardwareProfile struct {
 type storageProfile struct {
 	ImageReference *imageReference `json:"imageReference,omitempty"`
 	OSDisk         *osDisk         `json:"osDisk,omitempty"`
+	DataDisks      []dataDisk      `json:"dataDisks,omitempty"`
 }
 
 // osDisk carries the OS-disk shape; we only model osType, a cost input.
 type osDisk struct {
 	OSType string `json:"osType,omitempty"`
+}
+
+// dataDisk mirrors armcompute.DataDisk: one entry of storageProfile.dataDisks,
+// either declaring a managed disk to attach (createOption "Attach" +
+// managedDisk.id) or, on the PATCH Update path, marking an already-attached
+// disk for detachment (toBeDetached).
+type dataDisk struct {
+	Lun          int                    `json:"lun"`
+	Name         string                 `json:"name,omitempty"`
+	CreateOption string                 `json:"createOption,omitempty"`
+	DiskSizeGB   int                    `json:"diskSizeGB,omitempty"`
+	Caching      string                 `json:"caching,omitempty"`
+	ManagedDisk  *managedDiskParameters `json:"managedDisk,omitempty"`
+	ToBeDetached bool                   `json:"toBeDetached,omitempty"`
+	DetachOption string                 `json:"detachOption,omitempty"`
+}
+
+// managedDiskParameters references an existing Microsoft.Compute/disks
+// resource a dataDisk entry attaches.
+type managedDiskParameters struct {
+	ID                 string `json:"id,omitempty"`
+	StorageAccountType string `json:"storageAccountType,omitempty"`
 }
 
 type imageReference struct {

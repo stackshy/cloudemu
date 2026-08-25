@@ -6,6 +6,7 @@
 // Supported operations (instance lifecycle parity with AWS EC2):
 //
 //	PUT    .../virtualMachines/{name}        — CreateOrUpdate
+//	PATCH  .../virtualMachines/{name}        — Update (merge-patch; dataDisks attach/detach)
 //	GET    .../virtualMachines/{name}        — Get
 //	GET    .../virtualMachines               — List in resource group
 //	GET    .../providers/.../virtualMachines — List in subscription
@@ -133,6 +134,8 @@ func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rp azure
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.update(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
