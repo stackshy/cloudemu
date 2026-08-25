@@ -613,6 +613,12 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 // their group (Instance.ResourceGroup) on the ARM create path, so membership is
 // an exact match. Resource-group comparison is case-insensitive, matching ARM.
 // The subscription is unused (the emulator is single-estate).
+//
+// Each VM's attached data disks are detached first — the same release the
+// single-VM delete() path does — so a cascade-deleted VM clears its disks'
+// managedBy/diskState (deleteOption=Detach) rather than leaving them dangling at
+// the now-deleted VM. Detach is best-effort: a single failure is recorded but
+// does not stop the remaining teardown.
 func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
 	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
 	if err != nil {
@@ -631,7 +637,19 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 		return nil
 	}
 
-	return h.compute.TerminateInstances(ctx, ids)
+	var firstErr error
+
+	for _, id := range ids {
+		if derr := h.detachAttachedVolumes(ctx, id); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+	}
+
+	if terr := h.compute.TerminateInstances(ctx, ids); terr != nil && firstErr == nil {
+		firstErr = terr
+	}
+
+	return firstErr
 }
 
 // start handles POST virtualMachines/{name}/start.

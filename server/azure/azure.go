@@ -221,17 +221,35 @@ func New(d Drivers) http.Handler {
 		vnetHandler    *vnet.Handler
 		vmHandler      *virtualmachines.Handler
 		storageHandler *storageaccountsrv.Handler
+		lbHandler      *lbsrv.Handler
 		rgPurgers      []resourcegroups.ResourceGroupPurger
 	)
+
+	// Virtual machines are purged before the networking resources they consume
+	// (NICs, subnets): tearing a VM down first clears its NICs' virtualMachine
+	// back-reference, so the vnet purger's NIC delete is not blocked by the
+	// attached-NIC guard.
+	if d.VirtualMachines != nil {
+		vmHandler = virtualmachines.New(d.VirtualMachines, d.Network)
+		rgPurgers = append(rgPurgers, vmHandler)
+	}
 
 	if d.Network != nil {
 		vnetHandler = vnet.New(d.Network)
 		rgPurgers = append(rgPurgers, vnetHandler)
 	}
 
-	if d.VirtualMachines != nil {
-		vmHandler = virtualmachines.New(d.VirtualMachines, d.Network)
-		rgPurgers = append(rgPurgers, vmHandler)
+	if d.LB != nil {
+		lbHandler = lbsrv.New(d.LB)
+
+		// Project a backend address pool's read-only backendIPConfigurations from
+		// the NIC side of the association, so NIC↔LB pool membership reflects on
+		// both sides. Only wired when the networking driver exposes NICs.
+		if nics, ok := d.Network.(netdriver.AzureNetworkInterfaces); ok {
+			lbHandler.SetNICResolver(nics)
+		}
+
+		rgPurgers = append(rgPurgers, lbHandler)
 	}
 
 	if d.BlobStorage != nil {
@@ -314,16 +332,7 @@ func New(d Drivers) http.Handler {
 	// type (loadBalancers vs virtualNetworks / networkSecurityGroups /
 	// locations / dnsZones), so registration order relative to them is
 	// unconstrained. Registered before the BlobStorage fallback.
-	if d.LB != nil {
-		lbHandler := lbsrv.New(d.LB)
-
-		// Project a backend address pool's read-only backendIPConfigurations from
-		// the NIC side of the association, so NIC↔LB pool membership reflects on
-		// both sides. Only wired when the networking driver exposes NICs.
-		if nics, ok := d.Network.(netdriver.AzureNetworkInterfaces); ok {
-			lbHandler.SetNICResolver(nics)
-		}
-
+	if lbHandler != nil {
 		srv.Register(lbHandler)
 	}
 

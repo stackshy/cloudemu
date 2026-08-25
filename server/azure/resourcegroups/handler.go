@@ -48,8 +48,9 @@ const (
 // container, so deleting it must delete the resources created under it rather
 // than leaving them as globally addressable orphans. Each per-service ARM
 // handler that stores its resources resource-group-scoped (compute, networking,
-// storage today) implements it; a handler that does not is simply not passed to
-// New, so its resource type is not cascaded (a documented, extensible gap).
+// load balancing, storage today) implements it; a handler that does not is
+// simply not passed to New, so its resource type is not cascaded (a documented,
+// extensible gap).
 type ResourceGroupPurger interface {
 	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
 }
