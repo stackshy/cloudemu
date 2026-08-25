@@ -11,10 +11,11 @@ type armAccountCreate struct {
 }
 
 type armAccountCreateProps struct {
-	DatabaseAccountOfferType string          `json:"databaseAccountOfferType,omitempty"`
-	EnableFreeTier           bool            `json:"enableFreeTier,omitempty"`
-	Capabilities             []armCapability `json:"capabilities,omitempty"`
-	Locations                []armLocation   `json:"locations,omitempty"`
+	DatabaseAccountOfferType     string          `json:"databaseAccountOfferType,omitempty"`
+	EnableFreeTier               bool            `json:"enableFreeTier,omitempty"`
+	Capabilities                 []armCapability `json:"capabilities,omitempty"`
+	Locations                    []armLocation   `json:"locations,omitempty"`
+	EnableMultipleWriteLocations bool            `json:"enableMultipleWriteLocations,omitempty"`
 }
 
 // armCapability is the ARM capability shape ([{name}]).
@@ -98,4 +99,10 @@ type armConnectionStringsResult struct {
 // armRegenerateKey is the DatabaseAccountRegenerateKeyParameters request body.
 type armRegenerateKey struct {
 	KeyKind string `json:"keyKind"`
+}
+
+// armFailoverPolicies is the FailoverPriorityChange request body: the new
+// ordering of regions by failover priority.
+type armFailoverPolicies struct {
+	FailoverPolicies []armFailover `json:"failoverPolicies"`
 }
