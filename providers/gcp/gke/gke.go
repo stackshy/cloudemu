@@ -4,13 +4,15 @@
 // Operations they emit) plus a live Kubernetes data plane. When a shared
 // kubernetes.APIServer is wired in, GetCluster's Endpoint + masterAuth CA point
 // at a real in-memory apiserver so `gcloud container clusters get-credentials`
-// yields a working kubeconfig. Without one, GetCluster falls back to a sentinel
-// Endpoint (https://GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local) so kubeconfig
+// yields a working kubeconfig. Without one, GetCluster reports a deterministic
+// control-plane IP (matching real GKE's bare-IP `endpoint` field) so kubeconfig
 // rendering still works syntactically.
 package gke
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"sync"
 	"time"
 
@@ -22,10 +24,8 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
-// Stub values used in Cluster responses until the Kubernetes data-plane
-// arrives in Wave 2.
+// Default versions reported by clusters/node pools and getServerConfig.
 const (
-	StubEndpoint    = "GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
 	StubMasterVer   = "1.30.0-gke.0"
 	stubNodeVersion = "1.30.0-gke.0"
 )
@@ -36,6 +36,20 @@ const (
 	defaultNodeCount   = 1
 	defaultMachineType = "e2-medium"
 	defaultDiskSizeGB  = 100
+
+	// defaultServicesCIDR mirrors GKE's default Kubernetes Services IP range.
+	defaultServicesCIDR = "34.118.224.0/20"
+	// defaultClusterCIDR is the default pod IP range for the cluster.
+	defaultClusterCIDR = "10.0.0.0/14"
+	// defaultNodeIPv4CIDRSize is the per-node pod CIDR block size (/24).
+	defaultNodeIPv4CIDRSize = 24
+
+	// controlPlaneIPFirstOctet anchors synthesized control-plane IPs in a
+	// public-looking /8, matching real GKE's public endpoint shape.
+	controlPlaneIPFirstOctet = 35
+	octetMod                 = 253
+	octetShift8              = 8
+	octetShift16             = 16
 )
 
 // Cluster is the in-memory representation of a GKE cluster. The shape mirrors
@@ -43,6 +57,7 @@ const (
 // these to the wire shape google.golang.org/api/container/v1.Cluster expects.
 type Cluster struct {
 	Name              string
+	ID                string
 	Location          string
 	Description       string
 	Network           string
@@ -50,6 +65,8 @@ type Cluster struct {
 	InitialNodeCount  int64
 	NodeIPv4CIDRSize  int64
 	ClusterIPv4CIDR   string
+	ServicesIPv4CIDR  string
+	ControlPlaneIP    string
 	LoggingService    string
 	MonitoringService string
 	LegacyAbacEnabled bool
@@ -147,14 +164,16 @@ func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
 // Endpoint returns the data-plane URL clients should target for a given
 // cluster. If a Kubernetes APIServer is wired and the cluster has a
 // registered UID, returns "<base>/k8s/<uid>" — the in-memory data plane.
-// Otherwise returns "https://" + StubEndpoint so the Wave-1 sentinel surface
-// stays intact.
+// Otherwise returns the cluster's synthesized control-plane IP (a bare IPv4
+// address, matching real GKE's `endpoint` field) so a kubeconfig renders to a
+// well-formed, non-sentinel host.
 func (m *Mock) Endpoint(location, name string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	key := clusterKey(location, name)
+
 	if m.k8sAPI != nil {
-		key := clusterKey(location, name)
 		if uid, ok := m.k8sUIDs[key]; ok {
 			if base := m.k8sAPI.BaseURL(); base != "" {
 				return base + "/k8s/" + uid
@@ -162,7 +181,28 @@ func (m *Mock) Endpoint(location, name string) string {
 		}
 	}
 
-	return "https://" + StubEndpoint
+	if c, ok := m.clusters.Get(key); ok && c.ControlPlaneIP != "" {
+		return c.ControlPlaneIP
+	}
+
+	return controlPlaneIP(location, name)
+}
+
+// controlPlaneIP synthesizes a deterministic, public-looking IPv4 address for a
+// cluster's control-plane endpoint. Real GKE returns such an IP in the Cluster
+// `endpoint` field; the emulator has no real control-plane host without a wired
+// data plane, so a stable per-cluster IP stands in.
+func controlPlaneIP(location, name string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(location + "/" + name))
+	sum := h.Sum32()
+
+	return fmt.Sprintf("%d.%d.%d.%d",
+		controlPlaneIPFirstOctet,
+		(sum>>octetShift16)%octetMod+1,
+		(sum>>octetShift8)%octetMod+1,
+		sum%octetMod+1,
+	)
 }
 
 // emitClusterMetrics pushes container.googleapis.com metrics for a cluster.
@@ -252,13 +292,16 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 
 	cluster := Cluster{
 		Name:              input.Name,
+		ID:                idgen.SyntheticGUID(key),
 		Location:          input.Location,
 		Description:       input.Description,
 		Network:           defaultIfEmpty(input.Network, "default"),
 		Subnetwork:        defaultIfEmpty(input.Subnetwork, "default"),
 		InitialNodeCount:  input.InitialNodeCount,
-		NodeIPv4CIDRSize:  24,
-		ClusterIPv4CIDR:   "10.0.0.0/14",
+		NodeIPv4CIDRSize:  defaultNodeIPv4CIDRSize,
+		ClusterIPv4CIDR:   defaultClusterCIDR,
+		ServicesIPv4CIDR:  defaultServicesCIDR,
+		ControlPlaneIP:    controlPlaneIP(input.Location, input.Name),
 		LoggingService:    defaultIfEmpty(input.LoggingService, "logging.googleapis.com/kubernetes"),
 		MonitoringService: defaultIfEmpty(input.MonitoringService, "monitoring.googleapis.com/kubernetes"),
 		ResourceLabels:    copyLabels(input.ResourceLabels),
@@ -719,6 +762,17 @@ func (m *Mock) GetOperation(_ context.Context, _, name string) (*Operation, erro
 	out := op
 
 	return &out, nil
+}
+
+// HasOperation reports whether an operation with the given name was recorded by
+// this GKE mock. The handler uses it to claim only its own operation polls,
+// letting foreign location operations (artifactregistry, eventarc, …) fall
+// through to the shared LRO handler.
+func (m *Mock) HasOperation(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.operations.Has(name)
 }
 
 // ListOperations returns all operations in a location ("-" for all).

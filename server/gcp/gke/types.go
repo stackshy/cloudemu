@@ -14,17 +14,21 @@ import (
 // values via the standard json package.
 type gkeCluster struct {
 	Name              string            `json:"name,omitempty"`
+	ID                string            `json:"id,omitempty"`
 	Description       string            `json:"description,omitempty"`
 	Location          string            `json:"location,omitempty"`
+	Zone              string            `json:"zone,omitempty"`
 	Network           string            `json:"network,omitempty"`
 	Subnetwork        string            `json:"subnetwork,omitempty"`
 	InitialNodeCount  int64             `json:"initialNodeCount,omitempty"`
+	CurrentNodeCount  int64             `json:"currentNodeCount,omitempty"`
 	LoggingService    string            `json:"loggingService,omitempty"`
 	MonitoringService string            `json:"monitoringService,omitempty"`
 	ResourceLabels    map[string]string `json:"resourceLabels,omitempty"`
 	NodePools         []gkeNodePool     `json:"nodePools,omitempty"`
 	NodeIpv4CIDRSize  int64             `json:"nodeIpv4CidrSize,omitempty"`
 	ClusterIpv4Cidr   string            `json:"clusterIpv4Cidr,omitempty"`
+	ServicesIpv4Cidr  string            `json:"servicesIpv4Cidr,omitempty"`
 	Endpoint          string            `json:"endpoint,omitempty"`
 	MasterAuth        *gkeMasterAuth    `json:"masterAuth,omitempty"`
 	Status            string            `json:"status,omitempty"`
@@ -165,29 +169,52 @@ type gkeOperation struct {
 	OperationType string `json:"operationType,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Location      string `json:"location,omitempty"`
+	Zone          string `json:"zone,omitempty"`
 	TargetLink    string `json:"targetLink,omitempty"`
 	StartTime     string `json:"startTime,omitempty"`
 	EndTime       string `json:"endTime,omitempty"`
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
+// gkeServerConfig mirrors container/v1.ServerConfig for getServerConfig.
+type gkeServerConfig struct {
+	DefaultClusterVersion string   `json:"defaultClusterVersion,omitempty"`
+	ValidMasterVersions   []string `json:"validMasterVersions,omitempty"`
+	ValidNodeVersions     []string `json:"validNodeVersions,omitempty"`
+	DefaultImageType      string   `json:"defaultImageType,omitempty"`
+	ValidImageTypes       []string `json:"validImageTypes,omitempty"`
+}
+
+// selfLinkBase is the container-API host+version prefix real GKE stamps onto
+// every selfLink/targetLink it returns.
+const selfLinkBase = "https://container.googleapis.com/v1/"
+
 // toClusterResource converts a provider Cluster into the wire shape. The
 // endpoint argument is what the Mock reported via Endpoint(location, name) —
-// either the in-memory K8s data-plane URL when Wave 2 is wired, or the
-// "https://GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local" sentinel.
+// either the in-memory K8s data-plane URL when a data plane is wired, or the
+// cluster's synthesized control-plane IP.
 func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.NodePool) gkeCluster {
+	var currentNodes int64
+	for i := range pools {
+		currentNodes += pools[i].NodeCount
+	}
+
 	out := gkeCluster{
 		Name:              c.Name,
+		ID:                c.ID,
 		Description:       c.Description,
 		Location:          c.Location,
+		Zone:              c.Location,
 		Network:           c.Network,
 		Subnetwork:        c.Subnetwork,
 		InitialNodeCount:  c.InitialNodeCount,
+		CurrentNodeCount:  currentNodes,
 		LoggingService:    c.LoggingService,
 		MonitoringService: c.MonitoringService,
 		ResourceLabels:    c.ResourceLabels,
 		NodeIpv4CIDRSize:  c.NodeIPv4CIDRSize,
 		ClusterIpv4Cidr:   c.ClusterIPv4CIDR,
+		ServicesIpv4Cidr:  c.ServicesIPv4CIDR,
 		Endpoint:          endpoint,
 		MasterAuth: &gkeMasterAuth{
 			Username: c.MasterUsername,
@@ -199,7 +226,7 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 		Status:           c.Status,
 		CurrentMasterVer: versionOr(c.MasterVersion),
 		CurrentNodeVer:   versionOr(c.NodeVersion),
-		SelfLink:         "projects/" + project + "/locations/" + c.Location + "/clusters/" + c.Name,
+		SelfLink:         selfLinkBase + "projects/" + project + "/locations/" + c.Location + "/clusters/" + c.Name,
 		CreateTime:       c.CreatedAt.Format("2006-01-02T15:04:05.000Z"),
 	}
 
@@ -234,7 +261,7 @@ func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {
 			AutoRepair:  np.AutoRepair,
 		},
 		Status: np.Status,
-		SelfLink: "projects/" + project + "/locations/" + np.Location +
+		SelfLink: selfLinkBase + "projects/" + project + "/locations/" + np.Location +
 			"/clusters/" + np.ClusterName + "/nodePools/" + np.Name,
 	}
 
@@ -255,10 +282,26 @@ func toOperationResource(op *gke.Operation, project string) gkeOperation {
 		OperationType: op.OperationType,
 		Status:        op.Status,
 		Location:      op.Location,
-		TargetLink:    op.TargetLink,
+		Zone:          op.Location,
+		TargetLink:    selfLinkBase + op.TargetLink,
 		StartTime:     op.StartTime.Format("2006-01-02T15:04:05.000Z"),
 		EndTime:       op.EndTime.Format("2006-01-02T15:04:05.000Z"),
-		SelfLink:      "projects/" + project + "/locations/" + op.Location + "/operations/" + op.Name,
+		SelfLink:      selfLinkBase + "projects/" + project + "/locations/" + op.Location + "/operations/" + op.Name,
+	}
+}
+
+// defaultServerConfig returns the versions getServerConfig advertises. They are
+// centered on the emulator's default GKE version so create/upgrade validation
+// against these lists succeeds.
+func defaultServerConfig() gkeServerConfig {
+	versions := []string{gke.StubMasterVer, "1.29.0-gke.0", "1.28.0-gke.0"}
+
+	return gkeServerConfig{
+		DefaultClusterVersion: gke.StubMasterVer,
+		ValidMasterVersions:   versions,
+		ValidNodeVersions:     versions,
+		DefaultImageType:      "COS_CONTAINERD",
+		ValidImageTypes:       []string{"COS_CONTAINERD", "UBUNTU_CONTAINERD"},
 	}
 }
 
