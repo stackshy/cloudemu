@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/http"
 	"sync"
 	"time"
 
@@ -25,6 +26,9 @@ const (
 	activeTopicState = "ACTIVE"
 	resourceProvider = "Microsoft.EventGrid"
 	resourceType     = "topics"
+	// defaultInputSchema is the event schema a topic accepts when the caller
+	// doesn't specify one, matching real Event Grid's default.
+	defaultInputSchema = "EventGridSchema"
 )
 
 // Compile-time check that Mock implements driver.EventBus.
@@ -33,6 +37,12 @@ var _ driver.EventBus = (*Mock)(nil)
 type ruleData struct {
 	rule    driver.Rule
 	targets *memstore.Store[driver.Target]
+	// filter and dest are parsed from rule.Description (the raw ARM
+	// EventSubscription properties JSON) — Event Grid's subscription filter
+	// and destination shapes have no equivalent in the portable eventbus
+	// driver, so PutRule derives them here for PutEvents to apply/deliver to.
+	filter subscriptionFilter
+	dest   subscriptionDestination
 }
 
 type busData struct {
@@ -47,6 +57,7 @@ type Mock struct {
 	buses      *memstore.Store[*busData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	httpClient *http.Client
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -79,8 +90,9 @@ func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
 // New creates a new Event Grid mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		buses: memstore.New[*busData](),
-		opts:  opts,
+		buses:      memstore.New[*busData](),
+		opts:       opts,
+		httpClient: &http.Client{Timeout: webhookDeliveryTimeout},
 	}
 }
 
@@ -111,14 +123,20 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 		tags[k] = v
 	}
 
+	inputSchema := cfg.InputSchema
+	if inputSchema == "" {
+		inputSchema = defaultInputSchema
+	}
+
 	info := driver.EventBusInfo{
-		Name:      cfg.Name,
-		Scope:     cfg.Scope,
-		ARN:       topicID,
-		State:     activeTopicState,
-		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:      tags,
-		Region:    cfg.Region,
+		Name:        cfg.Name,
+		Scope:       cfg.Scope,
+		ARN:         topicID,
+		State:       activeTopicState,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:        tags,
+		Region:      cfg.Region,
+		InputSchema: inputSchema,
 	}
 
 	bd := &busData{
@@ -209,6 +227,8 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 	rd := &ruleData{
 		rule:    rule,
 		targets: memstore.New[driver.Target](),
+		filter:  parseSubscriptionFilter(cfg.Description),
+		dest:    parseSubscriptionDestination(cfg.Description),
 	}
 
 	for _, t := range rule.Targets {
@@ -385,7 +405,7 @@ func (m *Mock) ListTargets(_ context.Context, eventBus, ruleName string) ([]driv
 }
 
 // PutEvents publishes events to Event Grid topics.
-func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.PublishResult, error) {
+func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.PublishResult, error) {
 	result := &driver.PublishResult{
 		EventIDs: make([]string, 0, len(events)),
 	}
@@ -414,9 +434,11 @@ func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.Publ
 
 		m.storeEvent(bd, &events[i])
 
-		matchedCount := len(m.MatchedRules(&events[i]))
+		matched := m.matchedRuleData(bd, &events[i])
+		m.deliverToTargets(ctx, matched, &events[i], bd.info.ARN)
+
 		m.emitMetric(busName, map[string]float64{
-			"PublishedEvents": 1, "MatchedEvents": float64(matchedCount),
+			"PublishedEvents": 1, "MatchedEvents": float64(len(matched)),
 		})
 
 		result.SuccessCount++
@@ -545,22 +567,45 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	return &result, nil
 }
 
-// MatchedRules returns all subscriptions that match the given event (exported for testing).
+// MatchedRules returns the subscriptions on the event's own topic that match
+// it (exported for testing). Scoped to event.EventBus so a rule on one topic
+// never counts as matched for an event published to a different topic.
 func (m *Mock) MatchedRules(event *driver.Event) []driver.Rule {
-	var matched []driver.Rule
+	bd, ok := m.buses.Get(event.EventBus)
+	if !ok {
+		return nil
+	}
 
-	all := m.buses.All()
-	for _, bd := range all {
-		rules := bd.rules.All()
-		for _, rd := range rules {
-			if rd.rule.State != defaultRuleState {
-				continue
-			}
+	rds := m.matchedRuleData(bd, event)
 
-			if matchesPattern(event, rd.rule.EventPattern) {
-				matched = append(matched, rd.rule)
-			}
+	matched := make([]driver.Rule, 0, len(rds))
+	for _, rd := range rds {
+		matched = append(matched, rd.rule)
+	}
+
+	return matched
+}
+
+// matchedRuleData returns the enabled subscriptions on bd (the event's own
+// topic) whose event pattern and Event Grid filter (subject prefix/suffix,
+// included event types, advanced filters) both match event.
+func (*Mock) matchedRuleData(bd *busData, event *driver.Event) []*ruleData {
+	var matched []*ruleData
+
+	for _, rd := range bd.rules.All() {
+		if rd.rule.State != defaultRuleState {
+			continue
 		}
+
+		if !matchesPattern(event, rd.rule.EventPattern) {
+			continue
+		}
+
+		if !rd.filter.matches(event) {
+			continue
+		}
+
+		matched = append(matched, rd)
 	}
 
 	return matched

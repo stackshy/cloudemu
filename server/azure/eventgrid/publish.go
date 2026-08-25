@@ -1,11 +1,14 @@
 package eventgrid
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
@@ -72,7 +75,9 @@ func (h *PublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.bus.GetEventBus(r.Context(), topic); err != nil {
+	ctx := withDeliveryDepth(r)
+
+	if _, err := h.bus.GetEventBus(ctx, topic); err != nil {
 		azurearm.WriteError(w, http.StatusNotFound, "TopicNotFound", "topic "+topic+" not found")
 		return
 	}
@@ -91,15 +96,30 @@ func (h *PublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Detail:     string(events[i].Data),
 			Time:       parseEventTime(events[i].EventTime),
 			EventBus:   topic,
+			Subject:    events[i].Subject,
 		})
 	}
 
-	if _, err := h.bus.PutEvents(r.Context(), drvEvents); err != nil {
+	if _, err := h.bus.PutEvents(ctx, drvEvents); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// withDeliveryDepth seeds the request context with the re-entrant delivery
+// depth carried on recursionguard.DepthHeader. A WebHook subscription whose
+// endpointUrl points back here re-enters this handler over HTTP, where the
+// in-process depth can't ride the goroutine; reading it off the header keeps a
+// self-referential publish->deliver->publish chain counting toward the cap.
+func withDeliveryDepth(r *http.Request) context.Context {
+	ctx := r.Context()
+	if d, err := strconv.Atoi(r.Header.Get(recursionguard.DepthHeader)); err == nil && d > 0 {
+		ctx = recursionguard.WithDepth(ctx, d)
+	}
+
+	return ctx
 }
 
 func parseEventTime(s string) time.Time {

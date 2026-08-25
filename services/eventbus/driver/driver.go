@@ -19,6 +19,10 @@ type EventBusInfo struct {
 	// Region is the geographic location the resource was created in (Azure
 	// location, GCP region). Empty for AWS and unscoped portable callers.
 	Region string
+	// InputSchema records the event schema a topic accepts (Azure Event
+	// Grid: "EventGridSchema", "CustomEventSchema", "CloudEventSchemaV1_0").
+	// Empty for AWS and GCP.
+	InputSchema string
 }
 
 // EventBusConfig configures a new event bus.
@@ -32,6 +36,10 @@ type EventBusConfig struct {
 	// Region is the geographic location the resource is created in (Azure
 	// location, GCP region). Empty for AWS and unscoped portable callers.
 	Region string
+	// InputSchema records the event schema a topic accepts (Azure Event
+	// Grid: "EventGridSchema", "CustomEventSchema", "CloudEventSchemaV1_0").
+	// Empty for AWS and GCP, and for an Azure caller accepting the default.
+	InputSchema string
 }
 
 // Rule defines an event routing rule with filtering.
@@ -81,6 +89,10 @@ type Event struct {
 	Time       time.Time
 	EventBus   string
 	Resources  []string
+	// Subject is the event subject path (Azure Event Grid's resource-path
+	// concept, e.g. "/blobServices/default/containers/x"). Empty for AWS
+	// and GCP.
+	Subject string
 }
 
 // PublishResult is the result of publishing events.

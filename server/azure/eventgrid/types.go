@@ -75,6 +75,11 @@ func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJS
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeTopics, info.Name)
 	loc := topicLocation(info)
 
+	inputSchema := info.InputSchema
+	if inputSchema == "" {
+		inputSchema = defaultInputSchema
+	}
+
 	return topicJSON{
 		ID:       id,
 		Name:     info.Name,
@@ -84,7 +89,7 @@ func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJS
 		Properties: &topicProperties{
 			ProvisioningState:   provisioningSucceeded,
 			Endpoint:            topicEndpoint(info.Name, loc),
-			InputSchema:         defaultInputSchema,
+			InputSchema:         inputSchema,
 			PublicNetworkAccess: defaultPublicNetworkAccess,
 			MetricResourceID:    id,
 		},
