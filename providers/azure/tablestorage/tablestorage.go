@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,7 +108,7 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	defer m.mu.Unlock()
 
 	if _, ok := m.tables[name]; !ok {
-		return errors.Newf(errors.NotFound, "table %q not found", name)
+		return driver.ErrTableNotFound
 	}
 
 	delete(m.tables, name)
@@ -136,7 +137,7 @@ func (m *Mock) table(name string) (*tableData, error) {
 
 	td, ok := m.tables[name]
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "table %q not found", name)
+		return nil, driver.ErrTableNotFound
 	}
 
 	return td, nil
@@ -320,7 +321,9 @@ func sanitize(e driver.Entity) driver.Entity {
 
 // QueryEntities returns a page of entities matching opts, ordered by
 // (PartitionKey, RowKey), honoring the OData $filter, a partition restriction,
-// $top, and a continuation position.
+// $top, $select and a continuation position.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) QueryEntities(
 	_ context.Context, table string, opts driver.QueryOptions,
 ) (driver.QueryResult, error) {
@@ -338,7 +341,7 @@ func (m *Mock) QueryEntities(
 	ordered := td.sortedEntities()
 	td.mu.RUnlock()
 
-	return page(ordered, opts, pred), nil
+	return page(ordered, &opts, pred), nil
 }
 
 // sortedEntities returns the table's entities ordered by (PartitionKey,
@@ -361,9 +364,9 @@ func (td *tableData) sortedEntities() []*storedEntity {
 	return out
 }
 
-// page applies partition restriction, filter, continuation and $top to the
-// ordered entities, returning one result page.
-func page(ordered []*storedEntity, opts driver.QueryOptions, pred predicate) driver.QueryResult {
+// page applies partition restriction, filter, continuation, $top and $select
+// to the ordered entities, returning one result page.
+func page(ordered []*storedEntity, opts *driver.QueryOptions, pred predicate) driver.QueryResult {
 	var res driver.QueryResult
 
 	for _, se := range ordered {
@@ -389,10 +392,43 @@ func page(ordered []*storedEntity, opts driver.QueryOptions, pred predicate) dri
 			return res
 		}
 
-		res.Entities = append(res.Entities, se.render())
+		res.Entities = append(res.Entities, project(se.render(), opts.Select))
 	}
 
 	return res
+}
+
+// project restricts an entity to the property names listed in a raw
+// comma-separated $select value, always keeping the system properties
+// (PartitionKey, RowKey, Timestamp, odata.etag) the real Table service
+// returns regardless of $select. An empty select returns e unchanged.
+func project(e driver.Entity, selectRaw string) driver.Entity {
+	if strings.TrimSpace(selectRaw) == "" {
+		return e
+	}
+
+	keep := map[string]bool{
+		"PartitionKey": true,
+		"RowKey":       true,
+		timestampProp:  true,
+		etagProp:       true,
+	}
+
+	for _, name := range strings.Split(selectRaw, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			keep[name] = true
+		}
+	}
+
+	out := make(driver.Entity, len(keep))
+
+	for k, v := range e {
+		if keep[k] {
+			out[k] = v
+		}
+	}
+
+	return out
 }
 
 // afterContinuation reports whether (pk, rk) sorts at or after the continuation

@@ -2,6 +2,7 @@ package tablestorage
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -195,8 +196,10 @@ func writeErr(w http.ResponseWriter, err error) {
 // mapErr maps a CloudEmu canonical error to its Azure Table HTTP status + code.
 func mapErr(err error) (status int, code string) {
 	switch {
+	case errors.Is(err, driver.ErrTableNotFound):
+		return http.StatusNotFound, "TableNotFound"
 	case cerrors.IsNotFound(err):
-		return http.StatusNotFound, "ResourceNotFound"
+		return http.StatusNotFound, "EntityNotFound"
 	case cerrors.IsAlreadyExists(err):
 		return http.StatusConflict, "EntityAlreadyExists"
 	case cerrors.IsFailedPrecondition(err):

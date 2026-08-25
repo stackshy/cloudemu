@@ -53,6 +53,20 @@ const (
 	// maxEnqueueBodyBytes caps a single enqueued message body. Azure allows up
 	// to 64 KiB; we use a generous 1 MiB cap.
 	maxEnqueueBodyBytes = 1 << 20
+
+	// defaultMessageTTLSeconds is the message time-to-live Put Message applies
+	// when the messagettl query parameter is omitted.
+	defaultMessageTTLSeconds = 7 * 24 * 60 * 60
+
+	// neverExpireTTL is the messagettl value meaning "the message never expires".
+	neverExpireTTL = -1
+
+	// neverExpireHorizon is how far in the future the wire response reports a
+	// message's expiration when it never expires. Azure caps a "never expire"
+	// message's DateTime at a maximal value; a century is comfortably beyond
+	// any real workload's concern while still formatting as a valid RFC1123
+	// timestamp.
+	neverExpireHorizon = 100 * 365 * 24 * time.Hour
 )
 
 // Handler serves Azure Queue Storage REST requests against a messagequeue
@@ -328,10 +342,16 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 
 	visTimeout := atoiDefault(r.URL.Query().Get("visibilitytimeout"), 0)
 
+	ttlSeconds, ok := parseMessageTTL(w, r.URL.Query().Get("messagettl"))
+	if !ok {
+		return
+	}
+
 	out, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
-		QueueURL:     url,
-		Body:         req.MessageText,
-		DelaySeconds: visTimeout,
+		QueueURL:          url,
+		Body:              req.MessageText,
+		DelaySeconds:      visTimeout,
+		MessageTTLSeconds: &ttlSeconds,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -342,7 +362,7 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 	resp := messagesList{Messages: []messageXML{{
 		MessageID:       out.MessageID,
 		InsertionTime:   now.Format(time.RFC1123),
-		ExpirationTime:  now.Add(7 * 24 * time.Hour).Format(time.RFC1123),
+		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(time.RFC1123),
 		PopReceipt:      out.MessageID,
 		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
 	}}}
@@ -375,11 +395,12 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 	now := time.Now().UTC()
 	out := messagesList{}
 
-	for _, m := range msgs {
+	for i := range msgs {
+		m := &msgs[i]
 		out.Messages = append(out.Messages, messageXML{
 			MessageID:       m.MessageID,
 			InsertionTime:   now.Format(time.RFC1123),
-			ExpirationTime:  now.Add(7 * 24 * time.Hour).Format(time.RFC1123),
+			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
 			PopReceipt:      m.ReceiptHandle,
 			TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
 			DequeueCount:    int64(m.ReceiveCount),
@@ -436,7 +457,7 @@ func (h *Handler) peek(w http.ResponseWriter, r *http.Request, queue string) {
 		out.Messages = append(out.Messages, peekMessageXML{
 			MessageID:      m.MessageID,
 			InsertionTime:  m.InsertedAt.UTC().Format(time.RFC1123),
-			ExpirationTime: m.ExpiresAt.UTC().Format(time.RFC1123),
+			ExpirationTime: displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
 			DequeueCount:   int64(m.ReceiveCount),
 			MessageText:    m.Body,
 		})
@@ -594,6 +615,43 @@ func parseVisibilityTimeout(w http.ResponseWriter, raw string) (int, bool) {
 	}
 
 	return v, true
+}
+
+// parseMessageTTL validates the optional messagettl parameter for Put Message:
+// a positive number of seconds, or -1 meaning the message never expires. An
+// absent value returns Azure's documented default of 7 days. It writes a 400
+// and returns ok=false on a bad value.
+func parseMessageTTL(w http.ResponseWriter, raw string) (int, bool) {
+	if raw == "" {
+		return defaultMessageTTLSeconds, true
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue",
+			"Value for one of the query parameters specified in the request URI is invalid.")
+
+		return 0, false
+	}
+
+	if v != neverExpireTTL && v < 1 {
+		writeError(w, http.StatusBadRequest, "OutOfRangeQueryParameterValue", "messagettl is out of range")
+		return 0, false
+	}
+
+	return v, true
+}
+
+// displayExpiry returns t, or — for a message that never expires (the zero
+// time.Time internal marker) — a far-future timestamp so the wire response's
+// ExpirationTime element reads as "effectively unbounded" rather than
+// formatting the zero time as year 0001 (which would look already expired).
+func displayExpiry(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Now().UTC().Add(neverExpireHorizon)
+	}
+
+	return t
 }
 
 // parseNumOfMessages validates the optional numofmessages parameter for Get

@@ -7,7 +7,11 @@
 // Table data-plane REST API (aztables) exercises, nothing more.
 package driver
 
-import "context"
+import (
+	"context"
+
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+)
 
 // UpdateMode selects how UpdateEntity combines the supplied properties with an
 // existing entity.
@@ -43,6 +47,12 @@ type QueryOptions struct {
 	Filter string
 	// Top caps the number of entities returned in this page (0 = no cap).
 	Top int
+	// Select is a raw comma-separated $select property-name list restricting
+	// which properties each returned entity carries. Empty means no
+	// projection: every stored property is returned. PartitionKey, RowKey,
+	// Timestamp and odata.etag are always included regardless of Select,
+	// matching the real Table service.
+	Select string
 	// NextPartitionKey/NextRowKey are the continuation position from a prior
 	// page; results resume strictly after this (PartitionKey, RowKey).
 	NextPartitionKey string
@@ -90,6 +100,14 @@ type BatchOp struct {
 type BatchResult struct {
 	ETag string
 }
+
+// ErrTableNotFound is returned by TableStorage methods when the referenced
+// table itself does not exist. It is still a cerrors.NotFound error (so
+// cerrors.IsNotFound(err) keeps classifying it correctly), but wire handlers
+// can errors.Is(err, ErrTableNotFound) to tell it apart from a missing entity
+// inside an existing table (also cerrors.NotFound) and report the real Table
+// Storage "TableNotFound" error code instead of the generic "EntityNotFound".
+var ErrTableNotFound = cerrors.New(cerrors.NotFound, "the table specified does not exist")
 
 // TableStorage is the interface a Table Storage backend implements.
 type TableStorage interface {

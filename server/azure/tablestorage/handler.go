@@ -250,6 +250,7 @@ func (h *Handler) queryEntities(w http.ResponseWriter, r *http.Request, table st
 	res, err := h.ts.QueryEntities(r.Context(), table, driver.QueryOptions{
 		Filter:           q.Get("$filter"),
 		Top:              atoiDefault(q.Get("$top"), 0),
+		Select:           q.Get("$select"),
 		NextPartitionKey: q.Get("NextPartitionKey"),
 		NextRowKey:       q.Get("NextRowKey"),
 	})

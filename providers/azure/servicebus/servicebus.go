@@ -36,6 +36,11 @@ type sbMessage struct {
 	VisibleAt       time.Time
 	SentAt          time.Time
 	ReceiveCount    int
+	// ExpiresAt is the message's absolute expiration time. The zero value
+	// means the message never expires — the default for Service Bus queues
+	// (which never set SendMessageInput.MessageTTLSeconds) and for Azure
+	// Queue Storage messages sent with messagettl=-1. See isMessageExpired.
+	ExpiresAt time.Time
 }
 
 // queueData holds the internal state of a single Service Bus queue.
@@ -265,6 +270,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
+	expiresAt := computeExpiry(now, input.MessageTTLSeconds)
 
 	msg := &sbMessage{
 		ID:              msgID,
@@ -274,6 +280,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		Attributes:      attrs,
 		VisibleAt:       visibleAt,
 		SentAt:          now,
+		ExpiresAt:       expiresAt,
 	}
 
 	qd.messages = append(qd.messages, msg)
@@ -304,6 +311,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	return &driver.SendMessageOutput{
 		MessageID: msgID,
+		ExpiresAt: expiresAt,
 	}, nil
 }
 
@@ -367,7 +375,7 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	now := m.opts.Clock.Now()
 	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now)
 
-	// Remove DLQ-moved messages in reverse order.
+	// Remove DLQ-moved and expired messages in reverse order.
 	for i := len(toRemove) - 1; i >= 0; i-- {
 		idx := toRemove[i]
 		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
@@ -409,6 +417,14 @@ func (m *Mock) collectVisibleMessages(
 			break
 		}
 
+		// Lazily reap an expired message (Azure Queue Storage's per-message
+		// messagettl) instead of returning it, mirroring the Cosmos DB mock's
+		// on-read TTL check.
+		if isMessageExpired(msg, now) {
+			toRemove = append(toRemove, i)
+			continue
+		}
+
 		if msg.VisibleAt.After(now) {
 			continue
 		}
@@ -448,6 +464,7 @@ func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) 
 		Attributes:    attrs,
 		GroupID:       msg.GroupID,
 		ReceiveCount:  msg.ReceiveCount,
+		ExpiresAt:     msg.ExpiresAt,
 	}
 }
 
