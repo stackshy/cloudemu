@@ -11,11 +11,15 @@ type vmssRequest struct {
 	Properties vmssRequestProps  `json:"properties"`
 }
 
-// vmssSKU is the scale-set SKU: VM size, tier, and instance count.
+// vmssSKU is the scale-set SKU: VM size, tier, and instance count. Capacity
+// is a pointer (matching the real armcompute SKU.Capacity *int64 field) so a
+// request that omits "capacity" is distinguishable from one that sends the
+// scale-in-to-zero value "capacity":0 explicitly: both would decode to the
+// same Go zero value if this were a plain int.
 type vmssSKU struct {
 	Name     string `json:"name,omitempty"`
 	Tier     string `json:"tier,omitempty"`
-	Capacity int    `json:"capacity,omitempty"`
+	Capacity *int64 `json:"capacity,omitempty"`
 }
 
 type vmssRequestProps struct {

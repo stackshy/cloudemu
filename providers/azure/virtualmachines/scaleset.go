@@ -11,16 +11,22 @@ import (
 // discoverer prices on are modeled: the SKU (VM size / tier / instance count)
 // and the per-VM profile (Spot priority, hybrid-benefit license, OS type).
 type ScaleSet struct {
-	Name        string
-	ID          string
-	Location    string
-	SKUName     string
-	SKUTier     string
-	Capacity    int
-	Priority    string // Spot / Regular
-	LicenseType string
-	OSType      string // Linux / Windows
-	Tags        map[string]string
+	Name     string
+	ID       string
+	Location string
+	SKUName  string
+	SKUTier  string
+	Capacity int
+	// CapacityZero must be set true when Capacity==0 is an explicit
+	// scale-in-to-zero request rather than an omitted field. Without it,
+	// CreateScaleSet cannot tell "capacity not specified" (default to 1)
+	// apart from "capacity explicitly 0" (honor it) — real Azure
+	// tooling sends the latter via a nullable capacity field.
+	CapacityZero bool
+	Priority     string // Spot / Regular
+	LicenseType  string
+	OSType       string // Linux / Windows
+	Tags         map[string]string
 }
 
 // CreateScaleSet stores a VMSS, defaulting the fields real Azure fills in.
@@ -46,7 +52,10 @@ func (m *Mock) CreateScaleSet(_ context.Context, s ScaleSet) (*ScaleSet, error) 
 		s.SKUTier = "Standard"
 	}
 
-	if s.Capacity == 0 {
+	// A zero capacity is only defaulted to 1 when it wasn't explicitly
+	// requested; an explicit "capacity":0 (scale-in-to-zero) is honored —
+	// a VMSS at capacity 0 is a valid, running-with-no-instances state.
+	if s.Capacity == 0 && !s.CapacityZero {
 		s.Capacity = 1
 	}
 

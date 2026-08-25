@@ -78,7 +78,11 @@ func createScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 	if req.SKU != nil {
 		set.SKUName = req.SKU.Name
 		set.SKUTier = req.SKU.Tier
-		set.Capacity = req.SKU.Capacity
+
+		if req.SKU.Capacity != nil {
+			set.Capacity = int(*req.SKU.Capacity)
+			set.CapacityZero = *req.SKU.Capacity == 0
+		}
 	}
 
 	if p := req.Properties.VirtualMachineProfile; p != nil {
@@ -147,7 +151,7 @@ func toVMSSResponse(s *providervm.ScaleSet, rp azurearm.ResourcePath) vmssRespon
 		Type:     providerName + "/" + resourceTypeScaleSets,
 		Location: defaultIfEmpty(s.Location, "eastus"),
 		Tags:     s.Tags,
-		SKU:      &vmssSKU{Name: s.SKUName, Tier: s.SKUTier, Capacity: s.Capacity},
+		SKU:      &vmssSKU{Name: s.SKUName, Tier: s.SKUTier, Capacity: capacityPtr(s.Capacity)},
 		Properties: vmssResponseProps{
 			ProvisioningState: "Succeeded",
 			VirtualMachineProfile: &vmssVMProfile{
@@ -157,4 +161,11 @@ func toVMSSResponse(s *providervm.ScaleSet, rp azurearm.ResourcePath) vmssRespon
 			},
 		},
 	}
+}
+
+// capacityPtr converts the stored capacity (always a concrete value after
+// CreateScaleSet defaulting) to the pointer form the ARM wire shape uses.
+func capacityPtr(capacity int) *int64 {
+	c := int64(capacity)
+	return &c
 }
