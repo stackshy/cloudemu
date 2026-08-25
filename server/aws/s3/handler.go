@@ -1454,8 +1454,27 @@ func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, b
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// parseMaxItems reads a max-keys/max-parts/max-uploads value, falling back to
+// the S3 default page size of 1000 when it is absent, unparseable, or negative.
+func parseMaxItems(v string) int {
+	if v == "" {
+		return defaultMaxKeys
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return defaultMaxKeys
+	}
+
+	return n
+}
+
 // listParts lists the parts uploaded so far for a multipart upload, so
-// resumable-upload tooling can read back the parts it has already sent.
+// resumable-upload tooling can read back the parts it has already sent. It
+// honors max-parts and part-number-marker (parts are ordered ascending by
+// number; only parts numbered above the marker are listed), echoing MaxParts /
+// PartNumberMarker and setting IsTruncated / NextPartNumberMarker when a page is
+// cut short, as real S3 does.
 func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	parts, err := h.bucket.ListParts(r.Context(), bucket, key, uploadID)
 	if err != nil {
@@ -1463,14 +1482,41 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key,
 		return
 	}
 
+	q := r.URL.Query()
+	maxParts := parseMaxItems(q.Get("max-parts"))
+	// part-number-marker: only parts strictly above it are listed. An absent or
+	// unparseable marker means 0 (list from the first part).
+	partNumberMarker, _ := strconv.Atoi(q.Get("part-number-marker"))
+
 	result := listPartsResult{
-		Xmlns:       xmlns,
-		Bucket:      bucket,
-		Key:         key,
-		UploadID:    uploadID,
-		IsTruncated: false,
+		Xmlns:            xmlns,
+		Bucket:           bucket,
+		Key:              key,
+		UploadID:         uploadID,
+		PartNumberMarker: partNumberMarker,
+		MaxParts:         maxParts,
 	}
+
 	for _, p := range parts {
+		if p.PartNumber <= partNumberMarker {
+			continue
+		}
+
+		if len(result.Parts) >= maxParts {
+			// A further matching part exists, so the page is truncated; the last
+			// part actually returned is the next request's part-number-marker. With
+			// max-parts=0 no parts are returned, so fall back to the incoming
+			// part-number-marker rather than indexing an empty slice.
+			result.IsTruncated = true
+			if len(result.Parts) > 0 {
+				result.NextPartNumberMarker = result.Parts[len(result.Parts)-1].PartNumber
+			} else {
+				result.NextPartNumberMarker = partNumberMarker
+			}
+
+			break
+		}
+
 		result.Parts = append(result.Parts, partXML{
 			PartNumber: p.PartNumber,
 			ETag:       fmt.Sprintf("%q", p.ETag),
@@ -1481,6 +1527,12 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key,
 	wire.WriteXML(w, http.StatusOK, result)
 }
 
+// listMultipartUploads lists the in-progress multipart uploads in a bucket. It
+// honors prefix, max-uploads, key-marker and upload-id-marker: uploads are
+// filtered by prefix, ordered by key ascending and then by initiation time, and
+// the handler slices the requested page, echoing Prefix / MaxUploads / KeyMarker
+// / UploadIdMarker and setting IsTruncated / NextKeyMarker / NextUploadIdMarker
+// when more remain, as real S3 does.
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
 	uploads, err := h.bucket.ListMultipartUploads(r.Context(), bucket)
 	if err != nil {
@@ -1488,7 +1540,43 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	resp := listMultipartUploadsResult{Xmlns: xmlns, Bucket: bucket}
+	q := r.URL.Query()
+	keyMarker := q.Get("key-marker")
+	uploadIDMarker := q.Get("upload-id-marker")
+	prefix := q.Get("prefix")
+
+	uploads = filterUploadsByPrefix(uploads, prefix)
+	sortMultipartUploads(uploads)
+	uploads = skipToUploadMarker(uploads, keyMarker, uploadIDMarker)
+
+	resp := listMultipartUploadsResult{
+		Xmlns:          xmlns,
+		Bucket:         bucket,
+		Prefix:         prefix,
+		KeyMarker:      keyMarker,
+		UploadIDMarker: uploadIDMarker,
+		MaxUploads:     parseMaxItems(q.Get("max-uploads")),
+	}
+
+	if len(uploads) > resp.MaxUploads {
+		resp.IsTruncated = true
+		// S3 reports the last upload returned as the next markers; the resumed
+		// request lists uploads strictly after that key/upload-id pair. Capture
+		// the resume position BEFORE slicing — with max-uploads=0 no uploads are
+		// returned, so fall back to the incoming markers rather than losing the
+		// caller's position (which would silently restart pagination).
+		if resp.MaxUploads > 0 {
+			last := uploads[resp.MaxUploads-1]
+			resp.NextKeyMarker = last.Key
+			resp.NextUploadIDMarker = last.UploadID
+		} else {
+			resp.NextKeyMarker = keyMarker
+			resp.NextUploadIDMarker = uploadIDMarker
+		}
+
+		uploads = uploads[:resp.MaxUploads]
+	}
+
 	for _, u := range uploads {
 		resp.Uploads = append(resp.Uploads, multipartUploadXML{
 			Key:       u.Key,
@@ -1498,6 +1586,70 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 	}
 
 	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// filterUploadsByPrefix keeps only uploads whose key begins with prefix (an empty
+// prefix keeps them all), matching real S3's prefix parameter: the listing must
+// not include keys outside the prefix it echoes back.
+func filterUploadsByPrefix(uploads []driver.MultipartUpload, prefix string) []driver.MultipartUpload {
+	if prefix == "" {
+		return uploads
+	}
+
+	filtered := uploads[:0]
+
+	for i := range uploads {
+		if strings.HasPrefix(uploads[i].Key, prefix) {
+			filtered = append(filtered, uploads[i])
+		}
+	}
+
+	return filtered
+}
+
+// sortMultipartUploads orders uploads by key ascending, then, for uploads sharing
+// a key, by initiation time ascending (falling back to upload id when the times
+// are equal or unparseable), as real S3 does. Resume comparisons against
+// upload-id-marker stay lexicographic and are handled in skipToUploadMarker.
+func sortMultipartUploads(uploads []driver.MultipartUpload) {
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+
+		ti, ei := time.Parse(time.RFC3339, uploads[i].CreatedAt)
+		tj, ej := time.Parse(time.RFC3339, uploads[j].CreatedAt)
+
+		if ei == nil && ej == nil && !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+
+		return uploads[i].UploadID < uploads[j].UploadID
+	})
+}
+
+// skipToUploadMarker drops the uploads preceding a key-marker/upload-id-marker
+// pair so a resumed listing starts at the first not-yet-returned upload. With
+// only a key-marker, listing resumes at keys strictly greater than it; with
+// both, uploads for the marker key resume at upload ids lexicographically
+// greater than upload-id-marker.
+func skipToUploadMarker(uploads []driver.MultipartUpload, keyMarker, uploadIDMarker string) []driver.MultipartUpload {
+	if keyMarker == "" {
+		return uploads
+	}
+
+	for i := range uploads {
+		u := &uploads[i]
+		if u.Key > keyMarker {
+			return uploads[i:]
+		}
+
+		if u.Key == keyMarker && uploadIDMarker != "" && u.UploadID > uploadIDMarker {
+			return uploads[i:]
+		}
+	}
+
+	return nil
 }
 
 // objectTaggingOp dispatches PUT/GET/DELETE for the ?tagging sub-resource.
@@ -1633,70 +1785,140 @@ func (h *Handler) getBucketVersioning(w http.ResponseWriter, r *http.Request, bu
 // listObjectVersions handles GET /{bucket}?versions. When the driver retains
 // version history it returns the full history (versions + delete markers);
 // otherwise it falls back to listing current objects as the sole "null" version.
+// It honors max-keys, key-marker and version-id-marker: the driver returns the
+// full ordered history (keys ascending, newest version first within a key) and
+// the handler slices the requested page, echoing the markers and setting
+// IsTruncated / NextKeyMarker / NextVersionIdMarker as real S3 does.
 func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
+	q := r.URL.Query()
 	opts := driver.ListOptions{
-		Prefix:    r.URL.Query().Get("prefix"),
-		Delimiter: r.URL.Query().Get("delimiter"),
+		Prefix:    q.Get("prefix"),
+		Delimiter: q.Get("delimiter"),
 	}
 
-	resp := listVersionsResult{
-		Xmlns:     xmlns,
-		Name:      bucket,
-		Prefix:    opts.Prefix,
-		Delimiter: opts.Delimiter,
-		MaxKeys:   defaultMaxKeys,
-	}
+	keyMarker := q.Get("key-marker")
+	versionIDMarker := q.Get("version-id-marker")
 
-	if h.versioned != nil {
-		result, err := h.versioned.ListObjectVersions(r.Context(), bucket, opts)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		for _, v := range result.Versions {
-			if v.DeleteMarker {
-				resp.DeleteMarkers = append(resp.DeleteMarkers, deleteMarkerXML{
-					Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
-				})
-				continue
-			}
-
-			resp.Versions = append(resp.Versions, objectVersionXML{
-				Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
-				ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: "STANDARD",
-			})
-		}
-
-		for _, p := range result.CommonPrefixes {
-			resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
-		}
-
-		wire.WriteXML(w, http.StatusOK, resp)
-
-		return
-	}
-
-	// Fallback: no version history — list current objects as the "null" version.
-	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
+	entries, commonPrefixes, err := h.collectObjectVersions(r.Context(), bucket, opts)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	for i := range result.Objects {
-		obj := &result.Objects[i]
+	resp := listVersionsResult{
+		Xmlns:           xmlns,
+		Name:            bucket,
+		Prefix:          opts.Prefix,
+		Delimiter:       opts.Delimiter,
+		KeyMarker:       keyMarker,
+		VersionIDMarker: versionIDMarker,
+		MaxKeys:         parseMaxItems(q.Get("max-keys")),
+	}
+
+	entries = skipToVersionMarker(entries, keyMarker, versionIDMarker)
+
+	if len(entries) > resp.MaxKeys {
+		next := entries[resp.MaxKeys]
+		resp.IsTruncated = true
+		resp.NextKeyMarker = next.Key
+		resp.NextVersionIDMarker = next.VersionID
+		entries = entries[:resp.MaxKeys]
+	}
+
+	for i := range entries {
+		v := &entries[i]
+		if v.DeleteMarker {
+			resp.DeleteMarkers = append(resp.DeleteMarkers, deleteMarkerXML{
+				Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
+			})
+			continue
+		}
+
 		resp.Versions = append(resp.Versions, objectVersionXML{
-			Key: obj.Key, VersionID: "null", IsLatest: true, LastModified: obj.LastModified,
-			ETag: fmt.Sprintf("%q", obj.ETag), Size: obj.Size, StorageClass: "STANDARD",
+			Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
+			ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: "STANDARD",
 		})
 	}
 
-	for _, p := range result.CommonPrefixes {
+	// A CommonPrefix is echoed only when it is lexicographically greater than
+	// key-marker, so a resumed (truncated) listing does not re-return the same
+	// prefixes on every page. An empty key-marker keeps them all.
+	for _, p := range commonPrefixes {
+		if p <= keyMarker {
+			continue
+		}
+
 		resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
 	}
 
 	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// collectObjectVersions returns the full ordered version history for a bucket
+// (keys ascending, newest version first within a key) and its rolled-up common
+// prefixes. It reads real history when the driver retains it, otherwise falls
+// back to listing current objects as the sole "null" version.
+func (h *Handler) collectObjectVersions(
+	ctx context.Context, bucket string, opts driver.ListOptions,
+) (entries []driver.ObjectVersion, commonPrefixes []string, err error) {
+	if h.versioned != nil {
+		result, verr := h.versioned.ListObjectVersions(ctx, bucket, opts)
+		if verr != nil {
+			return nil, nil, verr
+		}
+
+		return result.Versions, result.CommonPrefixes, nil
+	}
+
+	// Fallback: no version history — list current objects as the "null" version.
+	result, lerr := h.bucket.ListObjects(ctx, bucket, opts)
+	if lerr != nil {
+		return nil, nil, lerr
+	}
+
+	entries = make([]driver.ObjectVersion, 0, len(result.Objects))
+
+	for i := range result.Objects {
+		obj := &result.Objects[i]
+		entries = append(entries, driver.ObjectVersion{
+			Key: obj.Key, VersionID: "null", IsLatest: true,
+			Size: obj.Size, ETag: obj.ETag, LastModified: obj.LastModified,
+		})
+	}
+
+	return entries, result.CommonPrefixes, nil
+}
+
+// skipToVersionMarker drops the entries that precede a key-marker/
+// version-id-marker pair so a resumed listing starts at the first not-yet-
+// returned version. With only a key-marker, listing resumes at keys strictly
+// greater than it; with both, it resumes at the entry matching the pair
+// (inclusive) — the values S3 reports as NextKeyMarker/NextVersionIdMarker.
+func skipToVersionMarker(entries []driver.ObjectVersion, keyMarker, versionIDMarker string) []driver.ObjectVersion {
+	if keyMarker == "" {
+		return entries
+	}
+
+	for i := range entries {
+		e := &entries[i]
+		if versionIDMarker == "" {
+			if e.Key > keyMarker {
+				return entries[i:]
+			}
+
+			continue
+		}
+
+		if e.Key == keyMarker && e.VersionID == versionIDMarker {
+			return entries[i:]
+		}
+
+		if e.Key > keyMarker {
+			return entries[i:]
+		}
+	}
+
+	return nil
 }
 
 // extractMetadata pulls x-amz-meta-* headers into a map.
