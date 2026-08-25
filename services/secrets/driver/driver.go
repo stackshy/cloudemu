@@ -27,6 +27,9 @@ type SecretInfo struct {
 	// Manager), echoed on DescribeSecret. Empty when the default
 	// aws/secretsmanager key is used. Ignored by Azure/GCP.
 	KMSKeyID string
+	// Etag is an opaque optimistic-concurrency tag (GCP Secret Manager), echoed
+	// on the secret resource. Empty for providers that don't model it.
+	Etag string
 }
 
 // SecretVersion represents a specific version of a secret value.
@@ -39,6 +42,16 @@ type SecretVersion struct {
 	// SecretString), so a reader returns it in the SecretBinary field. AWS Secrets
 	// Manager keeps these mutually exclusive; other providers leave it false.
 	Binary bool
+	// State is the lifecycle state of the version (GCP Secret Manager):
+	// "ENABLED", "DISABLED", or "DESTROYED". Empty for providers that don't
+	// model per-version state.
+	State string
+	// DestroyTime is the RFC3339 time the version was destroyed (GCP Secret
+	// Manager); empty unless State is "DESTROYED".
+	DestroyTime string
+	// Etag is an opaque optimistic-concurrency tag (GCP Secret Manager), echoed
+	// on the version resource. Empty for providers that don't model it.
+	Etag string
 }
 
 // Secrets is the interface that secret management provider implementations must satisfy.
@@ -51,6 +64,61 @@ type Secrets interface {
 	PutSecretValue(ctx context.Context, name string, value []byte) (*SecretVersion, error)
 	GetSecretValue(ctx context.Context, name string, versionID string) (*SecretVersion, error)
 	ListSecretVersions(ctx context.Context, name string) ([]SecretVersion, error)
+}
+
+// Version lifecycle states reported by GCP Secret Manager.
+const (
+	VersionEnabled   = "ENABLED"
+	VersionDisabled  = "DISABLED"
+	VersionDestroyed = "DESTROYED"
+)
+
+// GCPSecretPatch is the GCP Secret Manager secrets.patch payload. Only the
+// fields named in the update mask are applied; SetLabels true replaces the
+// label set with Labels (including clearing it when Labels is empty).
+type GCPSecretPatch struct {
+	Labels    map[string]string
+	SetLabels bool
+}
+
+// GCPIAMBinding binds an IAM role to a set of members.
+type GCPIAMBinding struct {
+	Role    string
+	Members []string
+}
+
+// GCPIAMPolicy is a GCP IAM policy as served by getIamPolicy/setIamPolicy.
+type GCPIAMPolicy struct {
+	Version  int
+	Bindings []GCPIAMBinding
+	Etag     string
+}
+
+// GCPSecrets is the GCP Secret Manager-specific surface kept off the shared
+// Secrets interface — a type-asserted optional interface — so the AWS and Azure
+// providers need not model version lifecycle, secret patch, or IAM semantics.
+type GCPSecrets interface {
+	// EnableSecretVersion moves a version to ENABLED. It is idempotent on an
+	// already-enabled version and fails on a DESTROYED one.
+	EnableSecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
+	// DisableSecretVersion moves a version to DISABLED. It fails on a DESTROYED
+	// version.
+	DisableSecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
+	// DestroySecretVersion moves a version to DESTROYED, wipes its payload, and
+	// stamps its destroyTime. It fails on an already-DESTROYED version.
+	DestroySecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
+	// PatchSecret applies a partial update (labels) to a secret's metadata.
+	PatchSecret(ctx context.Context, name string, patch GCPSecretPatch) (*SecretInfo, error)
+	// GetSecretIAMPolicy returns the secret's stored IAM policy (an empty
+	// versioned policy when none has been set).
+	GetSecretIAMPolicy(ctx context.Context, name string) (*GCPIAMPolicy, error)
+	// SetSecretIAMPolicy stores the secret's IAM policy and returns it with a
+	// refreshed etag.
+	SetSecretIAMPolicy(ctx context.Context, name string, policy GCPIAMPolicy) (*GCPIAMPolicy, error)
+	// TestSecretIAMPermissions returns the subset of permissions the caller
+	// holds. CloudEmu does not enforce IAM, so all requested permissions are
+	// reported as granted.
+	TestSecretIAMPermissions(ctx context.Context, name string, permissions []string) ([]string, error)
 }
 
 // KVAttributes are Azure Key Vault per-version secret management attributes.

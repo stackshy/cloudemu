@@ -2,10 +2,66 @@ package secretmanager
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
+
+// maskContains reports whether a field-update mask names the given field. An
+// empty mask is treated as "update everything present in the body".
+func maskContains(mask, field string) bool {
+	if strings.TrimSpace(mask) == "" {
+		return true
+	}
+
+	for _, f := range strings.Split(mask, ",") {
+		if strings.TrimSpace(f) == field {
+			return true
+		}
+	}
+
+	return false
+}
+
+const (
+	defaultPageSize = 100
+	maxPageSize     = 25000
+)
+
+// pageSize reads ?pageSize, clamping to a sane default and ceiling.
+func pageSize(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if err != nil || n <= 0 {
+		return defaultPageSize
+	}
+
+	if n > maxPageSize {
+		return maxPageSize
+	}
+
+	return n
+}
+
+// pageToken reads the opaque ?pageToken continuation cursor.
+func pageToken(r *http.Request) string {
+	return r.URL.Query().Get("pageToken")
+}
+
+// versionLess orders two numeric version ids ascending; non-numeric ids fall
+// back to string order.
+func versionLess(a, b string) bool {
+	ai, aerr := strconv.Atoi(a)
+	bi, berr := strconv.Atoi(b)
+
+	if aerr == nil && berr == nil {
+		return ai < bi
+	}
+
+	return a < b
+}
 
 func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request, rt route) {
 	var req createSecretRequest
@@ -44,12 +100,26 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request, rt route) 
 		return
 	}
 
-	out := make([]secretJSON, 0, len(infos))
-	for i := range infos {
-		out = append(out, toSecretJSON(rt.project, &infos[i]))
+	// Stable order by secret name so offset page tokens stay meaningful across
+	// calls (ListSecrets iterates a map, which is unordered).
+	page, err := pagination.PaginateSorted(infos,
+		func(a, b secretsdriver.SecretInfo) bool { return a.Name < b.Name },
+		pageToken(r), pageSize(r))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, listSecretsResponse{Secrets: out, TotalSize: len(out)})
+	out := make([]secretJSON, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toSecretJSON(rt.project, &page.Items[i]))
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, listSecretsResponse{
+		Secrets:       out,
+		TotalSize:     len(infos),
+		NextPageToken: page.NextPageToken,
+	})
 }
 
 func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request, rt route) {
@@ -84,12 +154,84 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, rt route)
 		return
 	}
 
-	out := make([]versionResourceJSON, 0, len(versions))
-	for i := range versions {
-		out = append(out, toVersionJSON(rt.project, rt.secret, &versions[i]))
+	// Real GCP lists versions newest-first (descending version number).
+	page, err := pagination.PaginateSorted(versions,
+		func(a, b secretsdriver.SecretVersion) bool { return versionLess(b.VersionID, a.VersionID) },
+		pageToken(r), pageSize(r))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, listVersionsResponse{Versions: out, TotalSize: len(out)})
+	out := make([]versionResourceJSON, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toVersionJSON(rt.project, rt.secret, &page.Items[i]))
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, listVersionsResponse{
+		Versions:      out,
+		TotalSize:     len(versions),
+		NextPageToken: page.NextPageToken,
+	})
+}
+
+func (h *Handler) patchSecret(w http.ResponseWriter, r *http.Request, rt route) {
+	if h.gcp == nil {
+		writeUnsupported(w)
+		return
+	}
+
+	var req patchSecretRequest
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// The update mask names the fields to change; only labels are modeled.
+	patch := secretsdriver.GCPSecretPatch{}
+	if maskContains(r.URL.Query().Get("updateMask"), "labels") {
+		patch.Labels = req.Labels
+		patch.SetLabels = true
+	}
+
+	info, err := h.gcp.PatchSecret(r.Context(), rt.secret, patch)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, toSecretJSON(rt.project, info))
+}
+
+// mutateVersion applies an enable/disable/destroy lifecycle verb to a version.
+func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route, verb string) {
+	if h.gcp == nil {
+		writeUnsupported(w)
+		return
+	}
+
+	var (
+		ver *secretsdriver.SecretVersion
+		err error
+	)
+
+	switch verb {
+	case verbEnable:
+		ver, err = h.gcp.EnableSecretVersion(r.Context(), rt.secret, driverVersion(rt.version))
+	case verbDisable:
+		ver, err = h.gcp.DisableSecretVersion(r.Context(), rt.secret, driverVersion(rt.version))
+	case verbDestroy:
+		ver, err = h.gcp.DestroySecretVersion(r.Context(), rt.secret, driverVersion(rt.version))
+	default:
+		writeUnsupported(w)
+		return
+	}
+
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(rt.project, rt.secret, ver))
 }
 
 func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request, rt route) {
@@ -106,6 +248,14 @@ func (h *Handler) accessVersion(w http.ResponseWriter, r *http.Request, rt route
 	ver, err := h.secrets.GetSecretValue(r.Context(), rt.secret, driverVersion(rt.version))
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// A version's payload can only be accessed in the ENABLED state; disabled
+	// and destroyed versions fail with FAILED_PRECONDITION, matching real GCP.
+	if ver.State != "" && ver.State != secretsdriver.VersionEnabled {
+		gcprest.WriteError(w, http.StatusBadRequest, "failedPrecondition",
+			"cannot access version "+ver.VersionID+" in state "+ver.State)
 		return
 	}
 

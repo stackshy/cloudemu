@@ -3,6 +3,7 @@ package secretmanager
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,10 +18,17 @@ import (
 var _ driver.Secrets = (*Mock)(nil)
 
 type secretData struct {
-	info      driver.SecretInfo
-	versions  []driver.SecretVersion
-	deletedAt time.Time
-	mu        sync.RWMutex
+	info       driver.SecretInfo
+	versions   []driver.SecretVersion
+	verCounter int                  // monotonic version-number allocator (GCP numbers versions 1,2,3…)
+	iam        *driver.GCPIAMPolicy // stored IAM policy; nil until first set
+	deletedAt  time.Time
+	mu         sync.RWMutex
+}
+
+// newEtag returns a fresh opaque optimistic-concurrency tag.
+func newEtag() string {
+	return idgen.GenerateID("etag-")
 }
 
 // Mock is an in-memory mock implementation of GCP Secret Manager.
@@ -63,6 +71,7 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		Tags:        tags,
+		Etag:        newEtag(),
 	}
 
 	sd := &secretData{info: info}
@@ -75,11 +84,14 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		data := make([]byte, len(value))
 		copy(data, value)
 
+		sd.verCounter++
 		sd.versions = []driver.SecretVersion{{
-			VersionID: idgen.GenerateID("ver-"),
+			VersionID: strconv.Itoa(sd.verCounter),
 			Value:     data,
 			CreatedAt: now,
 			Current:   true,
+			State:     driver.VersionEnabled,
+			Etag:      newEtag(),
 		}}
 	}
 
@@ -168,12 +180,14 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 	data := make([]byte, len(value))
 	copy(data, value)
 
-	versionID := idgen.GenerateID("ver-")
+	sd.verCounter++
 	version := driver.SecretVersion{
-		VersionID: versionID,
+		VersionID: strconv.Itoa(sd.verCounter),
 		Value:     data,
 		CreatedAt: now,
 		Current:   true,
+		State:     driver.VersionEnabled,
+		Etag:      newEtag(),
 	}
 
 	sd.versions = append(sd.versions, version)
@@ -239,10 +253,14 @@ func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.Secr
 
 	versions := make([]driver.SecretVersion, len(sd.versions))
 	for i, v := range sd.versions {
+		// Project metadata only — the payload is omitted from list results.
 		versions[i] = driver.SecretVersion{
-			VersionID: v.VersionID,
-			CreatedAt: v.CreatedAt,
-			Current:   v.Current,
+			VersionID:   v.VersionID,
+			CreatedAt:   v.CreatedAt,
+			Current:     v.Current,
+			State:       v.State,
+			DestroyTime: v.DestroyTime,
+			Etag:        v.Etag,
 		}
 	}
 
