@@ -195,6 +195,29 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	return nil
 }
 
+// PurgeAccount fully tears down a Cosmos databaseAccount's driver footprint: the
+// account's own table, every data-plane container table in its namespace (the
+// tables whose name is prefixed "{account}/"), and the account's discovery
+// attributes (accountAttrs). A plain DeleteTable removes only the single named
+// table, which left the deleted account visible in AccountTables and its
+// container tables live; PurgeAccount is the account-delete teardown that makes
+// a deleted account stop listing and a same-name recreate start from an empty
+// namespace.
+func (m *Mock) PurgeAccount(account string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.tables, account)
+	delete(m.accountAttrs, account)
+
+	prefix := account + "/"
+	for name := range m.tables {
+		if strings.HasPrefix(name, prefix) {
+			delete(m.tables, name)
+		}
+	}
+}
+
 // DescribeTable returns the configuration of a container (table).
 func (m *Mock) DescribeTable(_ context.Context, name string) (*driver.TableConfig, error) {
 	m.mu.RLock()

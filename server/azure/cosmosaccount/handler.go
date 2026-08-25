@@ -54,16 +54,30 @@ type attrBackend interface {
 	AccountTables() []string
 }
 
+// AccountPurger tears down a deleted account's full footprint in one step: its
+// driver tables (the account's own table plus every container table in its
+// namespace), its discovery attributes, and the cosmos data-plane handler's
+// in-memory database/offer/attrs bookkeeping. The account control plane
+// delegates DELETE to it so a deleted account leaves no ghost in List and a
+// same-name recreate starts from an empty namespace. The cosmos data-plane
+// handler implements it.
+type AccountPurger interface {
+	PurgeAccount(ctx context.Context, account string)
+}
+
 // Handler serves Microsoft.DocumentDB/databaseAccounts ARM requests against a
 // database driver.
 type Handler struct {
-	db    dbdriver.Database
-	attrs attrBackend // nil when the driver doesn't expose account attributes
+	db     dbdriver.Database
+	attrs  attrBackend   // nil when the driver doesn't expose account attributes
+	purger AccountPurger // tears down an account's data-plane footprint on delete
 }
 
-// New returns a Cosmos-account handler backed by db.
-func New(db dbdriver.Database) *Handler {
-	h := &Handler{db: db}
+// New returns a Cosmos-account handler backed by db. purger is the cosmos
+// data-plane handler, to which account DELETE is delegated so an account is torn
+// down fully (tables, attributes and data-plane bookkeeping), not shallowly.
+func New(db dbdriver.Database, purger AccountPurger) *Handler {
+	h := &Handler{db: db, purger: purger}
 	if a, ok := db.(attrBackend); ok {
 		h.attrs = a
 	}
@@ -249,12 +263,28 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp *azurearm.Reso
 }
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// A shallow DeleteTable(account) would leave the account visible in List (its
+	// discovery attributes linger) and its databases/containers live for a
+	// same-name recreate to inherit. Delegate to the data-plane purger, which
+	// drops the account's tables, attributes and data-plane bookkeeping in one
+	// idempotent step.
+	//
+	// Delete is a long-running op in real Azure; complete it synchronously with
+	// an empty 204 so the SDK's poller terminates (armcosmos BeginDelete accepts
+	// only 202/204 — a 200 fails its client-side response validation).
+	if h.purger != nil {
+		h.purger.PurgeAccount(r.Context(), rp.ResourceName)
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	if err := h.db.DeleteTable(r.Context(), rp.ResourceName); err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // toARMAccount renders the ARM databaseAccounts wire shape, reading the stored
