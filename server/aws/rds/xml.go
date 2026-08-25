@@ -103,6 +103,7 @@ type dbInstanceXML struct {
 	CACertificateIdentifier               string                     `xml:"CACertificateIdentifier,omitempty"`
 	Iops                                  int                        `xml:"Iops,omitempty"`
 	StorageEncrypted                      bool                       `xml:"StorageEncrypted"`
+	KmsKeyID                              string                     `xml:"KmsKeyId,omitempty"`
 	DeletionProtection                    bool                       `xml:"DeletionProtection"`
 	DBParameterGroups                     *dbParameterGroupsXML      `xml:"DBParameterGroups,omitempty"`
 	OptionGroupMemberships                *optionGroupMembershipsXML `xml:"OptionGroupMemberships,omitempty"`
@@ -141,6 +142,7 @@ type dbClusterXML struct {
 	DBClusterResourceID string                `xml:"DbClusterResourceId,omitempty"`
 	AllocatedStorage    int                   `xml:"AllocatedStorage,omitempty"`
 	StorageEncrypted    bool                  `xml:"StorageEncrypted"`
+	KmsKeyID            string                `xml:"KmsKeyId,omitempty"`
 	DeletionProtection  bool                  `xml:"DeletionProtection"`
 	AvailabilityZones   *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
 	ClusterCreateTime   string                `xml:"ClusterCreateTime,omitempty"`
@@ -410,6 +412,7 @@ func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupX
 		CACertificateIdentifier:               inst.CACertificateIdentifier,
 		Iops:                                  inst.Iops,
 		StorageEncrypted:                      inst.StorageEncrypted,
+		KmsKeyID:                              inst.KmsKeyID,
 		DeletionProtection:                    inst.DeletionProtection,
 		DBParameterGroups:                     toDBParameterGroupsXML(inst.DBParameterGroupName),
 		OptionGroupMemberships:                toOptionGroupMembershipsXML(inst.OptionGroupName),
@@ -484,6 +487,7 @@ func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {
 		DBClusterResourceID: cluster.DBClusterResourceID,
 		AllocatedStorage:    cluster.AllocatedStorage,
 		StorageEncrypted:    cluster.StorageEncrypted,
+		KmsKeyID:            cluster.KmsKeyID,
 		DeletionProtection:  cluster.DeletionProtection,
 		AvailabilityZones:   toAvailabilityZonesXML(cluster.AvailabilityZones),
 		ClusterCreateTime:   cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),

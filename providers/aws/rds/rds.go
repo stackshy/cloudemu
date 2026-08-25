@@ -48,6 +48,9 @@ const (
 	defaultEngineMode        = "provisioned"
 	auroraAllocatedStorage   = 1
 	resourceIDLen            = 20
+	// defaultKMSKeyAlias is the account-default RDS KMS key real AWS fills in
+	// when StorageEncrypted is set but no KmsKeyId is supplied.
+	defaultKMSKeyAlias = "alias/aws/rds"
 )
 
 // Metric namespaces for engines that share the RDS wire protocol but emit
@@ -467,9 +470,26 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		PreferredMaintenanceWindow: defaultMaintenanceWindow,
 		CACertificateIdentifier:    defaultCACertIdentifier,
 		StorageEncrypted:           cfg.StorageEncrypted,
+		KmsKeyID:                   resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
+		DeletionProtection:         cfg.DeletionProtection,
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(cfg.Tags),
 	}
+}
+
+// resolveKMSKeyID mirrors real RDS: when storage is encrypted and the caller
+// supplied no KmsKeyId, the account's default RDS key is filled in; an explicit
+// key always wins, and an unencrypted resource carries no key.
+func resolveKMSKeyID(encrypted bool, kmsKeyID string) string {
+	if !encrypted {
+		return ""
+	}
+
+	if kmsKeyID == "" {
+		return defaultKMSKeyAlias
+	}
+
+	return kmsKeyID
 }
 
 // planProvision snapshots, under the caller's lock, what runCreateProvision needs
@@ -944,6 +964,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		DBClusterResourceID:         resourceID("cluster-", cfg.ID),
 		AllocatedStorage:            allocatedStorage,
 		StorageEncrypted:            cfg.StorageEncrypted,
+		KmsKeyID:                    resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
 		DeletionProtection:          cfg.DeletionProtection,
 		AvailabilityZones:           availabilityZones(m.opts.Region),
 		CreatedAt:                   m.opts.Clock.Now().UTC(),

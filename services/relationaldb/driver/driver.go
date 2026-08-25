@@ -90,6 +90,14 @@ type InstanceConfig struct {
 	// StorageEncrypted requests encryption-at-rest on the instance's storage
 	// (AWS RDS StorageEncrypted); false for engines with no such flag.
 	StorageEncrypted bool
+	// KmsKeyId is the KMS key protecting an encrypted instance (AWS RDS
+	// KmsKeyId). When StorageEncrypted is set and this is empty, RDS fills in
+	// the account's default key; empty for unencrypted instances / other engines.
+	KmsKeyID string
+	// DeletionProtection guards a standalone instance from deletion while set
+	// (AWS RDS DeletionProtection); defaults to false. For Aurora, protection is
+	// managed at the cluster level, so this stays false on member instances.
+	DeletionProtection bool
 	// HighAvailabilityMode is the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty for engines with no such
 	// concept. StandbyAvailabilityZone is the zone the standby replica runs in
@@ -151,7 +159,10 @@ type Instance struct {
 	CACertificateIdentifier    string
 	Iops                       int
 	StorageEncrypted           bool
-	DeletionProtection         bool
+	// KmsKeyId echoes the KMS key protecting an encrypted instance (AWS RDS
+	// KmsKeyId) on read; empty for unencrypted instances / other engines.
+	KmsKeyID           string
+	DeletionProtection bool
 	// HighAvailabilityMode / StandbyAvailabilityZone echo the Azure Flexible
 	// Server HA configuration on read; empty for engines with no HA concept.
 	HighAvailabilityMode    string
@@ -221,6 +232,10 @@ type ClusterConfig struct {
 	// the corresponding create inputs. All default to zero for non-AWS engines.
 	EngineMode       string
 	StorageEncrypted bool
+	// KmsKeyId is the KMS key protecting an encrypted Aurora cluster (AWS RDS
+	// DBCluster KmsKeyId). When StorageEncrypted is set and this is empty, RDS
+	// fills in the account's default key; empty for unencrypted clusters.
+	KmsKeyID         string
 	AllocatedStorage int
 	// DeletionProtection guards an Aurora DB cluster from deletion while set; it
 	// echoes the AWS RDS DBCluster attribute and defaults to false. Zero for
@@ -262,7 +277,10 @@ type Cluster struct {
 	DBClusterResourceID string
 	AllocatedStorage    int
 	StorageEncrypted    bool
-	AvailabilityZones   []string
+	// KmsKeyId echoes the KMS key protecting an encrypted Aurora cluster (AWS
+	// RDS DBCluster KmsKeyId) on read; empty for unencrypted clusters.
+	KmsKeyID          string
+	AvailabilityZones []string
 	// DeletionProtection guards the cluster from deletion while set; echoes the
 	// AWS RDS DBCluster attribute and defaults to false for non-AWS engines.
 	DeletionProtection bool
