@@ -97,6 +97,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Zones:         req.Zones,
 		Region:        req.Location,
 		ResourceGroup: rp.ResourceGroup,
+		Identity:      toDriverIdentity(req.Identity),
 	}
 
 	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
@@ -896,6 +897,50 @@ func decodeCustomData(s string) string {
 	return s
 }
 
+// toDriverIdentity maps an inbound ARM identity block onto the driver shape.
+// Only Type and the UserAssignedIdentities keys (the identity resource IDs to
+// attach) are meaningful on input; principalId/tenantId/clientId are
+// read-only and decoded but discarded. Returns nil when the request did not
+// include an identity block at all (the caller then leaves any existing
+// identity untouched).
+func toDriverIdentity(in *identity) *computedriver.ManagedIdentity {
+	if in == nil {
+		return nil
+	}
+
+	out := &computedriver.ManagedIdentity{Type: in.Type}
+
+	if len(in.UserAssignedIdentities) > 0 {
+		out.UserAssigned = make(map[string]computedriver.UserAssignedIdentity, len(in.UserAssignedIdentities))
+		for id := range in.UserAssignedIdentities {
+			out.UserAssigned[id] = computedriver.UserAssignedIdentity{}
+		}
+	}
+
+	return out
+}
+
+// fromDriverIdentity builds the ARM identity response block from the
+// resolved driver shape, echoing each user-assigned identity's synthesized
+// principalId/clientId. Returns nil when the instance has no identity
+// attached, so the response omits the field entirely (matching real Azure).
+func fromDriverIdentity(in *computedriver.ManagedIdentity) *identity {
+	if in == nil {
+		return nil
+	}
+
+	out := &identity{Type: in.Type, PrincipalID: in.PrincipalID, TenantID: in.TenantID}
+
+	if len(in.UserAssigned) > 0 {
+		out.UserAssignedIdentities = make(map[string]*userAssignedIdentity, len(in.UserAssigned))
+		for id, u := range in.UserAssigned {
+			out.UserAssignedIdentities[id] = &userAssignedIdentity{PrincipalID: u.PrincipalID, ClientID: u.ClientID}
+		}
+	}
+
+	return out
+}
+
 func osTypeFromStorage(s *storageProfile) string {
 	if s == nil || s.OSDisk == nil {
 		return ""
@@ -973,6 +1018,7 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 		Location: defaultIfEmpty(inst.Region, defaultIfEmpty(req.Location, "eastus")),
 		Tags:     stripInternalTags(inst.Tags),
 		Zones:    inst.Zones,
+		Identity: fromDriverIdentity(inst.Identity),
 		Properties: vmResponseProps{
 			VMID:              inst.ID,
 			ProvisioningState: provisioningState,

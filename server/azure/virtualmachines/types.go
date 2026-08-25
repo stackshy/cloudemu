@@ -4,14 +4,47 @@ package virtualmachines
 //
 // We model the minimum surface needed for SDK clients to decode responses
 // and for tests to assert wire shapes. This is not a full ARM contract: many
-// optional fields (extensions, plan, identity, etc.) are intentionally omitted.
+// optional fields (extensions, plan, etc.) are intentionally omitted.
 
 // vmRequest is the inbound shape for a PUT virtualMachines/{name} request.
 type vmRequest struct {
-	Location   string            `json:"location"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	Zones      []string          `json:"zones,omitempty"`
-	Properties vmRequestProps    `json:"properties"`
+	Location string            `json:"location"`
+	Tags     map[string]string `json:"tags,omitempty"`
+	Zones    []string          `json:"zones,omitempty"`
+	// Identity is the managed-identity block, a sibling of properties at the
+	// resource root (armcompute.VirtualMachine.Identity). Omitted (nil) means
+	// the request did not touch identity; real Azure then preserves whatever
+	// identity is already attached rather than clearing it.
+	Identity   *identity      `json:"identity,omitempty"`
+	Properties vmRequestProps `json:"properties"`
+}
+
+// identity is the ARM managed-service-identity envelope
+// (armcompute.VirtualMachineIdentity): system-assigned and/or user-assigned
+// identity configuration.
+type identity struct {
+	// Type is one of "None", "SystemAssigned", "UserAssigned",
+	// "SystemAssigned,UserAssigned".
+	Type string `json:"type,omitempty"`
+	// PrincipalID/TenantID are read-only: Azure populates them once a
+	// system-assigned identity is attached. A request sends neither; we
+	// still decode them (and ignore the values) so a client that round-trips
+	// a GET response back into a PUT body doesn't fail to decode.
+	PrincipalID string `json:"principalId,omitempty"`
+	TenantID    string `json:"tenantId,omitempty"`
+	// UserAssignedIdentities is keyed by the full ARM resource ID of a
+	// Microsoft.ManagedIdentity/userAssignedIdentities resource to attach. A
+	// request sends an empty object per key; principalId/clientId are
+	// read-only, populated on the response.
+	UserAssignedIdentities map[string]*userAssignedIdentity `json:"userAssignedIdentities,omitempty"`
+}
+
+// userAssignedIdentity is one entry of identity.userAssignedIdentities: the
+// read-only principal/client id pair Azure reports for an attached
+// user-assigned identity.
+type userAssignedIdentity struct {
+	PrincipalID string `json:"principalId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
 }
 
 type vmRequestProps struct {
@@ -102,13 +135,16 @@ type bootDiagnosticsDataResult struct {
 // response closely enough that azure-sdk-for-go's armcompute.VirtualMachine
 // JSON decoder is happy.
 type vmResponse struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Location   string            `json:"location"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	Zones      []string          `json:"zones,omitempty"`
-	Properties vmResponseProps   `json:"properties"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`
+	Location string            `json:"location"`
+	Tags     map[string]string `json:"tags,omitempty"`
+	Zones    []string          `json:"zones,omitempty"`
+	// Identity echoes the managed-identity block attached to the VM, nil when
+	// none is attached.
+	Identity   *identity       `json:"identity,omitempty"`
+	Properties vmResponseProps `json:"properties"`
 }
 
 type vmResponseProps struct {
