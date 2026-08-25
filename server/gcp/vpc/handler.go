@@ -23,12 +23,18 @@ package vpc
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"hash/fnv"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -39,25 +45,92 @@ const (
 	resourceFirewalls   = "firewalls"
 	resourceRouters     = "routers"
 	resourceAddresses   = "addresses"
+	resourceRoutes      = "routes"
 	netNameTag          = "cloudemu:gcpNetName"
 	subnetNameTag       = "cloudemu:gcpSubnetName"
 	subnetNetworkTag    = "cloudemu:gcpSubnetNet"
 	autoSubnetTag       = "cloudemu:gcpAutoSubnet"
+	legacyNetTag        = "cloudemu:gcpLegacyNet"
+	createdAtTag        = "cloudemu:gcpCreatedAt"
+	subnetPurposeTag    = "cloudemu:gcpSubnetPurpose"
+	subnetStackTag      = "cloudemu:gcpSubnetStack"
+	subnetPGATag        = "cloudemu:gcpSubnetPGA"
 	firewallNameTag     = "cloudemu:gcpFwName"
 	firewallSpecTag     = "cloudemu:gcpFwSpec"
 	trueValue           = "true"
+
+	defaultSubnetPurpose = "PRIVATE"
+	defaultStackType     = "IPV4_ONLY"
+	internalNetCIDR      = "10.0.0.0/16"
 )
+
+// defaultListMax is GCP's default page size when maxResults is absent.
+const defaultListMax = 500
+
+// nowRFC3339 returns the current time formatted the way GCP stamps
+// creationTimestamp on every resource.
+func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// nameMatches reports whether name satisfies a GCP list filter. Only the
+// common single-clause "name (=|!=|eq|ne) value" form is supported; any other
+// filter (or none) matches everything.
+func nameMatches(filter, name string) bool {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return true
+	}
+
+	for _, cand := range []string{"!=", "=", " ne ", " eq "} {
+		idx := strings.Index(filter, cand)
+		if idx < 0 {
+			continue
+		}
+
+		field := strings.TrimSpace(filter[:idx])
+		if field != "name" {
+			return true
+		}
+
+		value := strings.Trim(strings.TrimSpace(filter[idx+len(cand):]), `"'`)
+		op := strings.TrimSpace(cand)
+		negate := op == "!=" || op == "ne"
+
+		return (name == value) != negate
+	}
+
+	return true
+}
+
+// maxResultsOf parses the maxResults query param, defaulting when absent/invalid.
+func maxResultsOf(raw string) int {
+	if raw == "" {
+		return defaultListMax
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return defaultListMax
+	}
+
+	return n
+}
 
 // Handler serves the GCP networking REST surface.
 type Handler struct {
 	net       netdriver.Networking
 	routers   *routerStore
 	addresses *addressStore
+	routes    *routeStore
 }
 
 // New returns a networks handler.
 func New(n netdriver.Networking) *Handler {
-	return &Handler{net: n, routers: newRouterStore(), addresses: newAddressStore()}
+	return &Handler{
+		net:       n,
+		routers:   newRouterStore(),
+		addresses: newAddressStore(),
+		routes:    newRouteStore(),
+	}
 }
 
 // Matches returns true for /compute/v1/.../networks|subnetworks|firewalls URLs.
@@ -75,7 +148,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceNetworks, resourceSubnetworks, resourceFirewalls, resourceRouters, resourceAddresses:
+	case resourceNetworks, resourceSubnetworks, resourceFirewalls,
+		resourceRouters, resourceAddresses, resourceRoutes:
 		return true
 	}
 
@@ -101,6 +175,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeRouters(w, r, rp)
 	case resourceAddresses:
 		h.routeAddresses(w, r, rp)
+	case resourceRoutes:
+		h.routeRoutes(w, r, rp)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unknown resource type")
 	}
@@ -208,12 +284,18 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	cidr := "10.0.0.0/16"
+	// A network with an explicit IPv4Range is a (deprecated) legacy network;
+	// only those carry an IPv4Range on the wire. Auto/custom-mode networks must
+	// NOT report one — the driver still needs a non-empty CIDR internally, so a
+	// placeholder is stored but hidden from the response unless legacy.
+	cidr := internalNetCIDR
+	tags := map[string]string{netNameTag: req.Name, createdAtTag: nowRFC3339()}
+
 	if req.IPv4Range != "" {
 		cidr = req.IPv4Range
+		tags[legacyNetTag] = trueValue
 	}
 
-	tags := map[string]string{netNameTag: req.Name}
 	if req.AutoCreateSubnetworks != nil && *req.AutoCreateSubnetworks {
 		tags[autoSubnetTag] = trueValue
 	}
@@ -254,19 +336,35 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 	}
 
 	host := hostOf(r)
-	out := networkListResponse{
-		Kind:     "compute#networkList",
-		ID:       "projects/" + rp.Project + "/global/networks",
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", ""),
-	}
+	filter := r.URL.Query().Get("filter")
+
+	items := make([]networkResponse, 0, len(infos))
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, netNameTag, infos[i].ID)
-		out.Items = append(out.Items, toNetworkResponse(&infos[i], scope, host))
+
+		resp := toNetworkResponse(&infos[i], scope, host)
+		if nameMatches(filter, resp.Name) {
+			items = append(items, resp)
+		}
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, out)
+	page, err := pagination.PaginateSorted(items,
+		func(a, b networkResponse) bool { return a.Name < b.Name },
+		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, networkListResponse{
+		Kind:          "compute#networkList",
+		ID:            "projects/" + rp.Project + "/global/networks",
+		Items:         page.Items,
+		NextPageToken: page.NextPageToken,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", ""),
+	})
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -274,6 +372,19 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 	v, err := findNetByName(r.Context(), h.net, rp.ResourceName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// Real GCP refuses to delete a network that still has subnetworks; the
+	// deletion would otherwise orphan them. Scan for live subnets on this
+	// network and reject with resourceInUseByAnotherResource.
+	if sub, scanErr := h.subnetOnNetwork(r.Context(), v.ID, rp.ResourceName); scanErr != nil {
+		gcprest.WriteCErr(w, scanErr)
+		return
+	} else if sub != "" {
+		gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
+			"The network resource '"+rp.ResourceName+"' is already being used by '"+sub+"'")
+
 		return
 	}
 
@@ -315,11 +426,28 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
+	tags := map[string]string{
+		subnetNameTag:    req.Name,
+		subnetNetworkTag: lastSegment(req.Network),
+		createdAtTag:     nowRFC3339(),
+	}
+	if req.Purpose != "" {
+		tags[subnetPurposeTag] = req.Purpose
+	}
+
+	if req.StackType != "" {
+		tags[subnetStackTag] = req.StackType
+	}
+
+	if req.PrivateIPGoogleAccess != nil && *req.PrivateIPGoogleAccess {
+		tags[subnetPGATag] = trueValue
+	}
+
 	cfg := netdriver.SubnetConfig{
 		VPCID:            vpcID,
 		CIDRBlock:        req.IPCIDRRange,
 		AvailabilityZone: rp.ScopeName,
-		Tags:             map[string]string{subnetNameTag: req.Name, subnetNetworkTag: lastSegment(req.Network)},
+		Tags:             tags,
 	}
 
 	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
@@ -335,7 +463,7 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getSubnetwork(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName)
+	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -353,24 +481,45 @@ func (h *Handler) listSubnetworks(w http.ResponseWriter, r *http.Request, rp gcp
 	}
 
 	host := hostOf(r)
-	out := subnetworkListResponse{
-		Kind:     "compute#subnetworkList",
-		ID:       "projects/" + rp.Project + "/regions/" + rp.ScopeName + "/subnetworks",
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, rp.ScopeName, "subnetworks", ""),
-	}
+	filter := r.URL.Query().Get("filter")
+
+	items := make([]subnetworkResponse, 0, len(infos))
 
 	for i := range infos {
+		// subnetworks.list is regional — only return subnets in this region.
+		if rp.ScopeName != "" && infos[i].AvailabilityZone != rp.ScopeName {
+			continue
+		}
+
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, subnetNameTag, infos[i].ID)
-		out.Items = append(out.Items, toSubnetworkResponse(&infos[i], scope, host))
+
+		resp := toSubnetworkResponse(&infos[i], scope, host)
+		if nameMatches(filter, resp.Name) {
+			items = append(items, resp)
+		}
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, out)
+	page, err := pagination.PaginateSorted(items,
+		func(a, b subnetworkResponse) bool { return a.Name < b.Name },
+		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, subnetworkListResponse{
+		Kind:          "compute#subnetworkList",
+		ID:            "projects/" + rp.Project + "/regions/" + rp.ScopeName + "/subnetworks",
+		Items:         page.Items,
+		NextPageToken: page.NextPageToken,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, rp.ScopeName, "subnetworks", ""),
+	})
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName)
+	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -430,7 +579,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	// (allowed/denied/direction/priority/targetTags), so persist the rule spec
 	// verbatim in a reserved tag and reconstruct it on read. Without this a
 	// created firewall reads back with no rules.
-	tags := map[string]string{firewallNameTag: req.Name}
+	tags := map[string]string{firewallNameTag: req.Name, createdAtTag: nowRFC3339()}
 	if spec := marshalFirewallSpec(&req); spec != "" {
 		tags[firewallSpecTag] = spec
 	}
@@ -473,19 +622,35 @@ func (h *Handler) listFirewalls(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	host := hostOf(r)
-	out := firewallListResponse{
-		Kind:     "compute#firewallList",
-		ID:       "projects/" + rp.Project + "/global/firewalls",
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", ""),
-	}
+	filter := r.URL.Query().Get("filter")
+
+	items := make([]firewallResponse, 0, len(infos))
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, firewallNameTag, infos[i].ID)
-		out.Items = append(out.Items, toFirewallResponse(&infos[i], scope, host))
+
+		resp := toFirewallResponse(&infos[i], scope, host)
+		if nameMatches(filter, resp.Name) {
+			items = append(items, resp)
+		}
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, out)
+	page, err := pagination.PaginateSorted(items,
+		func(a, b firewallResponse) bool { return a.Name < b.Name },
+		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, firewallListResponse{
+		Kind:          "compute#firewallList",
+		ID:            "projects/" + rp.Project + "/global/firewalls",
+		Items:         page.Items,
+		NextPageToken: page.NextPageToken,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", ""),
+	})
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -524,19 +689,47 @@ func findNetByName(ctx context.Context, n netdriver.Networking, name string) (*n
 	return nil, cerrors.Newf(cerrors.NotFound, "network %s not found", name)
 }
 
-func findSubnetByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.SubnetInfo, error) {
+// findSubnetByName resolves a subnetwork by name scoped to a region. Two
+// subnetworks in different regions may share a name, so region must
+// disambiguate (real GCP scopes subnetwork get/delete by region). An empty
+// region matches on name alone.
+func findSubnetByName(ctx context.Context, n netdriver.Networking, name, region string) (*netdriver.SubnetInfo, error) {
 	infos, err := n.DescribeSubnets(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range infos {
-		if tagOr(infos[i].Tags, subnetNameTag, "") == name {
-			return &infos[i], nil
+		if tagOr(infos[i].Tags, subnetNameTag, "") != name {
+			continue
 		}
+
+		if region != "" && infos[i].AvailabilityZone != region {
+			continue
+		}
+
+		return &infos[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "subnetwork %s not found", name)
+}
+
+// subnetOnNetwork returns the name of the first subnetwork attached to the
+// given network (by driver VPC ID or by the stored network-name tag), or "" if
+// none. It underpins the delete-in-use guard for networks.
+func (h *Handler) subnetOnNetwork(ctx context.Context, vpcID, netName string) (string, error) {
+	infos, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+
+	for i := range infos {
+		if infos[i].VPCID == vpcID || tagOr(infos[i].Tags, subnetNetworkTag, "") == netName {
+			return tagOr(infos[i].Tags, subnetNameTag, infos[i].ID), nil
+		}
+	}
+
+	return "", nil
 }
 
 func findFirewallByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.SecurityGroupInfo, error) {
@@ -593,14 +786,23 @@ func resolveNetwork(ctx context.Context, n netdriver.Networking, ref string) (st
 func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host string) networkResponse {
 	name := tagOr(info.Tags, netNameTag, info.ID)
 
-	return networkResponse{
+	resp := networkResponse{
 		Kind:                  "compute#network",
 		ID:                    numericID(info.ID),
 		Name:                  name,
-		IPv4Range:             info.CIDRBlock,
 		AutoCreateSubnetworks: info.Tags[autoSubnetTag] == trueValue,
+		CreationTimestamp:     info.Tags[createdAtTag],
 		SelfLink:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
 	}
+
+	// IPv4Range belongs only to a legacy network; a modern auto/custom network
+	// omits it (emitting it would wrongly read as legacy and conflict with
+	// autoCreateSubnetworks).
+	if info.Tags[legacyNetTag] == trueValue {
+		resp.IPv4Range = info.CIDRBlock
+	}
+
+	return resp
 }
 
 // lastSegment returns the final path/URL segment (e.g. a network self-link or
@@ -623,12 +825,18 @@ func toSubnetworkResponse(info *netdriver.SubnetInfo, rp gcprest.ResourcePath, h
 	}
 
 	resp := subnetworkResponse{
-		Kind:        "compute#subnetwork",
-		ID:          numericID(info.ID),
-		Name:        name,
-		IPCIDRRange: info.CIDRBlock,
-		Region:      host + "/compute/v1/projects/" + rp.Project + "/regions/" + region,
-		SelfLink:    gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, region, "subnetworks", name),
+		Kind:                  "compute#subnetwork",
+		ID:                    numericID(info.ID),
+		Name:                  name,
+		IPCIDRRange:           info.CIDRBlock,
+		Region:                host + "/compute/v1/projects/" + rp.Project + "/regions/" + region,
+		SelfLink:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, region, "subnetworks", name),
+		GatewayAddress:        gatewayAddress(info.CIDRBlock),
+		Purpose:               tagOr(info.Tags, subnetPurposeTag, defaultSubnetPurpose),
+		StackType:             tagOr(info.Tags, subnetStackTag, defaultStackType),
+		PrivateIPGoogleAccess: info.Tags[subnetPGATag] == trueValue,
+		Fingerprint:           fingerprintOf(name, info.CIDRBlock),
+		CreationTimestamp:     info.Tags[createdAtTag],
 	}
 
 	// Echo the parent network self-link so clients can discover a subnet's
@@ -640,16 +848,56 @@ func toSubnetworkResponse(info *netdriver.SubnetInfo, rp gcprest.ResourcePath, h
 	return resp
 }
 
+// gatewayAddress returns the first usable host of a CIDR — GCP assigns it as
+// the subnet's default gateway. Returns "" for a malformed range.
+func gatewayAddress(cidr string) string {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+
+	base := ipNet.IP.To4()
+	if base == nil {
+		base = ipNet.IP.To16()
+		if base == nil {
+			return ""
+		}
+	}
+
+	gw := append(net.IP(nil), base...)
+	gw[len(gw)-1]++
+
+	return gw.String()
+}
+
+// fingerprintOf returns a stable, non-empty base64 fingerprint. GCP requires
+// the current fingerprint on patch/update calls, so a resource missing one
+// cannot be modified.
+func fingerprintOf(parts ...string) string {
+	h := fnv.New64a()
+	for _, p := range parts {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+	}
+
+	var b [8]byte
+
+	binary.BigEndian.PutUint64(b[:], h.Sum64())
+
+	return base64.StdEncoding.EncodeToString(b[:])
+}
+
 //nolint:gocritic // rp is a request-scoped value
 func toFirewallResponse(info *netdriver.SecurityGroupInfo, rp gcprest.ResourcePath, host string) firewallResponse {
 	name := tagOr(info.Tags, firewallNameTag, info.ID)
 
 	resp := firewallResponse{
-		Kind:        "compute#firewall",
-		ID:          numericID(info.ID),
-		Name:        name,
-		Description: info.Description,
-		SelfLink:    gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", name),
+		Kind:              "compute#firewall",
+		ID:                numericID(info.ID),
+		Name:              name,
+		Description:       info.Description,
+		CreationTimestamp: info.Tags[createdAtTag],
+		SelfLink:          gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", name),
 	}
 
 	if spec, ok := unmarshalFirewallSpec(info.Tags[firewallSpecTag]); ok {

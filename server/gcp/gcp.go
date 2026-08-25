@@ -171,6 +171,14 @@ func New(d Drivers) *server.Server {
 		srv.Register(lbsrv.New(d.LB))
 	}
 
+	// Compute-space catch-all. Registered AFTER the compute, networks and load-
+	// balancing handlers so first-match-wins keeps every implemented /compute/v1
+	// path on its real handler; this only claims the leftovers, answering with a
+	// GCP JSON error envelope instead of the dispatcher's bare-text 501.
+	if d.Compute != nil || d.Networking != nil || d.LB != nil {
+		srv.Register(compute.NewFallback())
+	}
+
 	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths
 	// before Firestore so the locations+functions guard wins over Firestore's
 	// /v1/projects/ prefix match.
