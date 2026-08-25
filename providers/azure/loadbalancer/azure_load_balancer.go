@@ -110,19 +110,22 @@ func (m *Mock) UpsertAzureLBBackendPool(_ context.Context, rg, name, poolName st
 		return nil, cerrors.New(cerrors.InvalidArgument, "backend address pool name is required")
 	}
 
-	key := azureLBKey(rg, name)
+	var updated driver.AzureLoadBalancer
 
-	lb, ok := m.azureLBs.Get(key)
+	ok := m.azureLBs.Update(azureLBKey(rg, name), func(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
+		if !containsString(lb.BackendPools, poolName) {
+			lb.BackendPools = append(append([]string(nil), lb.BackendPools...), poolName)
+		}
+
+		updated = lb
+
+		return lb
+	})
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
 	}
 
-	if !containsString(lb.BackendPools, poolName) {
-		lb.BackendPools = append(append([]string(nil), lb.BackendPools...), poolName)
-		m.azureLBs.Set(key, lb)
-	}
-
-	out := cloneAzureLB(lb)
+	out := cloneAzureLB(updated)
 
 	return &out, nil
 }
@@ -130,20 +133,27 @@ func (m *Mock) UpsertAzureLBBackendPool(_ context.Context, rg, name, poolName st
 // DeleteAzureLBBackendPool removes a single backend pool by name, leaving
 // every other child untouched.
 func (m *Mock) DeleteAzureLBBackendPool(_ context.Context, rg, name, poolName string) error {
-	key := azureLBKey(rg, name)
+	poolMissing := false
 
-	lb, ok := m.azureLBs.Get(key)
+	ok := m.azureLBs.Update(azureLBKey(rg, name), func(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
+		idx := indexOfString(lb.BackendPools, poolName)
+		if idx == -1 {
+			poolMissing = true
+
+			return lb
+		}
+
+		lb.BackendPools = removeStringAt(lb.BackendPools, idx)
+
+		return lb
+	})
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
 	}
 
-	idx := indexOfString(lb.BackendPools, poolName)
-	if idx == -1 {
+	if poolMissing {
 		return cerrors.Newf(cerrors.NotFound, "backend address pool %q not found", poolName)
 	}
-
-	lb.BackendPools = removeStringAt(lb.BackendPools, idx)
-	m.azureLBs.Set(key, lb)
 
 	return nil
 }
@@ -159,42 +169,53 @@ func (m *Mock) UpsertAzureLBNatRule(
 		return nil, cerrors.New(cerrors.InvalidArgument, "inbound NAT rule name is required")
 	}
 
-	key := azureLBKey(rg, name)
+	rule.Name = natRuleName
 
-	lb, ok := m.azureLBs.Get(key)
+	var (
+		updated driver.AzureLoadBalancer
+		valErr  error
+	)
+
+	ok := m.azureLBs.Update(azureLBKey(rg, name), func(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
+		if rule.FrontendName != "" && !hasFrontend(lb.Frontends, rule.FrontendName) {
+			valErr = cerrors.Newf(cerrors.InvalidArgument,
+				"inbound NAT rule %q references frontend IP configuration %q that does not exist",
+				natRuleName, rule.FrontendName)
+
+			return lb
+		}
+
+		rules := append([]driver.AzureLBNatRule(nil), lb.NatRules...)
+
+		replaced := false
+
+		for i := range rules {
+			if rules[i].Name == natRuleName {
+				rules[i] = rule
+				replaced = true
+
+				break
+			}
+		}
+
+		if !replaced {
+			rules = append(rules, rule)
+		}
+
+		lb.NatRules = rules
+		updated = lb
+
+		return lb
+	})
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
 	}
 
-	if rule.FrontendName != "" && !hasFrontend(lb.Frontends, rule.FrontendName) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument,
-			"inbound NAT rule %q references frontend IP configuration %q that does not exist",
-			natRuleName, rule.FrontendName)
+	if valErr != nil {
+		return nil, valErr
 	}
 
-	rule.Name = natRuleName
-
-	rules := append([]driver.AzureLBNatRule(nil), lb.NatRules...)
-
-	replaced := false
-
-	for i := range rules {
-		if rules[i].Name == natRuleName {
-			rules[i] = rule
-			replaced = true
-
-			break
-		}
-	}
-
-	if !replaced {
-		rules = append(rules, rule)
-	}
-
-	lb.NatRules = rules
-	m.azureLBs.Set(key, lb)
-
-	out := cloneAzureLB(lb)
+	out := cloneAzureLB(updated)
 
 	return &out, nil
 }
@@ -202,28 +223,35 @@ func (m *Mock) UpsertAzureLBNatRule(
 // DeleteAzureLBNatRule removes a single inbound NAT rule by name, leaving
 // every other child untouched.
 func (m *Mock) DeleteAzureLBNatRule(_ context.Context, rg, name, natRuleName string) error {
-	key := azureLBKey(rg, name)
+	ruleMissing := false
 
-	lb, ok := m.azureLBs.Get(key)
+	ok := m.azureLBs.Update(azureLBKey(rg, name), func(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
+		idx := -1
+
+		for i := range lb.NatRules {
+			if lb.NatRules[i].Name == natRuleName {
+				idx = i
+				break
+			}
+		}
+
+		if idx == -1 {
+			ruleMissing = true
+
+			return lb
+		}
+
+		lb.NatRules = append(append([]driver.AzureLBNatRule(nil), lb.NatRules[:idx]...), lb.NatRules[idx+1:]...)
+
+		return lb
+	})
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
 	}
 
-	idx := -1
-
-	for i := range lb.NatRules {
-		if lb.NatRules[i].Name == natRuleName {
-			idx = i
-			break
-		}
-	}
-
-	if idx == -1 {
+	if ruleMissing {
 		return cerrors.Newf(cerrors.NotFound, "inbound NAT rule %q not found", natRuleName)
 	}
-
-	lb.NatRules = append(append([]driver.AzureLBNatRule(nil), lb.NatRules[:idx]...), lb.NatRules[idx+1:]...)
-	m.azureLBs.Set(key, lb)
 
 	return nil
 }

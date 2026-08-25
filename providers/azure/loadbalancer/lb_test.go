@@ -2,6 +2,8 @@ package loadbalancer
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -580,4 +582,83 @@ func TestDeleteLBCascadesListeners(t *testing.T) {
 	listeners, err := m.DescribeListeners(ctx, newLBARN)
 	require.NoError(t, err)
 	assert.Empty(t, listeners)
+}
+
+// TestUpsertAzureLBBackendPoolConcurrent guards the sub-resource CRUD path
+// against lost updates: N goroutines each add a distinct pool to the SAME load
+// balancer. With a non-atomic Get()+Set() read-modify-write all but a handful
+// silently vanish; the store.Update path keeps every one. Run with -race.
+func TestUpsertAzureLBBackendPoolConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	const rg, name = "rg1", "lb-concurrent-pools"
+
+	_, err := m.CreateOrUpdateAzureLoadBalancer(ctx, rg, name, driver.AzureLoadBalancer{
+		Location: "eastus", SKUName: "Standard",
+	})
+	require.NoError(t, err)
+
+	const n = 50
+
+	var wg sync.WaitGroup
+
+	wg.Add(n)
+
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			_, upErr := m.UpsertAzureLBBackendPool(ctx, rg, name, fmt.Sprintf("pool-%d", i))
+			assert.NoError(t, upErr)
+		}(i)
+	}
+
+	wg.Wait()
+
+	lb, err := m.GetAzureLoadBalancer(ctx, rg, name)
+	require.NoError(t, err)
+	assert.Len(t, lb.BackendPools, n, "every concurrently-added backend pool must survive")
+}
+
+// TestUpsertAzureLBNatRuleConcurrent is the NAT-rule twin of the backend-pool
+// concurrency guard above.
+func TestUpsertAzureLBNatRuleConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	const rg, name, frontend = "rg1", "lb-concurrent-nat", "fe1"
+
+	_, err := m.CreateOrUpdateAzureLoadBalancer(ctx, rg, name, driver.AzureLoadBalancer{
+		Location:  "eastus",
+		SKUName:   "Standard",
+		Frontends: []driver.AzureLBFrontend{{Name: frontend, PrivateIPAddress: "10.0.0.4"}},
+	})
+	require.NoError(t, err)
+
+	const n = 50
+
+	var wg sync.WaitGroup
+
+	wg.Add(n)
+
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			_, upErr := m.UpsertAzureLBNatRule(ctx, rg, name, fmt.Sprintf("nat-%d", i), driver.AzureLBNatRule{
+				Protocol:     "Tcp",
+				FrontendPort: 1000 + i,
+				BackendPort:  22,
+				FrontendName: frontend,
+			})
+			assert.NoError(t, upErr)
+		}(i)
+	}
+
+	wg.Wait()
+
+	lb, err := m.GetAzureLoadBalancer(ctx, rg, name)
+	require.NoError(t, err)
+	assert.Len(t, lb.NatRules, n, "every concurrently-added inbound NAT rule must survive")
 }
