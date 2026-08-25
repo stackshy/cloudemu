@@ -40,10 +40,11 @@ func (h *Handler) registerAlarm(r *http.Request, name string, props map[string]a
 }
 
 // actionGroupIDs extracts properties.actions[].actionGroupId — the action
-// group resource ids a metric alert notifies on state change — so a breaching
-// metric actually fires the linked action group (mirrors the AWS CloudWatch
-// alarm -> SNS AlarmActions wiring). Entries with no actionGroupId are
-// skipped rather than producing an empty AlarmActions entry.
+// group resource ids linked to a metric alert — and stores them on the alarm
+// so DescribeAlarms echoes the linkage back (mirroring the AWS CloudWatch
+// alarm's AlarmActions field). Actual delivery to the action group on a breach
+// is not simulated. Entries with no actionGroupId are skipped rather than
+// producing an empty AlarmActions entry.
 func actionGroupIDs(props map[string]any) []string {
 	actions, ok := props["actions"].([]any)
 	if !ok {
