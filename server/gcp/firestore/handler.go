@@ -14,14 +14,17 @@ package firestore
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
@@ -51,6 +54,26 @@ const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 5 << 20
 )
+
+// Reserved item keys the handler stores alongside user fields. The document id
+// is the driver partition key; createTime/updateTime carry stable commit
+// timestamps. None are surfaced as document fields.
+const (
+	fieldID         = "id"
+	fieldCreateTime = "__createTime__"
+	fieldUpdateTime = "__updateTime__"
+)
+
+// isReservedKey reports whether k is a handler-internal item key that must not
+// be emitted as a Firestore document field.
+func isReservedKey(k string) bool {
+	return k == fieldID || k == fieldCreateTime || k == fieldUpdateTime
+}
+
+// reference is a Go carrier for a Firestore referenceValue: a document
+// resource path. A distinct type keeps it from round-tripping as a plain
+// stringValue (which would lose the reference type through the SDK).
+type reference string
 
 // Handler serves Firestore REST API requests against a database driver.
 type Handler struct {
@@ -143,6 +166,12 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, base, acti
 		h.batchGet(w, r, base)
 	case "runQuery":
 		h.runQuery(w, r, base)
+	case "beginTransaction":
+		h.beginTransaction(w, r)
+	case "rollback":
+		h.rollback(w, r)
+	case "listCollectionIds":
+		h.listCollectionIDs(w, r)
 	default:
 		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "action not implemented: "+action)
 	}
@@ -177,7 +206,9 @@ type writeResult struct {
 }
 
 // commit handles POST .../documents:commit — the batch-write endpoint the
-// REST SDK uses for Set / Update / Delete.
+// REST SDK uses for Set / Update / Delete. A `transaction` field, when present,
+// is accepted and applied directly: the in-memory store has no isolation
+// levels, so the writes commit exactly as a non-transactional batch would.
 func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	var req commitRequest
 
@@ -185,85 +216,128 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	out := commitResponse{CommitTime: now}
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339Nano)
+	out := commitResponse{CommitTime: nowStr}
 
-	for _, op := range req.Writes {
+	for i := range req.Writes {
+		op := &req.Writes[i]
+
 		switch {
 		case op.Update != nil:
-			p, id, err := splitDocumentName(op.Update.Name)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+			if !h.commitUpdate(w, r, op, now) {
 				return
 			}
 
-			item := fieldsToMap(op.Update.Fields)
-			item["id"] = id
-
-			// updateMask selects merge semantics: masked paths written (or
-			// deleted when absent from the body), all other fields kept.
-			if op.UpdateMask != nil && len(op.UpdateMask.FieldPaths) > 0 {
-				existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
-				if gerr != nil && !cerrors.IsNotFound(gerr) {
-					writeErr(w, gerr)
-					return
-				}
-
-				merged := map[string]any{"id": id}
-				for k, v := range existing {
-					merged[k] = v
-				}
-				for _, path := range op.UpdateMask.FieldPaths {
-					if v, ok := item[path]; ok {
-						merged[path] = v
-					} else {
-						delete(merged, path)
-					}
-				}
-				item = merged
-			}
-
-			if op.CurrentDocument != nil && op.CurrentDocument.Exists != nil {
-				_, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
-				exists := gerr == nil
-
-				if !*op.CurrentDocument.Exists && exists {
-					writeError(w, http.StatusConflict, "ALREADY_EXISTS",
-						"document already exists: "+op.Update.Name)
-					return
-				}
-				if *op.CurrentDocument.Exists && !exists {
-					writeError(w, http.StatusNotFound, "NOT_FOUND",
-						"no document to update: "+op.Update.Name)
-					return
-				}
-			}
-
-			h.ensureCollection(r.Context(), p.collection)
-
-			if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
-				writeErr(w, perr)
-				return
-			}
-
-			out.WriteResults = append(out.WriteResults, writeResult{UpdateTime: now})
+			out.WriteResults = append(out.WriteResults, writeResult{UpdateTime: nowStr})
 		case op.Delete != "":
-			p, id, err := splitDocumentName(op.Delete)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+			if !h.commitDelete(w, r, op.Delete) {
 				return
 			}
 
-			if derr := h.db.DeleteItem(r.Context(), p.collection, map[string]any{"id": id}); derr != nil {
-				writeErr(w, derr)
-				return
-			}
-
-			out.WriteResults = append(out.WriteResults, writeResult{UpdateTime: now})
+			out.WriteResults = append(out.WriteResults, writeResult{UpdateTime: nowStr})
 		}
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// commitUpdate applies one Update write. It returns false when it has already
+// written an error response and the caller must stop.
+func (h *Handler) commitUpdate(w http.ResponseWriter, r *http.Request, op *writeOp, now time.Time) bool {
+	p, id, err := splitDocumentName(op.Update.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return false
+	}
+
+	existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: id})
+	if gerr != nil && !cerrors.IsNotFound(gerr) {
+		writeErr(w, gerr)
+		return false
+	}
+
+	exists := gerr == nil
+	if !checkPrecondition(w, op.CurrentDocument, exists, op.Update.Name) {
+		return false
+	}
+
+	item := fieldsToMap(op.Update.Fields)
+	item[fieldID] = id
+
+	// updateMask selects merge semantics: masked paths written (or deleted when
+	// absent from the body), all other stored fields kept.
+	if op.UpdateMask != nil && len(op.UpdateMask.FieldPaths) > 0 {
+		item = mergeMasked(existing, item, id, op.UpdateMask.FieldPaths)
+	}
+
+	stampTimes(item, existing, now)
+
+	h.ensureCollection(r.Context(), p.collection)
+
+	if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
+		writeErr(w, perr)
+		return false
+	}
+
+	return true
+}
+
+// commitDelete applies one Delete write, returning false when an error
+// response has already been written.
+func (h *Handler) commitDelete(w http.ResponseWriter, r *http.Request, name string) bool {
+	p, id, err := splitDocumentName(name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return false
+	}
+
+	if derr := h.db.DeleteItem(r.Context(), p.collection, map[string]any{fieldID: id}); derr != nil {
+		writeErr(w, derr)
+		return false
+	}
+
+	return true
+}
+
+// checkPrecondition enforces a currentDocument.exists precondition, writing the
+// matching Firestore error and returning false on violation.
+func checkPrecondition(w http.ResponseWriter, pc *precondition, exists bool, name string) bool {
+	if pc == nil || pc.Exists == nil {
+		return true
+	}
+
+	if !*pc.Exists && exists {
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", "document already exists: "+name)
+		return false
+	}
+
+	if *pc.Exists && !exists {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "no document to update: "+name)
+		return false
+	}
+
+	return true
+}
+
+// mergeMasked builds the merged item for a masked update: it starts from the
+// stored document (preserving unmasked fields and the reserved keys), then for
+// each masked path writes the new value or deletes it when absent from body.
+func mergeMasked(existing, body map[string]any, id string, paths []string) map[string]any {
+	merged := map[string]any{fieldID: id}
+	for k, v := range existing {
+		merged[k] = v
+	}
+
+	for _, path := range paths {
+		if v, ok := body[path]; ok {
+			merged[path] = v
+		} else {
+			delete(merged, path)
+		}
+	}
+
+	return merged
 }
 
 // batchGet handles POST .../documents:batchGet — the batched-read endpoint.
@@ -298,7 +372,7 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 			continue
 		}
 
-		item, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
+		item, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: id})
 		if gerr != nil {
 			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
 			continue
@@ -576,7 +650,7 @@ func streamQueryResults(w http.ResponseWriter, items []map[string]any, p firesto
 			w.Write([]byte(",")) //nolint:errcheck // best-effort
 		}
 
-		id, _ := item["id"].(string)
+		id, _ := item[fieldID].(string)
 		doc := mapToDocument(item, p, id)
 
 		_ = json.NewEncoder(w).Encode(runQueryResponseEntry{Document: &doc, ReadTime: now})
@@ -683,7 +757,7 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 	// CreateDocument with an explicit id must fail if that id already exists,
 	// rather than silently overwriting (real Firestore returns ALREADY_EXISTS).
 	if explicitID {
-		if _, err := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": docID}); err == nil {
+		if _, err := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: docID}); err == nil {
 			writeError(w, http.StatusConflict, "ALREADY_EXISTS",
 				"document "+docID+" already exists")
 
@@ -692,7 +766,8 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 	}
 
 	item := fieldsToMap(inDoc.Fields)
-	item["id"] = docID
+	item[fieldID] = docID
+	stampTimes(item, nil, time.Now().UTC())
 
 	// Firestore creates a collection lazily on first write; the driver requires
 	// the "table" to exist, so ensure it before writing.
@@ -714,7 +789,7 @@ func (h *Handler) ensureCollection(ctx context.Context, collection string) {
 }
 
 func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
-	item, err := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": p.documentID})
+	item, err := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: p.documentID})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -723,21 +798,107 @@ func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestor
 	writeJSON(w, http.StatusOK, mapToDocument(item, p, p.documentID))
 }
 
+// listDocuments handles GET .../{collection} — the ListDocuments RPC. It honors
+// pageSize/pageToken (so a large collection pages fully instead of silently
+// truncating at the driver's default limit), the optional orderBy, and
+// mask.fieldPaths field projection.
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, p firestorePath) {
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.collection})
+	// Fetch the whole collection, then order + page in the handler so orderBy
+	// stays correct across page boundaries.
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.collection, Limit: allResults})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := listDocumentsResponse{}
+	q := r.URL.Query()
 
-	for _, item := range result.Items {
-		id, _ := item["id"].(string)
-		out.Documents = append(out.Documents, mapToDocument(item, p, id))
+	items := result.Items
+	applyListOrderBy(items, q.Get("orderBy"))
+
+	page, perr := pagination.Paginate(items, q.Get("pageToken"), atoiOr(q.Get("pageSize"), 0))
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageToken")
+		return
+	}
+
+	mask := q["mask.fieldPaths"]
+
+	out := listDocumentsResponse{NextPageToken: page.NextPageToken}
+
+	for _, item := range page.Items {
+		id, _ := item[fieldID].(string)
+		doc := mapToDocument(item, p, id)
+		applyFieldMask(&doc, mask)
+		out.Documents = append(out.Documents, doc)
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// applyListOrderBy sorts items by a ListDocuments orderBy clause: a
+// comma-separated list of field paths, each optionally suffixed " desc". An
+// empty clause keeps the driver's default document-id order.
+func applyListOrderBy(items []map[string]any, orderBy string) {
+	orderBy = strings.TrimSpace(orderBy)
+	if orderBy == "" {
+		return
+	}
+
+	keys := parseOrderBy(orderBy)
+
+	sort.SliceStable(items, func(i, j int) bool {
+		return compareByKeys(items[i], items[j], keys) < 0
+	})
+}
+
+// parseOrderBy turns "score desc, name" into resolved sort keys.
+func parseOrderBy(orderBy string) []sortKey {
+	terms := strings.Split(orderBy, ",")
+	keys := make([]sortKey, 0, len(terms))
+
+	for _, term := range terms {
+		fields := strings.Fields(term)
+		if len(fields) == 0 {
+			continue
+		}
+
+		desc := len(fields) > 1 && strings.EqualFold(fields[1], "desc")
+		keys = append(keys, sortKey{path: fields[0], desc: desc})
+	}
+
+	return keys
+}
+
+// applyFieldMask trims a document's fields to the requested mask paths. An
+// empty mask leaves the document unchanged (all fields returned).
+func applyFieldMask(doc *document, mask []string) {
+	if len(mask) == 0 || doc.Fields == nil {
+		return
+	}
+
+	kept := make(map[string]value, len(mask))
+
+	for _, path := range mask {
+		if v, ok := doc.Fields[path]; ok {
+			kept[path] = v
+		}
+	}
+
+	doc.Fields = kept
+}
+
+// atoiOr parses s as an int, returning def when s is empty or invalid.
+func atoiOr(s string, def int) int {
+	if s == "" {
+		return def
+	}
+
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+
+	return def
 }
 
 func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
@@ -747,33 +908,24 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 		return
 	}
 
-	item := fieldsToMap(inDoc.Fields)
-	item["id"] = p.documentID
-
-	// With an updateMask, real Firestore merges: only the masked field
-	// paths are written; every other stored field is preserved. A masked
-	// path absent from the body is a field delete. Without a mask, the
-	// document is replaced wholesale.
-	if mask := r.URL.Query()["updateMask.fieldPaths"]; len(mask) > 0 {
-		existing, err := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": p.documentID})
-		if err != nil && !cerrors.IsNotFound(err) {
-			writeErr(w, err)
-			return
-		}
-
-		merged := map[string]any{"id": p.documentID}
-		for k, v := range existing {
-			merged[k] = v
-		}
-		for _, path := range mask {
-			if v, ok := item[path]; ok {
-				merged[path] = v
-			} else {
-				delete(merged, path)
-			}
-		}
-		item = merged
+	existing, err := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: p.documentID})
+	if err != nil && !cerrors.IsNotFound(err) {
+		writeErr(w, err)
+		return
 	}
+
+	item := fieldsToMap(inDoc.Fields)
+	item[fieldID] = p.documentID
+
+	// With an updateMask, real Firestore merges: only the masked field paths are
+	// written; every other stored field is preserved. A masked path absent from
+	// the body is a field delete. Without a mask, the document is replaced
+	// wholesale. createTime is preserved from the existing document either way.
+	if mask := r.URL.Query()["updateMask.fieldPaths"]; len(mask) > 0 {
+		item = mergeMasked(existing, item, p.documentID, mask)
+	}
+
+	stampTimes(item, existing, time.Now().UTC())
 
 	if err := h.db.PutItem(r.Context(), p.collection, item); err != nil {
 		writeErr(w, err)
@@ -784,7 +936,7 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 }
 
 func (h *Handler) deleteDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
-	if err := h.db.DeleteItem(r.Context(), p.collection, map[string]any{"id": p.documentID}); err != nil {
+	if err := h.db.DeleteItem(r.Context(), p.collection, map[string]any{fieldID: p.documentID}); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -793,16 +945,41 @@ func (h *Handler) deleteDocument(w http.ResponseWriter, r *http.Request, p fires
 }
 
 // mapToDocument converts a driver-shaped item map into a Firestore document.
+// createTime/updateTime are read from the stored item so repeated reads of an
+// unchanged document return stable commit timestamps (real Firestore behavior),
+// rather than being regenerated on every read.
 func mapToDocument(item map[string]any, p firestorePath, id string) document {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-
 	return document{
 		Name: fmt.Sprintf("projects/%s/databases/%s/documents/%s/%s",
 			p.project, p.database, p.collection, id),
 		Fields:     mapToFields(item),
-		CreateTime: now,
-		UpdateTime: now,
+		CreateTime: storedTime(item, fieldCreateTime),
+		UpdateTime: storedTime(item, fieldUpdateTime),
 	}
+}
+
+// storedTime formats a reserved timestamp key as an RFC3339 string. Legacy
+// items written before timestamps were tracked fall back to the current time.
+func storedTime(item map[string]any, key string) string {
+	if t, ok := item[key].(time.Time); ok {
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+
+	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+// stampTimes records commit timestamps on item before it is written. On a
+// first write (no existing document) createTime and updateTime are both now;
+// on an overwrite/update createTime is preserved from the existing document so
+// it stays stable while updateTime advances.
+func stampTimes(item, existing map[string]any, now time.Time) {
+	if ct, ok := existing[fieldCreateTime].(time.Time); ok {
+		item[fieldCreateTime] = ct
+	} else {
+		item[fieldCreateTime] = now
+	}
+
+	item[fieldUpdateTime] = now
 }
 
 // mapToFields converts a driver item map to typed Firestore field values,
@@ -815,7 +992,7 @@ func mapToFields(item map[string]any) map[string]value {
 	fields := make(map[string]value, len(item))
 
 	for k, v := range item {
-		if k == "id" {
+		if isReservedKey(k) {
 			continue
 		}
 
@@ -842,6 +1019,10 @@ func fieldsToMap(fields map[string]value) map[string]any {
 
 // goValueToFirestore picks the correct typed wrapper for a Go value.
 func goValueToFirestore(v any) value {
+	if tv, ok := goTypedToFirestore(v); ok {
+		return tv
+	}
+
 	switch x := v.(type) {
 	case string:
 		return value{StringValue: &x}
@@ -850,7 +1031,9 @@ func goValueToFirestore(v any) value {
 	case int, int32, int64:
 		return goIntToFirestore(x)
 	case float64:
-		return goFloat64ToFirestore(x)
+		// A float always re-encodes as doubleValue so an integer-valued double
+		// (30.0) round-trips as float64, not int64.
+		return value{DoubleValue: &x}
 	case []any:
 		return goArrayToFirestore(x)
 	case map[string]any:
@@ -863,6 +1046,34 @@ func goValueToFirestore(v any) value {
 		s := fmt.Sprintf("%v", x)
 
 		return value{StringValue: &s}
+	}
+}
+
+// goTypedToFirestore encodes the non-primitive Firestore value types
+// (timestamp, bytes, reference, geo point) whose Go carriers must round-trip
+// without decaying to a string. It reports false for anything it does not own.
+func goTypedToFirestore(v any) (value, bool) {
+	switch x := v.(type) {
+	case time.Time:
+		s := x.UTC().Format(time.RFC3339Nano)
+
+		return value{TimestampValue: &s}, true
+	case []byte:
+		s := base64.StdEncoding.EncodeToString(x)
+
+		return value{BytesValue: &s}, true
+	case reference:
+		s := string(x)
+
+		return value{ReferenceValue: &s}, true
+	case *geoPoint:
+		return value{GeoPointValue: x}, true
+	case geoPoint:
+		gp := x
+
+		return value{GeoPointValue: &gp}, true
+	default:
+		return value{}, false
 	}
 }
 
@@ -881,17 +1092,6 @@ func goIntToFirestore(x any) value {
 	s := strconv.FormatInt(n, 10)
 
 	return value{IntegerValue: &s}
-}
-
-// goFloat64ToFirestore encodes integer-valued floats as IntegerValue so
-// reads round-trip with the same Go type the SDK expects.
-func goFloat64ToFirestore(x float64) value {
-	if x == float64(int64(x)) {
-		s := strconv.FormatInt(int64(x), 10)
-		return value{IntegerValue: &s}
-	}
-
-	return value{DoubleValue: &x}
 }
 
 func goArrayToFirestore(x []any) value {
@@ -963,11 +1163,41 @@ func firestoreScalarToGo(v value) any {
 		return *v.DoubleValue
 	case v.NullValue != nil:
 		return nil
-	case v.TimestampValue != nil:
-		return *v.TimestampValue
+	}
+
+	if x, ok := firestoreTypedScalarToGo(v); ok {
+		return x
 	}
 
 	return skipScalar
+}
+
+// firestoreTypedScalarToGo decodes the non-primitive scalar value types
+// (timestamp, bytes, reference, geo point) into Go carriers that re-encode
+// losslessly. It reports false when v holds none of them.
+//
+//nolint:gocritic // v is by-design a value type for the field unmarshaller
+func firestoreTypedScalarToGo(v value) (any, bool) {
+	switch {
+	case v.TimestampValue != nil:
+		if t, err := time.Parse(time.RFC3339Nano, *v.TimestampValue); err == nil {
+			return t, true
+		}
+
+		return *v.TimestampValue, true
+	case v.BytesValue != nil:
+		if b, err := base64.StdEncoding.DecodeString(*v.BytesValue); err == nil {
+			return b, true
+		}
+
+		return *v.BytesValue, true
+	case v.ReferenceValue != nil:
+		return reference(*v.ReferenceValue), true
+	case v.GeoPointValue != nil:
+		return v.GeoPointValue, true
+	default:
+		return nil, false
+	}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

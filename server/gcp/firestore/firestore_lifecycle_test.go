@@ -610,10 +610,10 @@ func TestDatabaseNumericRoundTrip(t *testing.T) {
 		t.Errorf("f=%v (%T) want float64(3.5)", got["f"], got["f"])
 	}
 
-	// DIVERGENCE: real Firestore preserves doubleValue; the emulator
-	// re-encodes integer-valued floats as integerValue (survey-documented).
-	if got["fint"] != int64(2) {
-		t.Errorf("fint=%v (%T) want int64(2) per survey-documented integer re-encoding", got["fint"], got["fint"])
+	// An integer-valued double round-trips as float64, matching real Firestore
+	// (a doubleValue is never silently re-encoded as integerValue).
+	if got["fint"] != float64(2) {
+		t.Errorf("fint=%v (%T) want float64(2)", got["fint"], got["fint"])
 	}
 
 	if got["zero"] != int64(0) {
