@@ -159,7 +159,7 @@ func (h *Handler) createNetworkACLEntry(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.vpc.AddNetworkACLRule(r.Context(), r.Form.Get("NetworkAclId"), rule); err != nil {
-		writeNetworkACLErr(w, err)
+		writeNetworkACLEntryErr(w, err)
 		return
 	}
 
@@ -183,7 +183,7 @@ func (h *Handler) replaceNetworkACLEntry(w http.ResponseWriter, r *http.Request)
 	aclID := r.Form.Get("NetworkAclId")
 
 	if err := h.vpc.RemoveNetworkACLRule(r.Context(), aclID, ruleNum, egress); err != nil {
-		writeNetworkACLErr(w, err)
+		writeNetworkACLEntryErr(w, err)
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *Handler) replaceNetworkACLEntry(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.vpc.AddNetworkACLRule(r.Context(), aclID, rule); err != nil {
-		writeNetworkACLErr(w, err)
+		writeNetworkACLEntryErr(w, err)
 		return
 	}
 
@@ -216,7 +216,7 @@ func (h *Handler) deleteNetworkACLEntry(w http.ResponseWriter, r *http.Request) 
 	err := h.vpc.RemoveNetworkACLRule(r.Context(),
 		r.Form.Get("NetworkAclId"), ruleNum, egress)
 	if err != nil {
-		writeNetworkACLErr(w, err)
+		writeNetworkACLEntryErr(w, err)
 		return
 	}
 
@@ -314,4 +314,21 @@ func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
 
 func writeNetworkACLErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidNetworkAclID.NotFound", "DependencyViolation")
+}
+
+// writeNetworkACLEntryErr maps the per-entry actions (create/delete/replace).
+// The ACL and the entry are distinct resources: a missing entry on an existing
+// ACL is InvalidNetworkAclEntry.NotFound (not InvalidNetworkAclID.NotFound), and
+// a duplicate (ruleNumber, egress) is NetworkAclEntryAlreadyExists (not the
+// generic ResourceAlreadyExists). A missing ACL still maps through
+// writeNetworkACLErr to InvalidNetworkAclID.NotFound.
+func writeNetworkACLEntryErr(w http.ResponseWriter, err error) {
+	switch {
+	case cerrors.IsNotFound(err) && strings.Contains(err.Error(), "not found in network ACL"):
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkAclEntry.NotFound", cerrors.Message(err))
+	case cerrors.IsAlreadyExists(err):
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "NetworkAclEntryAlreadyExists", cerrors.Message(err))
+	default:
+		writeNetworkACLErr(w, err)
+	}
 }

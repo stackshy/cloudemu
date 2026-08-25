@@ -157,3 +157,73 @@ func TestDescribeInternetGatewaysPaginatesAllOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestOneInternetGatewayPerVPC pins the one-IGW-per-VPC invariant. Attaching a
+// second, different internet gateway to a VPC that already has one must fail
+// with Resource.AlreadyAssociated (real EC2: "Network vpc-… already has an
+// internet gateway attached"); the first gateway stays attached. Attaching an
+// already-attached gateway onto a second VPC is the same error code, not a
+// DependencyViolation.
+func TestOneInternetGatewayPerVPC(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	vpcA, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc A: %v", err)
+	}
+
+	vpcAID := aws.ToString(vpcA.Vpc.VpcId)
+
+	vpcB, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.1.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc B: %v", err)
+	}
+
+	vpcBID := aws.ToString(vpcB.Vpc.VpcId)
+
+	igwA := mkIGW(ctx, t, c)
+	igwB := mkIGW(ctx, t, c)
+
+	if _, err := c.AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwA), VpcId: aws.String(vpcAID),
+	}); err != nil {
+		t.Fatalf("AttachInternetGateway A: %v", err)
+	}
+
+	// A second, different gateway onto the same VPC -> Resource.AlreadyAssociated.
+	_, err = c.AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwB), VpcId: aws.String(vpcAID),
+	})
+	if err == nil {
+		t.Fatal("attaching a second IGW to the same VPC succeeded, want Resource.AlreadyAssociated")
+	}
+
+	if code := apiCode(t, err); code != "Resource.AlreadyAssociated" {
+		t.Errorf("second-IGW error code = %q, want Resource.AlreadyAssociated", code)
+	}
+
+	// The first gateway is still the VPC's only attachment.
+	desc, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+		Filters: []ec2types.Filter{{Name: aws.String("attachment.vpc-id"), Values: []string{vpcAID}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeInternetGateways: %v", err)
+	}
+
+	if len(desc.InternetGateways) != 1 || aws.ToString(desc.InternetGateways[0].InternetGatewayId) != igwA {
+		t.Fatalf("VPC attachments = %+v, want only %s", desc.InternetGateways, igwA)
+	}
+
+	// Attaching the already-attached igwA onto a second VPC -> same code.
+	_, err = c.AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwA), VpcId: aws.String(vpcBID),
+	})
+	if err == nil {
+		t.Fatal("attaching an already-attached IGW to a second VPC succeeded, want Resource.AlreadyAssociated")
+	}
+
+	if code := apiCode(t, err); code != "Resource.AlreadyAssociated" {
+		t.Errorf("already-attached-IGW error code = %q, want Resource.AlreadyAssociated", code)
+	}
+}

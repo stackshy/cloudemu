@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -84,7 +85,7 @@ func (h *Handler) createInternetGateway(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) attachInternetGateway(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.AttachInternetGateway(r.Context(),
 		r.Form.Get("InternetGatewayId"), r.Form.Get("VpcId")); err != nil {
-		writeIGWErr(w, err)
+		writeAttachIGWErr(w, err)
 		return
 	}
 
@@ -218,6 +219,19 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 
 func writeIGWErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidInternetGatewayID.NotFound", "DependencyViolation")
+}
+
+// writeAttachIGWErr maps AttachInternetGateway errors. A gateway that is already
+// attached, or a VPC that already has an internet gateway, is
+// Resource.AlreadyAssociated (an internet gateway attaches to exactly one VPC),
+// not the generic ResourceAlreadyExists.
+func writeAttachIGWErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "Resource.AlreadyAssociated", cerrors.Message(err))
+		return
+	}
+
+	writeIGWErr(w, err)
 }
 
 // writeDetachIGWErr maps DetachInternetGateway errors. Detaching an internet
