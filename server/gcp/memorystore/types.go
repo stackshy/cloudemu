@@ -305,10 +305,15 @@ func stateOrReady(status string) string {
 }
 
 // doneOperation builds a completed google.longrunning.Operation for the given
-// operation id. When resp is non-nil it is embedded as the operation response.
-func doneOperation(project, location, operationID string, resp json.RawMessage) operationJSON {
+// operation id and records it with the shared LRO poller so a client polling the
+// returned name resolves the same done operation (with its response) in the full
+// server. When resp is non-nil it is embedded as the operation response.
+func (h *Handler) doneOperation(project, location, operationID string, resp json.RawMessage) operationJSON {
+	name := operationResourceName(project, location, operationID)
+	h.ops.Register(name, resp)
+
 	return operationJSON{
-		Name:     operationResourceName(project, location, operationID),
+		Name:     name,
 		Done:     true,
 		Response: resp,
 	}

@@ -29,7 +29,7 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, repoID,
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, repoID,
 		typedResponse(repositoryTypeURL, toRepositoryJSON(rt.project, rt.location, repo, 0))))
 }
 
@@ -239,7 +239,7 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request, rt *r
 	delete(h.policies, repositoryResourceName(rt.project, rt.location, rt.repository))
 	h.mu.Unlock()
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, rt.repository, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.repository, nil))
 }
 
 func (h *Handler) listDockerImages(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -307,10 +307,15 @@ func pageSize(r *http.Request) int {
 	return n
 }
 
-// doneOperation builds a completed long-running operation envelope.
-func doneOperation(rt *route, id string, response any) operationJSON {
+// doneOperation builds a completed long-running operation envelope and records
+// it with the shared LRO poller so a client polling the returned name resolves
+// the same done operation (with its typed response) in the full server.
+func (h *Handler) doneOperation(rt *route, id string, response any) operationJSON {
+	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id
+	h.ops.Register(name, response)
+
 	return operationJSON{
-		Name:     "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id,
+		Name:     name,
 		Done:     true,
 		Response: response,
 	}

@@ -6,10 +6,13 @@ package gke_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
 	"google.golang.org/api/container/v1"
+	"google.golang.org/api/googleapi"
 )
 
 const selfLinkHost = "https://container.googleapis.com/v1/"
@@ -60,22 +63,25 @@ func TestSDKGKEOperationFullShape(t *testing.T) {
 	}
 }
 
-// TestSDKGKEForeignOperationStillDone proves the store-aware Matches lets an
+// TestSDKGKEForeignOperationNotFound proves the store-aware Matches lets an
 // operation the GKE mock never recorded fall through to the shared LRO poller
-// (which reports it done) instead of GKE 404ing it.
-func TestSDKGKEForeignOperationStillDone(t *testing.T) {
+// (instead of GKE greedily claiming and 404ing it), and that the shared poller
+// now 404s an operation name no service registered — real GCP returns NOT_FOUND
+// for an unknown operation id rather than masking it as done.
+func TestSDKGKEForeignOperationNotFound(t *testing.T) {
 	svc, project := newSDKClient(t)
 	ctx := context.Background()
 	loc := "us-central1"
 
-	got, err := svc.Projects.Locations.Operations.Get(parent(project, loc) + "/operations/operation-not-gke").
+	_, err := svc.Projects.Locations.Operations.Get(parent(project, loc) + "/operations/operation-not-gke").
 		Context(ctx).Do()
-	if err != nil {
-		t.Fatalf("operations.get (foreign): %v", err)
+	if err == nil {
+		t.Fatal("operations.get (foreign): want 404, got success")
 	}
 
-	if got.Status != "DONE" {
-		t.Fatalf("foreign op status = %q, want DONE", got.Status)
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusNotFound {
+		t.Fatalf("operations.get (foreign): want 404, got %v", err)
 	}
 }
 

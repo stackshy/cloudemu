@@ -1,6 +1,7 @@
 package gcp_test
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -62,8 +63,17 @@ func TestFullServerLROOperationPolling(t *testing.T) {
 	}
 
 	if code, body := do(t, ts, http.MethodGet,
-		"/v1/projects/demo/locations/us/operations/op-r1", ""); code != http.StatusOK || !strings.Contains(body, `"done":true`) {
-		t.Fatalf("AR op poll: code=%d body=%s (want 200 done:true)", code, body)
+		"/v1/projects/demo/locations/us/operations/op-r1", ""); code != http.StatusOK ||
+		!strings.Contains(body, `"done":true`) || !strings.Contains(body, `"response"`) ||
+		!strings.Contains(body, "MAVEN") {
+		t.Fatalf("AR op poll: code=%d body=%s (want 200 done:true with the repository response)", code, body)
+	}
+
+	// An operation name that was never created is 404 NOT_FOUND, not a masked
+	// done (real GCP returns 404 for an unknown operation id).
+	if code, body := do(t, ts, http.MethodGet,
+		"/v1/projects/demo/locations/us/operations/does-not-exist-123", ""); code != http.StatusNotFound {
+		t.Fatalf("unknown op poll: code=%d body=%s (want 404)", code, body)
 	}
 
 	// eventarc.
@@ -76,14 +86,22 @@ func TestFullServerLROOperationPolling(t *testing.T) {
 		t.Fatalf("eventarc op poll: code=%d body=%s", code, body)
 	}
 
-	// gke (a legitimate location-operations owner) must still resolve.
-	do(t, ts, http.MethodPost, "/v1/projects/demo/locations/us-central1/clusters",
+	// gke owns its operations: it registers ahead of the shared poller and
+	// claims a named operation poll only for the ops its mock recorded, so its
+	// richer container.Operation shape (a `status` field, not the longrunning
+	// `done` bool) is returned. Poll the name the create actually returned.
+	_, createBody := do(t, ts, http.MethodPost, "/v1/projects/demo/locations/us-central1/clusters",
 		`{"cluster":{"name":"k1","initialNodeCount":1}}`)
 
-	// GKE's container.Operation uses a `status` field, not the longrunning
-	// `done` bool — the shared handler must satisfy both.
+	var createOp struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(createBody), &createOp); err != nil || createOp.Name == "" {
+		t.Fatalf("gke create: cannot read operation name from %s (err=%v)", createBody, err)
+	}
+
 	if code, body := do(t, ts, http.MethodGet,
-		"/v1/projects/demo/locations/us-central1/operations/operation-00000001", ""); code != http.StatusOK ||
+		"/v1/projects/demo/locations/us-central1/operations/"+createOp.Name, ""); code != http.StatusOK ||
 		!strings.Contains(body, `"status":"DONE"`) {
 		t.Fatalf("gke op poll: code=%d body=%s (want status DONE)", code, body)
 	}

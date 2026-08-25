@@ -62,10 +62,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// doneOperation builds a completed AlloyDB LRO envelope carrying the resource
-// as its response. AlloyDB REST callers receive a terminal operation, so no
-// polling is required.
-func (*Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.Operation {
+// doneOperation builds a completed AlloyDB LRO envelope carrying the resource as
+// its response. AlloyDB REST callers receive a terminal operation, and a client
+// that polls the returned name resolves the same done operation (with its
+// response) via the shared LRO poller in the full server.
+func (h *Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.Operation {
 	name := "projects/" + p.project + "/locations/" + p.location + "/operations/op-" + verb
 
 	op := &alloydb.Operation{Name: name, Done: true}
@@ -75,6 +76,8 @@ func (*Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.
 			op.Response = raw
 		}
 	}
+
+	h.ops.Register(name, op.Response)
 
 	return op
 }
