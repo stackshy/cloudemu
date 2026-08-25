@@ -18,10 +18,12 @@
 package sts
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // Namespace is the XML namespace for AWS STS responses.
@@ -45,17 +47,31 @@ var stsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DecodeAuthorizationMessage": {},
 }
 
+// roleTrustEvaluator is the AWS-specific trust-policy surface AssumeRole uses to
+// decide whether the caller may assume a role. It is not part of the portable
+// IAM driver, so the handler type-asserts the injected IAM driver for it. When
+// the driver does not implement it (or none was wired), AssumeRole stays
+// permissive — the standalone behavior for callers that only need init creds.
+type roleTrustEvaluator interface {
+	EvaluateAssumeRoleTrust(ctx context.Context, roleName, callerPrincipal string) (roleExists, allowed bool)
+}
+
 // Handler serves STS query-protocol requests. It carries the account and region
-// the AWS server was configured with; there is no backing driver.
+// the AWS server was configured with. It has no backing driver of its own, but
+// when an IAM driver that can evaluate trust policies is wired, AssumeRole
+// enforces the target role's trust policy and existence.
 type Handler struct {
 	accountID string
 	region    string
+	trust     roleTrustEvaluator
 }
 
-// New returns an STS handler that reports the given accountID and region.
-// Empty values fall back to sensible defaults so a well-formed identity is
-// always returned.
-func New(accountID, region string) *Handler {
+// New returns an STS handler that reports the given accountID and region. Empty
+// values fall back to sensible defaults so a well-formed identity is always
+// returned. When iam is non-nil and can evaluate trust policies, AssumeRole
+// checks the target role's trust policy (and existence); otherwise AssumeRole
+// stays permissive.
+func New(accountID, region string, iam iamdriver.IAM) *Handler {
 	if accountID == "" {
 		accountID = defaultAccountID
 	}
@@ -64,7 +80,12 @@ func New(accountID, region string) *Handler {
 		region = defaultRegion
 	}
 
-	return &Handler{accountID: accountID, region: region}
+	h := &Handler{accountID: accountID, region: region}
+	if te, ok := iam.(roleTrustEvaluator); ok {
+		h.trust = te
+	}
+
+	return h
 }
 
 const (

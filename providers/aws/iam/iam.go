@@ -1318,9 +1318,12 @@ func (m *Mock) AddRoleToInstanceProfile(
 	}
 
 	if p.RoleName != "" {
+		// An instance profile can contain only one role and this quota cannot be
+		// increased, so a second (different) role is a limit breach, not a
+		// duplicate. Real IAM returns LimitExceeded here.
 		return errors.Newf(
-			errors.AlreadyExists,
-			"instance profile %q already has role %q",
+			errors.ResourceExhausted,
+			"instance profile %q already has role %q; an instance profile can contain only one role",
 			profileName, p.RoleName,
 		)
 	}

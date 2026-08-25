@@ -58,6 +58,7 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DetachRolePolicy":               {},
 	"ListAttachedUserPolicies":       {},
 	"ListAttachedRolePolicies":       {},
+	"ListEntitiesForPolicy":          {},
 	"CreateGroup":                    {},
 	"DeleteGroup":                    {},
 	"GetGroup":                       {},
@@ -254,6 +255,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listAttachedUserPolicies(w, r)
 	case "ListAttachedRolePolicies":
 		h.listAttachedRolePolicies(w, r)
+	case "ListEntitiesForPolicy":
+		h.listEntitiesForPolicy(w, r)
 	case "CreateGroup":
 		h.createGroup(w, r)
 	case "DeleteGroup":

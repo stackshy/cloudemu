@@ -545,7 +545,10 @@ func New(d Drivers) *server.Server {
 	// ElastiCache, SNS, and EC2, so no shadowing occurs. It has no driver, so
 	// it's gated on the STS bool. Registered before the EC2 catch-all.
 	if d.STS {
-		srv.Register(stssrv.New(d.AccountID, d.Region))
+		// Pass the IAM driver so AssumeRole can enforce the target role's trust
+		// policy and existence. d.IAM may be nil (standalone STS-only), in which
+		// case AssumeRole stays permissive.
+		srv.Register(stssrv.New(d.AccountID, d.Region, d.IAM))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
