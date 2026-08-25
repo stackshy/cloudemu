@@ -64,15 +64,43 @@ type tableData struct {
 
 // Mock is an in-memory mock implementation of DynamoDB.
 type Mock struct {
-	mu         sync.RWMutex
-	tables     map[string]*tableData
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	mu            sync.RWMutex
+	tables        map[string]*tableData
+	opts          *config.Options
+	monitoring    mondriver.Monitoring
+	streamInvoker StreamEventInvoker
+	// pendingStream buffers stream records captured under m.mu so their delivery
+	// runs after the lock is released (a mapped Lambda may write back into
+	// DynamoDB); guarded by m.mu.
+	pendingStream []pendingStreamEvent
+}
+
+// StreamEventInvoker delivers a DynamoDB Streams event batch to whatever Lambda
+// event-source-mappings target the stream identified by eventSourceARN. The
+// Lambda mock satisfies it, enabling real DynamoDB-stream -> Lambda invocation
+// (mirroring the S3 -> Lambda LambdaInvoker wiring).
+type StreamEventInvoker interface {
+	DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) error
+}
+
+// pendingStreamEvent is one captured change record awaiting out-of-lock delivery
+// to the stream's Lambda event-source-mappings.
+type pendingStreamEvent struct {
+	streamARN string
+	region    string
+	viewType  string
+	rec       driver.StreamRecord
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetStreamInvoker wires the Lambda backend so item writes to a stream-enabled
+// table invoke the stream's event-source-mapping targets.
+func (m *Mock) SetStreamInvoker(i StreamEventInvoker) {
+	m.streamInvoker = i
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
@@ -403,6 +431,7 @@ func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) err
 	td.items.Set(key, item)
 	m.recordStreamEvent(td, oldItem, item, hadOld)
 	m.mu.Unlock()
+	m.flushStreamDeliveries()
 
 	dims := map[string]string{"TableName": table}
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
@@ -485,6 +514,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	td.items.Set(k, updated)
 	m.recordStreamEvent(td, oldItem, updated, true)
 	m.mu.Unlock()
+	m.flushStreamDeliveries()
 
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
@@ -516,6 +546,7 @@ func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) e
 	}
 
 	m.mu.Unlock()
+	m.flushStreamDeliveries()
 
 	dims := map[string]string{"TableName": table}
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
@@ -928,6 +959,7 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 	}
 
 	m.mu.Unlock()
+	m.flushStreamDeliveries()
 
 	return nil
 }
@@ -1212,6 +1244,9 @@ func (m *Mock) TransactWriteItems(
 	_ context.Context, table string, puts []map[string]any, deletes []map[string]any,
 ) error {
 	m.mu.Lock()
+	// flush is registered before the unlock defer so it runs after the lock is
+	// released (defers are LIFO), delivering stream records outside m.mu.
+	defer m.flushStreamDeliveries()
 	defer m.mu.Unlock()
 
 	td, exists := m.tables[table]
@@ -1313,6 +1348,7 @@ func (m *Mock) recordStreamEvent(td *tableData, oldItem, newItem map[string]any,
 
 	rec := m.buildStreamRecord(td, eventType, oldItem, newItem)
 	td.streamRecords = appendStreamRecord(td.streamRecords, &rec)
+	m.queueStreamDelivery(td, &rec)
 }
 
 // recordStreamRemove records a REMOVE stream event. Caller must hold m.mu.
@@ -1323,6 +1359,57 @@ func (m *Mock) recordStreamRemove(td *tableData, oldItem map[string]any) {
 
 	rec := m.buildStreamRecord(td, "REMOVE", oldItem, nil)
 	td.streamRecords = appendStreamRecord(td.streamRecords, &rec)
+	m.queueStreamDelivery(td, &rec)
+}
+
+// queueStreamDelivery buffers a change record for out-of-lock delivery to the
+// stream's Lambda event-source-mappings. A no-op when no invoker is wired.
+// Caller must hold m.mu.
+func (m *Mock) queueStreamDelivery(td *tableData, rec *driver.StreamRecord) {
+	if m.streamInvoker == nil || td.config.StreamArn == "" {
+		return
+	}
+
+	m.pendingStream = append(m.pendingStream, pendingStreamEvent{
+		streamARN: td.config.StreamArn,
+		region:    m.opts.Region,
+		viewType:  td.streamConfig.ViewType,
+		rec:       *rec,
+	})
+}
+
+// flushStreamDeliveries drains the buffered stream records and delivers them to
+// the stream's Lambda event-source-mappings, grouping consecutive records of the
+// same stream into a single event batch (as a real ESM invoke would). It runs
+// after m.mu is released so a mapped Lambda may safely call back into DynamoDB.
+func (m *Mock) flushStreamDeliveries() {
+	if m.streamInvoker == nil {
+		return
+	}
+
+	m.mu.Lock()
+	pending := m.pendingStream
+	m.pendingStream = nil
+	m.mu.Unlock()
+
+	ctx := context.Background()
+
+	for i := 0; i < len(pending); {
+		j := i + 1
+		for j < len(pending) && pending[j].streamARN == pending[i].streamARN {
+			j++
+		}
+
+		batch := make([]driver.StreamRecord, 0, j-i)
+		for k := i; k < j; k++ {
+			batch = append(batch, pending[k].rec)
+		}
+
+		payload := driver.BuildLambdaStreamEvent(pending[i].streamARN, pending[i].region, pending[i].viewType, batch)
+		_ = m.streamInvoker.DeliverEventSourceBatch(ctx, pending[i].streamARN, payload)
+
+		i = j
+	}
 }
 
 func (m *Mock) buildStreamRecord(
