@@ -81,7 +81,7 @@ type Mock struct {
 // Lambda mock satisfies it, enabling real DynamoDB-stream -> Lambda invocation
 // (mirroring the S3 -> Lambda LambdaInvoker wiring).
 type StreamEventInvoker interface {
-	DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) error
+	DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) (delivered bool, err error)
 }
 
 // pendingStreamEvent is one captured change record awaiting out-of-lock delivery
@@ -1417,7 +1417,7 @@ func (m *Mock) flushStreamDeliveries(callerCtx context.Context) {
 		}
 
 		payload := driver.BuildLambdaStreamEvent(pending[i].streamARN, pending[i].region, pending[i].viewType, batch)
-		_ = m.streamInvoker.DeliverEventSourceBatch(ctx, pending[i].streamARN, payload)
+		_, _ = m.streamInvoker.DeliverEventSourceBatch(ctx, pending[i].streamARN, payload)
 
 		i = j
 	}

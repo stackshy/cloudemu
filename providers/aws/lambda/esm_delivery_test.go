@@ -47,8 +47,13 @@ func TestDeliverEventSourceBatch(t *testing.T) {
 		t.Fatalf("CreateEventSourceMapping(other): %v", err)
 	}
 
-	if err := m.DeliverEventSourceBatch(ctx, streamARN, []byte(`{"Records":[]}`)); err != nil {
+	delivered, err := m.DeliverEventSourceBatch(ctx, streamARN, []byte(`{"Records":[]}`))
+	if err != nil {
 		t.Fatalf("DeliverEventSourceBatch: %v", err)
+	}
+
+	if !delivered {
+		t.Fatal("delivered = false, want true (a mapping matched)")
 	}
 
 	if len(got) != 1 {
@@ -57,5 +62,16 @@ func TestDeliverEventSourceBatch(t *testing.T) {
 
 	if got[0] != `{"Records":[]}` {
 		t.Fatalf("delivered payload = %q", got[0])
+	}
+
+	// No mapping targets an unrelated ARN -> delivered reports false, distinct
+	// from a mapping that ran and succeeded.
+	delivered, err = m.DeliverEventSourceBatch(ctx, "arn:aws:sqs:us-east-1:000000000000:unmapped", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("DeliverEventSourceBatch(unmapped): %v", err)
+	}
+
+	if delivered {
+		t.Fatal("delivered = true for an ARN with no matching mapping")
 	}
 }

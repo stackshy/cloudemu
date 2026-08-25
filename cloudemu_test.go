@@ -1526,56 +1526,60 @@ func TestCostTrackerReset(t *testing.T) {
 	}
 }
 
-// Feature: Lambda-SQS Trigger Tests
+// Feature: Lambda-SQS Event Source Mapping Tests
 func TestLambdaSQSTrigger(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
 
-	// 1. Create a Lambda function
+	// 1. Create a Lambda function.
+	var triggerCount int64
 	p.Lambda.RegisterHandler("processor", func(_ context.Context, payload []byte) ([]byte, error) {
+		atomic.AddInt64(&triggerCount, 1)
 		return []byte("processed: " + string(payload)), nil
 	})
-	_, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+
+	if _, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
 		Name: "processor", Runtime: "go1.x", Handler: "main",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// 2. Create SQS queue
+	// 2. Create SQS queue.
 	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "trigger-queue"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// 3. Wire the trigger: SQS → Lambda
-	var triggerCount int64
-	p.SQS.SetTrigger(q.URL, func(queueURL string, msg mqdriver.Message) {
-		// Invoke lambda with the message body
-		_, invokeErr := p.Lambda.Invoke(ctx, serverlessdriver.InvokeInput{
-			FunctionName: "processor",
-			Payload:      []byte(msg.Body),
-		})
-		if invokeErr != nil {
-			t.Errorf("trigger invoke failed: %v", invokeErr)
-		}
-		atomic.AddInt64(&triggerCount, 1)
-	})
+	// 3. Wire the trigger: SQS -> Lambda, via a real event source mapping.
+	if _, err := p.Lambda.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: q.ARN, FunctionName: "processor", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
-	// 4. Send messages — Lambda should be triggered automatically
+	// 4. Send messages — Lambda should be invoked automatically.
 	for i := 0; i < 5; i++ {
-		_, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+		if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 			QueueURL: q.URL,
 			Body:     "message-body",
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// 5. Verify Lambda was triggered 5 times
-	if atomic.LoadInt64(&triggerCount) != 5 {
-		t.Errorf("expected 5 trigger invocations, got %d", triggerCount)
+	// 5. Verify Lambda was invoked 5 times, and each processed message was
+	// deleted from the queue on success.
+	if got := atomic.LoadInt64(&triggerCount); got != 5 {
+		t.Errorf("expected 5 invocations, got %d", got)
+	}
+
+	info, err := p.SQS.GetQueueInfo(ctx, q.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.ApproxMessageCount != 0 {
+		t.Errorf("expected 0 messages left in queue after successful processing, got %d", info.ApproxMessageCount)
 	}
 }
 
@@ -1583,29 +1587,51 @@ func TestLambdaSQSTriggerRemove(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
 
+	var triggerCount int64
+	p.Lambda.RegisterHandler("remover", func(_ context.Context, _ []byte) ([]byte, error) {
+		atomic.AddInt64(&triggerCount, 1)
+		return nil, nil
+	})
+
+	if _, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name: "remover", Runtime: "go1.x", Handler: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "removable-trigger"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var triggerCount int64
-	p.SQS.SetTrigger(q.URL, func(_ string, _ mqdriver.Message) {
-		atomic.AddInt64(&triggerCount, 1)
+	mapping, err := p.Lambda.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: q.ARN, FunctionName: "remover", Enabled: true,
 	})
-
-	// Send one message — trigger fires
-	p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"})
-	if atomic.LoadInt64(&triggerCount) != 1 {
-		t.Errorf("expected 1 trigger, got %d", triggerCount)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Remove trigger
-	p.SQS.RemoveTrigger(q.URL)
+	// Send one message — the mapping fires.
+	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"}); err != nil {
+		t.Fatal(err)
+	}
 
-	// Send another message — trigger should NOT fire
-	p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"})
-	if atomic.LoadInt64(&triggerCount) != 1 {
-		t.Errorf("expected still 1 trigger after removal, got %d", triggerCount)
+	if got := atomic.LoadInt64(&triggerCount); got != 1 {
+		t.Errorf("expected 1 invocation, got %d", got)
+	}
+
+	// Remove the mapping.
+	if err := p.Lambda.DeleteEventSourceMapping(ctx, mapping.UUID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send another message — the mapping should NOT fire.
+	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := atomic.LoadInt64(&triggerCount); got != 1 {
+		t.Errorf("expected still 1 invocation after mapping removal, got %d", got)
 	}
 }
 

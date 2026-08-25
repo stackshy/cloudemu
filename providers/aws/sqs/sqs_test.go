@@ -609,30 +609,6 @@ func createSQSQueue(m *Mock, name string) *driver.QueueInfo {
 	return info
 }
 
-func TestLambdaTrigger(t *testing.T) {
-	m, _ := newTestMock()
-	ctx := context.Background()
-	q := createStdQueue(m, "trigger-queue")
-
-	var triggered bool
-	var triggeredBody string
-
-	m.SetTrigger(q.URL, func(queueURL string, msg driver.Message) {
-		triggered = true
-		triggeredBody = msg.Body
-	})
-
-	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "trigger-test"})
-
-	assertEqual(t, true, triggered)
-	assertEqual(t, "trigger-test", triggeredBody)
-
-	m.RemoveTrigger(q.URL)
-	triggered = false
-	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "no-trigger"})
-	assertEqual(t, false, triggered)
-}
-
 func TestReceiveMessagesWithOptionsMetrics(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"), config.WithAccountID("123456789012"))

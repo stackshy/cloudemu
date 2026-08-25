@@ -14,11 +14,11 @@ type recordingStreamInvoker struct {
 	payloads [][]byte
 }
 
-func (r *recordingStreamInvoker) DeliverEventSourceBatch(_ context.Context, arn string, payload []byte) error {
+func (r *recordingStreamInvoker) DeliverEventSourceBatch(_ context.Context, arn string, payload []byte) (bool, error) {
 	r.arns = append(r.arns, arn)
 	r.payloads = append(r.payloads, payload)
 
-	return nil
+	return true, nil
 }
 
 // TestStreamInvokerDeliversOnWrite verifies that, once a stream invoker is wired,
