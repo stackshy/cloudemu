@@ -1,41 +1,34 @@
 // Package pubsub implements the GCP Pub/Sub v1 REST API as a server.Handler.
-// Real google.golang.org/api/pubsub/v1 clients configured with a custom
-// endpoint hit this handler the same way they hit pubsub.googleapis.com.
+// Real google.golang.org/api/pubsub/v1 and cloud.google.com/go/pubsub clients
+// configured with a custom endpoint hit this handler the same way they hit
+// pubsub.googleapis.com.
 //
-// MVP coverage:
+// Coverage:
 //
-//	PUT    /v1/projects/{p}/topics/{name}                  — Create
-//	GET    /v1/projects/{p}/topics/{name}                  — Get
-//	GET    /v1/projects/{p}/topics                         — List
-//	DELETE /v1/projects/{p}/topics/{name}                  — Delete
-//	POST   /v1/projects/{p}/topics/{name}:publish          — Publish
-//	PUT    /v1/projects/{p}/subscriptions/{name}           — Create
-//	GET    /v1/projects/{p}/subscriptions/{name}           — Get
-//	GET    /v1/projects/{p}/subscriptions                  — List
-//	DELETE /v1/projects/{p}/subscriptions/{name}           — Delete
-//	POST   /v1/projects/{p}/subscriptions/{name}:pull      — Pull
-//	POST   /v1/projects/{p}/subscriptions/{name}:acknowledge — Ack
+//	topics       create/get/list/delete/publish, getIamPolicy/setIamPolicy/testIamPermissions,
+//	             topics.subscriptions.list, topics.snapshots.list
+//	subscriptions create/get/list/delete, pull/acknowledge/modifyAckDeadline/
+//	             modifyPushConfig/seek, getIamPolicy/setIamPolicy/testIamPermissions
+//	snapshots    create/get/list/delete
 //
-// The portable messagequeue driver pairs a topic and subscription under a
-// single queue keyed by name. SDK-compat reflects this: a subscription's
-// "topic" must point at a topic with the same trailing name. Cross-name
-// subscriptions (sub "billing-events" linked to topic "events") are not
-// modeled in the MVP.
+// Topic existence and labels are backed by the portable messagequeue driver;
+// Pub/Sub-native delivery (independent fan-out per subscription, publish-time
+// stamping, ordering keys, snapshots, seek, IAM) is modeled in this handler
+// because that behavior does not map onto the SQS-style driver.
 package pubsub
 
 import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
@@ -44,47 +37,27 @@ const (
 
 	resTopics        = "topics"
 	resSubscriptions = "subscriptions"
+	resSnapshots     = "snapshots"
+
+	verbGetIamPolicy       = "getIamPolicy"
+	verbSetIamPolicy       = "setIamPolicy"
+	verbTestIamPermissions = "testIamPermissions"
+
+	reasonNotFound         = "NOT_FOUND"
+	reasonInvalidArgument  = "INVALID_ARGUMENT"
+	reasonMethodNotAllowed = "METHOD_NOT_ALLOWED"
+	reasonAlreadyExists    = "ALREADY_EXISTS"
+	reasonInternal         = "INTERNAL"
 
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 5 << 20
 
-	// Path-segment counts used to dispatch by URL shape.
 	partsTypeOnly = 2 // /v1/projects/{p}/{type}
 	partsResource = 3 // /v1/projects/{p}/{type}/{name}
+	partsNested   = 4 // /v1/projects/{p}/{type}/{name}/{subtype}
 )
 
-// Handler serves Pub/Sub v1 REST requests against a messagequeue driver.
-//
-// The portable messagequeue driver has one queue per topic and no separate
-// subscription concept, so subscription identity + metadata (its topic,
-// ackDeadline, labels) is tracked here. Messages still live in the topic's
-// queue; a subscription resolves to that queue for pull/ack. This lets a
-// subscription carry a name distinct from its topic. (Multiple subscriptions
-// on one topic share the single underlying queue rather than each getting an
-// independent copy — a documented emulator simplification.)
-type Handler struct {
-	mq mqdriver.MessageQueue
-
-	mu   sync.RWMutex
-	subs map[string]*subMeta // keyed by subscription short-name
-}
-
-// subMeta is the per-subscription metadata the driver can't hold.
-type subMeta struct {
-	topic       string // topic short-name whose queue backs this subscription
-	ackDeadline int
-	labels      map[string]string
-}
-
-// New returns a Pub/Sub handler backed by mq.
-func New(mq mqdriver.MessageQueue) *Handler {
-	return &Handler{mq: mq, subs: make(map[string]*subMeta)}
-}
-
-// Matches accepts /v1/projects/{p}/topics[...] and /v1/projects/{p}/subscriptions[...].
-// The resource-type guard prevents this handler from claiming Cloud Functions
-// (locations/functions) or Firestore (databases) URLs that share the same
-// /v1/projects/ prefix.
+// Matches accepts /v1/projects/{p}/{topics|subscriptions|snapshots}[...].
 func (*Handler) Matches(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
@@ -95,49 +68,41 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	// parts[1] is "topics" or "subscriptions" (possibly with :action suffix).
-	t := parts[1]
-	if i := strings.Index(t, ":"); i >= 0 {
-		t = t[:i]
-	}
+	t, _ := splitColon(parts[1])
 
-	return t == resTopics || t == resSubscriptions
+	return t == resTopics || t == resSubscriptions || t == resSnapshots
 }
 
 // ServeHTTP routes by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := splitPath(r.URL.Path)
 	if len(parts) < partsTypeOnly {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported path")
+		writeError(w, http.StatusNotFound, reasonNotFound, "unsupported path")
 		return
 	}
 
 	project := parts[0]
-	resType := parts[1]
+	bareType, typeAction := splitColon(parts[1])
 
-	// Strip ":action" from the type for the bare-collection match.
-	bareType, action := resType, ""
-	if i := strings.Index(resType, ":"); i >= 0 {
-		bareType = resType[:i]
-		action = resType[i+1:]
-	}
+	if len(parts) == partsTypeOnly {
+		if typeAction != "" {
+			writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
+			return
+		}
 
-	if len(parts) == partsTypeOnly && action == "" {
-		// /v1/projects/{p}/{topics|subscriptions}
 		h.serveCollection(w, r, project, bareType)
+
 		return
 	}
 
-	// Resource-level: /v1/projects/{p}/{type}/{name}[:action]
-	if len(parts) < partsResource {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "missing resource name")
-		return
-	}
+	name, action := splitColon(parts[2])
 
-	name := parts[2]
-	if i := strings.Index(name, ":"); i >= 0 {
-		action = name[i+1:]
-		name = name[:i]
+	// 4-segment nested collections: topics/{t}/subscriptions|snapshots.
+	if len(parts) >= partsNested {
+		sub, _ := splitColon(parts[3])
+		h.serveNested(w, r, project, bareType, name, sub)
+
+		return
 	}
 
 	switch bareType {
@@ -145,71 +110,57 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveTopic(w, r, project, name, action)
 	case resSubscriptions:
 		h.serveSubscription(w, r, project, name, action)
+	case resSnapshots:
+		h.serveSnapshot(w, r, project, name, action)
 	default:
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown resource type: "+bareType)
+		writeError(w, http.StatusNotFound, reasonNotFound, "unknown resource type: "+bareType)
 	}
 }
 
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, project, resType string) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	queues, err := h.mq.ListQueues(r.Context(), "")
-	if err != nil {
-		writeErr(w, err)
+		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	switch resType {
 	case resTopics:
-		out := listTopicsResponse{Topics: make([]topic, 0, len(queues))}
-		for i := range queues {
-			out.Topics = append(out.Topics, topic{
-				Name: topicName(project, queues[i].Name),
-			})
-		}
-
-		writeJSON(w, http.StatusOK, out)
+		h.listTopics(w, r, project)
 	case resSubscriptions:
-		// List from the subscription registry (not one phantom sub per queue),
-		// so distinct sub/topic names and their ackDeadline/labels round-trip.
-		// Emit in sorted name order: Go map iteration is randomized, and the
-		// repo's list endpoints are deterministic.
-		h.mu.RLock()
-		subNames := make([]string, 0, len(h.subs))
-
-		for subName := range h.subs {
-			subNames = append(subNames, subName)
-		}
-
-		sort.Strings(subNames)
-
-		out := listSubscriptionsResponse{Subscriptions: make([]subscription, 0, len(subNames))}
-
-		for _, subName := range subNames {
-			meta := h.subs[subName]
-			out.Subscriptions = append(out.Subscriptions, subscription{
-				Name:               subscriptionName(project, subName),
-				Topic:              topicName(project, meta.topic),
-				AckDeadlineSeconds: meta.ackDeadline,
-				Labels:             meta.labels,
-			})
-		}
-		h.mu.RUnlock()
-
-		writeJSON(w, http.StatusOK, out)
+		h.listSubscriptions(w, r, project)
+	case resSnapshots:
+		h.listSnapshots(w, r, project)
 	default:
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown collection type")
+		writeError(w, http.StatusNotFound, reasonNotFound, "unknown collection type")
+	}
+}
+
+// serveNested handles topics/{t}/subscriptions and topics/{t}/snapshots list.
+func (h *Handler) serveNested(w http.ResponseWriter, r *http.Request, project, bareType, name, sub string) {
+	if bareType != resTopics || r.Method != http.MethodGet {
+		writeError(w, http.StatusNotFound, reasonNotFound, "unsupported nested path")
+		return
+	}
+
+	switch sub {
+	case resSubscriptions:
+		h.listTopicSubscriptions(w, r, project, name)
+	case resSnapshots:
+		h.listTopicSnapshots(w, project, name)
+	default:
+		writeError(w, http.StatusNotFound, reasonNotFound, "unsupported nested collection: "+sub)
 	}
 }
 
 // ---------- Topics ----------
 
 func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, project, name, action string) {
-	if action == "publish" {
-		h.publish(w, r, project, name)
+	switch action {
+	case "publish":
+		h.publish(w, r, name)
+		return
+	case verbGetIamPolicy, verbSetIamPolicy, verbTestIamPermissions:
+		h.serveIam(w, r, resTopics, name, action)
 		return
 	}
 
@@ -219,18 +170,16 @@ func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, project, na
 	case http.MethodGet:
 		h.getTopic(w, r, project, name)
 	case http.MethodDelete:
-		h.deleteTopic(w, r, project, name)
+		h.deleteTopic(w, r, name)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, project, name string) {
-	// Real Pub/Sub createTopic accepts an empty body, so tolerate EOF/empty
-	// rather than 400ing on a bodyless request.
 	var body topic
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid JSON: "+err.Error())
 		return
 	}
 
@@ -239,6 +188,10 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, project, n
 		writeErr(w, err)
 		return
 	}
+
+	h.mu.Lock()
+	h.topicLog(name)
+	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, topic{
 		Name:   topicName(project, info.Name),
@@ -259,7 +212,7 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, project, name
 	})
 }
 
-func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, _, name string) {
+func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, name string) {
 	q, err := h.findQueueByName(r, name)
 	if err != nil {
 		writeErr(w, err)
@@ -271,12 +224,38 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, _, name st
 		return
 	}
 
+	h.mu.Lock()
+	delete(h.topics, name)
+	h.mu.Unlock()
+
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-func (h *Handler) publish(w http.ResponseWriter, r *http.Request, _, name string) {
+func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request, project string) {
+	queues, err := h.mq.ListQueues(r.Context(), "")
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	items := make([]topic, 0, len(queues))
+	for i := range queues {
+		items = append(items, topic{Name: topicName(project, queues[i].Name), Labels: queues[i].Tags})
+	}
+
+	page, err := pagination.PaginateSorted(items, func(a, b topic) bool { return a.Name < b.Name },
+		r.URL.Query().Get("pageToken"), pageSize(r))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid pageToken")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, listTopicsResponse{Topics: page.Items, NextPageToken: page.NextPageToken})
+}
+
+func (h *Handler) publish(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -285,224 +264,25 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, _, name string
 		return
 	}
 
-	q, err := h.findQueueByName(r, name)
-	if err != nil {
+	if _, err := h.findQueueByName(r, name); err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	publishTime := time.Now().UTC()
 	out := publishResponse{MessageIDs: make([]string, 0, len(req.Messages))}
 
 	for i := range req.Messages {
-		body, decErr := base64.StdEncoding.DecodeString(req.Messages[i].Data)
-		if decErr != nil {
-			// Tolerate unencoded payloads — some test clients send raw JSON.
-			body = []byte(req.Messages[i].Data)
-		}
-
-		send, sendErr := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
-			QueueURL:   q.URL,
-			Body:       string(body),
-			GroupID:    req.Messages[i].OrderingKey,
-			Attributes: req.Messages[i].Attributes,
+		id := h.appendMessage(name, &storedMessage{
+			body:        decodeData(req.Messages[i].Data),
+			attributes:  req.Messages[i].Attributes,
+			orderingKey: req.Messages[i].OrderingKey,
+			publishTime: publishTime,
 		})
-		if sendErr != nil {
-			writeErr(w, sendErr)
-			return
-		}
-
-		out.MessageIDs = append(out.MessageIDs, send.MessageID)
+		out.MessageIDs = append(out.MessageIDs, id)
 	}
 
 	writeJSON(w, http.StatusOK, out)
-}
-
-// ---------- Subscriptions ----------
-
-func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, project, name, action string) {
-	switch action {
-	case "pull":
-		h.pull(w, r, name)
-		return
-	case "acknowledge":
-		h.acknowledge(w, r, name)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPut:
-		h.createSubscription(w, r, project, name)
-	case http.MethodGet:
-		h.getSubscription(w, r, project, name)
-	case http.MethodDelete:
-		h.deleteSubscription(w, r, name)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-	}
-}
-
-func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, project, name string) {
-	var body subscription
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-
-	// The topic (a driver queue) must exist. Its short name may differ from
-	// the subscription name; default to the subscription name only when the
-	// caller omitted the topic (tolerant legacy path).
-	topicShort := subToTopicName(body.Topic)
-	if topicShort == "" {
-		topicShort = name
-	}
-
-	if _, err := h.findQueueByName(r, topicShort); err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	ackDeadline := body.AckDeadlineSeconds
-	if ackDeadline == 0 {
-		ackDeadline = 10
-	}
-
-	h.mu.Lock()
-	h.subs[name] = &subMeta{topic: topicShort, ackDeadline: ackDeadline, labels: body.Labels}
-	h.mu.Unlock()
-
-	writeJSON(w, http.StatusOK, subscription{
-		Name:               subscriptionName(project, name),
-		Topic:              topicName(project, topicShort),
-		AckDeadlineSeconds: ackDeadline,
-		Labels:             body.Labels,
-	})
-}
-
-func (h *Handler) getSubscription(w http.ResponseWriter, _ *http.Request, project, name string) {
-	h.mu.RLock()
-	meta, ok := h.subs[name]
-	h.mu.RUnlock()
-
-	if !ok {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "subscription "+name+" not found")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, subscription{
-		Name:               subscriptionName(project, name),
-		Topic:              topicName(project, meta.topic),
-		AckDeadlineSeconds: meta.ackDeadline,
-		Labels:             meta.labels,
-	})
-}
-
-func (h *Handler) deleteSubscription(w http.ResponseWriter, _ *http.Request, name string) {
-	h.mu.Lock()
-	_, ok := h.subs[name]
-	delete(h.subs, name)
-	h.mu.Unlock()
-
-	if !ok {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "subscription "+name+" not found")
-		return
-	}
-
-	// The subscription is removed from the registry; the topic's queue is left
-	// intact (real Pub/Sub deletes the subscription, not the topic).
-	writeJSON(w, http.StatusOK, map[string]any{})
-}
-
-// subscriptionQueue resolves a subscription to the queue that backs it (its
-// topic's queue). Falls back to a same-named queue for subscriptions created
-// before registration (legacy tolerance).
-func (h *Handler) subscriptionQueue(r *http.Request, name string) (*mqdriver.QueueInfo, error) {
-	h.mu.RLock()
-	meta, ok := h.subs[name]
-	h.mu.RUnlock()
-
-	target := name
-	if ok {
-		target = meta.topic
-	}
-
-	return h.findQueueByName(r, target)
-}
-
-func (h *Handler) pull(w http.ResponseWriter, r *http.Request, name string) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	var req pullRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	q, err := h.subscriptionQueue(r, name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	if req.MaxMessages == 0 {
-		req.MaxMessages = 1
-	}
-
-	msgs, err := h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
-		QueueURL:    q.URL,
-		MaxMessages: req.MaxMessages,
-	})
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	// Real Pub/Sub always stamps a publishTime; the driver doesn't retain one,
-	// so approximate with the delivery time (clients that require a non-empty,
-	// valid RFC3339 timestamp are satisfied).
-	publishTime := time.Now().UTC().Format(time.RFC3339)
-
-	out := pullResponse{ReceivedMessages: make([]receivedMessage, 0, len(msgs))}
-	for i := range msgs {
-		out.ReceivedMessages = append(out.ReceivedMessages, receivedMessage{
-			AckID: msgs[i].ReceiptHandle,
-			Message: pubsubMessage{
-				MessageID:   msgs[i].MessageID,
-				Data:        base64.StdEncoding.EncodeToString([]byte(msgs[i].Body)),
-				Attributes:  msgs[i].Attributes,
-				PublishTime: publishTime,
-			},
-		})
-	}
-
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (h *Handler) acknowledge(w http.ResponseWriter, r *http.Request, name string) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	var req acknowledgeRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	q, err := h.subscriptionQueue(r, name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	for _, ack := range req.AckIDs {
-		if delErr := h.mq.DeleteMessage(r.Context(), q.URL, ack); delErr != nil {
-			writeErr(w, delErr)
-			return
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
 // ---------- helpers ----------
@@ -516,16 +296,29 @@ func splitPath(p string) []string {
 	return strings.Split(rest, "/")
 }
 
+// splitColon separates a "name:action" segment into its parts.
+func splitColon(s string) (name, action string) {
+	if i := strings.Index(s, ":"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+
+	return s, ""
+}
+
 func topicName(project, name string) string {
-	return fmt.Sprintf("projects/%s/topics/%s", project, name)
+	return "projects/" + project + "/topics/" + name
 }
 
 func subscriptionName(project, name string) string {
-	return fmt.Sprintf("projects/%s/subscriptions/%s", project, name)
+	return "projects/" + project + "/subscriptions/" + name
 }
 
-// subToTopicName extracts the trailing topic name from "projects/p/topics/foo".
-func subToTopicName(full string) string {
+func snapshotName(project, name string) string {
+	return "projects/" + project + "/snapshots/" + name
+}
+
+// shortName returns the trailing segment of a resource path.
+func shortName(full string) string {
 	if i := strings.LastIndex(full, "/"); i >= 0 {
 		return full[i+1:]
 	}
@@ -548,11 +341,34 @@ func (h *Handler) findQueueByName(r *http.Request, name string) (*mqdriver.Queue
 	return nil, cerrors.Newf(cerrors.NotFound, "%s not found", name)
 }
 
+func pageSize(r *http.Request) int {
+	if v := r.URL.Query().Get("pageSize"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	return 0
+}
+
+func encodeData(raw string) string {
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeData tolerates unencoded payloads — some test clients send raw JSON.
+func decodeData(data string) string {
+	if b, err := base64.StdEncoding.DecodeString(data); err == nil {
+		return string(b)
+	}
+
+	return data
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid JSON: "+err.Error())
 		return false
 	}
 
@@ -578,12 +394,12 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, reasonNotFound, err.Error())
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, reasonAlreadyExists, err.Error())
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, reasonInternal, err.Error())
 	}
 }

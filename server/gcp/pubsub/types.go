@@ -1,25 +1,47 @@
 package pubsub
 
+import "encoding/json"
+
 // topic is the GCP Pub/Sub Topic resource shape.
 type topic struct {
 	Name   string            `json:"name"`
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// subscription is the GCP Pub/Sub Subscription resource shape.
+// subscription is the GCP Pub/Sub Subscription resource shape. Extended fields
+// (pushConfig/retryPolicy/deadLetterPolicy/expirationPolicy) are kept as raw
+// JSON so they round-trip verbatim without modeling every nested member.
 type subscription struct {
-	Name               string            `json:"name"`
-	Topic              string            `json:"topic"`
-	AckDeadlineSeconds int               `json:"ackDeadlineSeconds,omitempty"`
-	Labels             map[string]string `json:"labels,omitempty"`
+	Name                     string            `json:"name"`
+	Topic                    string            `json:"topic"`
+	PushConfig               json.RawMessage   `json:"pushConfig,omitempty"`
+	AckDeadlineSeconds       int               `json:"ackDeadlineSeconds,omitempty"`
+	RetainAckedMessages      bool              `json:"retainAckedMessages,omitempty"`
+	MessageRetentionDuration string            `json:"messageRetentionDuration,omitempty"`
+	Labels                   map[string]string `json:"labels,omitempty"`
+	EnableMessageOrdering    bool              `json:"enableMessageOrdering,omitempty"`
+	ExpirationPolicy         json.RawMessage   `json:"expirationPolicy,omitempty"`
+	Filter                   string            `json:"filter,omitempty"`
+	DeadLetterPolicy         json.RawMessage   `json:"deadLetterPolicy,omitempty"`
+	RetryPolicy              json.RawMessage   `json:"retryPolicy,omitempty"`
+	Detached                 bool              `json:"detached,omitempty"`
 }
 
 type listTopicsResponse struct {
-	Topics []topic `json:"topics"`
+	Topics        []topic `json:"topics"`
+	NextPageToken string  `json:"nextPageToken,omitempty"`
 }
 
 type listSubscriptionsResponse struct {
 	Subscriptions []subscription `json:"subscriptions"`
+	NextPageToken string         `json:"nextPageToken,omitempty"`
+}
+
+// listTopicSubscriptionsResponse is topics.subscriptions.list — a list of
+// subscription resource names (strings), not full Subscription objects.
+type listTopicSubscriptionsResponse struct {
+	Subscriptions []string `json:"subscriptions"`
+	NextPageToken string   `json:"nextPageToken,omitempty"`
 }
 
 // publishRequest is POST topics/{name}:publish.
@@ -50,11 +72,73 @@ type pullResponse struct {
 }
 
 type receivedMessage struct {
-	AckID   string        `json:"ackId"`
-	Message pubsubMessage `json:"message"`
+	AckID           string        `json:"ackId"`
+	Message         pubsubMessage `json:"message"`
+	DeliveryAttempt int           `json:"deliveryAttempt,omitempty"`
 }
 
 // acknowledgeRequest is POST subscriptions/{name}:acknowledge.
 type acknowledgeRequest struct {
 	AckIDs []string `json:"ackIds"`
+}
+
+// modifyAckDeadlineRequest is POST subscriptions/{name}:modifyAckDeadline.
+type modifyAckDeadlineRequest struct {
+	AckIDs             []string `json:"ackIds"`
+	AckDeadlineSeconds int      `json:"ackDeadlineSeconds"`
+}
+
+// modifyPushConfigRequest is POST subscriptions/{name}:modifyPushConfig.
+type modifyPushConfigRequest struct {
+	PushConfig json.RawMessage `json:"pushConfig"`
+}
+
+// seekRequest is POST subscriptions/{name}:seek.
+type seekRequest struct {
+	Time     string `json:"time,omitempty"`
+	Snapshot string `json:"snapshot,omitempty"`
+}
+
+// snapshot is the GCP Pub/Sub Snapshot resource shape.
+type snapshot struct {
+	Name       string            `json:"name"`
+	Topic      string            `json:"topic"`
+	ExpireTime string            `json:"expireTime,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+// createSnapshotRequest is PUT snapshots/{name}.
+type createSnapshotRequest struct {
+	Subscription string            `json:"subscription"`
+	Labels       map[string]string `json:"labels,omitempty"`
+}
+
+type listSnapshotsResponse struct {
+	Snapshots     []snapshot `json:"snapshots"`
+	NextPageToken string     `json:"nextPageToken,omitempty"`
+}
+
+// iamPolicy is the shared google.iam.v1.Policy shape.
+type iamPolicy struct {
+	Version  int          `json:"version,omitempty"`
+	Bindings []iamBinding `json:"bindings,omitempty"`
+	Etag     string       `json:"etag,omitempty"`
+}
+
+type iamBinding struct {
+	Role      string          `json:"role"`
+	Members   []string        `json:"members"`
+	Condition json.RawMessage `json:"condition,omitempty"`
+}
+
+type setIamPolicyRequest struct {
+	Policy iamPolicy `json:"policy"`
+}
+
+type testIamPermissionsRequest struct {
+	Permissions []string `json:"permissions"`
+}
+
+type testIamPermissionsResponse struct {
+	Permissions []string `json:"permissions,omitempty"`
 }
