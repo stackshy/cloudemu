@@ -48,6 +48,21 @@ type InstanceConfig struct {
 	// meaningful on input — PrincipalID/TenantID/ClientID are provider-
 	// synthesized output, ignored here. Ignored by AWS/GCP.
 	Identity *ManagedIdentity
+	// NetworkInterfaces are the NICs referenced by the VM's
+	// networkProfile.networkInterfaces (Azure), resolved from each entry's ARM
+	// resource id down to the (resourceGroup, name) pair the networking mock
+	// is keyed by. The provider attaches each one to the launched instance,
+	// setting the NIC's properties.virtualMachine back-reference. Ignored by
+	// AWS/GCP.
+	NetworkInterfaces []AzureNICRef
+}
+
+// AzureNICRef identifies a Network Interface (Microsoft.Network/networkInterfaces)
+// by its (resourceGroup, name) pair, as resolved from the ARM resource id
+// referenced in networkProfile.networkInterfaces. Azure-only.
+type AzureNICRef struct {
+	ResourceGroup string
+	Name          string
 }
 
 // IamInstanceProfile is the IAM instance profile association reported on an EC2

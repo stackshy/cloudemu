@@ -79,30 +79,32 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// A networkProfile must reference NICs that already exist. Real Azure
 	// rejects a VM whose networkProfile points at a missing NIC rather than
 	// silently succeeding.
-	if err := h.validateNICs(r.Context(), req.Properties.NetworkProfile); err != nil {
+	nicRefs, err := h.validateNICs(r.Context(), req.Properties.NetworkProfile)
+	if err != nil {
 		azurearm.WriteError(w, http.StatusBadRequest, "NetworkInterfaceNotFound", err.Error())
 		return
 	}
 
 	cfg := computedriver.InstanceConfig{
-		ImageID:       imageRefToID(req.Properties.StorageProfile),
-		InstanceType:  hardwareSize(req.Properties.HardwareProfile),
-		SubnetID:      firstNicID(req.Properties.NetworkProfile),
-		KeyName:       computerName(req.Properties.OSProfile),
-		UserData:      decodeCustomData(customData(req.Properties.OSProfile)),
-		Tags:          mergeTags(req.Tags, rp.ResourceName),
-		Priority:      req.Properties.Priority,
-		LicenseType:   req.Properties.LicenseType,
-		OSType:        osTypeFromStorage(req.Properties.StorageProfile),
-		Zones:         req.Zones,
-		Region:        req.Location,
-		ResourceGroup: rp.ResourceGroup,
-		Identity:      toDriverIdentity(req.Identity),
+		ImageID:           imageRefToID(req.Properties.StorageProfile),
+		InstanceType:      hardwareSize(req.Properties.HardwareProfile),
+		SubnetID:          firstNicID(req.Properties.NetworkProfile),
+		KeyName:           computerName(req.Properties.OSProfile),
+		UserData:          decodeCustomData(customData(req.Properties.OSProfile)),
+		Tags:              mergeTags(req.Tags, rp.ResourceName),
+		Priority:          req.Properties.Priority,
+		LicenseType:       req.Properties.LicenseType,
+		OSType:            osTypeFromStorage(req.Properties.StorageProfile),
+		Zones:             req.Zones,
+		Region:            req.Location,
+		ResourceGroup:     rp.ResourceGroup,
+		Identity:          toDriverIdentity(req.Identity),
+		NetworkInterfaces: nicRefs,
 	}
 
 	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
 	// updates the VM in place rather than provisioning a duplicate.
-	if existing, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
+	if existing, findErr := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); findErr == nil {
 		h.updateExisting(w, r, rp, req, existing, cfg)
 		return
 	}
@@ -131,19 +133,24 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	azurearm.WriteJSON(w, http.StatusCreated, h.buildVMResponse(r.Context(), &instances[0], rp, req, provisioningCreating))
 }
 
-// validateNICs verifies that every NIC referenced by a networkProfile exists.
-// It is a no-op when no networking driver is wired or the driver does not
-// implement the Azure network-interface surface, so handlers configured
-// without networking keep their previous permissive behavior.
-func (h *Handler) validateNICs(ctx context.Context, np *networkProfile) error {
+// validateNICs verifies that every NIC referenced by a networkProfile exists,
+// and resolves each reference down to the (resourceGroup, name) pair the
+// driver layer needs to attach the NIC to the VM being created (setting its
+// properties.virtualMachine back-reference). It returns (nil, nil) when no
+// networking driver is wired or the driver does not implement the Azure
+// network-interface surface, so handlers configured without networking keep
+// their previous permissive behavior.
+func (h *Handler) validateNICs(ctx context.Context, np *networkProfile) ([]computedriver.AzureNICRef, error) {
 	if np == nil || len(np.NetworkInterfaces) == 0 || h.net == nil {
-		return nil
+		return nil, nil
 	}
 
 	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
 	if !ok {
-		return nil
+		return nil, nil
 	}
+
+	refs := make([]computedriver.AzureNICRef, 0, len(np.NetworkInterfaces))
 
 	for _, nic := range np.NetworkInterfaces {
 		if nic.ID == "" {
@@ -152,16 +159,18 @@ func (h *Handler) validateNICs(ctx context.Context, np *networkProfile) error {
 
 		pp, ok := azurearm.ParsePath(nic.ID)
 		if !ok || pp.ResourceName == "" {
-			return cerrors.Newf(cerrors.InvalidArgument, "malformed networkInterface id %q", nic.ID)
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "malformed networkInterface id %q", nic.ID)
 		}
 
 		if _, err := svc.GetNetworkInterface(ctx, pp.ResourceGroup, pp.ResourceName); err != nil {
-			return cerrors.Newf(cerrors.InvalidArgument,
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
 				"networkProfile references network interface %q which does not exist", pp.ResourceName)
 		}
+
+		refs = append(refs, computedriver.AzureNICRef{ResourceGroup: pp.ResourceGroup, Name: pp.ResourceName})
 	}
 
-	return nil
+	return refs, nil
 }
 
 // updateExisting applies an idempotent CreateOrUpdate to an already-provisioned

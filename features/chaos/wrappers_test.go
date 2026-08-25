@@ -432,6 +432,7 @@ type computeConfigCompat = struct {
 	IamInstanceProfileARN  string
 	IamInstanceProfileName string
 	Identity               *computedriver.ManagedIdentity
+	NetworkInterfaces      []computedriver.AzureNICRef
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

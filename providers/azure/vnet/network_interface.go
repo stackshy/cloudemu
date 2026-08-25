@@ -141,6 +141,51 @@ func (m *Mock) DeleteNetworkInterface(_ context.Context, resourceGroup, name str
 	return nil
 }
 
+// AttachNetworkInterface associates the NIC identified by (resourceGroup,
+// name) with vmID, the ARM resource id of the owning VM — the driver-layer
+// hook the VM lifecycle uses to keep properties.virtualMachine in sync with
+// networkProfile.networkInterfaces. Matching real Azure, a NIC attaches to
+// only one VM at a time: attaching it to a second, different VM is rejected.
+// Re-attaching the same vmID is idempotent, matching ARM's idempotent PUT.
+func (m *Mock) AttachNetworkInterface(_ context.Context, resourceGroup, name, vmID string) error {
+	m.nicMu.Lock()
+	defer m.nicMu.Unlock()
+
+	nic, ok := m.nics.Get(nicKey(resourceGroup, name))
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "network interface %q not found in resource group %q", name, resourceGroup)
+	}
+
+	if nic.VirtualMachineID != "" && nic.VirtualMachineID != vmID {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"network interface %q is already attached to %q", name, nic.VirtualMachineID)
+	}
+
+	nic.VirtualMachineID = vmID
+
+	return nil
+}
+
+// DetachNetworkInterface clears the NIC's virtualMachine back-reference, but
+// only when it currently points at vmID. Detaching a NIC that is unattached,
+// already deleted, or attached to a different VM is a no-op — a stale or
+// duplicate detach must not disturb a real, current attachment.
+func (m *Mock) DetachNetworkInterface(_ context.Context, resourceGroup, name, vmID string) error {
+	m.nicMu.Lock()
+	defer m.nicMu.Unlock()
+
+	nic, ok := m.nics.Get(nicKey(resourceGroup, name))
+	if !ok {
+		return nil
+	}
+
+	if nic.VirtualMachineID == vmID {
+		nic.VirtualMachineID = ""
+	}
+
+	return nil
+}
+
 // ListNetworkInterfaces returns NICs in a resource group, or all when
 // resourceGroup is empty (subscription-wide list).
 func (m *Mock) ListNetworkInterfaces(_ context.Context, resourceGroup string) ([]driver.AzureNIC, error) {
@@ -203,7 +248,45 @@ func (m *Mock) resolveIPConfigs(configs []driver.AzureIPConfig, selfKey string) 
 		out = append(out, cfg)
 	}
 
+	if err := enforcePrimary(out); err != nil {
+		return nil, err
+	}
+
 	return out, nil
+}
+
+// enforcePrimary applies Azure's primary-ipConfiguration invariant to configs
+// in place. A NIC with a single ipConfiguration always has it as primary,
+// regardless of what the caller submitted — real Azure forces this rather
+// than erroring or leaving it non-primary ("Each network interface is
+// assigned one primary IP configuration": Microsoft Learn, Configure IP
+// addresses for an Azure network interface). With more than one
+// ipConfiguration, exactly one must already be marked primary ("A network
+// interface can't have more than one Primary IP configuration": same
+// source).
+func enforcePrimary(configs []driver.AzureIPConfig) error {
+	if len(configs) == 1 {
+		configs[0].Primary = true
+
+		return nil
+	}
+
+	count := 0
+
+	for i := range configs {
+		if configs[i].Primary {
+			count++
+		}
+	}
+
+	switch count {
+	case 1:
+		return nil
+	case 0:
+		return cerrors.New(cerrors.InvalidArgument, "one ipConfiguration must be marked primary")
+	default:
+		return cerrors.New(cerrors.InvalidArgument, "a network interface can have only one primary ipConfiguration")
+	}
 }
 
 // allocatePrivateIP returns the lowest free host in cidr (starting past Azure's

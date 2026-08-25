@@ -159,6 +159,11 @@ type instanceData struct {
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
 	engineBacked bool
+	// NICRefs are the network interfaces this instance was attached to at
+	// launch (networkProfile.networkInterfaces), so Terminate knows which NICs
+	// to detach (clearing their properties.virtualMachine back-reference).
+	// Empty when no NICAttacher is wired or the VM referenced no NICs.
+	NICRefs []driver.AzureNICRef
 }
 
 type asgData struct {
@@ -185,6 +190,12 @@ type Mock struct {
 	snapCounter  atomic.Int64
 	imgCounter   atomic.Int64
 	monitoring   mondriver.Monitoring
+	// nicAttacher keeps a network interface's virtualMachine back-reference in
+	// sync with the VM lifecycle (attach on create, detach on terminate). nil
+	// until wired by the provider factory, in which case NIC attachment is
+	// silently skipped (matching the pre-wiring behavior of every other
+	// optional cross-service hook in this package).
+	nicAttacher NICAttacher
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -439,6 +450,12 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			inst.engineBacked = true
 		}
 
+		if err := m.attachNICs(ctx, inst, cfg.NetworkInterfaces); err != nil {
+			m.rollbackInstances(ctx, created)
+
+			return nil, err
+		}
+
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
@@ -451,14 +468,75 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	return results, nil
 }
 
+// attachNICs attaches each of refs to inst, setting the NIC's
+// properties.virtualMachine back-reference to inst's ARM resource id, and
+// records what was attached on inst.NICRefs so a later Terminate knows what
+// to detach. It is a no-op when no NICAttacher is wired. A failure partway
+// through (e.g. a NIC already attached to a different VM) rolls back the NICs
+// already attached during this call before returning the error, so a failed
+// RunInstances never leaves a NIC dangling on a VM that was never created.
+func (m *Mock) attachNICs(ctx context.Context, inst *instanceData, refs []driver.AzureNICRef) error {
+	if m.nicAttacher == nil || len(refs) == 0 {
+		return nil
+	}
+
+	vmID := m.armResourceID(inst)
+	attached := make([]driver.AzureNICRef, 0, len(refs))
+
+	for _, ref := range refs {
+		if err := m.nicAttacher.AttachNetworkInterface(ctx, ref.ResourceGroup, ref.Name, vmID); err != nil {
+			for _, done := range attached {
+				_ = m.nicAttacher.DetachNetworkInterface(ctx, done.ResourceGroup, done.Name, vmID)
+			}
+
+			return err
+		}
+
+		attached = append(attached, ref)
+	}
+
+	inst.NICRefs = attached
+
+	return nil
+}
+
+// detachNICs clears the virtualMachine back-reference of every NIC inst was
+// attached to at launch, best-effort: every ref is attempted and failures are
+// aggregated rather than stopping partway, so a Terminate always releases
+// every NIC it can. It is a no-op when no NICAttacher is wired.
+func (m *Mock) detachNICs(ctx context.Context, inst *instanceData) error {
+	if m.nicAttacher == nil || len(inst.NICRefs) == 0 {
+		return nil
+	}
+
+	vmID := m.armResourceID(inst)
+
+	var errs []error
+
+	for _, ref := range inst.NICRefs {
+		if err := m.nicAttacher.DetachNetworkInterface(ctx, ref.ResourceGroup, ref.Name, vmID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	inst.NICRefs = nil
+
+	return errors.Join(errs...)
+}
+
 // rollbackInstances best-effort tears down instances already provisioned earlier
-// in a RunInstances batch that then failed: each engine-backed instance is
-// deprovisioned (so no live container remains) and every instance is dropped from
-// the store and the state machine (so no half-tracked state remains).
+// in a RunInstances batch that then failed: every NIC the instance attached at
+// launch is detached (so no NIC keeps a virtualMachine back-reference to a VM
+// that's about to vanish, which would strand it as permanently "in use"), each
+// engine-backed instance is deprovisioned (so no live container remains) and
+// every instance is dropped from the store and the state machine (so no
+// half-tracked state remains).
 func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 	engine := m.opts.ComputeEngine
 
 	for _, inst := range created {
+		_ = m.detachNICs(ctx, inst)
+
 		if inst.engineBacked {
 			di := driver.Instance{ID: inst.ID}
 			_ = computeengine.Deprovision(ctx, engine, &di)
@@ -645,7 +723,15 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
-		if !ok || !inst.engineBacked {
+		if !ok {
+			continue
+		}
+
+		if err := m.detachNICs(ctx, inst); err != nil {
+			errs = append(errs, err)
+		}
+
+		if !inst.engineBacked {
 			continue
 		}
 

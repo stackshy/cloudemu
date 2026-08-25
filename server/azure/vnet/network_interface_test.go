@@ -386,7 +386,78 @@ func TestSDKNetworkInterfacePublicIPDoubleAttachRejected(t *testing.T) {
 	}
 }
 
+// TestSDKNetworkInterfaceSoleIPConfigForcedPrimary verifies that a NIC's one
+// and only ipConfiguration is always reported primary, even when the request
+// submitted it as non-primary — real Azure forces this rather than leaving it
+// non-primary or erroring (Microsoft Learn, "Configure IP addresses for an
+// Azure network interface": "Each network interface is assigned one primary
+// IP configuration").
+func TestSDKNetworkInterfaceSoleIPConfigForcedPrimary(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{Network: cloudP.VNet})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	opts := clientOpts(ts)
+	poll := &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}
+
+	nicClient, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	np, err := nicClient.BeginCreateOrUpdate(ctx, "rg-1", "nic-sole", armnetwork.Interface{
+		Location: to.Ptr("eastus"),
+		Properties: &armnetwork.InterfacePropertiesFormat{
+			IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
+				Name: to.Ptr("ipconfig1"),
+				Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{
+					PrivateIPAddress:          to.Ptr("10.0.1.50"),
+					PrivateIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+					Primary:                   to.Ptr(false),
+				},
+			}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("nic BeginCreateOrUpdate: %v", err)
+	}
+
+	created, err := np.PollUntilDone(ctx, poll)
+	if err != nil {
+		t.Fatalf("nic poll: %v", err)
+	}
+
+	if !isPrimary(created.Properties) {
+		t.Error("sole ipConfiguration primary=false, want Azure to force it true")
+	}
+
+	got, err := nicClient.Get(ctx, "rg-1", "nic-sole", nil)
+	if err != nil {
+		t.Fatalf("nic Get: %v", err)
+	}
+
+	if !isPrimary(got.Interface.Properties) {
+		t.Error("GET sole ipConfiguration primary=false, want true")
+	}
+}
+
 // Helpers to read nested NIC response fields without repeating nil checks.
+
+func isPrimary(p *armnetwork.InterfacePropertiesFormat) bool {
+	if p == nil || len(p.IPConfigurations) == 0 {
+		return false
+	}
+
+	ipc := p.IPConfigurations[0]
+	if ipc.Properties == nil || ipc.Properties.Primary == nil {
+		return false
+	}
+
+	return *ipc.Properties.Primary
+}
 
 func provisioningState(p *armnetwork.InterfacePropertiesFormat) string {
 	if p == nil || p.ProvisioningState == nil {

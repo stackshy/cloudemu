@@ -201,6 +201,7 @@ func New(opts ...config.Option) *Provider {
 		Region:             o.Region,
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
+	p.VirtualMachines.SetNICAttacher(p.VNet)
 	p.BlobStorage.SetMonitoring(p.Monitor)
 	p.CosmosDB.SetMonitoring(p.Monitor)
 	p.Functions.SetMonitoring(p.Monitor)
