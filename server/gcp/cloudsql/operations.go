@@ -62,9 +62,9 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, p *sqlP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "create-"+inst.ID, "CREATE", "instances", inst.ID,
-	))
+	)
 }
 
 func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -74,12 +74,25 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, p *sqlPa
 		return
 	}
 
-	out := sqlInstanceList{Kind: "sql#instancesList", Items: make([]sqlInstance, 0, len(insts))}
+	items := make([]sqlInstance, 0, len(insts))
 	for i := range insts {
-		out.Items = append(out.Items, toSQLInstance(&insts[i], p.project))
+		items = append(items, toSQLInstance(&insts[i], p.project))
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	q := r.URL.Query()
+	items = filterInstances(items, q.Get("filter"))
+
+	page, err := paginateInstances(items, q.Get("pageToken"), q.Get("maxResults"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageToken")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sqlInstanceList{
+		Kind:          "sql#instancesList",
+		Items:         page.Items,
+		NextPageToken: page.NextPageToken,
+	})
 }
 
 func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -139,9 +152,9 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPa
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "patch-"+p.name, "UPDATE", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -150,9 +163,9 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, p *sqlP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "delete-"+p.name, "DELETE", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) restartInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -161,9 +174,9 @@ func (h *Handler) restartInstance(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "restart-"+p.name, "RESTART", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -186,9 +199,9 @@ func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "restore-"+p.name, "RESTORE_VOLUME", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) insertBackupRun(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -200,10 +213,10 @@ func (h *Handler) insertBackupRun(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "create-backup-"+snap.ID, "BACKUP_VOLUME",
 		"instances/"+p.name+"/backupRuns", snap.ID,
-	))
+	)
 }
 
 func (h *Handler) listBackupRuns(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -244,8 +257,8 @@ func (h *Handler) deleteBackupRun(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "delete-backup-"+p.subName, "DELETE",
 		"instances/"+p.name+"/backupRuns", p.subName,
-	))
+	)
 }
