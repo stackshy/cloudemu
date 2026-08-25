@@ -95,6 +95,11 @@ func TestSDKServiceCreateGetListDelete(t *testing.T) {
 		t.Errorf("template round-trip lost fields: %+v", got.Template)
 	}
 
+	if len(got.Template.Containers) != 1 || len(got.Template.Containers[0].Ports) != 1 ||
+		got.Template.Containers[0].Ports[0].ContainerPort != 8080 {
+		t.Errorf("container ports lost on round-trip: %+v", got.Template.Containers)
+	}
+
 	list, err := svc.Projects.Locations.Services.List(parent).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("Services.List: %v", err)

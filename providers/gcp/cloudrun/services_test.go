@@ -49,6 +49,15 @@ func TestCreateServiceReconciles(t *testing.T) {
 		t.Fatalf("terminalCondition = %+v", svc.TerminalCondition)
 	}
 
+	got, err := m.GetService(ctx, "web")
+	if err != nil {
+		t.Fatalf("GetService: %v", err)
+	}
+
+	if len(got.Containers) != 1 || len(got.Containers[0].Ports) != 1 || got.Containers[0].Ports[0] != 8080 {
+		t.Fatalf("container ports lost on round-trip: %+v", got.Containers)
+	}
+
 	if _, err := m.CreateService(ctx, svcCfg()); !cerrors.IsAlreadyExists(err) {
 		t.Fatalf("duplicate create err = %v, want AlreadyExists", err)
 	}

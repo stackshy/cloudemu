@@ -270,22 +270,12 @@ func (h *Handler) getExecution(w http.ResponseWriter, r *http.Request, p *crPath
 }
 
 func (h *Handler) listExecutions(w http.ResponseWriter, r *http.Request, p *crPath) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	execs, err := h.cr.ListExecutions(r.Context(), p.name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	items, next := pageConvert(r, execs, func(e *driver.Execution) executionResource {
-		return toExecutionResource(e, p)
-	})
-
-	writeJSON(w, http.StatusOK, listExecutionsResponse{Executions: items, NextPageToken: next})
+	listPaged(w, r,
+		func() ([]driver.Execution, error) { return h.cr.ListExecutions(r.Context(), p.name) },
+		func(e *driver.Execution) executionResource { return toExecutionResource(e, p) },
+		func(items []executionResource, next string) listExecutionsResponse {
+			return listExecutionsResponse{Executions: items, NextPageToken: next}
+		})
 }
 
 // serveOperation answers GET /v2/…/operations/{op}. Mutations are synchronous
@@ -446,6 +436,32 @@ func paginate(total int, r *http.Request) (indices []int, next string) {
 	}
 
 	return indices, next
+}
+
+// listPaged serves a GET sub-collection endpoint (revisions, executions): it
+// guards the method, fetches the driver slice, paginates + converts each element
+// to its wire shape, and writes the envelope built by wrap. list, conv, and wrap
+// are the only parts that vary between endpoints.
+func listPaged[D, W, R any](
+	w http.ResponseWriter,
+	r *http.Request,
+	list func() ([]D, error),
+	conv func(*D) W,
+	wrap func(items []W, next string) R,
+) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+
+	ds, err := list()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	items, next := pageConvert(r, ds, conv)
+	writeJSON(w, http.StatusOK, wrap(items, next))
 }
 
 // pageConvert selects the requested page over items and maps each element to

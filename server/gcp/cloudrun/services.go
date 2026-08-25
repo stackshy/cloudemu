@@ -230,22 +230,12 @@ func (h *Handler) deleteService(w http.ResponseWriter, r *http.Request, p *crPat
 }
 
 func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request, p *crPath) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	revs, err := h.cr.ListRevisions(r.Context(), p.name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	items, next := pageConvert(r, revs, func(rev *driver.Revision) revisionResource {
-		return toRevisionResource(rev, p)
-	})
-
-	writeJSON(w, http.StatusOK, listRevisionsResponse{Revisions: items, NextPageToken: next})
+	listPaged(w, r,
+		func() ([]driver.Revision, error) { return h.cr.ListRevisions(r.Context(), p.name) },
+		func(rev *driver.Revision) revisionResource { return toRevisionResource(rev, p) },
+		func(items []revisionResource, next string) listRevisionsResponse {
+			return listRevisionsResponse{Revisions: items, NextPageToken: next}
+		})
 }
 
 func (h *Handler) getRevision(w http.ResponseWriter, r *http.Request, p *crPath) {

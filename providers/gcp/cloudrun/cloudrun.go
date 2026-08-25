@@ -296,6 +296,7 @@ func cloneContainers(in []driver.Container) []driver.Container {
 			Command: append([]string(nil), in[i].Command...),
 			Args:    append([]string(nil), in[i].Args...),
 			Env:     cloneMap(in[i].Env),
+			Ports:   append([]int(nil), in[i].Ports...),
 		}
 	}
 
