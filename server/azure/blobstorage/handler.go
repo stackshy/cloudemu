@@ -15,13 +15,14 @@
 //	HEAD   /{container}/{blob}                          — head blob
 //	DELETE /{container}/{blob}                          — delete blob
 //
-// Less-used surfaces (lifecycle, encryption, tags, access policies, leases,
-// snapshots, versioning) are not yet wired and return 501.
+// Less-used surfaces (lifecycle, encryption, tags, versioning) are not yet
+// wired and return 501.
 package blobstorage
 
 import (
 	"crypto/sha256"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -32,6 +33,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -59,6 +61,11 @@ const (
 	compTier        = "tier"
 	compSnapshot    = "snapshot"
 	compAppendBlock = "appendblock"
+	compLease       = "lease"
+
+	// compACL is the ?comp= value for Set/Get Container ACL
+	// (?restype=container&comp=acl).
+	compACL = "acl"
 )
 
 // Handler serves Azure Blob Storage REST requests against a storage.Bucket
@@ -127,21 +134,25 @@ func parseBlobPath(path string) (container, blob string) {
 func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container string, q url.Values) {
 	switch r.Method {
 	case http.MethodPut:
-		if q.Get("comp") == compMetadata {
+		switch q.Get("comp") {
+		case compMetadata:
 			h.setContainerMetadata(w, r, container)
-			return
+		case compACL:
+			h.setContainerACL(w, r, container)
+		default:
+			h.createContainer(w, r, container)
 		}
-
-		h.createContainer(w, r, container)
 	case http.MethodDelete:
 		h.deleteContainer(w, r, container)
 	case http.MethodGet, http.MethodHead:
-		if q.Get("comp") == compList {
+		switch q.Get("comp") {
+		case compList:
 			h.listBlobs(w, r, container, q)
-			return
+		case compACL:
+			h.getContainerACL(w, r, container)
+		default:
+			h.getContainerProperties(w, r, container)
 		}
-
-		h.getContainerProperties(w, r, container)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
@@ -152,6 +163,11 @@ func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob
 	case http.MethodPut:
 		h.putBlobOp(w, r, container, blob)
 	case http.MethodGet:
+		if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && r.URL.Query().Get("comp") == compBlockList {
+			h.getBlockList(w, r, ext, container, blob)
+			return
+		}
+
 		h.getBlob(w, r, container, blob)
 	case http.MethodHead:
 		h.headBlob(w, r, container, blob)
@@ -207,6 +223,8 @@ func (h *Handler) dispatchBlobComp(
 		h.snapshotBlob(w, r, ext, container, blob)
 	case compAppendBlock:
 		h.appendBlock(w, r, ext, container, blob)
+	case compLease:
+		h.leaseBlob(w, r, ext, container, blob)
 	default:
 		return false
 	}
@@ -221,8 +239,24 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := listContainersResult{}
-	for _, b := range buckets {
+	q := r.URL.Query()
+	maxResults := parseMaxResults(q)
+
+	page, err := pagination.Paginate(buckets, q.Get("marker"), maxResults)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "OutOfRangeInput", "invalid marker")
+		return
+	}
+
+	out := listContainersResult{
+		Marker:     q.Get("marker"),
+		MaxResults: maxResults,
+		NextMarker: page.NextPageToken,
+	}
+
+	for i := range page.Items {
+		b := &page.Items[i]
+
 		out.Containers.Containers = append(out.Containers.Containers, containerXML{
 			Name: b.Name,
 			Properties: containerPropsXML{
@@ -232,7 +266,7 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeXML(w, http.StatusOK, out)
+	writeXML(w, out)
 }
 
 func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, container string) {
@@ -335,13 +369,7 @@ func (h *Handler) getContainerProperties(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container string, q url.Values) {
-	maxResults := defaultMaxResults
-
-	if v := q.Get("maxresults"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxResults = n
-		}
-	}
+	maxResults := parseMaxResults(q)
 
 	opts := storagedriver.ListOptions{
 		Prefix:    q.Get("prefix"),
@@ -364,6 +392,8 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 		NextMarker:    result.NextPageToken,
 	}
 
+	includeMetadata := includesOption(q.Get("include"), "metadata")
+
 	for i := range result.Objects {
 		obj := &result.Objects[i]
 
@@ -372,7 +402,7 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 			blobType = blobTypeBlockBlob
 		}
 
-		out.Blobs.Blobs = append(out.Blobs.Blobs, blobXML{
+		bx := blobXML{
 			Name: obj.Key,
 			Properties: blobPropsXML{
 				LastModified:  httpDate(obj.LastModified),
@@ -380,20 +410,59 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 				ContentLength: obj.Size,
 				ContentType:   obj.ContentType,
 				BlobType:      blobType,
+				AccessTier:    obj.AccessTier,
 			},
-		})
+		}
+
+		if includeMetadata && len(obj.Metadata) > 0 {
+			bx.Metadata = &metadataXML{Items: obj.Metadata}
+		}
+
+		out.Blobs.Blobs = append(out.Blobs.Blobs, bx)
 	}
 
 	for _, p := range result.CommonPrefixes {
 		out.Blobs.BlobPrefixes = append(out.Blobs.BlobPrefixes, blobPrefixXML{Name: p})
 	}
 
-	writeXML(w, http.StatusOK, out)
+	writeXML(w, out)
 }
 
 const defaultMaxResults = 5000
 
+// parseMaxResults reads ?maxresults= off q, falling back to defaultMaxResults
+// when it's absent, non-numeric, or not positive.
+func parseMaxResults(q url.Values) int {
+	v := q.Get("maxresults")
+	if v == "" {
+		return defaultMaxResults
+	}
+
+	n, convErr := strconv.Atoi(v)
+	if convErr != nil || n <= 0 {
+		return defaultMaxResults
+	}
+
+	return n
+}
+
+// includesOption reports whether the comma-separated ?include= value (e.g.
+// "metadata,tags") contains want.
+func includesOption(include, want string) bool {
+	for _, part := range strings.Split(include, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), want) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	if h.conditionFailed(w, r, container, blob) {
 		return
 	}
@@ -579,15 +648,39 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 }
 
 func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
-	if err := h.bucket.DeleteObject(r.Context(), container, blob); err != nil {
-		writeErr(w, err)
+	if h.checkLease(w, r, container, blob) {
 		return
+	}
+
+	deleteBase := true
+
+	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok {
+		var err error
+
+		deleteBase, err = ext.DeleteBlobSnapshots(r.Context(), container, blob, r.Header.Get("X-Ms-Delete-Snapshots"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	if deleteBase {
+		if err := h.bucket.DeleteObject(r.Context(), container, blob); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 
 	w.WriteHeader(http.StatusAccepted)
 }
 
 func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	// Copy Blob requires the destination's lease id (if it has an active
+	// lease); the source blob needs none.
+	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
 	src := r.Header.Get("X-Ms-Copy-Source")
 	srcBucket, srcKey := extractCopySource(src)
 
@@ -648,9 +741,12 @@ func httpDate(s string) string {
 	return time.Now().UTC().Format(http.TimeFormat)
 }
 
-func writeXML(w http.ResponseWriter, status int, v any) {
+// writeXML writes an XML response body. Every wire operation that returns an
+// XML document (list/get) does so with 200 OK on success — a write that needs
+// a different success status (201/202) sets headers and writes its own body.
+func writeXML(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", contentTypeXML)
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(xml.Header))
 	_ = xml.NewEncoder(w).Encode(v)
 }
@@ -665,6 +761,12 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 
 // writeErr maps CloudEmu canonical errors to Azure Blob HTTP errors.
 func writeErr(w http.ResponseWriter, err error) {
+	var opErr *storagedriver.BlobOpError
+	if errors.As(err, &opErr) {
+		writeError(w, opErr.Status, opErr.Code, opErr.Message)
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
 		writeError(w, http.StatusNotFound, "BlobNotFound", err.Error())

@@ -52,12 +52,29 @@ type blobObject struct {
 	ContentLanguage    string
 	ContentDisposition string
 	CacheControl       string
+	// CommittedBlocks records the block id/size pairs assembled by the most
+	// recent Put Block List commit, in commit order, for Get Block List.
+	CommittedBlocks []driver.BlockInfo
 	// mu guards the in-place mutations of the new Azure ops (append, metadata /
-	// property / tier updates). Whole-object replacements via the container store
-	// don't need it.
+	// property / tier updates, leases). Whole-object replacements via the
+	// container store don't need it.
 	mu sync.Mutex
 	// appendBlocks counts committed Append Block operations (append blobs only).
 	appendBlocks int
+
+	// Lease Blob state. leaseState is one of leaseStateAvailable (""),
+	// leaseStateLeased, leaseStateBreaking, or leaseStateBroken; a "leased" or
+	// "breaking" state additionally transitions to expired/broken lazily (see
+	// effectiveLeaseState) once its deadline passes, without a background timer.
+	leaseState       string
+	leaseID          string
+	leaseDurationSec int32
+	leaseExpiresAt   time.Time
+	leaseBreakAt     time.Time
+	// leaseModTimeAtAcquire is the blob's LastModified at the last successful
+	// Acquire/Renew, used to detect "blob modified since lease" on a Renew of
+	// an expired-but-unreleased lease.
+	leaseModTimeAtAcquire string
 }
 
 type blobMultipartUpload struct {
@@ -85,6 +102,12 @@ type containerMeta struct {
 	tags       map[string]string
 	// metadata is the container's x-ms-meta-* metadata (Set Container Metadata).
 	metadata map[string]string
+	// publicAccess is the container's public access level (Set/Get Container
+	// ACL), empty for private (the Azure default).
+	publicAccess string
+	// accessPolicies are the container's stored access policies (Set/Get
+	// Container ACL).
+	accessPolicies []driver.SignedIdentifier
 	// staging holds uncommitted blocks (Put Block) keyed by blob name.
 	staging *memstore.Store[*blockStaging]
 	// snapshots holds immutable blob snapshots keyed by snapshotKey(blob, id).
@@ -301,6 +324,18 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
+	// Get Blob doesn't support reading blob content while the blob's tier is
+	// Archive: the data has been moved to offline storage and must first be
+	// rehydrated by Set Blob Tier to an online tier. Get Blob Properties/Head/
+	// List Blobs still succeed and report the Archive tier.
+	// https://learn.microsoft.com/en-us/rest/api/storageservices/set-blob-tier
+	if obj.AccessTier == accessTierArchive {
+		return nil, &driver.BlobOpError{
+			Status: http.StatusConflict, Code: "BlobArchived",
+			Message: "This operation is not permitted on an archived blob.",
+		}
+	}
+
 	data, err := m.loadObjectData(ctx, bucket, obj)
 	if err != nil {
 		return nil, err
@@ -483,7 +518,9 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	dstObj := &blobObject{
 		Key: dstKey, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
-		Metadata: meta,
+		Metadata: meta, BlobType: srcObj.BlobType, AccessTier: srcObj.AccessTier,
+		ContentEncoding: srcObj.ContentEncoding, ContentLanguage: srcObj.ContentLanguage,
+		ContentDisposition: srcObj.ContentDisposition, CacheControl: srcObj.CacheControl,
 	}
 
 	if m.opts.StorageEngine != nil {

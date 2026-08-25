@@ -53,15 +53,25 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 
 | Operation | Description |
 | --- | --- |
+| `AcquireLease` | AcquireLease acquires a lease on a blob (Lease Blob, ?comp=lease, |
 | `AppendBlock` | AppendBlock appends a block to the end of an append blob (Append Block, |
+| `BreakLease` | BreakLease breaks the blob's current lease. breakPeriod is nil when the |
+| `ChangeLease` | ChangeLease changes the blob's lease ID. |
+| `CheckBlobLease` | CheckBlobLease validates a write/delete request's x-ms-lease-id header |
 | `CommitBlockList` | CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist) |
+| `ContainerAccessPolicy` | ContainerAccessPolicy returns a container's public access level and |
 | `ContainerMetadata` | ContainerMetadata returns a container's metadata (Get Container Properties / |
 | `CreateAppendBlob` | CreateAppendBlob creates an empty append blob (Put Blob with |
 | `CreateBlobSnapshot` | CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob, |
+| `DeleteBlobSnapshots` | DeleteBlobSnapshots applies the Azure delete-snapshots directive |
 | `GetBlobSnapshot` | GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…). |
+| `GetBlockList` | GetBlockList returns the blob's committed and uncommitted blocks (Get |
+| `ReleaseLease` | ReleaseLease releases the blob's current lease. |
+| `RenewLease` | RenewLease renews the blob's current lease. |
 | `SetBlobMetadata` | SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata, |
 | `SetBlobProperties` | SetBlobProperties replaces only a blob's system properties (Set Blob |
 | `SetBlobTier` | SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier), |
+| `SetContainerAccessPolicy` | SetContainerAccessPolicy sets a container's public access level and |
 | `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
 | `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
 
