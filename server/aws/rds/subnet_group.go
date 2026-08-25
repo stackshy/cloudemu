@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 
@@ -131,6 +132,30 @@ func (h *Handler) deleteDBSubnetGroup(w http.ResponseWriter, r *http.Request) {
 		Xmlns:    Namespace,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// resolveInstanceSubnetGroupXML resolves the DB subnet group an instance is
+// placed in to the full nested <DBSubnetGroup> wire shape RDS embeds on a
+// DBInstance. It returns nil when the instance has no subnet group, the driver
+// does not model subnet groups, or the named group no longer exists.
+func (h *Handler) resolveInstanceSubnetGroupXML(ctx context.Context, inst *rdsdriver.Instance) *dbSubnetGroupXML {
+	if inst.SubnetGroupName == "" {
+		return nil
+	}
+
+	store, ok := h.subnetGroups()
+	if !ok {
+		return nil
+	}
+
+	groups, err := store.DescribeDBSubnetGroups(ctx, []string{inst.SubnetGroupName})
+	if err != nil || len(groups) == 0 {
+		return nil
+	}
+
+	x := toSubnetGroupXML(&groups[0])
+
+	return &x
 }
 
 func toSubnetGroupXML(sg *rdsdriver.SubnetGroup) dbSubnetGroupXML {
