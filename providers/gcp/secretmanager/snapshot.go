@@ -20,9 +20,11 @@ type secretsSnapshot struct {
 }
 
 type secretSnapshot struct {
-	Info      driver.SecretInfo      `json:"info"`
-	Versions  []driver.SecretVersion `json:"versions,omitempty"`
-	DeletedAt time.Time              `json:"deletedAt,omitempty"`
+	Info       driver.SecretInfo      `json:"info"`
+	Versions   []driver.SecretVersion `json:"versions,omitempty"`
+	VerCounter int                    `json:"verCounter,omitempty"`
+	IAM        *driver.GCPIAMPolicy   `json:"iam,omitempty"`
+	DeletedAt  time.Time              `json:"deletedAt,omitempty"`
 }
 
 // Snapshot captures every secret's full state as JSON. includeAssets is unused —
@@ -34,9 +36,11 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	for name, sd := range m.secrets.All() {
 		sd.mu.RLock()
 		snap.Secrets[name] = &secretSnapshot{
-			Info:      sd.info,
-			Versions:  sd.versions,
-			DeletedAt: sd.deletedAt,
+			Info:       sd.info,
+			Versions:   sd.versions,
+			VerCounter: sd.verCounter,
+			IAM:        sd.iam,
+			DeletedAt:  sd.deletedAt,
 		}
 		sd.mu.RUnlock()
 	}
@@ -54,9 +58,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	for name, ss := range snap.Secrets {
 		m.secrets.Set(name, &secretData{
-			info:      ss.Info,
-			versions:  ss.Versions,
-			deletedAt: ss.DeletedAt,
+			info:       ss.Info,
+			versions:   ss.Versions,
+			verCounter: ss.VerCounter,
+			iam:        ss.IAM,
+			deletedAt:  ss.DeletedAt,
 		})
 	}
 

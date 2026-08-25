@@ -4,13 +4,14 @@ import (
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
-// stateEnabled is the lifecycle state reported for every version — the mock
-// models neither disabled nor destroyed versions.
-const stateEnabled = "ENABLED"
-
 type automaticJSON struct{}
 
 type replicationJSON struct {
+	Automatic *automaticJSON `json:"automatic,omitempty"`
+}
+
+// replicationStatusJSON mirrors the automatic replication shape on a version.
+type replicationStatusJSON struct {
 	Automatic *automaticJSON `json:"automatic,omitempty"`
 }
 
@@ -19,12 +20,16 @@ type secretJSON struct {
 	Replication replicationJSON   `json:"replication"`
 	CreateTime  string            `json:"createTime,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
+	Etag        string            `json:"etag,omitempty"`
 }
 
 type versionResourceJSON struct {
-	Name       string `json:"name"`
-	CreateTime string `json:"createTime,omitempty"`
-	State      string `json:"state"`
+	Name              string                 `json:"name"`
+	CreateTime        string                 `json:"createTime,omitempty"`
+	DestroyTime       string                 `json:"destroyTime,omitempty"`
+	State             string                 `json:"state"`
+	ReplicationStatus *replicationStatusJSON `json:"replicationStatus,omitempty"`
+	Etag              string                 `json:"etag,omitempty"`
 }
 
 // payloadJSON carries the secret bytes; encoding/json renders []byte as the
@@ -34,6 +39,11 @@ type payloadJSON struct {
 }
 
 type createSecretRequest struct {
+	Labels map[string]string `json:"labels"`
+}
+
+// patchSecretRequest is the body of secrets.patch; only labels are modeled.
+type patchSecretRequest struct {
 	Labels map[string]string `json:"labels"`
 }
 
@@ -47,13 +57,40 @@ type accessResponse struct {
 }
 
 type listSecretsResponse struct {
-	Secrets   []secretJSON `json:"secrets"`
-	TotalSize int          `json:"totalSize"`
+	Secrets       []secretJSON `json:"secrets"`
+	TotalSize     int          `json:"totalSize"`
+	NextPageToken string       `json:"nextPageToken,omitempty"`
 }
 
 type listVersionsResponse struct {
-	Versions  []versionResourceJSON `json:"versions"`
-	TotalSize int                   `json:"totalSize"`
+	Versions      []versionResourceJSON `json:"versions"`
+	TotalSize     int                   `json:"totalSize"`
+	NextPageToken string                `json:"nextPageToken,omitempty"`
+}
+
+// iamPolicyJSON is the GCP IAM Policy resource returned by getIamPolicy /
+// setIamPolicy.
+type iamPolicyJSON struct {
+	Version  int              `json:"version,omitempty"`
+	Bindings []iamBindingJSON `json:"bindings,omitempty"`
+	Etag     string           `json:"etag,omitempty"`
+}
+
+type iamBindingJSON struct {
+	Role    string   `json:"role"`
+	Members []string `json:"members,omitempty"`
+}
+
+type setIamPolicyRequest struct {
+	Policy iamPolicyJSON `json:"policy"`
+}
+
+type testIamPermissionsRequest struct {
+	Permissions []string `json:"permissions"`
+}
+
+type testIamPermissionsResponse struct {
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // secretName builds the canonical "projects/{p}/secrets/{id}" resource name,
@@ -82,13 +119,40 @@ func toSecretJSON(project string, info *secretsdriver.SecretInfo) secretJSON {
 		Replication: replicationJSON{Automatic: &automaticJSON{}},
 		CreateTime:  info.CreatedAt,
 		Labels:      info.Tags,
+		Etag:        info.Etag,
 	}
 }
 
 func toVersionJSON(project, id string, ver *secretsdriver.SecretVersion) versionResourceJSON {
-	return versionResourceJSON{
-		Name:       versionName(project, id, ver.VersionID),
-		CreateTime: ver.CreatedAt,
-		State:      stateEnabled,
+	state := ver.State
+	if state == "" {
+		state = secretsdriver.VersionEnabled
 	}
+
+	return versionResourceJSON{
+		Name:              versionName(project, id, ver.VersionID),
+		CreateTime:        ver.CreatedAt,
+		DestroyTime:       ver.DestroyTime,
+		State:             state,
+		ReplicationStatus: &replicationStatusJSON{Automatic: &automaticJSON{}},
+		Etag:              ver.Etag,
+	}
+}
+
+func toPolicyJSON(pol *secretsdriver.GCPIAMPolicy) iamPolicyJSON {
+	out := iamPolicyJSON{Version: pol.Version, Etag: pol.Etag}
+	for _, b := range pol.Bindings {
+		out.Bindings = append(out.Bindings, iamBindingJSON{Role: b.Role, Members: b.Members})
+	}
+
+	return out
+}
+
+func fromPolicyJSON(pol iamPolicyJSON) secretsdriver.GCPIAMPolicy {
+	out := secretsdriver.GCPIAMPolicy{Version: pol.Version, Etag: pol.Etag}
+	for _, b := range pol.Bindings {
+		out.Bindings = append(out.Bindings, secretsdriver.GCPIAMBinding{Role: b.Role, Members: b.Members})
+	}
+
+	return out
 }
