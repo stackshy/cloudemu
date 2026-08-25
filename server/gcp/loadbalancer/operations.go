@@ -2,9 +2,12 @@ package loadbalancer
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -26,13 +29,20 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if _, err := h.findTGByName(r.Context(), req.Name); conflictIfExists(w, err, "backend service "+req.Name+" already exists") {
+		return
+	}
+
+	tags := backendServiceTags(&req)
+	tags[bsCreationTag] = time.Now().UTC().Format(time.RFC3339)
+
 	if _, err := h.lb.CreateTargetGroup(r.Context(), lbdriver.TargetGroupConfig{
 		Name:     req.Name,
 		Protocol: req.Protocol,
 		Port:     req.Port,
 		// The driver TargetGroup can't hold these GCP fields, so round-trip them
 		// through tags rather than dropping them on read.
-		Tags: backendServiceTags(&req),
+		Tags: tags,
 	}); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -40,6 +50,50 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 
 	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		resourceBackendServices, req.Name, "insert")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// patchBackendService applies compute.backendServices.patch/update: it merges
+// the request's non-empty fields onto the existing backend service and returns
+// a DONE Operation. Without it, Terraform's google_compute_backend_service —
+// which patches on every change — leaves the resource read-only after create.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	patcher, ok := h.lb.(lbdriver.GCPBackendServicePatcher)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented", "load balancer driver cannot patch backend services")
+		return
+	}
+
+	var req backendServiceRequest
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	err := patcher.PatchGCPBackendService(r.Context(), rp.ResourceName, func(tg *lbdriver.TargetGroupInfo) {
+		if req.Protocol != "" {
+			tg.Protocol = req.Protocol
+		}
+
+		if req.Port != 0 {
+			tg.Port = req.Port
+		}
+
+		if tg.Tags == nil {
+			tg.Tags = map[string]string{}
+		}
+
+		mergeBackendServiceTags(tg.Tags, &req)
+	})
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		resourceBackendServices, rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -77,7 +131,7 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 	gcprest.WriteJSON(w, http.StatusOK, out)
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is a request-scoped value; CRUD delete shape is duplicate-by-design across resource types
 func (h *Handler) deleteBackendService(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	tg, err := h.findTGByName(r.Context(), rp.ResourceName)
 	if err != nil {
@@ -111,10 +165,17 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if _, err := h.findLBByName(r.Context(), req.Name); conflictIfExists(w, err, "forwarding rule "+req.Name+" already exists") {
+		return
+	}
+
 	lb, err := h.lb.CreateLoadBalancer(r.Context(), lbdriver.LBConfig{
 		Name:   req.Name,
 		Type:   "network",
 		Scheme: schemeFromRule(&req),
+		// Round-trip the GCP forwarding-rule fields the driver LB can't model
+		// (exact scheme, portRange, IPProtocol, IPAddress, …) through tags.
+		Tags: forwardingRuleTags(&req),
 	})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
@@ -131,6 +192,7 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 			gcprest.WriteCErr(w, ferr)
 			return
 		}
+
 		if _, lerr := h.lb.CreateListener(r.Context(), lbdriver.ListenerConfig{
 			LBARN:          lb.ARN,
 			Protocol:       req.IPProtocol,
@@ -181,7 +243,7 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 	gcprest.WriteJSON(w, http.StatusOK, out)
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is a request-scoped value; CRUD delete shape is duplicate-by-design across resource types
 func (h *Handler) deleteForwardingRule(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	lb, err := h.findLBByName(r.Context(), rp.ResourceName)
 	if err != nil {
@@ -245,6 +307,18 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 
 	resp.Description = tg.Tags[bsDescriptionTag]
 	resp.PortName = tg.Tags[bsPortNameTag]
+	resp.LoadBalancingScheme = tg.Tags[bsSchemeTag]
+	resp.SessionAffinity = tg.Tags[bsSessionAffinityTag]
+	resp.CreationTimestamp = tg.Tags[bsCreationTag]
+	// A non-empty fingerprint is required for every future patch; real GCP always
+	// returns one, so derive a stable value from the resource name.
+	resp.Fingerprint = fingerprintOf(tg.Name)
+
+	if ts := tg.Tags[bsTimeoutSecTag]; ts != "" {
+		if n, err := strconv.Atoi(ts); err == nil {
+			resp.TimeoutSec = n
+		}
+	}
 
 	if hc := tg.Tags[bsHealthChecksTag]; hc != "" {
 		resp.HealthChecks = strings.Split(hc, ",")
@@ -256,16 +330,27 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 // Reserved tag keys carry the GCP backend-service fields the driver's target
 // group can't model.
 const (
-	bsDescriptionTag  = "cloudemu:gcpBsDescription"
-	bsPortNameTag     = "cloudemu:gcpBsPortName"
-	bsHealthChecksTag = "cloudemu:gcpBsHealthChecks"
+	bsDescriptionTag     = "cloudemu:gcpBsDescription"
+	bsPortNameTag        = "cloudemu:gcpBsPortName"
+	bsHealthChecksTag    = "cloudemu:gcpBsHealthChecks"
+	bsSchemeTag          = "cloudemu:gcpBsScheme"
+	bsSessionAffinityTag = "cloudemu:gcpBsSessionAffinity"
+	bsTimeoutSecTag      = "cloudemu:gcpBsTimeoutSec"
+	bsCreationTag        = "cloudemu:gcpBsCreationTimestamp"
 )
 
-// backendServiceTags folds the GCP-specific backend-service fields into a tag
-// map so they round-trip through the driver.
+// backendServiceTags folds the GCP-specific backend-service fields into a fresh
+// tag map so they round-trip through the driver.
 func backendServiceTags(req *backendServiceRequest) map[string]string {
 	tags := map[string]string{}
+	mergeBackendServiceTags(tags, req)
 
+	return tags
+}
+
+// mergeBackendServiceTags sets a tag for each non-empty field of req, leaving
+// tags for omitted fields untouched (patch-merge semantics).
+func mergeBackendServiceTags(tags map[string]string, req *backendServiceRequest) {
 	if req.Description != "" {
 		tags[bsDescriptionTag] = req.Description
 	}
@@ -278,7 +363,17 @@ func backendServiceTags(req *backendServiceRequest) map[string]string {
 		tags[bsHealthChecksTag] = strings.Join(req.HealthChecks, ",")
 	}
 
-	return tags
+	if req.LoadBalancingScheme != "" {
+		tags[bsSchemeTag] = req.LoadBalancingScheme
+	}
+
+	if req.SessionAffinity != "" {
+		tags[bsSessionAffinityTag] = req.SessionAffinity
+	}
+
+	if req.TimeoutSec != 0 {
+		tags[bsTimeoutSecTag] = strconv.Itoa(req.TimeoutSec)
+	}
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -289,13 +384,17 @@ func (h *Handler) toForwardingRuleResponse(ctx context.Context, lb *lbdriver.LBI
 		Kind:                "compute#forwardingRule",
 		ID:                  numericID(lb.ID),
 		Name:                lb.Name,
-		IPAddress:           lb.DNSName,
-		IPProtocol:          "TCP",
-		LoadBalancingScheme: schemeToGCP(lb.Scheme),
+		IPAddress:           forwardingRuleIP(lb),
+		IPProtocol:          tagOrDefault(lb.Tags, frProtocolTag, "TCP"),
+		PortRange:           lb.Tags[frPortRangeTag],
+		Description:         lb.Tags[frDescriptionTag],
+		LoadBalancingScheme: forwardingRuleScheme(lb),
+		CreationTimestamp:   lb.Tags[frCreationTag],
 		SelfLink:            gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", resourceForwardingRules, lb.Name),
 	}
 
-	// Reflect the backing backend service, if a listener links one.
+	// A linked listener (a rule referencing a backend service) supersedes the
+	// round-tripped protocol/portRange and adds the backendService self-link.
 	if listeners, err := h.lb.DescribeListeners(ctx, lb.ARN); err == nil && len(listeners) > 0 {
 		out.IPProtocol = protocolOrDefault(listeners[0].Protocol)
 		out.PortRange = strconv.Itoa(listeners[0].Port)
@@ -357,10 +456,13 @@ func firstPort(portRange string) int {
 	return n
 }
 
+// driverSchemeInternal is the driver-side scheme value for internal LBs.
+const driverSchemeInternal = "internal"
+
 // schemeFromRule maps a GCP loadBalancingScheme to the driver scheme.
 func schemeFromRule(req *forwardingRuleRequest) string {
 	if strings.EqualFold(req.LoadBalancingScheme, "INTERNAL") {
-		return "internal"
+		return driverSchemeInternal
 	}
 
 	return "internet-facing"
@@ -368,7 +470,7 @@ func schemeFromRule(req *forwardingRuleRequest) string {
 
 // schemeToGCP maps the driver scheme back to a GCP loadBalancingScheme.
 func schemeToGCP(scheme string) string {
-	if scheme == "internal" {
+	if scheme == driverSchemeInternal {
 		return "INTERNAL"
 	}
 
@@ -384,20 +486,134 @@ func protocolOrDefault(p string) string {
 	return p
 }
 
-// numericID returns a stable uint64-shaped string derived from a driver ID.
-// GCP wire IDs are uint64 and proto JSON unmarshalling rejects anything else.
-func numericID(driverID string) string {
+// fnvHash is a 64-bit FNV-1a hash used to derive stable synthetic identity
+// (numeric IDs, fingerprints, IP addresses) from a resource's name/ID.
+func fnvHash(s string) uint64 {
 	const fnvOffset uint64 = 14695981039346656037
 
 	const fnvPrime uint64 = 1099511628211
 
 	h := fnvOffset
-	for i := 0; i < len(driverID); i++ {
-		h ^= uint64(driverID[i])
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
 		h *= fnvPrime
 	}
 
-	return strconv.FormatUint(h, 10)
+	return h
+}
+
+// numericID returns a stable uint64-shaped string derived from a driver ID.
+// GCP wire IDs are uint64 and proto JSON unmarshalling rejects anything else.
+func numericID(driverID string) string {
+	return strconv.FormatUint(fnvHash(driverID), 10)
+}
+
+// fingerprintOf returns a stable base64 fingerprint for a resource. GCP returns
+// a fingerprint on every resource and requires it on patch; a stable value is
+// enough for a read-modify-write client since the mock does not enforce it.
+func fingerprintOf(name string) string {
+	var b [8]byte
+
+	binary.BigEndian.PutUint64(b[:], fnvHash("fp:"+name))
+
+	return base64.StdEncoding.EncodeToString(b[:])
+}
+
+// Reserved tag keys carry the GCP forwarding-rule fields the driver's load
+// balancer can't model.
+const (
+	frPortRangeTag   = "cloudemu:gcpFrPortRange"
+	frProtocolTag    = "cloudemu:gcpFrIPProtocol"
+	frSchemeTag      = "cloudemu:gcpFrScheme"
+	frIPAddressTag   = "cloudemu:gcpFrIPAddress"
+	frDescriptionTag = "cloudemu:gcpFrDescription"
+	frCreationTag    = "cloudemu:gcpFrCreationTimestamp"
+)
+
+// forwardingRuleTags folds the GCP-specific forwarding-rule fields into a tag
+// map so they round-trip through the driver's LB record.
+func forwardingRuleTags(req *forwardingRuleRequest) map[string]string {
+	tags := map[string]string{
+		frCreationTag: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if req.PortRange != "" {
+		tags[frPortRangeTag] = req.PortRange
+	}
+
+	if req.IPProtocol != "" {
+		tags[frProtocolTag] = req.IPProtocol
+	}
+
+	if req.LoadBalancingScheme != "" {
+		tags[frSchemeTag] = req.LoadBalancingScheme
+	}
+
+	if req.IPAddress != "" {
+		tags[frIPAddressTag] = req.IPAddress
+	}
+
+	if req.Description != "" {
+		tags[frDescriptionTag] = req.Description
+	}
+
+	return tags
+}
+
+// forwardingRuleIP returns the rule's IP address: the client-supplied one when
+// present, otherwise a stable synthetic IPv4 (real GCP returns an IP, never a
+// hostname).
+func forwardingRuleIP(lb *lbdriver.LBInfo) string {
+	if ip := lb.Tags[frIPAddressTag]; ip != "" {
+		return ip
+	}
+
+	// Derive a deterministic public-looking IPv4 from the LB identity.
+	h := fnvHash("ip:" + lb.ID + lb.Name)
+
+	const octetMod = 254
+
+	o2 := byte(h%octetMod) + 1
+	o3 := byte((h>>8)%octetMod) + 1
+	o4 := byte((h>>16)%octetMod) + 1
+
+	return "34." + strconv.Itoa(int(o2)) + "." + strconv.Itoa(int(o3)) + "." + strconv.Itoa(int(o4))
+}
+
+// forwardingRuleScheme returns the exact GCP loadBalancingScheme, preferring the
+// round-tripped value (EXTERNAL_MANAGED / INTERNAL_MANAGED / …) over the driver
+// scheme's lossy EXTERNAL/INTERNAL collapse.
+func forwardingRuleScheme(lb *lbdriver.LBInfo) string {
+	if s := lb.Tags[frSchemeTag]; s != "" {
+		return s
+	}
+
+	return schemeToGCP(lb.Scheme)
+}
+
+// tagOrDefault returns tags[key], or def when absent/empty.
+func tagOrDefault(tags map[string]string, key, def string) string {
+	if v := tags[key]; v != "" {
+		return v
+	}
+
+	return def
+}
+
+// conflictIfExists writes a 409 alreadyExists (or the underlying error) and
+// returns true when a name-existence probe found the resource or errored; it
+// returns false, letting the caller proceed, only when findErr is NotFound.
+func conflictIfExists(w http.ResponseWriter, findErr error, msg string) bool {
+	switch {
+	case findErr == nil:
+		gcprest.WriteError(w, http.StatusConflict, "alreadyExists", msg)
+		return true
+	case !cerrors.IsNotFound(findErr):
+		gcprest.WriteCErr(w, findErr)
+		return true
+	default:
+		return false
+	}
 }
 
 func hostOf(r *http.Request) string {

@@ -27,6 +27,10 @@ type Mock struct {
 	rules     *memstore.Store[driver.RuleInfo]
 	opts      *config.Options
 
+	// gcpResources holds opaque GCP-only Compute Load Balancing resources
+	// (healthChecks, targetPools, urlMaps) keyed by "collection\x00scope\x00name".
+	gcpResources *memstore.Store[driver.GCPResource]
+
 	healthMu sync.RWMutex
 	health   map[string]map[string]*driver.TargetHealth // tgARN -> targetID -> health
 
@@ -37,13 +41,14 @@ type Mock struct {
 // New creates a new Cloud Load Balancing mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		lbs:       memstore.New[driver.LBInfo](),
-		tgs:       memstore.New[driver.TargetGroupInfo](),
-		listeners: memstore.New[driver.ListenerInfo](),
-		rules:     memstore.New[driver.RuleInfo](),
-		opts:      opts,
-		health:    make(map[string]map[string]*driver.TargetHealth),
-		attrs:     make(map[string]driver.LBAttributes),
+		lbs:          memstore.New[driver.LBInfo](),
+		tgs:          memstore.New[driver.TargetGroupInfo](),
+		listeners:    memstore.New[driver.ListenerInfo](),
+		rules:        memstore.New[driver.RuleInfo](),
+		opts:         opts,
+		gcpResources: memstore.New[driver.GCPResource](),
+		health:       make(map[string]map[string]*driver.TargetHealth),
+		attrs:        make(map[string]driver.LBAttributes),
 	}
 }
 

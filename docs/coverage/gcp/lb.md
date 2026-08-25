@@ -46,6 +46,25 @@ AzureLoadBalancers is an OPTIONAL, type-asserted capability. The Azure
 | `UpsertAzureLBBackendPool` | UpsertAzureLBBackendPool adds poolName to the load balancer's backend |
 | `UpsertAzureLBNatRule` | UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by |
 
+### GCPBackendServicePatcher
+
+GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `PatchGCPBackendService` | PatchGCPBackendService looks up the target group by its GCP name and |
+
+### GCPComputeResourceStore
+
+GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `DeleteGCPResource` | DeleteGCPResource removes the resource, returning NotFound when absent. |
+| `GetGCPResource` | GetGCPResource returns the stored resource, or NotFound. |
+| `ListGCPResources` | ListGCPResources returns every resource in a (collection, scope) bucket. |
+| `PutGCPResource` | PutGCPResource stores res, returning AlreadyExists when a resource with |
+
 ### LBAttributeUpdater
 
 LBAttributeUpdater is implemented by drivers that can apply a partial

@@ -7,24 +7,32 @@ package loadbalancer
 // --- backend services (→ driver target groups) ---
 
 type backendServiceRequest struct {
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
-	Port         int      `json:"port,omitempty"`
-	PortName     string   `json:"portName,omitempty"`
-	HealthChecks []string `json:"healthChecks,omitempty"`
+	Name                string   `json:"name"`
+	Description         string   `json:"description,omitempty"`
+	Protocol            string   `json:"protocol,omitempty"`
+	Port                int      `json:"port,omitempty"`
+	PortName            string   `json:"portName,omitempty"`
+	HealthChecks        []string `json:"healthChecks,omitempty"`
+	LoadBalancingScheme string   `json:"loadBalancingScheme,omitempty"`
+	SessionAffinity     string   `json:"sessionAffinity,omitempty"`
+	TimeoutSec          int      `json:"timeoutSec,omitempty"`
 }
 
 type backendServiceResponse struct {
-	Kind         string   `json:"kind"`
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
-	Port         int      `json:"port,omitempty"`
-	PortName     string   `json:"portName,omitempty"`
-	HealthChecks []string `json:"healthChecks,omitempty"`
-	SelfLink     string   `json:"selfLink"`
+	Kind                string   `json:"kind"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Description         string   `json:"description,omitempty"`
+	Protocol            string   `json:"protocol,omitempty"`
+	Port                int      `json:"port,omitempty"`
+	PortName            string   `json:"portName,omitempty"`
+	HealthChecks        []string `json:"healthChecks,omitempty"`
+	LoadBalancingScheme string   `json:"loadBalancingScheme,omitempty"`
+	SessionAffinity     string   `json:"sessionAffinity,omitempty"`
+	TimeoutSec          int      `json:"timeoutSec,omitempty"`
+	Fingerprint         string   `json:"fingerprint,omitempty"`
+	CreationTimestamp   string   `json:"creationTimestamp,omitempty"`
+	SelfLink            string   `json:"selfLink"`
 }
 
 type backendServiceListResponse struct {
@@ -39,6 +47,7 @@ type backendServiceListResponse struct {
 type forwardingRuleRequest struct {
 	Name                string `json:"name"`
 	Description         string `json:"description,omitempty"`
+	IPAddress           string `json:"IPAddress,omitempty"`
 	IPProtocol          string `json:"IPProtocol,omitempty"`
 	PortRange           string `json:"portRange,omitempty"`
 	Target              string `json:"target,omitempty"`
@@ -57,6 +66,7 @@ type forwardingRuleResponse struct {
 	Target              string `json:"target,omitempty"`
 	BackendService      string `json:"backendService,omitempty"`
 	LoadBalancingScheme string `json:"loadBalancingScheme,omitempty"`
+	CreationTimestamp   string `json:"creationTimestamp,omitempty"`
 	SelfLink            string `json:"selfLink"`
 }
 

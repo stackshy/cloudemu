@@ -5694,6 +5694,38 @@
         ]
       },
       {
+        "name": "GCPBackendServicePatcher",
+        "doc": "GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "PatchGCPBackendService",
+            "doc": "PatchGCPBackendService looks up the target group by its GCP name and"
+          }
+        ]
+      },
+      {
+        "name": "GCPComputeResourceStore",
+        "doc": "GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "DeleteGCPResource",
+            "doc": "DeleteGCPResource removes the resource, returning NotFound when absent."
+          },
+          {
+            "name": "GetGCPResource",
+            "doc": "GetGCPResource returns the stored resource, or NotFound."
+          },
+          {
+            "name": "ListGCPResources",
+            "doc": "ListGCPResources returns every resource in a (collection, scope) bucket."
+          },
+          {
+            "name": "PutGCPResource",
+            "doc": "PutGCPResource stores res, returning AlreadyExists when a resource with"
+          }
+        ]
+      },
+      {
         "name": "LBAttributeUpdater",
         "doc": "LBAttributeUpdater is implemented by drivers that can apply a partial",
         "operations": [
