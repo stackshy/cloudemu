@@ -216,6 +216,14 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 // action ARNs are published (via the wired publisher); the notification carries
 // the alarm's new state so subscribers can react. It is a no-op when no
 // publisher is wired or the alarm has actions disabled.
+//
+// The stateInsufficientData branch below is wired for completeness (and to
+// keep the switch exhaustive over the alarm state enum) but is currently
+// unreachable: evaluateSingleAlarm only ever assigns stateAlarm or stateOK,
+// since alarm evaluation here is event-driven off incoming PutMetricData
+// calls. Real CloudWatch instead transitions an alarm to INSUFFICIENT_DATA
+// on a background timer when expected datapoints stop arriving — a
+// timer-driven behavior this mock does not simulate.
 func (m *Mock) fireAlarmActions(a *alarmData, oldState, newState string, now time.Time) {
 	if m.sns == nil || !a.ActionsEnabled {
 		return

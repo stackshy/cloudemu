@@ -281,6 +281,13 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 // filter pattern contributes the filter's metric value; the total is published
 // to the filter's configured namespace/metric, mirroring how CloudWatch Logs
 // extracts custom metrics from ingested events.
+//
+// Pattern matching only supports plain-substring "count occurrences of a
+// term" matching (strings.Contains). Real CloudWatch Logs filter pattern
+// syntax — quoted phrases, JSON-field patterns (e.g. { $.level = "ERROR" }),
+// ?OR-style alternation, and -exclusion terms — is not parsed, so a more
+// elaborate real filter pattern will not behave like real CloudWatch Logs
+// here.
 func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
 	if m.monitoring == nil {
 		return
