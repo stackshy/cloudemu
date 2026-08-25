@@ -19,6 +19,11 @@ type QueueConfig struct {
 	MessageRetention  int // seconds
 	Tags              map[string]string
 	DeadLetterQueue   *DeadLetterConfig
+	// DeadLetterOnExpiration moves a message to the dead-letter queue when its
+	// TTL elapses instead of silently dropping it (Azure Service Bus'
+	// deadLetteringOnMessageExpiration). Requires DeadLetterQueue to be set;
+	// ignored by non-Azure providers.
+	DeadLetterOnExpiration bool
 
 	// AWS SQS extras (ignored by non-AWS providers).
 	ReceiveMessageWaitTimeSeconds int
@@ -76,6 +81,11 @@ type SendMessageInput struct {
 	// didn't specify one; a negative value means the message never expires.
 	// Ignored by non-Azure providers.
 	MessageTTLSeconds *int
+	// SystemProperties carries Azure Service Bus brokered-message system
+	// properties (MessageId, CorrelationId, SessionId, Label, ReplyTo, To,
+	// ReplyToSessionId, ContentType) so they survive a send/receive round-trip.
+	// Ignored by non-Azure providers.
+	SystemProperties map[string]string
 }
 
 // SendMessageOutput is the result of sending a message.
@@ -116,6 +126,9 @@ type Message struct {
 	// ExpiresAt is the message's absolute expiration time (Azure Queue Storage's
 	// per-message TTL). Providers that don't track per-message TTL leave it zero.
 	ExpiresAt time.Time
+	// SystemProperties carries Azure Service Bus brokered-message system
+	// properties preserved from the send (see SendMessageInput.SystemProperties).
+	SystemProperties map[string]string
 }
 
 // BatchSendEntry represents a single message in a batch send.

@@ -1,8 +1,6 @@
 package servicebus
 
 import (
-	"encoding/json"
-	"net/http"
 	"strconv"
 	"strings"
 )
@@ -21,37 +19,6 @@ type messageProps struct {
 	SessionID        string
 	ReplyToSessionID string
 	ContentType      string
-}
-
-// brokerProperties is the JSON shape of the BrokerProperties request header
-// the Service Bus REST "Send Message" API accepts for a brokered message's
-// system properties (custom application properties travel as separate,
-// individually-named headers instead, and are not parsed here yet -- see the
-// DEFER note on dataPlaneTopicSend).
-// https://learn.microsoft.com/rest/api/servicebus/send-message-to-queue
-type brokerProperties struct {
-	MessageID        string `json:"MessageId,omitempty"`
-	CorrelationID    string `json:"CorrelationId,omitempty"`
-	Label            string `json:"Label,omitempty"`
-	To               string `json:"To,omitempty"`
-	ReplyTo          string `json:"ReplyTo,omitempty"`
-	SessionID        string `json:"SessionId,omitempty"`
-	ReplyToSessionID string `json:"ReplyToSessionId,omitempty"`
-	ContentType      string `json:"ContentType,omitempty"`
-}
-
-// parseBrokerProperties reads the sender-supplied BrokerProperties header off
-// a data-plane send request. A missing or malformed header yields the zero
-// value, which only ever satisfies filters that impose no constraint (the
-// default "1=1" rule, an unset CorrelationFilter field).
-func parseBrokerProperties(r *http.Request) messageProps {
-	var bp brokerProperties
-
-	if h := r.Header.Get("BrokerProperties"); h != "" {
-		_ = json.Unmarshal([]byte(h), &bp)
-	}
-
-	return messageProps(bp)
 }
 
 // rulesMatch reports whether a message matches at least one of a
@@ -286,4 +253,91 @@ func lockDurationSeconds(s string) int {
 	}
 
 	return total
+}
+
+// secondsPerDay is the whole-seconds length of the ISO-8601 date component "D".
+const secondsPerDay = 86400
+
+// ttlSecondsFromISO converts a DefaultMessageTimeToLive ISO-8601 duration
+// (e.g. "PT5S", "PT1M", "P1DT2H") to whole seconds, returning 0 for "no TTL":
+// an empty value, the effectively-unlimited maxTimeToLive sentinel, or anything
+// it cannot cleanly parse (fractional seconds, weeks/months/years). Only the
+// day/hour/minute/second subset Service Bus emits is supported.
+func ttlSecondsFromISO(s string) int {
+	if s == "" || s == maxTimeToLive {
+		return 0
+	}
+
+	rest, ok := strings.CutPrefix(s, "P")
+	if !ok {
+		return 0
+	}
+
+	datePart, timePart := rest, ""
+	if i := strings.IndexByte(rest, 'T'); i >= 0 {
+		datePart, timePart = rest[:i], rest[i+1:]
+	}
+
+	days, ok := scanDurationField(datePart, 'D')
+	if !ok {
+		return 0
+	}
+
+	secs, ok := scanTimeComponents(timePart)
+	if !ok {
+		return 0
+	}
+
+	total := days*secondsPerDay + secs
+	if total <= 0 {
+		return 0
+	}
+
+	return total
+}
+
+// scanTimeComponents sums the H/M/S components of an ISO-8601 duration's time
+// part, reporting ok=false if any leftover text remains (an unsupported unit).
+func scanTimeComponents(timePart string) (int, bool) {
+	total := 0
+
+	for _, unit := range [...]struct {
+		suffix byte
+		mult   int
+	}{{'H', 3600}, {'M', 60}, {'S', 1}} {
+		idx := strings.IndexByte(timePart, unit.suffix)
+		if idx < 0 {
+			continue
+		}
+
+		n, err := strconv.Atoi(timePart[:idx])
+		if err != nil {
+			return 0, false
+		}
+
+		total += n * unit.mult
+		timePart = timePart[idx+1:]
+	}
+
+	if timePart != "" {
+		return 0, false
+	}
+
+	return total, true
+}
+
+// scanDurationField reads the integer preceding suffix in part, returning (0,
+// true) when the suffix is absent and (0, false) when the number won't parse.
+func scanDurationField(part string, suffix byte) (int, bool) {
+	idx := strings.IndexByte(part, suffix)
+	if idx < 0 {
+		return 0, true
+	}
+
+	n, err := strconv.Atoi(part[:idx])
+	if err != nil {
+		return 0, false
+	}
+
+	return n, true
 }

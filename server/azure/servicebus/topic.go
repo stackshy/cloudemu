@@ -142,10 +142,11 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, sp sbPath, name string) {
 		return
 	}
 
-	// Cascade: drop the backing message store of every subscription.
+	// Cascade: drop the backing message store of every subscription plus its
+	// paired dead-letter store.
 	urls := make([]string, 0, len(t.Subs))
 	for _, s := range t.Subs {
-		urls = append(urls, s.DriverURL)
+		urls = append(urls, s.DriverURL, s.DLQURL)
 	}
 
 	delete(ns.Topics, name)

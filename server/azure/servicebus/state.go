@@ -72,6 +72,8 @@ type namespaceState struct {
 type queueRecord struct {
 	Name      string
 	DriverURL string
+	// DLQURL is the backing store of this queue's $DeadLetterQueue sub-queue.
+	DLQURL    string
 	Props     queueProperties
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -88,6 +90,8 @@ type topicRecord struct {
 type subscriptionRecord struct {
 	Name      string
 	DriverURL string
+	// DLQURL is the backing store of this subscription's $DeadLetterQueue.
+	DLQURL    string
 	Props     subscriptionProperties
 	Rules     map[string]*ruleRecord
 	CreatedAt time.Time

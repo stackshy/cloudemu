@@ -137,15 +137,16 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 		return
 	}
 
-	// Cascade: drop the message store for every child queue and subscription.
+	// Cascade: drop the message store (and paired dead-letter store) for every
+	// child queue and subscription.
 	urls := make([]string, 0, len(ns.Queues))
 	for _, q := range ns.Queues {
-		urls = append(urls, q.DriverURL)
+		urls = append(urls, q.DriverURL, q.DLQURL)
 	}
 
 	for _, t := range ns.Topics {
 		for _, s := range t.Subs {
-			urls = append(urls, s.DriverURL)
+			urls = append(urls, s.DriverURL, s.DLQURL)
 		}
 	}
 
