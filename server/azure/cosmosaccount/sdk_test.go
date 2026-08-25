@@ -33,6 +33,17 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 func newDatabaseAccountsClient(t *testing.T) *armcosmos.DatabaseAccountsClient {
 	t.Helper()
 
+	client, _ := newDatabaseAccountsClientURL(t)
+
+	return client
+}
+
+// newDatabaseAccountsClientURL is newDatabaseAccountsClient but also returns the
+// emulator's base URL, so endpoint assertions can compare against the live host
+// the handler now derives documentEndpoint from.
+func newDatabaseAccountsClientURL(t *testing.T) (*armcosmos.DatabaseAccountsClient, string) {
+	t.Helper()
+
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{CosmosDB: cloudP.CosmosDB})
 
@@ -60,7 +71,7 @@ func newDatabaseAccountsClient(t *testing.T) *armcosmos.DatabaseAccountsClient {
 	client, err := armcosmos.NewDatabaseAccountsClient("sub-1", fakeCred{}, opts)
 	require.NoError(t, err)
 
-	return client
+	return client, ts.URL
 }
 
 func TestSDKDatabaseAccountCreateGet(t *testing.T) {
@@ -150,7 +161,7 @@ func createAccount(t *testing.T, client *armcosmos.DatabaseAccountsClient, rg, n
 // location arrays a real account exposes.
 func TestSDKDatabaseAccountGetEndpointAndTags(t *testing.T) {
 	ctx := context.Background()
-	client := newDatabaseAccountsClient(t)
+	client, baseURL := newDatabaseAccountsClientURL(t)
 	createAccount(t, client, "rg-1", "cosmos-ep", "westeurope")
 
 	got, err := client.Get(ctx, "rg-1", "cosmos-ep", nil)
@@ -164,7 +175,9 @@ func TestSDKDatabaseAccountGetEndpointAndTags(t *testing.T) {
 
 	require.NotNil(t, got.Properties)
 	require.NotNil(t, got.Properties.DocumentEndpoint)
-	assert.Equal(t, "https://cosmos-ep.documents.azure.com:443/", *got.Properties.DocumentEndpoint)
+	// The endpoint now resolves back to the emulator (host-derived) and carries
+	// the account as a path segment, so a client using it reaches this account.
+	assert.Equal(t, baseURL+"/cosmos-ep/", *got.Properties.DocumentEndpoint)
 
 	require.Len(t, got.Properties.WriteLocations, 1)
 	require.NotNil(t, got.Properties.WriteLocations[0].LocationName)
@@ -202,7 +215,7 @@ func TestSDKDatabaseAccountListKeys(t *testing.T) {
 // TestSDKDatabaseAccountListConnectionStrings drives ListConnectionStrings.
 func TestSDKDatabaseAccountListConnectionStrings(t *testing.T) {
 	ctx := context.Background()
-	client := newDatabaseAccountsClient(t)
+	client, baseURL := newDatabaseAccountsClientURL(t)
 	createAccount(t, client, "rg-1", "cosmos-conn", "eastus")
 
 	res, err := client.ListConnectionStrings(ctx, "rg-1", "cosmos-conn", nil)
@@ -211,7 +224,7 @@ func TestSDKDatabaseAccountListConnectionStrings(t *testing.T) {
 	require.NotEmpty(t, res.ConnectionStrings)
 	first := res.ConnectionStrings[0]
 	require.NotNil(t, first.ConnectionString)
-	assert.Contains(t, *first.ConnectionString, "AccountEndpoint=https://cosmos-conn.documents.azure.com:443/")
+	assert.Contains(t, *first.ConnectionString, "AccountEndpoint="+baseURL+"/cosmos-conn/")
 	require.NotNil(t, first.KeyKind)
 	assert.Equal(t, armcosmos.KindPrimary, *first.KeyKind)
 	require.NotNil(t, first.Type)
