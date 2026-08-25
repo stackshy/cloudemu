@@ -54,6 +54,9 @@ type Handler struct {
 	// regional is set when the driver can create a bucket in a caller-specified
 	// region (CreateBucketConfiguration.LocationConstraint).
 	regional driver.RegionalBucket
+	// conditional is set when the driver can perform an atomic conditional
+	// PutObject; the handler then enforces If-None-Match/If-Match on writes.
+	conditional driver.ConditionalBucket
 }
 
 // New returns an S3 handler backed by b.
@@ -73,6 +76,10 @@ func New(b driver.Bucket) *Handler {
 
 	if rb, ok := b.(driver.RegionalBucket); ok {
 		h.regional = rb
+	}
+
+	if cb, ok := b.(driver.ConditionalBucket); ok {
+		h.conditional = cb
 	}
 
 	return h
@@ -596,38 +603,98 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	metadata := extractMetadata(r.Header)
 
-	if err := h.bucket.PutObject(r.Context(), bucket, key, data, contentType, metadata); err != nil {
-		writeErr(w, err)
+	etag, versionID, ok := h.storePut(w, r, bucket, key, data, contentType, metadata)
+	if !ok {
+		return // error response already written
+	}
+
+	// x-amz-tagging sets the object's tag set at upload time; apply it so
+	// GetObjectTagging returns it (real S3 stores it atomically with the object).
+	if !h.applyPutTagging(w, r, bucket, key) {
 		return
 	}
 
-	// x-amz-tagging sets the object's tag set at upload time. Apply it to the
-	// just-written object so GetObjectTagging returns it (real S3 stores the tag
-	// set atomically with the object).
-	if tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging")); len(tags) > 0 {
-		if err := h.bucket.PutObjectTagging(r.Context(), bucket, key, tags); err != nil {
-			writeErr(w, err)
-			return
-		}
+	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
+
+	if versionID != "" {
+		w.Header().Set("X-Amz-Version-Id", versionID)
 	}
 
-	// Real S3 always returns the object's ETag on PutObject. Read it back
-	// from the driver so there is a single source of truth for the ETag
-	// algorithm; if a concurrent delete races the read-back, fall back to
-	// computing it from the body we just stored — a successful PUT must
-	// never answer 404.
-	etag := hex.EncodeToString(md5Sum(data))
+	w.WriteHeader(http.StatusOK)
+}
 
-	var versionID string
+// storePut writes the object, routing through the atomic conditional-write path
+// when an If-None-Match/If-Match header is present and the driver supports it.
+// On failure it writes the error response and returns ok=false; otherwise it
+// returns the stored object's ETag and version id.
+func (h *Handler) storePut(
+	w http.ResponseWriter, r *http.Request, bucket, key string,
+	data []byte, contentType string, metadata map[string]string,
+) (etag, versionID string, ok bool) {
+	ifNoneMatch := r.Header.Get("If-None-Match")
+	ifMatch := r.Header.Get("If-Match")
+
+	if (ifNoneMatch != "" || ifMatch != "") && h.conditional != nil {
+		return h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
+	}
+
+	if err := h.bucket.PutObject(r.Context(), bucket, key, data, contentType, metadata); err != nil {
+		writeErr(w, err)
+		return "", "", false
+	}
+
+	// Real S3 always returns the object's ETag. Read it back from the driver so
+	// there is a single source of truth for the ETag algorithm; if a concurrent
+	// delete races the read-back, fall back to computing it from the body we
+	// just stored — a successful PUT must never answer 404.
+	etag = hex.EncodeToString(md5Sum(data))
 	if info, err := h.bucket.HeadObject(r.Context(), bucket, key); err == nil {
 		etag = info.ETag
 		versionID = info.VersionID
 	}
-	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
-	if versionID != "" {
-		w.Header().Set("X-Amz-Version-Id", versionID)
+
+	return etag, versionID, true
+}
+
+// storePutConditional performs an atomic If-None-Match/If-Match PutObject. A
+// failed precondition is answered 412 PreconditionFailed.
+func (h *Handler) storePutConditional(
+	w http.ResponseWriter, r *http.Request, bucket, key string,
+	data []byte, contentType string, metadata map[string]string, ifNoneMatch, ifMatch string,
+) (etag, versionID string, ok bool) {
+	pre := driver.S3PutPrecondition{IfNoneMatch: ifNoneMatch, IfMatch: ifMatch}
+
+	info, err := h.conditional.PutObjectConditional(r.Context(), bucket, key, data, contentType, metadata, pre)
+	if err != nil {
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
+				"At least one of the preconditions you specified did not hold.")
+
+			return "", "", false
+		}
+
+		writeErr(w, err)
+
+		return "", "", false
 	}
-	w.WriteHeader(http.StatusOK)
+
+	return info.ETag, info.VersionID, true
+}
+
+// applyPutTagging stores the x-amz-tagging tag set on the just-written object.
+// It returns false (after writing the error response) if the driver rejects it.
+func (h *Handler) applyPutTagging(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+	tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if len(tags) == 0 {
+		return true
+	}
+
+	if err := h.bucket.PutObjectTagging(r.Context(), bucket, key, tags); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -649,6 +716,10 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			return
 		}
 		writeErr(w, err)
+		return
+	}
+
+	if handleReadConditions(w, r.Header, &obj.Info) {
 		return
 	}
 
@@ -793,8 +864,114 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	if handleReadConditions(w, r.Header, info) {
+		return
+	}
+
 	writeObjectHeaders(w, info, info.Size)
 	w.WriteHeader(http.StatusOK)
+}
+
+// condReadOutcome classifies a GET/HEAD conditional-header evaluation.
+type condReadOutcome int
+
+const (
+	condProceed            condReadOutcome = iota // serve the object (200/206)
+	condNotModified                               // 304 Not Modified
+	condPreconditionFailed                        // 412 Precondition Failed
+)
+
+// handleReadConditions evaluates the four conditional-read headers against the
+// object and, when they are not satisfied, writes the 304 or 412 response and
+// returns true (so the caller must stop). It returns false to serve normally.
+func handleReadConditions(w http.ResponseWriter, hdr http.Header, info *driver.ObjectInfo) bool {
+	switch evalReadConditions(hdr, info.ETag, info.LastModified) {
+	case condNotModified:
+		writeNotModified(w, info)
+		return true
+	case condPreconditionFailed:
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
+			"At least one of the preconditions you specified did not hold.")
+		return true
+	case condProceed:
+		return false
+	default:
+		return false
+	}
+}
+
+// evalReadConditions applies RFC 7232 §6 precedence for GET/HEAD: If-Match takes
+// precedence over If-Unmodified-Since (the match group → 412), and If-None-Match
+// takes precedence over If-Modified-Since (the modification group → 304); the
+// match group is evaluated before the modification group.
+func evalReadConditions(hdr http.Header, etag, lastModified string) condReadOutcome {
+	etag = strings.Trim(etag, `"`)
+	mod, modOK := parseObjectTime(lastModified)
+
+	if matchGroupFails(hdr, etag, mod, modOK) {
+		return condPreconditionFailed
+	}
+
+	if noneMatchGroupNotModified(hdr, etag, mod, modOK) {
+		return condNotModified
+	}
+
+	return condProceed
+}
+
+// matchGroupFails evaluates the 412 group: a present If-Match takes precedence
+// over If-Unmodified-Since, which is only considered when If-Match is absent.
+func matchGroupFails(hdr http.Header, etag string, mod time.Time, modOK bool) bool {
+	if ifMatch := hdr.Get("If-Match"); ifMatch != "" {
+		return !etagHeaderMatches(ifMatch, etag)
+	}
+
+	ifUnmodifiedSince := hdr.Get("If-Unmodified-Since")
+	if ifUnmodifiedSince == "" || !modOK {
+		return false
+	}
+
+	t, err := http.ParseTime(ifUnmodifiedSince)
+
+	return err == nil && mod.After(t)
+}
+
+// noneMatchGroupNotModified evaluates the 304 group: a present If-None-Match
+// takes precedence over If-Modified-Since, which is only considered when
+// If-None-Match is absent.
+func noneMatchGroupNotModified(hdr http.Header, etag string, mod time.Time, modOK bool) bool {
+	if ifNoneMatch := hdr.Get("If-None-Match"); ifNoneMatch != "" {
+		return etagHeaderMatches(ifNoneMatch, etag)
+	}
+
+	ifModifiedSince := hdr.Get("If-Modified-Since")
+	if ifModifiedSince == "" || !modOK {
+		return false
+	}
+
+	t, err := http.ParseTime(ifModifiedSince)
+
+	return err == nil && !mod.After(t)
+}
+
+// parseObjectTime parses a stored ObjectInfo.LastModified timestamp (RFC3339).
+func parseObjectTime(lastModified string) (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339, lastModified)
+
+	return t, err == nil
+}
+
+// writeNotModified answers a satisfied If-None-Match/If-Modified-Since read with
+// 304 and the validators (ETag/Last-Modified) but no body, per RFC 7232.
+func writeNotModified(w http.ResponseWriter, info *driver.ObjectInfo) {
+	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
+	w.Header().Set("Last-Modified", wire.ToHTTPDate(info.LastModified))
+
+	if info.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
+	}
+
+	w.WriteHeader(http.StatusNotModified)
 }
 
 func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int64) {
@@ -1176,9 +1353,15 @@ func evalCopySourceTimeConditions(hdr http.Header, lastModified string, skipUnmo
 }
 
 // copySourceETagMatches reports whether a copy-source-if-[none-]match header
-// value matches the source ETag: "*" matches any object; otherwise a
-// quote-insensitive, case-insensitive comparison.
+// value matches the source ETag.
 func copySourceETagMatches(header, etag string) bool {
+	return etagHeaderMatches(header, etag)
+}
+
+// etagHeaderMatches reports whether an If-[None-]Match header value matches the
+// object ETag: "*" matches any object; otherwise a quote-insensitive,
+// case-insensitive comparison. The caller must pass an unquoted etag.
+func etagHeaderMatches(header, etag string) bool {
 	header = strings.Trim(header, `"`)
 
 	return header == "*" || strings.EqualFold(header, etag)

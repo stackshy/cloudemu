@@ -10679,6 +10679,15 @@
         ]
       },
       {
+        "name": "ConditionalBucket",
+        "doc": "ConditionalBucket is an OPTIONAL capability (discovered by type assertion like",
+        "operations": [
+          {
+            "name": "PutObjectConditional"
+          }
+        ]
+      },
+      {
         "name": "GCSExtensions",
         "doc": "GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type",
         "operations": [

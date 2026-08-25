@@ -101,6 +101,14 @@ BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 | --- | --- |
 | `BucketAttributes` |  |
 
+### ConditionalBucket
+
+ConditionalBucket is an OPTIONAL capability (discovered by type assertion like
+
+| Operation | Description |
+| --- | --- |
+| `PutObjectConditional` |  |
+
 ### GCSExtensions
 
 GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type

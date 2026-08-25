@@ -624,6 +624,32 @@ type Bucket interface {
 	DeleteBucketTagging(ctx context.Context, bucket string) error
 }
 
+// S3PutPrecondition carries the S3 conditional-write headers (If-None-Match /
+// If-Match) sent on a plain PutObject, the guard AWS added for S3 conditional
+// writes. A zero value means an unconditional write. IfNoneMatch == "*" means
+// "the object must not already exist" (create-if-absent); a specific ETag means
+// "no current object with that ETag may exist". IfMatch == "<etag>" means "the
+// current object's ETag must match" (optimistic replace). A failed condition
+// must abort the write with a FailedPrecondition error, leaving any existing
+// object untouched, and must be evaluated atomically with the store so a
+// Get-then-Put race cannot lose an update.
+type S3PutPrecondition struct {
+	IfNoneMatch string
+	IfMatch     string
+}
+
+// ConditionalBucket is an OPTIONAL capability (discovered by type assertion like
+// VersionedBucket) letting a driver perform an atomic conditional PutObject that
+// honors the If-None-Match / If-Match request headers. The returned ObjectInfo
+// carries the stored ETag and (on a versioned bucket) the minted VersionID so
+// the wire handler can answer with them.
+type ConditionalBucket interface {
+	PutObjectConditional(
+		ctx context.Context, bucket, key string, data []byte, contentType string,
+		metadata map[string]string, pre S3PutPrecondition,
+	) (*ObjectInfo, error)
+}
+
 // GCSPrecondition carries the GCS write preconditions
 // (ifGenerationMatch/ifGenerationNotMatch/ifMetagenerationMatch/
 // ifMetagenerationNotMatch query parameters). A nil pointer means the caller

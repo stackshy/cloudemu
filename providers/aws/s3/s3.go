@@ -355,9 +355,54 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
+	obj := m.newObject(key, data, contentType, metadata)
+	m.storeObject(bkt, key, obj)
+
+	return m.afterPut(ctx, bkt, bucket, key, obj, data, contentType, metadata)
+}
+
+// PutObjectConditional implements driver.ConditionalBucket: it writes the object
+// only if the If-None-Match / If-Match precondition holds, evaluating the guard
+// and the store atomically under versionsMu so concurrent create-if-absent
+// writers cannot both win. A failed precondition returns a FailedPrecondition
+// error (mapped to 412 by the wire handler) and leaves any existing object
+// untouched.
+func (m *Mock) PutObjectConditional(
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, pre driver.S3PutPrecondition,
+) (*driver.ObjectInfo, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj := m.newObject(key, data, contentType, metadata)
+	if err := m.storeObjectConditional(bkt, key, obj, pre); err != nil {
+		return nil, err
+	}
+
+	if err := m.afterPut(ctx, bkt, bucket, key, obj, data, contentType, metadata); err != nil {
+		return nil, err
+	}
+
+	return &driver.ObjectInfo{
+		Key:          key,
+		Size:         obj.Size,
+		ContentType:  obj.ContentType,
+		ETag:         obj.ETag,
+		LastModified: obj.LastModified,
+		Metadata:     obj.Metadata,
+		VersionID:    obj.VersionID,
+	}, nil
+}
+
+// newObject builds a fresh current-object record from a PutObject body, copying
+// the bytes so a later caller mutation cannot alias stored data.
+func (m *Mock) newObject(key string, data []byte, contentType string, metadata map[string]string) *s3Object {
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
-	obj := &s3Object{
+
+	return &s3Object{
 		Key:          key,
 		Data:         dataCopy,
 		Size:         int64(len(data)),
@@ -366,10 +411,16 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     maps.Clone(metadata),
 	}
-	m.storeObject(bkt, key, obj)
+}
 
-	// storeObject stamps obj.VersionID, so the engine ref matches what GetObject
-	// (and GetObjectVersion for a versioned PUT) reads back.
+// afterPut runs the side effects shared by every PutObject variant: persist the
+// bytes to a configured storage engine, emit request metrics, and fire the
+// s3:ObjectCreated notification. storeObject has already stamped obj.VersionID,
+// so the engine ref matches what GetObject reads back.
+func (m *Mock) afterPut(
+	ctx context.Context, bkt *bucketMeta, bucket, key string, obj *s3Object,
+	data []byte, contentType string, metadata map[string]string,
+) error {
 	if err := m.engineStore(ctx, bucket, key, obj.VersionID, contentType, data, metadata); err != nil {
 		return err
 	}
@@ -398,14 +449,36 @@ const (
 
 func newVersionID() string { return idgen.GenerateID("") }
 
-// storeObject sets key's current object and, on a versioned bucket, records the
-// new version in history (stamping obj.VersionID). Enabled appends a fresh
-// version; Suspended overwrites the reusable "null" version; an unversioned
-// bucket keeps no history.
+// storeObject records key's current object under versionsMu (see
+// storeObjectLocked for the versioning behavior).
 func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
 
+	m.storeObjectLocked(bkt, key, obj)
+}
+
+// storeObjectConditional evaluates an If-None-Match / If-Match precondition
+// against the current object and, only if it holds, stores obj — both under a
+// single versionsMu hold so the check and the write are atomic.
+func (m *Mock) storeObjectConditional(bkt *bucketMeta, key string, obj *s3Object, pre driver.S3PutPrecondition) error {
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	if err := evalPutPrecondition(bkt, key, pre); err != nil {
+		return err
+	}
+
+	m.storeObjectLocked(bkt, key, obj)
+
+	return nil
+}
+
+// storeObjectLocked records key's current object; the caller must hold
+// versionsMu. On a versioned bucket it also appends/overwrites the version
+// history (stamping obj.VersionID). Enabled appends a fresh version; Suspended
+// overwrites the reusable "null" version; an unversioned bucket keeps no history.
+func (m *Mock) storeObjectLocked(bkt *bucketMeta, key string, obj *s3Object) {
 	// When an engine holds the bytes, the version record keeps only metadata +
 	// size; its bytes live in the engine under the version id (dropData).
 	dropData := m.opts.StorageEngine != nil
@@ -420,6 +493,36 @@ func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
 	}
 
 	bkt.objects.Set(key, obj)
+}
+
+// evalPutPrecondition reports whether a conditional PutObject may proceed. It
+// runs under versionsMu, reading the current object (a delete marker leaves no
+// current object, so the key reads as absent). If-None-Match: "*" requires the
+// object be absent; a specific ETag requires no current object with that ETag;
+// If-Match requires a current object whose ETag matches. A violated condition
+// returns FailedPrecondition (mapped to 412 PreconditionFailed at the wire).
+func evalPutPrecondition(bkt *bucketMeta, key string, pre driver.S3PutPrecondition) error {
+	cur, exists := bkt.objects.Get(key)
+
+	if pre.IfNoneMatch != "" {
+		if pre.IfNoneMatch == "*" && exists {
+			return failedPrecondition()
+		}
+
+		if pre.IfNoneMatch != "*" && exists && etagMatches(pre.IfNoneMatch, cur.ETag) {
+			return failedPrecondition()
+		}
+	}
+
+	if pre.IfMatch != "" && (!exists || !etagMatches(pre.IfMatch, cur.ETag)) {
+		return failedPrecondition()
+	}
+
+	return nil
+}
+
+func failedPrecondition() error {
+	return cerrors.New(cerrors.FailedPrecondition, "At least one of the preconditions you specified did not hold")
 }
 
 func versionFromObject(obj *s3Object, dropData bool) *s3Version {
