@@ -31,6 +31,7 @@ KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
 | `EncryptKey` |  |
 | `GetDeletedKey` |  |
 | `GetKey` |  |
+| `GetKeyRotationPolicy` |  |
 | `ImportKey` |  |
 | `ListDeletedKeys` |  |
 | `ListKeyVersions` |  |
@@ -40,6 +41,7 @@ KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
 | `SignKey` |  |
 | `UnwrapKey` |  |
 | `UpdateKey` |  |
+| `UpdateKeyRotationPolicy` |  |
 | `VerifyKey` |  |
 | `WrapKey` |  |
 

@@ -112,17 +112,22 @@ type KVDeletedSecret struct {
 // and backup/restore. It is kept off the shared Secrets interface — a
 // type-asserted optional interface — so the AWS and GCP providers need not
 // model Key Vault semantics.
+//
+// Every method takes vault, the vault name the request is scoped to (derived
+// by the wire layer from the request host, e.g. the {vault-name} label of
+// {vault-name}.vault.azure.net). Each vault is an isolated namespace: the
+// same secret name in two different vaults refers to two different secrets.
 type KeyVaultSecrets interface {
-	SetKeyVaultSecret(ctx context.Context, name string, params KVSetParams) (*KVSecret, error)
-	GetKeyVaultSecret(ctx context.Context, name, version string) (*KVSecret, error)
-	ListKeyVaultSecrets(ctx context.Context) ([]KVSecret, error)
-	ListKeyVaultSecretVersions(ctx context.Context, name string) ([]KVSecret, error)
-	UpdateKeyVaultSecret(ctx context.Context, name, version string, patch KVPatch) (*KVSecret, error)
-	DeleteKeyVaultSecret(ctx context.Context, name string) (*KVDeletedSecret, error)
-	GetDeletedKeyVaultSecret(ctx context.Context, name string) (*KVDeletedSecret, error)
-	ListDeletedKeyVaultSecrets(ctx context.Context) ([]KVDeletedSecret, error)
-	RecoverDeletedKeyVaultSecret(ctx context.Context, name string) (*KVSecret, error)
-	PurgeDeletedKeyVaultSecret(ctx context.Context, name string) error
-	BackupKeyVaultSecret(ctx context.Context, name string) ([]byte, error)
-	RestoreKeyVaultSecret(ctx context.Context, backup []byte) (*KVSecret, error)
+	SetKeyVaultSecret(ctx context.Context, vault, name string, params KVSetParams) (*KVSecret, error)
+	GetKeyVaultSecret(ctx context.Context, vault, name, version string) (*KVSecret, error)
+	ListKeyVaultSecrets(ctx context.Context, vault string) ([]KVSecret, error)
+	ListKeyVaultSecretVersions(ctx context.Context, vault, name string) ([]KVSecret, error)
+	UpdateKeyVaultSecret(ctx context.Context, vault, name, version string, patch KVPatch) (*KVSecret, error)
+	DeleteKeyVaultSecret(ctx context.Context, vault, name string) (*KVDeletedSecret, error)
+	GetDeletedKeyVaultSecret(ctx context.Context, vault, name string) (*KVDeletedSecret, error)
+	ListDeletedKeyVaultSecrets(ctx context.Context, vault string) ([]KVDeletedSecret, error)
+	RecoverDeletedKeyVaultSecret(ctx context.Context, vault, name string) (*KVSecret, error)
+	PurgeDeletedKeyVaultSecret(ctx context.Context, vault, name string) error
+	BackupKeyVaultSecret(ctx context.Context, vault, name string) ([]byte, error)
+	RestoreKeyVaultSecret(ctx context.Context, vault string, backup []byte) (*KVSecret, error)
 }

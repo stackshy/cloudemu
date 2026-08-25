@@ -404,7 +404,7 @@ func TestCreateSecretRejectsSoftDeletedName(t *testing.T) {
 
 	// The soft-deleted secret is untouched and still recoverable with its
 	// original value.
-	recovered, err := m.RecoverDeletedKeyVaultSecret(context.Background(), "sd-secret")
+	recovered, err := m.RecoverDeletedKeyVaultSecret(context.Background(), "default", "sd-secret")
 	require.NoError(t, err)
 	assert.Equal(t, "v1", string(recovered.Value))
 }

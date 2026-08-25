@@ -7,8 +7,28 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
+
+// liveVaultSecret returns the stored secret from store if it exists and is
+// not soft-deleted.
+func liveVaultSecret(store *memstore.Store[*secretData], name string) *secretData {
+	sd, ok := store.Get(name)
+	if !ok {
+		return nil
+	}
+
+	sd.mu.RLock()
+	deleted := !sd.deletedAt.IsZero()
+	sd.mu.RUnlock()
+
+	if deleted {
+		return nil
+	}
+
+	return sd
+}
 
 func (v *secretVersion) toKV(name string) driver.KVSecret {
 	return driver.KVSecret{
@@ -28,12 +48,14 @@ func (v *secretVersion) toKV(name string) driver.KVSecret {
 
 // SetKeyVaultSecret creates the secret on first call and appends a new version
 // on subsequent calls, carrying content type, tags and attributes.
-func (m *Mock) SetKeyVaultSecret(_ context.Context, name string, params driver.KVSetParams) (*driver.KVSecret, error) {
+func (m *Mock) SetKeyVaultSecret(_ context.Context, vault, name string, params driver.KVSetParams) (*driver.KVSecret, error) {
 	if name == "" {
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
 	}
 
-	if sd, ok := m.secrets.Get(name); ok {
+	store := m.vault(vault).secrets
+
+	if sd, ok := store.Get(name); ok {
 		sd.mu.Lock()
 		defer sd.mu.Unlock()
 
@@ -75,7 +97,7 @@ func (m *Mock) SetKeyVaultSecret(_ context.Context, name string, params driver.K
 		versions: []secretVersion{v},
 	}
 
-	m.secrets.Set(name, sd)
+	store.Set(name, sd)
 
 	kv := v.toKV(name)
 
@@ -83,8 +105,8 @@ func (m *Mock) SetKeyVaultSecret(_ context.Context, name string, params driver.K
 }
 
 // GetKeyVaultSecret returns one secret version. Empty version returns current.
-func (m *Mock) GetKeyVaultSecret(_ context.Context, name, version string) (*driver.KVSecret, error) {
-	sd := m.liveSecret(name)
+func (m *Mock) GetKeyVaultSecret(_ context.Context, vault, name, version string) (*driver.KVSecret, error) {
+	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -103,8 +125,8 @@ func (m *Mock) GetKeyVaultSecret(_ context.Context, name, version string) (*driv
 }
 
 // ListKeyVaultSecrets returns the current version of each live secret.
-func (m *Mock) ListKeyVaultSecrets(_ context.Context) ([]driver.KVSecret, error) {
-	all := m.secrets.All()
+func (m *Mock) ListKeyVaultSecrets(_ context.Context, vault string) ([]driver.KVSecret, error) {
+	all := m.vault(vault).secrets.All()
 
 	out := make([]driver.KVSecret, 0, len(all))
 
@@ -124,8 +146,8 @@ func (m *Mock) ListKeyVaultSecrets(_ context.Context) ([]driver.KVSecret, error)
 }
 
 // ListKeyVaultSecretVersions returns every version of a secret (no values).
-func (m *Mock) ListKeyVaultSecretVersions(_ context.Context, name string) ([]driver.KVSecret, error) {
-	sd := m.liveSecret(name)
+func (m *Mock) ListKeyVaultSecretVersions(_ context.Context, vault, name string) ([]driver.KVSecret, error) {
+	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -145,8 +167,8 @@ func (m *Mock) ListKeyVaultSecretVersions(_ context.Context, name string) ([]dri
 }
 
 // UpdateKeyVaultSecret patches a version's attributes, tags and content type.
-func (m *Mock) UpdateKeyVaultSecret(_ context.Context, name, version string, patch driver.KVPatch) (*driver.KVSecret, error) {
-	sd := m.liveSecret(name)
+func (m *Mock) UpdateKeyVaultSecret(_ context.Context, vault, name, version string, patch driver.KVPatch) (*driver.KVSecret, error) {
+	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -195,8 +217,8 @@ func applyPatch(v *secretVersion, patch driver.KVPatch) {
 }
 
 // DeleteKeyVaultSecret soft-deletes a secret and returns its deleted view.
-func (m *Mock) DeleteKeyVaultSecret(_ context.Context, name string) (*driver.KVDeletedSecret, error) {
-	sd := m.liveSecret(name)
+func (m *Mock) DeleteKeyVaultSecret(_ context.Context, vault, name string) (*driver.KVDeletedSecret, error) {
+	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -228,8 +250,8 @@ func deletedView(sd *secretData) *driver.KVDeletedSecret {
 }
 
 // GetDeletedKeyVaultSecret returns a soft-deleted secret by name.
-func (m *Mock) GetDeletedKeyVaultSecret(_ context.Context, name string) (*driver.KVDeletedSecret, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) GetDeletedKeyVaultSecret(_ context.Context, vault, name string) (*driver.KVDeletedSecret, error) {
+	sd, ok := m.vault(vault).secrets.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "deleted secret %q not found", name)
 	}
@@ -245,8 +267,8 @@ func (m *Mock) GetDeletedKeyVaultSecret(_ context.Context, name string) (*driver
 }
 
 // ListDeletedKeyVaultSecrets returns all soft-deleted secrets.
-func (m *Mock) ListDeletedKeyVaultSecrets(_ context.Context) ([]driver.KVDeletedSecret, error) {
-	all := m.secrets.All()
+func (m *Mock) ListDeletedKeyVaultSecrets(_ context.Context, vault string) ([]driver.KVDeletedSecret, error) {
+	all := m.vault(vault).secrets.All()
 
 	out := make([]driver.KVDeletedSecret, 0, len(all))
 
@@ -262,8 +284,8 @@ func (m *Mock) ListDeletedKeyVaultSecrets(_ context.Context) ([]driver.KVDeleted
 }
 
 // RecoverDeletedKeyVaultSecret clears the soft-delete state of a secret.
-func (m *Mock) RecoverDeletedKeyVaultSecret(_ context.Context, name string) (*driver.KVSecret, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) RecoverDeletedKeyVaultSecret(_ context.Context, vault, name string) (*driver.KVSecret, error) {
+	sd, ok := m.vault(vault).secrets.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "deleted secret %q not found", name)
 	}
@@ -289,8 +311,10 @@ func (m *Mock) RecoverDeletedKeyVaultSecret(_ context.Context, name string) (*dr
 }
 
 // PurgeDeletedKeyVaultSecret permanently removes a soft-deleted secret.
-func (m *Mock) PurgeDeletedKeyVaultSecret(_ context.Context, name string) error {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) PurgeDeletedKeyVaultSecret(_ context.Context, vault, name string) error {
+	store := m.vault(vault).secrets
+
+	sd, ok := store.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "deleted secret %q not found", name)
 	}
@@ -303,7 +327,7 @@ func (m *Mock) PurgeDeletedKeyVaultSecret(_ context.Context, name string) error 
 		return errors.Newf(errors.NotFound, "deleted secret %q not found", name)
 	}
 
-	m.secrets.Delete(name)
+	store.Delete(name)
 
 	return nil
 }
@@ -328,8 +352,8 @@ type backupSnapshot struct {
 }
 
 // BackupKeyVaultSecret returns an opaque blob capturing every version.
-func (m *Mock) BackupKeyVaultSecret(_ context.Context, name string) ([]byte, error) {
-	sd := m.liveSecret(name)
+func (m *Mock) BackupKeyVaultSecret(_ context.Context, vault, name string) ([]byte, error) {
+	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -352,7 +376,7 @@ func (m *Mock) BackupKeyVaultSecret(_ context.Context, name string) ([]byte, err
 }
 
 // RestoreKeyVaultSecret recreates a secret from a backup blob.
-func (m *Mock) RestoreKeyVaultSecret(_ context.Context, backup []byte) (*driver.KVSecret, error) {
+func (m *Mock) RestoreKeyVaultSecret(_ context.Context, vault string, backup []byte) (*driver.KVSecret, error) {
 	var snap backupSnapshot
 	if err := json.Unmarshal(backup, &snap); err != nil {
 		return nil, errors.New(errors.InvalidArgument, "invalid secret backup blob")
@@ -362,7 +386,9 @@ func (m *Mock) RestoreKeyVaultSecret(_ context.Context, backup []byte) (*driver.
 		return nil, errors.New(errors.InvalidArgument, "invalid secret backup blob")
 	}
 
-	if _, ok := m.secrets.Get(snap.Name); ok {
+	store := m.vault(vault).secrets
+
+	if _, ok := store.Get(snap.Name); ok {
 		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", snap.Name)
 	}
 
@@ -387,7 +413,7 @@ func (m *Mock) RestoreKeyVaultSecret(_ context.Context, backup []byte) (*driver.
 		})
 	}
 
-	m.secrets.Set(snap.Name, sd)
+	store.Set(snap.Name, sd)
 
 	v := findVersion(sd, "")
 

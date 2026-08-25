@@ -9545,6 +9545,9 @@
             "name": "GetKey"
           },
           {
+            "name": "GetKeyRotationPolicy"
+          },
+          {
             "name": "ImportKey"
           },
           {
@@ -9570,6 +9573,9 @@
           },
           {
             "name": "UpdateKey"
+          },
+          {
+            "name": "UpdateKeyRotationPolicy"
           },
           {
             "name": "VerifyKey"

@@ -47,20 +47,81 @@ type secretData struct {
 	mu             sync.RWMutex
 }
 
-// Mock is an in-memory mock implementation of Azure Key Vault.
-type Mock struct {
+// vaultData is one Key Vault vault's isolated secrets/keys namespace. The
+// KeyVaultSecrets and KeyVaultKeys surfaces (server/azure/keyvault) each
+// resolve the caller's vault name to one of these before touching storage, so
+// a secret or key created in one vault is never visible through another.
+type vaultData struct {
 	secrets *memstore.Store[*secretData]
 	keys    *memstore.Store[*keyData]
-	opts    *config.Options
+}
+
+func newVaultData() *vaultData {
+	return &vaultData{
+		secrets: memstore.New[*secretData](),
+		keys:    memstore.New[*keyData](),
+	}
+}
+
+// defaultVault is the vault name that backs the shared, cross-cloud Secrets
+// driver interface (CreateSecret, GetSecret, PutSecretValue, ...), which has
+// no notion of a vault. A caller that reaches the Key Vault data-plane API
+// under this vault name (the wire layer's host-extraction fallback for a
+// request whose Host carries no recognizable vault subdomain — see
+// vaultFromRequest in server/azure/keyvault) sees the exact same secrets and
+// keys the portable API manages, preserving pre-multi-vault behavior. Any
+// other vault name gets its own fully isolated namespace.
+const defaultVault = "default"
+
+// Mock is an in-memory mock implementation of Azure Key Vault.
+type Mock struct {
+	// secrets and keys are the defaultVault's stores, kept as direct fields so
+	// the shared Secrets driver interface methods (which carry no vault name)
+	// can use them without a map lookup.
+	secrets *memstore.Store[*secretData]
+	keys    *memstore.Store[*keyData]
+	// vaults backs the Azure-specific KeyVaultSecrets/KeyVaultKeys data-plane
+	// surface, keyed by vault name, so secrets/keys are isolated per vault.
+	// vaults[defaultVault] aliases secrets/keys above.
+	vaults *memstore.Store[*vaultData]
+	opts   *config.Options
 }
 
 // New creates a new Key Vault mock with the given configuration options.
 func New(opts *config.Options) *Mock {
+	secrets := memstore.New[*secretData]()
+	keys := memstore.New[*keyData]()
+
+	vaults := memstore.New[*vaultData]()
+	vaults.Set(defaultVault, &vaultData{secrets: secrets, keys: keys})
+
 	return &Mock{
-		secrets: memstore.New[*secretData](),
-		keys:    memstore.New[*keyData](),
+		secrets: secrets,
+		keys:    keys,
+		vaults:  vaults,
 		opts:    opts,
 	}
+}
+
+// vault returns the named vault's secret/key store, creating it on first
+// touch. Key Vault vaults have no separate ARM "create vault" step in the
+// data-plane surface cloudemu emulates, so a vault springs into existence the
+// first time any secret or key name is addressed within it.
+func (m *Mock) vault(name string) *vaultData {
+	if vd, ok := m.vaults.Get(name); ok {
+		return vd
+	}
+
+	vd := newVaultData()
+	if m.vaults.SetIfAbsent(name, vd) {
+		return vd
+	}
+
+	// Lost the race to a concurrent first touch of the same vault name;
+	// use the winner's store instead of orphaning ours.
+	existing, _ := m.vaults.Get(name)
+
+	return existing
 }
 
 func copyTags(in map[string]string) map[string]string {

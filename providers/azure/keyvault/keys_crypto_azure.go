@@ -41,8 +41,8 @@ const (
 )
 
 // opKey resolves a live, enabled key version and checks that op is permitted.
-func (m *Mock) opKey(name, version, op string) (*keyVersion, error) {
-	kd := m.liveKey(name)
+func (m *Mock) opKey(vault, name, version, op string) (*keyVersion, error) {
+	kd := liveKey(m.vault(vault).keys, name)
 	if kd == nil {
 		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
 	}
@@ -92,8 +92,8 @@ func result(v *keyVersion, out []byte) *driver.KVCryptoResult {
 }
 
 // EncryptKey encrypts a single block with the key's public part.
-func (m *Mock) EncryptKey(_ context.Context, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
-	v, err := m.opKey(name, version, "encrypt")
+func (m *Mock) EncryptKey(_ context.Context, vault, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
+	v, err := m.opKey(vault, name, version, "encrypt")
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +111,8 @@ func (m *Mock) EncryptKey(_ context.Context, name, version string, p driver.KVCr
 }
 
 // DecryptKey decrypts a single block with the key's private part.
-func (m *Mock) DecryptKey(_ context.Context, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
-	v, err := m.opKey(name, version, "decrypt")
+func (m *Mock) DecryptKey(_ context.Context, vault, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
+	v, err := m.opKey(vault, name, version, "decrypt")
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +131,8 @@ func (m *Mock) DecryptKey(_ context.Context, name, version string, p driver.KVCr
 
 // WrapKey wraps a symmetric key. RSA keys wrap with the RSA algorithms; oct
 // keys wrap with AES key wrap (RFC 3394).
-func (m *Mock) WrapKey(_ context.Context, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
-	v, err := m.opKey(name, version, "wrapKey")
+func (m *Mock) WrapKey(_ context.Context, vault, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
+	v, err := m.opKey(vault, name, version, "wrapKey")
 	if err != nil {
 		return nil, err
 	}
@@ -146,8 +146,8 @@ func (m *Mock) WrapKey(_ context.Context, name, version string, p driver.KVCrypt
 }
 
 // UnwrapKey reverses WrapKey.
-func (m *Mock) UnwrapKey(_ context.Context, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
-	v, err := m.opKey(name, version, "unwrapKey")
+func (m *Mock) UnwrapKey(_ context.Context, vault, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
+	v, err := m.opKey(vault, name, version, "unwrapKey")
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +202,8 @@ func rsaDecrypt(key *rsa.PrivateKey, alg string, ct []byte) ([]byte, error) {
 }
 
 // SignKey signs a pre-computed digest and returns the signature.
-func (m *Mock) SignKey(_ context.Context, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
-	v, err := m.opKey(name, version, "sign")
+func (m *Mock) SignKey(_ context.Context, vault, name, version string, p driver.KVCryptoParams) (*driver.KVCryptoResult, error) {
+	v, err := m.opKey(vault, name, version, "sign")
 	if err != nil {
 		return nil, err
 	}
@@ -217,8 +217,8 @@ func (m *Mock) SignKey(_ context.Context, name, version string, p driver.KVCrypt
 }
 
 // VerifyKey checks a signature over a digest.
-func (m *Mock) VerifyKey(_ context.Context, name, version string, p driver.KVCryptoParams) (bool, error) {
-	v, err := m.opKey(name, version, "verify")
+func (m *Mock) VerifyKey(_ context.Context, vault, name, version string, p driver.KVCryptoParams) (bool, error) {
+	v, err := m.opKey(vault, name, version, "verify")
 	if err != nil {
 		return false, err
 	}
