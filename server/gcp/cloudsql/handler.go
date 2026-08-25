@@ -17,7 +17,7 @@
 //	GET    /v1/projects/{p}/instances/{i}/backupRuns             — List backup runs
 //	GET    /v1/projects/{p}/instances/{i}/backupRuns/{id}        — Get backup run
 //	DELETE /v1/projects/{p}/instances/{i}/backupRuns/{id}        — Delete backup run
-//	GET    /v1/projects/{p}/operations/{op}                      — Poll operation (always DONE)
+//	GET    /v1/projects/{p}/operations/{op}                      — Poll operation (recorded record, 404 if unknown)
 //
 // All mutating endpoints return Operation envelopes with status=DONE so SDK
 // pollers terminate on the first response. Start/Stop are emulated via
@@ -32,6 +32,7 @@ package cloudsql
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -65,11 +66,40 @@ func isSubResource(seg string) bool {
 // Handler serves Cloud SQL Admin REST requests against a relationaldb driver.
 type Handler struct {
 	db rdsdriver.RelationalDB
+
+	// mu guards ops. Mutating endpoints complete inline (status=DONE) and record
+	// the resulting Operation here so a later Operations.Get returns the real
+	// CREATE/UPDATE/DELETE record — pointing at the affected resource — rather
+	// than a synthetic stand-in.
+	mu  sync.RWMutex
+	ops map[string]operation
 }
 
 // New returns a Cloud SQL handler backed by db.
 func New(db rdsdriver.RelationalDB) *Handler {
-	return &Handler{db: db}
+	return &Handler{
+		db:  db,
+		ops: make(map[string]operation),
+	}
+}
+
+// buildOp builds the DONE operation for a finished mutation and records it
+// keyed by name, so a later Operations.Get serves the same record. It returns
+// the operation for callers that embed it in a larger response (e.g.
+// sslCerts.insert).
+func (h *Handler) buildOp(project, name, opType, resourceType, target string) operation {
+	op := doneOperationWithTarget(project, name, opType, resourceType, target)
+
+	h.mu.Lock()
+	h.ops[name] = op
+	h.mu.Unlock()
+
+	return op
+}
+
+// completeOp records the mutation's operation and writes it as the LRO response.
+func (h *Handler) completeOp(w http.ResponseWriter, project, name, opType, resourceType, target string) {
+	writeJSON(w, http.StatusOK, h.buildOp(project, name, opType, resourceType, target))
 }
 
 // Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... paths plus
@@ -290,7 +320,7 @@ func (h *Handler) serveBackupRunsRoute(w http.ResponseWriter, r *http.Request, p
 	}
 }
 
-func (*Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
 		return
@@ -301,7 +331,18 @@ func (*Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlPat
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperation(p.project, p.name, "GET", "noop"))
+	h.mu.RLock()
+	op, ok := h.ops[p.name]
+	h.mu.RUnlock()
+
+	// Real Cloud SQL returns 404 for an unknown operation rather than a
+	// synthetic DONE, so pollers surface a genuinely missing op.
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "operation not found: "+p.name)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, op)
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter) {

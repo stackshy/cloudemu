@@ -3,6 +3,7 @@ package cloudsql
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -13,6 +14,20 @@ import (
 const (
 	activationAlways = "ALWAYS"
 	activationNever  = "NEVER"
+
+	// selfLinkBase is the resource URI prefix Cloud SQL stamps on every
+	// selfLink/targetLink. Even the v1 client is answered with sql/v1beta4
+	// selfLinks — that is the version the real service returns.
+	selfLinkBase = "https://sqladmin.googleapis.com/sql/v1beta4/projects/"
+
+	// operationUser is the caller identity Cloud SQL records on an operation.
+	// The emulator enforces no auth, so a fixed service-account address stands
+	// in for the authenticated principal.
+	operationUser = "cloudemu@cloudemu.iam.gserviceaccount.com"
+
+	// rfc3339Milli is the millisecond RFC3339 layout Cloud SQL uses for its
+	// timestamp fields (createTime, insertTime, startTime, endTime).
+	rfc3339Milli = "2006-01-02T15:04:05.000Z"
 )
 
 // sqlInstance is the JSON shape Cloud SQL expects for DatabaseInstance.
@@ -49,8 +64,9 @@ type ipMapping struct {
 }
 
 type sqlInstanceList struct {
-	Kind  string        `json:"kind"`
-	Items []sqlInstance `json:"items"`
+	Kind          string        `json:"kind"`
+	Items         []sqlInstance `json:"items"`
+	NextPageToken string        `json:"nextPageToken,omitempty"`
 }
 
 type backupRun struct {
@@ -95,42 +111,47 @@ type operation struct {
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
-// doneOperation builds an LRO Operation with status=DONE and a synthetic name
-// derived from project+verb.
-func doneOperation(project, name, opType, _ string) operation {
+// doneOperationWithTarget builds a DONE operation that carries the full record
+// a real Cloud SQL operation exposes: the affected resource (targetId /
+// targetLink), the acting user, insert/start/end timestamps, and its own
+// selfLink. Mutating handlers persist the result so a later Operations.Get
+// returns this same record rather than a synthetic stand-in.
+func doneOperationWithTarget(project, name, opType, resourceType, target string) operation {
+	now := time.Now().UTC().Format(rfc3339Milli)
+
 	return operation{
 		Kind:          "sql#operation",
 		Name:          name,
 		OperationType: opType,
 		Status:        "DONE",
+		User:          operationUser,
+		InsertTime:    now,
+		StartTime:     now,
+		EndTime:       now,
+		TargetID:      target,
 		TargetProject: project,
+		TargetLink:    selfLinkBase + project + "/" + resourceType + "/" + target,
+		SelfLink:      selfLinkBase + project + "/operations/" + name,
 	}
-}
-
-// doneOperationWithTarget builds a DONE operation that also carries a
-// targetLink/targetId pointing at the affected resource.
-func doneOperationWithTarget(project, name, opType, resourceType, target string) operation {
-	op := doneOperation(project, name, opType, "")
-	op.TargetID = target
-	op.TargetLink = pathPrefix + project + "/" + resourceType + "/" + target
-
-	return op
 }
 
 // toSQLInstance converts a portable Instance to the wire shape.
 func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 	return sqlInstance{
-		Kind:               "sql#instance",
-		Name:               inst.ID,
-		Project:            project,
-		Region:             inst.AvailabilityZone,
-		DatabaseVersion:    inst.Engine,
-		State:              sqlState(inst.State),
-		BackendType:        "SECOND_GEN",
-		ConnectionName:     inst.ConnectionName,
+		Kind:            "sql#instance",
+		Name:            inst.ID,
+		Project:         project,
+		Region:          inst.AvailabilityZone,
+		DatabaseVersion: inst.Engine,
+		State:           sqlState(inst.State),
+		BackendType:     "SECOND_GEN",
+		// connectionName is keyed on the REQUEST project (from the URL), matching
+		// real Cloud SQL's {project}:{region}:{instance} — not the server's
+		// configured project, which the stored inst.ConnectionName carries.
+		ConnectionName:     project + ":" + inst.AvailabilityZone + ":" + inst.ID,
 		MasterInstanceName: inst.ReadReplicaSource,
 		ReplicaNames:       inst.ReadReplicaTargets,
-		SelfLink:           pathPrefix + project + "/instances/" + inst.ID,
+		SelfLink:           selfLinkBase + project + "/instances/" + inst.ID,
 		// PRIMARY is the public IP a client is meant to connect to. Endpoint holds
 		// the reachable host: a synthetic IP normally, or the real engine host
 		// when a database engine backs the instance.
@@ -144,7 +165,7 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			UserLabels:       inst.Tags,
 			ActivationPolicy: activationFromState(inst.State),
 		},
-		CreateTime: inst.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		CreateTime: inst.CreatedAt.UTC().Format(rfc3339Milli),
 	}
 }
 
@@ -156,8 +177,8 @@ func toBackupRun(snap *rdsdriver.Snapshot) backupRun {
 		Status:     sqlBackupStatus(snap.State),
 		Type:       "ON_DEMAND",
 		Instance:   snap.InstanceID,
-		StartTime:  snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		EndTime:    snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		StartTime:  snap.CreatedAt.UTC().Format(rfc3339Milli),
+		EndTime:    snap.CreatedAt.UTC().Format(rfc3339Milli),
 		BackupKind: "SNAPSHOT",
 	}
 }
