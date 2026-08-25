@@ -176,3 +176,99 @@ func TestSDKAzureSQLDatabaseElasticPoolMembership(t *testing.T) {
 		t.Fatalf("pool delete PollUntilDone: %v", err)
 	}
 }
+
+// TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase is the HIGH
+// regression: a PUT against an EXISTING database that references an
+// elasticPoolId which doesn't resolve must fail the request without deleting
+// the database. replaceDatabase upserts by deleting the stored record and
+// re-creating it merged with the request body — before the fix, the delete
+// ran first, so a bad pool reference on the re-create half permanently lost a
+// database that already existed.
+func TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase(t *testing.T) {
+	cf := newFactory(t)
+	ctx := context.Background()
+	mustCreateSQLServer(t, cf)
+
+	dbs := cf.NewDatabasesClient()
+
+	createPoller, err := dbs.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "keepme", armsql.Database{
+		Location: to.Ptr("eastus"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("create BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("create PollUntilDone: %v", err)
+	}
+
+	// PUT again, attaching a pool that was never created on this server.
+	badPoller, err := dbs.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "keepme", armsql.Database{
+		Location:   to.Ptr("eastus"),
+		Properties: &armsql.DatabaseProperties{ElasticPoolID: to.Ptr("ghost-pool")},
+	}, nil)
+	if err == nil {
+		_, err = badPoller.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("update with nonexistent elasticPoolId: expected error")
+	}
+
+	// The database must still exist — the rejected update must have no
+	// side effect, not have deleted it out from under the failed request.
+	got, err := dbs.Get(ctx, "rg-1", "srv1", "keepme", nil)
+	if err != nil {
+		t.Fatalf("Get after rejected update: expected database to survive, got error: %v", err)
+	}
+
+	if got.Database.Properties != nil && got.Database.Properties.ElasticPoolID != nil {
+		t.Errorf("surviving database carries the rejected elasticPoolId: %+v", got.Database.Properties)
+	}
+}
+
+// TestSDKAzureSQLDatabaseCreateBadElasticPoolNotParentNotFound is the MEDIUM
+// regression: creating a brand-new database on an EXISTING server with an
+// elasticPoolId that doesn't resolve must not be reported as
+// ParentResourceNotFound — that code means the parent SERVER is missing, and
+// here the server exists. Real Azure answers 400 TargetElasticPoolDoesNotExist
+// (learn.microsoft.com/rest/api/sql/databases/create-or-update).
+func TestSDKAzureSQLDatabaseCreateBadElasticPoolNotParentNotFound(t *testing.T) {
+	cf := newFactory(t)
+	ctx := context.Background()
+	mustCreateSQLServer(t, cf)
+
+	dbs := cf.NewDatabasesClient()
+
+	poller, err := dbs.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "newdb", armsql.Database{
+		Location:   to.Ptr("eastus"),
+		Properties: &armsql.DatabaseProperties{ElasticPoolID: to.Ptr("ghost-pool")},
+	}, nil)
+	if err == nil {
+		_, err = poller.PollUntilDone(ctx, nil)
+	}
+
+	var re *azcore.ResponseError
+	if !errors.As(err, &re) {
+		t.Fatalf("create with nonexistent elasticPoolId: expected azcore.ResponseError, got %T: %v", err, err)
+	}
+
+	if re.ErrorCode == "ParentResourceNotFound" {
+		t.Errorf("error code = %q: the server exists, this must not be reported as a missing parent", re.ErrorCode)
+	}
+
+	if re.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", re.StatusCode)
+	}
+
+	if re.ErrorCode != "TargetElasticPoolDoesNotExist" {
+		t.Errorf("error code = %q, want TargetElasticPoolDoesNotExist", re.ErrorCode)
+	}
+
+	// The database must not have been created either.
+	if _, err := dbs.Get(ctx, "rg-1", "srv1", "newdb", nil); err == nil {
+		t.Error("Get newdb after failed create: expected NotFound")
+	} else if got := statusOf(t, err); got != http.StatusNotFound {
+		t.Errorf("Get newdb after failed create: status %d, want 404", got)
+	}
+}
