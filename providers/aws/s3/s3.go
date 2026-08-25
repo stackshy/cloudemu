@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -159,6 +160,7 @@ type Mock struct {
 	sqs        SQSDeliverer
 	sns        SNSPublisher
 	lambda     LambdaInvoker
+	eventSeq   atomic.Uint64 // monotonic source for object-event sequencer tokens
 }
 
 // SetSQSDeliverer wires the SQS backend so object events deliver to buckets' SQS
@@ -381,7 +383,7 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 	m.emitMetric("PutRequests", 1, "Count", dims)
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
 
-	m.notifyObjectCreated(bkt, bucket, key, int64(len(data)))
+	m.notifyObjectCreated(ctx, bkt, bucket, key, int64(len(data)), obj.ETag, obj.VersionID)
 
 	return nil
 }
@@ -524,7 +526,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("DeleteRequests", 1, "Count", dims)
 
-	m.notifyObjectRemoved(bkt, bucket, key)
+	m.notifyObjectRemoved(ctx, bkt, bucket, key, vid)
 
 	return nil
 }
@@ -710,7 +712,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("CopyRequests", 1, "Count", dims)
 
-	m.notifyObjectCreated(dstBkt, dstBucket, dstKey, srcObj.Size)
+	m.notifyObjectCreated(ctx, dstBkt, dstBucket, dstKey, srcObj.Size, dstObj.ETag, dstObj.VersionID)
 
 	return nil
 }
@@ -786,7 +788,7 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("CopyRequests", 1, "Count", dims)
 
-	m.notifyObjectCreated(dstBkt, req.DstBucket, req.DstKey, src.size)
+	m.notifyObjectCreated(ctx, dstBkt, req.DstBucket, req.DstKey, src.size, dstObj.ETag, dstObj.VersionID)
 
 	return &driver.CopyObjectResult{
 		ETag: dstObj.ETag, LastModified: dstObj.LastModified,
@@ -1193,7 +1195,7 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 	m.emitMetric("PutRequests", 1, "Count", dims)
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
 
-	m.notifyObjectCreated(bkt, bucket, key, int64(len(data)))
+	m.notifyObjectCreated(ctx, bkt, bucket, key, int64(len(data)), obj.ETag, obj.VersionID)
 
 	return nil
 }

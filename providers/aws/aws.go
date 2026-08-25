@@ -275,6 +275,9 @@ func New(opts ...config.Option) *Provider {
 	p.S3.SetSQSDeliverer(p.SQS)
 	p.S3.SetSNSPublisher(p.SNS)
 	p.S3.SetLambdaInvoker(p.Lambda)
+	// DynamoDB Streams -> Lambda: writes to a stream-enabled table invoke the
+	// stream's event-source-mapping targets (mirrors the S3 -> Lambda wiring).
+	p.DynamoDB.SetStreamInvoker(p.Lambda)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),

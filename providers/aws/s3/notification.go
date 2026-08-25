@@ -3,9 +3,11 @@ package s3
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 )
 
 // PutBucketNotification replaces a bucket's event-notification configuration
@@ -31,16 +33,33 @@ func (m *Mock) GetBucketNotification(_ context.Context, bucket string) ([]Bucket
 	return bkt.notifications, nil
 }
 
+// objectEvent carries the object-level facts an S3 event record reports, so the
+// event builders take one value instead of a long positional parameter list.
+type objectEvent struct {
+	bucket    string
+	key       string
+	size      int64
+	eTag      string
+	versionID string
+	eventName string // e.g. "ObjectCreated:Put" (no "s3:" prefix)
+	sequencer string
+}
+
 // notifyObjectCreated delivers an s3:ObjectCreated:Put event (PutObject, copy,
 // or completed multipart upload) to matching notification targets.
-func (m *Mock) notifyObjectCreated(bkt *bucketMeta, bucket, key string, size int64) {
-	m.notify(bkt, bucket, key, size, "ObjectCreated:Put")
+func (m *Mock) notifyObjectCreated(ctx context.Context, bkt *bucketMeta, bucket, key string, size int64, eTag, versionID string) {
+	m.notify(ctx, bkt, &objectEvent{
+		bucket: bucket, key: key, size: size, eTag: eTag,
+		versionID: versionID, eventName: "ObjectCreated:Put",
+	})
 }
 
 // notifyObjectRemoved delivers an s3:ObjectRemoved:Delete event to matching
 // notification targets.
-func (m *Mock) notifyObjectRemoved(bkt *bucketMeta, bucket, key string) {
-	m.notify(bkt, bucket, key, 0, "ObjectRemoved:Delete")
+func (m *Mock) notifyObjectRemoved(ctx context.Context, bkt *bucketMeta, bucket, key, versionID string) {
+	m.notify(ctx, bkt, &objectEvent{
+		bucket: bucket, key: key, versionID: versionID, eventName: "ObjectRemoved:Delete",
+	})
 }
 
 // notify delivers an S3 event to every notification target configured on the
@@ -48,26 +67,47 @@ func (m *Mock) notifyObjectRemoved(bkt *bucketMeta, bucket, key string) {
 // accepts the object key. Best-effort: delivery errors are swallowed so a
 // missing/failed target never fails the object operation (mirroring S3's
 // asynchronous, decoupled notification behavior).
-func (m *Mock) notify(bkt *bucketMeta, bucket, key string, size int64, eventName string) {
+//
+// ctx is the write call's own context, carried through only so deliver can
+// read the re-entrant delivery depth (internal/recursionguard): a notified
+// Lambda handler commonly writes back into the same bucket (mark-processed,
+// audit-append), re-entering here through the same synchronous call chain
+// (PutObject -> notify -> deliver -> InvokeExternal -> handler -> PutObject ->
+// ...), which the guard in InvokeExternal bounds.
+func (m *Mock) notify(ctx context.Context, bkt *bucketMeta, ev *objectEvent) {
 	if len(bkt.notifications) == 0 {
 		return
 	}
 
-	body := m.objectEventJSON(bucket, key, size, eventName)
+	// A single object operation carries one sequencer across all of its
+	// notification records, matching real S3.
+	ev.sequencer = m.nextSequencer()
 
 	for i := range bkt.notifications {
 		n := &bkt.notifications[i]
-		if !eventMatches(n.Events, eventName) || !filterMatches(n.Filters, key) {
+		if !eventMatches(n.Events, ev.eventName) || !filterMatches(n.Filters, ev.key) {
 			continue
 		}
 
-		m.deliver(n, body)
+		m.deliver(ctx, n, m.objectEventJSON(ev, n.ID))
 	}
 }
 
+// nextSequencer returns a monotonically increasing, 0-padded hexadecimal token,
+// the shape S3 stamps on ObjectCreated/ObjectRemoved event records so a consumer
+// can order events for a given object key.
+func (m *Mock) nextSequencer() string {
+	return fmt.Sprintf("%016X", m.eventSeq.Add(1))
+}
+
 // deliver dispatches an event body to a single notification target by kind.
-func (m *Mock) deliver(n *BucketNotification, body string) {
-	ctx := context.Background()
+// Delivery always runs on a fresh background context, decoupled from
+// callerCtx's cancellation/deadline (mirroring S3's real asynchronous,
+// decoupled notification behavior), carrying forward only the re-entrant
+// delivery depth so a Lambda target that writes back into this bucket stays
+// bounded (the guard itself lives in lambda.InvokeExternal).
+func (m *Mock) deliver(callerCtx context.Context, n *BucketNotification, body string) {
+	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
 
 	switch n.Target {
 	case NotifyQueue:
@@ -126,15 +166,51 @@ func filterMatches(rules []NotificationFilterRule, key string) bool {
 	return true
 }
 
-func (m *Mock) objectEventJSON(bucket, key string, size int64, eventName string) string {
+// objectEventJSON renders the S3 event-notification record for a single
+// notification target (its configurationId is the target's id). The shape
+// mirrors the documented S3 event message: top-level eventVersion/userIdentity/
+// requestParameters/responseElements plus the full s3 block (s3SchemaVersion,
+// configurationId, bucket.{name,arn,ownerIdentity} and object.{key,size,eTag,
+// versionId,sequencer}), so a handler reading record.s3.object.eTag/sequencer or
+// record.s3.bucket.arn sees real values.
+func (m *Mock) objectEventJSON(ev *objectEvent, configurationID string) string {
+	object := map[string]any{
+		"key":       ev.key,
+		"sequencer": ev.sequencer,
+	}
+
+	// Object creation reports size/eTag; a removal (delete marker) carries
+	// neither, matching real S3's ObjectRemoved records.
+	if strings.HasPrefix(ev.eventName, "ObjectCreated") {
+		object["size"] = ev.size
+		object["eTag"] = ev.eTag
+	}
+
+	if ev.versionID != "" {
+		object["versionId"] = ev.versionID
+	}
+
 	record := map[string]any{
-		"eventSource": "aws:s3",
-		"eventName":   eventName,
-		"awsRegion":   m.opts.Region,
-		"eventTime":   m.opts.Clock.Now().UTC().Format(s3TimeFormat),
+		"eventVersion":      "2.1",
+		"eventSource":       "aws:s3",
+		"awsRegion":         m.opts.Region,
+		"eventTime":         m.opts.Clock.Now().UTC().Format(s3TimeFormat),
+		"eventName":         ev.eventName,
+		"userIdentity":      map[string]any{"principalId": m.opts.AccountID},
+		"requestParameters": map[string]any{"sourceIPAddress": "127.0.0.1"},
+		"responseElements": map[string]any{
+			"x-amz-request-id": ev.sequencer,
+			"x-amz-id-2":       ev.sequencer,
+		},
 		"s3": map[string]any{
-			"bucket": map[string]any{"name": bucket},
-			"object": map[string]any{"key": key, "size": size},
+			"s3SchemaVersion": "1.0",
+			"configurationId": configurationID,
+			"bucket": map[string]any{
+				"name":          ev.bucket,
+				"ownerIdentity": map[string]any{"principalId": m.opts.AccountID},
+				"arn":           "arn:aws:s3:::" + ev.bucket,
+			},
+			"object": object,
 		},
 	}
 

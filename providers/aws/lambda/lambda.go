@@ -16,6 +16,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
@@ -337,13 +338,33 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 
 // InvokeExternal asynchronously invokes the function identified by its ARN with
 // the given event payload. It backs cross-service event delivery (e.g. S3 ->
-// Lambda notifications). An unknown function is a no-op so a stale target never
-// fails the caller.
+// Lambda notifications, DynamoDB Streams -> Lambda event source mappings). An
+// unknown function is a no-op so a stale target never fails the caller.
+//
+// It is also the single choke point every such delivery path funnels through,
+// so it carries the recursive-loop guard: a mapped/notified handler commonly
+// writes back into its own event source (mark-processed, audit-append,
+// status-bump), which re-enters here through the same synchronous call chain
+// (write -> deliver -> Invoke -> handler -> write -> ...). Left unbounded that
+// recurses the process into an unrecoverable "fatal error: stack overflow".
+// ctx carries the re-entrant delivery depth (see internal/recursionguard);
+// once it reaches recursionguard.MaxDepth — matching AWS Lambda's own
+// recursive-loop detection, which stops invoking a function after ~16
+// invocations within one chain of requests (see
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-recursion.html) —
+// further delivery is dropped instead of recursing.
 func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload []byte) error {
 	name := functionNameFromARN(functionARN)
 	if _, ok := m.funcs.Get(name); !ok {
 		return nil
 	}
+
+	depth := recursionguard.Depth(ctx)
+	if depth >= recursionguard.MaxDepth {
+		return nil
+	}
+
+	ctx = recursionguard.WithDepth(ctx, depth+1)
 
 	_, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: name, Payload: payload, InvokeType: "Event"})
 

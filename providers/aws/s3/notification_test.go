@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -114,6 +115,119 @@ func TestNotificationFilterAndTargets(t *testing.T) {
 
 	if !strings.Contains(lambda.payloads[0], `"eventName":"ObjectRemoved:Delete"`) {
 		t.Fatalf("lambda payload = %s", lambda.payloads[0])
+	}
+}
+
+// TestObjectEventFullShape verifies the S3 event record delivered to a target
+// carries the complete documented shape — eventVersion, userIdentity,
+// requestParameters, responseElements, and the full s3 block with
+// s3SchemaVersion, configurationId, bucket.{name,arn,ownerIdentity} and
+// object.{key,size,eTag,sequencer} — not just bucket.name/object.key.
+func TestObjectEventFullShape(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	lambda := &recordingInvoker{}
+	m.SetLambdaInvoker(lambda)
+
+	if err := m.CreateBucket(ctx, "shape-bucket"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	if err := m.PutBucketNotification(ctx, "shape-bucket", []BucketNotification{
+		{ID: "cfg-1", Target: NotifyLambda, ARN: "arn:aws:lambda:us-east-1:0:function:f", Events: []string{"s3:ObjectCreated:*"}},
+	}); err != nil {
+		t.Fatalf("PutBucketNotification: %v", err)
+	}
+
+	if err := m.PutObject(ctx, "shape-bucket", "uploads/photo.jpg", []byte("data"), "image/jpeg", nil); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	if len(lambda.payloads) != 1 {
+		t.Fatalf("lambda invocations = %d, want 1", len(lambda.payloads))
+	}
+
+	var event struct {
+		Records []struct {
+			EventVersion      string         `json:"eventVersion"`
+			EventSource       string         `json:"eventSource"`
+			EventName         string         `json:"eventName"`
+			UserIdentity      map[string]any `json:"userIdentity"`
+			RequestParameters map[string]any `json:"requestParameters"`
+			ResponseElements  map[string]any `json:"responseElements"`
+			S3                struct {
+				SchemaVersion   string `json:"s3SchemaVersion"`
+				ConfigurationID string `json:"configurationId"`
+				Bucket          struct {
+					Name          string         `json:"name"`
+					ARN           string         `json:"arn"`
+					OwnerIdentity map[string]any `json:"ownerIdentity"`
+				} `json:"bucket"`
+				Object struct {
+					Key       string `json:"key"`
+					Size      int64  `json:"size"`
+					ETag      string `json:"eTag"`
+					Sequencer string `json:"sequencer"`
+				} `json:"object"`
+			} `json:"s3"`
+		} `json:"Records"`
+	}
+
+	if err := json.Unmarshal([]byte(lambda.payloads[0]), &event); err != nil {
+		t.Fatalf("unmarshal event: %v\npayload=%s", err, lambda.payloads[0])
+	}
+
+	if len(event.Records) != 1 {
+		t.Fatalf("Records = %d, want 1", len(event.Records))
+	}
+
+	r := event.Records[0]
+	assertEq(t, "eventVersion", r.EventVersion, "2.1")
+	assertEq(t, "eventSource", r.EventSource, "aws:s3")
+	assertEq(t, "eventName", r.EventName, "ObjectCreated:Put")
+
+	if r.UserIdentity["principalId"] == "" || r.UserIdentity["principalId"] == nil {
+		t.Fatalf("userIdentity.principalId empty: %+v", r.UserIdentity)
+	}
+
+	if r.RequestParameters["sourceIPAddress"] == nil {
+		t.Fatalf("requestParameters.sourceIPAddress missing: %+v", r.RequestParameters)
+	}
+
+	if r.ResponseElements["x-amz-request-id"] == nil {
+		t.Fatalf("responseElements.x-amz-request-id missing: %+v", r.ResponseElements)
+	}
+
+	assertEq(t, "s3SchemaVersion", r.S3.SchemaVersion, "1.0")
+	assertEq(t, "configurationId", r.S3.ConfigurationID, "cfg-1")
+	assertEq(t, "bucket.name", r.S3.Bucket.Name, "shape-bucket")
+	assertEq(t, "bucket.arn", r.S3.Bucket.ARN, "arn:aws:s3:::shape-bucket")
+
+	if r.S3.Bucket.OwnerIdentity["principalId"] == nil {
+		t.Fatalf("bucket.ownerIdentity.principalId missing: %+v", r.S3.Bucket.OwnerIdentity)
+	}
+
+	assertEq(t, "object.key", r.S3.Object.Key, "uploads/photo.jpg")
+
+	if r.S3.Object.Size != 4 {
+		t.Fatalf("object.size = %d, want 4", r.S3.Object.Size)
+	}
+
+	if len(r.S3.Object.ETag) != 32 {
+		t.Fatalf("object.eTag = %q, want a 32-char md5", r.S3.Object.ETag)
+	}
+
+	if r.S3.Object.Sequencer == "" {
+		t.Fatalf("object.sequencer empty")
+	}
+}
+
+func assertEq(t *testing.T, field, got, want string) {
+	t.Helper()
+
+	if got != want {
+		t.Fatalf("%s = %q, want %q", field, got, want)
 	}
 }
 
