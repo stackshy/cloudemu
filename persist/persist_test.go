@@ -164,7 +164,10 @@ func dataOf(o *storagedriver.Object) []byte {
 
 // TestExportMetadataOnlyOmitsBodies verifies the default (metadata-only) export
 // records object keys/metadata but drops the bytes, and that IncludeAssets keeps
-// them — the flag that keeps the snapshot file KB-sized by default.
+// them — the flag that keeps the snapshot file KB-sized by default. With the AWS
+// S3 mock now snapshotting itself, the guarantee is asserted through a restore:
+// metadata-only keeps the object but empties its bytes, while IncludeAssets
+// keeps them.
 func TestExportMetadataOnlyOmitsBodies(t *testing.T) {
 	ctx := context.Background()
 
@@ -176,23 +179,50 @@ func TestExportMetadataOnlyOmitsBodies(t *testing.T) {
 		t.Fatalf("seed source: %v", err)
 	}
 
+	// Metadata-only: the object is restored (still listed) but its bytes are gone.
 	meta, err := persist.Export(ctx, tSrc, persist.Options{IncludeAssets: false})
 	if err != nil {
 		t.Fatalf("export metadata-only: %v", err)
 	}
-	if len(meta.Buckets) != 1 || len(meta.Buckets[0].Objects) != 1 {
-		t.Fatalf("metadata-only dropped bucket/object metadata: %+v", meta)
-	}
-	if len(meta.Buckets[0].Objects[0].Body) != 0 {
-		t.Fatalf("metadata-only kept body: %q", meta.Buckets[0].Objects[0].Body)
+
+	metaDst := cloudemu.NewAWS()
+	if err := persist.Restore(ctx, seed.Target{Storage: metaDst.S3}, &meta); err != nil {
+		t.Fatalf("restore metadata-only: %v", err)
 	}
 
+	head, err := metaDst.S3.HeadObject(ctx, "b", "k")
+	if err != nil {
+		t.Fatalf("metadata-only dropped object metadata: %v", err)
+	}
+	if head.Key != "k" {
+		t.Fatalf("restored object key = %q, want k", head.Key)
+	}
+
+	mo, err := metaDst.S3.GetObject(ctx, "b", "k")
+	if err != nil {
+		t.Fatalf("get metadata-only object: %v", err)
+	}
+	if len(mo.Data) != 0 {
+		t.Fatalf("metadata-only kept body: %q", mo.Data)
+	}
+
+	// IncludeAssets: the bytes survive.
 	full, err := persist.Export(ctx, tSrc, persist.Options{IncludeAssets: true})
 	if err != nil {
 		t.Fatalf("export with assets: %v", err)
 	}
-	if string(full.Buckets[0].Objects[0].Body) != "secret-bytes" {
-		t.Fatalf("asset export dropped body: %q", full.Buckets[0].Objects[0].Body)
+
+	fullDst := cloudemu.NewAWS()
+	if err := persist.Restore(ctx, seed.Target{Storage: fullDst.S3}, &full); err != nil {
+		t.Fatalf("restore with assets: %v", err)
+	}
+
+	fo, err := fullDst.S3.GetObject(ctx, "b", "k")
+	if err != nil {
+		t.Fatalf("get asset object: %v", err)
+	}
+	if string(fo.Data) != "secret-bytes" {
+		t.Fatalf("asset export dropped body: %q", fo.Data)
 	}
 }
 

@@ -2,6 +2,7 @@
 package memstore
 
 import (
+	"encoding/json"
 	"sort"
 	"sync"
 )
@@ -145,6 +146,32 @@ func (s *Store[V]) Filter(fn func(key string, value V) bool) map[string]V {
 	}
 
 	return result
+}
+
+// Snapshot serializes the whole store as a JSON object keyed by id
+// (map[string]V), so a restore can reinstate every value under its exact key.
+// Identity is preserved: the keys are the resource ids and round-trip unchanged.
+// V must be JSON-serializable for the dump to be lossless — a value type with
+// unexported data fields needs an exported snapshot form or custom JSON methods.
+func (s *Store[V]) Snapshot() ([]byte, error) {
+	return json.Marshal(s.All())
+}
+
+// LoadSnapshot restores a store from Snapshot's output, Set-ing each value under
+// the same key it was dumped with, so ids and any id-string cross-references
+// survive. It merges onto whatever the store already holds (a fresh store is
+// empty), leaving existing unrelated keys untouched.
+func (s *Store[V]) LoadSnapshot(data []byte) error {
+	var items map[string]V
+	if err := json.Unmarshal(data, &items); err != nil {
+		return err
+	}
+
+	for k, v := range items {
+		s.Set(k, v)
+	}
+
+	return nil
 }
 
 // SortedValues returns the values ordered by their keys. List endpoints

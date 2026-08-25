@@ -21,7 +21,7 @@ func TestRetypeItemRestoresNumber(t *testing.T) {
 		"nested": map[string]any{"inner": map[string]any{expr.NumberJSONTag: "42"}},
 		"list":   []any{map[string]any{expr.NumberJSONTag: "7"}, "s"},
 	}
-	got := retypeItem(item)
+	got := expr.RetypeItem(item)
 	if got["big"] != expr.Number("123456789012345678901234567890") {
 		t.Fatalf("big = %#v, want exact-decimal Number", got["big"])
 	}

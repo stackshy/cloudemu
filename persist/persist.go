@@ -1,12 +1,14 @@
 // Package persist snapshots cloudemu provider state to disk and restores it, so
 // emulated resources survive a stop/start of the standalone server.
 //
-// State can't be serialized generically (Go has no pickle; the in-memory value
-// types hold mutexes, funcs, and nested stores that no reflection codec can
-// round-trip). Instead Export/Restore read and write through the same
-// provider-agnostic driver interfaces the seed package uses — so one snapshot
-// format spans AWS, Azure, and GCP, and the on-disk file is human-readable and
-// diffable JSON rather than an opaque binary blob.
+// A mock that implements internal/snapshot.Snapshottable serializes its own
+// full state (identity-preserving: resource ids and id-string cross-references
+// survive), captured under ProviderState.Services keyed by service name. For a
+// mock that does not implement it yet, Export/Restore fall back to the bespoke
+// path that reads and writes through the same provider-agnostic driver
+// interfaces the seed package uses — so one snapshot format still spans AWS,
+// Azure, and GCP as more services migrate. Either way the on-disk file is
+// human-readable, diffable JSON rather than an opaque binary blob.
 package persist
 
 import (
@@ -17,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/seed"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -25,20 +28,30 @@ import (
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
-// SchemaVersion is the on-disk snapshot format version. Bump it on a
-// backward-incompatible change to the JSON shape.
-const SchemaVersion = 1
+// SchemaVersion is the on-disk snapshot format version. Bumped to 2 for the
+// per-driver identity-preserving layout (a migrated service's mock serializes
+// its own state under ProviderState.Services); a v1 snapshot is rejected on
+// load. Snapshots are a dev-only convenience, so a clean break is acceptable.
+const SchemaVersion = 2
 
 const (
 	defaultContentType = "application/octet-stream"
 
 	dirPerm = 0o755
+
+	// Service names keying ProviderState.Services for the generic (per-driver
+	// Snapshottable) path.
+	svcStorage  = "storage"
+	svcDatabase = "database"
+	svcSecrets  = "secrets"
+	svcCompute  = "compute"
 )
 
 // Sentinel errors so callers (and err113) get static, wrappable failures.
 var (
-	errNoDriver = errors.New("snapshot names a resource kind with no driver in the target")
-	errSchema   = errors.New("unsupported snapshot schema version")
+	errNoDriver        = errors.New("snapshot names a resource kind with no driver in the target")
+	errSchema          = errors.New("unsupported snapshot schema version")
+	errNotSnapshotable = errors.New("snapshot carries per-driver state for a service whose target driver is not snapshottable")
 )
 
 // Snapshot is a multi-cloud, point-in-time capture of provider state, written
@@ -59,12 +72,17 @@ type Meta struct {
 	Providers       []string `json:"providers,omitempty"`
 }
 
-// ProviderState is a single provider's persisted resources.
+// ProviderState is a single provider's persisted resources. Services holds the
+// per-driver identity-preserving snapshots (keyed by service name) for mocks
+// that implement snapshot.Snapshottable; the remaining fields hold the bespoke
+// fallback capture for mocks not yet migrated. For any given service exactly one
+// representation is populated.
 type ProviderState struct {
-	Buckets   []Bucket   `json:"buckets,omitempty"`
-	Tables    []Table    `json:"tables,omitempty"`
-	Secrets   []Secret   `json:"secrets,omitempty"`
-	Instances []Instance `json:"instances,omitempty"`
+	Services  map[string]json.RawMessage `json:"services,omitempty"`
+	Buckets   []Bucket                   `json:"buckets,omitempty"`
+	Tables    []Table                    `json:"tables,omitempty"`
+	Secrets   []Secret                   `json:"secrets,omitempty"`
+	Instances []Instance                 `json:"instances,omitempty"`
 }
 
 // Bucket is an object-storage bucket and its objects.
@@ -154,48 +172,114 @@ func RestoreAll(ctx context.Context, snap *Snapshot, targets map[string]seed.Tar
 	return nil
 }
 
-// Export reads a provider's current state through its drivers. A nil driver for
-// a kind simply contributes nothing (that kind isn't persisted).
+// Export captures a provider's current state. For each service whose mock
+// implements snapshot.Snapshottable, its identity-preserving self-snapshot is
+// stored under ProviderState.Services; every other service falls back to the
+// bespoke driver-replay capture. A nil driver for a kind contributes nothing.
 func Export(ctx context.Context, t seed.Target, opts Options) (ProviderState, error) {
-	buckets, err := exportBuckets(ctx, t.Storage, opts.IncludeAssets)
-	if err != nil {
+	ps := ProviderState{Services: map[string]json.RawMessage{}}
+
+	if err := exportKind(ctx, &ps, svcStorage, t.Storage, opts.IncludeAssets, func() error {
+		buckets, err := exportBuckets(ctx, t.Storage, opts.IncludeAssets)
+		ps.Buckets = buckets
+		return err
+	}); err != nil {
 		return ProviderState{}, err
 	}
 
-	tables, err := exportTables(ctx, t.Database)
-	if err != nil {
+	if err := exportKind(ctx, &ps, svcDatabase, t.Database, opts.IncludeAssets, func() error {
+		tables, err := exportTables(ctx, t.Database)
+		ps.Tables = tables
+		return err
+	}); err != nil {
 		return ProviderState{}, err
 	}
 
-	secrets, err := exportSecrets(ctx, t.Secrets)
-	if err != nil {
+	if err := exportKind(ctx, &ps, svcSecrets, t.Secrets, opts.IncludeAssets, func() error {
+		secrets, err := exportSecrets(ctx, t.Secrets)
+		ps.Secrets = secrets
+		return err
+	}); err != nil {
 		return ProviderState{}, err
 	}
 
-	instances, err := exportInstances(ctx, t.Compute)
-	if err != nil {
+	if err := exportKind(ctx, &ps, svcCompute, t.Compute, opts.IncludeAssets, func() error {
+		instances, err := exportInstances(ctx, t.Compute)
+		ps.Instances = instances
+		return err
+	}); err != nil {
 		return ProviderState{}, err
 	}
 
-	return ProviderState{Buckets: buckets, Tables: tables, Secrets: secrets, Instances: instances}, nil
+	if len(ps.Services) == 0 {
+		ps.Services = nil
+	}
+
+	return ps, nil
 }
 
-// Restore writes a provider state back through its drivers, into what should be
-// a freshly-built (empty) provider.
+// exportKind stores d's self-snapshot under name when d implements
+// Snapshottable; otherwise it runs the bespoke fallback capture.
+func exportKind[D any](ctx context.Context, ps *ProviderState, name string, d D, includeAssets bool, bespoke func() error) error {
+	if s, ok := any(d).(snapshot.Snapshottable); ok {
+		raw, err := s.Snapshot(ctx, includeAssets)
+		if err != nil {
+			return fmt.Errorf("snapshot %s: %w", name, err)
+		}
+
+		ps.Services[name] = raw
+
+		return nil
+	}
+
+	return bespoke()
+}
+
+// Restore writes a provider state back into what should be a freshly-built
+// (empty) provider. A service captured under Services is restored through its
+// mock's Snapshottable.Restore; otherwise the bespoke driver-replay path runs.
 func Restore(ctx context.Context, t seed.Target, ps *ProviderState) error {
-	if err := restoreBuckets(ctx, t.Storage, ps.Buckets); err != nil {
+	if err := restoreKind(ctx, ps, svcStorage, t.Storage, func() error {
+		return restoreBuckets(ctx, t.Storage, ps.Buckets)
+	}); err != nil {
 		return err
 	}
 
-	if err := restoreTables(ctx, t.Database, ps.Tables); err != nil {
+	if err := restoreKind(ctx, ps, svcDatabase, t.Database, func() error {
+		return restoreTables(ctx, t.Database, ps.Tables)
+	}); err != nil {
 		return err
 	}
 
-	if err := restoreSecrets(ctx, t.Secrets, ps.Secrets); err != nil {
+	if err := restoreKind(ctx, ps, svcSecrets, t.Secrets, func() error {
+		return restoreSecrets(ctx, t.Secrets, ps.Secrets)
+	}); err != nil {
 		return err
 	}
 
-	return restoreInstances(ctx, t.Compute, ps.Instances)
+	return restoreKind(ctx, ps, svcCompute, t.Compute, func() error {
+		return restoreInstances(ctx, t.Compute, ps.Instances)
+	})
+}
+
+// restoreKind restores name's per-driver snapshot through d's Snapshottable when
+// the snapshot carries one; otherwise it runs the bespoke fallback restore.
+func restoreKind[D any](ctx context.Context, ps *ProviderState, name string, d D, bespoke func() error) error {
+	raw, ok := ps.Services[name]
+	if !ok {
+		return bespoke()
+	}
+
+	s, ok := any(d).(snapshot.Snapshottable)
+	if !ok {
+		return fmt.Errorf("%w: %s", errNotSnapshotable, name)
+	}
+
+	if err := s.Restore(ctx, raw); err != nil {
+		return fmt.Errorf("restore %s: %w", name, err)
+	}
+
+	return nil
 }
 
 func exportBuckets(ctx context.Context, d storagedriver.Bucket, includeAssets bool) ([]Bucket, error) {
@@ -418,49 +502,13 @@ func restoreTables(ctx context.Context, d dbdriver.Database, tables []Table) err
 		}
 
 		for i, item := range tb.Items {
-			if err := d.PutItem(ctx, tb.Name, retypeItem(item)); err != nil {
+			if err := d.PutItem(ctx, tb.Name, expr.RetypeItem(item)); err != nil {
 				return fmt.Errorf("restore table %q item %d: %w", tb.Name, i, err)
 			}
 		}
 	}
 
 	return nil
-}
-
-// retypeItem restores DynamoDB Number attributes that a JSON round-trip left as
-// the self-describing {"$ddbN":"25"} object back into expr.Number, recursing
-// through nested maps and lists so exact-decimal numbers survive persist.
-func retypeItem(item map[string]any) map[string]any {
-	out := make(map[string]any, len(item))
-	for k, v := range item {
-		out[k] = retypeValue(v)
-	}
-
-	return out
-}
-
-func retypeValue(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		if len(t) == 1 {
-			if n, ok := t[expr.NumberJSONTag]; ok {
-				if s, isStr := n.(string); isStr {
-					return expr.Number(s)
-				}
-			}
-		}
-
-		return retypeItem(t)
-	case []any:
-		out := make([]any, len(t))
-		for i := range t {
-			out[i] = retypeValue(t[i])
-		}
-
-		return out
-	default:
-		return v
-	}
 }
 
 func restoreSecrets(ctx context.Context, d secretsdriver.Secrets, secrets []Secret) error {
