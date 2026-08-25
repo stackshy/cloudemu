@@ -54,11 +54,22 @@ func (m *Mock) notifyObjectCreated(ctx context.Context, bkt *bucketMeta, bucket,
 	})
 }
 
-// notifyObjectRemoved delivers an s3:ObjectRemoved:Delete event to matching
-// notification targets.
-func (m *Mock) notifyObjectRemoved(ctx context.Context, bkt *bucketMeta, bucket, key, versionID string) {
+// notifyObjectRemoved delivers an s3:ObjectRemoved event to matching
+// notification targets. deleteMarker reports whether this delete created a new
+// delete marker (a top-level delete, no versionId, on a versioning-Enabled or
+// -Suspended bucket) rather than permanently erasing bytes: that case fires
+// "ObjectRemoved:DeleteMarkerCreated" instead of "ObjectRemoved:Delete", the
+// same distinction real S3 draws — a permanent removal (unversioned bucket, or
+// an explicit ?versionId, even one that happens to target a delete marker)
+// always fires "ObjectRemoved:Delete".
+func (m *Mock) notifyObjectRemoved(ctx context.Context, bkt *bucketMeta, bucket, key, versionID string, deleteMarker bool) {
+	eventName := "ObjectRemoved:Delete"
+	if deleteMarker {
+		eventName = "ObjectRemoved:DeleteMarkerCreated"
+	}
+
 	m.notify(ctx, bkt, &objectEvent{
-		bucket: bucket, key: key, versionID: versionID, eventName: "ObjectRemoved:Delete",
+		bucket: bucket, key: key, versionID: versionID, eventName: eventName,
 	})
 }
 
