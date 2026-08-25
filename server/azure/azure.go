@@ -211,9 +211,10 @@ func New(d Drivers) http.Handler {
 	// before the permissive blob fallback so it isn't swallowed as a blob call.
 	srv.Register(tenants.New(tenantID))
 
-	// Resource groups have no driver: they are containers, and the emulator
-	// tracks membership by the ids resources already carry.
-	srv.Register(resourcegroups.New())
+	// Resource groups have no driver of their own: they are containers, and the
+	// emulator tracks membership by the ids resources already carry. The
+	// discovery engine (nil-safe) lets exportTemplate enumerate that membership.
+	srv.Register(resourcegroups.New(d.ResourceDiscovery))
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
