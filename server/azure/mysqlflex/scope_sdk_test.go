@@ -109,3 +109,127 @@ func TestSDKMySQLFlexScopedDeleteNotFound(t *testing.T) {
 		t.Fatalf("Get after cross-group delete attempt: %v", err)
 	}
 }
+
+func skuName(s *armmysqlflexibleservers.Server) string {
+	if s == nil || s.SKU == nil || s.SKU.Name == nil {
+		return ""
+	}
+
+	return *s.SKU.Name
+}
+
+// TestSDKMySQLFlexScopedUpdateNotFound asserts a PATCH issued under the wrong
+// resource group cannot mutate another resource group's server (the SKU/storage
+// cross-tenant write) — it must 404 and leave the real server untouched.
+func TestSDKMySQLFlexScopedUpdateNotFound(t *testing.T) {
+	cf := newFactory(t)
+	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
+
+	ctx := context.Background()
+	servers := cf.NewServersClient()
+
+	before, err := servers.Get(ctx, "rg-team-a", "srv-a1", nil)
+	if err != nil {
+		t.Fatalf("Get before: %v", err)
+	}
+
+	origSKU := skuName(&before.Server)
+
+	poller, err := servers.BeginUpdate(ctx, "rg-team-b", "srv-a1", armmysqlflexibleservers.ServerForUpdate{
+		SKU: &armmysqlflexibleservers.SKU{Name: to.Ptr("Standard_D8ds_v4")},
+	}, nil)
+	if err == nil {
+		_, err = poller.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("Update from a different resource group: expected an error, got nil")
+	}
+
+	after, err := servers.Get(ctx, "rg-team-a", "srv-a1", nil)
+	if err != nil {
+		t.Fatalf("Get after: %v", err)
+	}
+
+	if got := skuName(&after.Server); got != origSKU {
+		t.Fatalf("cross-group update mutated the owner's SKU: %q -> %q", origSKU, got)
+	}
+}
+
+// TestSDKMySQLFlexCrossGroupCreateConflict asserts a same-name PUT from a
+// different resource group conflicts (Flex names are globally FQDN-unique)
+// rather than silently mutating the real owner's server.
+func TestSDKMySQLFlexCrossGroupCreateConflict(t *testing.T) {
+	cf := newFactory(t)
+	ctx := context.Background()
+	servers := cf.NewServersClient()
+
+	poller, err := servers.BeginCreate(ctx, "rg-team-a", "srv1", armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		SKU:      &armmysqlflexibleservers.SKU{Name: to.Ptr("Standard_B1ms")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate rg-team-a: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create rg-team-a: %v", err)
+	}
+
+	poller2, err := servers.BeginCreate(ctx, "rg-team-b", "srv1", armmysqlflexibleservers.Server{
+		Location: to.Ptr("westus"),
+		SKU:      &armmysqlflexibleservers.SKU{Name: to.Ptr("Standard_D8ds_v4")},
+	}, nil)
+	if err == nil {
+		_, err = poller2.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("cross-group same-name create: expected a conflict, got nil")
+	}
+
+	got, err := servers.Get(ctx, "rg-team-a", "srv1", nil)
+	if err != nil {
+		t.Fatalf("Get rg-team-a after conflict: %v", err)
+	}
+
+	if name := skuName(&got.Server); name != "Standard_B1ms" {
+		t.Fatalf("cross-group create mutated the owner's SKU, got %q", name)
+	}
+
+	if _, err := servers.Get(ctx, "rg-team-b", "srv1", nil); err == nil {
+		t.Fatal("server must not exist under rg-team-b after a rejected create")
+	}
+}
+
+// TestSDKMySQLFlexScopedStartStopNotFound asserts start/stop issued under the
+// wrong resource group cannot act on another resource group's server.
+func TestSDKMySQLFlexScopedStartStopNotFound(t *testing.T) {
+	cf := newFactory(t)
+	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
+
+	ctx := context.Background()
+	servers := cf.NewServersClient()
+
+	stopP, err := servers.BeginStop(ctx, "rg-team-b", "srv-a1", nil)
+	if err == nil {
+		_, err = stopP.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("Stop from a different resource group: expected an error, got nil")
+	}
+
+	startP, err := servers.BeginStart(ctx, "rg-team-b", "srv-a1", nil)
+	if err == nil {
+		_, err = startP.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("Start from a different resource group: expected an error, got nil")
+	}
+
+	if _, err := servers.Get(ctx, "rg-team-a", "srv-a1", nil); err != nil {
+		t.Fatalf("Get after cross-group start/stop attempt: %v", err)
+	}
+}

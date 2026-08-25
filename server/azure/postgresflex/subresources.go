@@ -84,6 +84,10 @@ func (h *Handler) serveDatabase(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -188,6 +192,10 @@ func (h *Handler) serveFirewallRule(w http.ResponseWriter, r *http.Request, rp *
 	fw, ok := h.firewallRules()
 	if !ok {
 		writeUnsupported(w, "firewallRules")
+		return
+	}
+
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
 		return
 	}
 
@@ -296,6 +304,10 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, rp 
 	cf, ok := h.configurations()
 	if !ok {
 		writeUnsupported(w, "configurations")
+		return
+	}
+
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
 		return
 	}
 
