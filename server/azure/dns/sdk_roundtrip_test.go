@@ -220,6 +220,111 @@ func TestSDKAzureDNSRecordSets(t *testing.T) {
 	}
 }
 
+// TestSDKAzureDNSListPreservesUnmodeledRecordTypes is the regression for the
+// HIGH finding: MX and SRV record sets are not natively modeled by the DNS
+// handler (Azure represents them as properties.MXRecords / properties.SRVRecords
+// — see RecordSet in
+// https://learn.microsoft.com/en-us/rest/api/dns/record-sets/list-by-dns-zone),
+// so cloudemu relies on the unmodeled-property overlay to round-trip their
+// data. A single RecordSets.Get on one of them worked, but
+// RecordSets.ListByDnsZone returned every record set with its MXRecords /
+// SRVRecords silently dropped. A/AAAA/CNAME/TXT are natively modeled and must
+// keep listing correctly alongside the fix.
+func TestSDKAzureDNSListPreservesUnmodeledRecordTypes(t *testing.T) {
+	zones, records := newDNSClients(t)
+	ctx := context.Background()
+
+	if _, err := zones.CreateOrUpdate(ctx, testRG, "unmodeled.com", armdns.Zone{
+		Location: to.Ptr("global"),
+	}, nil); err != nil {
+		t.Fatalf("Zones.CreateOrUpdate: %v", err)
+	}
+
+	if _, err := records.CreateOrUpdate(ctx, testRG, "unmodeled.com", "@", armdns.RecordTypeMX, armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
+			TTL: to.Ptr(int64(300)),
+			MxRecords: []*armdns.MxRecord{
+				{Exchange: to.Ptr("mail.unmodeled.com"), Preference: to.Ptr(int32(10))},
+			},
+		},
+	}, nil); err != nil {
+		t.Fatalf("RecordSets.CreateOrUpdate(MX): %v", err)
+	}
+
+	if _, err := records.CreateOrUpdate(ctx, testRG, "unmodeled.com", "_sip._tcp", armdns.RecordTypeSRV, armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
+			TTL: to.Ptr(int64(300)),
+			SrvRecords: []*armdns.SrvRecord{
+				{Priority: to.Ptr(int32(1)), Weight: to.Ptr(int32(5)), Port: to.Ptr(int32(5060)), Target: to.Ptr("sip.unmodeled.com")},
+			},
+		},
+	}, nil); err != nil {
+		t.Fatalf("RecordSets.CreateOrUpdate(SRV): %v", err)
+	}
+
+	if _, err := records.CreateOrUpdate(ctx, testRG, "unmodeled.com", "www", armdns.RecordTypeA, armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
+			TTL:      to.Ptr(int64(300)),
+			ARecords: []*armdns.ARecord{{IPv4Address: to.Ptr("203.0.113.9")}},
+		},
+	}, nil); err != nil {
+		t.Fatalf("RecordSets.CreateOrUpdate(A): %v", err)
+	}
+
+	var (
+		mxSeen, srvSeen, aSeen bool
+	)
+
+	pager := records.NewListByDNSZonePager(testRG, "unmodeled.com", nil)
+	for pager.More() {
+		page, perr := pager.NextPage(ctx)
+		if perr != nil {
+			t.Fatalf("ListByDNSZone: %v", perr)
+		}
+
+		for _, rs := range page.Value {
+			if rs.Properties == nil {
+				continue
+			}
+
+			switch {
+			case len(rs.Properties.MxRecords) > 0:
+				mxSeen = true
+
+				mx := rs.Properties.MxRecords[0]
+				if mx.Exchange == nil || *mx.Exchange != "mail.unmodeled.com" || mx.Preference == nil || *mx.Preference != 10 {
+					t.Errorf("list MX record = %+v, want exchange=mail.unmodeled.com preference=10", mx)
+				}
+			case len(rs.Properties.SrvRecords) > 0:
+				srvSeen = true
+
+				srv := rs.Properties.SrvRecords[0]
+				if srv.Target == nil || *srv.Target != "sip.unmodeled.com" || srv.Port == nil || *srv.Port != 5060 {
+					t.Errorf("list SRV record = %+v, want target=sip.unmodeled.com port=5060", srv)
+				}
+			case len(rs.Properties.ARecords) > 0:
+				aSeen = true
+
+				if *rs.Properties.ARecords[0].IPv4Address != "203.0.113.9" {
+					t.Errorf("list A record = %+v, want 203.0.113.9", rs.Properties.ARecords[0])
+				}
+			}
+		}
+	}
+
+	if !mxSeen {
+		t.Error("ListByDnsZone dropped the MX record set's MXRecords data")
+	}
+
+	if !srvSeen {
+		t.Error("ListByDnsZone dropped the SRV record set's SRVRecords data")
+	}
+
+	if !aSeen {
+		t.Error("ListByDnsZone regressed on the natively-modeled A record set")
+	}
+}
+
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
