@@ -52,6 +52,14 @@ type lifecycleTransition struct {
 	// powerState is the Azure power state the instance settles into after the
 	// transition ("running"/"stopped"/"deallocated"). Empty leaves it unchanged.
 	powerState string
+	// idempotentPowerStates are the Azure PowerState values the instance may
+	// already be in for which this action is a true no-op. Real Azure
+	// documents Start/PowerOff/Deallocate as always succeeding (200/202) —
+	// no state-conflict error is documented for calling them on a VM already
+	// at (or past) the target power level (MS Learn: rest/api/compute/
+	// virtual-machines/start, .../deallocate). Nil for actions (Reboot,
+	// Terminate) that are not idempotent on the settled state.
+	idempotentPowerStates []string
 }
 
 var (
@@ -59,32 +67,36 @@ var (
 	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0}          //nolint:gochecknoglobals // package-level test fixtures
 
 	startTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
-		intermediateState: compute.StatePending,
-		finalState:        compute.StateRunning,
-		metricValues:      runningMetricValues,
-		errVerb:           "start",
-		powerState:        powerStateRunning,
+		intermediateState:     compute.StatePending,
+		finalState:            compute.StateRunning,
+		metricValues:          runningMetricValues,
+		errVerb:               "start",
+		powerState:            powerStateRunning,
+		idempotentPowerStates: []string{powerStateRunning},
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
-		intermediateState: compute.StateStopping,
-		finalState:        compute.StateStopped,
-		metricValues:      zeroMetricValues,
-		errVerb:           "stop",
-		powerState:        powerStateDeallocated,
+		intermediateState:     compute.StateStopping,
+		finalState:            compute.StateStopped,
+		metricValues:          zeroMetricValues,
+		errVerb:               "stop",
+		powerState:            powerStateDeallocated,
+		idempotentPowerStates: []string{powerStateDeallocated},
 	}
 	powerOffTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
-		intermediateState: compute.StateStopping,
-		finalState:        compute.StateStopped,
-		metricValues:      zeroMetricValues,
-		errVerb:           "power off",
-		powerState:        powerStateStopped,
+		intermediateState:     compute.StateStopping,
+		finalState:            compute.StateStopped,
+		metricValues:          zeroMetricValues,
+		errVerb:               "power off",
+		powerState:            powerStateStopped,
+		idempotentPowerStates: []string{powerStateStopped, powerStateDeallocated},
 	}
 	deallocateTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
-		intermediateState: compute.StateStopping,
-		finalState:        compute.StateStopped,
-		metricValues:      zeroMetricValues,
-		errVerb:           "deallocate",
-		powerState:        powerStateDeallocated,
+		intermediateState:     compute.StateStopping,
+		finalState:            compute.StateStopped,
+		metricValues:          zeroMetricValues,
+		errVerb:               "deallocate",
+		powerState:            powerStateDeallocated,
+		idempotentPowerStates: []string{powerStateDeallocated},
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateRestarting,
@@ -399,6 +411,21 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
 		}
 
+		// The lifecycle state machine is already settled at this action's
+		// target state (e.g. Start on an already-running VM, or PowerOff
+		// after Deallocate — both settle at compute.StateStopped). Walking
+		// the FSM again would hit an illegal same-state edge, but real Azure
+		// treats the action as idempotent, so short-circuit instead of
+		// erroring.
+		if inst.State == t.finalState && isIdempotentPowerState(t) {
+			if !isIdempotent(inst.PowerState, t.idempotentPowerStates) && t.powerState != "" {
+				inst.PowerState = t.powerState
+				m.emitLifecycleMetrics(ctx, inst, t.metricValues)
+			}
+
+			continue
+		}
+
 		if err := m.sm.Transition(id, t.intermediateState); err != nil {
 			return cerrors.Newf(cerrors.FailedPrecondition, "cannot %s instance %q: %v", t.errVerb, id, err)
 		}
@@ -415,6 +442,23 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 	}
 
 	return nil
+}
+
+// isIdempotentPowerState reports whether t is one of the power actions
+// (Start/Stop/PowerOff/Deallocate) that Azure documents as idempotent on the
+// settled state, as opposed to Reboot/Terminate which always act.
+func isIdempotentPowerState(t *lifecycleTransition) bool {
+	return len(t.idempotentPowerStates) > 0
+}
+
+func isIdempotent(state string, idempotentStates []string) bool {
+	for _, s := range idempotentStates {
+		if state == s {
+			return true
+		}
+	}
+
+	return false
 }
 
 // StartInstances starts the specified stopped virtual machine instances.
