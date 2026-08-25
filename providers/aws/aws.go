@@ -260,6 +260,9 @@ func New(opts ...config.Option) *Provider {
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
+	// CloudWatch alarm -> SNS: an alarm state transition fires its configured
+	// SNS-topic actions, fanning a notification out to the topic's subscribers.
+	p.CloudWatch.SetSNSPublisher(p.SNS)
 	// SNS -> SQS fan-out: publishes deliver to SQS-protocol subscriptions.
 	p.SNS.SetSQSDeliverer(p.SQS)
 	// EventBridge -> SQS: matched rules deliver events to SQS targets.

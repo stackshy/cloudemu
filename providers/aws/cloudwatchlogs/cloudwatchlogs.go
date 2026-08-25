@@ -3,8 +3,8 @@ package cloudwatchlogs
 
 import (
 	"context"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 	"maps"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -270,7 +271,66 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 	m.emitMetric("IncomingLogEvents", float64(len(events)), "Count", dims)
 	m.emitMetric("IncomingBytes", float64(totalBytes), "Bytes", dims)
 
+	m.evaluateMetricFilters(g, events)
+
 	return nil
+}
+
+// evaluateMetricFilters turns matching log events into CloudWatch metric data.
+// For each metric filter on the group, every event whose message matches the
+// filter pattern contributes the filter's metric value; the total is published
+// to the filter's configured namespace/metric, mirroring how CloudWatch Logs
+// extracts custom metrics from ingested events.
+func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
+	if m.monitoring == nil {
+		return
+	}
+
+	for _, mf := range g.metricFilters.All() {
+		var (
+			matched int
+			total   float64
+		)
+
+		for i := range events {
+			if mf.FilterPattern == "" || strings.Contains(events[i].Message, mf.FilterPattern) {
+				matched++
+				total += metricFilterValue(mf.MetricValue)
+			}
+		}
+
+		if matched == 0 {
+			continue
+		}
+
+		namespace := mf.MetricNamespace
+		if namespace == "" {
+			namespace = "LogMetrics"
+		}
+
+		_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+			Namespace:  namespace,
+			MetricName: mf.MetricName,
+			Value:      total,
+			Timestamp:  m.opts.Clock.Now(),
+		}})
+	}
+}
+
+// metricFilterValue resolves a metric filter's metricValue to the number each
+// matching event contributes. A literal number is used directly; anything else
+// (an empty value, or a "$field" token this emulator does not extract) counts
+// as 1 per matching event, which is the common "count occurrences" filter.
+func metricFilterValue(raw string) float64 {
+	if raw == "" {
+		return 1
+	}
+
+	if v, err := strconv.ParseFloat(raw, 64); err == nil {
+		return v
+	}
+
+	return 1
 }
 
 // GetLogEvents retrieves log events matching the query.

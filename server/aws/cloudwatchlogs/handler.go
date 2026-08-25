@@ -14,6 +14,7 @@
 //	CreateLogGroup      DescribeLogGroups   DeleteLogGroup
 //	CreateLogStream     DescribeLogStreams  DeleteLogStream
 //	PutLogEvents        GetLogEvents        FilterLogEvents
+//	PutMetricFilter     DescribeMetricFilters DeleteMetricFilter
 package cloudwatchlogs
 
 import (
@@ -47,7 +48,10 @@ func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 }
 
-// ServeHTTP dispatches CloudWatch Logs operations based on X-Amz-Target.
+// ServeHTTP dispatches CloudWatch Logs operations based on X-Amz-Target. Core
+// log-group / log-stream / log-event operations are handled here; retention,
+// metric-filter, and tagging operations route through dispatchManagement to
+// keep either switch within the complexity budget.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
@@ -70,8 +74,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getLogEvents(w, r)
 	case "FilterLogEvents":
 		h.filterLogEvents(w, r)
+	default:
+		h.dispatchManagement(w, r, op)
+	}
+}
+
+// dispatchManagement handles the retention, metric-filter, and tagging
+// operations, and reports the unknown-operation error for anything unmatched.
+func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
 	case "PutRetentionPolicy":
 		h.putRetentionPolicy(w, r)
+	case "PutMetricFilter":
+		h.putMetricFilter(w, r)
+	case "DescribeMetricFilters":
+		h.describeMetricFilters(w, r)
+	case "DeleteMetricFilter":
+		h.deleteMetricFilter(w, r)
 	case "TagResource", "TagLogGroup":
 		h.tagLogGroup(w, r)
 	case "UntagResource", "UntagLogGroup":
