@@ -331,6 +331,29 @@ func functionNameFromARN(arn string) string {
 	return arn
 }
 
+// splitFunctionNameQualifier extracts the bare function name and an optional
+// version/alias qualifier from an Invoke FunctionName path segment. Per the
+// Lambda Invoke API's FunctionName pattern, a version or alias can be
+// appended with ":<qualifier>" to any accepted form: a bare name
+// ("my-fn:PROD"), a full ARN ("arn:aws:lambda:region:account:function:my-fn:PROD"),
+// or a partial ARN ("account:function:my-fn:PROD"). Everything through the
+// "function:" marker (if present) is the function name; a colon after that is
+// the qualifier boundary.
+func splitFunctionNameQualifier(raw string) (name, qualifier string) {
+	const marker = ":function:"
+
+	rest := raw
+	if i := strings.LastIndex(raw, marker); i >= 0 {
+		rest = raw[i+len(marker):]
+	}
+
+	if j := strings.IndexByte(rest, ':'); j >= 0 {
+		return rest[:j], rest[j+1:]
+	}
+
+	return rest, ""
+}
+
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on
 // .../{name}/policy.
 func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name string) {
@@ -851,13 +874,22 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	// FunctionName may carry its own ":<qualifier>" suffix (bare name, full ARN,
+	// or partial ARN all accept one — see the Invoke API's FunctionName pattern);
+	// the Qualifier query parameter is the other place AWS accepts one and, when
+	// both are present, wins.
+	functionName, qualifier := splitFunctionNameQualifier(name)
+	if q := r.URL.Query().Get("Qualifier"); q != "" {
+		qualifier = q
+	}
+
 	invokeType := r.Header.Get("X-Amz-Invocation-Type")
 
 	// A DryRun invocation validates the request without executing the function:
 	// confirm the function exists, then return 204 No Content (real Lambda runs
 	// nothing and returns no payload).
 	if invokeType == invocationTypeDryRun {
-		if _, err = h.fn.GetFunction(r.Context(), name); err != nil {
+		if _, err = h.fn.GetFunction(r.Context(), functionName); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -868,9 +900,10 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	out, err := h.fn.Invoke(r.Context(), sdrv.InvokeInput{
-		FunctionName: name,
+		FunctionName: functionName,
 		Payload:      payload,
 		InvokeType:   invokeType,
+		Qualifier:    qualifier,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -885,11 +918,18 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	w.Header().Set("Content-Type", contentTypeJSON)
+
 	// A synchronous (RequestResponse) invocation always reports the version that
-	// ran via X-Amz-Executed-Version. The emulator invokes the unqualified
-	// function, so the executed version is $LATEST. The SDK reads this into
-	// InvokeOutput.ExecutedVersion.
-	w.Header().Set("X-Amz-Executed-Version", latestVersion)
+	// ran via X-Amz-Executed-Version, which the SDK reads into
+	// InvokeOutput.ExecutedVersion: the alias's target version when Qualifier
+	// named an alias, the qualifier itself when it named a version, or $LATEST
+	// for an unqualified invoke.
+	executedVersion := out.ExecutedVersion
+	if executedVersion == "" {
+		executedVersion = latestVersion
+	}
+
+	w.Header().Set("X-Amz-Executed-Version", executedVersion)
 
 	if out.Error != "" {
 		// Lambda surfaces handler errors via the X-Amz-Function-Error header
