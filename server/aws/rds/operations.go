@@ -34,6 +34,8 @@ func instanceConfigFromForm(form url.Values) rdsdriver.InstanceConfig {
 		ClusterID:            form.Get("DBClusterIdentifier"),
 		AvailabilityZone:     form.Get("AvailabilityZone"),
 		StorageEncrypted:     formBool(form.Get("StorageEncrypted")),
+		KmsKeyID:             form.Get("KmsKeyId"),
+		DeletionProtection:   formBool(form.Get("DeletionProtection")),
 		Tags:                 parseRDSTags(form),
 	}
 }
@@ -272,8 +274,10 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	// set. When a final snapshot is requested, FinalDBSnapshotIdentifier is
 	// mandatory (InvalidParameterCombination otherwise). Cluster members carry no
 	// final-snapshot semantics — that belongs to DeleteDBCluster.
+	var finalID string
+
 	if last.ClusterID == "" && !formBool(r.Form.Get("SkipFinalSnapshot")) {
-		finalID := r.Form.Get("FinalDBSnapshotIdentifier")
+		finalID = r.Form.Get("FinalDBSnapshotIdentifier")
 		if finalID == "" {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
 				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
@@ -289,7 +293,16 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteInstance(r.Context(), id); err != nil {
+		// The delete precondition (live read replicas, invalid state) is enforced
+		// inside DeleteInstance, so a rejection can land after the final snapshot
+		// was already written. Roll that snapshot back so a rejected delete leaves
+		// no phantom snapshot behind — real RDS validates before taking it.
+		if finalID != "" {
+			_ = h.db.DeleteSnapshot(r.Context(), finalID)
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
@@ -382,6 +395,7 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
 		EngineMode:                  form.Get("EngineMode"),
 		StorageEncrypted:            formBool(form.Get("StorageEncrypted")),
+		KmsKeyID:                    form.Get("KmsKeyId"),
 		AllocatedStorage:            formInt(form.Get("AllocatedStorage")),
 		DeletionProtection:          formBool(form.Get("DeletionProtection")),
 		Tags:                        parseRDSTags(form),
