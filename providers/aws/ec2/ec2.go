@@ -217,6 +217,14 @@ func (d *instanceData) terminationProtected() bool {
 	return d.disableAPITermination
 }
 
+// readState returns the instance's current lifecycle state under mu.
+func (d *instanceData) readState() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.State
+}
+
 // isEngineBacked reports whether a real compute engine backs this instance,
 // read under mu.
 func (d *instanceData) isEngineBacked() bool {
@@ -824,6 +832,10 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 		return err
 	}
 
+	// Every attached EBS volume must be released, otherwise it stays in-use
+	// against a dead instance forever and can never be deleted (VolumeInUse).
+	m.detachTerminatedVolumes(instanceIDs)
+
 	// Tear down the real backing for any engine-backed instances. Every id is now
 	// Terminated (transitionInstances verified they exist), and a Terminated
 	// instance can't be terminated again — so this must be best-effort: continue
@@ -1285,53 +1297,127 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 
 // AttachVolume attaches a volume to an instance.
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
-	vol, ok := m.volumes.Get(volumeID)
+	// The target instance must exist and be in a state that can take an
+	// attachment. Real EC2 rejects attaching to a pending/shutting-down/
+	// terminated instance with IncorrectInstanceState — a volume can only
+	// attach to a running or stopped instance.
+	inst, ok := m.instances.Get(instanceID)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "volume %q not found", volumeID)
-	}
-
-	if vol.State == stateInUse {
-		return cerrors.Newf(cerrors.FailedPrecondition,
-			"VolumeInUse: volume %q is attached to instance %q", volumeID, vol.AttachedTo)
-	}
-
-	if _, ok := m.instances.Get(instanceID); !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
-	// A volume can only attach to an instance in the SAME Availability Zone
-	// (real EC2 InvalidVolume.ZoneMismatch). Instances aren't placed in an
-	// explicit zone here, so they occupy the region's default zone, which is
-	// what CreateVolume also defaults to — an explicit cross-AZ volume mismatches.
-	if instZone := m.opts.Region + "a"; vol.AvailabilityZone != "" && vol.AvailabilityZone != instZone {
+	if state := inst.readState(); state != compute.StateRunning && state != compute.StateStopped {
 		return cerrors.Newf(cerrors.FailedPrecondition,
-			"ZoneMismatch: volume %q is in availability zone %q but instance %q is in %q",
-			volumeID, vol.AvailabilityZone, instanceID, instZone)
+			"IncorrectInstanceState: instance %q is in state %q; a volume can only attach to a running or stopped instance",
+			instanceID, state)
 	}
 
-	vol.State = stateInUse
-	vol.AttachedTo = instanceID
-	vol.Device = device
+	// Instances aren't placed in an explicit zone here, so they occupy the
+	// region's default zone, which is what CreateVolume also defaults to.
+	instZone := m.opts.Region + "a"
 
-	return nil
-}
+	// Atomic check-and-set: the "is this volume available?" test and the "mark
+	// it attached" write happen together under the store lock, so two concurrent
+	// attaches of the same volume have exactly one winner (the loser sees
+	// VolumeInUse). The fn returns a fresh pointer (copy-on-write) so a
+	// concurrent DescribeVolumes, which dereferences the stored pointer outside
+	// the store lock, never races with the field writes.
+	var attachErr error
 
-// DetachVolume detaches a volume from an instance.
-func (m *Mock) DetachVolume(_ context.Context, volumeID string) error {
-	vol, ok := m.volumes.Get(volumeID)
-	if !ok {
+	found := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		if v.State == stateInUse {
+			attachErr = cerrors.Newf(cerrors.FailedPrecondition,
+				"VolumeInUse: volume %q is attached to instance %q", volumeID, v.AttachedTo)
+
+			return v
+		}
+
+		// A volume can only attach to an instance in the SAME Availability Zone
+		// (real EC2 InvalidVolume.ZoneMismatch); an explicit cross-AZ volume mismatches.
+		if v.AvailabilityZone != "" && v.AvailabilityZone != instZone {
+			attachErr = cerrors.Newf(cerrors.FailedPrecondition,
+				"ZoneMismatch: volume %q is in availability zone %q but instance %q is in %q",
+				volumeID, v.AvailabilityZone, instanceID, instZone)
+
+			return v
+		}
+
+		cp := *v
+		cp.State = stateInUse
+		cp.AttachedTo = instanceID
+		cp.Device = device
+
+		return &cp
+	})
+	if !found {
 		return cerrors.Newf(cerrors.NotFound, "volume %q not found", volumeID)
 	}
 
-	if vol.State != "in-use" {
-		return cerrors.Newf(cerrors.FailedPrecondition, "volume %q is not attached", volumeID)
+	return attachErr
+}
+
+// DetachVolume detaches a volume from an instance. A non-empty instanceID or
+// device must match the volume's current attachment; real EC2 answers
+// InvalidAttachment.NotFound when the volume is not attached to the named
+// instance/device.
+func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device string) error {
+	var detachErr error
+
+	found := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		if v.State != stateInUse {
+			detachErr = cerrors.Newf(cerrors.FailedPrecondition, "volume %q is not attached", volumeID)
+
+			return v
+		}
+
+		if (instanceID != "" && instanceID != v.AttachedTo) || (device != "" && device != v.Device) {
+			detachErr = cerrors.Newf(cerrors.NotFound,
+				"InvalidAttachment.NotFound: volume %q is not attached to instance %q as device %q",
+				volumeID, instanceID, device)
+
+			return v
+		}
+
+		cp := *v
+		cp.State = stateAvailable
+		cp.AttachedTo = ""
+		cp.Device = ""
+
+		return &cp
+	})
+	if !found {
+		return cerrors.Newf(cerrors.NotFound, "volume %q not found", volumeID)
 	}
 
-	vol.State = stateAvailable
-	vol.AttachedTo = ""
-	vol.Device = ""
+	return detachErr
+}
 
-	return nil
+// detachTerminatedVolumes returns every EBS volume attached to a now-terminated
+// instance to the `available` state (attachment cleared). Real EC2 detaches
+// volumes with DeleteOnTermination=false back to available on terminate; user-
+// attached volumes carry that default, so all of them detach here. Each volume
+// is updated with a copy-on-write fresh pointer under the store lock so a
+// concurrent DescribeVolumes/AttachVolume never races.
+func (m *Mock) detachTerminatedVolumes(instanceIDs []string) {
+	terminated := make(map[string]bool, len(instanceIDs))
+	for _, id := range instanceIDs {
+		terminated[id] = true
+	}
+
+	for _, volID := range m.volumes.Keys() {
+		m.volumes.Update(volID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+			if v.AttachedTo == "" || !terminated[v.AttachedTo] {
+				return v
+			}
+
+			cp := *v
+			cp.State = stateAvailable
+			cp.AttachedTo = ""
+			cp.Device = ""
+
+			return &cp
+		})
+	}
 }
 
 // CreateSnapshot creates a snapshot from a volume.

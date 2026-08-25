@@ -28,7 +28,7 @@ AWS's `compute` service · portable interface `driver.Compute` · [AWS index](./
 | `DescribeSnapshots` |  |
 | `DescribeSpotRequests` |  |
 | `DescribeVolumes` |  |
-| `DetachVolume` |  |
+| `DetachVolume` | DetachVolume detaches a volume. When instanceID or device is non-empty it |
 | `ExecuteScalingPolicy` |  |
 | `GetAutoScalingGroup` |  |
 | `GetLaunchTemplate` |  |

@@ -596,7 +596,10 @@ type Compute interface {
 	DeleteVolume(ctx context.Context, id string) error
 	DescribeVolumes(ctx context.Context, ids []string) ([]VolumeInfo, error)
 	AttachVolume(ctx context.Context, volumeID, instanceID, device string) error
-	DetachVolume(ctx context.Context, volumeID string) error
+	// DetachVolume detaches a volume. When instanceID or device is non-empty it
+	// must match the volume's current attachment (real EC2 answers
+	// InvalidAttachment.NotFound on a mismatch); empty values detach by volume.
+	DetachVolume(ctx context.Context, volumeID, instanceID, device string) error
 
 	// Snapshots
 	CreateSnapshot(ctx context.Context, config SnapshotConfig) (*SnapshotInfo, error)

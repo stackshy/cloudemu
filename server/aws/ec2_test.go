@@ -1596,6 +1596,132 @@ func TestEC2VolumeAttachDetach(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestEC2TerminateDetachesAttachedVolume reproduces the HIGH data-loss bug
+// (audit #1): terminating an instance must release its attached EBS volumes
+// back to `available` so they can be deleted, instead of stranding them
+// in-use against a dead instance forever.
+func TestEC2TerminateDetachesAttachedVolume(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-term-vol"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(20),
+	})
+	require.NoError(t, err)
+	volID := aws.ToString(vol.VolumeId)
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		InstanceIds: []string{instID},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volID}})
+	require.NoError(t, err)
+	require.Len(t, desc.Volumes, 1)
+	assert.Equal(t, ec2types.VolumeStateAvailable, desc.Volumes[0].State,
+		"terminating the instance must detach the volume back to available")
+	assert.Empty(t, desc.Volumes[0].Attachments, "detached volume must report no attachments")
+
+	// The freed volume must now be deletable (was stuck VolumeInUse forever).
+	_, err = client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volID)})
+	require.NoError(t, err, "detached volume must be deletable after terminate")
+}
+
+// TestEC2AttachVolumeToTerminatedInstanceRejected reproduces audit #2: a volume
+// can only attach to a running or stopped instance; attaching to a terminated
+// instance is IncorrectInstanceState, not a silent success.
+func TestEC2AttachVolumeToTerminatedInstanceRejected(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-term"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instID}})
+	require.NoError(t, err)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(10),
+	})
+	require.NoError(t, err)
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId: vol.VolumeId, InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "IncorrectInstanceState", apiErr.ErrorCode())
+}
+
+// TestEC2DetachVolumeWrongInstanceRejected reproduces audit #3: detaching a
+// volume while naming an instance it is not attached to must fail with
+// InvalidAttachment.NotFound rather than silently detaching.
+func TestEC2DetachVolumeWrongInstanceRejected(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-detach"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(10),
+	})
+	require.NoError(t, err)
+	volID := aws.ToString(vol.VolumeId)
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String("i-someotherinstance"),
+	})
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "InvalidAttachment.NotFound", apiErr.ErrorCode())
+
+	// The mismatched detach must not have altered the real attachment.
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volID}})
+	require.NoError(t, err)
+	require.Len(t, desc.Volumes, 1)
+	assert.Equal(t, ec2types.VolumeStateInUse, desc.Volumes[0].State)
+	require.Len(t, desc.Volumes[0].Attachments, 1)
+	assert.Equal(t, instID, aws.ToString(desc.Volumes[0].Attachments[0].InstanceId))
+
+	// A correctly-targeted detach still succeeds and echoes the real attachment.
+	detach, err := client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, instID, aws.ToString(detach.InstanceId))
+	assert.Equal(t, "/dev/sdf", aws.ToString(detach.Device))
+}
+
 func TestEC2DeleteVolumeUnknownReturnsError(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()

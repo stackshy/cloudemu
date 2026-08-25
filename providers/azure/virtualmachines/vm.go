@@ -944,7 +944,9 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 	return nil
 }
 
-func (m *Mock) DetachVolume(_ context.Context, volumeID string) error {
+// DetachVolume detaches a managed disk. instanceID/device are accepted for
+// driver-interface parity with AWS; Azure detaches by disk id alone.
+func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
 	vol, ok := m.volumes.Get(volumeID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
