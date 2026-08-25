@@ -15,8 +15,9 @@
 //	HEAD   /{container}/{blob}                          — head blob
 //	DELETE /{container}/{blob}                          — delete blob
 //
-// Less-used surfaces (lifecycle, encryption, tags, versioning) are not yet
-// wired and return 501.
+// Less-used surfaces (lifecycle, encryption, versioning) are not yet wired and
+// return 501. An unrecognized or unimplemented blob-PUT comp selector fails
+// closed with an Azure error rather than falling through to a content write.
 package blobstorage
 
 import (
@@ -62,6 +63,12 @@ const (
 	compSnapshot    = "snapshot"
 	compAppendBlock = "appendblock"
 	compLease       = "lease"
+	compTags        = "tags"
+	compPage        = "page"
+
+	// blobTypePageBlob is the Azure page-blob type; cloudemu does not implement
+	// page-blob range semantics, so a page-blob create/write fails closed.
+	blobTypePageBlob = "PageBlob"
 
 	// compACL is the ?comp= value for Set/Get Container ACL
 	// (?restype=container&comp=acl).
@@ -167,6 +174,11 @@ func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob
 	case http.MethodPut:
 		h.putBlobOp(w, r, container, blob)
 	case http.MethodGet:
+		if r.URL.Query().Get("comp") == compTags {
+			h.getBlobTags(w, r, container, blob)
+			return
+		}
+
 		if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && r.URL.Query().Get("comp") == compBlockList {
 			h.getBlockList(w, r, ext, container, blob)
 			return
@@ -187,10 +199,12 @@ func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob
 // metadata/properties/tier/snapshot/appendblock each mean something different
 // and must NOT be treated as a content write (doing so corrupts the blob).
 func (h *Handler) putBlobOp(w http.ResponseWriter, r *http.Request, container, blob string) {
-	comp := r.URL.Query().Get("comp")
-
-	ext, hasExt := h.bucket.(storagedriver.AzureBlobExtensions)
-	if comp != "" && hasExt && h.dispatchBlobComp(w, r, ext, container, blob, comp) {
+	// A blob PUT carrying a ?comp= selector is a distinct sub-operation, never a
+	// content write. An unrecognized or unimplemented comp MUST fail closed:
+	// falling through to Put Blob would write the sub-operation's request body
+	// over the blob's content (silent data corruption).
+	if comp := r.URL.Query().Get("comp"); comp != "" {
+		h.putBlobComp(w, r, container, blob, comp)
 		return
 	}
 
@@ -199,12 +213,44 @@ func (h *Handler) putBlobOp(w http.ResponseWriter, r *http.Request, container, b
 		return
 	}
 
-	if strings.EqualFold(r.Header.Get("x-ms-blob-type"), "AppendBlob") && hasExt {
+	blobType := r.Header.Get("X-Ms-Blob-Type")
+
+	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && strings.EqualFold(blobType, "AppendBlob") {
 		h.createAppendBlob(w, r, ext, container, blob)
 		return
 	}
 
+	// Page blobs are not implemented; fail closed rather than silently creating
+	// a block blob (which would misreport page-blob support and, on an existing
+	// blob, clobber it).
+	if strings.EqualFold(blobType, blobTypePageBlob) {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "page blobs are not supported")
+		return
+	}
+
 	h.putBlob(w, r, container, blob)
+}
+
+// putBlobComp routes a blob PUT ?comp= sub-operation. Any comp it does not
+// implement fails closed with an Azure error so an unknown selector can never
+// fall through to a content write and corrupt the blob body.
+func (h *Handler) putBlobComp(w http.ResponseWriter, r *http.Request, container, blob, comp string) {
+	if comp == compTags {
+		h.setBlobTags(w, r, container, blob)
+		return
+	}
+
+	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && h.dispatchBlobComp(w, r, ext, container, blob, comp) {
+		return
+	}
+
+	if comp == compPage {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "page blobs are not supported")
+		return
+	}
+
+	writeError(w, http.StatusBadRequest, "UnsupportedQueryParameter",
+		fmt.Sprintf("the query parameter comp=%s is not supported for a blob PUT", comp))
 }
 
 // dispatchBlobComp routes a PUT comp sub-operation to its handler, returning
