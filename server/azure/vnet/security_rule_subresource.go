@@ -52,7 +52,7 @@ func (h *Handler) routeSecurityRule(w http.ResponseWriter, r *http.Request, rp a
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listSecurityRules(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findNSGByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findNSGInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -67,7 +67,7 @@ func (h *Handler) listSecurityRules(w http.ResponseWriter, r *http.Request, rp a
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getSecurityRule(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findNSGByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findNSGInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -95,7 +95,7 @@ func (h *Handler) putSecurityRule(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
-	info, err := findNSGByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findNSGInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -145,7 +145,7 @@ func (h *Handler) deleteSecurityRule(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	info, err := findNSGByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findNSGInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

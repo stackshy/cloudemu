@@ -49,7 +49,7 @@ func (h *Handler) listVNetPeerings(w http.ResponseWriter, r *http.Request, rp az
 		return
 	}
 
-	vnet, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -74,7 +74,7 @@ func (h *Handler) getVNetPeering(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	vnet, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -101,7 +101,7 @@ func (h *Handler) putVNetPeering(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	vnet, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -177,7 +177,7 @@ func (h *Handler) resolvePeeringRemote(
 		return nil, "", false
 	}
 
-	vnet, err := findVNetByName(r.Context(), h.net, remoteRP.ResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, remoteRP.ResourceGroup, remoteRP.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return nil, "", false
@@ -209,7 +209,7 @@ func (h *Handler) deleteVNetPeering(w http.ResponseWriter, r *http.Request, rp a
 		return
 	}
 
-	vnet, err := findVNetByName(r.Context(), h.net, rp.ResourceName)
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
