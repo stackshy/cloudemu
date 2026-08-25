@@ -80,6 +80,12 @@ type PublishInput struct {
 	Subject    string
 	Message    string
 	Attributes map[string]string
+	// MessageGroupID / MessageDeduplicationID carry the FIFO ordering and
+	// deduplication identifiers of a publish to a FIFO topic. They are empty for
+	// standard topics and are threaded to a FIFO SQS subscription so the queue,
+	// which requires a message group id, accepts the fan-out delivery.
+	MessageGroupID         string
+	MessageDeduplicationID string
 }
 
 // PublishOutput is the result of publishing a message.

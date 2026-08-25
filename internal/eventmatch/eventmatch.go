@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"math"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -131,22 +132,35 @@ func isReservedOperator(name string) bool {
 // at least one entry of a leaf constraint array. When the event value is itself
 // an array, the constraint matches if any element matches.
 func MatchLeaf(allowed []any, value any, present bool) bool {
+	return matchLeaf(allowed, value, present, false)
+}
+
+// MatchLeafAttr is MatchLeaf for SNS message-attribute matching, where values
+// arrive as strings even when their DataType is Number. It lets a numeric
+// operator parse a numeric string (so a "150" attribute satisfies {"numeric":
+// [">",100]}), while body/EventBridge matching via MatchLeaf keeps the stricter
+// rule that a JSON string never satisfies a numeric operator.
+func MatchLeafAttr(allowed []any, value any, present bool) bool {
+	return matchLeaf(allowed, value, present, true)
+}
+
+func matchLeaf(allowed []any, value any, present, coerceNum bool) bool {
 	// When the event value is an array, the leaf matches if any element does;
 	// otherwise fall through so exists-style operators can evaluate presence.
 	if arr, ok := value.([]any); ok && present {
 		for _, el := range arr {
-			if matchAnyEntry(allowed, el, true) {
+			if matchAnyEntry(allowed, el, true, coerceNum) {
 				return true
 			}
 		}
 	}
 
-	return matchAnyEntry(allowed, value, present)
+	return matchAnyEntry(allowed, value, present, coerceNum)
 }
 
-func matchAnyEntry(allowed []any, value any, present bool) bool {
+func matchAnyEntry(allowed []any, value any, present, coerceNum bool) bool {
 	for _, a := range allowed {
-		if matchEntry(a, value, present) {
+		if matchEntry(a, value, present, coerceNum) {
 			return true
 		}
 	}
@@ -154,10 +168,10 @@ func matchAnyEntry(allowed []any, value any, present bool) bool {
 	return false
 }
 
-func matchEntry(allowed, value any, present bool) bool {
+func matchEntry(allowed, value any, present, coerceNum bool) bool {
 	switch a := allowed.(type) {
 	case map[string]any:
-		return matchOperator(a, value, present)
+		return matchOperator(a, value, present, coerceNum)
 	case nil:
 		return present && value == nil
 	default:
@@ -165,9 +179,9 @@ func matchEntry(allowed, value any, present bool) bool {
 	}
 }
 
-func matchOperator(op map[string]any, value any, present bool) bool {
+func matchOperator(op map[string]any, value any, present, coerceNum bool) bool {
 	for name, spec := range op {
-		if !matchNamedOperator(name, spec, value, present) {
+		if !matchNamedOperator(name, spec, value, present, coerceNum) {
 			return false
 		}
 	}
@@ -175,7 +189,7 @@ func matchOperator(op map[string]any, value any, present bool) bool {
 	return true
 }
 
-func matchNamedOperator(name string, spec, value any, present bool) bool {
+func matchNamedOperator(name string, spec, value any, present, coerceNum bool) bool {
 	// exists is the only operator that evaluates the absent case; every other
 	// operator requires a present value.
 	if name == opExists {
@@ -184,10 +198,10 @@ func matchNamedOperator(name string, spec, value any, present bool) bool {
 		return want == present
 	}
 
-	return present && matchPresentOperator(name, spec, value)
+	return present && matchPresentOperator(name, spec, value, coerceNum)
 }
 
-func matchPresentOperator(name string, spec, value any) bool {
+func matchPresentOperator(name string, spec, value any, coerceNum bool) bool {
 	switch name {
 	case opPrefix:
 		return matchAffix(spec, value, strings.HasPrefix)
@@ -196,9 +210,9 @@ func matchPresentOperator(name string, spec, value any) bool {
 	case opEqualsIgnoreCase:
 		return matchEqualsIgnoreCase(spec, value)
 	case opAnythingBut:
-		return matchAnythingBut(spec, value)
+		return matchAnythingBut(spec, value, coerceNum)
 	case opNumeric:
-		return matchNumeric(spec, value)
+		return matchNumeric(spec, value, coerceNum)
 	case opCIDR:
 		return matchCIDR(spec, value)
 	case opWildcard:
@@ -253,7 +267,7 @@ func matchEqualsIgnoreCase(spec, value any) bool {
 	return ok && strings.EqualFold(got, want)
 }
 
-func matchAnythingBut(spec, value any) bool {
+func matchAnythingBut(spec, value any, coerceNum bool) bool {
 	switch s := spec.(type) {
 	case []any:
 		for _, e := range s {
@@ -264,14 +278,14 @@ func matchAnythingBut(spec, value any) bool {
 
 		return true
 	case map[string]any:
-		return !matchOperator(s, value, true)
+		return !matchOperator(s, value, true, coerceNum)
 	default:
 		return !equalScalar(spec, value)
 	}
 }
 
-func matchNumeric(spec, value any) bool {
-	v, ok := toFloat(value)
+func matchNumeric(spec, value any, coerceNum bool) bool {
+	v, ok := numericValue(value, coerceNum)
 	if !ok {
 		return false
 	}
@@ -413,6 +427,23 @@ func toFloat(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// numericValue resolves an event value to a float for numeric comparison. With
+// coerceNum set (SNS message-attribute scope), a numeric string is parsed, since
+// attribute values travel the wire as strings; a non-numeric string still fails.
+// Without it (body/EventBridge scope), a JSON string never satisfies a numeric
+// operator, so string values are not coerced.
+func numericValue(value any, coerceNum bool) (float64, bool) {
+	if coerceNum {
+		if s, ok := value.(string); ok {
+			f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+
+			return f, err == nil
+		}
+	}
+
+	return toFloat(value)
 }
 
 // ParsePattern decodes a JSON event pattern / filter policy into the object form

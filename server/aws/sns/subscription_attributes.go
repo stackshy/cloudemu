@@ -215,10 +215,12 @@ func (h *Handler) publishBatch(w http.ResponseWriter, r *http.Request) {
 		entryID := r.Form.Get(base + ".Id")
 
 		out, err := h.notif.Publish(r.Context(), notifdriver.PublishInput{
-			TopicID:    topicID,
-			Subject:    r.Form.Get(base + ".Subject"),
-			Message:    r.Form.Get(base + ".Message"),
-			Attributes: parseBatchMessageAttributes(r.Form, base),
+			TopicID:                topicID,
+			Subject:                r.Form.Get(base + ".Subject"),
+			Message:                r.Form.Get(base + ".Message"),
+			Attributes:             parseBatchMessageAttributes(r.Form, base),
+			MessageGroupID:         r.Form.Get(base + ".MessageGroupId"),
+			MessageDeduplicationID: r.Form.Get(base + ".MessageDeduplicationId"),
 		})
 		if err != nil {
 			failures = append(failures, batchErrorEntry{

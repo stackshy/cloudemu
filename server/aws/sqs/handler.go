@@ -372,7 +372,7 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mq.DeleteMessage(r.Context(), req.QueueURL, req.ReceiptHandle); err != nil {
-		writeErr(w, err)
+		writeReceiptErr(w, err)
 		return
 	}
 
