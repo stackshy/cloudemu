@@ -51,7 +51,7 @@ func (h *Handler) createDBInstanceReadReplica(w http.ResponseWriter, r *http.Req
 
 	awsquery.WriteXMLResponse(w, createDBInstanceReadReplicaResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -71,7 +71,7 @@ func (h *Handler) promoteReadReplica(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, promoteReadReplicaResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

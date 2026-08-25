@@ -128,7 +128,7 @@ func (h *Handler) restoreDBInstanceToPointInTime(w http.ResponseWriter, r *http.
 
 	awsquery.WriteXMLResponse(w, restoreDBInstanceToPointInTimeResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

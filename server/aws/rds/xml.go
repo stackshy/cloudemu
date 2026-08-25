@@ -94,7 +94,7 @@ type dbInstanceXML struct {
 	PubliclyAccessible                    bool                       `xml:"PubliclyAccessible"`
 	AvailabilityZone                      string                     `xml:"AvailabilityZone,omitempty"`
 	DBClusterIdentifier                   string                     `xml:"DBClusterIdentifier,omitempty"`
-	DBSubnetGroupName                     string                     `xml:"DBSubnetGroupName,omitempty"`
+	DBSubnetGroup                         *dbSubnetGroupXML          `xml:"DBSubnetGroup,omitempty"`
 	InstanceCreateTime                    string                     `xml:"InstanceCreateTime,omitempty"`
 	DbiResourceID                         string                     `xml:"DbiResourceId,omitempty"`
 	BackupRetentionPeriod                 int                        `xml:"BackupRetentionPeriod,omitempty"`
@@ -374,8 +374,14 @@ type describeDBClusterSnapshotsResponse struct {
 }
 
 // toInstanceXML converts a driver Instance to its XML representation.
-func toInstanceXML(inst *rdsdriver.Instance) dbInstanceXML {
-	return dbInstanceXML{
+//
+// resolvedSubnetGroup, when non-nil, is the fully resolved DB subnet group the
+// instance is placed in. Real RDS reports the association as a nested complex
+// <DBSubnetGroup> element (name, description, VpcId, status, Subnets) — not a
+// scalar <DBSubnetGroupName> — so the aws-sdk-go-v2 DBInstance.DBSubnetGroup
+// field (and Terraform's db_subnet_group_name off it) has something to bind.
+func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupXML) dbInstanceXML {
+	x := dbInstanceXML{
 		DBInstanceIdentifier: inst.ID,
 		DBInstanceArn:        inst.ARN,
 		Engine:               inst.Engine,
@@ -395,7 +401,7 @@ func toInstanceXML(inst *rdsdriver.Instance) dbInstanceXML {
 		PubliclyAccessible:                    inst.PubliclyAccessible,
 		AvailabilityZone:                      inst.AvailabilityZone,
 		DBClusterIdentifier:                   inst.ClusterID,
-		DBSubnetGroupName:                     inst.SubnetGroupName,
+		DBSubnetGroup:                         resolvedSubnetGroup,
 		InstanceCreateTime:                    inst.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		DbiResourceID:                         inst.DbiResourceID,
 		BackupRetentionPeriod:                 inst.BackupRetentionPeriod,
@@ -412,6 +418,8 @@ func toInstanceXML(inst *rdsdriver.Instance) dbInstanceXML {
 		ReadReplicaSourceDBInstanceIdentifier: inst.ReadReplicaSource,
 		ReadReplicaDBInstanceIdentifiers:      toReadReplicaIDsXML(inst.ReadReplicaTargets),
 	}
+
+	return x
 }
 
 func toDBParameterGroupsXML(name string) *dbParameterGroupsXML {

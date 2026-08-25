@@ -77,7 +77,7 @@ func (h *Handler) createDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, createDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -109,7 +109,8 @@ func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 
 	out := dbInstancesXML{DBInstance: make([]dbInstanceXML, 0, len(page.Items))}
 	for i := range page.Items {
-		out.DBInstance = append(out.DBInstance, toInstanceXML(&page.Items[i]))
+		out.DBInstance = append(out.DBInstance,
+			toInstanceXML(&page.Items[i], h.resolveInstanceSubnetGroupXML(r.Context(), &page.Items[i])))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBInstancesResponse{
@@ -235,7 +236,7 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, modifyDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -294,7 +295,7 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, deleteDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&last)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&last, h.resolveInstanceSubnetGroupXML(r.Context(), &last))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -316,7 +317,7 @@ func (h *Handler) startDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, startDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0])},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0], h.resolveInstanceSubnetGroupXML(r.Context(), &insts[0]))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -338,7 +339,7 @@ func (h *Handler) stopDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, stopDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0])},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0], h.resolveInstanceSubnetGroupXML(r.Context(), &insts[0]))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -360,7 +361,7 @@ func (h *Handler) rebootDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, rebootDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0])},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0], h.resolveInstanceSubnetGroupXML(r.Context(), &insts[0]))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -659,7 +660,7 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 
 	awsquery.WriteXMLResponse(w, restoreDBInstanceFromDBSnapshotResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
