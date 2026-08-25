@@ -162,6 +162,31 @@ func constructed(provider any) map[string]bool {
 	return out
 }
 
+// TestNoDeadWireHandlers guards against a service the provider factory fully
+// implements (driver + a populated Provider field, i.e. Service.Providers is
+// set) but that server/<cloud>/<cloud>.go never wires up: a Drivers field
+// backing it is either absent or declared-but-unread in New(). Such a service
+// is reachable through the Go library and the in-process SDK-compat server,
+// but never through the standalone wire-protocol server for that cloud — a
+// silent capability gap.
+func TestNoDeadWireHandlers(t *testing.T) {
+	services := loadServices(t)
+
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+
+	warnings, err := checkRegistrations(root, sortedServices(services))
+	if err != nil {
+		t.Fatalf("checkRegistrations: %v", err)
+	}
+
+	for _, w := range warnings {
+		t.Error(w)
+	}
+}
+
 // TestFullyImplementedProvidersHaveServices makes sure the constructed-field
 // gate did not over-filter AWS/Azure/GCP down to nothing.
 func TestFullyImplementedProvidersHaveServices(t *testing.T) {
