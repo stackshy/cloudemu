@@ -104,6 +104,44 @@ func TestSubscriptionFilterMatches(t *testing.T) {
 			want:  false,
 		},
 		{
+			// Per Event Grid semantics, a missing key MATCHES the negative-
+			// membership operators (the field can't be in the excluded set).
+			name: "advancedFilter StringNotIn matches when key is absent",
+			rawProps: `{"filter":{"advancedFilters":[
+				{"operatorType":"StringNotIn","key":"data.missing","values":["a","b"]}]}}`,
+			event: driver.Event{Detail: `{"total":250}`},
+			want:  true,
+		},
+		{
+			name: "advancedFilter NumberNotIn matches when key is absent",
+			rawProps: `{"filter":{"advancedFilters":[
+				{"operatorType":"NumberNotIn","key":"data.missing","values":[1,2]}]}}`,
+			event: driver.Event{Detail: `{"total":250}`},
+			want:  true,
+		},
+		{
+			// The positive-membership counterparts stay NOT-matched on a missing key.
+			name: "advancedFilter StringIn rejects when key is absent",
+			rawProps: `{"filter":{"advancedFilters":[
+				{"operatorType":"StringIn","key":"data.missing","values":["a","b"]}]}}`,
+			event: driver.Event{Detail: `{"total":250}`},
+			want:  false,
+		},
+		{
+			name: "advancedFilter NumberIn rejects when key is absent",
+			rawProps: `{"filter":{"advancedFilters":[
+				{"operatorType":"NumberIn","key":"data.missing","values":[1,2]}]}}`,
+			event: driver.Event{Detail: `{"total":250}`},
+			want:  false,
+		},
+		{
+			name: "advancedFilter StringNotIn rejects when present value is excluded",
+			rawProps: `{"filter":{"advancedFilters":[
+				{"operatorType":"StringNotIn","key":"data.color","values":["red","blue"]}]}}`,
+			event: driver.Event{Detail: `{"color":"red"}`},
+			want:  false,
+		},
+		{
 			name: "advancedFilter on subject field",
 			rawProps: `{"filter":{"advancedFilters":[
 				{"operatorType":"StringBeginsWith","key":"subject","values":["orders/"]}]}}`,

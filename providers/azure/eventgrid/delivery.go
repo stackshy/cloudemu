@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
@@ -83,14 +85,22 @@ type deliveryEvent struct {
 // destination. Delivery is synchronous (mirroring how AWS EventBridge's
 // deliverToTargets runs in-line in this codebase) but decoupled from the
 // caller's context so a client that cancels its publish request doesn't abort
-// in-flight deliveries. ServiceBusQueue/Topic, EventHub, and AzureFunction
-// destinations are parsed and round-trip on the subscription resource, but
-// are not delivered to: EventHub has no peer mock in this codebase, and
-// wiring ServiceBus/Functions delivery is left as a follow-up (see PR notes).
-func (m *Mock) deliverToTargets(matched []*ruleData, event *driver.Event, topicARN string) {
+// in-flight deliveries. The caller ctx's re-entrant delivery depth is carried
+// forward so a self-referential WebHook chain (a subscription endpointUrl that
+// points back at this emulator's publish endpoint) stays bounded — the cap is
+// enforced in postWebhook, mirroring lambda.InvokeExternal. ServiceBusQueue/
+// Topic, EventHub, and AzureFunction destinations are parsed and round-trip on
+// the subscription resource, but are not delivered to: EventHub has no peer
+// mock in this codebase, and wiring ServiceBus/Functions delivery is left as a
+// follow-up (see PR notes).
+func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event *driver.Event, topicARN string) {
 	if len(matched) == 0 {
 		return
 	}
+
+	// Decouple delivery from the caller's cancellation/deadline while carrying
+	// the re-entrant delivery depth forward onto a background-rooted context.
+	dctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(ctx))
 
 	payload := deliveryEvent{
 		ID:          event.ID,
@@ -112,7 +122,7 @@ func (m *Mock) deliverToTargets(matched []*ruleData, event *driver.Event, topicA
 			continue
 		}
 
-		m.postWebhook(rd.dest.EndpointURL, body)
+		m.postWebhook(dctx, rd.dest.EndpointURL, body)
 	}
 }
 
@@ -121,17 +131,32 @@ func (m *Mock) deliverToTargets(matched []*ruleData, event *driver.Event, topicA
 // status) are swallowed: this mock does not model Event Grid's retry/dead-
 // letter pipeline, so a failed delivery is simply dropped, same as
 // EventBridge's dispatchTarget in this codebase.
-func (m *Mock) postWebhook(url string, body []byte) {
-	ctx, cancel := context.WithTimeout(context.Background(), webhookDeliveryTimeout)
+//
+// ctx carries the re-entrant delivery depth (see internal/recursionguard). A
+// subscription's endpointUrl is arbitrary ARM input and can point back at this
+// emulator's own publish endpoint; because delivery is synchronous, an
+// unbounded self-referential chain would tie up one blocked goroutine per
+// level. Once the depth reaches recursionguard.MaxDepth — mirroring
+// lambda.InvokeExternal — the delivery is dropped instead of recursing further.
+func (m *Mock) postWebhook(ctx context.Context, url string, body []byte) {
+	depth := recursionguard.Depth(ctx)
+	if depth >= recursionguard.MaxDepth {
+		return
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, webhookDeliveryTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return
 	}
 
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Aeg-Event-Type", "Notification")
+	// Carry the incremented depth across the webhook round-trip so a publish
+	// endpoint that re-enters PutEvents keeps counting toward the cap.
+	req.Header.Set(recursionguard.DepthHeader, strconv.Itoa(depth+1))
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {

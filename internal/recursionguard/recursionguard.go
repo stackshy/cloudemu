@@ -21,6 +21,15 @@ import "context"
 // Lambda's documented recursive-loop-detection threshold of ~16 invocations.
 const MaxDepth = 16
 
+// DepthHeader carries the re-entrant delivery depth across a delivery hop that
+// crosses an HTTP boundary. In-process chains ride the goroutine's ctx, but a
+// hop like Event Grid WebHook delivery is a fresh outbound HTTP request whose
+// response re-enters the emulator through a separate handler goroutine, so the
+// ctx depth can't ride along. The sender stamps the incremented depth on this
+// header; the re-entered publish handler seeds ctx from it via WithDepth so the
+// chain keeps counting toward MaxDepth instead of resetting to zero each hop.
+const DepthHeader = "X-Cloudemu-Delivery-Depth"
+
 type depthKey struct{}
 
 // WithDepth returns a copy of ctx carrying the given re-entrant delivery

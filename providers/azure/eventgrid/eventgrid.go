@@ -405,7 +405,7 @@ func (m *Mock) ListTargets(_ context.Context, eventBus, ruleName string) ([]driv
 }
 
 // PutEvents publishes events to Event Grid topics.
-func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.PublishResult, error) {
+func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.PublishResult, error) {
 	result := &driver.PublishResult{
 		EventIDs: make([]string, 0, len(events)),
 	}
@@ -435,7 +435,7 @@ func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.Publ
 		m.storeEvent(bd, &events[i])
 
 		matched := m.matchedRuleData(bd, &events[i])
-		m.deliverToTargets(matched, &events[i], bd.info.ARN)
+		m.deliverToTargets(ctx, matched, &events[i], bd.info.ARN)
 
 		m.emitMetric(busName, map[string]float64{
 			"PublishedEvents": 1, "MatchedEvents": float64(len(matched)),

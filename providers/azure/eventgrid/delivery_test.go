@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,6 +137,60 @@ func TestPutEventsDeliveryHonorsFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, receiver.events(), "non-matching subject must not be delivered")
+}
+
+// TestPutEventsWebHookRecursionBounded locks the HIGH fix: a WebHook
+// subscription whose endpoint re-publishes to the same topic is a
+// self-referential loop. Delivery is synchronous, so without a cap each level
+// ties up a blocked goroutine forever. The re-entrant depth guard (carried
+// across the webhook round-trip via recursionguard.DepthHeader) must bound the
+// chain to at most MaxDepth deliveries and let the process unwind.
+func TestPutEventsWebHookRecursionBounded(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestTopic(t, m, "loop")
+
+	var deliveries atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deliveries.Add(1)
+
+		// Seed the depth from the header exactly as the real PublishHandler
+		// does, then re-publish to the same topic to close the loop.
+		reCtx := context.Background()
+		if d, err := strconv.Atoi(r.Header.Get(recursionguard.DepthHeader)); err == nil && d > 0 {
+			reCtx = recursionguard.WithDepth(reCtx, d)
+		}
+
+		_, _ = m.PutEvents(reCtx, []driver.Event{{
+			EventBus:   "loop",
+			DetailType: "Loop.Tick",
+			Subject:    "loop/1",
+		}})
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := m.PutRule(ctx, &driver.RuleConfig{
+		Name:        "sub-loop",
+		EventBus:    "loop",
+		Description: destinationJSON(srv.URL),
+	})
+	require.NoError(t, err)
+
+	_, err = m.PutEvents(ctx, []driver.Event{{
+		EventBus:   "loop",
+		DetailType: "Loop.Start",
+		Subject:    "loop/0",
+	}})
+	require.NoError(t, err)
+
+	got := deliveries.Load()
+	assert.Positive(t, got, "the webhook must be delivered to at least once")
+	assert.LessOrEqual(t, got, int32(recursionguard.MaxDepth),
+		"the self-referential webhook chain must be bounded by the depth cap")
 }
 
 // TestMatchedRulesScopedToOwnTopic locks the isolation fix: a subscription on

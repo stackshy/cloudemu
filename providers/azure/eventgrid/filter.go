@@ -201,7 +201,11 @@ func matchAdvancedFilter(af *advancedFilter, event *driver.Event, data map[strin
 	}
 
 	if !found {
-		return false
+		// Per Event Grid's filtering semantics, a missing key evaluates as
+		// MATCHED only for the two negative-membership operators (the field
+		// genuinely can't be in the excluded set); every other operator is
+		// NOT-matched on a missing key. See Microsoft Learn "Event Filtering".
+		return af.OperatorType == opStringNotIn || af.OperatorType == opNumberNotIn
 	}
 
 	switch {
