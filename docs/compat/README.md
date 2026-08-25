@@ -80,6 +80,7 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 |---|---|---|---|
 | CreateRepository | ✅ | · | ✅ |
 | DeleteImage | ✅ | · | · |
+| DeleteLifecyclePolicy | · | · | · |
 | DeleteRepository | ✅ | ✅ | ✅ |
 | EvaluateLifecyclePolicy | · | · | · |
 | GetImage | ✅ | · | · |
@@ -93,7 +94,7 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | StartImageScan | ✅ | · | · |
 | TagImage | · | · | · |
 
-**containerregistry verified via Go SDK:** AWS 12/14 · Azure 4/14 · GCP 5/14.
+**containerregistry verified via Go SDK:** AWS 12/15 · Azure 4/15 · GCP 5/15.
 
 ## database
 

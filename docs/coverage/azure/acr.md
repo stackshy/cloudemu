@@ -3,12 +3,13 @@
 
 Azure's `containerregistry` service · portable interface `driver.ContainerRegistry` · [Azure index](./README.md)
 
-## Operations (14)
+## Operations (15)
 
 | Operation | Description |
 | --- | --- |
 | `CreateRepository` | Repository management |
 | `DeleteImage` |  |
+| `DeleteLifecyclePolicy` | DeleteLifecyclePolicy removes the repository's lifecycle policy and returns |
 | `DeleteRepository` |  |
 | `EvaluateLifecyclePolicy` |  |
 | `GetImage` |  |

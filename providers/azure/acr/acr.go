@@ -381,6 +381,24 @@ func (m *Mock) GetLifecyclePolicy(_ context.Context, repository string) (*driver
 	return &result, nil
 }
 
+// DeleteLifecyclePolicy removes the lifecycle policy from an ACR repository and
+// returns the policy that was deleted.
+func (m *Mock) DeleteLifecyclePolicy(_ context.Context, repository string) (*driver.LifecyclePolicy, error) {
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	if rd.policy == nil {
+		return nil, errors.Newf(errors.NotFound, "no lifecycle policy for repository %q", repository)
+	}
+
+	result := copyLifecyclePolicy(*rd.policy)
+	rd.policy = nil
+
+	return &result, nil
+}
+
 // EvaluateLifecyclePolicy evaluates the lifecycle policy and returns digests to expire.
 func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]string, error) {
 	rd, ok := m.repos.Get(repository)

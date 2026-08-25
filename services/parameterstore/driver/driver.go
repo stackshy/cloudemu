@@ -118,9 +118,19 @@ type CommandInvocation struct {
 	Stderr       string
 }
 
-// CommandConfig describes a Run Command send.
+// CommandTarget identifies managed nodes by a Key/Values criterion, e.g.
+// {Key: "tag:Name", Values: ["web"]}. It mirrors the SSM Target shape and is an
+// alternative to listing InstanceIDs explicitly.
+type CommandTarget struct {
+	Key    string
+	Values []string
+}
+
+// CommandConfig describes a Run Command send. Either InstanceIDs or Targets
+// (or both) must be supplied; Targets select managed nodes by tag/attribute.
 type CommandConfig struct {
 	InstanceIDs  []string
+	Targets      []CommandTarget
 	DocumentName string
 	Comment      string
 	Parameters   map[string][]string

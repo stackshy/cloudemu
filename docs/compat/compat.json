@@ -964,6 +964,22 @@
   },
   {
     "service": "containerregistry",
+    "operation": "DeleteLifecyclePolicy",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
     "operation": "DeleteRepository",
     "providers": {
       "aws": {

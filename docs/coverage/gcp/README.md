@@ -6,7 +6,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | GCP service | Portable service | Operations |
 | --- | --- | --- |
 | [AlloyDB](./alloydb.md) | `relationaldb` | 21 |
-| [ArtifactRegistry](./artifactregistry.md) | `containerregistry` | 14 |
+| [ArtifactRegistry](./artifactregistry.md) | `containerregistry` | 15 |
 | [Bigtable](./bigtable.md) | `bigtable` | 38 |
 | [CloudDNS](./clouddns.md) | `dns` | 16 |
 | [CloudFunctions](./cloudfunctions.md) | `serverless` | 27 |

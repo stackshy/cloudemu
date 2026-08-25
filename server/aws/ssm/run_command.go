@@ -4,24 +4,30 @@ import (
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
+type ssmTarget struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
+}
+
 type sendCommandRequest struct {
 	InstanceIds  []string            `json:"InstanceIds"`
+	Targets      []ssmTarget         `json:"Targets"`
 	DocumentName string              `json:"DocumentName"`
 	Comment      string              `json:"Comment"`
 	Parameters   map[string][]string `json:"Parameters"`
 }
 
 type commandJSON struct {
-	CommandId    string   `json:"CommandId"`
-	DocumentName string   `json:"DocumentName"`
-	Status       string   `json:"Status"`
-	InstanceIds  []string `json:"InstanceIds"`
-	Comment      string   `json:"Comment,omitempty"`
+	CommandId    string      `json:"CommandId"`
+	DocumentName string      `json:"DocumentName"`
+	Status       string      `json:"Status"`
+	InstanceIds  []string    `json:"InstanceIds"`
+	Targets      []ssmTarget `json:"Targets,omitempty"`
+	Comment      string      `json:"Comment,omitempty"`
 }
 
 type sendCommandResponse struct {
@@ -67,6 +73,7 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 
 	commandID, err := store.SendCommand(r.Context(), ssmdriver.CommandConfig{
 		InstanceIDs:  req.InstanceIds,
+		Targets:      toDriverTargets(req.Targets),
 		DocumentName: req.DocumentName,
 		Comment:      req.Comment,
 		Parameters:   req.Parameters,
@@ -95,8 +102,23 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		DocumentName: req.DocumentName,
 		Status:       "Pending",
 		InstanceIds:  req.InstanceIds,
+		Targets:      req.Targets,
 		Comment:      req.Comment,
 	}})
+}
+
+// toDriverTargets converts wire Targets to the driver's CommandTarget shape.
+func toDriverTargets(in []ssmTarget) []ssmdriver.CommandTarget {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]ssmdriver.CommandTarget, 0, len(in))
+	for _, t := range in {
+		out = append(out, ssmdriver.CommandTarget{Key: t.Key, Values: t.Values})
+	}
+
+	return out
 }
 
 func (h *Handler) getCommandInvocation(w http.ResponseWriter, r *http.Request) {

@@ -109,6 +109,11 @@ type ContainerRegistry interface {
 	// Lifecycle policies
 	PutLifecyclePolicy(ctx context.Context, repository string, policy LifecyclePolicy) error
 	GetLifecyclePolicy(ctx context.Context, repository string) (*LifecyclePolicy, error)
+	// DeleteLifecyclePolicy removes the repository's lifecycle policy and returns
+	// the policy that was deleted. It is NotFound both when the repository does
+	// not exist and when the repository has no policy set; callers distinguish
+	// the two by re-checking GetRepository.
+	DeleteLifecyclePolicy(ctx context.Context, repository string) (*LifecyclePolicy, error)
 	EvaluateLifecyclePolicy(ctx context.Context, repository string) ([]string, error)
 
 	// Image scanning
