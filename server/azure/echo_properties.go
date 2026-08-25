@@ -95,15 +95,32 @@ func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.H
 
 // resourceIDFromPath reconstructs the ARM resource id from a request path so a
 // DELETE can evict the matching overlay entry (DELETE responses carry no body
-// to read the id from). Returns "" for a path that is not a single named
-// resource, in which case nothing is evicted.
+// to read the id from). Handles both a top-level resource
+// (.../{type}/{name}) and a named sub-resource one level down
+// (.../{type}/{name}/{subResource}/{subResourceName}, e.g. a SQL database
+// under its server) — the sub-resource id is built the same way the handlers
+// that create these resources build it (see server/azure/sql childID), so it
+// matches the "id" field the overlay was captured under. Returns "" for a path
+// that isn't a single named resource or named sub-resource, in which case
+// nothing is evicted — e.g. a bodiless action like .../failoverGroups/{n}/
+// failover carries a SubResourceAction and is left alone.
 func resourceIDFromPath(urlPath string) string {
 	rp, ok := azurearm.ParsePath(urlPath)
-	if !ok || rp.ResourceName == "" || rp.SubResource != "" {
+	if !ok || rp.ResourceName == "" {
 		return ""
 	}
 
-	return azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, rp.Provider, rp.ResourceType, rp.ResourceName)
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, rp.Provider, rp.ResourceType, rp.ResourceName)
+
+	if rp.SubResource == "" {
+		return id
+	}
+
+	if rp.SubResourceName == "" || rp.SubResourceAction != "" {
+		return ""
+	}
+
+	return id + "/" + rp.SubResource + "/" + rp.SubResourceName
 }
 
 // readRequestProperties returns the request body's top-level "properties"

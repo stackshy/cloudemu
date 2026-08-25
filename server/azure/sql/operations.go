@@ -135,6 +135,8 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 
 	if body.Properties != nil {
 		cfg.Collation = body.Properties.Collation
+		cfg.ElasticPoolID = body.Properties.ElasticPoolID
+
 		if body.Properties.ZoneRedundant != nil {
 			cfg.ZoneRedundant = *body.Properties.ZoneRedundant
 		}
@@ -147,7 +149,7 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 // absent, otherwise apply the body's sku/tier/zoneRedundant to the existing
 // record. The Databases capability has no update verb, so an upsert merges the
 // body over the stored fields and re-creates.
-func (*Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
+func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
 	var body armDatabase
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
@@ -156,42 +158,63 @@ func (*Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm
 	cfg := dbCfgFromBody(&body, rp)
 
 	out, err := db.CreateDatabase(r.Context(), cfg)
-	if err != nil {
-		if cerrors.IsNotFound(err) {
-			// The only NotFound CreateDatabase raises is a missing parent server;
-			// real Azure answers 404 ParentResourceNotFound for a child under an
-			// absent parent.
-			azurearm.WriteParentNotFound(w, err)
-			return
-		}
-
-		if !cerrors.IsAlreadyExists(err) {
-			azurearm.WriteCErr(w, err)
-			return
-		}
-
-		out, err = replaceDatabase(r.Context(), db, &body, &cfg)
-		if err != nil {
-			azurearm.WriteCErr(w, err)
-			return
-		}
+	if err == nil {
+		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+	if cerrors.IsNotFound(err) {
+		// CreateDatabase raises NotFound for two distinct causes: a missing
+		// parent server, or (once the server exists) an elasticPoolId that
+		// doesn't resolve to a pool on it. Disambiguate by server existence.
+		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, err)
+		return
+	}
+
+	if !cerrors.IsAlreadyExists(err) {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out, err = replaceDatabase(r.Context(), db, &body, &cfg)
+	if err == nil {
+		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+		return
+	}
+
+	if cerrors.IsNotFound(err) {
+		// Same disambiguation as above: replaceDatabase's own elastic-pool
+		// pre-check also raises NotFound.
+		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, err)
+		return
+	}
+
+	azurearm.WriteCErr(w, err)
 }
 
-// replaceDatabase merges the request body over the stored database and
-// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
-// HA while leaving omitted fields intact.
-func replaceDatabase(
-	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
-) (*rdsdriver.Database, error) {
-	existing, err := db.GetDatabase(ctx, cfg.Server, cfg.Name)
-	if err != nil {
-		return nil, err
+// writeDatabaseNotFound distinguishes the two NotFound causes a database
+// create/replace can raise: a missing parent server (real Azure answers 404
+// ParentResourceNotFound for a child under an absent parent) vs an existing
+// server whose referenced elastic pool doesn't exist (real Azure answers 400
+// TargetElasticPoolDoesNotExist — see
+// https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update).
+func (h *Handler) writeDatabaseNotFound(ctx context.Context, w http.ResponseWriter, server string, err error) {
+	clusters, dErr := h.db.DescribeClusters(ctx, []string{server})
+	if dErr != nil || len(clusters) == 0 {
+		azurearm.WriteParentNotFound(w, err)
+		return
 	}
 
+	azurearm.WriteError(w, http.StatusBadRequest, "TargetElasticPoolDoesNotExist", err.Error())
+}
+
+// mergeDatabaseFields overlays the non-empty fields of cfg (and body's
+// pointer-only properties) onto existing, leaving fields the request omitted
+// untouched. Split out of replaceDatabase to keep that function's
+// cyclomatic complexity down — this is pure field merging, no I/O.
+func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *rdsdriver.DatabaseConfig) rdsdriver.Database {
 	merged := *existing
+
 	if cfg.SKUName != "" {
 		merged.SKUName = cfg.SKUName
 	}
@@ -212,8 +235,38 @@ func replaceDatabase(
 		merged.Tags = cfg.Tags
 	}
 
+	if cfg.ElasticPoolID != "" {
+		merged.ElasticPoolID = cfg.ElasticPoolID
+	}
+
 	if body.Properties != nil && body.Properties.ZoneRedundant != nil {
 		merged.ZoneRedundant = *body.Properties.ZoneRedundant
+	}
+
+	return merged
+}
+
+// replaceDatabase merges the request body over the stored database and
+// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
+// HA while leaving omitted fields intact.
+//
+// The merged elasticPoolId is validated before DeleteDatabase runs: a request
+// that references a nonexistent pool must fail the update with no side
+// effect, not delete the database out from under a bad request (CreateDatabase
+// re-validates the pool too, but only after the delete below would already
+// have happened).
+func replaceDatabase(
+	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
+) (*rdsdriver.Database, error) {
+	existing, err := db.GetDatabase(ctx, cfg.Server, cfg.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	merged := mergeDatabaseFields(existing, body, cfg)
+
+	if err := requireElasticPool(ctx, db, cfg.Server, merged.ElasticPoolID); err != nil {
+		return nil, err
 	}
 
 	if err := db.DeleteDatabase(ctx, cfg.Server, cfg.Name); err != nil {
@@ -230,7 +283,28 @@ func replaceDatabase(
 		SKUName:       merged.SKUName,
 		SKUTier:       merged.SKUTier,
 		ZoneRedundant: merged.ZoneRedundant,
+		ElasticPoolID: merged.ElasticPoolID,
 	})
+}
+
+// requireElasticPool returns NotFound when a non-empty elastic-pool reference
+// doesn't resolve to an existing pool on the server. Empty id is a no-op (a
+// standalone database). Mirrors the provider-level check CreateDatabase
+// applies, so replaceDatabase can fail before mutating anything instead of
+// only after CreateDatabase re-validates on the re-create half of the upsert.
+func requireElasticPool(ctx context.Context, db rdsdriver.Databases, server, poolID string) error {
+	if poolID == "" {
+		return nil
+	}
+
+	pools, ok := db.(rdsdriver.ElasticPools)
+	if !ok {
+		return nil
+	}
+
+	_, err := pools.GetElasticPool(ctx, server, rdsdriver.ElasticPoolName(poolID))
+
+	return err
 }
 
 func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {

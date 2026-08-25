@@ -262,3 +262,71 @@ func bytesReader(t *testing.T, v map[string]any) *bytes.Reader {
 
 	return bytes.NewReader(raw)
 }
+
+// deleteOK sends a DELETE and requires a 2xx response; the overlay eviction
+// hook only fires on success, matching echoUnmodeledProperties.
+func deleteOK(t *testing.T, c *http.Client, url string) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("DELETE %s: status %d: %s", url, resp.StatusCode, data)
+	}
+}
+
+// TestEchoEvictsSubResourceOverlayOnDelete is the MEDIUM regression: deleting
+// a named sub-resource (a SQL database under its server) must evict its
+// overlay entry the same way deleting a top-level resource does. Before the
+// fix, resourceIDFromPath returned "" for any path with a SubResource, so
+// DELETE .../servers/{s}/databases/{d} never called overlay.evict — a
+// same-named database recreated afterward resurrected the previous
+// incarnation's unmodeled properties.
+func TestEchoEvictsSubResourceOverlayOnDelete(t *testing.T) {
+	ts, c := echoTestServer(t)
+	base := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Sql/servers/srv1"
+
+	putJSON(t, c, base+"?api-version=2021-11-01", map[string]any{"location": "eastus"})
+
+	dbURL := base + "/databases/db1?api-version=2021-11-01"
+
+	created := putJSON(t, c, dbURL, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			// readScale is not modeled by the SQL database handler; the
+			// overlay is what makes it round-trip at all.
+			"readScale": "Enabled",
+		},
+	})
+
+	if props(t, created)["readScale"] != "Enabled" {
+		t.Fatal("unmodeled readScale was not preserved after create")
+	}
+
+	if props(t, getJSON(t, c, dbURL))["readScale"] != "Enabled" {
+		t.Fatal("unmodeled readScale not echoed on GET before delete")
+	}
+
+	deleteOK(t, c, dbURL)
+
+	// Re-create the same database name with no unmodeled properties at all.
+	recreated := putJSON(t, c, dbURL, map[string]any{"location": "eastus"})
+
+	if v, ok := props(t, recreated)["readScale"]; ok {
+		t.Fatalf("recreated database resurrected stale readScale from the deleted one: %v", v)
+	}
+
+	if v, ok := props(t, getJSON(t, c, dbURL))["readScale"]; ok {
+		t.Fatalf("GET on recreated database still carries the deleted database's readScale: %v", v)
+	}
+}

@@ -102,6 +102,7 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath) armDatabas
 			CurrentServiceObjectiveName: db.SKUName,
 			CurrentSKU:                  &armSKU{Name: db.SKUName, Tier: db.SKUTier},
 			ZoneRedundant:               &zoneRedundant,
+			ElasticPoolID:               db.ElasticPoolID,
 		},
 	}
 }

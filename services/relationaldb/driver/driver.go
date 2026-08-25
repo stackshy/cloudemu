@@ -7,6 +7,7 @@ package driver
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -423,6 +424,10 @@ type DatabaseConfig struct {
 	SKUName       string
 	SKUTier       string
 	ZoneRedundant bool
+	// ElasticPoolID is the Azure SQL elastic pool this database belongs to (a
+	// bare pool name or a full ARM resource ID); empty for a standalone
+	// database. Set via properties.elasticPoolId on the ARM request body.
+	ElasticPoolID string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -442,6 +447,9 @@ type Database struct {
 	SKUName       string
 	SKUTier       string
 	ZoneRedundant bool
+	// ElasticPoolID echoes the elastic pool this database belongs to on read
+	// (properties.elasticPoolId); empty for a standalone database.
+	ElasticPoolID string
 }
 
 // Databases is an OPTIONAL capability for managing the logical databases inside
@@ -583,6 +591,20 @@ type ElasticPools interface {
 	GetElasticPool(ctx context.Context, server, name string) (*ElasticPool, error)
 	ListElasticPools(ctx context.Context, server string) ([]ElasticPool, error)
 	DeleteElasticPool(ctx context.Context, server, name string) error
+}
+
+// ElasticPoolName extracts the pool name from an elasticPoolId, which may be
+// a bare name or a full ARM resource ID ending in ".../elasticPools/{name}".
+// Shared by the provider (which owns the pool store) and the wire server
+// (which must validate a pool reference before mutating a database), so the
+// two never parse the id differently.
+func ElasticPoolName(id string) string {
+	const marker = "/elasticPools/"
+	if i := strings.LastIndex(id, marker); i >= 0 {
+		return id[i+len(marker):]
+	}
+
+	return id
 }
 
 // FailoverGroupConfig describes a failover group to create (Azure SQL).
