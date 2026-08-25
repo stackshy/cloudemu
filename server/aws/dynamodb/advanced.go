@@ -3,6 +3,7 @@ package dynamodb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -45,21 +46,19 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 	vals := fromWireItem(req.ExpressionAttributeValues)
 
 	// ExpressionAttributeValues serve both the UpdateExpression and the
-	// ConditionExpression, matching real DynamoDB. Gate the mutation on the
-	// condition (evaluated against the current item) before applying actions.
-	if !h.gateCondition(r.Context(), w, req.TableName, key,
-		req.ConditionExpression, req.ExpressionAttributeNames, vals,
-		req.ReturnValuesOnConditionCheckFailure) {
-		return
+	// ConditionExpression, matching real DynamoDB. The condition is evaluated and
+	// the update applied atomically inside the provider (single lock hold), so an
+	// optimistic-lock update cannot race a concurrent writer.
+	cond := dbdriver.Condition{
+		Expression: req.ConditionExpression,
+		Names:      req.ExpressionAttributeNames,
+		Values:     vals,
 	}
-
-	// Capture the pre-update image so ALL_OLD/UPDATED_OLD/UPDATED_NEW can report
-	// the changed attributes relative to it.
-	old := h.previousItem(r.Context(), req.TableName, key)
 
 	// The raw UpdateExpression flows to the driver, which parses and evaluates
 	// the full grammar (SET arithmetic, if_not_exists, list_append, ADD, DELETE)
-	// against the stored item.
+	// against the stored item. old is the pre-update image for
+	// ALL_OLD/UPDATED_OLD/UPDATED_NEW.
 	input := dbdriver.UpdateItemInput{
 		Table:            req.TableName,
 		Key:              key,
@@ -68,9 +67,8 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		ExprValues:       vals,
 	}
 
-	updated, err := h.db.UpdateItem(r.Context(), input)
-	if err != nil {
-		writeErr(w, err)
+	updated, old, err := h.writer().UpdateItemConditional(r.Context(), input, cond)
+	if handleConditionalError(w, err, req.ReturnValuesOnConditionCheckFailure) {
 		return
 	}
 
@@ -514,23 +512,71 @@ func (h *Handler) transactWriteItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reasons, canceled, err := h.evaluateTransactConditions(ctx, ops)
+	// The whole transaction — every ConditionExpression check and every write —
+	// runs under a single hold of the provider's table lock, so it is atomic
+	// (all-or-nothing) and isolated from concurrent single-item writes. This
+	// replaces the former handler-level evaluate-then-apply, which dropped the
+	// lock between the check and the write (a TOCTOU that let two conflicting
+	// transactions both commit).
+	err := h.writer().TransactWrite(ctx, toDriverTransactOps(ops))
+
+	var canceled *dbdriver.TransactionCanceled
+	if errors.As(err, &canceled) {
+		writeTransactionCancelled(w, buildCancelReasons(len(ops), canceled.FailedConditions))
+		return
+	}
+
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	if canceled {
-		writeTransactionCancelled(w, reasons)
-		return
-	}
-
-	if aerr := h.applyTransactOps(ctx, ops); aerr != nil {
-		writeTransactErr(w, aerr)
-		return
-	}
-
 	wire.WriteJSON(w, map[string]any{})
+}
+
+// toDriverTransactOps maps the decoded wire operations onto the provider's
+// atomic transaction ops. For a Put, keySrc equals item (set by toTxOp) and the
+// provider keys off the item; for the other kinds keySrc is the operation's Key.
+func toDriverTransactOps(ops []txOp) []dbdriver.TransactOp {
+	out := make([]dbdriver.TransactOp, len(ops))
+
+	for i := range ops {
+		out[i] = dbdriver.TransactOp{
+			Kind:  ops[i].kind,
+			Table: ops[i].table,
+			Item:  ops[i].item,
+			Key:   ops[i].keySrc,
+			Condition: dbdriver.Condition{
+				Expression: ops[i].condition,
+				Names:      ops[i].names,
+				Values:     ops[i].values,
+			},
+			UpdateExpression: ops[i].updateExpr,
+			ExprNames:        ops[i].names,
+			ExprValues:       ops[i].values,
+		}
+	}
+
+	return out
+}
+
+// buildCancelReasons builds the per-operation CancellationReasons array: "None"
+// for every operation, overwritten with ConditionalCheckFailed for the indices
+// whose condition failed. The shape matches what real DynamoDB returns in a
+// TransactionCanceledException.
+func buildCancelReasons(n int, failed []int) []map[string]any {
+	reasons := make([]map[string]any, n)
+	for i := range reasons {
+		reasons[i] = map[string]any{"Code": "None"}
+	}
+
+	for _, idx := range failed {
+		if idx >= 0 && idx < n {
+			reasons[idx] = map[string]any{"Code": "ConditionalCheckFailed", "Message": "The conditional request failed"}
+		}
+	}
+
+	return reasons
 }
 
 // normalizeTransactItems decodes each wire item into a kind-tagged txOp,
@@ -612,114 +658,6 @@ func (h *Handler) checkTransactDuplicates(ctx context.Context, ops []txOp) error
 	return nil
 }
 
-// evaluateTransactConditions checks every operation's ConditionExpression
-// against current state. It returns a per-operation CancellationReasons array
-// (in request order) and whether any condition failed. A malformed expression
-// or a missing table surfaces as a non-nil error.
-func (h *Handler) evaluateTransactConditions(
-	ctx context.Context, ops []txOp,
-) (reasons []map[string]any, canceled bool, err error) {
-	reasons = make([]map[string]any, len(ops))
-
-	for i := range ops {
-		reasons[i] = map[string]any{"Code": "None"}
-
-		if ops[i].condition == "" {
-			continue
-		}
-
-		ok, cerr := h.checkCondition(ctx, ops[i].table, ops[i].keySrc,
-			ops[i].condition, ops[i].names, ops[i].values)
-		if cerr != nil {
-			return nil, false, cerr
-		}
-
-		if !ok {
-			reasons[i] = map[string]any{"Code": "ConditionalCheckFailed", "Message": "The conditional request failed"}
-			canceled = true
-		}
-	}
-
-	return reasons, canceled, nil
-}
-
-// txSnapshot is a pre-image of an item a transaction op will change, kept so a
-// mid-apply failure can be rolled back (DynamoDB transactions are all-or-nothing).
-type txSnapshot struct {
-	table   string
-	key     map[string]any
-	before  map[string]any
-	existed bool
-}
-
-// applyTransactOps applies every operation atomically. Conditions have already
-// passed; should any op still fail structurally, every already-applied op is
-// rolled back so the transaction is all-or-nothing. checkTransactDuplicates
-// guarantees each item is touched by at most one op, so the snapshots don't
-// alias.
-func (h *Handler) applyTransactOps(ctx context.Context, ops []txOp) error {
-	snaps := make([]txSnapshot, 0, len(ops))
-
-	for i := range ops {
-		if ops[i].kind == "ConditionCheck" {
-			continue
-		}
-
-		before, err := h.db.GetItem(ctx, ops[i].table, ops[i].keySrc)
-		// A missing item (or table) is expected — the op may create it; only a
-		// real read failure aborts. Treat NotFound as "no pre-image".
-		if err != nil && !cerrors.IsNotFound(err) {
-			h.rollbackTransact(ctx, snaps)
-			return err
-		}
-
-		snaps = append(snaps, txSnapshot{ops[i].table, ops[i].keySrc, before, err == nil && before != nil})
-	}
-
-	for i := range ops {
-		if err := h.applyTransactOp(ctx, &ops[i]); err != nil {
-			h.rollbackTransact(ctx, snaps)
-			return err
-		}
-	}
-
-	return nil
-}
-
-// rollbackTransact restores each snapshotted item to its pre-image (re-putting
-// what existed, deleting what the transaction created), in reverse order.
-func (h *Handler) rollbackTransact(ctx context.Context, snaps []txSnapshot) {
-	for i := len(snaps) - 1; i >= 0; i-- {
-		s := snaps[i]
-		if s.existed {
-			_ = h.db.PutItem(ctx, s.table, s.before)
-		} else {
-			_ = h.db.DeleteItem(ctx, s.table, s.key)
-		}
-	}
-}
-
-func (h *Handler) applyTransactOp(ctx context.Context, op *txOp) error {
-	switch op.kind {
-	case "Put":
-		return h.db.PutItem(ctx, op.table, op.item)
-	case "Delete":
-		return h.db.DeleteItem(ctx, op.table, op.keySrc)
-	case "Update":
-		_, err := h.db.UpdateItem(ctx, dbdriver.UpdateItemInput{
-			Table:            op.table,
-			Key:              op.keySrc,
-			UpdateExpression: op.updateExpr,
-			ExprNames:        op.names,
-			ExprValues:       op.values,
-		})
-
-		return err
-	default: // ConditionCheck asserts a condition but writes nothing.
-		return nil
-	}
-}
-
 // writeTransactionCancelled emits the TransactionCanceledException carrying the
 // per-operation CancellationReasons array, which SDK clients read to learn which
 // condition failed.
@@ -734,17 +672,4 @@ func writeTransactionCancelled(w http.ResponseWriter, reasons []map[string]any) 
 		"Message":             "Transaction cancelled, please refer cancellation reasons for specific reasons",
 		"CancellationReasons": reasons,
 	})
-}
-
-// writeTransactErr uses a TransactionCanceledException code so real SDK
-// clients recognize transaction failures distinctly from generic errors.
-func writeTransactErr(w http.ResponseWriter, err error) {
-	if cerrors.IsFailedPrecondition(err) || cerrors.IsAlreadyExists(err) {
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"TransactionCanceledException", err.Error())
-
-		return
-	}
-
-	writeErr(w, err)
 }
