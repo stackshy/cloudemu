@@ -3,8 +3,12 @@ package eventarc
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -19,6 +23,13 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 
 	var body triggerJSON
 	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	// A trigger must route somewhere. Real Eventarc rejects a trigger with no
+	// destination with INVALID_ARGUMENT rather than storing a dead route.
+	if _, ok := destinationTarget(body.Destination); !ok {
+		gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "destination is required")
 		return
 	}
 
@@ -40,20 +51,26 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		Name:         triggerID,
 		EventBus:     bus,
 		EventPattern: encodeEventPattern(body.EventFilters),
-		Description:  encodeTriggerMeta(body.ServiceAccount, body.Labels),
+		Description: encodeTriggerMeta(triggerMeta{
+			ServiceAccount: body.ServiceAccount,
+			Labels:         body.Labels,
+			UID:            idgen.GenerateID("trigger-"),
+		}),
 	}); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	if target, ok := destinationTarget(body.Destination); ok {
-		if perr := h.bus.PutTargets(r.Context(), bus, triggerID, []ebdriver.Target{target}); perr != nil {
-			// Roll back the rule created above so a failed Create doesn't leave
-			// an orphaned trigger that blocks a later Create with the same id.
-			_ = h.bus.DeleteRule(r.Context(), bus, triggerID)
-			gcprest.WriteCErr(w, perr)
-			return
-		}
+	target, _ := destinationTarget(body.Destination)
+
+	if perr := h.bus.PutTargets(r.Context(), bus, triggerID, []ebdriver.Target{target}); perr != nil {
+		// Roll back the rule created above so a failed Create doesn't leave
+		// an orphaned trigger that blocks a later Create with the same id.
+		_ = h.bus.DeleteRule(r.Context(), bus, triggerID)
+
+		gcprest.WriteCErr(w, perr)
+
+		return
 	}
 
 	// Re-fetch so the response carries the stored targets/destination.
@@ -116,12 +133,42 @@ func (h *Handler) listTriggers(w http.ResponseWriter, r *http.Request, rt *route
 		return
 	}
 
-	out := make([]triggerJSON, 0, len(rules))
-	for i := range rules {
-		out = append(out, toTriggerJSON(rt.project, rt.location, &rules[i]))
+	page, perr := pagination.PaginateSorted(rules,
+		func(a, b ebdriver.Rule) bool { return a.Name < b.Name },
+		r.URL.Query().Get("pageToken"), triggerPageSize(r))
+	if perr != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, listTriggersResponse{Triggers: out})
+	out := make([]triggerJSON, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toTriggerJSON(rt.project, rt.location, &page.Items[i]))
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, listTriggersResponse{
+		Triggers:      out,
+		NextPageToken: page.NextPageToken,
+	})
+}
+
+const (
+	defaultTriggerPageSize = 50
+	maxTriggerPageSize     = 1000
+)
+
+// triggerPageSize reads ?pageSize, clamping to a sane default and ceiling.
+func triggerPageSize(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if err != nil || n <= 0 {
+		return defaultTriggerPageSize
+	}
+
+	if n > maxTriggerPageSize {
+		return maxTriggerPageSize
+	}
+
+	return n
 }
 
 func (h *Handler) deleteTrigger(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -131,6 +178,113 @@ func (h *Handler) deleteTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, rt.trigger, nil))
+}
+
+// patchTrigger applies an updateTrigger call. Only the fields named in
+// ?updateMask are changed (an empty mask updates every field present in the
+// body); uid and createTime are preserved. Real Eventarc supports patching the
+// destination, event filters, service account, and labels.
+func (h *Handler) patchTrigger(w http.ResponseWriter, r *http.Request, rt *route) {
+	bus := channelName(rt.location)
+
+	existing, err := h.bus.GetRule(r.Context(), bus, rt.trigger)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var body triggerJSON
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	mask := parseUpdateMask(r.URL.Query().Get("updateMask"))
+	cur := toTriggerJSON(rt.project, rt.location, existing)
+	meta := decodeTriggerMeta(existing.Description)
+
+	if mask.has("eventFilters") {
+		cur.EventFilters = body.EventFilters
+	}
+
+	if mask.has("serviceAccount") {
+		meta.ServiceAccount = body.ServiceAccount
+	}
+
+	if mask.has("labels") {
+		meta.Labels = body.Labels
+	}
+
+	if mask.has("destination") {
+		if _, ok := destinationTarget(body.Destination); !ok {
+			gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "destination is required")
+			return
+		}
+
+		cur.Destination = body.Destination
+	}
+
+	meta.Revision++
+
+	if perr := h.applyTriggerUpdate(r, rt, &cur, meta); perr != nil {
+		gcprest.WriteCErr(w, perr)
+		return
+	}
+
+	stored, gerr := h.bus.GetRule(r.Context(), bus, rt.trigger)
+	if gerr != nil {
+		gcprest.WriteCErr(w, gerr)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, rt.trigger,
+		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
+}
+
+// applyTriggerUpdate persists the mutated trigger back onto the driver rule and
+// its targets.
+func (h *Handler) applyTriggerUpdate(r *http.Request, rt *route, cur *triggerJSON, meta triggerMeta) error {
+	bus := channelName(rt.location)
+
+	if _, err := h.bus.PutRule(r.Context(), &ebdriver.RuleConfig{
+		Name:         rt.trigger,
+		EventBus:     bus,
+		EventPattern: encodeEventPattern(cur.EventFilters),
+		Description:  encodeTriggerMeta(meta),
+	}); err != nil {
+		return err
+	}
+
+	target, _ := destinationTarget(cur.Destination)
+
+	return h.bus.PutTargets(r.Context(), bus, rt.trigger, []ebdriver.Target{target})
+}
+
+// updateMask is a parsed FieldMask: an empty mask means "update every field
+// present in the body".
+type updateMask struct {
+	fields map[string]bool
+	all    bool
+}
+
+func (m updateMask) has(field string) bool {
+	return m.all || m.fields[field]
+}
+
+func parseUpdateMask(raw string) updateMask {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "*" {
+		return updateMask{all: true}
+	}
+
+	fields := map[string]bool{}
+
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			fields[f] = true
+		}
+	}
+
+	return updateMask{fields: fields}
 }
 
 // ensureChannel creates the location's backing event bus if it does not already

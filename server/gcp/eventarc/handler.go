@@ -34,7 +34,8 @@
 //
 //	POST   /v1/projects/{p}/locations/{l}/triggers?triggerId={id}   — Create (LRO, done inline)
 //	GET    /v1/projects/{p}/locations/{l}/triggers/{id}             — Get
-//	GET    /v1/projects/{p}/locations/{l}/triggers                  — List
+//	GET    /v1/projects/{p}/locations/{l}/triggers                  — List (paginated)
+//	PATCH  /v1/projects/{p}/locations/{l}/triggers/{id}?updateMask= — Update (LRO, done inline)
 //	DELETE /v1/projects/{p}/locations/{l}/triggers/{id}             — Delete (LRO, done inline)
 package eventarc
 
@@ -152,6 +153,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.getTrigger(w, r, &rt)
+	case http.MethodPatch:
+		h.patchTrigger(w, r, &rt)
 	case http.MethodDelete:
 		h.deleteTrigger(w, r, &rt)
 	default:

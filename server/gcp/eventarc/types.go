@@ -2,7 +2,10 @@ package eventarc
 
 import (
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
@@ -39,10 +42,22 @@ type triggerJSON struct {
 	EventFilters   []eventFilterJSON `json:"eventFilters,omitempty"`
 	ServiceAccount string            `json:"serviceAccount,omitempty"`
 	Destination    *destinationJSON  `json:"destination,omitempty"`
+	Transport      *transportJSON    `json:"transport,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	CreateTime     string            `json:"createTime,omitempty"`
 	UpdateTime     string            `json:"updateTime,omitempty"`
 	UID            string            `json:"uid,omitempty"`
+	Etag           string            `json:"etag,omitempty"`
+}
+
+// transportJSON is the Eventarc v1 Transport shape. Every trigger is backed by
+// an auto-provisioned Pub/Sub topic.
+type transportJSON struct {
+	Pubsub *pubsubTransportJSON `json:"pubsub,omitempty"`
+}
+
+type pubsubTransportJSON struct {
+	Topic string `json:"topic,omitempty"`
 }
 
 type listTriggersResponse struct {
@@ -156,17 +171,41 @@ func destinationSummary(dest *destinationJSON) string {
 
 // toTriggerJSON converts a driver rule into its Eventarc Trigger element.
 func toTriggerJSON(project, location string, rule *ebdriver.Rule) triggerJSON {
-	sa, labels := decodeTriggerMeta(rule.Description)
+	meta := decodeTriggerMeta(rule.Description)
 
 	return triggerJSON{
 		Name:           triggerResourceName(project, location, rule.Name),
 		EventFilters:   decodeEventPattern(rule.EventPattern),
 		Destination:    destinationFromTargets(rule.Targets),
-		ServiceAccount: sa,
-		Labels:         labels,
+		Transport:      transportFor(project, location, rule.Name),
+		ServiceAccount: meta.ServiceAccount,
+		Labels:         meta.Labels,
 		CreateTime:     rule.CreatedAt,
 		UpdateTime:     rule.CreatedAt,
+		UID:            meta.UID,
+		Etag:           computeEtag(meta.UID, meta.Revision),
 	}
+}
+
+// transportFor synthesizes the auto-provisioned Pub/Sub transport a real
+// Eventarc trigger carries.
+func transportFor(project, location, trigger string) *transportJSON {
+	topic := idgen.GCPID(project, "topics", "eventarc-"+location+"-"+trigger)
+
+	return &transportJSON{Pubsub: &pubsubTransportJSON{Topic: topic}}
+}
+
+// computeEtag derives a stable, opaque etag from the trigger's uid and its
+// revision, so it changes whenever the trigger is patched.
+func computeEtag(uid string, revision int) string {
+	if uid == "" {
+		return ""
+	}
+
+	h := fnv.New64a()
+	_, _ = fmt.Fprintf(h, "%s|%d", uid, revision)
+
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 // triggerMeta holds the Eventarc fields the eventbus Rule can't store natively;
@@ -174,14 +213,16 @@ func toTriggerJSON(project, location string, rule *ebdriver.Rule) triggerJSON {
 type triggerMeta struct {
 	ServiceAccount string            `json:"serviceAccount,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
+	UID            string            `json:"uid,omitempty"`
+	Revision       int               `json:"revision,omitempty"`
 }
 
-func encodeTriggerMeta(sa string, labels map[string]string) string {
-	if sa == "" && len(labels) == 0 {
+func encodeTriggerMeta(m triggerMeta) string {
+	if m.ServiceAccount == "" && len(m.Labels) == 0 && m.UID == "" && m.Revision == 0 {
 		return ""
 	}
 
-	b, err := json.Marshal(triggerMeta{ServiceAccount: sa, Labels: labels})
+	b, err := json.Marshal(m)
 	if err != nil {
 		return ""
 	}
@@ -189,15 +230,15 @@ func encodeTriggerMeta(sa string, labels map[string]string) string {
 	return string(b)
 }
 
-func decodeTriggerMeta(s string) (serviceAccount string, labels map[string]string) {
+func decodeTriggerMeta(s string) triggerMeta {
 	if s == "" {
-		return "", nil
+		return triggerMeta{}
 	}
 
 	var m triggerMeta
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		return "", nil
+		return triggerMeta{}
 	}
 
-	return m.ServiceAccount, m.Labels
+	return m
 }
