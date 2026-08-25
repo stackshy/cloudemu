@@ -321,7 +321,7 @@ func (h *Handler) applyDataDisk(
 			return nil
 		}
 
-		if err := h.compute.DetachVolume(ctx, volID); err != nil {
+		if err := h.compute.DetachVolume(ctx, volID, "", ""); err != nil {
 			return err
 		}
 
@@ -356,7 +356,7 @@ func (h *Handler) attachDataDisk(
 	}
 
 	if prevVolID, ok := attached[d.Lun]; ok && prevVolID != volID {
-		if err := h.compute.DetachVolume(ctx, prevVolID); err != nil {
+		if err := h.compute.DetachVolume(ctx, prevVolID, "", ""); err != nil {
 			return err
 		}
 	}
@@ -386,7 +386,7 @@ func (h *Handler) detachAttachedVolumes(ctx context.Context, instanceID string) 
 			continue
 		}
 
-		if err := h.compute.DetachVolume(ctx, vols[i].ID); err != nil {
+		if err := h.compute.DetachVolume(ctx, vols[i].ID, "", ""); err != nil {
 			return err
 		}
 	}
@@ -402,7 +402,7 @@ func detachUnlistedDisks(ctx context.Context, c computedriver.Compute, attached 
 			continue
 		}
 
-		if err := c.DetachVolume(ctx, volID); err != nil {
+		if err := c.DetachVolume(ctx, volID, "", ""); err != nil {
 			return err
 		}
 	}

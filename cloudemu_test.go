@@ -7126,7 +7126,7 @@ func TestVolumeLifecycleAWS(t *testing.T) {
 		t.Errorf("expected state 'in-use', got %q", vols[0].State)
 	}
 
-	if err := p.EC2.DetachVolume(ctx, vol.ID); err != nil {
+	if err := p.EC2.DetachVolume(ctx, vol.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 

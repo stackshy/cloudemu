@@ -839,7 +839,7 @@ func (mc *mockCompute) AttachVolume(_ context.Context, volumeID, instanceID, dev
 	return nil
 }
 
-func (mc *mockCompute) DetachVolume(_ context.Context, volumeID string) error {
+func (mc *mockCompute) DetachVolume(_ context.Context, volumeID, _, _ string) error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
@@ -1074,7 +1074,7 @@ func TestDetachVolumePortable(t *testing.T) {
 	err = c.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
 	require.NoError(t, err)
 
-	err = c.DetachVolume(ctx, vol.ID)
+	err = c.DetachVolume(ctx, vol.ID, "", "")
 	require.NoError(t, err)
 
 	// Verify state
@@ -1090,7 +1090,7 @@ func TestDetachVolumePortableError(t *testing.T) {
 	vol, err := c.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
 	require.NoError(t, err)
 
-	err = c.DetachVolume(ctx, vol.ID)
+	err = c.DetachVolume(ctx, vol.ID, "", "")
 	require.Error(t, err)
 }
 

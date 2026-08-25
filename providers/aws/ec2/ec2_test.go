@@ -531,7 +531,7 @@ func TestDetachVolume(t *testing.T) {
 		err = m.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
 		requireNoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		requireNoError(t, err)
 
 		// Verify state changed back to available
@@ -548,9 +548,81 @@ func TestDetachVolume(t *testing.T) {
 		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
 		requireNoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		assertError(t, err, true)
 	})
+}
+
+// TestAttachVolumeConcurrentSingleWinner reproduces audit #6: two concurrent
+// AttachVolume calls on the same available volume must have exactly one winner
+// (the loser sees VolumeInUse), and the field mutations must not race with a
+// concurrent DescribeVolumes reader. Run under `go test -race` to prove it.
+func TestAttachVolumeConcurrentSingleWinner(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	insts, err := m.RunInstances(ctx, defaultConfig(), 2)
+	requireNoError(t, err)
+
+	vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+	requireNoError(t, err)
+
+	var (
+		mu        sync.Mutex
+		successes int
+		wg        sync.WaitGroup
+	)
+
+	// Concurrent readers race the attach writers on the shared volume struct.
+	stop := make(chan struct{})
+
+	for range 2 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _ = m.DescribeVolumes(ctx, []string{vol.ID})
+				}
+			}
+		}()
+	}
+
+	for _, inst := range insts {
+		wg.Add(1)
+
+		go func(instanceID string) {
+			defer wg.Done()
+
+			if attachErr := m.AttachVolume(ctx, vol.ID, instanceID, "/dev/sdf"); attachErr == nil {
+				mu.Lock()
+				successes++
+				mu.Unlock()
+			}
+		}(inst.ID)
+	}
+
+	// Let the two attach goroutines settle, then stop the readers.
+	for range 2 {
+		<-time.After(time.Millisecond)
+	}
+
+	close(stop)
+	wg.Wait()
+
+	if successes != 1 {
+		t.Fatalf("expected exactly one concurrent attach to win, got %d successes", successes)
+	}
+
+	vols, err := m.DescribeVolumes(ctx, []string{vol.ID})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(vols))
+	assertEqual(t, "in-use", vols[0].State)
 }
 
 // Snapshot Tests

@@ -263,6 +263,13 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// A volume can only attach to a running/stopped instance; attaching to a
+		// terminated or pending instance is IncorrectInstanceState.
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "IncorrectInstanceState:") {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "IncorrectInstanceState", err.Error())
+			return
+		}
+
 		writeVolumeErr(w, err)
 
 		return
@@ -280,9 +287,29 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) detachVolume(w http.ResponseWriter, r *http.Request) {
 	volID := r.Form.Get("VolumeId")
+	instID := r.Form.Get("InstanceId")
+	device := r.Form.Get("Device")
 
-	if err := h.compute.DetachVolume(r.Context(), volID); err != nil {
+	// Capture the real attachment before detaching so the response echoes the
+	// actual instance/device the volume was detached from, not the caller's
+	// (possibly empty or wrong) request values.
+	respInst, respDev := instID, device
+
+	if vols, derr := h.compute.DescribeVolumes(r.Context(), []string{volID}); derr == nil && len(vols) == 1 {
+		respInst = vols[0].AttachedTo
+		respDev = vols[0].Device
+	}
+
+	if err := h.compute.DetachVolume(r.Context(), volID, instID, device); err != nil {
+		// The named instance/device did not match the volume's actual
+		// attachment; real EC2 answers InvalidAttachment.NotFound.
+		if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "InvalidAttachment.NotFound:") {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAttachment.NotFound", err.Error())
+			return
+		}
+
 		writeVolumeErr(w, err)
+
 		return
 	}
 
@@ -290,8 +317,8 @@ func (h *Handler) detachVolume(w http.ResponseWriter, r *http.Request) {
 		Xmlns:      awsquery.Namespace,
 		RequestID:  awsquery.RequestID,
 		VolumeID:   volID,
-		InstanceID: r.Form.Get("InstanceId"),
-		Device:     r.Form.Get("Device"),
+		InstanceID: respInst,
+		Device:     respDev,
 		Status:     "detaching",
 	})
 }

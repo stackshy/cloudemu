@@ -1535,7 +1535,7 @@ func TestDetachVolume(t *testing.T) {
 		err = m.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
 		require.NoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		require.NoError(t, err)
 
 		// Verify state changed back to available
@@ -1550,7 +1550,7 @@ func TestDetachVolume(t *testing.T) {
 		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
 		require.NoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not attached")
 	})
