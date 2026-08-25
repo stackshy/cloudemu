@@ -409,7 +409,7 @@ type appServicePlanDiscovery struct{ m *functions.Mock }
 func (a appServicePlanDiscovery) DiscoverAppServicePlans(
 	ctx context.Context,
 ) ([]resourcediscovery.DiscoveredAppServicePlan, error) {
-	plans, err := a.m.ListAppServicePlans(ctx)
+	plans, err := a.m.ListAppServicePlans(ctx, "", "")
 	if err != nil {
 		return nil, err
 	}
