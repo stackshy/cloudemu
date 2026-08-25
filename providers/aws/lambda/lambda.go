@@ -290,6 +290,11 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", input.FunctionName)
 	}
 
+	executedVersion, err := m.resolveQualifier(&fd, input.Qualifier)
+	if err != nil {
+		return nil, err
+	}
+
 	dims := map[string]string{"FunctionName": input.FunctionName}
 
 	h := fd.handler
@@ -300,7 +305,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	}
 
 	if h == nil && fd.engineBacked {
-		return m.invokeEngine(ctx, input, dims)
+		return m.invokeEngine(ctx, input, dims, executedVersion)
 	}
 
 	if h == nil {
@@ -318,7 +323,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 			payload = []byte("{}")
 		}
 
-		return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+		return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
 	}
 
 	payload, err := h(ctx, input.Payload)
@@ -326,14 +331,37 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Errors", 1, dims)
 
-		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error()}, nil
+		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error(), ExecutedVersion: executedVersion}, nil
 	}
 
 	m.emitMetric(ctx, "Invocations", 1, dims)
 	m.emitMetric(ctx, "Duration", 1.0, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
 
-	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+	return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
+}
+
+// resolveQualifier resolves an Invoke Qualifier (empty, "$LATEST", a numeric
+// published version, or an alias name) to the concrete version that should be
+// reported as ExecutedVersion, matching real Lambda's alias-resolution
+// semantics: an alias resolves one hop to its target FunctionVersion (aliases
+// can't point to other aliases); a version qualifier must name a version that
+// was actually published. An unknown qualifier is a ResourceNotFoundException,
+// the same error AWS returns for an alias or version that doesn't exist.
+func (m *Mock) resolveQualifier(fd *funcData, qualifier string) (string, error) {
+	if qualifier == "" || qualifier == latestVersion {
+		return latestVersion, nil
+	}
+
+	if ad, ok := fd.aliases.Get(qualifier); ok {
+		return ad.alias.FunctionVersion, nil
+	}
+
+	if m.versionExists(fd, qualifier) {
+		return qualifier, nil
+	}
+
+	return "", cerrors.Newf(cerrors.NotFound, "function version/alias not found for %s", qualifier)
 }
 
 // InvokeExternal asynchronously invokes the function identified by its ARN with
@@ -407,11 +435,15 @@ func functionNameFromARN(arn string) string {
 // FunctionEngine and records the same metrics as a real handler invocation. A
 // handler that raised is reported via out.Error (HTTP stays 200), matching real
 // Lambda's X-Amz-Function-Error semantics.
-func (m *Mock) invokeEngine(ctx context.Context, input driver.InvokeInput, dims map[string]string) (*driver.InvokeOutput, error) {
+func (m *Mock) invokeEngine(
+	ctx context.Context, input driver.InvokeInput, dims map[string]string, executedVersion string,
+) (*driver.InvokeOutput, error) {
 	out, err := funcengine.Invoke(ctx, m.opts.FunctionEngine, input.FunctionName, input.Payload)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.Internal, "invoke function %s: %v", input.FunctionName, err)
 	}
+
+	out.ExecutedVersion = executedVersion
 
 	m.emitMetric(ctx, "Invocations", 1, dims)
 

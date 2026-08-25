@@ -201,6 +201,10 @@ type InvokeInput struct {
 	FunctionName string
 	Payload      []byte
 	InvokeType   string // "RequestResponse" or "Event"
+	// Qualifier selects a published version (a numeric version string) or
+	// alias to invoke instead of the mutable $LATEST code. Empty invokes
+	// $LATEST, matching the AWS Lambda Invoke Qualifier parameter.
+	Qualifier string
 }
 
 // InvokeOutput is the result of a function invocation.
@@ -208,6 +212,11 @@ type InvokeOutput struct {
 	StatusCode int
 	Payload    []byte
 	Error      string
+	// ExecutedVersion is the version that actually ran: the alias's target
+	// version when Qualifier names an alias, the Qualifier itself when it
+	// names a version, or "$LATEST" for an unqualified invoke. Mirrors the
+	// AWS Lambda Invoke ExecutedVersion response field.
+	ExecutedVersion string
 }
 
 // HandlerFunc is a function handler that processes invocations.
