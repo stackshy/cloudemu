@@ -60,9 +60,22 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 
 	rec, existed := ns.Queues[name]
 	if !existed {
+		dlqURL, err := h.provisionDLQ(r, sp.namespace+"/"+name)
+		if err != nil {
+			h.mu.Unlock()
+			azurearm.WriteCErr(w, err)
+
+			return
+		}
+
 		info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{
 			Name:              sp.namespace + "/" + name,
 			VisibilityTimeout: lockSeconds,
+			DeadLetterQueue: &mqdriver.DeadLetterConfig{
+				TargetQueueURL:  dlqURL,
+				MaxReceiveCount: effectiveMaxDeliveryCount(&req.Properties),
+			},
+			DeadLetterOnExpiration: req.Properties.DeadLetteringOnExpiration,
 		})
 		if err != nil && !cerrors.IsAlreadyExists(err) {
 			h.mu.Unlock()
@@ -76,7 +89,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 			url = info.URL
 		}
 
-		rec = &queueRecord{Name: name, DriverURL: url, CreatedAt: now}
+		rec = &queueRecord{Name: name, DriverURL: url, DLQURL: dlqURL, CreatedAt: now}
 		ns.Queues[name] = rec
 	} else if rec.DriverURL != "" {
 		// PUT is create-or-update: honor a LockDuration change on an existing
@@ -149,6 +162,7 @@ func (h *Handler) deleteQueue(w http.ResponseWriter, sp sbPath, name string) {
 	}
 
 	url := rec.DriverURL
+	dlqURL := rec.DLQURL
 
 	delete(ns.Queues, name)
 	h.mu.Unlock()
@@ -157,7 +171,35 @@ func (h *Handler) deleteQueue(w http.ResponseWriter, sp sbPath, name string) {
 		_ = h.mq.DeleteQueue(context.Background(), url)
 	}
 
+	h.deleteBackingQueue(dlqURL)
+
 	w.WriteHeader(http.StatusOK)
+}
+
+// provisionDLQ creates the backing store for an entity's $DeadLetterQueue
+// sub-queue and returns its driver URL. The DLQ store carries no onward
+// dead-lettering of its own. Callers hold h.mu.
+func (h *Handler) provisionDLQ(r *http.Request, entityName string) (string, error) {
+	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: entityName + "/" + dlqSuffix})
+	if err != nil && !cerrors.IsAlreadyExists(err) {
+		return "", err
+	}
+
+	if info != nil {
+		return info.URL, nil
+	}
+
+	return "", nil
+}
+
+// effectiveMaxDeliveryCount is the delivery-attempt ceiling after which a
+// message dead-letters, defaulting to Service Bus' documented 10.
+func effectiveMaxDeliveryCount(p *queueProperties) int {
+	if p.MaxDeliveryCount > 0 {
+		return int(p.MaxDeliveryCount)
+	}
+
+	return defaultMaxDeliveryCount
 }
 
 // buildQueueProps synthesizes the server-computed fields and defaults a real

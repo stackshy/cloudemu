@@ -32,10 +32,13 @@ type sbMessage struct {
 	GroupID         string
 	DeduplicationID string
 	Attributes      map[string]string
-	ReceiptHandle   string
-	VisibleAt       time.Time
-	SentAt          time.Time
-	ReceiveCount    int
+	// SystemProps carries Azure Service Bus brokered-message system properties
+	// (MessageId, CorrelationId, Label, SessionId, ...) preserved from the send.
+	SystemProps   map[string]string
+	ReceiptHandle string
+	VisibleAt     time.Time
+	SentAt        time.Time
+	ReceiveCount  int
 	// ExpiresAt is the message's absolute expiration time. The zero value
 	// means the message never expires — the default for Service Bus queues
 	// (which never set SendMessageInput.MessageTTLSeconds) and for Azure
@@ -57,7 +60,10 @@ type queueData struct {
 	lastModifiedAt     time.Time
 	deduplicationIndex map[string]time.Time
 	dlqConfig          *driver.DeadLetterConfig
-	metadata           map[string]string
+	// deadLetterOnExpiration routes an expired message to the dead-letter queue
+	// instead of dropping it (Service Bus deadLetteringOnMessageExpiration).
+	deadLetterOnExpiration bool
+	metadata               map[string]string
 }
 
 // FunctionTrigger is a function that gets called when a message is sent to a queue.
@@ -125,6 +131,8 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 }
 
 // CreateQueue creates a new Service Bus queue.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "queue name is required")
@@ -163,17 +171,18 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	now := m.opts.Clock.Now()
 
 	qd := &queueData{
-		info:               info,
-		messages:           make([]*sbMessage, 0),
-		delaySeconds:       cfg.DelaySeconds,
-		visibilityTimeout:  visibilityTimeout,
-		maxMessageSize:     cfg.MaxMessageSize,
-		messageRetention:   cfg.MessageRetention,
-		createdAt:          now,
-		lastModifiedAt:     now,
-		deduplicationIndex: make(map[string]time.Time),
-		dlqConfig:          cfg.DeadLetterQueue,
-		metadata:           make(map[string]string),
+		info:                   info,
+		messages:               make([]*sbMessage, 0),
+		delaySeconds:           cfg.DelaySeconds,
+		visibilityTimeout:      visibilityTimeout,
+		maxMessageSize:         cfg.MaxMessageSize,
+		messageRetention:       cfg.MessageRetention,
+		createdAt:              now,
+		lastModifiedAt:         now,
+		deduplicationIndex:     make(map[string]time.Time),
+		dlqConfig:              cfg.DeadLetterQueue,
+		deadLetterOnExpiration: cfg.DeadLetterOnExpiration,
+		metadata:               make(map[string]string),
 	}
 
 	m.queues.Set(url, qd)
@@ -264,6 +273,11 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		attrs[k] = v
 	}
 
+	sysProps := make(map[string]string, len(input.SystemProperties))
+	for k, v := range input.SystemProperties {
+		sysProps[k] = v
+	}
+
 	delaySeconds := input.DelaySeconds
 	if delaySeconds == 0 {
 		delaySeconds = qd.delaySeconds
@@ -278,6 +292,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		GroupID:         input.GroupID,
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
+		SystemProps:     sysProps,
 		VisibleAt:       visibleAt,
 		SentAt:          now,
 		ExpiresAt:       expiresAt,
@@ -417,10 +432,7 @@ func (m *Mock) collectVisibleMessages(
 			break
 		}
 
-		// Lazily reap an expired message (Azure Queue Storage's per-message
-		// messagettl) instead of returning it, mirroring the Cosmos DB mock's
-		// on-read TTL check.
-		if isMessageExpired(msg, now) {
+		if m.reapExpired(qd, msg, now) {
 			toRemove = append(toRemove, i)
 			continue
 		}
@@ -431,11 +443,10 @@ func (m *Mock) collectVisibleMessages(
 
 		msg.ReceiveCount++
 
-		// Check if message exceeded max receive count -- move to DLQ.
-		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount {
-			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
-
-			toRemove = append(toRemove, i)
+		if exceeded, moved := m.deadLetterExhausted(qd, msg); exceeded {
+			if moved {
+				toRemove = append(toRemove, i)
+			}
 
 			continue
 		}
@@ -444,6 +455,35 @@ func (m *Mock) collectVisibleMessages(
 	}
 
 	return results, toRemove
+}
+
+// reapExpired handles an expired message (Azure Queue Storage's per-message
+// messagettl / Service Bus defaultMessageTimeToLive), mirroring the Cosmos DB
+// mock's on-read TTL check: it routes the message to the DLQ when
+// dead-lettering-on-expiration is enabled and reports whether it was reaped so
+// the caller drops it.
+func (m *Mock) reapExpired(qd *queueData, msg *sbMessage, now time.Time) bool {
+	if !isMessageExpired(msg, now) {
+		return false
+	}
+
+	if qd.deadLetterOnExpiration && qd.dlqConfig != nil {
+		m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
+	}
+
+	return true
+}
+
+// deadLetterExhausted reports whether msg has exhausted its delivery attempts,
+// and whether it was successfully moved to the DLQ. Only when moved may the
+// caller drop it from the main queue -- a missing DLQ store must not silently
+// lose the message.
+func (m *Mock) deadLetterExhausted(qd *queueData, msg *sbMessage) (exceeded, moved bool) {
+	if qd.dlqConfig == nil || qd.dlqConfig.MaxReceiveCount <= 0 || msg.ReceiveCount <= qd.dlqConfig.MaxReceiveCount {
+		return false, false
+	}
+
+	return true, m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
 }
 
 func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) driver.Message {
@@ -457,37 +497,50 @@ func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) 
 		attrs[k] = v
 	}
 
+	sysProps := make(map[string]string, len(msg.SystemProps))
+	for k, v := range msg.SystemProps {
+		sysProps[k] = v
+	}
+
 	return driver.Message{
-		MessageID:     msg.ID,
-		ReceiptHandle: receiptHandle,
-		Body:          msg.Body,
-		Attributes:    attrs,
-		GroupID:       msg.GroupID,
-		ReceiveCount:  msg.ReceiveCount,
-		ExpiresAt:     msg.ExpiresAt,
+		MessageID:        msg.ID,
+		ReceiptHandle:    receiptHandle,
+		Body:             msg.Body,
+		Attributes:       attrs,
+		SystemProperties: sysProps,
+		GroupID:          msg.GroupID,
+		ReceiveCount:     msg.ReceiveCount,
+		ExpiresAt:        msg.ExpiresAt,
 	}
 }
 
-// moveToDLQ moves a message to the dead-letter queue.
-func (m *Mock) moveToDLQ(dlqURL string, msg *sbMessage) {
+// moveToDLQ copies a message into the dead-letter queue, reporting whether the
+// move succeeded. A missing DLQ store yields false so the caller can keep the
+// message on the main queue rather than dropping (and losing) it. Dead-lettered
+// messages do not carry the source TTL (ExpiresAt stays zero), matching Service
+// Bus, where the DLQ has its own retention.
+func (m *Mock) moveToDLQ(dlqURL string, msg *sbMessage) bool {
 	dlq, ok := m.queues.Get(dlqURL)
 	if !ok {
-		return
+		return false
 	}
+
+	now := m.opts.Clock.Now()
 
 	dlq.mu.Lock()
 	defer dlq.mu.Unlock()
 
-	dlqMsg := &sbMessage{
-		ID:         msg.ID,
-		Body:       msg.Body,
-		GroupID:    msg.GroupID,
-		Attributes: msg.Attributes,
-		VisibleAt:  m.opts.Clock.Now(),
-		SentAt:     m.opts.Clock.Now(),
-	}
+	dlq.messages = append(dlq.messages, &sbMessage{
+		ID:          msg.ID,
+		Body:        msg.Body,
+		GroupID:     msg.GroupID,
+		Attributes:  msg.Attributes,
+		SystemProps: msg.SystemProps,
+		VisibleAt:   now,
+		SentAt:      now,
+	})
 
-	dlq.messages = append(dlq.messages, dlqMsg)
+	return true
 }
 
 // DeleteMessage deletes (completes) a message from the specified queue using its receipt handle (lock token).

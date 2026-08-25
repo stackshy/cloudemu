@@ -71,7 +71,7 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 
 	rec, existed := t.Subs[name]
 	if !existed {
-		url, err := h.createSubQueue(r, sp.namespace, topic, name, lockSeconds)
+		url, dlqURL, err := h.createSubQueue(r, sp.namespace, topic, name, lockSeconds, &req.Properties)
 		if err != nil {
 			h.mu.Unlock()
 			azurearm.WriteCErr(w, err)
@@ -79,7 +79,7 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 			return
 		}
 
-		rec = &subscriptionRecord{Name: name, DriverURL: url, Rules: map[string]*ruleRecord{}, CreatedAt: now}
+		rec = &subscriptionRecord{Name: name, DriverURL: url, DLQURL: dlqURL, Rules: map[string]*ruleRecord{}, CreatedAt: now}
 		rec.Rules[defaultRuleName] = defaultRule()
 		t.Subs[name] = rec
 	} else if rec.DriverURL != "" {
@@ -130,29 +130,58 @@ func (h *Handler) deleteSubscription(w http.ResponseWriter, sp sbPath, topic, na
 	}
 
 	url := rec.DriverURL
+	dlqURL := rec.DLQURL
 
 	delete(t.Subs, name)
 	h.mu.Unlock()
 
 	h.deleteBackingQueue(url)
+	h.deleteBackingQueue(dlqURL)
 	w.WriteHeader(http.StatusOK)
 }
 
-// createSubQueue provisions the backing message store for a new subscription,
-// honoring its configured LockDuration for peek-lock visibility.
-func (h *Handler) createSubQueue(r *http.Request, namespace, topic, sub string, lockSeconds int) (string, error) {
+// createSubQueue provisions the backing message store for a new subscription
+// plus its paired $DeadLetterQueue, honoring the subscription's LockDuration,
+// MaxDeliveryCount and deadLetteringOnMessageExpiration. It returns the primary
+// and dead-letter store URLs.
+func (h *Handler) createSubQueue(
+	r *http.Request, namespace, topic, sub string, lockSeconds int, props *subscriptionProperties,
+) (url, dlqURL string, err error) {
 	name := namespace + "/" + topic + "/" + segSubs + "/" + sub
 
-	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: name, VisibilityTimeout: lockSeconds})
+	dlqURL, err = h.provisionDLQ(r, name)
+	if err != nil {
+		return "", "", err
+	}
+
+	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{
+		Name:              name,
+		VisibilityTimeout: lockSeconds,
+		DeadLetterQueue: &mqdriver.DeadLetterConfig{
+			TargetQueueURL:  dlqURL,
+			MaxReceiveCount: effectiveSubMaxDeliveryCount(props),
+		},
+		DeadLetterOnExpiration: props.DeadLetteringOnExpiration,
+	})
 	if err != nil && !cerrors.IsAlreadyExists(err) {
-		return "", err
+		return "", "", err
 	}
 
 	if info != nil {
-		return info.URL, nil
+		return info.URL, dlqURL, nil
 	}
 
-	return "", nil
+	return "", dlqURL, nil
+}
+
+// effectiveSubMaxDeliveryCount mirrors effectiveMaxDeliveryCount for a
+// subscription's MaxDeliveryCount.
+func effectiveSubMaxDeliveryCount(p *subscriptionProperties) int {
+	if p.MaxDeliveryCount > 0 {
+		return int(p.MaxDeliveryCount)
+	}
+
+	return defaultMaxDeliveryCount
 }
 
 // lookupTopic returns the topic record; caller must hold h.mu.
