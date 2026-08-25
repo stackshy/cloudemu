@@ -137,11 +137,14 @@ func TestSDKCloudDNSRecordChanges(t *testing.T) {
 		t.Fatalf("ResourceRecordSets.List: %v", err)
 	}
 
-	if len(rrsets.Rrsets) != 1 {
-		t.Fatalf("got %d rrsets, want 1: %+v", len(rrsets.Rrsets), rrsets.Rrsets)
+	// The zone also carries the auto-created apex SOA + NS records, so filter to
+	// the user-added record set before asserting.
+	user := userRrsets(rrsets.Rrsets)
+	if len(user) != 1 {
+		t.Fatalf("got %d user rrsets, want 1: %+v", len(user), user)
 	}
 
-	got := rrsets.Rrsets[0]
+	got := user[0]
 	if got.Name != "www.records.com." || got.Type != "A" || got.Ttl != 300 {
 		t.Fatalf("rrset = %+v, want www.records.com. A 300", got)
 	}
@@ -162,9 +165,22 @@ func TestSDKCloudDNSRecordChanges(t *testing.T) {
 		t.Fatalf("ResourceRecordSets.List after delete: %v", err)
 	}
 
-	if len(after.Rrsets) != 0 {
-		t.Fatalf("got %d rrsets after delete, want 0: %+v", len(after.Rrsets), after.Rrsets)
+	if got := userRrsets(after.Rrsets); len(got) != 0 {
+		t.Fatalf("got %d user rrsets after delete, want 0: %+v", len(got), got)
 	}
+}
+
+// userRrsets drops the apex SOA and NS record sets Cloud DNS auto-creates so a
+// test can assert on just the record sets it added.
+func userRrsets(in []*dns.ResourceRecordSet) []*dns.ResourceRecordSet {
+	out := make([]*dns.ResourceRecordSet, 0, len(in))
+	for _, r := range in {
+		if r.Type == "SOA" || r.Type == "NS" {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // TestSDKCloudDNSUpdateRecord guards the #321 fix: the canonical record update
@@ -214,8 +230,9 @@ func TestSDKCloudDNSUpdateRecord(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	if len(rrsets.Rrsets) != 1 || rrsets.Rrsets[0].Ttl != 600 || rrsets.Rrsets[0].Rrdatas[0] != "192.0.2.2" {
-		t.Fatalf("after update rrsets=%+v want single 600/192.0.2.2", rrsets.Rrsets)
+	user := userRrsets(rrsets.Rrsets)
+	if len(user) != 1 || user[0].Ttl != 600 || user[0].Rrdatas[0] != "192.0.2.2" {
+		t.Fatalf("after update rrsets=%+v want single 600/192.0.2.2", user)
 	}
 }
 

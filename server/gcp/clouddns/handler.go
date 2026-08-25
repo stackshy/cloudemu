@@ -21,6 +21,7 @@ package clouddns
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -39,23 +40,31 @@ const (
 	minZonesCollectionParts = 3 // [projects, {p}, managedZones]
 	restZoneResource        = 1 // [{zone}]
 	restZoneSubCollection   = 2 // [{zone}, changes|rrsets]
+	restZoneSubResource     = 3 // [{zone}, changes, {changeId}]
 )
 
 // Handler serves dns.googleapis.com v1 requests against a dns driver.
 type Handler struct {
 	dns       dnsdriver.DNS
 	changeSeq atomic.Uint64
+
+	// changes records applied changes per driver zone id so changes.list/get can
+	// replay them. Cloud DNS keeps this change log itself; the dns driver models
+	// only the end state, so the wire layer owns it. Guarded by mu.
+	mu      sync.Mutex
+	changes map[string][]changeJSON
 }
 
 // New returns a Cloud DNS handler backed by d.
 func New(d dnsdriver.DNS) *Handler {
-	return &Handler{dns: d}
+	return &Handler{dns: d, changes: make(map[string][]changeJSON)}
 }
 
 type route struct {
-	project string
-	zone    string // managed zone name; empty for the collection
-	sub     string // "changes" or "rrsets"; empty for a bare zone
+	project  string
+	zone     string // managed zone name; empty for the collection
+	sub      string // "changes" or "rrsets"; empty for a bare zone
+	changeID string // change id; only set for [{zone}, changes, {changeId}]
 }
 
 // parseRoute extracts the components of a Cloud DNS v1 path.
@@ -81,6 +90,12 @@ func parseRoute(urlPath string) (route, bool) {
 	case restZoneSubCollection:
 		rt.zone = rest[0]
 		rt.sub = rest[1]
+
+		return rt, true
+	case restZoneSubResource:
+		rt.zone = rest[0]
+		rt.sub = rest[1]
+		rt.changeID = rest[2]
 
 		return rt, true
 	default:
@@ -138,19 +153,30 @@ func (h *Handler) serveZone(w http.ResponseWriter, r *http.Request, rt route) {
 		h.getZone(w, r, rt)
 	case http.MethodDelete:
 		h.deleteZone(w, r, rt)
+	case http.MethodPatch, http.MethodPut:
+		h.patchZone(w, r, rt)
 	default:
 		writeUnsupported(w)
 	}
 }
 
-// serveChanges dispatches /managedZones/{z}/changes requests.
+// serveChanges dispatches /managedZones/{z}/changes[/{changeId}] requests.
 func (h *Handler) serveChanges(w http.ResponseWriter, r *http.Request, rt route) {
-	if r.Method != http.MethodPost {
-		writeUnsupported(w)
-		return
-	}
+	switch {
+	case rt.changeID != "":
+		if r.Method != http.MethodGet {
+			writeUnsupported(w)
+			return
+		}
 
-	h.createChange(w, r, rt)
+		h.getChange(w, r, rt)
+	case r.Method == http.MethodPost:
+		h.createChange(w, r, rt)
+	case r.Method == http.MethodGet:
+		h.listChanges(w, r, rt)
+	default:
+		writeUnsupported(w)
+	}
 }
 
 // serveRRSets dispatches /managedZones/{z}/rrsets requests.
