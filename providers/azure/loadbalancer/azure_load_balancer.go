@@ -89,6 +89,9 @@ func cloneAzureLB(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
 	out.BackendPools = append([]string(nil), lb.BackendPools...)
 	out.Rules = append([]driver.AzureLBRule(nil), lb.Rules...)
 	out.Probes = append([]driver.AzureLBProbe(nil), lb.Probes...)
+	out.NatRules = append([]driver.AzureLBNatRule(nil), lb.NatRules...)
+	out.NatPools = append([]driver.AzureLBNatPool(nil), lb.NatPools...)
+	out.OutboundRules = append([]driver.AzureLBOutboundRule(nil), lb.OutboundRules...)
 
 	if len(lb.Tags) > 0 {
 		out.Tags = make(map[string]string, len(lb.Tags))
@@ -96,6 +99,167 @@ func cloneAzureLB(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
 			out.Tags[k] = v
 		}
 	}
+
+	return out
+}
+
+// UpsertAzureLBBackendPool adds poolName to the load balancer's backend pools
+// if absent, leaving every other child untouched.
+func (m *Mock) UpsertAzureLBBackendPool(_ context.Context, rg, name, poolName string) (*driver.AzureLoadBalancer, error) {
+	if poolName == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "backend address pool name is required")
+	}
+
+	key := azureLBKey(rg, name)
+
+	lb, ok := m.azureLBs.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
+	}
+
+	if !containsString(lb.BackendPools, poolName) {
+		lb.BackendPools = append(append([]string(nil), lb.BackendPools...), poolName)
+		m.azureLBs.Set(key, lb)
+	}
+
+	out := cloneAzureLB(lb)
+
+	return &out, nil
+}
+
+// DeleteAzureLBBackendPool removes a single backend pool by name, leaving
+// every other child untouched.
+func (m *Mock) DeleteAzureLBBackendPool(_ context.Context, rg, name, poolName string) error {
+	key := azureLBKey(rg, name)
+
+	lb, ok := m.azureLBs.Get(key)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
+	}
+
+	idx := indexOfString(lb.BackendPools, poolName)
+	if idx == -1 {
+		return cerrors.Newf(cerrors.NotFound, "backend address pool %q not found", poolName)
+	}
+
+	lb.BackendPools = removeStringAt(lb.BackendPools, idx)
+	m.azureLBs.Set(key, lb)
+
+	return nil
+}
+
+// UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by name,
+// leaving every other child untouched.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) UpsertAzureLBNatRule(
+	_ context.Context, rg, name, natRuleName string, rule driver.AzureLBNatRule,
+) (*driver.AzureLoadBalancer, error) {
+	if natRuleName == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "inbound NAT rule name is required")
+	}
+
+	key := azureLBKey(rg, name)
+
+	lb, ok := m.azureLBs.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
+	}
+
+	if rule.FrontendName != "" && !hasFrontend(lb.Frontends, rule.FrontendName) {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"inbound NAT rule %q references frontend IP configuration %q that does not exist",
+			natRuleName, rule.FrontendName)
+	}
+
+	rule.Name = natRuleName
+
+	rules := append([]driver.AzureLBNatRule(nil), lb.NatRules...)
+
+	replaced := false
+
+	for i := range rules {
+		if rules[i].Name == natRuleName {
+			rules[i] = rule
+			replaced = true
+
+			break
+		}
+	}
+
+	if !replaced {
+		rules = append(rules, rule)
+	}
+
+	lb.NatRules = rules
+	m.azureLBs.Set(key, lb)
+
+	out := cloneAzureLB(lb)
+
+	return &out, nil
+}
+
+// DeleteAzureLBNatRule removes a single inbound NAT rule by name, leaving
+// every other child untouched.
+func (m *Mock) DeleteAzureLBNatRule(_ context.Context, rg, name, natRuleName string) error {
+	key := azureLBKey(rg, name)
+
+	lb, ok := m.azureLBs.Get(key)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "load balancer %q not found", name)
+	}
+
+	idx := -1
+
+	for i := range lb.NatRules {
+		if lb.NatRules[i].Name == natRuleName {
+			idx = i
+			break
+		}
+	}
+
+	if idx == -1 {
+		return cerrors.Newf(cerrors.NotFound, "inbound NAT rule %q not found", natRuleName)
+	}
+
+	lb.NatRules = append(append([]driver.AzureLBNatRule(nil), lb.NatRules[:idx]...), lb.NatRules[idx+1:]...)
+	m.azureLBs.Set(key, lb)
+
+	return nil
+}
+
+// hasFrontend reports whether name matches a frontend IP configuration in in.
+func hasFrontend(in []driver.AzureLBFrontend, name string) bool {
+	for i := range in {
+		if in[i].Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsString reports whether s is present in in.
+func containsString(in []string, s string) bool {
+	return indexOfString(in, s) != -1
+}
+
+// indexOfString returns the index of s in in, or -1 if absent.
+func indexOfString(in []string, s string) int {
+	for i, v := range in {
+		if v == s {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// removeStringAt returns a copy of in with the element at idx removed.
+func removeStringAt(in []string, idx int) []string {
+	out := make([]string, 0, len(in)-1)
+	out = append(out, in[:idx]...)
+	out = append(out, in[idx+1:]...)
 
 	return out
 }

@@ -5667,6 +5667,14 @@
             "name": "CreateOrUpdateAzureLoadBalancer"
           },
           {
+            "name": "DeleteAzureLBBackendPool",
+            "doc": "DeleteAzureLBBackendPool removes a single backend pool by name, leaving"
+          },
+          {
+            "name": "DeleteAzureLBNatRule",
+            "doc": "DeleteAzureLBNatRule removes a single inbound NAT rule by name, leaving"
+          },
+          {
             "name": "DeleteAzureLoadBalancer"
           },
           {
@@ -5674,6 +5682,14 @@
           },
           {
             "name": "ListAzureLoadBalancers"
+          },
+          {
+            "name": "UpsertAzureLBBackendPool",
+            "doc": "UpsertAzureLBBackendPool adds poolName to the load balancer's backend"
+          },
+          {
+            "name": "UpsertAzureLBNatRule",
+            "doc": "UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by"
           }
         ]
       },

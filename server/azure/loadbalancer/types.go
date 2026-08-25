@@ -9,11 +9,23 @@ const (
 	providerName = "Microsoft.Network"
 	typeLBs      = "loadBalancers"
 
-	lbResourceType    = "Microsoft.Network/loadBalancers"
-	poolResourceType  = "Microsoft.Network/loadBalancers/backendAddressPools"
-	ruleResourceType  = "Microsoft.Network/loadBalancers/loadBalancingRules"
-	feResourceType    = "Microsoft.Network/loadBalancers/frontendIPConfigurations"
-	probeResourceType = "Microsoft.Network/loadBalancers/probes"
+	lbResourceType           = "Microsoft.Network/loadBalancers"
+	poolResourceType         = "Microsoft.Network/loadBalancers/backendAddressPools"
+	ruleResourceType         = "Microsoft.Network/loadBalancers/loadBalancingRules"
+	feResourceType           = "Microsoft.Network/loadBalancers/frontendIPConfigurations"
+	probeResourceType        = "Microsoft.Network/loadBalancers/probes"
+	natRuleResourceType      = "Microsoft.Network/loadBalancers/inboundNatRules"
+	natPoolResourceType      = "Microsoft.Network/loadBalancers/inboundNatPools"
+	outboundRuleResourceType = "Microsoft.Network/loadBalancers/outboundRules"
+
+	// sub-resource path segments, as they appear in the ARM URL.
+	subResourceFrontendIPConfigurations = "frontendIPConfigurations"
+	subResourceBackendAddressPools      = "backendAddressPools"
+	subResourceLoadBalancingRules       = "loadBalancingRules"
+	subResourceProbes                   = "probes"
+	subResourceInboundNatRules          = "inboundNatRules"
+	subResourceInboundNatPools          = "inboundNatPools"
+	subResourceOutboundRules            = "outboundRules"
 
 	defaultLBLocation = "eastus"
 
@@ -74,6 +86,7 @@ type loadBalancingRuleProps struct {
 	BackendAddressPool      *subResource `json:"backendAddressPool,omitempty"`
 	Probe                   *subResource `json:"probe,omitempty"`
 	EnableFloatingIP        *bool        `json:"enableFloatingIP,omitempty"`
+	DisableOutboundSnat     *bool        `json:"disableOutboundSnat,omitempty"`
 	IdleTimeoutInMinutes    int32        `json:"idleTimeoutInMinutes,omitempty"`
 	LoadDistribution        string       `json:"loadDistribution,omitempty"`
 	ProvisioningState       string       `json:"provisioningState,omitempty"`
@@ -106,6 +119,64 @@ type probeJSON struct {
 	Properties *probeProps `json:"properties,omitempty"`
 }
 
+// --- inbound NAT rules ---
+
+type inboundNatRuleProps struct {
+	Protocol                string       `json:"protocol,omitempty"`
+	FrontendPort            int32        `json:"frontendPort,omitempty"`
+	BackendPort             int32        `json:"backendPort,omitempty"`
+	FrontendIPConfiguration *subResource `json:"frontendIPConfiguration,omitempty"`
+	EnableFloatingIP        *bool        `json:"enableFloatingIP,omitempty"`
+	IdleTimeoutInMinutes    int32        `json:"idleTimeoutInMinutes,omitempty"`
+	ProvisioningState       string       `json:"provisioningState,omitempty"`
+}
+
+type inboundNatRuleJSON struct {
+	ID         string               `json:"id,omitempty"`
+	Name       string               `json:"name,omitempty"`
+	Type       string               `json:"type,omitempty"`
+	Etag       string               `json:"etag,omitempty"`
+	Properties *inboundNatRuleProps `json:"properties,omitempty"`
+}
+
+// --- inbound NAT pools ---
+
+type inboundNatPoolProps struct {
+	Protocol                string       `json:"protocol,omitempty"`
+	FrontendPortRangeStart  int32        `json:"frontendPortRangeStart,omitempty"`
+	FrontendPortRangeEnd    int32        `json:"frontendPortRangeEnd,omitempty"`
+	BackendPort             int32        `json:"backendPort,omitempty"`
+	FrontendIPConfiguration *subResource `json:"frontendIPConfiguration,omitempty"`
+	ProvisioningState       string       `json:"provisioningState,omitempty"`
+}
+
+type inboundNatPoolJSON struct {
+	ID         string               `json:"id,omitempty"`
+	Name       string               `json:"name,omitempty"`
+	Type       string               `json:"type,omitempty"`
+	Etag       string               `json:"etag,omitempty"`
+	Properties *inboundNatPoolProps `json:"properties,omitempty"`
+}
+
+// --- outbound rules ---
+
+type outboundRuleProps struct {
+	Protocol                 string        `json:"protocol,omitempty"`
+	BackendAddressPool       *subResource  `json:"backendAddressPool,omitempty"`
+	FrontendIPConfigurations []subResource `json:"frontendIPConfigurations,omitempty"`
+	AllocatedOutboundPorts   int32         `json:"allocatedOutboundPorts,omitempty"`
+	IdleTimeoutInMinutes     int32         `json:"idleTimeoutInMinutes,omitempty"`
+	ProvisioningState        string        `json:"provisioningState,omitempty"`
+}
+
+type outboundRuleJSON struct {
+	ID         string             `json:"id,omitempty"`
+	Name       string             `json:"name,omitempty"`
+	Type       string             `json:"type,omitempty"`
+	Etag       string             `json:"etag,omitempty"`
+	Properties *outboundRuleProps `json:"properties,omitempty"`
+}
+
 // --- load balancer ---
 
 type loadBalancerProps struct {
@@ -113,6 +184,9 @@ type loadBalancerProps struct {
 	FrontendIPConfigurations []frontendIPJSON        `json:"frontendIPConfigurations,omitempty"`
 	LoadBalancingRules       []loadBalancingRuleJSON `json:"loadBalancingRules,omitempty"`
 	Probes                   []probeJSON             `json:"probes,omitempty"`
+	InboundNatRules          []inboundNatRuleJSON    `json:"inboundNatRules,omitempty"`
+	InboundNatPools          []inboundNatPoolJSON    `json:"inboundNatPools,omitempty"`
+	OutboundRules            []outboundRuleJSON      `json:"outboundRules,omitempty"`
 	ProvisioningState        string                  `json:"provisioningState,omitempty"`
 }
 
@@ -134,4 +208,12 @@ type loadBalancerJSON struct {
 
 type lbListResult struct {
 	Value []loadBalancerJSON `json:"value"`
+}
+
+// subResourceListResult is the ARM list envelope shared by every load
+// balancer sub-resource collection (backendAddressPools, probes,
+// loadBalancingRules, inboundNatRules, inboundNatPools, outboundRules,
+// frontendIPConfigurations).
+type subResourceListResult struct {
+	Value any `json:"value"`
 }
