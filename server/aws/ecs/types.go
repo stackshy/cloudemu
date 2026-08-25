@@ -201,15 +201,25 @@ type wireTaskDef struct {
 // containerStatusStopped is the ECS lastStatus of a finished container.
 const containerStatusStopped = "STOPPED"
 
+// wireNetworkBinding mirrors the ECS NetworkBinding shape: the host IP/port a
+// bridge- or host-mode container port mapping was bound to.
+type wireNetworkBinding struct {
+	BindIP        string `json:"bindIP,omitempty"`
+	ContainerPort int    `json:"containerPort,omitempty"`
+	HostPort      int    `json:"hostPort,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+}
+
 type wireContainer struct {
 	Name       string `json:"name,omitempty"`
 	Image      string `json:"image,omitempty"`
 	LastStatus string `json:"lastStatus,omitempty"`
 	// ExitCode is a pointer so a real exit 0 on a STOPPED container serializes
 	// (real ECS reports it), while a running container omits it entirely.
-	ExitCode  *int   `json:"exitCode,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	RuntimeID string `json:"runtimeId,omitempty"`
+	ExitCode        *int                 `json:"exitCode,omitempty"`
+	Reason          string               `json:"reason,omitempty"`
+	RuntimeID       string               `json:"runtimeId,omitempty"`
+	NetworkBindings []wireNetworkBinding `json:"networkBindings,omitempty"`
 }
 
 // wireAttachment mirrors the ECS Attachment shape (type/status/details), where
@@ -1181,6 +1191,23 @@ func taskDefToWire(t *driver.TaskDefinition) wireTaskDef {
 	}
 }
 
+// fromNetworkBindings converts a container's resolved bridge/host port
+// bindings to the wire shape.
+func fromNetworkBindings(in []driver.NetworkBinding) []wireNetworkBinding {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]wireNetworkBinding, 0, len(in))
+	for _, nb := range in {
+		out = append(out, wireNetworkBinding{
+			BindIP: nb.BindIP, ContainerPort: nb.ContainerPort, HostPort: nb.HostPort, Protocol: nb.Protocol,
+		})
+	}
+
+	return out
+}
+
 func taskToWire(t *driver.Task) wireTask {
 	containers := make([]wireContainer, 0, len(t.Containers))
 
@@ -1189,6 +1216,7 @@ func taskToWire(t *driver.Task) wireTask {
 		wc := wireContainer{
 			Name: c.Name, Image: c.Image, LastStatus: c.LastStatus,
 			Reason: c.Reason, RuntimeID: c.RuntimeID,
+			NetworkBindings: fromNetworkBindings(c.NetworkBindings),
 		}
 		// Surface the exit code only once the container has stopped, so a genuine
 		// exit 0 is reported while a running container has none.

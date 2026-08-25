@@ -277,12 +277,37 @@ func TestDeregisterTargets(t *testing.T) {
 	tg := createTestTG(m)
 	_ = m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}, {ID: "i-2", Port: 80}})
 
-	t.Run("success", func(t *testing.T) {
-		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1"}})
+	t.Run("success by exact (id, port)", func(t *testing.T) {
+		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}})
 		requireNoError(t, err)
 
 		health, _ := m.DescribeTargetHealth(ctx, tg.ARN)
 		assertEqual(t, 1, len(health))
+	})
+
+	t.Run("success by id alone when unambiguous", func(t *testing.T) {
+		// A caller that omits Port (the common case — RegisterTargets docs
+		// Example 1 registers and deregisters by ID alone) can still
+		// deregister as long as that ID has exactly one registered port.
+		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-2"}})
+		requireNoError(t, err)
+
+		health, _ := m.DescribeTargetHealth(ctx, tg.ARN)
+		assertEqual(t, 0, len(health))
+	})
+
+	t.Run("id alone is a no-op when ambiguous across ports", func(t *testing.T) {
+		// DeregisterTargets docs: "If you specified a port override when you
+		// registered a target, you must specify both the target ID and the
+		// port when you deregister it." Two ports for the same ID must not
+		// be collapsed by an unqualified ID.
+		_ = m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-3", Port: 80}, {ID: "i-3", Port: 766}})
+
+		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-3"}})
+		requireNoError(t, err)
+
+		health, _ := m.DescribeTargetHealth(ctx, tg.ARN)
+		assertEqual(t, 2, len(health))
 	})
 
 	t.Run("TG not found", func(t *testing.T) {
@@ -333,6 +358,46 @@ func TestSetTargetHealth(t *testing.T) {
 		err := m.SetTargetHealth(ctx, "arn:nope", "i-1", "healthy")
 		assertError(t, err, true)
 	})
+}
+
+// TestRegisterTargetsSamePortOverride is the regression case for the
+// target-health store overwriting a same-instance registration: AWS lets one
+// instance ID be registered multiple times under different port overrides
+// (RegisterTargets docs, "Register targets by instance ID using port
+// overrides": the same instance is registered as Port=80 and Port=766 in one
+// call), and both must coexist and be independently deregisterable.
+func TestRegisterTargetsSamePortOverride(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	tg := createTestTG(m)
+
+	err := m.RegisterTargets(ctx, tg.ARN, []driver.Target{
+		{ID: "i-shared", Port: 80},
+		{ID: "i-shared", Port: 766},
+	})
+	requireNoError(t, err)
+
+	health, err := m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(health))
+
+	ports := map[int]bool{}
+	for _, th := range health {
+		assertEqual(t, "i-shared", th.Target.ID)
+		ports[th.Target.Port] = true
+	}
+
+	assertEqual(t, true, ports[80])
+	assertEqual(t, true, ports[766])
+
+	// Deregistering one port must leave the other target registered.
+	err = m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-shared", Port: 80}})
+	requireNoError(t, err)
+
+	health, err = m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(health))
+	assertEqual(t, 766, health[0].Target.Port)
 }
 
 func TestCreateRule(t *testing.T) {

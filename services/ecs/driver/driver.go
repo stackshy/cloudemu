@@ -263,16 +263,28 @@ type TaskDefinition struct {
 	Tags                    []Tag
 }
 
+// NetworkBinding is a container port mapping resolved at task launch: the
+// host IP/port bound to a container port. It is populated only for bridge and
+// host network mode; an awsvpc/Fargate task carries no port bindings since
+// traffic reaches the container directly through its ENI address.
+type NetworkBinding struct {
+	BindIP        string
+	ContainerPort int
+	HostPort      int
+	Protocol      string
+}
+
 // Container is a running container within a task. ExitCode, Reason, and
 // RuntimeID are populated only when the task is backed by a real
 // config.ContainerEngine; they stay zero for the default synthetic tasks.
 type Container struct {
-	Name       string
-	Image      string
-	LastStatus string
-	ExitCode   int
-	Reason     string
-	RuntimeID  string
+	Name            string
+	Image           string
+	LastStatus      string
+	ExitCode        int
+	Reason          string
+	RuntimeID       string
+	NetworkBindings []NetworkBinding
 }
 
 // Attachment is a resource attached to a task, such as the elastic network
@@ -352,8 +364,10 @@ type ServiceEvent struct {
 }
 
 // LoadBalancer associates a service's container/port with an Elastic Load
-// Balancing target group. It is accepted and echoed but not wired to real
-// target registration or health checks.
+// Balancing target group. The service scheduler registers each RUNNING task it
+// places against TargetGroupARN (when a TargetRegistrar is wired) and
+// deregisters it when the task stops or the service scales down; health-check
+// evaluation itself is the target group's own concern.
 type LoadBalancer struct {
 	TargetGroupARN   string
 	LoadBalancerName string

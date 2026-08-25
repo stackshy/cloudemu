@@ -28,6 +28,21 @@ var (
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
 const defaultIdleTimeoutSec = 60
 
+// targetKey is the identity of a registered target within a target group.
+// AWS lets the same instance ID or IP be registered multiple times with
+// different port overrides (RegisterTargets docs, "Register targets by
+// instance ID using port overrides": the same instance ID is registered
+// twice with Port=80 and Port=766, and both remain distinct targets) — so
+// the health store must key on (ID, Port), not ID alone.
+type targetKey struct {
+	id   string
+	port int
+}
+
+func keyFor(t driver.Target) targetKey {
+	return targetKey{id: t.ID, port: t.Port}
+}
+
 // Mock is an in-memory mock implementation of the AWS ELB service.
 type Mock struct {
 	lbs       *memstore.Store[driver.LBInfo]
@@ -37,7 +52,7 @@ type Mock struct {
 	opts      *config.Options
 
 	healthMu sync.RWMutex
-	health   map[string]map[string]*driver.TargetHealth // tgARN -> targetID -> health
+	health   map[string]map[targetKey]*driver.TargetHealth // tgARN -> (id,port) -> health
 
 	attrsMu sync.RWMutex
 	attrs   map[string]driver.LBAttributes // lbARN -> attributes
@@ -54,7 +69,7 @@ func New(opts *config.Options) *Mock {
 		listeners: memstore.New[driver.ListenerInfo](),
 		rules:     memstore.New[driver.RuleInfo](),
 		opts:      opts,
-		health:    make(map[string]map[string]*driver.TargetHealth),
+		health:    make(map[string]map[targetKey]*driver.TargetHealth),
 		attrs:     make(map[string]driver.LBAttributes),
 		tgAttrs:   make(map[string]map[string]string),
 	}
@@ -235,7 +250,7 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 
 	// Initialize health map for this target group.
 	m.healthMu.Lock()
-	m.health[arn] = make(map[string]*driver.TargetHealth)
+	m.health[arn] = make(map[targetKey]*driver.TargetHealth)
 	m.healthMu.Unlock()
 
 	result := tg
@@ -896,12 +911,12 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 
 	tgHealth, ok := m.health[targetGroupARN]
 	if !ok {
-		tgHealth = make(map[string]*driver.TargetHealth)
+		tgHealth = make(map[targetKey]*driver.TargetHealth)
 		m.health[targetGroupARN] = tgHealth
 	}
 
 	for _, t := range targets {
-		tgHealth[t.ID] = &driver.TargetHealth{
+		tgHealth[keyFor(t)] = &driver.TargetHealth{
 			Target: driver.Target{
 				ID:   t.ID,
 				Port: t.Port,
@@ -930,10 +945,53 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 	}
 
 	for _, t := range targets {
-		delete(tgHealth, t.ID)
+		key := keyFor(t)
+		if _, ok := tgHealth[key]; ok {
+			delete(tgHealth, key)
+			continue
+		}
+
+		// No exact (ID, Port) match. Per the DeregisterTargets docs, a port
+		// is only required when the target was registered with a port
+		// override; a caller that omits Port (t.Port == 0, the common case —
+		// RegisterTargets docs Example 1 registers and deregisters by ID
+		// alone) still identifies a target unambiguously as long as that ID
+		// is registered under exactly one port. Deregistering an unknown
+		// target is a no-op ("If the specified target does not exist, the
+		// action returns successfully").
+		if t.Port == 0 {
+			deleteSolePortMatch(tgHealth, t.ID)
+		}
 	}
 
 	return nil
+}
+
+// deleteSolePortMatch removes the single entry registered under id, when
+// exactly one exists. Two or more entries for the same id (different port
+// overrides) are left untouched — disambiguating them requires the caller to
+// specify the port, matching real ELBv2 semantics.
+func deleteSolePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string) {
+	var match targetKey
+
+	count := 0
+
+	for k := range tgHealth {
+		if k.id != id {
+			continue
+		}
+
+		match = k
+		count++
+
+		if count > 1 {
+			return
+		}
+	}
+
+	if count == 1 {
+		delete(tgHealth, match)
+	}
 }
 
 // DescribeTargetHealth returns the health status of all targets in a target
@@ -984,13 +1042,24 @@ func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN, targetID, stat
 		return errors.Newf(errors.NotFound, "no targets registered in target group %q", targetGroupARN)
 	}
 
-	th, ok := tgHealth[targetID]
-	if !ok {
-		return errors.Newf(errors.NotFound, "target %q not found in target group %q", targetID, targetGroupARN)
+	// targetID alone is ambiguous when the same ID is registered under
+	// multiple ports (see targetKey); set every port registered for it,
+	// matching the common case of a single port per ID.
+	found := false
+
+	for k, th := range tgHealth {
+		if k.id != targetID {
+			continue
+		}
+
+		th.State = state
+		th.Reason = ""
+		found = true
 	}
 
-	th.State = state
-	th.Reason = ""
+	if !found {
+		return errors.Newf(errors.NotFound, "target %q not found in target group %q", targetID, targetGroupARN)
+	}
 
 	return nil
 }
