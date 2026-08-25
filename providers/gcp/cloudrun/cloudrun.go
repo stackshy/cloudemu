@@ -14,8 +14,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -44,6 +46,8 @@ type Mock struct {
 	mu         sync.Mutex
 	jobs       *memstore.Store[*driver.Job]
 	executions *memstore.Store[*driver.Execution]
+	services   *memstore.Store[*driver.Service]
+	revisions  *memstore.Store[*driver.Revision]
 	// engineHandles maps a job id to the ContainerEngine handles its executions
 	// started. A present, non-empty entry is the engine-backed marker DeleteJob
 	// consults to tear down real containers; an absent entry means the job's
@@ -58,12 +62,16 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		jobs:          memstore.New[*driver.Job](),
 		executions:    memstore.New[*driver.Execution](),
+		services:      memstore.New[*driver.Service](),
+		revisions:     memstore.New[*driver.Revision](),
 		engineHandles: memstore.New[[]string](),
 		opts:          opts,
 	}
 }
 
 // CreateJob stores a job spec without running it.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the CloudRun driver interface.
 func (m *Mock) CreateJob(_ context.Context, cfg driver.JobConfig) (*driver.Job, error) {
 	name := lastSegment(cfg.Name)
 	if name == "" {
@@ -84,22 +92,103 @@ func (m *Mock) CreateJob(_ context.Context, cfg driver.JobConfig) (*driver.Job, 
 
 	now := m.opts.Clock.Now()
 	job := &driver.Job{
-		Name:        name,
-		UID:         newID(uidBytes),
-		Generation:  1,
-		CreateTime:  now,
-		UpdateTime:  now,
-		LaunchStage: launchStageGA,
-		TaskCount:   taskCount,
-		Containers:  cloneContainers(cfg.Containers),
-		Labels:      cloneMap(cfg.Labels),
-		Annotations: cloneMap(cfg.Annotations),
-		Conditions:  []driver.Condition{{Type: condReady, State: stateSucceeded, Reason: "Ready"}},
+		Name:                 name,
+		UID:                  newID(uidBytes),
+		Generation:           1,
+		ObservedGeneration:   1,
+		CreateTime:           now,
+		UpdateTime:           now,
+		LaunchStage:          launchStageGA,
+		TaskCount:            taskCount,
+		Parallelism:          cfg.Parallelism,
+		MaxRetries:           cfg.MaxRetries,
+		Timeout:              cfg.Timeout,
+		ServiceAccount:       cfg.ServiceAccount,
+		ExecutionEnvironment: cfg.ExecutionEnvironment,
+		VPCAccess:            cloneVPCAccess(cfg.VPCAccess),
+		Containers:           cloneContainers(cfg.Containers),
+		Labels:               cloneMap(cfg.Labels),
+		Annotations:          cloneMap(cfg.Annotations),
+		Conditions:           []driver.Condition{{Type: condReady, State: stateSucceeded, Reason: "Ready"}},
+		TerminalCondition:    &driver.Condition{Type: condReady, State: stateSucceeded, Reason: "Ready"},
+		Etag:                 newEtag(now, 1),
 	}
 
 	m.jobs.Set(name, job)
 
 	return cloneJob(job), nil
+}
+
+// UpdateJob applies an in-place update to an existing job, bumping its
+// generation, and returns the mutated job.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the CloudRun driver interface.
+func (m *Mock) UpdateJob(_ context.Context, cfg driver.JobConfig) (*driver.Job, error) {
+	name := lastSegment(cfg.Name)
+	if name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "job name is required")
+	}
+
+	taskCount := cfg.TaskCount
+	if taskCount <= 0 {
+		taskCount = defaultTaskCount
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, ok := m.jobs.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "job %q not found", name)
+	}
+
+	now := m.opts.Clock.Now()
+	job.Generation++
+	job.ObservedGeneration = job.Generation
+	job.UpdateTime = now
+	job.TaskCount = taskCount
+	job.Parallelism = cfg.Parallelism
+	job.MaxRetries = cfg.MaxRetries
+	job.Timeout = cfg.Timeout
+	job.ServiceAccount = cfg.ServiceAccount
+	job.ExecutionEnvironment = cfg.ExecutionEnvironment
+	job.VPCAccess = cloneVPCAccess(cfg.VPCAccess)
+	job.Containers = cloneContainers(cfg.Containers)
+	job.Labels = cloneMap(cfg.Labels)
+	job.Annotations = cloneMap(cfg.Annotations)
+	job.Etag = newEtag(now, job.Generation)
+
+	m.jobs.Set(name, job)
+
+	return cloneJob(job), nil
+}
+
+// ListExecutions returns every stored execution of the named job.
+func (m *Mock) ListExecutions(_ context.Context, jobName string) ([]driver.Execution, error) {
+	id := lastSegment(jobName)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.jobs.Has(id) {
+		return nil, cerrors.Newf(cerrors.NotFound, "job %q not found", id)
+	}
+
+	return collectByParent(m.executions.SortedValues(), id,
+		func(e *driver.Execution) string { return e.JobName }, cloneExecution), nil
+}
+
+// collectByParent returns clones of every value whose parent id matches.
+func collectByParent[T any](values []*T, parent string, parentOf func(*T) string, clone func(*T) *T) []T {
+	out := make([]T, 0, len(values))
+
+	for _, v := range values {
+		if parentOf(v) == parent {
+			out = append(out, *clone(v))
+		}
+	}
+
+	return out
 }
 
 // GetJob returns a job by id or fully qualified name.
@@ -207,6 +296,7 @@ func cloneContainers(in []driver.Container) []driver.Container {
 			Command: append([]string(nil), in[i].Command...),
 			Args:    append([]string(nil), in[i].Args...),
 			Env:     cloneMap(in[i].Env),
+			Ports:   append([]int(nil), in[i].Ports...),
 		}
 	}
 
@@ -232,8 +322,42 @@ func cloneJob(j *driver.Job) *driver.Job {
 	cp.Labels = cloneMap(j.Labels)
 	cp.Annotations = cloneMap(j.Annotations)
 	cp.Conditions = append([]driver.Condition(nil), j.Conditions...)
+	cp.VPCAccess = cloneVPCAccess(j.VPCAccess)
+
+	if j.TerminalCondition != nil {
+		tc := *j.TerminalCondition
+		cp.TerminalCondition = &tc
+	}
+
+	if j.LatestCreatedExecution != nil {
+		ref := *j.LatestCreatedExecution
+		cp.LatestCreatedExecution = &ref
+	}
 
 	return &cp
+}
+
+// cloneVPCAccess deep-copies a VPC access config, or returns nil.
+func cloneVPCAccess(in *driver.VpcAccess) *driver.VpcAccess {
+	if in == nil {
+		return nil
+	}
+
+	out := &driver.VpcAccess{Connector: in.Connector, Egress: in.Egress}
+	for _, ni := range in.NetworkInterfaces {
+		out.NetworkInterfaces = append(out.NetworkInterfaces, driver.VpcNetworkInterface{
+			Network:    ni.Network,
+			Subnetwork: ni.Subnetwork,
+			Tags:       append([]string(nil), ni.Tags...),
+		})
+	}
+
+	return out
+}
+
+// newEtag returns a stable, opaque etag for a resource state.
+func newEtag(t time.Time, generation int64) string {
+	return `"` + strconv.FormatInt(t.UnixNano(), 36) + "-" + strconv.FormatInt(generation, 10) + `"`
 }
 
 func cloneExecution(e *driver.Execution) *driver.Execution {

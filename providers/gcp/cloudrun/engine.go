@@ -51,6 +51,15 @@ func (m *Mock) RunJob(ctx context.Context, name string) (*driver.Execution, erro
 	m.mu.Lock()
 	exec.CompletionTime = m.opts.Clock.Now()
 	m.executions.Set(exec.Name, exec)
+
+	if job, ok := m.jobs.Get(jobName); ok {
+		job.LatestCreatedExecution = &driver.ExecutionReference{
+			Name:           exec.Name,
+			CreateTime:     exec.CreateTime,
+			CompletionTime: exec.CompletionTime,
+		}
+	}
+
 	m.mu.Unlock()
 
 	return cloneExecution(exec), nil
