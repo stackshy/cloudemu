@@ -219,6 +219,48 @@ func TestSnapshotAndRestore(t *testing.T) {
 	requireNoError(t, m.DeleteSnapshot(ctx, "snap-1"))
 }
 
+// TestRestoreFromSnapshotAfterSourceDeleted verifies that RestoreDBInstanceFromDBSnapshot
+// restores DBName, MasterUsername, and Port from the snapshot's own captured metadata, not
+// a live lookup of the source instance. Snapshots are meant to outlive their source instance
+// (a normal, common scenario), so the source being deleted before restore must not lose or
+// default these attributes. See AWS API docs for RestoreDBInstanceFromDBSnapshot: "The target
+// database is created from the source database restore point with most of the source's
+// original configuration" and Port "Default: The same port as the original DB instance".
+func TestRestoreFromSnapshotAfterSourceDeleted(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const nonDefaultPort = 5555
+
+	_, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:             "src2",
+		Engine:         "mysql",
+		MasterUsername: "appadmin",
+		DBName:         "appdb",
+		Port:           nonDefaultPort,
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{
+		ID:         "snap-2",
+		InstanceID: "src2",
+	})
+	requireNoError(t, err)
+
+	// Snapshots outlive their source instance; delete it before restoring.
+	requireNoError(t, m.DeleteInstance(ctx, "src2"))
+
+	restored, err := m.RestoreInstanceFromSnapshot(ctx, rdsdriver.RestoreInstanceInput{
+		NewInstanceID: "restored2",
+		SnapshotID:    "snap-2",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, "appdb", restored.DBName)
+	assertEqual(t, "appadmin", restored.MasterUsername)
+	assertEqual(t, nonDefaultPort, restored.Port)
+}
+
 func TestClusterSnapshotAndRestore(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

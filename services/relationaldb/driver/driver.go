@@ -290,6 +290,16 @@ type Snapshot struct {
 	State            string
 	CreatedAt        time.Time
 	Tags             map[string]string
+	// The fields below capture the source instance's shape at snapshot time, so a
+	// restore is a self-contained point-in-time image, matching real RDS ("the
+	// target database is created from the source database restore point with most
+	// of the source's original configuration") rather than a live lookup of a
+	// source instance that may since have been deleted. They are empty on
+	// snapshots created before this capture existed; restore falls back to a live
+	// source-instance lookup in that case.
+	MasterUsername string
+	DBName         string
+	Port           int
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.

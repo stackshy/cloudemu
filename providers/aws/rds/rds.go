@@ -1143,6 +1143,11 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		State:            rdsdriver.SnapshotAvailable,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
+		// Captured so the snapshot is a self-contained restore point that
+		// survives the source instance being deleted.
+		MasterUsername: inst.MasterUsername,
+		DBName:         inst.DBName,
+		Port:           inst.Port,
 	}
 
 	now := m.opts.Clock.Now()
@@ -1233,26 +1238,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		instanceClass = defaultInstanceClass
 	}
 
-	// Inherit the source instance's master login, DBName, and port so the
-	// restored database matches the original's shape; fall back to engine
-	// defaults when the source is gone. The password is remembered under the
-	// snapshot's source id.
-	var username, dbName string
-
-	port := input.Port
-
-	if src, ok := m.instances.Get(snap.InstanceID); ok {
-		username = src.MasterUsername
-		dbName = src.DBName
-
-		if port == 0 {
-			port = src.Port
-		}
-	}
-
-	if port == 0 {
-		port = defaultPortFor(snap.Engine)
-	}
+	username, dbName, port := m.restoreAttrsFromSnapshot(&snap, input.Port)
 
 	password := m.rootPasswords[snap.InstanceID]
 
@@ -1293,6 +1279,60 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	out := inst
 
 	return &out, nil
+}
+
+// restoreAttrsFromSnapshot resolves the master login, DBName, and port for an
+// instance being restored from snap, preferring the snapshot's own captured
+// metadata over a live source-instance lookup. This matches real RDS: a
+// snapshot is a self-contained point-in-time image, so a restore reflects the
+// source's shape AT SNAPSHOT TIME even if the source instance has since been
+// deleted or modified. Older snapshots taken before these fields were
+// captured fall back to a live source-instance lookup, then engine defaults.
+// requestedPort is the caller-supplied Port input, which always wins when set.
+func (m *Mock) restoreAttrsFromSnapshot(snap *rdsdriver.Snapshot, requestedPort int) (username, dbName string, port int) {
+	username = snap.MasterUsername
+	dbName = snap.DBName
+	port = requestedPort
+
+	if port == 0 {
+		port = snap.Port
+	}
+
+	if username == "" || dbName == "" || port == 0 {
+		username, dbName, port = m.fallbackRestoreAttrsFromSource(snap.InstanceID, username, dbName, port)
+	}
+
+	if port == 0 {
+		port = defaultPortFor(snap.Engine)
+	}
+
+	return username, dbName, port
+}
+
+// fallbackRestoreAttrsFromSource fills in any still-missing username/dbName/port
+// from a live lookup of the snapshot's source instance, for snapshots taken
+// before that metadata was captured on the snapshot itself.
+func (m *Mock) fallbackRestoreAttrsFromSource(
+	sourceID, username, dbName string, port int,
+) (resolvedUsername, resolvedDBName string, resolvedPort int) {
+	src, ok := m.instances.Get(sourceID)
+	if !ok {
+		return username, dbName, port
+	}
+
+	if username == "" {
+		username = src.MasterUsername
+	}
+
+	if dbName == "" {
+		dbName = src.DBName
+	}
+
+	if port == 0 {
+		port = src.Port
+	}
+
+	return username, dbName, port
 }
 
 // CreateClusterSnapshot snapshots a cluster.
