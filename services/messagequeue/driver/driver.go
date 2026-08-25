@@ -71,12 +71,21 @@ type SendMessageInput struct {
 	// SystemAttributes are SQS message system attributes (AWS SQS; the only
 	// supported key is AWSTraceHeader). Non-AWS providers ignore them.
 	SystemAttributes map[string]MessageAttributeValue
+	// MessageTTLSeconds is Azure Queue Storage's per-message time-to-live (Put
+	// Message's messagettl query parameter), in seconds. nil means the caller
+	// didn't specify one; a negative value means the message never expires.
+	// Ignored by non-Azure providers.
+	MessageTTLSeconds *int
 }
 
 // SendMessageOutput is the result of sending a message.
 type SendMessageOutput struct {
 	MessageID      string
 	SequenceNumber string // FIFO only
+	// ExpiresAt is the message's absolute expiration time, as resolved from
+	// MessageTTLSeconds (Azure Queue Storage). Providers that don't track
+	// per-message TTL leave it zero.
+	ExpiresAt time.Time
 }
 
 // ReceiveMessageInput configures a message receive operation.
@@ -104,6 +113,9 @@ type Message struct {
 	// Queue Storage surfaces it as DequeueCount; providers that don't track it
 	// leave it zero.
 	ReceiveCount int
+	// ExpiresAt is the message's absolute expiration time (Azure Queue Storage's
+	// per-message TTL). Providers that don't track per-message TTL leave it zero.
+	ExpiresAt time.Time
 }
 
 // BatchSendEntry represents a single message in a batch send.

@@ -117,10 +117,11 @@ func TestSDKTableRoundTrip(t *testing.T) {
 		t.Fatalf("DeleteEntity: %v", err)
 	}
 
-	// Confirm the entity is gone.
+	// Confirm the entity is gone: the table still exists, so this is
+	// EntityNotFound, not the table-missing TableNotFound.
 	if _, err := client.GetEntity(ctx, "org", "alice", nil); err == nil ||
-		!strings.Contains(err.Error(), "ResourceNotFound") {
-		t.Errorf("expected ResourceNotFound after delete, got %v", err)
+		!strings.Contains(err.Error(), "EntityNotFound") {
+		t.Errorf("expected EntityNotFound after delete, got %v", err)
 	}
 
 	// Delete table.

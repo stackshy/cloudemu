@@ -12,9 +12,6 @@ import (
 // Compile-time check that Mock implements the Azure-specific queue surface.
 var _ driver.AzureQueueStorage = (*Mock)(nil)
 
-// defaultMessageRetention is the Azure Queue Storage default message TTL.
-const defaultMessageRetention = 7 * 24 * time.Hour
-
 // maxQueueStorageMessages is the maximum number of messages Azure Queue Storage
 // returns from a single Get Messages or Peek Messages call. This differs from
 // Service Bus's receive cap, so Queue Storage clamps against its own limit.
@@ -70,13 +67,43 @@ func (m *Mock) DequeueMessages(
 	return results, nil
 }
 
-// messageExpiry returns when a message expires given the queue's retention.
-func (qd *queueData) messageExpiry(msg *sbMessage) time.Time {
-	if qd.messageRetention > 0 {
-		return msg.SentAt.Add(time.Duration(qd.messageRetention) * time.Second)
+// computeExpiry resolves a message's absolute expiration time from the
+// caller-supplied Azure Queue Storage TTL (Put Message's messagettl,
+// SendMessageInput.MessageTTLSeconds). A nil pointer means the caller didn't
+// specify a TTL (Service Bus queues never set this field, so they keep their
+// existing no-expiry behavior); a negative value is Azure's "never expire"
+// sentinel. Both map to the zero time.Time, the internal "does not expire"
+// marker isMessageExpired checks for.
+func computeExpiry(now time.Time, ttlSeconds *int) time.Time {
+	if ttlSeconds == nil || *ttlSeconds < 0 {
+		return time.Time{}
 	}
 
-	return msg.SentAt.Add(defaultMessageRetention)
+	return now.Add(time.Duration(*ttlSeconds) * time.Second)
+}
+
+// isMessageExpired reports whether msg's TTL has elapsed. A zero ExpiresAt
+// means the message never expires.
+func isMessageExpired(msg *sbMessage, now time.Time) bool {
+	return !msg.ExpiresAt.IsZero() && !msg.ExpiresAt.After(now)
+}
+
+// removeExpiredMessages drops messages whose per-message TTL has elapsed,
+// mirroring the lazy TTL reaping the Cosmos DB mock performs on read
+// (isItemExpired): an expired message is simply never surfaced to Peek
+// Messages rather than actively swept by a background job.
+func removeExpiredMessages(messages []*sbMessage, now time.Time) []*sbMessage {
+	kept := messages[:0]
+
+	for _, msg := range messages {
+		if isMessageExpired(msg, now) {
+			continue
+		}
+
+		kept = append(kept, msg)
+	}
+
+	return kept
 }
 
 // PeekMessages returns up to maxMessages visible messages without changing
@@ -92,6 +119,8 @@ func (m *Mock) PeekMessages(_ context.Context, queueURL string, maxMessages int)
 
 	limit := clampQueueStorageMessages(maxMessages)
 	now := m.opts.Clock.Now()
+
+	qd.messages = removeExpiredMessages(qd.messages, now)
 
 	out := make([]driver.AzureQueueMessage, 0, limit)
 
@@ -109,7 +138,7 @@ func (m *Mock) PeekMessages(_ context.Context, queueURL string, maxMessages int)
 			Body:         msg.Body,
 			ReceiveCount: msg.ReceiveCount,
 			InsertedAt:   msg.SentAt,
-			ExpiresAt:    qd.messageExpiry(msg),
+			ExpiresAt:    msg.ExpiresAt,
 		})
 	}
 
