@@ -1,8 +1,12 @@
 package cloudlogging
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,23 +18,34 @@ import (
 // (severity, jsonPayload, labels, insertId) are JSON-enveloped into it on
 // write and reconstructed on read — see encode/decodeEntryPayload.
 type logEntryJSON struct {
-	LogName     string            `json:"logName,omitempty"`
-	Timestamp   string            `json:"timestamp,omitempty"`
-	TextPayload string            `json:"textPayload,omitempty"`
-	JSONPayload map[string]any    `json:"jsonPayload,omitempty"`
-	InsertID    string            `json:"insertId,omitempty"`
-	Severity    string            `json:"severity,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	LogName          string             `json:"logName,omitempty"`
+	Timestamp        string             `json:"timestamp,omitempty"`
+	ReceiveTimestamp string             `json:"receiveTimestamp,omitempty"`
+	TextPayload      string             `json:"textPayload,omitempty"`
+	JSONPayload      map[string]any     `json:"jsonPayload,omitempty"`
+	InsertID         string             `json:"insertId,omitempty"`
+	Severity         string             `json:"severity,omitempty"`
+	Labels           map[string]string  `json:"labels,omitempty"`
+	Resource         *monitoredResource `json:"resource,omitempty"`
+}
+
+// monitoredResource is the Cloud Logging MonitoredResource attached to every
+// entry (its type plus type-specific labels, e.g. gce_instance / global).
+type monitoredResource struct {
+	Type   string            `json:"type,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // entryPayload is the JSON envelope stored in the driver's message string so a
 // log entry's structured fields survive a write→read round-trip.
 type entryPayload struct {
-	Text        string            `json:"t,omitempty"`
-	JSONPayload map[string]any    `json:"j,omitempty"`
-	Severity    string            `json:"s,omitempty"`
-	InsertID    string            `json:"i,omitempty"`
-	Labels      map[string]string `json:"l,omitempty"`
+	Text           string            `json:"t,omitempty"`
+	JSONPayload    map[string]any    `json:"j,omitempty"`
+	Severity       string            `json:"s,omitempty"`
+	InsertID       string            `json:"i,omitempty"`
+	Labels         map[string]string `json:"l,omitempty"`
+	ResourceType   string            `json:"rt,omitempty"`
+	ResourceLabels map[string]string `json:"rl,omitempty"`
 }
 
 // entryPayloadPrefix marks a driver message that carries an encoded envelope.
@@ -40,17 +55,23 @@ const entryPayloadPrefix = "\x00cloudemu-log\x00"
 func encodeEntryPayload(e *logEntryJSON) string {
 	// Plain text with no structured fields stays a bare string, so logs written
 	// by other means still read back naturally.
-	if e.Severity == "" && e.InsertID == "" && len(e.JSONPayload) == 0 && len(e.Labels) == 0 {
+	if e.Severity == "" && e.InsertID == "" && len(e.JSONPayload) == 0 && len(e.Labels) == 0 && e.Resource == nil {
 		return e.TextPayload
 	}
 
-	b, err := json.Marshal(entryPayload{
+	p := entryPayload{
 		Text:        e.TextPayload,
 		JSONPayload: e.JSONPayload,
 		Severity:    e.Severity,
 		InsertID:    e.InsertID,
 		Labels:      e.Labels,
-	})
+	}
+	if e.Resource != nil {
+		p.ResourceType = e.Resource.Type
+		p.ResourceLabels = e.Resource.Labels
+	}
+
+	b, err := json.Marshal(p)
 	if err != nil {
 		return e.TextPayload
 	}
@@ -75,13 +96,19 @@ func decodeEntryPayload(msg string, out *logEntryJSON) {
 	out.Severity = p.Severity
 	out.InsertID = p.InsertID
 	out.Labels = p.Labels
+
+	if p.ResourceType != "" || len(p.ResourceLabels) > 0 {
+		out.Resource = &monitoredResource{Type: p.ResourceType, Labels: p.ResourceLabels}
+	}
 }
 
 // writeLogEntriesRequest is the entries:write body. logName/resource may be set
 // at the request level and inherited by entries that omit their own logName.
 type writeLogEntriesRequest struct {
-	LogName string         `json:"logName"`
-	Entries []logEntryJSON `json:"entries"`
+	LogName  string             `json:"logName"`
+	Resource *monitoredResource `json:"resource"`
+	Labels   map[string]string  `json:"labels"`
+	Entries  []logEntryJSON     `json:"entries"`
 }
 
 // listLogEntriesRequest is the entries:list body.
@@ -89,11 +116,13 @@ type listLogEntriesRequest struct {
 	ResourceNames []string `json:"resourceNames"`
 	Filter        string   `json:"filter"`
 	PageSize      int      `json:"pageSize"`
+	PageToken     string   `json:"pageToken"`
 	OrderBy       string   `json:"orderBy"`
 }
 
 type listLogEntriesResponse struct {
-	Entries []logEntryJSON `json:"entries"`
+	Entries       []logEntryJSON `json:"entries"`
+	NextPageToken string         `json:"nextPageToken,omitempty"`
 }
 
 type listLogsResponse struct {
@@ -215,6 +244,48 @@ func logIDFromFilter(filter string) string {
 	return logIDFromName(rest)
 }
 
+// insertIDBytes is the entropy of a generated insertId (16 bytes → 32 hex chars).
+const insertIDBytes = 16
+
+// genInsertID returns an opaque unique insertId, mirroring the server-assigned id
+// real Cloud Logging generates for entries that omit their own. Clients dedupe on
+// it, so it must be unique per entry.
+func genInsertID() string {
+	b := make([]byte, insertIDBytes)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failure is unexpected; fall back to a time-based id so an
+		// entry is never dropped for want of an insertId.
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+
+	return hex.EncodeToString(b)
+}
+
+// encodePageToken encodes a next-entry offset into an opaque list page token.
+func encodePageToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+// decodePageToken recovers the offset from a page token. A malformed or empty
+// token yields offset 0 (start from the beginning).
+func decodePageToken(tok string) int {
+	if tok == "" {
+		return 0
+	}
+
+	b, err := base64.StdEncoding.DecodeString(tok)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.Atoi(string(b))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
 // parseTimestamp parses an RFC3339(Nano) Cloud Logging timestamp. A zero/empty
 // or unparseable value yields the current time so an entry is never dropped for
 // a bad clock.
@@ -237,6 +308,21 @@ func toLogEntryJSON(project, logID string, e *logdriver.LogEvent) logEntryJSON {
 	}
 
 	decodeEntryPayload(e.Message, &out)
+
+	// receiveTimestamp is the wall-clock ingestion time recorded at write; clients
+	// use it to distinguish event time from delivery time.
+	if !e.IngestionTime.IsZero() {
+		out.ReceiveTimestamp = e.IngestionTime.UTC().Format(time.RFC3339Nano)
+	}
+
+	// Every entry carries a MonitoredResource. Default to the "global" resource
+	// scoped to the project when the writer supplied none, mirroring real GCP.
+	if out.Resource == nil {
+		out.Resource = &monitoredResource{
+			Type:   "global",
+			Labels: map[string]string{"project_id": project},
+		}
+	}
 
 	return out
 }
