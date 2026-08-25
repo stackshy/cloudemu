@@ -206,7 +206,8 @@ func writeJSONResponse(w http.ResponseWriter, status int, body []byte) {
 // rewrite merges the recorded and request-carried unmodeled properties into the
 // response and writes the result. It returns false (and writes nothing) when
 // the response is not a rewritable ARM resource object, leaving the caller to
-// flush the original bytes.
+// flush the original bytes. A collection response ({"value": [...]}) is
+// dispatched to rewriteList instead of the single-resource path below.
 func (c *captureWriter) rewrite(
 	w http.ResponseWriter, r *http.Request, reqProps map[string]any, overlay *propertyOverlay,
 ) bool {
@@ -223,6 +224,10 @@ func (c *captureWriter) rewrite(
 		return false
 	}
 
+	if values, ok := resource["value"].([]any); ok {
+		return c.rewriteList(w, resource, values, overlay)
+	}
+
 	id, ok := resource["id"].(string)
 	if !ok || id == "" {
 		return false
@@ -237,6 +242,54 @@ func (c *captureWriter) rewrite(
 	}
 
 	resource["properties"] = mergeProperties(respProps, unmodeled)
+
+	rewritten, err := json.Marshal(resource)
+	if err != nil {
+		return false
+	}
+
+	writeJSONResponse(w, c.status, rewritten)
+
+	return true
+}
+
+// rewriteList merges each list item's previously-recorded overlay entry into
+// its own properties, keyed by the item's own "id". A collection list (e.g.
+// RecordSets.ListByDnsZone) carries no request body to capture fresh
+// unmodeled properties from — list is read-only — so this only replays what
+// an earlier create/update on that same item already recorded; without it, a
+// record set with unmodeled data (e.g. an MX or SRV DNS record set, whose
+// MXRecords/SRVRecords are not natively modeled) loses that data specifically
+// on the list response while a single GET on it still returns it correctly.
+func (c *captureWriter) rewriteList(
+	w http.ResponseWriter, resource map[string]any, values []any, overlay *propertyOverlay,
+) bool {
+	changed := false
+
+	for _, v := range values {
+		item, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		id, ok := item["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+
+		unmodeled := overlay.lookup(id)
+		if len(unmodeled) == 0 {
+			continue
+		}
+
+		respProps, _ := item["properties"].(map[string]any)
+		item["properties"] = mergeProperties(respProps, unmodeled)
+		changed = true
+	}
+
+	if !changed {
+		return false
+	}
 
 	rewritten, err := json.Marshal(resource)
 	if err != nil {
