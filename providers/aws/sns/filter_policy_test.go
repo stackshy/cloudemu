@@ -100,6 +100,35 @@ func TestSNSFilterPolicyOrOperator(t *testing.T) {
 	}
 }
 
+// TestSNSFilterPolicyMessageBodyRecordsArray asserts AWS's documented
+// S3->SNS->SQS body-filtering pattern: a MessageBody-scope policy whose nested
+// key ("Records") is an array of objects matches when any element satisfies the
+// nested pattern. See sns-message-filtering / S3 event notification shape.
+func TestSNSFilterPolicyMessageBodyRecordsArray(t *testing.T) {
+	attrs := map[string]string{
+		"FilterPolicyScope": "MessageBody",
+		"FilterPolicy":      `{"Records":{"s3":{"object":{"key":[{"prefix":"obj"}]}}}}`,
+	}
+
+	body := func(key string) string {
+		b, _ := json.Marshal(map[string]any{
+			"Records": []any{
+				map[string]any{"s3": map[string]any{"object": map[string]any{"key": key}}},
+			},
+		})
+
+		return string(b)
+	}
+
+	if got := snsToSQS(t, attrs, body("obj1.txt"), nil); len(got) != 1 {
+		t.Fatalf("matching S3 key prefix: delivered %d, want 1", len(got))
+	}
+
+	if got := snsToSQS(t, attrs, body("other.txt"), nil); len(got) != 0 {
+		t.Fatalf("non-matching S3 key prefix: delivered %d, want 0", len(got))
+	}
+}
+
 func TestSNSRawMessageDelivery(t *testing.T) {
 	attrs := map[string]string{"RawMessageDelivery": "true"}
 
