@@ -101,6 +101,22 @@ BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 | --- | --- |
 | `BucketAttributes` |  |
 
+### GCSExtensions
+
+GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
+
+| Operation | Description |
+| --- | --- |
+| `BucketAttrsGCS` | BucketAttrsGCS returns the bucket's GCS-specific attributes. |
+| `BucketIAMPolicy` |  |
+| `ComposeObjectGCS` | ComposeObjectGCS concatenates the source objects' bytes (in order) into |
+| `ListObjectGenerations` | ListObjectGenerations returns every generation (current + archived) of the |
+| `PutObjectGCS` | PutObjectGCS writes an object honoring pre (a failed condition returns a |
+| `SetBucketAttrsGCS` | SetBucketAttrsGCS records the bucket's location and default storage class |
+| `SetBucketIAMPolicy` | SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM |
+| `TouchBucket` | TouchBucket bumps the bucket's metageneration and updated timestamp, |
+| `UpdateObjectGCS` | UpdateObjectGCS mutates an existing object's system properties and/or |
+
 ### ObjectCopier
 
 ObjectCopier is an OPTIONAL capability (discovered by type assertion, like
