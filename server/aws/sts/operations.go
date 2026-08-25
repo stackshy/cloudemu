@@ -36,7 +36,9 @@ func (h *Handler) getCallerIdentity(w http.ResponseWriter, _ *http.Request) {
 }
 
 // assumeRole returns synthetic temporary credentials and an AssumedRoleUser
-// derived from the requested RoleArn and RoleSessionName.
+// derived from the requested RoleArn and RoleSessionName. When an IAM trust
+// evaluator is wired, the target role must exist and its trust policy must allow
+// the caller to sts:AssumeRole; otherwise AWS returns AccessDenied (403).
 func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	roleArn := r.Form.Get("RoleArn")
 	sessionName := r.Form.Get("RoleSessionName")
@@ -49,6 +51,16 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	//   arn:aws:sts::{account}:assumed-role/{role-name}/{session-name}
 	// where role-name is the last path segment of the requested RoleArn.
 	roleName := roleNameFromArn(roleArn)
+
+	if !h.trustAllows(r, roleName) {
+		// Real STS returns AccessDenied (403) both when the trust policy denies
+		// the caller and when the role does not exist (it does not disclose which).
+		awsquery.WriteXMLError(w, http.StatusForbidden, "AccessDenied",
+			"User is not authorized to perform sts:AssumeRole on "+roleArn)
+
+		return
+	}
+
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 
 	awsquery.WriteXMLResponse(w, assumeRoleResponse{
@@ -62,6 +74,22 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// trustAllows reports whether the caller may assume roleName. With no trust
+// evaluator wired it stays permissive (standalone init-creds behavior). With one
+// wired, a missing role or a trust policy that does not allow the caller both
+// deny. The caller principal is the account-root identity — cloudemu does not
+// verify SigV4, so it evaluates trust against a consistent same-account root.
+func (h *Handler) trustAllows(r *http.Request, roleName string) bool {
+	if h.trust == nil {
+		return true
+	}
+
+	callerPrincipal := "arn:aws:iam::" + h.accountID + ":root"
+	_, allowed := h.trust.EvaluateAssumeRoleTrust(r.Context(), roleName, callerPrincipal)
+
+	return allowed
 }
 
 // assumeRoleWithWebIdentity mirrors AssumeRole but is fed by an OIDC/WebIdentity
