@@ -275,12 +275,15 @@ func New(d Drivers) http.Handler {
 	// Cosmos DB matches on /dbs/* paths — register before the catch-all
 	// blob handler.
 	if d.CosmosDB != nil {
-		srv.Register(cosmosdb.New(d.CosmosDB))
+		cosmosDataPlane := cosmosdb.New(d.CosmosDB)
+		srv.Register(cosmosDataPlane)
 		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
 		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
 		// management path — disjoint from the /dbs data plane above and from
-		// managedcassandra (cassandraClusters), so order is unconstrained.
-		srv.Register(cosmosaccount.New(d.CosmosDB))
+		// managedcassandra (cassandraClusters), so order is unconstrained. Account
+		// DELETE is delegated to the data-plane handler so the account is torn
+		// down fully (tables, attributes and data-plane bookkeeping).
+		srv.Register(cosmosaccount.New(d.CosmosDB, cosmosDataPlane))
 	}
 
 	// Managed Cassandra matches ARM Microsoft.DocumentDB/cassandraClusters paths

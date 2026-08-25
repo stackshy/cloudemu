@@ -468,6 +468,62 @@ func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, account
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// accountPurger is the optional driver capability that tears down a Cosmos
+// databaseAccount's driver footprint (its own table, every "{account}/…"
+// container table, and its discovery attributes) in one step. The Azure cosmos
+// provider implements it; DynamoDB/Firestore don't.
+type accountPurger interface {
+	PurgeAccount(account string)
+}
+
+// PurgeAccount removes every trace of a Cosmos databaseAccount: the data-plane
+// wire state this handler tracks (the account's databases set, their
+// shared-throughput offers, and every container's offer + TTL/attrs
+// bookkeeping) and, via the driver, the account's own table, its container
+// tables and its discovery attributes. The account control plane calls this on
+// DELETE so a deleted account stops listing (no ghost) and a same-name recreate
+// starts from an empty namespace. It is idempotent — purging an unknown account
+// is a no-op.
+func (h *Handler) PurgeAccount(ctx context.Context, account string) {
+	// Reap the offer + TTL/attrs bookkeeping for every container table in the
+	// account's namespace before the driver drops the tables underneath us.
+	prefix := nsPrefix(account)
+
+	if tables, err := h.db.ListTables(ctx); err == nil {
+		for _, t := range tables {
+			if strings.HasPrefix(t, prefix) {
+				h.deleteOffer(t)
+				h.attrs.delete(t)
+			}
+		}
+	}
+
+	// Drop the account's databases and each one's shared-throughput offer.
+	h.dbMu.Lock()
+	dbKeys := make([]string, 0)
+
+	for key := range h.databases {
+		if _, ok := accountDBName(key, account); ok {
+			dbKeys = append(dbKeys, key)
+			delete(h.databases, key)
+		}
+	}
+	h.dbMu.Unlock()
+
+	for _, key := range dbKeys {
+		h.deleteOffer(key)
+	}
+
+	// Tear down the driver namespace in one step: the account's own table, its
+	// "{account}/…" container tables, and its discovery attributes.
+	if p, ok := h.db.(accountPurger); ok {
+		p.PurgeAccount(account)
+		return
+	}
+
+	_ = h.db.DeleteTable(ctx, account)
+}
+
 func (h *Handler) containerCollection(w http.ResponseWriter, r *http.Request, account, db string) {
 	switch r.Method {
 	case http.MethodPost:
