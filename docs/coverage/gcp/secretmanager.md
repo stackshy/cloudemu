@@ -19,6 +19,22 @@ GCP's `secrets` service · portable interface `driver.Secrets` · [GCP index](./
 
 Discovered by type assertion; only some providers implement these.
 
+### KeyVaultCertificates
+
+KeyVaultCertificates is the Azure Key Vault-specific certificate data-plane
+
+| Operation | Description |
+| --- | --- |
+| `CreateCertificate` |  |
+| `DeleteCertificate` |  |
+| `GetCertificate` |  |
+| `GetDeletedCertificate` |  |
+| `ListCertificateVersions` |  |
+| `ListCertificates` |  |
+| `ListDeletedCertificates` |  |
+| `PurgeDeletedCertificate` |  |
+| `RecoverDeletedCertificate` |  |
+
 ### KeyVaultKeys
 
 KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
