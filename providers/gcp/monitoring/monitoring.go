@@ -70,12 +70,12 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 	}
 
 	m.mu.Lock()
-	for _, d := range data {
+	for i := range data {
 		key := metricKey{
-			Namespace:  d.Namespace,
-			MetricName: d.MetricName,
+			Namespace:  data[i].Namespace,
+			MetricName: data[i].MetricName,
 		}
-		m.metrics[key] = append(m.metrics[key], d)
+		m.metrics[key] = append(m.metrics[key], data[i])
 	}
 	m.mu.Unlock()
 
@@ -308,6 +308,43 @@ func (m *Mock) ListMetrics(_ context.Context, namespace string) ([]string, error
 	sort.Strings(names)
 
 	return names, nil
+}
+
+// GCPSeriesKeys returns the (namespace, metricName) pairs that currently hold
+// metric data. It backs the GCP timeSeries.list / metricDescriptors surface,
+// which enumerates metric types independently of the AWS-shaped ListMetrics.
+func (m *Mock) GCPSeriesKeys() []driver.MetricIdentifier {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	keys := make([]driver.MetricIdentifier, 0, len(m.metrics))
+	for key := range m.metrics {
+		keys = append(keys, driver.MetricIdentifier{Namespace: key.Namespace, MetricName: key.MetricName})
+	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Namespace != keys[j].Namespace {
+			return keys[i].Namespace < keys[j].Namespace
+		}
+
+		return keys[i].MetricName < keys[j].MetricName
+	})
+
+	return keys
+}
+
+// GCPRawSeries returns a copy of every raw datum stored for namespace+metricName.
+// timeSeries.list groups these by their label set into individual series, which
+// the aggregated GetMetricData path cannot express.
+func (m *Mock) GCPRawSeries(namespace, metricName string) []driver.MetricDatum {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	src := m.metrics[metricKey{Namespace: namespace, MetricName: metricName}]
+	out := make([]driver.MetricDatum, len(src))
+	copy(out, src)
+
+	return out
 }
 
 // CreateAlarm creates or updates an alert policy with the given configuration.

@@ -5,11 +5,25 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
+
+// policyID extracts the opaque id from an alert policy's canonical name
+// (projects/{p}/alertPolicies/{id}).
+func policyID(t *testing.T, created map[string]any) string {
+	t.Helper()
+
+	name, ok := created["name"].(string)
+	if !ok || name == "" {
+		t.Fatal("create response missing canonical name")
+	}
+
+	return name[strings.LastIndex(name, "/")+1:]
+}
 
 // HTTP-level test for the GCP Cloud Monitoring handler. Real
 // cloud.google.com/go/monitoring uses gRPC by default; the REST surface here
@@ -46,9 +60,14 @@ func TestMonitoringAlertPolicyCRUD(t *testing.T) {
 		t.Errorf("displayName=%v", got["displayName"])
 	}
 
-	if name, ok := got["name"].(string); !ok || name == "" {
-		t.Errorf("missing canonical name in response")
+	canonical, ok := got["name"].(string)
+	if !ok || canonical == "" {
+		t.Fatal("missing canonical name in response")
 	}
+
+	// Real Cloud Monitoring addresses a policy by its opaque numeric id, not by
+	// displayName — extract the id assigned on create.
+	id := canonical[strings.LastIndex(canonical, "/")+1:]
 
 	// List
 	listResp, err := ts.Client().Get(ts.URL + collURL)
@@ -68,7 +87,7 @@ func TestMonitoringAlertPolicyCRUD(t *testing.T) {
 	}
 
 	// Get
-	getResp, err := ts.Client().Get(ts.URL + collURL + "/high-cpu")
+	getResp, err := ts.Client().Get(ts.URL + collURL + "/" + id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +98,7 @@ func TestMonitoringAlertPolicyCRUD(t *testing.T) {
 	}
 
 	// Delete
-	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+collURL+"/high-cpu", http.NoBody)
+	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+collURL+"/"+id, http.NoBody)
 
 	delResp, err := ts.Client().Do(delReq)
 	if err != nil {
@@ -116,10 +135,15 @@ func TestMonitoringAlertPolicySemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	var created map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 
+	id := policyID(t, created)
+
 	// Get must reflect what was created.
-	getResp, err := ts.Client().Get(ts.URL + collURL + "/cpu-alert")
+	getResp, err := ts.Client().Get(ts.URL + collURL + "/" + id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +171,7 @@ func TestMonitoringAlertPolicySemantics(t *testing.T) {
 	// PATCH updates the combiner but OMITS enabled — a partial patch must NOT
 	// silently disable the policy (regression guard for the omitted-field bug).
 	patch := bytes.NewBufferString(`{"combiner": "OR"}`)
-	patchReq, _ := http.NewRequest(http.MethodPatch, ts.URL+collURL+"/cpu-alert", patch)
+	patchReq, _ := http.NewRequest(http.MethodPatch, ts.URL+collURL+"/"+id, patch)
 	patchReq.Header.Set("Content-Type", "application/json")
 
 	patchResp, err := ts.Client().Do(patchReq)
@@ -189,9 +213,12 @@ func TestMonitoringNonThresholdCondition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	var created map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 
-	getResp, err := ts.Client().Get(ts.URL + collURL + "/absent-alert")
+	getResp, err := ts.Client().Get(ts.URL + collURL + "/" + policyID(t, created))
 	if err != nil {
 		t.Fatal(err)
 	}
