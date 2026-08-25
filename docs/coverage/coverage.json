@@ -6469,6 +6469,10 @@
             "name": "DeleteAzureNSGMetadata"
           },
           {
+            "name": "DeleteAzureNSGRule",
+            "doc": "DeleteAzureNSGRule removes a single custom security rule by name, leaving"
+          },
+          {
             "name": "DeleteAzureVNetMetadata"
           },
           {
@@ -6482,6 +6486,10 @@
           },
           {
             "name": "PutAzureVNetMetadata"
+          },
+          {
+            "name": "UpsertAzureNSGRule",
+            "doc": "UpsertAzureNSGRule creates or replaces a single custom security rule by"
           }
         ]
       },

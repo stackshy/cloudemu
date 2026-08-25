@@ -387,21 +387,26 @@ type AzureNICConfig struct {
 	Tags         map[string]string
 	IPConfigs    []AzureIPConfig
 	IPForwarding bool
+	// NetworkSecurityGroupID is the ARM resource id of the NSG associated with
+	// the whole interface (properties.networkSecurityGroup) — an Azure NIC
+	// binds its NSG at this top level, not per ipConfiguration.
+	NetworkSecurityGroupID string
 }
 
 // AzureNIC is the stored/returned Azure network interface.
 type AzureNIC struct {
-	Name              string
-	ResourceGroup     string
-	Location          string
-	Tags              map[string]string
-	IPConfigs         []AzureIPConfig
-	IPForwarding      bool
-	MACAddress        string
-	ResourceGUID      string
-	ProvisioningState string
-	ETag              string
-	VirtualMachineID  string // set while attached to a VM
+	Name                   string
+	ResourceGroup          string
+	Location               string
+	Tags                   map[string]string
+	IPConfigs              []AzureIPConfig
+	IPForwarding           bool
+	NetworkSecurityGroupID string
+	MACAddress             string
+	ResourceGUID           string
+	ProvisioningState      string
+	ETag                   string
+	VirtualMachineID       string // set while attached to a VM
 }
 
 // AzureNetworkInterfaces is the Azure-specific network-interface surface,

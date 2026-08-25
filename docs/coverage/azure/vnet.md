@@ -87,11 +87,13 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | Operation | Description |
 | --- | --- |
 | `DeleteAzureNSGMetadata` |  |
+| `DeleteAzureNSGRule` | DeleteAzureNSGRule removes a single custom security rule by name, leaving |
 | `DeleteAzureVNetMetadata` |  |
 | `GetAzureNSGMetadata` |  |
 | `GetAzureVNetMetadata` |  |
 | `PutAzureNSGMetadata` |  |
 | `PutAzureVNetMetadata` |  |
+| `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
 
 ### ClientVPN
 

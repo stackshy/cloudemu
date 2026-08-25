@@ -3,6 +3,7 @@ package vnet
 import (
 	"context"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -53,6 +54,80 @@ func (m *Mock) GetAzureNSGMetadata(_ context.Context, id string) (driver.AzureNS
 // security group is deleted).
 func (m *Mock) DeleteAzureNSGMetadata(_ context.Context, id string) {
 	m.azureNSGMeta.Delete(id)
+}
+
+// UpsertAzureNSGRule creates or replaces a single custom security rule by
+// name via an atomic read-modify-write on the stored metadata, leaving every
+// sibling rule untouched — the SecurityRules sub-resource CRUD's mutation.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) UpsertAzureNSGRule(_ context.Context, id string, rule driver.AzureNSGRule) (driver.AzureNSGMetadata, error) {
+	var updated driver.AzureNSGMetadata
+
+	ok := m.azureNSGMeta.Update(id, func(meta driver.AzureNSGMetadata) driver.AzureNSGMetadata {
+		rules := append([]driver.AzureNSGRule(nil), meta.SecurityRules...)
+
+		replaced := false
+
+		for i := range rules {
+			if rules[i].Name == rule.Name {
+				rules[i] = rule
+				replaced = true
+
+				break
+			}
+		}
+
+		if !replaced {
+			rules = append(rules, rule)
+		}
+
+		meta.SecurityRules = rules
+		updated = cloneNSGMeta(meta)
+
+		return meta
+	})
+	if !ok {
+		return driver.AzureNSGMetadata{}, cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+	}
+
+	return updated, nil
+}
+
+// DeleteAzureNSGRule removes a single custom security rule by name via an
+// atomic read-modify-write, leaving every sibling rule untouched.
+func (m *Mock) DeleteAzureNSGRule(_ context.Context, id, ruleName string) error {
+	ruleMissing := false
+
+	ok := m.azureNSGMeta.Update(id, func(meta driver.AzureNSGMetadata) driver.AzureNSGMetadata {
+		idx := -1
+
+		for i := range meta.SecurityRules {
+			if meta.SecurityRules[i].Name == ruleName {
+				idx = i
+				break
+			}
+		}
+
+		if idx == -1 {
+			ruleMissing = true
+
+			return meta
+		}
+
+		meta.SecurityRules = append(append([]driver.AzureNSGRule(nil), meta.SecurityRules[:idx]...), meta.SecurityRules[idx+1:]...)
+
+		return meta
+	})
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+	}
+
+	if ruleMissing {
+		return cerrors.Newf(cerrors.NotFound, "security rule %q not found", ruleName)
+	}
+
+	return nil
 }
 
 // cloneVNetMeta deep-copies the address-prefix slice so stored and returned
