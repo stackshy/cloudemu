@@ -209,6 +209,44 @@ func TestVMInstanceView(t *testing.T) {
 	}
 }
 
+// TestVMLifecycleIdempotent verifies repeating the same power action over the
+// wire — exactly what Terraform/az cli commonly re-issues — succeeds
+// idempotently (200/202) instead of the 409 real Azure never documents for
+// Start/PowerOff/Deallocate (MS Learn: rest/api/compute/virtual-machines/
+// start, .../power-off, .../deallocate list only 200/202 as responses).
+func TestVMLifecycleIdempotent(t *testing.T) {
+	ts := newAzureTestServer(t)
+	_ = putVM(t, ts, "vm-idem-power")
+
+	if code := postAction(t, ts, "vm-idem-power", "start"); code != http.StatusAccepted {
+		t.Fatalf("start status=%d want 202", code)
+	}
+
+	if code := postAction(t, ts, "vm-idem-power", "start"); code != http.StatusAccepted {
+		t.Fatalf("repeat start on already-running VM status=%d want 202 (idempotent), not a state-conflict error", code)
+	}
+
+	if code := postAction(t, ts, "vm-idem-power", "powerOff"); code != http.StatusAccepted {
+		t.Fatalf("powerOff status=%d want 202", code)
+	}
+
+	if code := postAction(t, ts, "vm-idem-power", "powerOff"); code != http.StatusAccepted {
+		t.Fatalf("repeat powerOff on already-stopped VM status=%d want 202 (idempotent), not a state-conflict error", code)
+	}
+
+	if code := postAction(t, ts, "vm-idem-power", "deallocate"); code != http.StatusAccepted {
+		t.Fatalf("deallocate status=%d want 202", code)
+	}
+
+	if code := postAction(t, ts, "vm-idem-power", "deallocate"); code != http.StatusAccepted {
+		t.Fatalf("repeat deallocate on already-deallocated VM status=%d want 202 (idempotent), not a state-conflict error", code)
+	}
+
+	if got := powerStateCode(t, getVM(t, ts, "vm-idem-power")); got != "deallocated" {
+		t.Errorf("after idempotent deallocate powerState=%q want deallocated", got)
+	}
+}
+
 // TestVMPowerOffVsDeallocate verifies PowerOff reports PowerState/stopped (the
 // VM stays allocated) while Deallocate reports PowerState/deallocated.
 func TestVMPowerOffVsDeallocate(t *testing.T) {

@@ -37,6 +37,12 @@ type lifecycleTransition struct {
 	finalState        string
 	metricValues      []float64
 	errVerb           string
+	// idempotentStates are states where the operation is a no-op rather than
+	// an error. Real GCE documents instances.start/instances.stop as
+	// returning a completed zone operation (no error) when the instance is
+	// already at the requested power state, rather than an invalid-state
+	// error.
+	idempotentStates []string
 }
 
 var (
@@ -48,12 +54,14 @@ var (
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "start",
+		idempotentStates:  []string{compute.StateRunning, compute.StatePending},
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateStopping,
 		finalState:        compute.StateStopped,
 		metricValues:      zeroMetricValues,
 		errVerb:           "stop",
+		idempotentStates:  []string{compute.StateStopped, compute.StateStopping},
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateRestarting,
@@ -309,11 +317,18 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 	}
 }
 
-func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
+func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t *lifecycleTransition) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
 			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+		}
+
+		// Real GCE documents start/stop as idempotent on the target state.
+		// Skip the state machine and return success without changing state
+		// when we're already there.
+		if isIdempotent(inst.State, t.idempotentStates) {
+			continue
 		}
 
 		if err := m.sm.Transition(id, t.intermediateState); err != nil {
@@ -330,20 +345,30 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 	return nil
 }
 
+func isIdempotent(state string, idempotentStates []string) bool {
+	for _, s := range idempotentStates {
+		if state == s {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (m *Mock) StartInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, startTransition)
+	return m.transitionInstances(ctx, instanceIDs, &startTransition)
 }
 
 func (m *Mock) StopInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, stopTransition)
+	return m.transitionInstances(ctx, instanceIDs, &stopTransition)
 }
 
 func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, rebootTransition)
+	return m.transitionInstances(ctx, instanceIDs, &rebootTransition)
 }
 
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
-	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+	if err := m.transitionInstances(ctx, instanceIDs, &terminateTransition); err != nil {
 		return err
 	}
 
