@@ -151,6 +151,16 @@ func (m *Mock) AddNetworkACLRule(_ context.Context, aclID string, rule *driver.N
 		return errors.Newf(errors.NotFound, "network ACL %q not found", aclID)
 	}
 
+	// A rule number is unique per direction. Real EC2 rejects a second entry at
+	// the same (ruleNumber, egress) with NetworkAclEntryAlreadyExists; replacing
+	// an entry is a distinct action (ReplaceNetworkAclEntry).
+	for _, r := range acl.Rules {
+		if r.RuleNumber == rule.RuleNumber && r.Egress == rule.Egress {
+			return errors.Newf(errors.AlreadyExists,
+				"entry with rule number %d already exists in network ACL %q", rule.RuleNumber, aclID)
+		}
+	}
+
 	acl.Rules = append(acl.Rules, *rule)
 	sort.Slice(acl.Rules, func(i, j int) bool {
 		return acl.Rules[i].RuleNumber < acl.Rules[j].RuleNumber
@@ -164,6 +174,13 @@ func (m *Mock) RemoveNetworkACLRule(_ context.Context, aclID string, ruleNumber 
 	acl, ok := m.networkACLs.Get(aclID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "network ACL %q not found", aclID)
+	}
+
+	// The reserved catch-all '*' entry (rule 32767) is immutable: real EC2
+	// refuses to delete or replace it, preserving deny-by-default.
+	if ruleNumber == defaultDenyRuleNumber {
+		return errors.Newf(errors.InvalidArgument,
+			"the network ACL entry %d is the reserved default rule and cannot be deleted or modified", ruleNumber)
 	}
 
 	for i, r := range acl.Rules {

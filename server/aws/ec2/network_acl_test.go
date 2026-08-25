@@ -179,3 +179,135 @@ func TestDescribeNetworkAclsPaginatesAllOnce(t *testing.T) {
 		}
 	}
 }
+
+// mkCustomACL creates a VPC and a custom network ACL in it, returning the ACL id.
+func mkCustomACL(t *testing.T, c *ec2.Client) string {
+	t.Helper()
+
+	ctx := context.Background()
+
+	vpc, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc: %v", err)
+	}
+
+	acl, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: vpc.Vpc.VpcId})
+	if err != nil {
+		t.Fatalf("CreateNetworkAcl: %v", err)
+	}
+
+	return aws.ToString(acl.NetworkAcl.NetworkAclId)
+}
+
+// TestCreateDuplicateNetworkAclEntryRejected pins that a second
+// CreateNetworkAclEntry at the same (ruleNumber, egress) fails with
+// NetworkAclEntryAlreadyExists rather than silently creating an ambiguous
+// duplicate. Updating an entry is ReplaceNetworkAclEntry, not a second create.
+func TestCreateDuplicateNetworkAclEntryRejected(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	aclID := mkCustomACL(t, c)
+
+	entry := &ec2.CreateNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(100),
+		Egress:       aws.Bool(false),
+		Protocol:     aws.String("-1"),
+		RuleAction:   ec2types.RuleActionAllow,
+		CidrBlock:    aws.String("10.10.0.0/16"),
+	}
+
+	if _, err := c.CreateNetworkAclEntry(ctx, entry); err != nil {
+		t.Fatalf("first CreateNetworkAclEntry: %v", err)
+	}
+
+	_, err := c.CreateNetworkAclEntry(ctx, entry)
+	if err == nil {
+		t.Fatal("duplicate CreateNetworkAclEntry succeeded, want NetworkAclEntryAlreadyExists")
+	}
+
+	if code := apiCode(t, err); code != "NetworkAclEntryAlreadyExists" {
+		t.Errorf("duplicate entry error code = %q, want NetworkAclEntryAlreadyExists", code)
+	}
+
+	// The ingress rule 100 must still exist exactly once (plus its egress sibling
+	// is a different key, so a same-number egress create is allowed).
+	if _, err := c.CreateNetworkAclEntry(ctx, &ec2.CreateNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(100),
+		Egress:       aws.Bool(true),
+		Protocol:     aws.String("-1"),
+		RuleAction:   ec2types.RuleActionAllow,
+		CidrBlock:    aws.String("10.10.0.0/16"),
+	}); err != nil {
+		t.Fatalf("same-number egress entry should be allowed: %v", err)
+	}
+}
+
+// TestDeleteReservedNetworkAclEntryRejected pins that the immutable catch-all
+// '*' entry (rule 32767) cannot be deleted, so a NACL's deny-by-default posture
+// cannot be silently removed. The deny entry must survive the attempt.
+func TestDeleteReservedNetworkAclEntryRejected(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	aclID := mkCustomACL(t, c)
+
+	_, err := c.DeleteNetworkAclEntry(ctx, &ec2.DeleteNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(32767),
+		Egress:       aws.Bool(false),
+	})
+	if err == nil {
+		t.Fatal("deleting reserved rule 32767 succeeded, want an error")
+	}
+
+	desc, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{NetworkAclIds: []string{aclID}})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls: %v", err)
+	}
+
+	deny := findACLEntry(desc.NetworkAcls[0].Entries, 32767, false)
+	if deny == nil || deny.RuleAction != ec2types.RuleActionDeny {
+		t.Fatalf("default deny (rule 32767, ingress) missing after delete attempt; entries: %+v",
+			desc.NetworkAcls[0].Entries)
+	}
+}
+
+// TestModifyNonexistentNetworkAclEntryNotFound pins that deleting or replacing a
+// rule number that does not exist on an ACL that does exist reports
+// InvalidNetworkAclEntry.NotFound (the entry is missing) rather than
+// InvalidNetworkAclID.NotFound (which would imply the ACL is missing).
+func TestModifyNonexistentNetworkAclEntryNotFound(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	aclID := mkCustomACL(t, c)
+
+	_, err := c.DeleteNetworkAclEntry(ctx, &ec2.DeleteNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(500),
+		Egress:       aws.Bool(false),
+	})
+	if err == nil {
+		t.Fatal("deleting a nonexistent entry succeeded, want InvalidNetworkAclEntry.NotFound")
+	}
+
+	if code := apiCode(t, err); code != "InvalidNetworkAclEntry.NotFound" {
+		t.Errorf("delete nonexistent entry code = %q, want InvalidNetworkAclEntry.NotFound", code)
+	}
+
+	_, err = c.ReplaceNetworkAclEntry(ctx, &ec2.ReplaceNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(500),
+		Egress:       aws.Bool(false),
+		Protocol:     aws.String("-1"),
+		RuleAction:   ec2types.RuleActionAllow,
+		CidrBlock:    aws.String("10.10.0.0/16"),
+	})
+	if err == nil {
+		t.Fatal("replacing a nonexistent entry succeeded, want InvalidNetworkAclEntry.NotFound")
+	}
+
+	if code := apiCode(t, err); code != "InvalidNetworkAclEntry.NotFound" {
+		t.Errorf("replace nonexistent entry code = %q, want InvalidNetworkAclEntry.NotFound", code)
+	}
+}
