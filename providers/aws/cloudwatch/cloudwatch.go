@@ -3,6 +3,7 @@ package cloudwatch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,6 +20,26 @@ import (
 // Compile-time check that Mock implements driver.Monitoring.
 var _ driver.Monitoring = (*Mock)(nil)
 
+// snsTopicARNPrefix identifies an alarm action that targets an SNS topic. Only
+// these actions are delivered to a notification publisher; other action ARNs
+// (Auto Scaling, EC2, etc.) are recorded but not fired.
+const snsTopicARNPrefix = "arn:aws:sns:"
+
+// Alarm states, matching the CloudWatch StateValue enum.
+const (
+	stateAlarm            = "ALARM"
+	stateOK               = "OK"
+	stateInsufficientData = "INSUFFICIENT_DATA"
+)
+
+// ActionPublisher publishes an alarm-state-change notification to an SNS topic
+// by ARN. It is satisfied by the SNS backend's PublishExternal, mirroring the
+// S3 -> SNS notification wiring, so an alarm transition fans a message out to
+// the topic's subscribers.
+type ActionPublisher interface {
+	PublishExternal(ctx context.Context, topicARN, message string) error
+}
+
 // metricKey uniquely identifies a metric series by namespace, name, and dimensions.
 type metricKey struct {
 	Namespace  string
@@ -33,6 +54,14 @@ type Mock struct {
 	channels *memstore.Store[*driver.NotificationChannelInfo]
 	history  []driver.AlarmHistoryEntry
 	opts     *config.Options
+	sns      ActionPublisher
+}
+
+// SetSNSPublisher wires the SNS backend so an alarm state transition delivers
+// its configured actions (AlarmActions / OKActions / InsufficientDataActions)
+// to the SNS topics they name. Nil (the default) leaves actions un-fired.
+func (m *Mock) SetSNSPublisher(p ActionPublisher) {
+	m.sns = p
 }
 
 type alarmData struct {
@@ -150,21 +179,23 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 
 	var newState, reason string
 	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
-		newState = "ALARM"
+		newState = stateAlarm
 		reason = "Threshold crossed"
 	} else {
-		newState = "OK"
+		newState = stateOK
 		reason = "Threshold not crossed"
 	}
 
-	if alarm.State != newState {
+	oldState := alarm.State
+
+	if oldState != newState {
 		m.mu.Lock()
 		m.history = append(m.history, driver.AlarmHistoryEntry{
 			AlarmName: alarm.Name,
 			Timestamp: now,
-			OldState:  alarm.State,
+			OldState:  oldState,
 			NewState:  newState,
-			Reason:    fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
+			Reason:    fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
 		})
 		m.mu.Unlock()
 
@@ -173,6 +204,85 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 
 	alarm.State = newState
 	alarm.StateReason = reason
+
+	// An alarm invokes its actions only when it changes state — matching real
+	// CloudWatch, which never re-fires actions while the state is steady.
+	if oldState != newState {
+		m.fireAlarmActions(alarm, oldState, newState, now)
+	}
+}
+
+// fireAlarmActions delivers an alarm's state-change actions. Only SNS-topic
+// action ARNs are published (via the wired publisher); the notification carries
+// the alarm's new state so subscribers can react. It is a no-op when no
+// publisher is wired or the alarm has actions disabled.
+//
+// The stateInsufficientData branch below is wired for completeness (and to
+// keep the switch exhaustive over the alarm state enum) but is currently
+// unreachable: evaluateSingleAlarm only ever assigns stateAlarm or stateOK,
+// since alarm evaluation here is event-driven off incoming PutMetricData
+// calls. Real CloudWatch instead transitions an alarm to INSUFFICIENT_DATA
+// on a background timer when expected datapoints stop arriving — a
+// timer-driven behavior this mock does not simulate.
+func (m *Mock) fireAlarmActions(a *alarmData, oldState, newState string, now time.Time) {
+	if m.sns == nil || !a.ActionsEnabled {
+		return
+	}
+
+	var actions []string
+
+	switch newState {
+	case stateAlarm:
+		actions = a.AlarmActions
+	case stateOK:
+		actions = a.OKActions
+	case stateInsufficientData:
+		actions = a.InsufficientDataActions
+	}
+
+	if len(actions) == 0 {
+		return
+	}
+
+	message := m.alarmNotification(a, oldState, newState, now)
+
+	for _, arn := range actions {
+		if strings.HasPrefix(arn, snsTopicARNPrefix) {
+			_ = m.sns.PublishExternal(context.Background(), arn, message)
+		}
+	}
+}
+
+// alarmNotification renders the JSON body CloudWatch publishes to an SNS topic
+// on a state change. It mirrors the real notification's key fields so a
+// subscriber (e.g. an SQS queue) receives a recognizable alarm payload.
+func (m *Mock) alarmNotification(a *alarmData, oldState, newState string, now time.Time) string {
+	payload := map[string]any{
+		"AlarmName":        a.Name,
+		"AlarmDescription": a.AlarmDescription,
+		"AWSAccountId":     m.opts.AccountID,
+		"Region":           m.opts.Region,
+		"NewStateValue":    newState,
+		"NewStateReason":   a.StateReason,
+		"OldStateValue":    oldState,
+		"StateChangeTime":  now.UTC().Format(time.RFC3339),
+		"Trigger": map[string]any{
+			"MetricName":         a.MetricName,
+			"Namespace":          a.Namespace,
+			"Statistic":          a.Stat,
+			"ComparisonOperator": a.ComparisonOperator,
+			"Threshold":          a.Threshold,
+			"Period":             a.Period,
+			"EvaluationPeriods":  a.EvaluationPeriods,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+
+	return string(body)
 }
 
 func (m *Mock) collectFilteredDatums(
@@ -438,7 +548,7 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 	// When PutMetricAlarm updates an existing alarm, its state is left unchanged and
 	// tags supplied in this operation are ignored (real AWS API_PutMetricAlarm semantics).
 	// The rest of the configuration is completely overwritten.
-	state := "INSUFFICIENT_DATA"
+	state := stateInsufficientData
 	stateReason := ""
 	stateUpdated := m.opts.Clock.Now()
 
