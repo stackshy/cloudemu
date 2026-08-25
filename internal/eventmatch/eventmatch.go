@@ -53,9 +53,29 @@ func matchPatternKey(key string, pv any, event map[string]any) bool {
 	case []any:
 		return MatchLeaf(p, ev, present)
 	case map[string]any:
-		child, ok := ev.(map[string]any)
+		return matchNestedObject(p, ev)
+	default:
+		return false
+	}
+}
 
-		return ok && MatchEvent(p, child)
+// matchNestedObject applies a nested-object pattern to an event value. It matches
+// an object directly, and matches a JSON array if the pattern matches any element
+// — mirroring MatchLeaf's array handling. This makes a nested filter policy like
+// the documented S3->SNS body filter {"Records":{"s3":{"object":{"key":[...]}}}}
+// match an S3 event whose top-level "Records" is an array of objects.
+func matchNestedObject(pattern map[string]any, ev any) bool {
+	switch child := ev.(type) {
+	case map[string]any:
+		return MatchEvent(pattern, child)
+	case []any:
+		for _, el := range child {
+			if matchNestedObject(pattern, el) {
+				return true
+			}
+		}
+
+		return false
 	default:
 		return false
 	}

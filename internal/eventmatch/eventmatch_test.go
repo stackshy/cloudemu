@@ -188,6 +188,45 @@ func TestMatchAnythingButNestedLists(t *testing.T) {
 	}
 }
 
+// TestMatchEventNestedObjectArray asserts AWS's documented S3->SNS->SQS body
+// filter: a nested-object pattern applies to each element of a JSON array at that
+// key, matching when any element satisfies the nested pattern. The message body's
+// top-level "Records" is an array of objects, as S3 event notifications produce.
+func TestMatchEventNestedObjectArray(t *testing.T) {
+	pattern := mustPattern(t, `{"Records":{"s3":{"object":{"key":[{"prefix":"obj"}]}}}}`)
+
+	event := func(key string) map[string]any {
+		return map[string]any{
+			"Records": []any{
+				map[string]any{
+					"s3": map[string]any{
+						"object": map[string]any{"key": key},
+					},
+				},
+			},
+		}
+	}
+
+	if !eventmatch.MatchEvent(pattern, event("obj1.txt")) {
+		t.Fatal("expected S3 event with matching key prefix to match")
+	}
+
+	if eventmatch.MatchEvent(pattern, event("other.txt")) {
+		t.Fatal("expected S3 event with non-matching key prefix not to match")
+	}
+
+	// An array where a later element matches must still match (any-element).
+	multi := map[string]any{
+		"Records": []any{
+			map[string]any{"s3": map[string]any{"object": map[string]any{"key": "nope.txt"}}},
+			map[string]any{"s3": map[string]any{"object": map[string]any{"key": "obj9.txt"}}},
+		},
+	}
+	if !eventmatch.MatchEvent(pattern, multi) {
+		t.Fatal("expected match when any array element satisfies the nested pattern")
+	}
+}
+
 func TestMatchEventArrayValueIntersection(t *testing.T) {
 	pattern := mustPattern(t, `{"resources":["arn:2"]}`)
 	event := map[string]any{"resources": []any{"arn:1", "arn:2"}}
