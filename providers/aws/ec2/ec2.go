@@ -465,6 +465,14 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		return dup, nil
 	}
 
+	return m.launchInstances(ctx, cfg, count)
+}
+
+// launchInstances does the actual provisioning for RunInstances once count and
+// idempotency have already been validated.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, count int) ([]driver.Instance, error) {
 	results := make([]driver.Instance, 0, count)
 	hidden := m.visibility() == visibilityHidden
 
@@ -476,8 +484,13 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
 
 	// Resolve the IamInstanceProfile reference once for the whole batch; every
-	// instance launched by this call shares the same profile association.
-	iamProfile := m.resolveInstanceProfile(ctx, &cfg)
+	// instance launched by this call shares the same profile association. A
+	// Name/ARN that doesn't resolve rejects the whole call before anything is
+	// launched, matching real EC2.
+	iamProfile, err := m.resolveInstanceProfile(ctx, &cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	// created tracks the instances already fully provisioned in this batch, so a
 	// mid-batch engine failure can roll them back rather than orphaning live

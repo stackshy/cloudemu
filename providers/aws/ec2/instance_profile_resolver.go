@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
@@ -24,27 +25,57 @@ func (m *Mock) SetInstanceProfileResolver(r InstanceProfileResolver) {
 }
 
 // resolveInstanceProfile turns the IamInstanceProfile reference on cfg into the
-// association stored on the instance. It returns nil when no profile is
+// association stored on the instance. It returns nil, nil when no profile is
 // referenced. When a resolver is wired and the profile exists, both the
 // canonical ARN and the ID are filled in; otherwise it falls back to the
 // supplied ARN so a caller that passed an ARN still reads it back.
-func (m *Mock) resolveInstanceProfile(ctx context.Context, cfg *driver.InstanceConfig) *driver.IamInstanceProfile {
+//
+// A Name or ARN that does not resolve to any created instance profile is
+// rejected synchronously, matching real EC2's RunInstances behavior: it
+// answers InvalidParameterValue rather than launching the instance with a
+// dangling/empty profile association.
+func (m *Mock) resolveInstanceProfile(ctx context.Context, cfg *driver.InstanceConfig) (*driver.IamInstanceProfile, error) {
 	name := cfg.IamInstanceProfileName
 	if name == "" {
 		name = instanceProfileNameFromARN(cfg.IamInstanceProfileARN)
 	}
 
 	if name == "" && cfg.IamInstanceProfileARN == "" {
-		return nil
+		return nil, nil //nolint:nilnil // no profile referenced is not an error
 	}
 
-	if m.instanceProfileResolver != nil && name != "" {
-		if info, err := m.instanceProfileResolver.GetInstanceProfile(ctx, name); err == nil {
-			return &driver.IamInstanceProfile{ARN: info.ARN, ID: info.ID}
+	if m.instanceProfileResolver == nil || name == "" {
+		return &driver.IamInstanceProfile{ARN: cfg.IamInstanceProfileARN}, nil
+	}
+
+	info, err := m.instanceProfileResolver.GetInstanceProfile(ctx, name)
+	if err != nil {
+		if cerrors.IsNotFound(err) {
+			return nil, invalidInstanceProfileError(cfg)
 		}
+
+		return nil, err
 	}
 
-	return &driver.IamInstanceProfile{ARN: cfg.IamInstanceProfileARN}
+	return &driver.IamInstanceProfile{ARN: info.ARN, ID: info.ID}, nil
+}
+
+// invalidInstanceProfileError reproduces the exact wording real EC2 returns
+// for RunInstances when IamInstanceProfile.Name/.Arn does not resolve to an
+// existing instance profile, e.g.:
+//
+//	Value (my-profile) for parameter iamInstanceProfile.name is invalid.
+//	Invalid IAM Instance Profile name
+func invalidInstanceProfileError(cfg *driver.InstanceConfig) error {
+	if cfg.IamInstanceProfileName != "" {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Value (%s) for parameter iamInstanceProfile.name is invalid. Invalid IAM Instance Profile name",
+			cfg.IamInstanceProfileName)
+	}
+
+	return cerrors.Newf(cerrors.InvalidArgument,
+		"Value (%s) for parameter iamInstanceProfile.arn is invalid. Invalid IAM Instance Profile ARN",
+		cfg.IamInstanceProfileARN)
 }
 
 // instanceProfileNameFromARN extracts the profile name from an instance-profile

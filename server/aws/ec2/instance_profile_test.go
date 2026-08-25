@@ -2,6 +2,7 @@ package ec2_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	smithy "github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -125,5 +127,48 @@ func TestRunInstancesIamInstanceProfileReflectedOnDescribe(t *testing.T) {
 		t.Fatalf("DescribeInstances IamInstanceProfile.Id = %q, want %q",
 			aws.ToString(got.IamInstanceProfile.Id),
 			aws.ToString(profile.InstanceProfile.InstanceProfileId))
+	}
+}
+
+// TestRunInstancesIamInstanceProfileNotFound drives real EC2's synchronous
+// rejection: a RunInstances call referencing an IamInstanceProfile name that
+// was never created answers InvalidParameterValue rather than launching an
+// instance with a dangling/empty profile association.
+func TestRunInstancesIamInstanceProfileNotFound(t *testing.T) {
+	ctx := context.Background()
+	ec2c, _ := newEC2AndIAMClients(t)
+
+	_, err := ec2c.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-123"),
+		InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		IamInstanceProfile: &ec2types.IamInstanceProfileSpecification{
+			Name: aws.String("does-not-exist"),
+		},
+	})
+	if err == nil {
+		t.Fatal("RunInstances with a nonexistent IamInstanceProfile name succeeded, want InvalidParameterValue")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("RunInstances error = %v, want an API error", err)
+	}
+
+	if apiErr.ErrorCode() != "InvalidParameterValue" {
+		t.Fatalf("RunInstances error code = %q, want InvalidParameterValue", apiErr.ErrorCode())
+	}
+
+	// No instance should have been launched: a subsequent DescribeInstances
+	// should come back empty.
+	desc, err := ec2c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
+	if err != nil {
+		t.Fatalf("DescribeInstances: %v", err)
+	}
+
+	if len(desc.Reservations) != 0 {
+		t.Fatalf("DescribeInstances returned %d reservations, want 0 (RunInstances should not have launched anything)",
+			len(desc.Reservations))
 	}
 }
