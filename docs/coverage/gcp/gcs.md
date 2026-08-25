@@ -47,6 +47,15 @@ GCP's `storage` service · portable interface `driver.Bucket` · [GCP index](./R
 
 Discovered by type assertion; only some providers implement these.
 
+### AccountEncryptionConfig
+
+AccountEncryptionConfig is an OPTIONAL Azure-specific capability,
+
+| Operation | Description |
+| --- | --- |
+| `AccountEncryption` |  |
+| `SetAccountEncryption` |  |
+
 ### AzureBlobExtensions
 
 AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
@@ -74,6 +83,15 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 | `SetContainerAccessPolicy` | SetContainerAccessPolicy sets a container's public access level and |
 | `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
 | `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
+
+### BlobServiceConfig
+
+BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `BlobServiceProperties` |  |
+| `SetBlobServiceProperties` |  |
 
 ### BucketAttributes
 

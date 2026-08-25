@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2"
+	azureprovider "github.com/stackshy/cloudemu/v2/providers/azure"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
@@ -33,7 +34,16 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 func newAccountsClient(t *testing.T) *armstorage.AccountsClient {
 	t.Helper()
 
-	cloudP := cloudemu.NewAzure()
+	return newAccountsClientFor(t, cloudemu.NewAzure())
+}
+
+// newAccountsClientFor builds an AccountsClient against a caller-supplied
+// provider, so a test can share one cloudemu.Azure (and its blob-storage
+// state) across an AccountsClient and a BlobServicesClient on independent TLS
+// servers/connections.
+func newAccountsClientFor(t *testing.T, cloudP *azureprovider.Provider) *armstorage.AccountsClient {
+	t.Helper()
+
 	srv := azureserver.New(azureserver.Drivers{BlobStorage: cloudP.BlobStorage})
 
 	ts := httptest.NewTLSServer(srv)

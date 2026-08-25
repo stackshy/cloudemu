@@ -10344,6 +10344,18 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccountEncryptionConfig",
+        "doc": "AccountEncryptionConfig is an OPTIONAL Azure-specific capability,",
+        "operations": [
+          {
+            "name": "AccountEncryption"
+          },
+          {
+            "name": "SetAccountEncryption"
+          }
+        ]
+      },
+      {
         "name": "AzureBlobExtensions",
         "doc": "AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,",
         "operations": [
@@ -10430,6 +10442,18 @@
           {
             "name": "StageBlock",
             "doc": "StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob"
+          }
+        ]
+      },
+      {
+        "name": "BlobServiceConfig",
+        "doc": "BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "BlobServiceProperties"
+          },
+          {
+            "name": "SetBlobServiceProperties"
           }
         ]
       },
