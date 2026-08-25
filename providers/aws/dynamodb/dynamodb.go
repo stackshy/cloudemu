@@ -14,6 +14,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -406,7 +407,7 @@ func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 	return names, nil
 }
 
-func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) error {
+func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) error {
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -431,7 +432,7 @@ func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) err
 	td.items.Set(key, item)
 	m.recordStreamEvent(td, oldItem, item, hadOld)
 	m.mu.Unlock()
-	m.flushStreamDeliveries()
+	m.flushStreamDeliveries(ctx)
 
 	dims := map[string]string{"TableName": table}
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
@@ -471,7 +472,7 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 // UpdateItem applies partial updates to an existing item.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[string]any, error) {
+func (m *Mock) UpdateItem(ctx context.Context, input driver.UpdateItemInput) (map[string]any, error) {
 	m.mu.Lock()
 
 	td, exists := m.tables[input.Table]
@@ -514,7 +515,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	td.items.Set(k, updated)
 	m.recordStreamEvent(td, oldItem, updated, true)
 	m.mu.Unlock()
-	m.flushStreamDeliveries()
+	m.flushStreamDeliveries(ctx)
 
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
@@ -523,7 +524,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	return maps.Clone(updated), nil
 }
 
-func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {
+func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any) error {
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -546,7 +547,7 @@ func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) e
 	}
 
 	m.mu.Unlock()
-	m.flushStreamDeliveries()
+	m.flushStreamDeliveries(ctx)
 
 	dims := map[string]string{"TableName": table}
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
@@ -928,7 +929,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 	return result, nil
 }
 
-func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
+func (m *Mock) BatchPutItems(ctx context.Context, table string, items []map[string]any) error {
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -959,7 +960,7 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 	}
 
 	m.mu.Unlock()
-	m.flushStreamDeliveries()
+	m.flushStreamDeliveries(ctx)
 
 	return nil
 }
@@ -1241,12 +1242,12 @@ func filterStreamRecords(records []driver.StreamRecord, limit int, token string)
 
 // TransactWriteItems executes puts and deletes atomically.
 func (m *Mock) TransactWriteItems(
-	_ context.Context, table string, puts []map[string]any, deletes []map[string]any,
+	ctx context.Context, table string, puts []map[string]any, deletes []map[string]any,
 ) error {
 	m.mu.Lock()
 	// flush is registered before the unlock defer so it runs after the lock is
 	// released (defers are LIFO), delivering stream records outside m.mu.
-	defer m.flushStreamDeliveries()
+	defer func() { m.flushStreamDeliveries(ctx) }()
 	defer m.mu.Unlock()
 
 	td, exists := m.tables[table]
@@ -1382,7 +1383,17 @@ func (m *Mock) queueStreamDelivery(td *tableData, rec *driver.StreamRecord) {
 // the stream's Lambda event-source-mappings, grouping consecutive records of the
 // same stream into a single event batch (as a real ESM invoke would). It runs
 // after m.mu is released so a mapped Lambda may safely call back into DynamoDB.
-func (m *Mock) flushStreamDeliveries() {
+//
+// callerCtx is the write call's own context, used only to read the re-entrant
+// delivery depth (internal/recursionguard): a mapped Lambda commonly writes
+// back into its own source table (mark-processed, audit-append, status-bump),
+// re-entering here through the very same synchronous call chain
+// (Put/Update/DeleteItem -> flush -> DeliverEventSourceBatch -> Invoke ->
+// handler -> Put/Update/DeleteItem -> ...). Delivery itself always runs on a
+// fresh background context, decoupled from callerCtx's cancellation/deadline
+// (delivery must still complete once the write call has already returned),
+// carrying forward only the depth so the chain stays bounded.
+func (m *Mock) flushStreamDeliveries(callerCtx context.Context) {
 	if m.streamInvoker == nil {
 		return
 	}
@@ -1392,7 +1403,7 @@ func (m *Mock) flushStreamDeliveries() {
 	m.pendingStream = nil
 	m.mu.Unlock()
 
-	ctx := context.Background()
+	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
 
 	for i := 0; i < len(pending); {
 		j := i + 1

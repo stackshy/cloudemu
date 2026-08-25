@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 )
 
 // PutBucketNotification replaces a bucket's event-notification configuration
@@ -46,8 +47,8 @@ type objectEvent struct {
 
 // notifyObjectCreated delivers an s3:ObjectCreated:Put event (PutObject, copy,
 // or completed multipart upload) to matching notification targets.
-func (m *Mock) notifyObjectCreated(bkt *bucketMeta, bucket, key string, size int64, eTag, versionID string) {
-	m.notify(bkt, &objectEvent{
+func (m *Mock) notifyObjectCreated(ctx context.Context, bkt *bucketMeta, bucket, key string, size int64, eTag, versionID string) {
+	m.notify(ctx, bkt, &objectEvent{
 		bucket: bucket, key: key, size: size, eTag: eTag,
 		versionID: versionID, eventName: "ObjectCreated:Put",
 	})
@@ -55,8 +56,8 @@ func (m *Mock) notifyObjectCreated(bkt *bucketMeta, bucket, key string, size int
 
 // notifyObjectRemoved delivers an s3:ObjectRemoved:Delete event to matching
 // notification targets.
-func (m *Mock) notifyObjectRemoved(bkt *bucketMeta, bucket, key, versionID string) {
-	m.notify(bkt, &objectEvent{
+func (m *Mock) notifyObjectRemoved(ctx context.Context, bkt *bucketMeta, bucket, key, versionID string) {
+	m.notify(ctx, bkt, &objectEvent{
 		bucket: bucket, key: key, versionID: versionID, eventName: "ObjectRemoved:Delete",
 	})
 }
@@ -66,7 +67,14 @@ func (m *Mock) notifyObjectRemoved(bkt *bucketMeta, bucket, key, versionID strin
 // accepts the object key. Best-effort: delivery errors are swallowed so a
 // missing/failed target never fails the object operation (mirroring S3's
 // asynchronous, decoupled notification behavior).
-func (m *Mock) notify(bkt *bucketMeta, ev *objectEvent) {
+//
+// ctx is the write call's own context, carried through only so deliver can
+// read the re-entrant delivery depth (internal/recursionguard): a notified
+// Lambda handler commonly writes back into the same bucket (mark-processed,
+// audit-append), re-entering here through the same synchronous call chain
+// (PutObject -> notify -> deliver -> InvokeExternal -> handler -> PutObject ->
+// ...), which the guard in InvokeExternal bounds.
+func (m *Mock) notify(ctx context.Context, bkt *bucketMeta, ev *objectEvent) {
 	if len(bkt.notifications) == 0 {
 		return
 	}
@@ -81,7 +89,7 @@ func (m *Mock) notify(bkt *bucketMeta, ev *objectEvent) {
 			continue
 		}
 
-		m.deliver(n, m.objectEventJSON(ev, n.ID))
+		m.deliver(ctx, n, m.objectEventJSON(ev, n.ID))
 	}
 }
 
@@ -93,8 +101,13 @@ func (m *Mock) nextSequencer() string {
 }
 
 // deliver dispatches an event body to a single notification target by kind.
-func (m *Mock) deliver(n *BucketNotification, body string) {
-	ctx := context.Background()
+// Delivery always runs on a fresh background context, decoupled from
+// callerCtx's cancellation/deadline (mirroring S3's real asynchronous,
+// decoupled notification behavior), carrying forward only the re-entrant
+// delivery depth so a Lambda target that writes back into this bucket stays
+// bounded (the guard itself lives in lambda.InvokeExternal).
+func (m *Mock) deliver(callerCtx context.Context, n *BucketNotification, body string) {
+	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
 
 	switch n.Target {
 	case NotifyQueue:

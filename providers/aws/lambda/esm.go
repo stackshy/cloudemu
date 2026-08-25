@@ -84,6 +84,10 @@ func (m *Mock) functionARN(nameOrARN string) string {
 // InvokeExternal wiring: the source records a change and calls this so the
 // mapped function actually runs. A disabled mapping is skipped; an unknown
 // target function is a no-op (InvokeExternal), so stale mappings never error.
+// ctx's re-entrant delivery depth is enforced inside InvokeExternal (see
+// internal/recursionguard), which is the single choke point every delivery
+// path funnels through, so a handler that writes back into its own event
+// source cannot recurse this call chain unboundedly.
 func (m *Mock) DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) error {
 	for _, info := range m.mappings.All() {
 		if info.State != stateEnabled || info.EventSourceArn != eventSourceARN {
