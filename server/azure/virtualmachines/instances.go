@@ -231,10 +231,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		return
 	}
 
-	// Update's dataDisks is merge-patch, not declarative: a disk is only
-	// detached when its entry explicitly sets toBeDetached (real Azure's
-	// Update semantics), never by omission.
-	if err = h.applyDataDisks(r.Context(), inst.ID, dataDisksOf(req.Properties.StorageProfile), false); err != nil {
+	// A PATCH that omits storageProfile.dataDisks entirely (nil slice) leaves the
+	// attached disks untouched — true merge-patch. But a PATCH that *supplies* a
+	// dataDisks array (non-nil, empty included) is a full replace of the disk set:
+	// real Azure detaches every disk whose LUN is absent from the array (this is
+	// how `az vm update` / BeginUpdate remove a data disk). json.Unmarshal yields
+	// nil for an omitted array and a non-nil (possibly empty) slice for a present
+	// one, so presence is a sufficient declarative-vs-merge discriminator.
+	if err = h.applyDataDisks(
+		r.Context(), inst.ID, dataDisksOf(req.Properties.StorageProfile), dataDisksPresent(req.Properties.StorageProfile),
+	); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -258,14 +264,25 @@ func dataDisksOf(s *storageProfile) []dataDisk {
 	return s.DataDisks
 }
 
+// dataDisksPresent reports whether the request explicitly supplied a
+// storageProfile.dataDisks array (non-nil, empty included) — the signal that a
+// PATCH is a full replace of the data-disk set rather than a merge-patch that
+// omitted the field. It stays false when storageProfile or its dataDisks array
+// was absent, so an omitted array leaves attachments untouched.
+func dataDisksPresent(s *storageProfile) bool {
+	return s != nil && s.DataDisks != nil
+}
+
 // applyDataDisks reconciles instanceID's attached data disks against disks,
-// the request's storageProfile.dataDisks. declarative selects PUT
-// CreateOrUpdate's full-replace semantics — the array is the VM's complete
-// desired data-disk state, so any currently attached disk whose LUN is absent
-// from disks is detached — versus PATCH Update's merge-patch semantics, where
-// a disk is detached only when its own entry sets toBeDetached and entries
-// absent from the request are left untouched. Both paths attach any entry
-// whose managedDisk.id resolves to a disk not yet attached at that LUN.
+// the request's storageProfile.dataDisks. declarative selects full-replace
+// semantics — the array is the VM's complete desired data-disk state, so any
+// currently attached disk whose LUN is absent from disks is detached — versus
+// merge-patch semantics, where a disk is detached only when its own entry sets
+// toBeDetached and entries absent from the request are left untouched. PUT
+// CreateOrUpdate always uses full-replace; PATCH Update uses full-replace when
+// the request supplies a dataDisks array and merge-patch when it omits one.
+// Both modes attach any entry whose managedDisk.id resolves to a disk not yet
+// attached at that LUN.
 func (h *Handler) applyDataDisks(ctx context.Context, instanceID string, disks []dataDisk, declarative bool) error {
 	vols, err := h.compute.DescribeVolumes(ctx, nil)
 	if err != nil {
@@ -349,6 +366,30 @@ func (h *Handler) attachDataDisk(
 	}
 
 	attached[d.Lun] = volID
+
+	return nil
+}
+
+// detachAttachedVolumes detaches every volume the instance currently holds,
+// clearing each disk's managedBy/diskState (returning it to Unattached). Used on
+// VM delete so surviving managed disks (deleteOption=Detach) don't dangle at the
+// deleted VM. It reuses the driver's DetachVolume — the same call applyDataDisks
+// uses — rather than duplicating detach bookkeeping.
+func (h *Handler) detachAttachedVolumes(ctx context.Context, instanceID string) error {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	for i := range vols {
+		if vols[i].AttachedTo != instanceID {
+			continue
+		}
+
+		if err := h.compute.DetachVolume(ctx, vols[i].ID); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -546,6 +587,15 @@ func (h *Handler) instanceView(w http.ResponseWriter, r *http.Request, rp azurea
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	// A deleted VM's attached data disks default to deleteOption=Detach: the disk
+	// survives but must be released. Detach every volume the VM held first so each
+	// disk's managedBy/diskState is cleared (returned to Unattached) rather than
+	// left dangling at the now-deleted VM, matching real Azure.
+	if err := h.detachAttachedVolumes(r.Context(), inst.ID); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
