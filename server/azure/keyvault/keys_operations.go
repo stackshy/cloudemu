@@ -35,7 +35,7 @@ func (h *KeysHandler) createKey(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 
-	key, err := h.kv.CreateKey(r.Context(), name, &secretsdriver.KVCreateKeyParams{
+	key, err := h.kv.CreateKey(r.Context(), vaultFromRequest(r), name, &secretsdriver.KVCreateKeyParams{
 		Kty:            req.Kty,
 		KeySize:        req.KeySize,
 		Curve:          req.Crv,
@@ -64,7 +64,7 @@ func (h *KeysHandler) importKey(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 
-	key, err := h.kv.ImportKey(r.Context(), name, &secretsdriver.KVImportKeyParams{
+	key, err := h.kv.ImportKey(r.Context(), vaultFromRequest(r), name, &secretsdriver.KVImportKeyParams{
 		Key:        jwk,
 		HSM:        req.HSM,
 		Tags:       req.Tags,
@@ -79,7 +79,7 @@ func (h *KeysHandler) importKey(w http.ResponseWriter, r *http.Request, name str
 }
 
 func (h *KeysHandler) getKey(w http.ResponseWriter, r *http.Request, name, version string) {
-	key, err := h.kv.GetKey(r.Context(), name, version)
+	key, err := h.kv.GetKey(r.Context(), vaultFromRequest(r), name, version)
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -111,7 +111,7 @@ func (h *KeysHandler) updateKey(w http.ResponseWriter, r *http.Request, name, ve
 		patch.NotBefore = a.NotBefore
 	}
 
-	key, err := h.kv.UpdateKey(r.Context(), name, version, patch)
+	key, err := h.kv.UpdateKey(r.Context(), vaultFromRequest(r), name, version, patch)
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -121,7 +121,7 @@ func (h *KeysHandler) updateKey(w http.ResponseWriter, r *http.Request, name, ve
 }
 
 func (h *KeysHandler) deleteKey(w http.ResponseWriter, r *http.Request, name string) {
-	deleted, err := h.kv.DeleteKey(r.Context(), name)
+	deleted, err := h.kv.DeleteKey(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -131,7 +131,7 @@ func (h *KeysHandler) deleteKey(w http.ResponseWriter, r *http.Request, name str
 }
 
 func (h *KeysHandler) listKeys(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.kv.ListKeys(r.Context())
+	keys, err := h.kv.ListKeys(r.Context(), vaultFromRequest(r))
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -146,7 +146,7 @@ func (h *KeysHandler) listKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KeysHandler) listKeyVersions(w http.ResponseWriter, r *http.Request, name string) {
-	versions, err := h.kv.ListKeyVersions(r.Context(), name)
+	versions, err := h.kv.ListKeyVersions(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -161,7 +161,7 @@ func (h *KeysHandler) listKeyVersions(w http.ResponseWriter, r *http.Request, na
 }
 
 func (h *KeysHandler) listDeletedKeys(w http.ResponseWriter, r *http.Request) {
-	deleted, err := h.kv.ListDeletedKeys(r.Context())
+	deleted, err := h.kv.ListDeletedKeys(r.Context(), vaultFromRequest(r))
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -176,7 +176,7 @@ func (h *KeysHandler) listDeletedKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KeysHandler) getDeletedKey(w http.ResponseWriter, r *http.Request, name string) {
-	deleted, err := h.kv.GetDeletedKey(r.Context(), name)
+	deleted, err := h.kv.GetDeletedKey(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -186,7 +186,7 @@ func (h *KeysHandler) getDeletedKey(w http.ResponseWriter, r *http.Request, name
 }
 
 func (h *KeysHandler) recoverDeletedKey(w http.ResponseWriter, r *http.Request, name string) {
-	key, err := h.kv.RecoverDeletedKey(r.Context(), name)
+	key, err := h.kv.RecoverDeletedKey(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -196,12 +196,37 @@ func (h *KeysHandler) recoverDeletedKey(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *KeysHandler) purgeDeletedKey(w http.ResponseWriter, r *http.Request, name string) {
-	if err := h.kv.PurgeDeletedKey(r.Context(), name); err != nil {
+	if err := h.kv.PurgeDeletedKey(r.Context(), vaultFromRequest(r), name); err != nil {
 		writeKeyErr(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *KeysHandler) getKeyRotationPolicy(w http.ResponseWriter, r *http.Request, name string) {
+	policy, err := h.kv.GetKeyRotationPolicy(r.Context(), vaultFromRequest(r), name)
+	if err != nil {
+		writeKeyErr(w, err)
+		return
+	}
+
+	writeJSON(w, toRotationPolicyJSON(r, name, policy))
+}
+
+func (h *KeysHandler) updateKeyRotationPolicy(w http.ResponseWriter, r *http.Request, name string) {
+	var req keyRotationPolicyJSON
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	policy, err := h.kv.UpdateKeyRotationPolicy(r.Context(), vaultFromRequest(r), name, fromRotationPolicyJSON(&req))
+	if err != nil {
+		writeKeyErr(w, err)
+		return
+	}
+
+	writeJSON(w, toRotationPolicyJSON(r, name, policy))
 }
 
 // decodeImportJWK decodes the base64url components of an inbound JWK.

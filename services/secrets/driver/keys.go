@@ -125,29 +125,67 @@ type KVCryptoResult struct {
 	Value   []byte
 }
 
+// KVRotationPolicyAction identifies what a key rotation policy's lifetime
+// action does: "Rotate" the key or "Notify" via Event Grid.
+type KVRotationPolicyAction struct {
+	Type string
+}
+
+// KVRotationPolicyTrigger is the condition ("time after create" or "time
+// before expiry", each an ISO 8601 duration such as "P90D") that fires a
+// lifetime action.
+type KVRotationPolicyTrigger struct {
+	TimeAfterCreate  string
+	TimeBeforeExpiry string
+}
+
+// KVLifetimeAction pairs a rotation policy trigger with the action it fires.
+type KVLifetimeAction struct {
+	Trigger KVRotationPolicyTrigger
+	Action  KVRotationPolicyAction
+}
+
+// KVRotationPolicy is a key's rotation policy: the expiry applied to new
+// versions plus the lifetime actions Key Vault performs automatically.
+// Created and Updated are Unix epoch seconds.
+type KVRotationPolicy struct {
+	ExpiryTime      string
+	LifetimeActions []KVLifetimeAction
+	Created         int64
+	Updated         int64
+}
+
 // KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
 // (create/import/get/list/update/soft-delete/recover/purge) plus the real
 // cryptographic operations (encrypt/decrypt/wrap/unwrap/sign/verify) performed
 // with the private key material held in the provider. It is kept off the shared
 // Secrets interface — a type-asserted optional interface — so the AWS and GCP
 // providers need not model Key Vault key semantics.
+//
+// Every method takes vault, the vault name the request is scoped to (derived
+// by the wire layer from the request host, e.g. the {vault-name} label of
+// {vault-name}.vault.azure.net). Each vault is an isolated namespace: the
+// same key name in two different vaults refers to two different keys.
 type KeyVaultKeys interface {
-	CreateKey(ctx context.Context, name string, params *KVCreateKeyParams) (*KVKey, error)
-	ImportKey(ctx context.Context, name string, params *KVImportKeyParams) (*KVKey, error)
-	GetKey(ctx context.Context, name, version string) (*KVKey, error)
-	ListKeys(ctx context.Context) ([]KVKey, error)
-	ListKeyVersions(ctx context.Context, name string) ([]KVKey, error)
-	UpdateKey(ctx context.Context, name, version string, patch KVKeyPatch) (*KVKey, error)
-	DeleteKey(ctx context.Context, name string) (*KVDeletedKey, error)
-	GetDeletedKey(ctx context.Context, name string) (*KVDeletedKey, error)
-	ListDeletedKeys(ctx context.Context) ([]KVDeletedKey, error)
-	RecoverDeletedKey(ctx context.Context, name string) (*KVKey, error)
-	PurgeDeletedKey(ctx context.Context, name string) error
+	CreateKey(ctx context.Context, vault, name string, params *KVCreateKeyParams) (*KVKey, error)
+	ImportKey(ctx context.Context, vault, name string, params *KVImportKeyParams) (*KVKey, error)
+	GetKey(ctx context.Context, vault, name, version string) (*KVKey, error)
+	ListKeys(ctx context.Context, vault string) ([]KVKey, error)
+	ListKeyVersions(ctx context.Context, vault, name string) ([]KVKey, error)
+	UpdateKey(ctx context.Context, vault, name, version string, patch KVKeyPatch) (*KVKey, error)
+	DeleteKey(ctx context.Context, vault, name string) (*KVDeletedKey, error)
+	GetDeletedKey(ctx context.Context, vault, name string) (*KVDeletedKey, error)
+	ListDeletedKeys(ctx context.Context, vault string) ([]KVDeletedKey, error)
+	RecoverDeletedKey(ctx context.Context, vault, name string) (*KVKey, error)
+	PurgeDeletedKey(ctx context.Context, vault, name string) error
 
-	EncryptKey(ctx context.Context, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
-	DecryptKey(ctx context.Context, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
-	WrapKey(ctx context.Context, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
-	UnwrapKey(ctx context.Context, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
-	SignKey(ctx context.Context, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
-	VerifyKey(ctx context.Context, name, version string, params KVCryptoParams) (bool, error)
+	EncryptKey(ctx context.Context, vault, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
+	DecryptKey(ctx context.Context, vault, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
+	WrapKey(ctx context.Context, vault, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
+	UnwrapKey(ctx context.Context, vault, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
+	SignKey(ctx context.Context, vault, name, version string, params KVCryptoParams) (*KVCryptoResult, error)
+	VerifyKey(ctx context.Context, vault, name, version string, params KVCryptoParams) (bool, error)
+
+	GetKeyRotationPolicy(ctx context.Context, vault, name string) (*KVRotationPolicy, error)
+	UpdateKeyRotationPolicy(ctx context.Context, vault, name string, policy KVRotationPolicy) (*KVRotationPolicy, error)
 }

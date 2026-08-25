@@ -47,7 +47,7 @@ func (h *Handler) setSecret(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
-	kv, err := h.kv.SetKeyVaultSecret(r.Context(), name, secretsdriver.KVSetParams{
+	kv, err := h.kv.SetKeyVaultSecret(r.Context(), vaultFromRequest(r), name, secretsdriver.KVSetParams{
 		Value:       []byte(req.Value),
 		ContentType: req.ContentType,
 		Tags:        req.Tags,
@@ -62,7 +62,7 @@ func (h *Handler) setSecret(w http.ResponseWriter, r *http.Request, name string)
 }
 
 func (h *Handler) getSecret(w http.ResponseWriter, r *http.Request, name, version string) {
-	kv, err := h.kv.GetKeyVaultSecret(r.Context(), name, version)
+	kv, err := h.kv.GetKeyVaultSecret(r.Context(), vaultFromRequest(r), name, version)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -94,7 +94,7 @@ func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request, name, ver
 		patch.NotBefore = a.NotBefore
 	}
 
-	kv, err := h.kv.UpdateKeyVaultSecret(r.Context(), name, version, patch)
+	kv, err := h.kv.UpdateKeyVaultSecret(r.Context(), vaultFromRequest(r), name, version, patch)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -104,7 +104,7 @@ func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request, name, ver
 }
 
 func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request, name string) {
-	deleted, err := h.kv.DeleteKeyVaultSecret(r.Context(), name)
+	deleted, err := h.kv.DeleteKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -114,7 +114,7 @@ func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request, name stri
 }
 
 func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
-	secrets, err := h.kv.ListKeyVaultSecrets(r.Context())
+	secrets, err := h.kv.ListKeyVaultSecrets(r.Context(), vaultFromRequest(r))
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -129,7 +129,7 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listSecretVersions(w http.ResponseWriter, r *http.Request, name string) {
-	versions, err := h.kv.ListKeyVaultSecretVersions(r.Context(), name)
+	versions, err := h.kv.ListKeyVaultSecretVersions(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -144,7 +144,7 @@ func (h *Handler) listSecretVersions(w http.ResponseWriter, r *http.Request, nam
 }
 
 func (h *Handler) backupSecret(w http.ResponseWriter, r *http.Request, name string) {
-	blob, err := h.kv.BackupKeyVaultSecret(r.Context(), name)
+	blob, err := h.kv.BackupKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -165,7 +165,7 @@ func (h *Handler) restoreSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kv, err := h.kv.RestoreKeyVaultSecret(r.Context(), blob)
+	kv, err := h.kv.RestoreKeyVaultSecret(r.Context(), vaultFromRequest(r), blob)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -175,7 +175,7 @@ func (h *Handler) restoreSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listDeletedSecrets(w http.ResponseWriter, r *http.Request) {
-	deleted, err := h.kv.ListDeletedKeyVaultSecrets(r.Context())
+	deleted, err := h.kv.ListDeletedKeyVaultSecrets(r.Context(), vaultFromRequest(r))
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -190,7 +190,7 @@ func (h *Handler) listDeletedSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getDeletedSecret(w http.ResponseWriter, r *http.Request, name string) {
-	deleted, err := h.kv.GetDeletedKeyVaultSecret(r.Context(), name)
+	deleted, err := h.kv.GetDeletedKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -200,7 +200,7 @@ func (h *Handler) getDeletedSecret(w http.ResponseWriter, r *http.Request, name 
 }
 
 func (h *Handler) recoverDeletedSecret(w http.ResponseWriter, r *http.Request, name string) {
-	kv, err := h.kv.RecoverDeletedKeyVaultSecret(r.Context(), name)
+	kv, err := h.kv.RecoverDeletedKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -210,7 +210,7 @@ func (h *Handler) recoverDeletedSecret(w http.ResponseWriter, r *http.Request, n
 }
 
 func (h *Handler) purgeDeletedSecret(w http.ResponseWriter, r *http.Request, name string) {
-	if err := h.kv.PurgeDeletedKeyVaultSecret(r.Context(), name); err != nil {
+	if err := h.kv.PurgeDeletedKeyVaultSecret(r.Context(), vaultFromRequest(r), name); err != nil {
 		writeCErr(w, err)
 		return
 	}

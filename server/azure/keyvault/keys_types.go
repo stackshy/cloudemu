@@ -150,6 +150,87 @@ type keyVerifyResultJSON struct {
 	Value bool `json:"value"`
 }
 
+// keyRotationPolicyActionJSON is a lifetime action's action type ("Rotate" or
+// "Notify").
+type keyRotationPolicyActionJSON struct {
+	Type string `json:"type"`
+}
+
+// keyRotationPolicyTriggerJSON is a lifetime action's trigger condition,
+// exactly one of which is set: an ISO 8601 duration after key creation, or
+// before the key's expiry.
+type keyRotationPolicyTriggerJSON struct {
+	TimeAfterCreate  string `json:"timeAfterCreate,omitempty"`
+	TimeBeforeExpiry string `json:"timeBeforeExpiry,omitempty"`
+}
+
+// lifetimeActionJSON pairs a trigger with the action it fires.
+type lifetimeActionJSON struct {
+	Trigger keyRotationPolicyTriggerJSON `json:"trigger"`
+	Action  keyRotationPolicyActionJSON  `json:"action"`
+}
+
+// keyRotationPolicyAttributesJSON is the rotation policy's attributes:
+// the expiry ISO 8601 duration applied to new versions, plus the policy's own
+// created/updated timestamps (Unix epoch seconds).
+type keyRotationPolicyAttributesJSON struct {
+	ExpiryTime string `json:"expiryTime,omitempty"`
+	Created    int64  `json:"created,omitempty"`
+	Updated    int64  `json:"updated,omitempty"`
+}
+
+// keyRotationPolicyJSON is the GET/PUT .../rotationpolicy request and
+// response body.
+type keyRotationPolicyJSON struct {
+	ID              string                          `json:"id,omitempty"`
+	LifetimeActions []lifetimeActionJSON            `json:"lifetimeActions,omitempty"`
+	Attributes      keyRotationPolicyAttributesJSON `json:"attributes"`
+}
+
+// keyRotationPolicyID builds "{vault}/keys/{name}/rotationpolicy".
+func keyRotationPolicyID(r *http.Request, name string) string {
+	return vaultBaseURL(r) + keysPrefix + "/" + name + "/" + rotationPolicySeg
+}
+
+func toRotationPolicyJSON(r *http.Request, name string, p *secretsdriver.KVRotationPolicy) keyRotationPolicyJSON {
+	out := keyRotationPolicyJSON{
+		ID: keyRotationPolicyID(r, name),
+		Attributes: keyRotationPolicyAttributesJSON{
+			ExpiryTime: p.ExpiryTime,
+			Created:    p.Created,
+			Updated:    p.Updated,
+		},
+	}
+
+	for _, la := range p.LifetimeActions {
+		out.LifetimeActions = append(out.LifetimeActions, lifetimeActionJSON{
+			Trigger: keyRotationPolicyTriggerJSON{
+				TimeAfterCreate:  la.Trigger.TimeAfterCreate,
+				TimeBeforeExpiry: la.Trigger.TimeBeforeExpiry,
+			},
+			Action: keyRotationPolicyActionJSON{Type: la.Action.Type},
+		})
+	}
+
+	return out
+}
+
+func fromRotationPolicyJSON(in *keyRotationPolicyJSON) secretsdriver.KVRotationPolicy {
+	out := secretsdriver.KVRotationPolicy{ExpiryTime: in.Attributes.ExpiryTime}
+
+	for _, la := range in.LifetimeActions {
+		out.LifetimeActions = append(out.LifetimeActions, secretsdriver.KVLifetimeAction{
+			Trigger: secretsdriver.KVRotationPolicyTrigger{
+				TimeAfterCreate:  la.Trigger.TimeAfterCreate,
+				TimeBeforeExpiry: la.Trigger.TimeBeforeExpiry,
+			},
+			Action: secretsdriver.KVRotationPolicyAction{Type: la.Action.Type},
+		})
+	}
+
+	return out
+}
+
 // keyID builds "{vault}/keys/{name}[/{version}]".
 func keyID(r *http.Request, name, version string) string {
 	id := vaultBaseURL(r) + keysPrefix + "/" + name

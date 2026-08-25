@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -57,9 +58,10 @@ func toKVKey(name string, v *keyVersion) driver.KVKey {
 	return kv
 }
 
-// liveKey returns the stored key if it exists and is not soft-deleted.
-func (m *Mock) liveKey(name string) *keyData {
-	kd, ok := m.keys.Get(name)
+// liveKey returns the stored key from store if it exists and is not
+// soft-deleted.
+func liveKey(store *memstore.Store[*keyData], name string) *keyData {
+	kd, ok := store.Get(name)
 	if !ok {
 		return nil
 	}
@@ -91,8 +93,8 @@ func findKeyVersion(kd *keyData, version string) *keyVersion {
 }
 
 // GetKey returns one key version. Empty version returns the current version.
-func (m *Mock) GetKey(_ context.Context, name, version string) (*driver.KVKey, error) {
-	kd := m.liveKey(name)
+func (m *Mock) GetKey(_ context.Context, vault, name, version string) (*driver.KVKey, error) {
+	kd := liveKey(m.vault(vault).keys, name)
 	if kd == nil {
 		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
 	}
@@ -111,8 +113,8 @@ func (m *Mock) GetKey(_ context.Context, name, version string) (*driver.KVKey, e
 }
 
 // ListKeys returns the current version of each live key.
-func (m *Mock) ListKeys(_ context.Context) ([]driver.KVKey, error) {
-	all := m.keys.All()
+func (m *Mock) ListKeys(_ context.Context, vault string) ([]driver.KVKey, error) {
+	all := m.vault(vault).keys.All()
 
 	out := make([]driver.KVKey, 0, len(all))
 
@@ -130,8 +132,8 @@ func (m *Mock) ListKeys(_ context.Context) ([]driver.KVKey, error) {
 }
 
 // ListKeyVersions returns every version of a key.
-func (m *Mock) ListKeyVersions(_ context.Context, name string) ([]driver.KVKey, error) {
-	kd := m.liveKey(name)
+func (m *Mock) ListKeyVersions(_ context.Context, vault, name string) ([]driver.KVKey, error) {
+	kd := liveKey(m.vault(vault).keys, name)
 	if kd == nil {
 		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
 	}
@@ -148,8 +150,8 @@ func (m *Mock) ListKeyVersions(_ context.Context, name string) ([]driver.KVKey, 
 }
 
 // UpdateKey patches a version's attributes, tags and key operations.
-func (m *Mock) UpdateKey(_ context.Context, name, version string, patch driver.KVKeyPatch) (*driver.KVKey, error) {
-	kd := m.liveKey(name)
+func (m *Mock) UpdateKey(_ context.Context, vault, name, version string, patch driver.KVKeyPatch) (*driver.KVKey, error) {
+	kd := liveKey(m.vault(vault).keys, name)
 	if kd == nil {
 		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
 	}
@@ -193,8 +195,8 @@ func applyKeyPatch(v *keyVersion, patch driver.KVKeyPatch) {
 }
 
 // DeleteKey soft-deletes a key and returns its deleted view.
-func (m *Mock) DeleteKey(_ context.Context, name string) (*driver.KVDeletedKey, error) {
-	kd := m.liveKey(name)
+func (m *Mock) DeleteKey(_ context.Context, vault, name string) (*driver.KVDeletedKey, error) {
+	kd := liveKey(m.vault(vault).keys, name)
 	if kd == nil {
 		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
 	}
@@ -228,8 +230,8 @@ func deletedKeyView(kd *keyData) *driver.KVDeletedKey {
 }
 
 // GetDeletedKey returns a soft-deleted key by name.
-func (m *Mock) GetDeletedKey(_ context.Context, name string) (*driver.KVDeletedKey, error) {
-	kd, ok := m.keys.Get(name)
+func (m *Mock) GetDeletedKey(_ context.Context, vault, name string) (*driver.KVDeletedKey, error) {
+	kd, ok := m.vault(vault).keys.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "deleted key %q not found", name)
 	}
@@ -245,8 +247,8 @@ func (m *Mock) GetDeletedKey(_ context.Context, name string) (*driver.KVDeletedK
 }
 
 // ListDeletedKeys returns all soft-deleted keys.
-func (m *Mock) ListDeletedKeys(_ context.Context) ([]driver.KVDeletedKey, error) {
-	all := m.keys.All()
+func (m *Mock) ListDeletedKeys(_ context.Context, vault string) ([]driver.KVDeletedKey, error) {
+	all := m.vault(vault).keys.All()
 
 	out := make([]driver.KVDeletedKey, 0, len(all))
 
@@ -262,8 +264,8 @@ func (m *Mock) ListDeletedKeys(_ context.Context) ([]driver.KVDeletedKey, error)
 }
 
 // RecoverDeletedKey clears the soft-delete state of a key.
-func (m *Mock) RecoverDeletedKey(_ context.Context, name string) (*driver.KVKey, error) {
-	kd, ok := m.keys.Get(name)
+func (m *Mock) RecoverDeletedKey(_ context.Context, vault, name string) (*driver.KVKey, error) {
+	kd, ok := m.vault(vault).keys.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "deleted key %q not found", name)
 	}
@@ -289,8 +291,10 @@ func (m *Mock) RecoverDeletedKey(_ context.Context, name string) (*driver.KVKey,
 }
 
 // PurgeDeletedKey permanently removes a soft-deleted key.
-func (m *Mock) PurgeDeletedKey(_ context.Context, name string) error {
-	kd, ok := m.keys.Get(name)
+func (m *Mock) PurgeDeletedKey(_ context.Context, vault, name string) error {
+	store := m.vault(vault).keys
+
+	kd, ok := store.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "deleted key %q not found", name)
 	}
@@ -303,7 +307,58 @@ func (m *Mock) PurgeDeletedKey(_ context.Context, name string) error {
 		return errors.Newf(errors.NotFound, "deleted key %q not found", name)
 	}
 
-	m.keys.Delete(name)
+	store.Delete(name)
 
 	return nil
+}
+
+// GetKeyRotationPolicy returns name's rotation policy. A key that has never
+// had a policy set returns Key Vault's empty default (no lifetime actions, no
+// expiry) rather than an error.
+func (m *Mock) GetKeyRotationPolicy(_ context.Context, vault, name string) (*driver.KVRotationPolicy, error) {
+	kd := liveKey(m.vault(vault).keys, name)
+	if kd == nil {
+		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
+	}
+
+	kd.mu.RLock()
+	defer kd.mu.RUnlock()
+
+	if kd.rotationPolicy == nil {
+		return &driver.KVRotationPolicy{}, nil
+	}
+
+	policy := *kd.rotationPolicy
+
+	return &policy, nil
+}
+
+// UpdateKeyRotationPolicy replaces name's rotation policy, preserving its
+// original Created time (Key Vault semantics: Created is set once, Updated
+// changes on every write).
+func (m *Mock) UpdateKeyRotationPolicy(
+	_ context.Context, vault, name string, policy driver.KVRotationPolicy,
+) (*driver.KVRotationPolicy, error) {
+	kd := liveKey(m.vault(vault).keys, name)
+	if kd == nil {
+		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
+	}
+
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+
+	now := m.opts.Clock.Now().UTC().Unix()
+
+	created := now
+	if kd.rotationPolicy != nil {
+		created = kd.rotationPolicy.Created
+	}
+
+	policy.Created = created
+	policy.Updated = now
+	kd.rotationPolicy = &policy
+
+	stored := *kd.rotationPolicy
+
+	return &stored, nil
 }

@@ -191,6 +191,40 @@ func (h *Handler) routeDeleted(w http.ResponseWriter, r *http.Request, tail stri
 	}
 }
 
+// vaultSuffixes are the DNS suffixes real Key Vault and Managed HSM data-plane
+// hosts are addressed under, across Azure public/US Gov/China clouds. The
+// vault (or HSM) name is the leading label of the host.
+//
+//nolint:gochecknoglobals // read-only lookup table, not mutable state
+var vaultSuffixes = []string{
+	".vault.azure.net",
+	".vault.azure.cn",
+	".vault.usgovcloudapi.net",
+	".managedhsm.azure.net",
+	".managedhsm.azure.cn",
+	".managedhsm.usgovcloudapi.net",
+}
+
+// vaultFromRequest extracts the vault name that scopes secret/key isolation
+// for r, so that a secret or key created in one vault is never visible
+// through another. Real Key Vault clients address a vault via its unique
+// {vault-name}.vault.azure.net (or Managed HSM equivalent) subdomain; a
+// request whose Host carries none of those suffixes (a bare host, as in a
+// test pointed directly at this server without DisableChallengeResourceVerification-style
+// vault URLs) falls back to a single "default" vault, matching this server's
+// pre-multi-vault behavior.
+func vaultFromRequest(r *http.Request) string {
+	host, _, _ := strings.Cut(r.Host, ":")
+
+	for _, suffix := range vaultSuffixes {
+		if i := strings.Index(host, suffix); i > 0 {
+			return host[:i]
+		}
+	}
+
+	return "default"
+}
+
 // bearerChallenge answers an unauthenticated request with the Key Vault bearer
 // challenge and reports whether it handled the request. Key Vault SDKs expect a
 // 401 with a WWW-Authenticate header before retrying with a token.

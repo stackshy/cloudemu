@@ -11,7 +11,7 @@ import (
 // cryptoOp decodes a keyOperationRequest, runs op, and writes the result.
 func cryptoOp(
 	w http.ResponseWriter, r *http.Request, name, version string,
-	op func(name, version string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error),
+	op func(vault, name, version string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error),
 ) {
 	var req keyOperationRequest
 	if !wire.DecodeJSON(w, r, &req) {
@@ -24,7 +24,7 @@ func cryptoOp(
 		return
 	}
 
-	res, err := op(name, version, secretsdriver.KVCryptoParams{Algorithm: req.Alg, Value: value})
+	res, err := op(vaultFromRequest(r), name, version, secretsdriver.KVCryptoParams{Algorithm: req.Alg, Value: value})
 	if err != nil {
 		writeKeyErr(w, err)
 		return
@@ -37,32 +37,32 @@ func cryptoOp(
 }
 
 func (h *KeysHandler) encrypt(w http.ResponseWriter, r *http.Request, name, version string) {
-	cryptoOp(w, r, name, version, func(n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
-		return h.kv.EncryptKey(r.Context(), n, v, p)
+	cryptoOp(w, r, name, version, func(vault, n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
+		return h.kv.EncryptKey(r.Context(), vault, n, v, p)
 	})
 }
 
 func (h *KeysHandler) decrypt(w http.ResponseWriter, r *http.Request, name, version string) {
-	cryptoOp(w, r, name, version, func(n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
-		return h.kv.DecryptKey(r.Context(), n, v, p)
+	cryptoOp(w, r, name, version, func(vault, n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
+		return h.kv.DecryptKey(r.Context(), vault, n, v, p)
 	})
 }
 
 func (h *KeysHandler) wrapKey(w http.ResponseWriter, r *http.Request, name, version string) {
-	cryptoOp(w, r, name, version, func(n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
-		return h.kv.WrapKey(r.Context(), n, v, p)
+	cryptoOp(w, r, name, version, func(vault, n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
+		return h.kv.WrapKey(r.Context(), vault, n, v, p)
 	})
 }
 
 func (h *KeysHandler) unwrapKey(w http.ResponseWriter, r *http.Request, name, version string) {
-	cryptoOp(w, r, name, version, func(n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
-		return h.kv.UnwrapKey(r.Context(), n, v, p)
+	cryptoOp(w, r, name, version, func(vault, n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
+		return h.kv.UnwrapKey(r.Context(), vault, n, v, p)
 	})
 }
 
 func (h *KeysHandler) sign(w http.ResponseWriter, r *http.Request, name, version string) {
-	cryptoOp(w, r, name, version, func(n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
-		return h.kv.SignKey(r.Context(), n, v, p)
+	cryptoOp(w, r, name, version, func(vault, n, v string, p secretsdriver.KVCryptoParams) (*secretsdriver.KVCryptoResult, error) {
+		return h.kv.SignKey(r.Context(), vault, n, v, p)
 	})
 }
 
@@ -84,7 +84,7 @@ func (h *KeysHandler) verify(w http.ResponseWriter, r *http.Request, name, versi
 		return
 	}
 
-	ok, err := h.kv.VerifyKey(r.Context(), name, version, secretsdriver.KVCryptoParams{
+	ok, err := h.kv.VerifyKey(r.Context(), vaultFromRequest(r), name, version, secretsdriver.KVCryptoParams{
 		Algorithm: req.Alg,
 		Value:     digest,
 		Signature: sig,

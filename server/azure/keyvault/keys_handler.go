@@ -21,6 +21,8 @@
 //	POST   /keys/{name}/{version}/unwrapkey     — unwrap key
 //	POST   /keys/{name}/{version}/sign          — sign digest
 //	POST   /keys/{name}/{version}/verify        — verify signature
+//	GET    /keys/{name}/rotationpolicy          — get key rotation policy
+//	PUT    /keys/{name}/rotationpolicy          — update key rotation policy
 //	GET    /deletedkeys                         — list deleted keys
 //	GET    /deletedkeys/{name}                  — get deleted key
 //	POST   /deletedkeys/{name}/recover          — recover deleted key
@@ -39,6 +41,7 @@ const (
 	keysPrefix        = "/keys"
 	deletedKeysPrefix = "/deletedkeys"
 	createSeg         = "create"
+	rotationPolicySeg = "rotationpolicy"
 	encryptSeg        = "encrypt"
 	decryptSeg        = "decrypt"
 	wrapSeg           = "wrapkey"
@@ -129,6 +132,14 @@ func (h *KeysHandler) routeNamedKey(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
+	// rotationpolicy is not version-scoped (there is no /keys/{name}/{version}/
+	// rotationpolicy shape) and must be routed before the version/op split
+	// below, which would otherwise misread "rotationpolicy" as a version.
+	if sub == rotationPolicySeg {
+		h.routeKeyRotationPolicy(w, r, name)
+		return
+	}
+
 	// A crypto operation on the current version collapses to /keys/{name}/{op}
 	// (the SDK drops the empty version segment).
 	if isCryptoOp(sub) {
@@ -184,6 +195,18 @@ func (h *KeysHandler) routeCryptoOp(w http.ResponseWriter, r *http.Request, name
 		h.verify(w, r, name, version)
 	default:
 		writeErr(w, http.StatusNotFound, "NotFound", "unsupported Key Vault operation")
+	}
+}
+
+// routeKeyRotationPolicy dispatches GET/PUT /keys/{name}/rotationpolicy.
+func (h *KeysHandler) routeKeyRotationPolicy(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getKeyRotationPolicy(w, r, name)
+	case http.MethodPut:
+		h.updateKeyRotationPolicy(w, r, name)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -60,6 +61,10 @@ type keyData struct {
 	versions       []keyVersion
 	deletedAt      time.Time
 	scheduledPurge time.Time
+	// rotationPolicy is nil until UpdateKeyRotationPolicy is called, at which
+	// point Key Vault starts returning it verbatim; GetKeyRotationPolicy
+	// synthesizes an empty default policy while it is nil.
+	rotationPolicy *driver.KVRotationPolicy
 	mu             sync.RWMutex
 }
 
@@ -118,7 +123,7 @@ func curveFor(name string) (elliptic.Curve, error) {
 
 // CreateKey generates a new key (RSA or EC) with real key material and stores
 // it as the current version, creating a new version if the name already exists.
-func (m *Mock) CreateKey(_ context.Context, name string, params *driver.KVCreateKeyParams) (*driver.KVKey, error) {
+func (m *Mock) CreateKey(_ context.Context, vault, name string, params *driver.KVCreateKeyParams) (*driver.KVKey, error) {
 	if name == "" {
 		return nil, errors.New(errors.InvalidArgument, "key name is required")
 	}
@@ -128,7 +133,7 @@ func (m *Mock) CreateKey(_ context.Context, name string, params *driver.KVCreate
 		return nil, err
 	}
 
-	return m.storeVersion(name, v)
+	return storeVersion(m.vault(vault).keys, name, v)
 }
 
 func (m *Mock) generateVersion(params *driver.KVCreateKeyParams) (*keyVersion, error) {
@@ -214,10 +219,11 @@ func generateEC(v *keyVersion, params *driver.KVCreateKeyParams) error {
 	return nil
 }
 
-// storeVersion appends v as the current version of name, creating the key if
-// it does not yet exist. A soft-deleted name cannot be reused until recovered.
-func (m *Mock) storeVersion(name string, v *keyVersion) (*driver.KVKey, error) {
-	if kd, ok := m.keys.Get(name); ok {
+// storeVersion appends v as the current version of name in store, creating
+// the key if it does not yet exist. A soft-deleted name cannot be reused
+// until recovered.
+func storeVersion(store *memstore.Store[*keyData], name string, v *keyVersion) (*driver.KVKey, error) {
+	if kd, ok := store.Get(name); ok {
 		kd.mu.Lock()
 		defer kd.mu.Unlock()
 
@@ -236,7 +242,7 @@ func (m *Mock) storeVersion(name string, v *keyVersion) (*driver.KVKey, error) {
 	}
 
 	kd := &keyData{name: name, versions: []keyVersion{*v}}
-	m.keys.Set(name, kd)
+	store.Set(name, kd)
 
 	kv := toKVKey(name, &kd.versions[0])
 
@@ -245,7 +251,7 @@ func (m *Mock) storeVersion(name string, v *keyVersion) (*driver.KVKey, error) {
 
 // ImportKey stores a caller-supplied key. RSA and EC keys are reconstructed
 // from their JWK components; oct keys keep their raw bytes.
-func (m *Mock) ImportKey(_ context.Context, name string, params *driver.KVImportKeyParams) (*driver.KVKey, error) {
+func (m *Mock) ImportKey(_ context.Context, vault, name string, params *driver.KVImportKeyParams) (*driver.KVKey, error) {
 	if name == "" {
 		return nil, errors.New(errors.InvalidArgument, "key name is required")
 	}
@@ -280,7 +286,7 @@ func (m *Mock) ImportKey(_ context.Context, name string, params *driver.KVImport
 		v.kty = hsmVariant(v.kty)
 	}
 
-	return m.storeVersion(name, v)
+	return storeVersion(m.vault(vault).keys, name, v)
 }
 
 func importMaterial(v *keyVersion, jwk *driver.KVImportJWK) error {
