@@ -67,6 +67,13 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
+	// Aggregated-scope requests (aggregatedList) are not implemented for these
+	// networking resources; leave them unmatched so the dispatcher's default
+	// applies rather than mis-serving them as a scoped list.
+	if rp.Scope == gcprest.ScopeAggregated {
+		return false
+	}
+
 	switch rp.ResourceType {
 	case resourceNetworks, resourceSubnetworks, resourceFirewalls, resourceRouters, resourceAddresses:
 		return true

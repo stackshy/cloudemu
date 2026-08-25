@@ -64,6 +64,13 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
+	// Aggregated-scope requests (aggregatedList) are not implemented for these
+	// load-balancer resources; leave them unmatched so the dispatcher's default
+	// applies rather than mis-serving them as a scoped list.
+	if rp.Scope == gcprest.ScopeAggregated {
+		return false
+	}
+
 	switch rp.ResourceType {
 	case resourceBackendServices, resourceForwardingRules:
 		return true
