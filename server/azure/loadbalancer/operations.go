@@ -40,7 +40,13 @@ func (h *Handler) createOrUpdateLoadBalancer(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	stored, err := az.CreateOrUpdateAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName, buildAzureLB(&body))
+	azLB := buildAzureLB(&body)
+	if verr := validateAzureLB(&azLB); verr != nil {
+		azurearm.WriteCErr(w, verr)
+		return
+	}
+
+	stored, err := az.CreateOrUpdateAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName, azLB)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -142,6 +148,9 @@ func buildAzureLB(body *loadBalancerJSON) lbdriver.AzureLoadBalancer {
 	lb.BackendPools = buildPools(body.Properties.BackendAddressPools)
 	lb.Probes = buildProbes(body.Properties.Probes)
 	lb.Rules = buildRules(body.Properties.LoadBalancingRules)
+	lb.NatRules = buildNatRules(body.Properties.InboundNatRules)
+	lb.NatPools = buildNatPools(body.Properties.InboundNatPools)
+	lb.OutboundRules = buildOutboundRules(body.Properties.OutboundRules)
 
 	return lb
 }
@@ -227,6 +236,85 @@ func buildRules(in []loadBalancingRuleJSON) []lbdriver.AzureLBRule {
 			if p.EnableFloatingIP != nil {
 				rule.EnableFloatingIP = *p.EnableFloatingIP
 			}
+
+			if p.DisableOutboundSnat != nil {
+				rule.DisableOutboundSnat = *p.DisableOutboundSnat
+			}
+		}
+
+		out = append(out, rule)
+	}
+
+	return out
+}
+
+func buildNatRules(in []inboundNatRuleJSON) []lbdriver.AzureLBNatRule {
+	out := make([]lbdriver.AzureLBNatRule, 0, len(in))
+
+	for i := range in {
+		rule := lbdriver.AzureLBNatRule{Name: in[i].Name}
+
+		if p := in[i].Properties; p != nil {
+			rule.Protocol = firstNonEmpty(p.Protocol, protocolTCP)
+			rule.FrontendPort = int(p.FrontendPort)
+			rule.BackendPort = int(p.BackendPort)
+
+			if rule.BackendPort == 0 {
+				rule.BackendPort = rule.FrontendPort
+			}
+
+			rule.FrontendName = lastPathSegment(refID(p.FrontendIPConfiguration))
+			rule.IdleTimeoutMin = int(p.IdleTimeoutInMinutes)
+
+			if p.EnableFloatingIP != nil {
+				rule.EnableFloatingIP = *p.EnableFloatingIP
+			}
+		}
+
+		out = append(out, rule)
+	}
+
+	return out
+}
+
+func buildNatPools(in []inboundNatPoolJSON) []lbdriver.AzureLBNatPool {
+	out := make([]lbdriver.AzureLBNatPool, 0, len(in))
+
+	for i := range in {
+		pool := lbdriver.AzureLBNatPool{Name: in[i].Name}
+
+		if p := in[i].Properties; p != nil {
+			pool.Protocol = firstNonEmpty(p.Protocol, protocolTCP)
+			pool.FrontendPortRangeStart = int(p.FrontendPortRangeStart)
+			pool.FrontendPortRangeEnd = int(p.FrontendPortRangeEnd)
+			pool.BackendPort = int(p.BackendPort)
+			pool.FrontendName = lastPathSegment(refID(p.FrontendIPConfiguration))
+		}
+
+		out = append(out, pool)
+	}
+
+	return out
+}
+
+func buildOutboundRules(in []outboundRuleJSON) []lbdriver.AzureLBOutboundRule {
+	out := make([]lbdriver.AzureLBOutboundRule, 0, len(in))
+
+	for i := range in {
+		rule := lbdriver.AzureLBOutboundRule{Name: in[i].Name}
+
+		if p := in[i].Properties; p != nil {
+			rule.Protocol = firstNonEmpty(p.Protocol, protocolTCP)
+			rule.BackendPoolName = lastPathSegment(refID(p.BackendAddressPool))
+			rule.AllocatedOutboundPorts = int(p.AllocatedOutboundPorts)
+			rule.IdleTimeoutMin = int(p.IdleTimeoutInMinutes)
+
+			for j := range p.FrontendIPConfigurations {
+				fe := lastPathSegment(p.FrontendIPConfigurations[j].ID)
+				if fe != "" {
+					rule.FrontendNames = append(rule.FrontendNames, fe)
+				}
+			}
 		}
 
 		out = append(out, rule)
@@ -248,6 +336,9 @@ func toLBJSON(rp *azurearm.ResourcePath, lb *lbdriver.AzureLoadBalancer) loadBal
 		BackendAddressPools:      poolsJSON(lbID, lb.BackendPools),
 		Probes:                   probesJSON(lbID, lb.Probes),
 		LoadBalancingRules:       rulesJSON(lbID, lb.Rules),
+		InboundNatRules:          natRulesJSON(lbID, lb.NatRules),
+		InboundNatPools:          natPoolsJSON(lbID, lb.NatPools),
+		OutboundRules:            outboundRulesJSON(lbID, lb.OutboundRules),
 	}
 
 	return loadBalancerJSON{
@@ -339,6 +430,7 @@ func rulesJSON(lbID string, in []lbdriver.AzureLBRule) []loadBalancingRuleJSON {
 			IdleTimeoutInMinutes: i32(rule.IdleTimeoutMin),
 			LoadDistribution:     rule.LoadDistribution,
 			EnableFloatingIP:     &rule.EnableFloatingIP,
+			DisableOutboundSnat:  &rule.DisableOutboundSnat,
 			ProvisioningState:    provisioningStateSucceeded,
 		}
 
@@ -356,6 +448,89 @@ func rulesJSON(lbID string, in []lbdriver.AzureLBRule) []loadBalancingRuleJSON {
 
 		out = append(out, loadBalancingRuleJSON{
 			ID: id, Name: rule.Name, Type: ruleResourceType, Etag: weakETag(id), Properties: p,
+		})
+	}
+
+	return out
+}
+
+func natRulesJSON(lbID string, in []lbdriver.AzureLBNatRule) []inboundNatRuleJSON {
+	out := make([]inboundNatRuleJSON, 0, len(in))
+
+	for i := range in {
+		rule := in[i]
+		id := lbID + "/inboundNatRules/" + rule.Name
+		p := &inboundNatRuleProps{
+			Protocol:             firstNonEmpty(rule.Protocol, protocolTCP),
+			FrontendPort:         i32(rule.FrontendPort),
+			BackendPort:          i32(rule.BackendPort),
+			IdleTimeoutInMinutes: i32(rule.IdleTimeoutMin),
+			EnableFloatingIP:     &rule.EnableFloatingIP,
+			ProvisioningState:    provisioningStateSucceeded,
+		}
+
+		if rule.FrontendName != "" {
+			p.FrontendIPConfiguration = &subResource{ID: lbID + "/frontendIPConfigurations/" + rule.FrontendName}
+		}
+
+		out = append(out, inboundNatRuleJSON{
+			ID: id, Name: rule.Name, Type: natRuleResourceType, Etag: weakETag(id), Properties: p,
+		})
+	}
+
+	return out
+}
+
+func natPoolsJSON(lbID string, in []lbdriver.AzureLBNatPool) []inboundNatPoolJSON {
+	out := make([]inboundNatPoolJSON, 0, len(in))
+
+	for i := range in {
+		pool := in[i]
+		id := lbID + "/inboundNatPools/" + pool.Name
+		p := &inboundNatPoolProps{
+			Protocol:               firstNonEmpty(pool.Protocol, protocolTCP),
+			FrontendPortRangeStart: i32(pool.FrontendPortRangeStart),
+			FrontendPortRangeEnd:   i32(pool.FrontendPortRangeEnd),
+			BackendPort:            i32(pool.BackendPort),
+			ProvisioningState:      provisioningStateSucceeded,
+		}
+
+		if pool.FrontendName != "" {
+			p.FrontendIPConfiguration = &subResource{ID: lbID + "/frontendIPConfigurations/" + pool.FrontendName}
+		}
+
+		out = append(out, inboundNatPoolJSON{
+			ID: id, Name: pool.Name, Type: natPoolResourceType, Etag: weakETag(id), Properties: p,
+		})
+	}
+
+	return out
+}
+
+func outboundRulesJSON(lbID string, in []lbdriver.AzureLBOutboundRule) []outboundRuleJSON {
+	out := make([]outboundRuleJSON, 0, len(in))
+
+	for i := range in {
+		rule := in[i]
+		id := lbID + "/outboundRules/" + rule.Name
+		p := &outboundRuleProps{
+			Protocol:               firstNonEmpty(rule.Protocol, protocolTCP),
+			AllocatedOutboundPorts: i32(rule.AllocatedOutboundPorts),
+			IdleTimeoutInMinutes:   i32(rule.IdleTimeoutMin),
+			ProvisioningState:      provisioningStateSucceeded,
+		}
+
+		if rule.BackendPoolName != "" {
+			p.BackendAddressPool = &subResource{ID: lbID + "/backendAddressPools/" + rule.BackendPoolName}
+		}
+
+		for _, fe := range rule.FrontendNames {
+			p.FrontendIPConfigurations = append(p.FrontendIPConfigurations,
+				subResource{ID: lbID + "/frontendIPConfigurations/" + fe})
+		}
+
+		out = append(out, outboundRuleJSON{
+			ID: id, Name: rule.Name, Type: outboundRuleResourceType, Etag: weakETag(id), Properties: p,
 		})
 	}
 

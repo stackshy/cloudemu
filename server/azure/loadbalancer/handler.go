@@ -34,6 +34,24 @@
 //	DELETE .../loadBalancers/{name}            — LoadBalancers.BeginDelete (LRO, sync-200)
 //	GET    .../resourceGroups/{rg}/…/loadBalancers    — LoadBalancers.List (RG scope)
 //	GET    .../subscriptions/{s}/…/loadBalancers      — LoadBalancers.ListAll (sub scope)
+//
+// Sub-resource requests (a URL with a segment past the load balancer name)
+// route through serveSubResource (subresource.go) to true per-child CRUD
+// instead of ever reaching the whole-LB handlers above, matching the real ARM
+// operation surface per child kind:
+//
+//	GET                     .../backendAddressPools[/{name}]      — Get/List
+//	PUT/DELETE              .../backendAddressPools/{name}        — BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
+//	GET                     .../inboundNatRules[/{name}]          — Get/List
+//	PUT/DELETE              .../inboundNatRules/{name}            — BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
+//	GET                     .../probes[/{name}]                   — Get/List only (405 on PUT/DELETE)
+//	GET                     .../loadBalancingRules[/{name}]       — Get/List only (405 on PUT/DELETE)
+//	GET                     .../outboundRules[/{name}]            — Get/List only (405 on PUT/DELETE)
+//	GET                     .../frontendIPConfigurations[/{name}] — Get/List only (405 on PUT/DELETE)
+//
+// inboundNatPools has no standalone ARM operation group at all — it is
+// reflected only as a nested array inside the whole load balancer body, so a
+// request addressing it standalone 404s.
 package loadbalancer
 
 import (
@@ -92,6 +110,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		h.listLoadBalancers(w, r, &rp)
 
+		return
+	}
+
+	// A sub-resource segment (backendAddressPools, probes, loadBalancingRules,
+	// inboundNatRules, inboundNatPools, outboundRules, frontendIPConfigurations)
+	// addresses one child of the load balancer, not the load balancer itself —
+	// route it to per-child CRUD before any whole-LB handler ever sees the
+	// request. Falling through here would let a standalone child PUT/GET/DELETE
+	// be misparsed as a whole-LB request scoped to rp.ResourceName, silently
+	// wiping or deleting every other child.
+	if rp.SubResource != "" {
+		h.serveSubResource(w, r, &rp)
 		return
 	}
 

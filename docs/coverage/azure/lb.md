@@ -38,9 +38,13 @@ AzureLoadBalancers is an OPTIONAL, type-asserted capability. The Azure
 | Operation | Description |
 | --- | --- |
 | `CreateOrUpdateAzureLoadBalancer` |  |
+| `DeleteAzureLBBackendPool` | DeleteAzureLBBackendPool removes a single backend pool by name, leaving |
+| `DeleteAzureLBNatRule` | DeleteAzureLBNatRule removes a single inbound NAT rule by name, leaving |
 | `DeleteAzureLoadBalancer` |  |
 | `GetAzureLoadBalancer` |  |
 | `ListAzureLoadBalancers` |  |
+| `UpsertAzureLBBackendPool` | UpsertAzureLBBackendPool adds poolName to the load balancer's backend |
+| `UpsertAzureLBNatRule` | UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by |
 
 ### LBAttributeUpdater
 
