@@ -133,13 +133,20 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 		t.Errorf("disk-0 diskState=%v, want Attached", diskStateOf(gotDisk1))
 	}
 
-	// PATCH (BeginUpdate) attaches disk-1 at lun 1 — the non-recreating
-	// merge-patch path — without disturbing the existing lun-0 attachment.
+	// PATCH (BeginUpdate) adds disk-1 at lun 1 via the real read-modify-write
+	// pattern: the desired dataDisks list carries BOTH lun 0 (kept) and lun 1
+	// (new). A PATCH's supplied dataDisks array is a full replace, so keeping an
+	// existing attachment means re-listing it — the same way `az vm disk attach`
+	// GETs, appends, then updates.
 	updatePoller, err := vmClient.BeginUpdate(ctx, "rg-1", "vm-disks",
 		armcompute.VirtualMachineUpdate{
 			Properties: &armcompute.VirtualMachineProperties{
 				StorageProfile: &armcompute.StorageProfile{
 					DataDisks: []*armcompute.DataDisk{{
+						Lun:          to.Ptr[int32](0),
+						CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
+						ManagedDisk:  &armcompute.ManagedDiskParameters{ID: disk1.ID},
+					}, {
 						Lun:          to.Ptr[int32](1),
 						CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
 						ManagedDisk:  &armcompute.ManagedDiskParameters{ID: disk2.ID},
@@ -162,8 +169,9 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 
 	assertDataDiskLUNs(t, got.Properties.StorageProfile, 0, 1)
 
-	// PATCH detaches lun 0 via toBeDetached — real Azure's Update semantics,
-	// distinct from PUT's declarative "omit to detach".
+	// PATCH detaches lun 0 via toBeDetached while keeping lun 1 — real Azure's
+	// graceful-detach shape (list all disks, mark the one to detach). lun 1 is
+	// re-listed so the full-replace PATCH keeps it attached.
 	detachPoller, err := vmClient.BeginUpdate(ctx, "rg-1", "vm-disks",
 		armcompute.VirtualMachineUpdate{
 			Properties: &armcompute.VirtualMachineProperties{
@@ -171,6 +179,10 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 					DataDisks: []*armcompute.DataDisk{{
 						Lun:          to.Ptr[int32](0),
 						ToBeDetached: to.Ptr(true),
+					}, {
+						Lun:          to.Ptr[int32](1),
+						CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
+						ManagedDisk:  &armcompute.ManagedDiskParameters{ID: disk2.ID},
 					}},
 				},
 			},
