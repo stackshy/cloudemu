@@ -274,14 +274,15 @@ func (h *Handler) createV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	fn.revisionSeq = 1
 	computeGen2Outputs(&fn, p, true)
 	h.gen2[key] = &fn
+	resp := cloneGen2(&fn)
 	h.mu.Unlock()
 
-	h.finishV2LRO(w, p, &fn)
+	h.finishV2LRO(w, p, resp)
 }
 
 func (h *Handler) getV2(w http.ResponseWriter, p v2Path) {
 	h.mu.RLock()
-	fn := h.gen2[p.fullName()]
+	fn := cloneGen2(h.gen2[p.fullName()])
 	h.mu.RUnlock()
 
 	if fn == nil {
@@ -299,7 +300,7 @@ func (h *Handler) listV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	prefix := "projects/" + p.project + "/locations/" + p.location + "/functions/"
 	for name, fn := range h.gen2 {
 		if strings.HasPrefix(name, prefix) {
-			fns = append(fns, *fn)
+			fns = append(fns, *cloneGen2(fn))
 		}
 	}
 	h.mu.RUnlock()
@@ -337,11 +338,11 @@ func (h *Handler) patchV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	mergeGen2(fn, &body)
 	computeGen2Outputs(fn, p, false)
 
-	updated := *fn
+	updated := cloneGen2(fn)
 
 	h.mu.Unlock()
 
-	h.finishV2LRO(w, p, &updated)
+	h.finishV2LRO(w, p, updated)
 }
 
 func (h *Handler) deleteV2(w http.ResponseWriter, p v2Path) {
@@ -575,6 +576,66 @@ func resourceAsResponseV2(fn *gen2Function) map[string]any {
 	_ = json.Unmarshal(b, &fields)
 
 	for k, v := range fields {
+		out[k] = v
+	}
+
+	return out
+}
+
+// cloneGen2 returns a deep copy of fn: the nested BuildConfig/ServiceConfig/
+// EventTrigger structs and every map are cloned, so the copy shares no mutable
+// state with the stored function. Readers clone under the lock and then marshal
+// the copy after releasing it, so a concurrent patchV2 (which mutates the stored
+// serviceConfig in place and reassigns nested pointers) can never be observed
+// mid-write. A shallow struct copy is not enough — it still aliases the nested
+// pointers and maps.
+func cloneGen2(fn *gen2Function) *gen2Function {
+	if fn == nil {
+		return nil
+	}
+
+	out := *fn
+	out.Labels = cloneStringMap(fn.Labels)
+
+	if fn.BuildConfig != nil {
+		bc := *fn.BuildConfig
+		bc.EnvironmentVariables = cloneStringMap(fn.BuildConfig.EnvironmentVariables)
+
+		if fn.BuildConfig.Source != nil {
+			src := *fn.BuildConfig.Source
+
+			if fn.BuildConfig.Source.StorageSource != nil {
+				ss := *fn.BuildConfig.Source.StorageSource
+				src.StorageSource = &ss
+			}
+
+			bc.Source = &src
+		}
+
+		out.BuildConfig = &bc
+	}
+
+	if fn.ServiceConfig != nil {
+		sc := *fn.ServiceConfig
+		sc.EnvironmentVariables = cloneStringMap(fn.ServiceConfig.EnvironmentVariables)
+		out.ServiceConfig = &sc
+	}
+
+	if fn.EventTrigger != nil {
+		et := *fn.EventTrigger
+		out.EventTrigger = &et
+	}
+
+	return &out
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(m))
+	for k, v := range m {
 		out[k] = v
 	}
 

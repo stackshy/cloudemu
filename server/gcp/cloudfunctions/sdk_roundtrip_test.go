@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu/v2"
-	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	"google.golang.org/api/cloudfunctions/v1"
 	"google.golang.org/api/option"
+
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 func newGCPSDKService(t *testing.T) *cloudfunctions.Service {
