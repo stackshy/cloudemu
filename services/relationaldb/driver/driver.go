@@ -290,6 +290,16 @@ type Snapshot struct {
 	State            string
 	CreatedAt        time.Time
 	Tags             map[string]string
+	// The fields below capture the source instance's shape at snapshot time, so a
+	// restore is a self-contained point-in-time image, matching real RDS ("the
+	// target database is created from the source database restore point with most
+	// of the source's original configuration") rather than a live lookup of a
+	// source instance that may since have been deleted. They are empty on
+	// snapshots created before this capture existed; restore falls back to a live
+	// source-instance lookup in that case.
+	MasterUsername string
+	DBName         string
+	Port           int
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -323,7 +333,11 @@ type RestoreInstanceInput struct {
 	NewInstanceID string
 	SnapshotID    string
 	InstanceClass string
-	Tags          map[string]string
+	// Port overrides the restored instance's connection port. Zero means "no
+	// override": AWS falls back to the same port as the original DB instance
+	// the snapshot was taken from, not the engine default.
+	Port int
+	Tags map[string]string
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.
@@ -886,7 +900,11 @@ type ReadReplicaConfig struct {
 	AvailabilityZone   string
 	Port               int
 	PubliclyAccessible bool
-	Tags               map[string]string
+	// DBParameterGroupName overrides the replica's parameter group. Empty
+	// means "no override": AWS inherits the source instance's DBParameterGroup
+	// for a same-Region replica.
+	DBParameterGroupName string
+	Tags                 map[string]string
 }
 
 // ReadReplicas is an OPTIONAL capability for creating and promoting read

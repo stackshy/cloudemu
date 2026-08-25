@@ -19,7 +19,8 @@ func (m *Mock) sourceEngineBacked(engine string) bool {
 }
 
 // CreateDBInstanceReadReplica creates a replica reading from an existing
-// primary instance, inheriting the source's engine, version and storage.
+// primary instance, inheriting the source's engine, version, storage,
+// DBName, and DBParameterGroup unless the caller overrides them.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.ReadReplicaConfig) (*rdsdriver.Instance, error) {
@@ -53,6 +54,14 @@ func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.Read
 		port = src.Port
 	}
 
+	// Same-Region read replicas inherit the source's DBParameterGroup and
+	// DBName unless the caller overrides the parameter group explicitly.
+	// DBName has no override parameter on CreateDBInstanceReadReplica at all.
+	dbParameterGroupName := cfg.DBParameterGroupName
+	if dbParameterGroupName == "" {
+		dbParameterGroupName = src.DBParameterGroupName
+	}
+
 	// A real read replica serves the SOURCE's data. When the source is backed by
 	// a real engine, point the replica at the source's reachable host:port so a
 	// client reading from the replica reaches the real database — provisioning a
@@ -65,22 +74,24 @@ func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.Read
 	}
 
 	replica := rdsdriver.Instance{
-		ID:                 cfg.ID,
-		ARN:                instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:             src.Engine,
-		EngineVersion:      src.EngineVersion,
-		InstanceClass:      instanceClass,
-		AllocatedStorage:   src.AllocatedStorage,
-		StorageType:        src.StorageType,
-		MasterUsername:     src.MasterUsername,
-		Endpoint:           endpoint,
-		Port:               port,
-		State:              rdsdriver.StateAvailable,
-		PubliclyAccessible: cfg.PubliclyAccessible,
-		AvailabilityZone:   cfg.AvailabilityZone,
-		CreatedAt:          m.opts.Clock.Now(),
-		Tags:               copyTags(cfg.Tags),
-		ReadReplicaSource:  cfg.SourceInstanceID,
+		ID:                   cfg.ID,
+		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:               src.Engine,
+		EngineVersion:        src.EngineVersion,
+		InstanceClass:        instanceClass,
+		AllocatedStorage:     src.AllocatedStorage,
+		StorageType:          src.StorageType,
+		MasterUsername:       src.MasterUsername,
+		DBName:               src.DBName,
+		Endpoint:             endpoint,
+		Port:                 port,
+		State:                rdsdriver.StateAvailable,
+		PubliclyAccessible:   cfg.PubliclyAccessible,
+		AvailabilityZone:     cfg.AvailabilityZone,
+		DBParameterGroupName: dbParameterGroupName,
+		CreatedAt:            m.opts.Clock.Now(),
+		Tags:                 copyTags(cfg.Tags),
+		ReadReplicaSource:    cfg.SourceInstanceID,
 	}
 	m.instances.Set(cfg.ID, replica)
 
