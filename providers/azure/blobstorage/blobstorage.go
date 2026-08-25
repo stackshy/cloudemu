@@ -135,14 +135,30 @@ type Mock struct {
 	// accountKeys holds the shared access keys per storage account, generated
 	// lazily on first ListStorageAccountKeys.
 	accountKeys *memstore.Store[[]driver.AccountKey]
-	opts        *config.Options
-	monitoring  mondriver.Monitoring
+	// blobServiceProps holds the account-level Blob service properties
+	// (versioning/soft-delete/change-feed/CORS) set via the blobServices/default
+	// ARM sub-resource, for the BlobServiceConfig capability.
+	blobServiceProps *memstore.Store[driver.BlobServiceProperties]
+	// accountEncryption holds the account's service-side encryption
+	// configuration (Properties.Encryption), for the AccountEncryptionConfig
+	// capability. Kept separate from bucketAttrs so that struct stays small.
+	accountEncryption *memstore.Store[driver.AccountEncryption]
+	opts              *config.Options
+	monitoring        mondriver.Monitoring
 }
 
 // Compile-time check that Mock satisfies the optional BucketAttributes
 // discovery capability, so a signature typo fails the build rather than
 // silently failing the runtime type assertion in walkStorage.
 var _ driver.BucketAttributes = (*Mock)(nil)
+
+// Compile-time check that Mock satisfies the optional BlobServiceConfig
+// capability the ARM storage-account handler reaches by type assertion.
+var _ driver.BlobServiceConfig = (*Mock)(nil)
+
+// Compile-time check that Mock satisfies the optional AccountEncryptionConfig
+// capability the ARM storage-account handler reaches by type assertion.
+var _ driver.AccountEncryptionConfig = (*Mock)(nil)
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
@@ -174,10 +190,12 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 // New creates a new Azure Blob Storage mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		containers:  memstore.New[*containerMeta](),
-		bucketAttrs: memstore.New[driver.AccountAttributes](),
-		accountKeys: memstore.New[[]driver.AccountKey](),
-		opts:        opts,
+		containers:        memstore.New[*containerMeta](),
+		bucketAttrs:       memstore.New[driver.AccountAttributes](),
+		accountKeys:       memstore.New[[]driver.AccountKey](),
+		blobServiceProps:  memstore.New[driver.BlobServiceProperties](),
+		accountEncryption: memstore.New[driver.AccountEncryption](),
+		opts:              opts,
 	}
 }
 
@@ -209,6 +227,63 @@ func (m *Mock) BucketAttributes(_ context.Context, bucket string) (driver.Accoun
 	}
 
 	return a, nil
+}
+
+// UpdateBucketAttributes atomically applies fn to a container's stored
+// attributes (Azure storage-account PATCH — AccountsClient.Update), seeding
+// the real-Azure baseline (Standard_LRS/StorageV2/Hot) first if none was set
+// yet. Routed through memstore's Update rather than a Get-then-Set pair so a
+// concurrent PATCH/create never loses an update.
+func (m *Mock) UpdateBucketAttributes(
+	_ context.Context, name string, fn func(driver.AccountAttributes) driver.AccountAttributes,
+) (driver.AccountAttributes, error) {
+	m.bucketAttrs.SetIfAbsent(name, driver.AccountAttributes{SKU: "Standard_LRS", Kind: "StorageV2", AccessTier: "Hot"})
+
+	var updated driver.AccountAttributes
+
+	m.bucketAttrs.Update(name, func(v driver.AccountAttributes) driver.AccountAttributes {
+		updated = fn(v)
+		return updated
+	})
+
+	return updated, nil
+}
+
+// SetBlobServiceProperties implements the storage BlobServiceConfig optional
+// capability (…/blobServices/default PUT), replacing any previously stored
+// properties for the account wholesale — matching real Azure's Set Blob
+// Service Properties, which takes a complete properties document each call.
+func (m *Mock) SetBlobServiceProperties(_ context.Context, account string, props driver.BlobServiceProperties) error {
+	m.blobServiceProps.Set(account, props)
+
+	return nil
+}
+
+// BlobServiceProperties implements the storage BlobServiceConfig optional
+// capability (…/blobServices/default GET), returning the zero value (all
+// features disabled) for an account that never had properties set — matching
+// real Azure's defaults for a freshly created account.
+func (m *Mock) BlobServiceProperties(_ context.Context, account string) (driver.BlobServiceProperties, error) {
+	props, _ := m.blobServiceProps.Get(account)
+
+	return props, nil
+}
+
+// SetAccountEncryption implements the storage AccountEncryptionConfig
+// optional capability, storing the account's requested encryption
+// configuration so it round-trips on a later GET instead of always reporting
+// the platform-managed default.
+func (m *Mock) SetAccountEncryption(account string, enc driver.AccountEncryption) {
+	m.accountEncryption.Set(account, enc)
+}
+
+// AccountEncryption implements the storage AccountEncryptionConfig optional
+// capability, returning the zero value (platform-managed default) for an
+// account that never requested customer-managed-key encryption.
+func (m *Mock) AccountEncryption(_ context.Context, account string) (driver.AccountEncryption, error) {
+	enc, _ := m.accountEncryption.Get(account)
+
+	return enc, nil
 }
 
 // CreateBucket creates a new blob container.

@@ -51,6 +51,56 @@ type AccountAttributes struct {
 	Tags map[string]string
 }
 
+// AccountEncryption is the storage-account encryption configuration requested
+// on create/update (ARM Properties.Encryption): KeySource is
+// "Microsoft.Storage" (platform-managed, the default) or "Microsoft.Keyvault"
+// (customer-managed key), in which case KeyVaultURI/KeyName/KeyVersion
+// identify the CMK. A zero value means unset, which the handler renders as
+// the platform-managed default. Kept separate from AccountAttributes (rather
+// than a field on it) so that struct stays small enough to pass by value.
+type AccountEncryption struct {
+	KeySource   string
+	KeyVaultURI string
+	KeyName     string
+	KeyVersion  string
+}
+
+// AccountEncryptionConfig is an OPTIONAL Azure-specific capability,
+// discovered by type assertion (like BucketAttributes), that persists and
+// echoes back an account's service-side encryption configuration
+// (Properties.Encryption on create/update), so a customer-managed-key request
+// doesn't silently downgrade to the platform-managed default on the next GET.
+type AccountEncryptionConfig interface {
+	SetAccountEncryption(account string, enc AccountEncryption)
+	AccountEncryption(ctx context.Context, account string) (AccountEncryption, error)
+}
+
+// BlobServiceProperties are the storage-account-level Blob service settings
+// configured via Set/Get Blob Service Properties
+// (…/storageAccounts/{account}/blobServices/default): versioning, soft
+// delete, change feed, and CORS. Real Azure applies these once per storage
+// account, not per container — distinct from the per-bucket CORS/versioning
+// surface on the Bucket interface that S3/GCS also implement.
+type BlobServiceProperties struct {
+	IsVersioningEnabled bool
+	ChangeFeedEnabled   bool
+	// ChangeFeedRetentionDays is 0 for infinite retention (unset).
+	ChangeFeedRetentionDays int
+	DeleteRetentionEnabled  bool
+	// DeleteRetentionDays is 0 when unset.
+	DeleteRetentionDays int
+	CORS                []CORSRule
+}
+
+// BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by
+// type assertion (like BucketAttributes), that persists and echoes back the
+// account-level Blob service properties sub-resource. S3/GCS have no
+// equivalent and don't implement it.
+type BlobServiceConfig interface {
+	SetBlobServiceProperties(ctx context.Context, account string, props BlobServiceProperties) error
+	BlobServiceProperties(ctx context.Context, account string) (BlobServiceProperties, error)
+}
+
 // AccountKey is one access key of an Azure storage account (Microsoft.Storage
 // ListKeys / RegenerateKey). Value is a base64-encoded secret.
 type AccountKey struct {

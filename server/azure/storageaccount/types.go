@@ -4,15 +4,43 @@ package storageaccount
 // emulator reads. armstorage's AccountCreateParameters marshals to these JSON
 // field names.
 type armAccountCreate struct {
-	Location   string                 `json:"location,omitempty"`
-	Kind       string                 `json:"kind,omitempty"`
-	Tags       map[string]string      `json:"tags,omitempty"`
-	SKU        *armSKU                `json:"sku,omitempty"`
-	Properties *armAccountCreateProps `json:"properties,omitempty"`
+	Location   string              `json:"location,omitempty"`
+	Kind       string              `json:"kind,omitempty"`
+	Tags       map[string]string   `json:"tags,omitempty"`
+	SKU        *armSKU             `json:"sku,omitempty"`
+	Properties *armAccountPropsReq `json:"properties,omitempty"`
 }
 
-type armAccountCreateProps struct {
-	AccessTier string `json:"accessTier,omitempty"`
+// armAccountUpdate is the subset of the ARM storage-account PATCH body the
+// emulator reads. armstorage's AccountUpdateParameters marshals to these same
+// JSON field names (minus location, which a PATCH cannot change).
+type armAccountUpdate struct {
+	Kind       string              `json:"kind,omitempty"`
+	Tags       map[string]string   `json:"tags,omitempty"`
+	SKU        *armSKU             `json:"sku,omitempty"`
+	Properties *armAccountPropsReq `json:"properties,omitempty"`
+}
+
+// armAccountPropsReq is the settable subset of properties on a create or
+// update request body — shared because AccountPropertiesCreateParameters and
+// AccountPropertiesUpdateParameters marshal accessTier/encryption identically.
+type armAccountPropsReq struct {
+	AccessTier string            `json:"accessTier,omitempty"`
+	Encryption *armEncryptionReq `json:"encryption,omitempty"`
+}
+
+// armEncryptionReq is the request-side encryption block: keySource selects
+// Microsoft.Storage (platform-managed, the default) or Microsoft.Keyvault
+// (customer-managed key), in which case keyvaultproperties identifies the key.
+type armEncryptionReq struct {
+	KeySource          string               `json:"keySource,omitempty"`
+	KeyVaultProperties *armKeyVaultPropsReq `json:"keyvaultproperties,omitempty"`
+}
+
+type armKeyVaultPropsReq struct {
+	KeyVaultURI string `json:"keyvaulturi,omitempty"`
+	KeyName     string `json:"keyname,omitempty"`
+	KeyVersion  string `json:"keyversion,omitempty"`
 }
 
 // armSKU is the ARM sku shape (sku.name / sku.tier).
@@ -39,13 +67,19 @@ type armAccountList struct {
 }
 
 type armAccountProps struct {
-	AccessTier        string         `json:"accessTier,omitempty"`
-	ProvisioningState string         `json:"provisioningState,omitempty"`
-	PrimaryEndpoints  *armEndpoints  `json:"primaryEndpoints,omitempty"`
-	PrimaryLocation   string         `json:"primaryLocation,omitempty"`
-	StatusOfPrimary   string         `json:"statusOfPrimary,omitempty"`
-	CreationTime      string         `json:"creationTime,omitempty"`
-	Encryption        *armEncryption `json:"encryption,omitempty"`
+	AccessTier        string        `json:"accessTier,omitempty"`
+	ProvisioningState string        `json:"provisioningState,omitempty"`
+	PrimaryEndpoints  *armEndpoints `json:"primaryEndpoints,omitempty"`
+	PrimaryLocation   string        `json:"primaryLocation,omitempty"`
+	StatusOfPrimary   string        `json:"statusOfPrimary,omitempty"`
+	// SecondaryLocation/StatusOfSecondary are populated for GRS/RA-GRS/GZRS/
+	// RA-GZRS SKUs; SecondaryEndpoints only for the read-access (RA-*) variants
+	// — matching real Azure (see armstorage AccountProperties doc comments).
+	SecondaryLocation  string         `json:"secondaryLocation,omitempty"`
+	StatusOfSecondary  string         `json:"statusOfSecondary,omitempty"`
+	SecondaryEndpoints *armEndpoints  `json:"secondaryEndpoints,omitempty"`
+	CreationTime       string         `json:"creationTime,omitempty"`
+	Encryption         *armEncryption `json:"encryption,omitempty"`
 }
 
 // armEndpoints is the primaryEndpoints object (blob/queue/table/file service
@@ -57,11 +91,22 @@ type armEndpoints struct {
 	File  string `json:"file,omitempty"`
 }
 
-// armEncryption is the account encryption block: service-side encryption is
-// always on for Azure storage, keyed by Microsoft.Storage.
+// armEncryption is the account encryption response block: service-side
+// encryption is always on for Azure storage, keyed by either the
+// Microsoft.Storage platform default or a Microsoft.Keyvault customer-managed
+// key (in which case KeyVaultProperties identifies it).
 type armEncryption struct {
-	Services  *armEncryptionServices `json:"services,omitempty"`
-	KeySource string                 `json:"keySource,omitempty"`
+	Services           *armEncryptionServices `json:"services,omitempty"`
+	KeySource          string                 `json:"keySource,omitempty"`
+	KeyVaultProperties *armKeyVaultProperties `json:"keyvaultproperties,omitempty"`
+}
+
+// armKeyVaultProperties identifies the customer-managed key on a
+// Microsoft.Keyvault-encrypted account.
+type armKeyVaultProperties struct {
+	KeyVaultURI string `json:"keyvaulturi,omitempty"`
+	KeyName     string `json:"keyname,omitempty"`
+	KeyVersion  string `json:"keyversion,omitempty"`
 }
 
 type armEncryptionServices struct {
@@ -90,4 +135,43 @@ type armKey struct {
 // armRegenerateKey is the regenerateKey request body.
 type armRegenerateKey struct {
 	KeyName string `json:"keyName"`
+}
+
+// armBlobServiceProperties is the ARM wire shape for the storage-account Blob
+// service properties sub-resource (…/blobServices/default), returned by both
+// BlobServicesClient.SetServiceProperties and .GetServiceProperties.
+type armBlobServiceProperties struct {
+	ID         string                         `json:"id,omitempty"`
+	Name       string                         `json:"name,omitempty"`
+	Type       string                         `json:"type,omitempty"`
+	Properties *armBlobServicePropertiesProps `json:"properties,omitempty"`
+}
+
+type armBlobServicePropertiesProps struct {
+	IsVersioningEnabled   *bool               `json:"isVersioningEnabled,omitempty"`
+	ChangeFeed            *armChangeFeed      `json:"changeFeed,omitempty"`
+	DeleteRetentionPolicy *armDeleteRetention `json:"deleteRetentionPolicy,omitempty"`
+	Cors                  *armCorsRules       `json:"cors,omitempty"`
+}
+
+type armChangeFeed struct {
+	Enabled         *bool `json:"enabled,omitempty"`
+	RetentionInDays *int  `json:"retentionInDays,omitempty"`
+}
+
+type armDeleteRetention struct {
+	Enabled *bool `json:"enabled,omitempty"`
+	Days    *int  `json:"days,omitempty"`
+}
+
+type armCorsRules struct {
+	CorsRules []armCorsRule `json:"corsRules,omitempty"`
+}
+
+type armCorsRule struct {
+	AllowedOrigins  []string `json:"allowedOrigins,omitempty"`
+	AllowedMethods  []string `json:"allowedMethods,omitempty"`
+	AllowedHeaders  []string `json:"allowedHeaders,omitempty"`
+	ExposedHeaders  []string `json:"exposedHeaders,omitempty"`
+	MaxAgeInSeconds int      `json:"maxAgeInSeconds,omitempty"`
 }
