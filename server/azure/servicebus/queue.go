@@ -56,10 +56,14 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 	}
 
 	now := time.Now().UTC()
+	lockSeconds := lockDurationSeconds(req.Properties.LockDuration)
 
 	rec, existed := ns.Queues[name]
 	if !existed {
-		info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: sp.namespace + "/" + name})
+		info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{
+			Name:              sp.namespace + "/" + name,
+			VisibilityTimeout: lockSeconds,
+		})
 		if err != nil && !cerrors.IsAlreadyExists(err) {
 			h.mu.Unlock()
 			azurearm.WriteCErr(w, err)
@@ -74,6 +78,10 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 
 		rec = &queueRecord{Name: name, DriverURL: url, CreatedAt: now}
 		ns.Queues[name] = rec
+	} else if rec.DriverURL != "" {
+		// PUT is create-or-update: honor a LockDuration change on an existing
+		// queue's peek-lock visibility window too.
+		_ = h.mq.SetQueueAttributes(r.Context(), rec.DriverURL, map[string]int{"VisibilityTimeout": lockSeconds})
 	}
 
 	rec.Props = buildQueueProps(&req.Properties, rec.CreatedAt, now)
