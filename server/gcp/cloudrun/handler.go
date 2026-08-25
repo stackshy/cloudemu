@@ -1,19 +1,31 @@
-// Package cloudrun implements the GCP Cloud Run Admin API v2 Jobs REST surface
-// as a server.Handler. Real cloud.google.com/go/run/apiv2 clients (and the
-// gcloud CLI) configured with a custom endpoint hit this handler the same way
-// they hit run.googleapis.com.
+// Package cloudrun implements the GCP Cloud Run Admin API v2 REST surface as a
+// server.Handler. Real cloud.google.com/go/run/apiv2 clients (and the gcloud
+// CLI) configured with a custom endpoint hit this handler the same way they hit
+// run.googleapis.com.
 //
-// Scope is Jobs (run-to-completion), not Services (HTTP ingress / revisions).
+// Scope covers both surfaces: Jobs (run-to-completion) and Services (HTTP
+// ingress / revisions / traffic).
 //
 // Coverage:
 //
-//	POST   /v2/projects/{p}/locations/{l}/jobs?jobId={id}                   — Create (LRO, response=Job)
-//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}                        — Get
-//	GET    /v2/projects/{p}/locations/{l}/jobs                              — List
-//	DELETE /v2/projects/{p}/locations/{l}/jobs/{job}                        — Delete (LRO)
-//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:run                    — Run   (LRO, response=Execution)
-//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions/{exec}      — Executions.Get
-//	GET    /v2/projects/{p}/locations/{l}/operations/{op}                   — Poll an LRO
+//	POST   /v2/projects/{p}/locations/{l}/jobs?jobId={id}                — Jobs.Create (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}                     — Jobs.Get
+//	GET    /v2/projects/{p}/locations/{l}/jobs                           — Jobs.List
+//	PATCH  /v2/projects/{p}/locations/{l}/jobs/{job}                     — Jobs.Patch (LRO)
+//	DELETE /v2/projects/{p}/locations/{l}/jobs/{job}                     — Jobs.Delete (LRO)
+//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:run                 — Jobs.Run (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions          — Executions.List
+//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions/{exec}   — Executions.Get
+//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:{get,set}IamPolicy  — Jobs IAM
+//	POST   /v2/projects/{p}/locations/{l}/services?serviceId={id}        — Services.Create (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/services/{svc}                 — Services.Get
+//	GET    /v2/projects/{p}/locations/{l}/services                       — Services.List
+//	PATCH  /v2/projects/{p}/locations/{l}/services/{svc}                 — Services.Patch (LRO)
+//	DELETE /v2/projects/{p}/locations/{l}/services/{svc}                 — Services.Delete (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/services/{svc}/revisions[/{r}] — Revisions.{List,Get}
+//	DELETE /v2/projects/{p}/locations/{l}/services/{svc}/revisions/{r}   — Revisions.Delete (LRO)
+//	POST   /v2/projects/{p}/locations/{l}/services/{svc}:{get,set}IamPolicy — Services IAM
+//	GET    /v2/projects/{p}/locations/{l}/operations/{op}                — Poll an LRO
 //
 // All mutating endpoints return google.longrunning.Operation envelopes with
 // done=true so SDK pollers terminate on the first response.
@@ -24,6 +36,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -31,31 +44,43 @@ import (
 )
 
 const (
-	pathPrefix      = "/v2/projects/"
-	locationsSeg    = "locations"
-	jobsSeg         = "jobs"
-	executionsSeg   = "executions"
-	operationsSeg   = "operations"
-	actionRun       = "run"
-	contentTypeJSON = "application/json"
-	maxBodyBytes    = 1 << 20
-	jobTypeURL      = "type.googleapis.com/google.cloud.run.v2.Job"
-	execTypeURL     = "type.googleapis.com/google.cloud.run.v2.Execution"
+	pathPrefix         = "/v2/projects/"
+	locationsSeg       = "locations"
+	jobsSeg            = "jobs"
+	servicesSeg        = "services"
+	executionsSeg      = "executions"
+	revisionsSeg       = "revisions"
+	operationsSeg      = "operations"
+	actionRun          = "run"
+	actionGetIamPolicy = "getIamPolicy"
+	actionSetIamPolicy = "setIamPolicy"
+	actionTestIamPerms = "testIamPermissions"
+	contentTypeJSON    = "application/json"
+	maxBodyBytes       = 1 << 20
+	jobTypeURL         = "type.googleapis.com/google.cloud.run.v2.Job"
+	execTypeURL        = "type.googleapis.com/google.cloud.run.v2.Execution"
+	serviceTypeURL     = "type.googleapis.com/google.cloud.run.v2.Service"
+	defaultPageSize    = 100
 )
 
-// Handler serves Cloud Run Admin API v2 Jobs requests against a CloudRun driver.
+// Handler serves Cloud Run Admin API v2 requests against a CloudRun driver.
 type Handler struct {
 	cr driver.CloudRun
+	mu sync.RWMutex
+	// policies stores the IAM policy set via setIamPolicy, keyed by a resource's
+	// canonical name. CloudEmu does not enforce IAM; the policy is stored so a
+	// set/get (and Terraform's *_iam_member read-back) round-trips.
+	policies map[string]*iamPolicy
 }
 
-// New returns a Cloud Run Jobs handler backed by cr.
+// New returns a Cloud Run handler backed by cr.
 func New(cr driver.CloudRun) *Handler {
-	return &Handler{cr: cr}
+	return &Handler{cr: cr, policies: make(map[string]*iamPolicy)}
 }
 
-// Matches claims Cloud Run v2 job and location-operation paths:
-// /v2/projects/{p}/locations/{l}/{jobs|operations}[/...]. The locations+jobs
-// guard keeps it disjoint from Cloud Logging's /v2/projects/{p}/logs paths.
+// Matches claims Cloud Run v2 job, service and location-operation paths. The
+// locations+{jobs,services,operations} guard keeps it disjoint from Cloud
+// Logging's /v2/projects/{p}/logs paths.
 func (*Handler) Matches(r *http.Request) bool {
 	_, ok := parsePath(r.URL.Path)
 
@@ -70,24 +95,49 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch {
-	case p.operation != "":
+	switch p.kind {
+	case operationsSeg:
 		h.serveOperation(w, r, &p)
-	case p.action == actionRun && p.job != "":
-		h.run(w, r, &p)
-	case p.execution != "":
-		h.getExecution(w, r, &p)
-	case p.job != "":
-		h.serveJob(w, r, &p)
+	case servicesSeg:
+		h.serveServices(w, r, &p)
 	default:
-		h.serveCollection(w, r, &p)
+		h.serveJobs(w, r, &p)
 	}
 }
 
-func (h *Handler) serveJob(w http.ResponseWriter, r *http.Request, p *crPath) {
+// serveJobs routes the jobs surface.
+func (h *Handler) serveJobs(w http.ResponseWriter, r *http.Request, p *crPath) {
+	switch {
+	case p.action != "":
+		h.serveJobAction(w, r, p)
+	case p.sub == executionsSeg && p.subName != "":
+		h.getExecution(w, r, p)
+	case p.sub == executionsSeg:
+		h.listExecutions(w, r, p)
+	case p.name != "":
+		h.serveJobItem(w, r, p)
+	default:
+		h.serveJobCollection(w, r, p)
+	}
+}
+
+func (h *Handler) serveJobAction(w http.ResponseWriter, r *http.Request, p *crPath) {
+	switch p.action {
+	case actionRun:
+		h.run(w, r, p)
+	case actionGetIamPolicy, actionSetIamPolicy, actionTestIamPerms:
+		h.serveIam(w, r, p, p.jobName(p.name), h.jobExists)
+	default:
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown method: "+p.action)
+	}
+}
+
+func (h *Handler) serveJobItem(w http.ResponseWriter, r *http.Request, p *crPath) {
 	switch r.Method {
 	case http.MethodGet:
 		h.getJob(w, r, p)
+	case http.MethodPatch:
+		h.updateJob(w, r, p)
 	case http.MethodDelete:
 		h.deleteJob(w, r, p)
 	default:
@@ -95,7 +145,7 @@ func (h *Handler) serveJob(w http.ResponseWriter, r *http.Request, p *crPath) {
 	}
 }
 
-func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, p *crPath) {
+func (h *Handler) serveJobCollection(w http.ResponseWriter, r *http.Request, p *crPath) {
 	switch r.Method {
 	case http.MethodPost:
 		h.create(w, r, p)
@@ -122,30 +172,40 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	cfg := driver.JobConfig{
-		Name:        name,
-		TaskCount:   body.Template.TaskCount,
-		Containers:  toDriverContainers(body.Template.Template.Containers),
-		Labels:      body.Labels,
-		Annotations: body.Annotations,
-	}
-
-	job, err := h.cr.CreateJob(r.Context(), cfg)
+	job, err := h.cr.CreateJob(r.Context(), jobConfigFromWire(name, &body))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	resource := toJobResource(job, p)
 	writeJSON(w, http.StatusOK, operation{
 		Name:     opName(p, "create-"+name),
 		Done:     true,
-		Response: asResponse(resource, jobTypeURL),
+		Response: asResponse(toJobResource(job, p), jobTypeURL),
+	})
+}
+
+func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request, p *crPath) {
+	var body jobResource
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	job, err := h.cr.UpdateJob(r.Context(), jobConfigFromWire(p.name, &body))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, operation{
+		Name:     opName(p, "update-"+p.name),
+		Done:     true,
+		Response: asResponse(toJobResource(job, p), jobTypeURL),
 	})
 }
 
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, p *crPath) {
-	job, err := h.cr.GetJob(r.Context(), p.job)
+	job, err := h.cr.GetJob(r.Context(), p.name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -161,21 +221,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	out := listJobsResponse{Jobs: make([]jobResource, 0, len(jobs))}
-	for i := range jobs {
-		out.Jobs = append(out.Jobs, toJobResource(&jobs[i], p))
-	}
+	items, next := pageConvert(r, jobs, func(j *driver.Job) jobResource { return toJobResource(j, p) })
 
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, listJobsResponse{Jobs: items, NextPageToken: next})
 }
 
 func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, p *crPath) {
-	if err := h.cr.DeleteJob(r.Context(), p.job); err != nil {
+	if err := h.cr.DeleteJob(r.Context(), p.name); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{Name: opName(p, "delete-"+p.job), Done: true})
+	writeJSON(w, http.StatusOK, operation{Name: opName(p, "delete-"+p.name), Done: true})
 }
 
 func (h *Handler) run(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -184,17 +241,16 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	exec, err := h.cr.RunJob(r.Context(), p.job)
+	exec, err := h.cr.RunJob(r.Context(), p.name)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	resource := toExecutionResource(exec, p)
 	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "run-"+p.job),
+		Name:     opName(p, "run-"+p.name),
 		Done:     true,
-		Response: asResponse(resource, execTypeURL),
+		Response: asResponse(toExecutionResource(exec, p), execTypeURL),
 	})
 }
 
@@ -204,13 +260,32 @@ func (h *Handler) getExecution(w http.ResponseWriter, r *http.Request, p *crPath
 		return
 	}
 
-	exec, err := h.cr.GetExecution(r.Context(), p.execution)
+	exec, err := h.cr.GetExecution(r.Context(), p.subName)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, toExecutionResource(exec, p))
+}
+
+func (h *Handler) listExecutions(w http.ResponseWriter, r *http.Request, p *crPath) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+
+	execs, err := h.cr.ListExecutions(r.Context(), p.name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	items, next := pageConvert(r, execs, func(e *driver.Execution) executionResource {
+		return toExecutionResource(e, p)
+	})
+
+	writeJSON(w, http.StatusOK, listExecutionsResponse{Executions: items, NextPageToken: next})
 }
 
 // serveOperation answers GET /v2/…/operations/{op}. Mutations are synchronous
@@ -222,29 +297,24 @@ func (*Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *crPath
 	}
 
 	writeJSON(w, http.StatusOK, operation{
-		Name: "projects/" + p.project + "/locations/" + p.location + "/operations/" + p.operation,
+		Name: "projects/" + p.project + "/locations/" + p.location + "/operations/" + p.name,
 		Done: true,
 	})
 }
 
 // crPath holds the parsed components of a Cloud Run v2 URL.
 type crPath struct {
-	project   string
-	location  string
-	job       string
-	execution string
-	action    string // "run"
-	operation string
+	project  string
+	location string
+	kind     string // jobs | services | operations
+	name     string // job / service / operation id
+	sub      string // executions | revisions
+	subName  string // execution / revision id
+	action   string // run | getIamPolicy | setIamPolicy | testIamPermissions
 }
 
 // parsePath extracts components from a Cloud Run v2 URL, returning ok=false for
 // any path this handler does not serve.
-//
-//	/v2/projects/{p}/locations/{l}/jobs
-//	/v2/projects/{p}/locations/{l}/jobs/{job}
-//	/v2/projects/{p}/locations/{l}/jobs/{job}:run
-//	/v2/projects/{p}/locations/{l}/jobs/{job}/executions/{exec}
-//	/v2/projects/{p}/locations/{l}/operations/{op}
 func parsePath(path string) (crPath, bool) {
 	if !strings.HasPrefix(path, pathPrefix) {
 		return crPath{}, false
@@ -253,9 +323,9 @@ func parsePath(path string) (crPath, bool) {
 	parts := strings.Split(strings.TrimPrefix(path, pathPrefix), "/")
 
 	const (
-		minParts = 4 // {project}/locations/{location}/{type}
+		minParts = 4 // {project}/locations/{location}/{kind}
 		idxScope = 1
-		idxType  = 3
+		idxKind  = 3
 		idxName  = 4
 	)
 
@@ -263,19 +333,19 @@ func parsePath(path string) (crPath, bool) {
 		return crPath{}, false
 	}
 
-	p := crPath{project: parts[0], location: parts[2]}
+	p := crPath{project: parts[0], location: parts[2], kind: parts[idxKind]}
 
-	switch parts[idxType] {
+	switch p.kind {
 	case operationsSeg:
 		if len(parts) <= idxName || parts[idxName] == "" {
 			return crPath{}, false
 		}
 
-		p.operation = parts[idxName]
+		p.name = parts[idxName]
 
 		return p, true
-	case jobsSeg:
-		parseJobTail(parts, idxName, &p)
+	case jobsSeg, servicesSeg:
+		parseTail(parts, idxName, &p)
 
 		return p, true
 	default:
@@ -283,28 +353,33 @@ func parsePath(path string) (crPath, bool) {
 	}
 }
 
-// parseJobTail reads the job / :run / executions segments after ".../jobs".
-func parseJobTail(parts []string, idxName int, p *crPath) {
+// parseTail reads the {name}[:action] and sub-collection segments after
+// .../{jobs|services}.
+func parseTail(parts []string, idxName int, p *crPath) {
 	if len(parts) <= idxName {
 		return // collection
 	}
 
 	if base, action, ok := splitColon(parts[idxName]); ok {
-		p.job = base
+		p.name = base
 		p.action = action
 
 		return
 	}
 
-	p.job = parts[idxName]
+	p.name = parts[idxName]
 
 	const (
-		idxExecType = 5
-		idxExecName = 6
+		idxSub     = 5
+		idxSubName = 6
 	)
 
-	if len(parts) > idxExecName && parts[idxExecType] == executionsSeg {
-		p.execution = parts[idxExecName]
+	if len(parts) > idxSub {
+		p.sub = parts[idxSub]
+	}
+
+	if len(parts) > idxSubName {
+		p.subName = parts[idxSubName]
 	}
 }
 
@@ -329,125 +404,61 @@ func (p *crPath) jobName(id string) string {
 	return "projects/" + p.project + "/locations/" + p.location + "/jobs/" + id
 }
 
+func (p *crPath) serviceName(id string) string {
+	return "projects/" + p.project + "/locations/" + p.location + "/services/" + id
+}
+
 func opName(p *crPath, suffix string) string {
 	return "projects/" + p.project + "/locations/" + p.location + "/operations/" +
 		suffix + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
-func toDriverContainers(in []container) []driver.Container {
-	out := make([]driver.Container, 0, len(in))
-	for i := range in {
-		out = append(out, driver.Container{
-			Name:    in[i].Name,
-			Image:   in[i].Image,
-			Command: in[i].Command,
-			Args:    in[i].Args,
-			Env:     envToMap(in[i].Env),
-		})
+// paginate resolves pageSize / pageToken query params into the indices of the
+// requested page over a total-length slice, plus the next page token (empty on
+// the last page). Tokens are 1-based start offsets rendered as decimal strings.
+func paginate(total int, r *http.Request) (indices []int, next string) {
+	size := defaultPageSize
+	if v, err := strconv.Atoi(r.URL.Query().Get("pageSize")); err == nil && v > 0 {
+		size = v
 	}
 
-	return out
+	start := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("pageToken")); err == nil && v > 0 {
+		start = v
+	}
+
+	if start > total {
+		start = total
+	}
+
+	end := start + size
+	if end > total {
+		end = total
+	}
+
+	indices = make([]int, 0, end-start)
+	for i := start; i < end; i++ {
+		indices = append(indices, i)
+	}
+
+	if end < total {
+		next = strconv.Itoa(end)
+	}
+
+	return indices, next
 }
 
-func envToMap(in []envVar) map[string]string {
-	if len(in) == 0 {
-		return nil
+// pageConvert selects the requested page over items and maps each element to
+// its wire shape, returning the converted page and the next page token.
+func pageConvert[S, W any](r *http.Request, items []S, conv func(*S) W) (page []W, next string) {
+	idx, next := paginate(len(items), r)
+
+	page = make([]W, 0, len(idx))
+	for _, i := range idx {
+		page = append(page, conv(&items[i]))
 	}
 
-	out := make(map[string]string, len(in))
-	for _, e := range in {
-		out[e.Name] = e.Value
-	}
-
-	return out
-}
-
-func envToList(in map[string]string) []envVar {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make([]envVar, 0, len(in))
-	for k, v := range in {
-		out = append(out, envVar{Name: k, Value: v})
-	}
-
-	return out
-}
-
-func toContainers(in []driver.Container) []container {
-	out := make([]container, 0, len(in))
-	for i := range in {
-		out = append(out, container{
-			Name:    in[i].Name,
-			Image:   in[i].Image,
-			Command: in[i].Command,
-			Args:    in[i].Args,
-			Env:     envToList(in[i].Env),
-		})
-	}
-
-	return out
-}
-
-func toConditions(in []driver.Condition) []condition {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make([]condition, 0, len(in))
-	for _, c := range in {
-		out = append(out, condition{Type: c.Type, State: c.State, Message: c.Message, Reason: c.Reason})
-	}
-
-	return out
-}
-
-func toJobResource(j *driver.Job, p *crPath) jobResource {
-	return jobResource{
-		Name:           p.jobName(j.Name),
-		UID:            j.UID,
-		Generation:     strconv.FormatInt(j.Generation, 10),
-		CreateTime:     formatTime(j.CreateTime),
-		UpdateTime:     formatTime(j.UpdateTime),
-		LaunchStage:    j.LaunchStage,
-		ExecutionCount: j.ExecutionCount,
-		Labels:         j.Labels,
-		Annotations:    j.Annotations,
-		Template: execTemplate{
-			TaskCount: j.TaskCount,
-			Template:  taskTemplate{Containers: toContainers(j.Containers)},
-		},
-		Conditions: toConditions(j.Conditions),
-	}
-}
-
-func toExecutionResource(e *driver.Execution, p *crPath) executionResource {
-	return executionResource{
-		Name:           p.jobName(e.JobName) + "/executions/" + e.Name,
-		UID:            e.UID,
-		Generation:     strconv.FormatInt(e.Generation, 10),
-		Job:            p.jobName(e.JobName),
-		CreateTime:     formatTime(e.CreateTime),
-		StartTime:      formatTime(e.StartTime),
-		CompletionTime: formatTime(e.CompletionTime),
-		TaskCount:      e.TaskCount,
-		SucceededCount: e.SucceededCount,
-		FailedCount:    e.FailedCount,
-		RunningCount:   e.RunningCount,
-		CancelledCount: e.CancelledCount,
-		LogURI:         e.LogURI,
-		Template:       taskTemplate{Containers: toContainers(e.Containers)},
-		Conditions:     toConditions(e.Conditions),
-	}
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-
-	return t.UTC().Format(time.RFC3339Nano)
+	return page, next
 }
 
 // asResponse marshals a wire resource into the {@type, ...fields} map an LRO

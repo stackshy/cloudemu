@@ -1609,8 +1609,20 @@
         "doc": "CreateJob stores a job spec. It does not run anything — RunJob does."
       },
       {
+        "name": "CreateService",
+        "doc": "CreateService stores a service spec and materializes its first Revision,"
+      },
+      {
         "name": "DeleteJob",
         "doc": "DeleteJob removes a job and stops any container workloads its executions"
+      },
+      {
+        "name": "DeleteRevision",
+        "doc": "DeleteRevision removes a single revision of a service."
+      },
+      {
+        "name": "DeleteService",
+        "doc": "DeleteService removes a service and its revisions."
       },
       {
         "name": "GetExecution",
@@ -1621,12 +1633,40 @@
         "doc": "GetJob returns a job by name. name may be the bare job id or a fully"
       },
       {
+        "name": "GetRevision",
+        "doc": "GetRevision returns a revision by name (bare revision id or a fully"
+      },
+      {
+        "name": "GetService",
+        "doc": "GetService returns a service by name (bare service id or a fully"
+      },
+      {
+        "name": "ListExecutions",
+        "doc": "ListExecutions returns every stored execution of the named job."
+      },
+      {
         "name": "ListJobs",
         "doc": "ListJobs returns every stored job."
       },
       {
+        "name": "ListRevisions",
+        "doc": "ListRevisions returns every stored revision of the named service."
+      },
+      {
+        "name": "ListServices",
+        "doc": "ListServices returns every stored service."
+      },
+      {
         "name": "RunJob",
         "doc": "RunJob creates and runs one Execution of the named job, blocking until"
+      },
+      {
+        "name": "UpdateJob",
+        "doc": "UpdateJob applies an in-place update to an existing job, bumping its"
+      },
+      {
+        "name": "UpdateService",
+        "doc": "UpdateService applies an in-place update, materializing a new Revision"
       }
     ],
     "providers": {
