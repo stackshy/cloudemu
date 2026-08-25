@@ -36,6 +36,19 @@ type InstanceConfig struct {
 	// same case-sensitive token returns the already-launched instances instead
 	// of provisioning new ones. Empty disables dedup. Ignored by Azure/GCP.
 	ClientToken string
+	// IamInstanceProfileARN / IamInstanceProfileName reference the IAM instance
+	// profile to attach at launch (AWS RunInstances IamInstanceProfile.Arn /
+	// .Name). Callers supply one or the other; the AWS provider resolves the
+	// reference to the profile's ARN and ID. Ignored by Azure/GCP.
+	IamInstanceProfileARN  string
+	IamInstanceProfileName string
+}
+
+// IamInstanceProfile is the IAM instance profile association reported on an EC2
+// instance (arn + id), matching the EC2 IamInstanceProfile response element.
+type IamInstanceProfile struct {
+	ARN string
+	ID  string
 }
 
 // Instance describes a running virtual machine.
@@ -90,6 +103,9 @@ type Instance struct {
 	// MetadataOptions is the instance's IMDS configuration (AWS). The zero value
 	// means "not set"; the wire layer fills in EC2 defaults when rendering.
 	MetadataOptions MetadataOptions
+	// IamInstanceProfile is the IAM instance profile attached to the instance
+	// (AWS), nil when none is attached.
+	IamInstanceProfile *IamInstanceProfile
 }
 
 // MetadataOptions is an instance's IMDS (instance metadata service)

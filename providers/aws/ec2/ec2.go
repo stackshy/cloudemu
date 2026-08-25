@@ -182,6 +182,9 @@ type instanceData struct {
 	// metadataOptions is the instance's IMDS configuration, defaulted at launch
 	// and changed by ModifyInstanceMetadataOptions.
 	metadataOptions driver.MetadataOptions
+	// iamInstanceProfile is the IAM instance profile attached at launch (resolved
+	// ARN + ID), nil when the instance was launched without one.
+	iamInstanceProfile *driver.IamInstanceProfile
 	// settle overlays a post-launch "pending" window over the stored (running)
 	// State on the Describe surface when AsyncSettle is enabled; zero-value
 	// (default) reports the stored State immediately.
@@ -234,6 +237,11 @@ type Mock struct {
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
 	subnetResolver SubnetResolver
+	// instanceProfileResolver resolves an IamInstanceProfile reference (Arn/Name)
+	// supplied to RunInstances into the profile's canonical ARN and ID, so the
+	// role->profile->instance chain reads back on DescribeInstances. nil until
+	// wired by the provider.
+	instanceProfileResolver InstanceProfileResolver
 	// mu guards managedResourceVisibility, clientTokens and subnetIPCounters,
 	// which are scalar/map shared state that (unlike the memstores) has no
 	// internal locking of their own.
@@ -362,12 +370,20 @@ func toInstance(d *instanceData, hidden bool, now time.Time) driver.Instance {
 		}
 	}
 
+	var iamProfile *driver.IamInstanceProfile
+
+	if d.iamInstanceProfile != nil {
+		p := *d.iamInstanceProfile
+		iamProfile = &p
+	}
+
 	return driver.Instance{
 		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.settle.Observe(now, d.State),
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
 		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
 		ReservationID: d.reservationID, KeyName: d.keyName, Monitoring: d.monitoring,
 		Operator: operator, MetadataOptions: d.metadataOptions,
+		IamInstanceProfile: iamProfile,
 	}
 }
 
@@ -459,6 +475,10 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	// private-IP allocation reuse a single lookup.
 	vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
 
+	// Resolve the IamInstanceProfile reference once for the whole batch; every
+	// instance launched by this call shares the same profile association.
+	iamProfile := m.resolveInstanceProfile(ctx, &cfg)
+
 	// created tracks the instances already fully provisioned in this batch, so a
 	// mid-batch engine failure can roll them back rather than orphaning live
 	// containers and half-tracked instances (real EC2 launches the whole batch or
@@ -482,13 +502,14 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			State: compute.StatePending, PrivateIP: m.allocatePrivateIP(cfg.SubnetID, subnetCIDR),
 			SubnetID: cfg.SubnetID, VPCID: vpcID,
 			SecurityGroups: sg, Tags: tags,
-			LaunchTime:      m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-			sourceDestCheck: true,
-			reservationID:   reservationID,
-			keyName:         cfg.KeyName,
-			userData:        cfg.UserData,
-			monitoring:      monitoringDisabled,
-			metadataOptions: defaultMetadataOptions(),
+			LaunchTime:         m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			sourceDestCheck:    true,
+			reservationID:      reservationID,
+			keyName:            cfg.KeyName,
+			userData:           cfg.UserData,
+			monitoring:         monitoringDisabled,
+			metadataOptions:    defaultMetadataOptions(),
+			iamInstanceProfile: iamProfile,
 		}
 
 		if cfg.Managed {

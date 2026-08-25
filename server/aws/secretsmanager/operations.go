@@ -18,6 +18,7 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 		Name:        req.Name,
 		Description: req.Description,
 		Tags:        tagsToMap(req.Tags),
+		KMSKeyID:    req.KmsKeyID,
 	}, secretValue(req.SecretString, req.SecretBinary))
 	if err != nil {
 		writeErr(w, err)

@@ -8,6 +8,10 @@ type SecretConfig struct {
 	Name        string
 	Description string
 	Tags        map[string]string
+	// KMSKeyID is the customer KMS key (ARN, key id, or alias) the secret is
+	// encrypted with (AWS Secrets Manager). Empty means the default
+	// aws/secretsmanager key. Ignored by Azure/GCP.
+	KMSKeyID string
 }
 
 // SecretInfo describes a secret.
@@ -19,6 +23,10 @@ type SecretInfo struct {
 	CreatedAt   string
 	UpdatedAt   string
 	Tags        map[string]string
+	// KMSKeyID is the customer KMS key the secret is encrypted with (AWS Secrets
+	// Manager), echoed on DescribeSecret. Empty when the default
+	// aws/secretsmanager key is used. Ignored by Azure/GCP.
+	KMSKeyID string
 }
 
 // SecretVersion represents a specific version of a secret value.
