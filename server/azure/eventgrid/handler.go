@@ -22,6 +22,8 @@
 //	GET            .../topics/{t}/eventSubscriptions        — TopicEventSubscriptions.List
 //	PUT/GET/DELETE .../domains/{d}/topics/{t}               — DomainTopics CRUD
 //	GET            .../domains/{d}/topics                   — DomainTopics.ListByDomain
+//	PUT/GET/DELETE {scope}/.../eventSubscriptions/{s}      — EventSubscriptions CRUD (subscription/RG/resource scope)
+//	GET            {scope}/.../eventSubscriptions          — EventSubscriptions List (ByResource / Global{BySub,ByRG})
 package eventgrid
 
 import (
@@ -51,6 +53,11 @@ type Handler struct {
 	mu           sync.RWMutex
 	systemTopics map[string]*systemTopicRecord
 	domains      map[string]*domainRecord
+	// scopedSubs holds event subscriptions created as extension resources on a
+	// non-topic scope (subscription, resource group, or an arbitrary resource).
+	// These have no eventbus-driver topic to hang off, so — like systemTopics
+	// and domains — the wire handler owns their state. Keyed by scope+name.
+	scopedSubs map[string]*scopedSubRecord
 }
 
 // New returns an Azure Event Grid handler backed by b.
@@ -59,6 +66,7 @@ func New(b ebdriver.EventBus) *Handler {
 		bus:          b,
 		systemTopics: make(map[string]*systemTopicRecord),
 		domains:      make(map[string]*domainRecord),
+		scopedSubs:   make(map[string]*scopedSubRecord),
 	}
 }
 
@@ -66,6 +74,14 @@ func New(b ebdriver.EventBus) *Handler {
 // and domains. Disjoint from every other Azure ARM provider, so registration
 // order is unconstrained. Registered before the BlobStorage fallback.
 func (*Handler) Matches(r *http.Request) bool {
+	// Scope-bound event subscriptions are an extension resource that can hang
+	// off any scope (subscription, resource group, or an arbitrary resource of
+	// a different provider), so the outer provider in the path is not
+	// necessarily Microsoft.EventGrid. Claim them by the trailing marker.
+	if _, ok := parseScopedEventSubscription(r.URL.Path); ok {
+		return true
+	}
+
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		return false
@@ -85,6 +101,14 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP routes on the parsed path shape and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Scope-bound / extension-form event subscriptions are recognized ahead of
+	// the topic-oriented parse: their path carries an extra
+	// providers/Microsoft.EventGrid segment that azurearm.ParsePath cannot model.
+	if sp, ok := parseScopedEventSubscription(r.URL.Path); ok {
+		h.serveScopedEventSubscription(w, r, &sp)
+		return
+	}
+
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
@@ -112,6 +136,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.serveTopicResource(w, r, &rp)
+}
+
+// serveTopicResource routes a named topic and its sub-resources.
+func (h *Handler) serveTopicResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch rp.SubResource {
 	case actionListKeys:
 		if r.Method != http.MethodPost {
@@ -119,11 +148,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.listTopicKeys(w, r, &rp)
+		h.listTopicKeys(w, r, rp)
 	case subEventSubscriptions:
-		h.serveEventSubscription(w, r, &rp)
+		h.serveEventSubscription(w, r, rp)
 	case "":
-		h.serveTopic(w, r, &rp)
+		h.serveTopic(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Event Grid topic sub-resource")
 	}
