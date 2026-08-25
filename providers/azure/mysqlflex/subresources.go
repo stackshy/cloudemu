@@ -283,10 +283,11 @@ func (m *Mock) applyConfiguration(cfg rdsdriver.ConfigurationConfig) rdsdriver.C
 	conf, ok := m.configurations.Get(key)
 	if !ok {
 		conf = rdsdriver.Configuration{
-			Server:   cfg.Server,
-			Name:     cfg.Name,
-			DataType: "String",
-			ARN:      m.childARN(cfg.Server, "configurations", cfg.Name),
+			Server:       cfg.Server,
+			Name:         cfg.Name,
+			DataType:     "String",
+			DefaultValue: knownServerParameters[cfg.Name],
+			ARN:          m.childARN(cfg.Server, "configurations", cfg.Name),
 		}
 	}
 
@@ -371,12 +372,13 @@ func (m *Mock) GetConfiguration(_ context.Context, server, name string) (*rdsdri
 // defaultConfiguration builds the system-default view of a known parameter.
 func (m *Mock) defaultConfiguration(server, name, value string) *rdsdriver.Configuration {
 	return &rdsdriver.Configuration{
-		Server:   server,
-		Name:     name,
-		Value:    value,
-		Source:   "system-default",
-		DataType: "String",
-		ARN:      m.childARN(server, "configurations", name),
+		Server:       server,
+		Name:         name,
+		Value:        value,
+		Source:       "system-default",
+		DataType:     "String",
+		DefaultValue: value,
+		ARN:          m.childARN(server, "configurations", name),
 	}
 }
 
@@ -424,7 +426,9 @@ func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver
 // ---- Failover ----
 
 // FailoverInstance triggers a server failover to its standby. The server must
-// be running; it stays available afterwards.
+// be running and have an active standby (HighAvailability enabled) — real
+// Azure rejects a forced failover on a server with no standby to fail over to.
+// It stays available afterwards.
 func (m *Mock) FailoverInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -437,6 +441,11 @@ func (m *Mock) FailoverInstance(_ context.Context, id string) error {
 	if inst.State != rdsdriver.StateAvailable {
 		return cerrors.Newf(cerrors.FailedPrecondition,
 			"MySQL Flexible Server %q is in state %q; failover requires %q", id, inst.State, rdsdriver.StateAvailable)
+	}
+
+	if !rdsdriver.HAEnabled(inst.HighAvailabilityMode) {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"MySQL Flexible Server %q has no standby to fail over to; high availability is not enabled", id)
 	}
 
 	m.emitInstanceMetrics(id, cpuMetricRunning, connectionMetricValue, diskReadOpsRunning, diskWriteOpsRunning)

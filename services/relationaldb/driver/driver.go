@@ -9,6 +9,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Lifecycle states. Mirrors the AWS RDS terminology since RDS is the
@@ -103,6 +105,9 @@ type InstanceConfig struct {
 	// empty for a standalone primary.
 	MasterInstanceName string
 	Tags               map[string]string
+	// Scope records where the resource lives (Azure subscription/resource
+	// group). Zero for AWS/GCP and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // Instance describes a managed database instance.
@@ -159,6 +164,11 @@ type Instance struct {
 	// replica identifiers reading from this instance.
 	ReadReplicaSource  string
 	ReadReplicaTargets []string
+	// Scope records where the resource lives (Azure subscription/resource
+	// group), echoed from the InstanceConfig it was created with. Zero for
+	// AWS/GCP and unscoped portable callers — Scope.Matches treats a zero
+	// Scope as visible under any filter.
+	Scope scope.Scope
 }
 
 // ModifyInstanceInput holds modifiable instance (and cluster) attributes.
@@ -530,6 +540,17 @@ type BatchConfigurations interface {
 // standby, discovered by type assertion.
 type Failover interface {
 	FailoverInstance(ctx context.Context, id string) error
+}
+
+// ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
+// a scoped provider (Azure MySQL/Postgres Flexible Server) refuse to delete an
+// instance that does not belong to the caller's subscription/resource group —
+// a single atomic check-and-delete, avoiding the fetch-then-delete race a
+// handler-level Scope check on top of the plain DeleteInstance would leave.
+// AWS RDS and GCP Cloud SQL have no resource-group concept and do not
+// implement this interface, so their DeleteInstance is used unscoped.
+type ScopedDelete interface {
+	DeleteInstanceInScope(ctx context.Context, id string, filter scope.Scope) error
 }
 
 // VNetRuleConfig describes a virtual-network rule to create (Azure SQL).

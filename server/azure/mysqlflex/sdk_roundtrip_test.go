@@ -234,6 +234,54 @@ func TestSDKMySQLFlexStartStopRestart(t *testing.T) {
 	}
 }
 
+// TestSDKMySQLFlexRestartWithFailover asserts BeginRestart honors the request
+// body's restartWithFailover: on an HA server it routes through failover
+// (inheriting its precondition), and on a non-HA server it is rejected rather
+// than silently performing a plain restart.
+func TestSDKMySQLFlexRestartWithFailover(t *testing.T) {
+	cf := newFactory(t)
+	mustCreateHAServer(t, cf, "ha-restart")
+
+	ctx := context.Background()
+	servers := cf.NewServersClient()
+
+	restartPoller, err := servers.BeginRestart(ctx, "rg-1", "ha-restart", armmysqlflexibleservers.ServerRestartParameter{
+		RestartWithFailover: to.Ptr(armmysqlflexibleservers.EnableStatusEnumEnabled),
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginRestart(restartWithFailover=Enabled): %v", err)
+	}
+
+	if _, err := restartPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Restart(restartWithFailover) PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "ha-restart", nil)
+	if err != nil {
+		t.Fatalf("Get after restart: %v", err)
+	}
+
+	if got.Server.Properties == nil || got.Server.Properties.State == nil ||
+		*got.Server.Properties.State != armmysqlflexibleservers.ServerStateReady {
+		t.Fatalf("expected state Ready after restart with failover, got %v", got.Server.Properties.State)
+	}
+
+	// A non-HA server has no standby: restartWithFailover=Enabled must fail
+	// rather than silently degrade into a plain restart.
+	mustCreateServer(t, cf) // creates "srv1" with no HighAvailability
+
+	noHAPoller, err := servers.BeginRestart(ctx, "rg-1", "srv1", armmysqlflexibleservers.ServerRestartParameter{
+		RestartWithFailover: to.Ptr(armmysqlflexibleservers.EnableStatusEnumEnabled),
+	}, nil)
+	if err == nil {
+		_, err = noHAPoller.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("expected restartWithFailover on a non-HA server to fail, got nil")
+	}
+}
+
 func TestSDKMySQLFlexHighAvailability(t *testing.T) {
 	servers := newSDKClient(t)
 	ctx := context.Background()

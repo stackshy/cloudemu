@@ -6,7 +6,39 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
+
+// requestScope builds the subscription/resource-group filter a server must
+// live in to be visible under rp's path — a Postgres Flexible Server created
+// under one resource group must not resolve, list, or delete under another.
+func requestScope(rp *azurearm.ResourcePath) scope.Scope {
+	return scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+}
+
+// lookupInScope resolves the server named in rp and verifies it lives in the
+// request's subscription/resource group before any by-name mutation. It writes
+// the wire error and returns false when the server is missing (WriteCErr) or
+// belongs to a different scope (404 ResourceNotFound), so a caller in one
+// resource group can never update, start, stop, restart, or reach the
+// sub-resources of another group's server. A server's Scope is fixed at create
+// time, so this check-then-act needs no extra lock.
+func (h *Handler) lookupInScope(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath,
+) (*rdsdriver.Instance, bool) {
+	insts, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return nil, false
+	}
+
+	if len(insts) == 0 || !insts[0].Scope.Matches(requestScope(rp)) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "server "+rp.ResourceName+" not found")
+		return nil, false
+	}
+
+	return &insts[0], true
+}
 
 // rejectInvalidHAMode writes a 400 and returns true when the body carries a
 // highAvailability.mode that is not a recognized enum value — real Azure
@@ -29,11 +61,12 @@ func rejectInvalidHAMode(w http.ResponseWriter, body *armServer) bool {
 
 // instanceFromBody decodes a Postgres Flex create/update body and converts it
 // to the portable driver shape.
-func instanceFromBody(body *armServer) rdsdriver.InstanceConfig {
+func instanceFromBody(body *armServer, rp *azurearm.ResourcePath) rdsdriver.InstanceConfig {
 	cfg := rdsdriver.InstanceConfig{
 		Engine:   "Postgres",
 		Location: body.Location,
 		Tags:     body.Tags,
+		Scope:    requestScope(rp),
 	}
 
 	if body.SKU != nil {
@@ -75,7 +108,7 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	cfg := instanceFromBody(&body)
+	cfg := instanceFromBody(&body, rp)
 	cfg.ID = rp.ResourceName
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
@@ -85,16 +118,44 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 			return
 		}
 
-		// Idempotent PUT: a create against an existing server applies the body's
-		// storage/sku/version/HA rather than returning the stale record.
-		inst, err = h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
-		if err != nil {
-			azurearm.WriteCErr(w, err)
+		var ok bool
+		if inst, ok = h.upsertOnNameCollision(w, r, rp, &body); !ok {
 			return
 		}
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+}
+
+// upsertOnNameCollision resolves a PUT whose server name is already taken.
+// Flexible Server names are globally unique (they back a public FQDN), so a
+// same-name PUT from a different resource group is a naming conflict — mutating
+// the real owner's server would be a cross-tenant write. Only an in-scope
+// collision is a legitimate idempotent PUT that applies the body's
+// storage/sku/version/HA. It writes the wire error and returns false when the
+// caller must stop.
+func (h *Handler) upsertOnNameCollision(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, body *armServer,
+) (*rdsdriver.Instance, bool) {
+	existing, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return nil, false
+	}
+
+	if len(existing) == 0 || !existing[0].Scope.Matches(requestScope(rp)) {
+		azurearm.WriteError(w, http.StatusConflict, "Conflict",
+			"server name "+rp.ResourceName+" is already in use")
+		return nil, false
+	}
+
+	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(body))
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return nil, false
+	}
+
+	return inst, true
 }
 
 // modifyInputFromBody maps a Postgres Flex server body to the portable modify
@@ -152,6 +213,10 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -161,23 +226,34 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
+// getServer handles GET on a single server — Servers.Get. The driver keys
+// servers by name alone, so the handler enforces the request's resource-group
+// scope: a server created in one subscription/resource group must not resolve
+// under a different one in the URL (real ARM answers 404, since the id would
+// contradict the request path).
 func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	insts, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
-	if err != nil {
-		azurearm.WriteCErr(w, err)
+	inst, ok := h.lookupInScope(w, r, rp)
+	if !ok {
 		return
 	}
 
-	if len(insts) == 0 {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "server "+rp.ResourceName+" not found")
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, toARMServer(&insts[0], rp.Subscription, rp.ResourceGroup))
+	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
+// deleteServer handles DELETE — Servers.Delete. When the backend implements
+// ScopedDelete (Postgres Flex always does), the scope check and the delete
+// happen atomically so a cross-tenant DELETE can never remove another
+// resource group's server; otherwise DeleteInstance runs unscoped.
 func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.db.DeleteInstance(r.Context(), rp.ResourceName); err != nil {
+	var err error
+
+	if sd, ok := h.db.(rdsdriver.ScopedDelete); ok {
+		err = sd.DeleteInstanceInScope(r.Context(), rp.ResourceName, requestScope(rp))
+	} else {
+		err = h.db.DeleteInstance(r.Context(), rp.ResourceName)
+	}
+
+	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -185,6 +261,10 @@ func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azure
 	w.WriteHeader(http.StatusOK)
 }
 
+// listServers handles GET on the collection — Servers.ListByResourceGroup /
+// ListBySubscription. The filter carries the path's subscription and, for
+// RG-level lists, its resource group; subscription-level lists leave the
+// resource group empty so the filter spans the subscription's groups.
 func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	insts, err := h.db.DescribeInstances(r.Context(), nil)
 	if err != nil {
@@ -192,8 +272,15 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 		return
 	}
 
+	filter := requestScope(rp)
+
 	out := make([]armServer, 0, len(insts))
+
 	for i := range insts {
+		if !insts[i].Scope.Matches(filter) {
+			continue
+		}
+
 		out = append(out, toARMServer(&insts[i], rp.Subscription, rp.ResourceGroup))
 	}
 
@@ -201,6 +288,10 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 }
 
 func (h *Handler) startServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	if err := h.db.StartInstance(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -210,6 +301,10 @@ func (h *Handler) startServer(w http.ResponseWriter, r *http.Request, rp *azurea
 }
 
 func (h *Handler) stopServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	if err := h.db.StopInstance(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -219,6 +314,10 @@ func (h *Handler) stopServer(w http.ResponseWriter, r *http.Request, rp *azurear
 }
 
 func (h *Handler) restartServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	if err := h.db.RebootInstance(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -357,7 +358,10 @@ func TestFailoverRequiresRunning(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:                   "srv",
+		HighAvailabilityMode: rdsdriver.HAModeZoneRedundant,
+	}); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
@@ -375,6 +379,27 @@ func TestFailoverRequiresRunning(t *testing.T) {
 
 	if err := m.FailoverInstance(ctx, "ghost"); err == nil {
 		t.Error("FailoverInstance on missing server: expected NotFound")
+	}
+}
+
+// TestFailoverRequiresHighAvailability confirms a forced failover is rejected
+// on a running server with no standby (HighAvailability Disabled/unset) —
+// there is nothing to fail over to.
+func TestFailoverRequiresHighAvailability(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "no-ha"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	err := m.FailoverInstance(ctx, "no-ha")
+	if err == nil {
+		t.Fatal("FailoverInstance on server without HA: expected FailedPrecondition, got nil")
+	}
+
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("FailoverInstance on server without HA: got %v, want FailedPrecondition", err)
 	}
 }
 
