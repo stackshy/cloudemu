@@ -43,7 +43,8 @@ type subnetRequest struct {
 }
 
 type subnetRequestProps struct {
-	AddressPrefix string `json:"addressPrefix,omitempty"`
+	AddressPrefix string    `json:"addressPrefix,omitempty"`
+	NatGateway    *armIDRef `json:"natGateway,omitempty"`
 }
 
 type subnetResponse struct {
@@ -54,8 +55,9 @@ type subnetResponse struct {
 }
 
 type subnetResponseProps struct {
-	ProvisioningState string `json:"provisioningState"`
-	AddressPrefix     string `json:"addressPrefix,omitempty"`
+	ProvisioningState string    `json:"provisioningState"`
+	AddressPrefix     string    `json:"addressPrefix,omitempty"`
+	NatGateway        *armIDRef `json:"natGateway,omitempty"`
 }
 
 type subnetListResponse struct {
@@ -115,6 +117,7 @@ type publicIPRequest struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	SKU        *publicIPSKU      `json:"sku,omitempty"`
+	Zones      []string          `json:"zones,omitempty"`
 	Properties publicIPReqProps  `json:"properties"`
 }
 
@@ -123,7 +126,13 @@ type publicIPSKU struct {
 }
 
 type publicIPReqProps struct {
-	PublicIPAllocationMethod string `json:"publicIPAllocationMethod,omitempty"`
+	PublicIPAllocationMethod string                  `json:"publicIPAllocationMethod,omitempty"`
+	IdleTimeoutInMinutes     int                     `json:"idleTimeoutInMinutes,omitempty"`
+	DNSSettings              *publicIPDNSSettingsReq `json:"dnsSettings,omitempty"`
+}
+
+type publicIPDNSSettingsReq struct {
+	DomainNameLabel string `json:"domainNameLabel,omitempty"`
 }
 
 type publicIPResponse struct {
@@ -133,13 +142,24 @@ type publicIPResponse struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	SKU        *publicIPSKU      `json:"sku,omitempty"`
+	Zones      []string          `json:"zones,omitempty"`
 	Properties publicIPRespProps `json:"properties"`
 }
 
 type publicIPRespProps struct {
-	ProvisioningState        string `json:"provisioningState"`
-	PublicIPAllocationMethod string `json:"publicIPAllocationMethod,omitempty"`
-	IPAddress                string `json:"ipAddress,omitempty"`
+	ProvisioningState        string               `json:"provisioningState"`
+	PublicIPAllocationMethod string               `json:"publicIPAllocationMethod,omitempty"`
+	IPAddress                string               `json:"ipAddress,omitempty"`
+	IdleTimeoutInMinutes     int                  `json:"idleTimeoutInMinutes,omitempty"`
+	DNSSettings              *publicIPDNSSettings `json:"dnsSettings,omitempty"`
+	// IPConfiguration is the back-reference to the NIC ipConfiguration a real
+	// publicIPAddresses GET reports once a NIC attaches the address.
+	IPConfiguration *armIDRef `json:"ipConfiguration,omitempty"`
+}
+
+type publicIPDNSSettings struct {
+	DomainNameLabel string `json:"domainNameLabel,omitempty"`
+	FQDN            string `json:"fqdn,omitempty"`
 }
 
 type publicIPListResponse struct {

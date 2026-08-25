@@ -125,9 +125,15 @@ func (h *Handler) createNIC(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	ipConfigs, err := h.buildIPConfigs(r.Context(), req.Properties.IPConfigurations)
+	ipConfigs, err := h.buildIPConfigs(r.Context(), rp.ResourceGroup, rp.ResourceName, req.Properties.IPConfigurations, svc)
 	if err != nil {
+		if cerrors.IsFailedPrecondition(err) {
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeAssignedToMultipleIpConfigs", err.Error())
+			return
+		}
+
 		azurearm.WriteCErr(w, err)
+
 		return
 	}
 
@@ -205,8 +211,12 @@ func (*Handler) listNICs(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 
 // buildIPConfigs maps the wire ipConfigurations to driver configs, resolving
 // each referenced subnet to its address prefix so the mock can allocate a
-// dynamic private IP from the right range.
-func (h *Handler) buildIPConfigs(ctx context.Context, in []nicIPConfigRequest) ([]netdriver.AzureIPConfig, error) {
+// dynamic private IP from the right range. rg/nicName identify the NIC being
+// created or updated, so a re-PUT of the same NIC doesn't conflict with its
+// own existing public IP reference.
+func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []nicIPConfigRequest,
+	svc netdriver.AzureNetworkInterfaces,
+) ([]netdriver.AzureIPConfig, error) {
 	out := make([]netdriver.AzureIPConfig, 0, len(in))
 
 	for i := range in {
@@ -231,10 +241,18 @@ func (h *Handler) buildIPConfigs(ctx context.Context, in []nicIPConfigRequest) (
 		}
 
 		if p.PublicIPAddress != nil {
-			pipName := lastSegment(p.PublicIPAddress.ID)
-			if _, err := findPublicIPByName(ctx, h.net, pipName); err != nil {
+			pipRP, ok := azurearm.ParsePath(p.PublicIPAddress.ID)
+			if !ok || pipRP.ResourceType != typePublicIP {
+				return nil, cerrors.Newf(cerrors.InvalidArgument, "malformed public IP id %q", p.PublicIPAddress.ID)
+			}
+
+			if _, err := findPublicIPByName(ctx, h.net, pipRP.ResourceGroup, pipRP.ResourceName); err != nil {
 				return nil, cerrors.Newf(cerrors.InvalidArgument,
-					"ipConfiguration references public IP %q which does not exist", pipName)
+					"ipConfiguration references public IP %q which does not exist", pipRP.ResourceName)
+			}
+
+			if err := checkPublicIPNotAttached(ctx, svc, p.PublicIPAddress.ID, rg, nicName); err != nil {
+				return nil, err
 			}
 
 			cfg.PublicIPID = p.PublicIPAddress.ID
@@ -244,6 +262,33 @@ func (h *Handler) buildIPConfigs(ctx context.Context, in []nicIPConfigRequest) (
 	}
 
 	return out, nil
+}
+
+// checkPublicIPNotAttached rejects attaching armID to (rg, nicName) when it is
+// already referenced by a DIFFERENT network interface's ipConfiguration — a
+// static public IP can only be bound to one NIC at a time in real Azure
+// (PublicIPAddressCannotBeAssignedToMultipleIpConfigs). A re-PUT of the same
+// NIC that keeps its own existing reference is not a conflict.
+func checkPublicIPNotAttached(ctx context.Context, svc netdriver.AzureNetworkInterfaces, armID, rg, nicName string) error {
+	nics, err := svc.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return err
+	}
+
+	for i := range nics {
+		if strings.EqualFold(nics[i].ResourceGroup, rg) && nics[i].Name == nicName {
+			continue
+		}
+
+		for j := range nics[i].IPConfigs {
+			if strings.EqualFold(nics[i].IPConfigs[j].PublicIPID, armID) {
+				return cerrors.Newf(cerrors.FailedPrecondition,
+					"public IP %q is already associated with network interface %q", armID, nics[i].Name)
+			}
+		}
+	}
+
+	return nil
 }
 
 // subnetCIDR resolves the address prefix of the subnet named by an ARM subnet
@@ -278,14 +323,13 @@ func (h *Handler) subnetCIDR(ctx context.Context, subnetID string) (string, erro
 		"ipConfiguration references subnet %q which does not exist in vnet %q", sp.SubResourceName, sp.ResourceName)
 }
 
-func lastSegment(id string) string {
-	id = strings.TrimRight(id, "/")
-
-	if i := strings.LastIndexByte(id, '/'); i >= 0 {
-		return id[i+1:]
-	}
-
-	return id
+// ipConfigResourceID builds the nested ARM resource id of one NIC
+// ipConfiguration, used as the publicIPAddresses.ipConfiguration back-reference.
+func ipConfigResourceID(sub, rg, nicName, configName string) string {
+	return "/subscriptions/" + sub +
+		"/resourceGroups/" + rg +
+		"/providers/" + providerName + "/" + typeNIC +
+		"/" + nicName + "/ipConfigurations/" + configName
 }
 
 //nolint:gocritic // rp is a request-scoped value

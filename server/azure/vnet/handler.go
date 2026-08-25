@@ -27,17 +27,23 @@ import (
 )
 
 const (
-	providerName   = "Microsoft.Network"
-	typeVNet       = "virtualNetworks"
-	typeNSG        = "networkSecurityGroups"
-	typePublicIP   = "publicIPAddresses"
-	typeLocations  = "locations"
-	armNameTag     = "cloudemu:azureNetName"
-	armSubnetTag   = "cloudemu:azureSubnet"
-	armNSGTag      = "cloudemu:azureNSGName"
-	armPublicIPTag = "cloudemu:azurePublicIP"
-	defaultLoc     = "eastus"
-	subResSubnets  = "subnets"
+	providerName     = "Microsoft.Network"
+	typeVNet         = "virtualNetworks"
+	typeNSG          = "networkSecurityGroups"
+	typePublicIP     = "publicIPAddresses"
+	typeLocations    = "locations"
+	armNameTag       = "cloudemu:azureNetName"
+	armSubnetTag     = "cloudemu:azureSubnet"
+	armNSGTag        = "cloudemu:azureNSGName"
+	armPublicIPTag   = "cloudemu:azurePublicIP"
+	armPublicIPRGTag = "cloudemu:azurePublicIPResourceGroup"
+	// armSubnetNATTag stores the full ARM resource id of the NAT gateway a
+	// subnet is associated with (set via the subnet's own natGateway
+	// property), so both the subnet response and the NAT gateway's
+	// read-only subnets list can reflect the association.
+	armSubnetNATTag = "cloudemu:azureSubnetNATGateway"
+	defaultLoc      = "eastus"
+	subResSubnets   = "subnets"
 )
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
@@ -64,7 +70,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typePublicIP, typeNIC, typeLocations:
+	case typeVNet, typeNSG, typePublicIP, typeNIC, typeNATGateway, typeLocations:
 		return true
 	}
 
@@ -97,6 +103,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routePublicIP(w, r, rp)
 	case typeNIC:
 		h.routeNIC(w, r, rp)
+	case typeNATGateway:
+		h.routeNATGateway(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)
@@ -415,13 +423,24 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
-	cfg := netdriver.SubnetConfig{
-		VPCID:     vnet.ID,
-		CIDRBlock: req.Properties.AddressPrefix,
-		Tags:      mergeTags(nil, armSubnetTag, rp.SubResourceName),
+	var natGatewayID string
+
+	if req.Properties.NatGateway != nil {
+		ngRP, ok := azurearm.ParsePath(req.Properties.NatGateway.ID)
+		if !ok || ngRP.ResourceType != typeNATGateway {
+			azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed natGateway id")
+			return
+		}
+
+		if _, ngErr := findNATGatewayByName(r.Context(), h.net, ngRP.ResourceGroup, ngRP.ResourceName); ngErr != nil {
+			azurearm.WriteCErr(w, ngErr)
+			return
+		}
+
+		natGatewayID = req.Properties.NatGateway.ID
 	}
 
-	info, err := h.net.CreateSubnet(r.Context(), cfg)
+	info, err := h.upsertSubnet(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix, natGatewayID)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -430,6 +449,56 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 	body := toSubnetResponse(info, rp)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "subnet-create-"+rp.SubResourceName, body)
+}
+
+// upsertSubnet creates the named subnet, or — when it already exists — merges
+// in a NAT gateway reference so a subnet can be attached to a NAT gateway via
+// a second PUT (armnetwork's SubnetsClient.BeginCreateOrUpdate, the real ARM
+// mechanism: the association lives on the subnet's natGateway property, not
+// on the NAT gateway). Other subnet properties are not merged on update,
+// matching this handler's existing create-only behavior for subnets.
+func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewayID string) (*netdriver.SubnetInfo, error) {
+	if existing, err := findSubnetInVNet(ctx, h.net, vpcID, name); err == nil {
+		if natGatewayID == "" {
+			return existing, nil
+		}
+
+		if err := h.net.UpdateSubnetTags(ctx, existing.ID, map[string]string{armSubnetNATTag: natGatewayID}); err != nil {
+			return nil, err
+		}
+
+		existing.Tags = mergeTags(existing.Tags, armSubnetNATTag, natGatewayID)
+
+		return existing, nil
+	}
+
+	tags := mergeTags(nil, armSubnetTag, name)
+	if natGatewayID != "" {
+		tags = mergeTags(tags, armSubnetNATTag, natGatewayID)
+	}
+
+	return h.net.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID:     vpcID,
+		CIDRBlock: cidr,
+		Tags:      tags,
+	})
+}
+
+// findSubnetInVNet resolves a subnet by (vnet, name) — subnet names are only
+// unique within a vnet — mirroring subnetCIDR's scoped lookup.
+func findSubnetInVNet(ctx context.Context, n netdriver.Networking, vpcID, name string) (*netdriver.SubnetInfo, error) {
+	subs, err := n.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range subs {
+		if subs[i].VPCID == vpcID && tagOr(subs[i].Tags, armSubnetTag, "") == name {
+			return &subs[i], nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "subnet %s not found", name)
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -610,6 +679,8 @@ func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azure
 		h.createPublicIP(w, r, rp)
 	case http.MethodGet:
 		h.getPublicIP(w, r, rp)
+	case http.MethodDelete:
+		h.deletePublicIP(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
@@ -633,10 +704,19 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		sku = req.SKU.Name
 	}
 
+	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
+	tags = mergeTags(tags, armPublicIPRGTag, rp.ResourceGroup)
+
 	cfg := netdriver.ElasticIPConfig{
-		SKU:              sku,
-		AllocationMethod: req.Properties.PublicIPAllocationMethod,
-		Tags:             mergeTags(req.Tags, armPublicIPTag, rp.ResourceName),
+		SKU:                sku,
+		AllocationMethod:   req.Properties.PublicIPAllocationMethod,
+		Tags:               tags,
+		Zones:              req.Zones,
+		IdleTimeoutMinutes: req.Properties.IdleTimeoutInMinutes,
+	}
+
+	if req.Properties.DNSSettings != nil {
+		cfg.DNSDomainNameLabel = req.Properties.DNSSettings.DomainNameLabel
 	}
 
 	info, err := h.net.AllocateAddress(r.Context(), cfg)
@@ -650,23 +730,65 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		loc = defaultLoc
 	}
 
-	body := toPublicIPResponse(info, rp, loc)
+	body := h.toPublicIPResponse(r.Context(), info, rp, loc)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "publicip-create-"+rp.ResourceName, body)
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getPublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := findPublicIPByName(r.Context(), h.net, rp.ResourceName)
+	info, err := findPublicIPByName(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toPublicIPResponse(info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp, defaultLoc))
 }
 
 //nolint:gocritic // rp is a request-scoped value
+func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	info, err := findPublicIPByName(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	// A NIC's ipConfiguration reference doesn't go through
+	// AssociateAddress/eip.AssociationID (that's reserved for AWS-style
+	// instance/NAT-gateway attachment), so it needs its own in-use check here
+	// — the same scan the ipConfiguration back-reference already does.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
+
+	if h.publicIPConfigurationRef(r.Context(), rp.Subscription, id) != nil {
+		azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted",
+			"public IP "+rp.ResourceName+" is still referenced by a network interface ipConfiguration")
+
+		return
+	}
+
+	if err := h.net.ReleaseAddress(r.Context(), info.AllocationID); err != nil {
+		// A public IP still bound to a NIC/NAT gateway: ARM answers 400 with
+		// this specific code, not the generic 409 WriteCErr would emit.
+		if cerrors.IsFailedPrecondition(err) {
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", err.Error())
+			return
+		}
+
+		azurearm.WriteCErr(w, err)
+
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, "publicip-delete-"+rp.ResourceName, nil)
+}
+
+// listPublicIPs lists public IPs in rp's resource group, or every public IP in
+// the subscription when the request path carries no resource group (ARM
+// supports both .../resourceGroups/{rg}/.../publicIPAddresses and the
+// subscription-wide .../providers/Microsoft.Network/publicIPAddresses).
+//
+//nolint:gocritic,dupl // rp is request-scoped; mirrors listNATGateways over a distinct resource type by design
 func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeAddresses(r.Context(), nil)
 	if err != nil {
@@ -677,9 +799,14 @@ func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azure
 	out := publicIPListResponse{}
 
 	for i := range infos {
+		if rp.ResourceGroup != "" && tagOr(infos[i].Tags, armPublicIPRGTag, "") != rp.ResourceGroup {
+			continue
+		}
+
 		scope := rp
+		scope.ResourceGroup = tagOr(infos[i].Tags, armPublicIPRGTag, rp.ResourceGroup)
 		scope.ResourceName = tagOr(infos[i].Tags, armPublicIPTag, infos[i].AllocationID)
-		out.Value = append(out.Value, toPublicIPResponse(&infos[i], scope, defaultLoc))
+		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope, defaultLoc))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -732,16 +859,25 @@ func findNSGByName(ctx context.Context, n netdriver.Networking, name string) (*n
 	return nil, cerrors.Newf(cerrors.NotFound, "networkSecurityGroup %s not found", name)
 }
 
-func findPublicIPByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.ElasticIP, error) {
+// findPublicIPByName matches by both the ARM name tag and, when rg is
+// non-empty, the resource-group tag — a public IP in a different resource
+// group with the same name must not match (see armPublicIPRGTag).
+func findPublicIPByName(ctx context.Context, n netdriver.Networking, rg, name string) (*netdriver.ElasticIP, error) {
 	infos, err := n.DescribeAddresses(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range infos {
-		if tagOr(infos[i].Tags, armPublicIPTag, "") == name {
-			return &infos[i], nil
+		if tagOr(infos[i].Tags, armPublicIPTag, "") != name {
+			continue
 		}
+
+		if rg != "" && tagOr(infos[i].Tags, armPublicIPRGTag, "") != rg {
+			continue
+		}
+
+		return &infos[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "publicIPAddress %s not found", name)
@@ -819,7 +955,7 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 		"/providers/" + providerName + "/" + typeVNet +
 		"/" + rp.ResourceName + "/subnets/" + name
 
-	return subnetResponse{
+	out := subnetResponse{
 		ID:   id,
 		Name: name,
 		Etag: etagOf(id),
@@ -828,6 +964,12 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 			AddressPrefix:     info.CIDRBlock,
 		},
 	}
+
+	if ngID := tagOr(info.Tags, armSubnetNATTag, ""); ngID != "" {
+		out.Properties.NatGateway = &armIDRef{ID: ngID}
+	}
+
+	return out
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -864,21 +1006,27 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 }
 
 //nolint:gocritic // rp is a request-scoped value
-func toPublicIPResponse(info *netdriver.ElasticIP, rp azurearm.ResourcePath, location string) publicIPResponse {
+func (h *Handler) toPublicIPResponse(
+	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath, location string,
+) publicIPResponse {
 	if location == "" {
 		location = defaultLoc
 	}
 
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
+
 	out := publicIPResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName),
+		ID:       id,
 		Name:     rp.ResourceName,
 		Type:     providerName + "/" + typePublicIP,
 		Location: location,
 		Tags:     stripInternal(info.Tags),
+		Zones:    info.Zones,
 		Properties: publicIPRespProps{
 			ProvisioningState:        "Succeeded",
 			PublicIPAllocationMethod: info.AllocationMethod,
 			IPAddress:                info.PublicIP,
+			IdleTimeoutInMinutes:     info.IdleTimeoutMinutes,
 		},
 	}
 
@@ -886,7 +1034,42 @@ func toPublicIPResponse(info *netdriver.ElasticIP, rp azurearm.ResourcePath, loc
 		out.SKU = &publicIPSKU{Name: info.SKU}
 	}
 
+	if info.DNSDomainNameLabel != "" {
+		out.Properties.DNSSettings = &publicIPDNSSettings{
+			DomainNameLabel: info.DNSDomainNameLabel,
+			FQDN:            info.DNSFQDN,
+		}
+	}
+
+	out.Properties.IPConfiguration = h.publicIPConfigurationRef(ctx, rp.Subscription, id)
+
 	return out
+}
+
+// publicIPConfigurationRef scans network interfaces for an ipConfiguration
+// referencing the public IP with the given ARM id, matching the back-reference
+// a real publicIPAddresses GET reports once a NIC attaches the address (mirrors
+// vnetResponse's subnet-by-VPCID scan and vnetSubnetInUse's NIC scan).
+func (h *Handler) publicIPConfigurationRef(ctx context.Context, sub, publicIPARMID string) *armIDRef {
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return nil
+	}
+
+	nics, err := svc.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return nil
+	}
+
+	for i := range nics {
+		for j := range nics[i].IPConfigs {
+			if strings.EqualFold(nics[i].IPConfigs[j].PublicIPID, publicIPARMID) {
+				return &armIDRef{ID: ipConfigResourceID(sub, nics[i].ResourceGroup, nics[i].Name, nics[i].IPConfigs[j].Name)}
+			}
+		}
+	}
+
+	return nil
 }
 
 // writeAcceptedAsync replies for create/delete operations. armnetwork's

@@ -278,6 +278,12 @@ type ElasticIPConfig struct {
 	// Dynamic) are cost/behavior inputs a discoverer reads; optional.
 	SKU              string
 	AllocationMethod string
+	// Zones, IdleTimeoutMinutes and DNSDomainNameLabel are Azure public-IP-only
+	// fields (availability zones, TCP idle timeout, DNS label) the AWS-shaped
+	// fields above cannot represent; empty/zero for AWS and GCP.
+	Zones              []string
+	IdleTimeoutMinutes int
+	DNSDomainNameLabel string
 }
 
 // ElasticIP represents an elastic IP address.
@@ -297,6 +303,13 @@ type ElasticIP struct {
 	SKU string
 	// AllocationMethod is Static/Dynamic (Azure publicIPAllocationMethod).
 	AllocationMethod string
+	// Zones, IdleTimeoutMinutes, DNSDomainNameLabel and DNSFQDN round-trip the
+	// Azure-only public-IP fields set in ElasticIPConfig; DNSFQDN is derived by
+	// the provider from DNSDomainNameLabel. Empty/zero for AWS and GCP.
+	Zones              []string
+	IdleTimeoutMinutes int
+	DNSDomainNameLabel string
+	DNSFQDN            string
 }
 
 // AssociateAddressInput carries the target of an AssociateAddress call. Exactly

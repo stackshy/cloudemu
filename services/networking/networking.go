@@ -519,6 +519,8 @@ func (n *Networking) DetachInternetGateway(
 }
 
 // AllocateAddress allocates a new elastic IP address.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
 func (n *Networking) AllocateAddress(
 	ctx context.Context, cfg driver.ElasticIPConfig,
 ) (*driver.ElasticIP, error) {

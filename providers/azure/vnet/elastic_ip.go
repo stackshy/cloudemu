@@ -9,16 +9,28 @@ import (
 )
 
 type eipData struct {
-	AllocationID     string
-	PublicIP         string
-	AssociationID    string
-	InstanceID       string
-	Tags             map[string]string
-	SKU              string
-	AllocationMethod string
+	AllocationID       string
+	PublicIP           string
+	AssociationID      string
+	InstanceID         string
+	Tags               map[string]string
+	SKU                string
+	AllocationMethod   string
+	Zones              []string
+	IdleTimeoutMinutes int
+	DNSDomainNameLabel string
+	DNSFQDN            string
 }
 
+// defaultFQDNRegion is the region segment used to build a mock DNS FQDN for a
+// public IP's domainNameLabel. Real Azure computes this from the resource's
+// actual location plus a per-cloud hash segment; a fixed region keeps the mock
+// deterministic without threading location through ElasticIPConfig.
+const defaultFQDNRegion = "eastus"
+
 // AllocateAddress allocates a new public IP address.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AllocateAddress(
 	_ context.Context, cfg driver.ElasticIPConfig,
 ) (*driver.ElasticIP, error) {
@@ -37,12 +49,20 @@ func (m *Mock) AllocateAddress(
 	}
 
 	eip := &eipData{
-		AllocationID:     allocID,
-		PublicIP:         mockPublicIP(allocID),
-		Tags:             copyTags(cfg.Tags),
-		SKU:              sku,
-		AllocationMethod: allocMethod,
+		AllocationID:       allocID,
+		PublicIP:           mockPublicIP(allocID),
+		Tags:               copyTags(cfg.Tags),
+		SKU:                sku,
+		AllocationMethod:   allocMethod,
+		Zones:              append([]string(nil), cfg.Zones...),
+		IdleTimeoutMinutes: cfg.IdleTimeoutMinutes,
+		DNSDomainNameLabel: cfg.DNSDomainNameLabel,
 	}
+
+	if cfg.DNSDomainNameLabel != "" {
+		eip.DNSFQDN = cfg.DNSDomainNameLabel + "." + defaultFQDNRegion + ".cloudapp.azure.com"
+	}
+
 	m.eips.Set(allocID, eip)
 
 	info := toEIPInfo(eip)
@@ -129,12 +149,16 @@ func (m *Mock) DisassociateAddress(
 
 func toEIPInfo(eip *eipData) driver.ElasticIP {
 	return driver.ElasticIP{
-		AllocationID:     eip.AllocationID,
-		PublicIP:         eip.PublicIP,
-		AssociationID:    eip.AssociationID,
-		InstanceID:       eip.InstanceID,
-		Tags:             copyTags(eip.Tags),
-		SKU:              eip.SKU,
-		AllocationMethod: eip.AllocationMethod,
+		AllocationID:       eip.AllocationID,
+		PublicIP:           eip.PublicIP,
+		AssociationID:      eip.AssociationID,
+		InstanceID:         eip.InstanceID,
+		Tags:               copyTags(eip.Tags),
+		SKU:                eip.SKU,
+		AllocationMethod:   eip.AllocationMethod,
+		Zones:              append([]string(nil), eip.Zones...),
+		IdleTimeoutMinutes: eip.IdleTimeoutMinutes,
+		DNSDomainNameLabel: eip.DNSDomainNameLabel,
+		DNSFQDN:            eip.DNSFQDN,
 	}
 }

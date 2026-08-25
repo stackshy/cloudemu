@@ -2,10 +2,12 @@ package vnet_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
@@ -296,6 +298,91 @@ func TestSDKNetworkInterfaceUnknownSubnet(t *testing.T) {
 	}, nil)
 	if err == nil {
 		t.Fatal("NIC create against a missing subnet succeeded, want error")
+	}
+}
+
+// TestSDKNetworkInterfacePublicIPDoubleAttachRejected guards buildIPConfigs'
+// association check: the same static public IP cannot be attached to two
+// different NICs at once. A re-PUT of the SAME NIC keeping its own reference
+// must still succeed (not a false-positive conflict with itself).
+func TestSDKNetworkInterfacePublicIPDoubleAttachRejected(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{Network: cloudP.VNet})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	opts := clientOpts(ts)
+	poll := &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}
+
+	pips, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pp, err := pips.BeginCreateOrUpdate(ctx, "rg-1", "pip-double", armnetwork.PublicIPAddress{
+		Location: to.Ptr("eastus"),
+		SKU:      &armnetwork.PublicIPAddressSKU{Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard)},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create pip: %v", err)
+	}
+
+	if _, err = pp.PollUntilDone(ctx, poll); err != nil {
+		t.Fatalf("pip poll: %v", err)
+	}
+
+	pipID := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/publicIPAddresses/pip-double"
+
+	nicClient, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nicBody := func() armnetwork.Interface {
+		return armnetwork.Interface{
+			Location: to.Ptr("eastus"),
+			Properties: &armnetwork.InterfacePropertiesFormat{
+				IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
+					Name: to.Ptr("ipconfig1"),
+					Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{
+						PublicIPAddress: &armnetwork.PublicIPAddress{ID: to.Ptr(pipID)},
+					},
+				}},
+			},
+		}
+	}
+
+	np1, err := nicClient.BeginCreateOrUpdate(ctx, "rg-1", "nic-first", nicBody(), nil)
+	if err != nil {
+		t.Fatalf("first nic create: %v", err)
+	}
+
+	if _, err = np1.PollUntilDone(ctx, poll); err != nil {
+		t.Fatalf("first nic poll: %v", err)
+	}
+
+	// A second, different NIC referencing the same public IP must be rejected.
+	_, err = nicClient.BeginCreateOrUpdate(ctx, "rg-1", "nic-second", nicBody(), nil)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != 400 {
+		t.Fatalf("second nic double-attach: got %v, want 400", err)
+	}
+
+	// Re-PUTting the FIRST nic with the same reference is not a conflict with
+	// itself.
+	np1b, err := nicClient.BeginCreateOrUpdate(ctx, "rg-1", "nic-first", nicBody(), nil)
+	if err != nil {
+		t.Fatalf("first nic re-PUT: %v", err)
+	}
+
+	if _, err = np1b.PollUntilDone(ctx, poll); err != nil {
+		t.Fatalf("first nic re-PUT poll: %v", err)
 	}
 }
 
