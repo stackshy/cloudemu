@@ -83,6 +83,12 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 		return nil, err
 	}
 
+	// Real ECS normalizes the service's taskDefinition to the full ARN regardless
+	// of how the caller referenced it (bare family or family:revision), so echo the
+	// resolved ARN rather than the caller's short form. This is what lets Terraform
+	// diff-suppress family:revision against the ARN AWS always returns.
+	in.TaskDefinition = td.ARN
+
 	// A DAEMON service runs exactly one task per container instance, so AWS
 	// rejects a caller-supplied desiredCount rather than overriding it.
 	if in.SchedulingStrategy == schedDaemon && in.DesiredCount > 0 {
@@ -357,15 +363,24 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 // unset) task definition is a no-op. A deregistered (INACTIVE) definition can't
 // back a new deployment, same as CreateService/RunTask, so it is rejected.
 func (m *Mock) applyTaskDefChange(updated, svc *driver.Service, in *driver.UpdateServiceInput) (bool, error) {
-	if in.TaskDefinition == "" || in.TaskDefinition == svc.TaskDefinition {
+	if in.TaskDefinition == "" {
 		return false, nil
 	}
 
-	if _, err := m.resolveLaunchableTaskDef(in.TaskDefinition); err != nil {
+	td, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
+	if err != nil {
 		return false, err
 	}
 
-	updated.TaskDefinition = in.TaskDefinition
+	// The stored taskDefinition is always the full ARN, so compare the resolved ARN
+	// (not the caller's possibly-short reference) to detect a real change. A caller
+	// re-supplying the same revision as "family:revision" must remain a no-op.
+	if td.ARN == svc.TaskDefinition {
+		return false, nil
+	}
+
+	// Normalize to the full task-definition ARN, matching real ECS (and CreateService).
+	updated.TaskDefinition = td.ARN
 
 	return true, nil
 }
