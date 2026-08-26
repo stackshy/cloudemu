@@ -251,6 +251,8 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
+	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
+	p.ELB.SetSubnetResolver(p.VPC)
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)

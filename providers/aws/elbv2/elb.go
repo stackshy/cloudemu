@@ -59,6 +59,11 @@ type Mock struct {
 
 	tgAttrsMu sync.RWMutex
 	tgAttrs   map[string]map[string]string // tgARN -> attribute overrides
+
+	// subnetResolver derives a load balancer's VpcId from its subnets. Real
+	// ELBv2 infers VpcId rather than taking it as input; without the resolver
+	// wired in the field is simply left empty.
+	subnetResolver SubnetResolver
 }
 
 // New creates a new ELB mock with the given configuration options.
@@ -78,7 +83,7 @@ func New(opts *config.Options) *Mock {
 // CreateLoadBalancer creates a new load balancer.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
+func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "load balancer name is required")
 	}
@@ -124,6 +129,7 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 		SecurityGroups:        sgs,
 		IPAddressType:         ipType,
 		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
+		VPCID:                 m.resolveVPCID(ctx, cfg.Subnets),
 		CreatedTime:           m.opts.Clock.Now().UTC(),
 		Tags:                  tags,
 	}
