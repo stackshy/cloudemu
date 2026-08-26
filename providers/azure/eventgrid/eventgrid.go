@@ -420,8 +420,12 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 	}
 
 	for i := range events {
-		eventID := generateEventID(&events[i], m.opts.Clock.Now())
-		events[i].ID = eventID
+		// Real Event Grid preserves the publisher-supplied event id end-to-end
+		// (subscribers dedup on it); only synthesize one when the publisher
+		// omitted it.
+		if events[i].ID == "" {
+			events[i].ID = generateEventID(&events[i], m.opts.Clock.Now())
+		}
 
 		if events[i].Time.IsZero() {
 			events[i].Time = m.opts.Clock.Now()
@@ -451,7 +455,7 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 		})
 
 		result.SuccessCount++
-		result.EventIDs = append(result.EventIDs, eventID)
+		result.EventIDs = append(result.EventIDs, events[i].ID)
 	}
 
 	return result, nil

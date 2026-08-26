@@ -282,6 +282,47 @@ func TestGetImage(t *testing.T) {
 	})
 }
 
+func TestPutImageSameDigestUnionsTags(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "my-repo")
+
+	const digest = "sha256:AAA"
+
+	_, err := m.PutImage(ctx, &driver.ImageManifest{
+		Repository: "my-repo",
+		Tag:        "v1",
+		Digest:     digest,
+		SizeBytes:  1024,
+	})
+	require.NoError(t, err)
+
+	// Re-push the identical content under a new tag; v1 must survive.
+	_, err = m.PutImage(ctx, &driver.ImageManifest{
+		Repository: "my-repo",
+		Tag:        "latest",
+		Digest:     digest,
+		SizeBytes:  1024,
+	})
+	require.NoError(t, err)
+
+	byV1, err := m.GetImage(ctx, "my-repo", "v1")
+	require.NoError(t, err)
+	assert.Equal(t, digest, byV1.Digest)
+
+	byLatest, err := m.GetImage(ctx, "my-repo", "latest")
+	require.NoError(t, err)
+	assert.Equal(t, digest, byLatest.Digest)
+
+	assert.ElementsMatch(t, []string{"v1", "latest"}, byLatest.Tags)
+
+	// Single manifest, both tags on it.
+	images, err := m.ListImages(ctx, "my-repo")
+	require.NoError(t, err)
+	assert.Len(t, images, 1)
+}
+
 func TestListImages(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()

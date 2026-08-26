@@ -73,7 +73,7 @@ func TestListClustersResourceGroupCaseInsensitive(t *testing.T) {
 		ResourceGroup: "rg-1",
 		Name:          "k8s-prod",
 		Location:      "eastus",
-		AgentPools:    []AgentPoolInput{{Name: "system", Count: 1, VMSize: "Standard_D2s_v3", Mode: "System"}},
+		AgentPools:    []AgentPoolInput{{Name: "system", Count: int32Ptr(1), VMSize: "Standard_D2s_v3", Mode: "System"}},
 	})
 	requireNoError(t, err)
 
