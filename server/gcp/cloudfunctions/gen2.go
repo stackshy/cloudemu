@@ -335,7 +335,7 @@ func (h *Handler) patchV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 
 	fn.revisionSeq++
 
-	mergeGen2(fn, &body)
+	mergeGen2(fn, &body, parseUpdateMask(r.URL.Query()))
 	computeGen2Outputs(fn, p, false)
 
 	updated := cloneGen2(fn)
@@ -440,56 +440,69 @@ func (h *Handler) generateUploadURLV2(w http.ResponseWriter, r *http.Request, p 
 	})
 }
 
-// mergeGen2 applies the non-nil fields of a patch body onto the stored function.
-func mergeGen2(dst, src *gen2Function) {
-	if src.Description != "" {
-		dst.Description = src.Description
-	}
+// mergeGen2 applies a patch body onto the stored function under the update mask.
+// A partial buildConfig/serviceConfig patch merges sub-fields rather than
+// replacing the whole object, so a mask that touches one sub-field (or omits a
+// mask entirely) never wipes the runtime, entryPoint or scaling the client left
+// unset.
+func mergeGen2(dst, src *gen2Function, mask updateMask) {
+	applyMaskedStr(mask, "description", &dst.Description, src.Description)
 
-	if src.Labels != nil {
+	if mask.covers("labels") && (mask.explicit() || src.Labels != nil) {
 		dst.Labels = src.Labels
 	}
 
 	if src.BuildConfig != nil {
-		dst.BuildConfig = src.BuildConfig
+		mergeBuildConfig(dst, src.BuildConfig, mask)
 	}
 
 	if src.ServiceConfig != nil {
-		mergeServiceConfig(dst, src.ServiceConfig)
+		mergeServiceConfig(dst, src.ServiceConfig, mask)
 	}
 
-	if src.EventTrigger != nil {
+	if src.EventTrigger != nil && mask.covers("eventTrigger") {
 		dst.EventTrigger = src.EventTrigger
 	}
 }
 
-func mergeServiceConfig(dst *gen2Function, sc *gen2ServiceConfig) {
+// mergeBuildConfig merges the patch buildConfig sub-fields under the mask. The
+// build id is output-only (computeGen2Outputs recuts it) and is not merged here.
+func mergeBuildConfig(dst *gen2Function, bc *gen2BuildConfig, mask updateMask) {
+	if dst.BuildConfig == nil {
+		dst.BuildConfig = &gen2BuildConfig{}
+	}
+
+	d := dst.BuildConfig
+	applyMaskedStr(mask, "buildConfig.runtime", &d.Runtime, bc.Runtime)
+	applyMaskedStr(mask, "buildConfig.entryPoint", &d.EntryPoint, bc.EntryPoint)
+	applyMaskedStr(mask, "buildConfig.dockerRegistry", &d.DockerRegistry, bc.DockerRegistry)
+	applyMaskedStr(mask, "buildConfig.dockerRepository", &d.DockerRepository, bc.DockerRepository)
+
+	if mask.covers("buildConfig.environmentVariables") && (mask.explicit() || bc.EnvironmentVariables != nil) {
+		d.EnvironmentVariables = bc.EnvironmentVariables
+	}
+
+	if mask.covers("buildConfig.source") && bc.Source != nil {
+		d.Source = bc.Source
+	}
+}
+
+func mergeServiceConfig(dst *gen2Function, sc *gen2ServiceConfig, mask updateMask) {
 	if dst.ServiceConfig == nil {
 		dst.ServiceConfig = &gen2ServiceConfig{}
 	}
 
-	if sc.ServiceAccountEmail != "" {
-		dst.ServiceConfig.ServiceAccountEmail = sc.ServiceAccountEmail
-	}
+	d := dst.ServiceConfig
+	applyMaskedStr(mask, "serviceConfig.serviceAccountEmail", &d.ServiceAccountEmail, sc.ServiceAccountEmail)
+	applyMaskedStr(mask, "serviceConfig.availableMemory", &d.AvailableMemory, sc.AvailableMemory)
+	applyMaskedStr(mask, "serviceConfig.availableCpu", &d.AvailableCPU, sc.AvailableCPU)
+	applyMaskedInt(mask, "serviceConfig.timeoutSeconds", &d.TimeoutSeconds, sc.TimeoutSeconds)
+	applyMaskedStr(mask, "serviceConfig.ingressSettings", &d.IngressSettings, sc.IngressSettings)
+	applyMaskedInt(mask, "serviceConfig.maxInstanceCount", &d.MaxInstanceCount, sc.MaxInstanceCount)
+	applyMaskedInt(mask, "serviceConfig.minInstanceCount", &d.MinInstanceCount, sc.MinInstanceCount)
 
-	if sc.AvailableMemory != "" {
-		dst.ServiceConfig.AvailableMemory = sc.AvailableMemory
-	}
-
-	if sc.AvailableCPU != "" {
-		dst.ServiceConfig.AvailableCPU = sc.AvailableCPU
-	}
-
-	if sc.TimeoutSeconds != 0 {
-		dst.ServiceConfig.TimeoutSeconds = sc.TimeoutSeconds
-	}
-
-	if sc.IngressSettings != "" {
-		dst.ServiceConfig.IngressSettings = sc.IngressSettings
-	}
-
-	if sc.EnvironmentVariables != nil {
-		dst.ServiceConfig.EnvironmentVariables = sc.EnvironmentVariables
+	if mask.covers("serviceConfig.environmentVariables") && (mask.explicit() || sc.EnvironmentVariables != nil) {
+		d.EnvironmentVariables = sc.EnvironmentVariables
 	}
 }
 
