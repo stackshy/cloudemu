@@ -49,18 +49,17 @@ func (m *Mock) resolveSubnets(ctx context.Context, subnetIDs []string) (string, 
 // lookupSubnets resolves the requested subnets into an id→AZ map and the VPC id
 // they belong to (the first non-empty one). Subnets spanning more than one VPC
 // is not a case real Redshift accepts, so the first match is the answer.
-func (m *Mock) lookupSubnets(ctx context.Context, subnetIDs []string) (map[string]string, string) {
+func (m *Mock) lookupSubnets(ctx context.Context, subnetIDs []string) (azByID map[string]string, vpcID string) {
 	subnets, err := m.subnetResolver.DescribeSubnets(ctx, subnetIDs)
 	if err != nil || len(subnets) == 0 {
 		return nil, ""
 	}
 
-	azByID := make(map[string]string, len(subnets))
-
-	var vpcID string
+	azByID = make(map[string]string, len(subnets))
 
 	for i := range subnets {
 		azByID[subnets[i].ID] = subnets[i].AvailabilityZone
+
 		if vpcID == "" && subnets[i].VPCID != "" {
 			vpcID = subnets[i].VPCID
 		}

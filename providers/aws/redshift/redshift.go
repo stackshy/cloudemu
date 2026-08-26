@@ -620,7 +620,7 @@ func (m *Mock) ModifyCluster(
 		cluster.EngineVersion = input.EngineVersion
 	}
 
-	applyResize(&cluster, input)
+	applyResize(&cluster, &input)
 
 	if input.Tags != nil {
 		cluster.Tags = copyTags(input.Tags)
@@ -637,7 +637,7 @@ func (m *Mock) ModifyCluster(
 // / ClusterType) onto the cluster. A "single-node" ClusterType forces one node;
 // otherwise a positive NumberOfNodes is applied. Zero / empty inputs mean "no
 // change", so RDS/Aurora modifications (which never set these) are unaffected.
-func applyResize(cluster *rdbdriver.Cluster, input rdbdriver.ModifyInstanceInput) {
+func applyResize(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInstanceInput) {
 	if input.NodeType != "" {
 		cluster.NodeType = input.NodeType
 	}
