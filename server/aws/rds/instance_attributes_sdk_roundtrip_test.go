@@ -80,6 +80,7 @@ func TestSDKRDSModifyInstanceAttributes(t *testing.T) {
 		StorageType:                aws.String("io1"),
 		Iops:                       aws.Int32(3000),
 		DeletionProtection:         aws.Bool(true),
+		ApplyImmediately:           aws.Bool(true),
 	})
 	if err != nil {
 		t.Fatalf("ModifyDBInstance: %v", err)
@@ -153,5 +154,108 @@ func TestSDKRDSRenameInstance(t *testing.T) {
 		DBInstanceIdentifier: aws.String("oldname"),
 	}); err == nil {
 		t.Fatal("expected oldname to be gone after rename")
+	}
+}
+
+// TestSDKRDSModifyPendingModifiedValues asserts a deferred ModifyDBInstance
+// (ApplyImmediately=false) leaves the current values unchanged and reports the
+// requested changes in the nested PendingModifiedValues element on
+// DescribeDBInstances, with the master password masked.
+func TestSDKRDSModifyPendingModifiedValues(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBInstance(ctx, &awsrds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String("pending"),
+		Engine:               aws.String("mysql"),
+		DBInstanceClass:      aws.String("db.t3.micro"),
+		AllocatedStorage:     aws.Int32(20),
+	}); err != nil {
+		t.Fatalf("CreateDBInstance: %v", err)
+	}
+
+	out, err := client.ModifyDBInstance(ctx, &awsrds.ModifyDBInstanceInput{
+		DBInstanceIdentifier: aws.String("pending"),
+		DBInstanceClass:      aws.String("db.t3.large"),
+		AllocatedStorage:     aws.Int32(50),
+		MasterUserPassword:   aws.String("SuperSecret123!"),
+		ApplyImmediately:     aws.Bool(false),
+	})
+	if err != nil {
+		t.Fatalf("ModifyDBInstance: %v", err)
+	}
+
+	// The instance keeps its current class/storage; the change is only pending.
+	if aws.ToString(out.DBInstance.DBInstanceClass) != "db.t3.micro" {
+		t.Fatalf("class applied immediately=%q, want unchanged db.t3.micro", aws.ToString(out.DBInstance.DBInstanceClass))
+	}
+
+	got, err := client.DescribeDBInstances(ctx, &awsrds.DescribeDBInstancesInput{
+		DBInstanceIdentifier: aws.String("pending"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBInstances: %v", err)
+	}
+
+	if len(got.DBInstances) != 1 {
+		t.Fatalf("got %d instances, want 1", len(got.DBInstances))
+	}
+
+	inst := got.DBInstances[0]
+
+	if aws.ToString(inst.DBInstanceClass) != "db.t3.micro" || aws.ToInt32(inst.AllocatedStorage) != 20 {
+		t.Fatalf("current values changed: class=%q storage=%d, want db.t3.micro/20",
+			aws.ToString(inst.DBInstanceClass), aws.ToInt32(inst.AllocatedStorage))
+	}
+
+	pmv := inst.PendingModifiedValues
+	if pmv == nil {
+		t.Fatal("PendingModifiedValues nil; want the deferred changes")
+	}
+
+	if aws.ToString(pmv.DBInstanceClass) != "db.t3.large" {
+		t.Fatalf("PendingModifiedValues.DBInstanceClass=%q, want db.t3.large", aws.ToString(pmv.DBInstanceClass))
+	}
+
+	if aws.ToInt32(pmv.AllocatedStorage) != 50 {
+		t.Fatalf("PendingModifiedValues.AllocatedStorage=%d, want 50", aws.ToInt32(pmv.AllocatedStorage))
+	}
+
+	if aws.ToString(pmv.MasterUserPassword) != "****" {
+		t.Fatalf("PendingModifiedValues.MasterUserPassword=%q, want masked ****", aws.ToString(pmv.MasterUserPassword))
+	}
+}
+
+// TestSDKRDSModifyApplyImmediatelyClearsPending asserts ApplyImmediately=true
+// updates the instance now and reports no PendingModifiedValues.
+func TestSDKRDSModifyApplyImmediatelyClearsPending(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBInstance(ctx, &awsrds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String("applynow"),
+		Engine:               aws.String("mysql"),
+		DBInstanceClass:      aws.String("db.t3.micro"),
+	}); err != nil {
+		t.Fatalf("CreateDBInstance: %v", err)
+	}
+
+	out, err := client.ModifyDBInstance(ctx, &awsrds.ModifyDBInstanceInput{
+		DBInstanceIdentifier: aws.String("applynow"),
+		DBInstanceClass:      aws.String("db.t3.large"),
+		ApplyImmediately:     aws.Bool(true),
+	})
+	if err != nil {
+		t.Fatalf("ModifyDBInstance: %v", err)
+	}
+
+	if aws.ToString(out.DBInstance.DBInstanceClass) != "db.t3.large" {
+		t.Fatalf("class=%q, want db.t3.large applied now", aws.ToString(out.DBInstance.DBInstanceClass))
+	}
+
+	if out.DBInstance.PendingModifiedValues != nil &&
+		aws.ToString(out.DBInstance.PendingModifiedValues.DBInstanceClass) != "" {
+		t.Fatalf("expected no pending class, got %q",
+			aws.ToString(out.DBInstance.PendingModifiedValues.DBInstanceClass))
 	}
 }

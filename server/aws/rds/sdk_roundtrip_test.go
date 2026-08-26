@@ -145,6 +145,7 @@ func TestSDKRDSInstanceLifecycle(t *testing.T) {
 	if _, err := client.ModifyDBInstance(ctx, &awsrds.ModifyDBInstanceInput{
 		DBInstanceIdentifier: aws.String("life"),
 		AllocatedStorage:     aws.Int32(100),
+		ApplyImmediately:     aws.Bool(true),
 	}); err != nil {
 		t.Fatalf("ModifyDBInstance: %v", err)
 	}

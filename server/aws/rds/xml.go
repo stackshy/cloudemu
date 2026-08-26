@@ -111,6 +111,21 @@ type dbInstanceXML struct {
 	TagList                               *tagListXML                `xml:"TagList,omitempty"`
 	ReadReplicaSourceDBInstanceIdentifier string                     `xml:"ReadReplicaSourceDBInstanceIdentifier,omitempty"`
 	ReadReplicaDBInstanceIdentifiers      *readReplicaIDsXML         `xml:"ReadReplicaDBInstanceIdentifiers,omitempty"`
+	PendingModifiedValues                 *pendingModifiedValuesXML  `xml:"PendingModifiedValues,omitempty"`
+}
+
+// pendingModifiedValuesXML is the nested DBInstance element listing the
+// deferrable ModifyDBInstance changes requested with ApplyImmediately=false but
+// not yet applied. MasterUserPassword is echoed masked ("****"), never in clear.
+type pendingModifiedValuesXML struct {
+	DBInstanceClass       string `xml:"DBInstanceClass,omitempty"`
+	AllocatedStorage      int    `xml:"AllocatedStorage,omitempty"`
+	EngineVersion         string `xml:"EngineVersion,omitempty"`
+	MasterUserPassword    string `xml:"MasterUserPassword,omitempty"`
+	BackupRetentionPeriod int    `xml:"BackupRetentionPeriod,omitempty"`
+	MultiAZ               *bool  `xml:"MultiAZ,omitempty"`
+	Iops                  int    `xml:"Iops,omitempty"`
+	StorageType           string `xml:"StorageType,omitempty"`
 }
 
 type readReplicaIDsXML struct {
@@ -422,9 +437,29 @@ func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupX
 		TagList:                               toTagListXML(inst.Tags),
 		ReadReplicaSourceDBInstanceIdentifier: inst.ReadReplicaSource,
 		ReadReplicaDBInstanceIdentifiers:      toReadReplicaIDsXML(inst.ReadReplicaTargets),
+		PendingModifiedValues:                 toPendingModifiedValuesXML(inst.PendingModifiedValues),
 	}
 
 	return x
+}
+
+// toPendingModifiedValuesXML maps the driver's PendingModifiedValues onto its
+// nested wire element, returning nil (an omitted element) when nothing is pending.
+func toPendingModifiedValuesXML(p *rdsdriver.PendingModifiedValues) *pendingModifiedValuesXML {
+	if p == nil {
+		return nil
+	}
+
+	return &pendingModifiedValuesXML{
+		DBInstanceClass:       p.InstanceClass,
+		AllocatedStorage:      p.AllocatedStorage,
+		EngineVersion:         p.EngineVersion,
+		MasterUserPassword:    p.MasterUserPassword,
+		BackupRetentionPeriod: p.BackupRetentionPeriod,
+		MultiAZ:               p.MultiAZ,
+		Iops:                  p.Iops,
+		StorageType:           p.StorageType,
+	}
 }
 
 func toDBParameterGroupsXML(name string) *dbParameterGroupsXML {

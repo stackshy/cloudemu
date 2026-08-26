@@ -641,14 +641,26 @@ func (m *Mock) ModifyInstance(
 		return nil, err
 	}
 
-	// Rotate the master password on the backing engine so the new credential
-	// actually authenticates.
-	if err := m.rotateEnginePassword(ctx, &inst, input.MasterUserPassword); err != nil {
-		return nil, err
+	// ApplyImmediately (default false) governs the deferrable resize/version/
+	// password/storage changes. When set they take effect now and clear any
+	// pending changes; otherwise they are recorded in PendingModifiedValues and
+	// the instance keeps its current values until the maintenance window.
+	if input.ApplyImmediately {
+		// Rotate the master password on the backing engine so the new credential
+		// actually authenticates.
+		if err := m.rotateEnginePassword(ctx, &inst, input.MasterUserPassword); err != nil {
+			return nil, err
+		}
+
+		applyDeferrableMods(&inst, &input)
+		inst.PendingModifiedValues = nil
+	} else {
+		inst.PendingModifiedValues = pendingModifiedValues(&inst, &input)
 	}
 
-	applyInstanceCoreMods(&inst, &input)
-	applyInstanceStorageMods(&inst, &input)
+	// Parameter/option groups, tags, backup/maintenance windows and deletion
+	// protection always apply immediately in real RDS, regardless of the flag.
+	applyImmediateMods(&inst, &input)
 
 	// A rename re-keys the store and rewrites the ARN + any replica references.
 	// Apply the scalar changes first so the renamed row carries them.
@@ -669,8 +681,9 @@ func renameRequested(id string, input *rdsdriver.ModifyInstanceInput) bool {
 	return input.NewInstanceID != "" && input.NewInstanceID != id
 }
 
-// applyInstanceCoreMods applies the class/storage/version/param-group changes.
-func applyInstanceCoreMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+// applyDeferrableMods applies the class/storage/version/MultiAZ changes real RDS
+// defers to the maintenance window unless ApplyImmediately is set.
+func applyDeferrableMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
 	if input.InstanceClass != "" {
 		inst.InstanceClass = input.InstanceClass
 	}
@@ -687,28 +700,29 @@ func applyInstanceCoreMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInst
 		inst.MultiAZ = *input.MultiAZ
 	}
 
-	if input.DBParameterGroupName != "" {
-		inst.DBParameterGroupName = input.DBParameterGroupName
-	}
-
-	if input.OptionGroupName != "" {
-		inst.OptionGroupName = input.OptionGroupName
-	}
-
-	if input.Tags != nil {
-		inst.Tags = copyTags(input.Tags)
-	}
-}
-
-// applyInstanceStorageMods applies the storage/backup/maintenance/protection
-// attributes real RDS honors on ModifyDBInstance.
-func applyInstanceStorageMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
 	if input.StorageType != "" {
 		inst.StorageType = input.StorageType
 	}
 
 	if input.BackupRetentionPeriod > 0 {
 		inst.BackupRetentionPeriod = input.BackupRetentionPeriod
+	}
+
+	if input.Iops > 0 {
+		inst.Iops = input.Iops
+	}
+}
+
+// applyImmediateMods applies the attributes real RDS honors right away on
+// ModifyDBInstance regardless of ApplyImmediately: parameter/option groups,
+// backup/maintenance windows, deletion protection and tags.
+func applyImmediateMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+	if input.DBParameterGroupName != "" {
+		inst.DBParameterGroupName = input.DBParameterGroupName
+	}
+
+	if input.OptionGroupName != "" {
+		inst.OptionGroupName = input.OptionGroupName
 	}
 
 	if input.PreferredBackupWindow != "" {
@@ -719,13 +733,69 @@ func applyInstanceStorageMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyI
 		inst.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
 	}
 
-	if input.Iops > 0 {
-		inst.Iops = input.Iops
-	}
-
 	if input.DeletionProtection != nil {
 		inst.DeletionProtection = *input.DeletionProtection
 	}
+
+	if input.Tags != nil {
+		inst.Tags = copyTags(input.Tags)
+	}
+}
+
+// pendingModifiedValues computes the deferrable changes that differ from the
+// instance's current values, returning nil when nothing is pending. A pending
+// password change is recorded masked — the plaintext is never stored here.
+func pendingModifiedValues(
+	inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput,
+) *rdsdriver.PendingModifiedValues {
+	p := &rdsdriver.PendingModifiedValues{
+		InstanceClass:         pendingStr(inst.InstanceClass, input.InstanceClass),
+		AllocatedStorage:      pendingInt(inst.AllocatedStorage, input.AllocatedStorage),
+		EngineVersion:         pendingStr(inst.EngineVersion, input.EngineVersion),
+		BackupRetentionPeriod: pendingInt(inst.BackupRetentionPeriod, input.BackupRetentionPeriod),
+		MultiAZ:               pendingBool(inst.MultiAZ, input.MultiAZ),
+		Iops:                  pendingInt(inst.Iops, input.Iops),
+		StorageType:           pendingStr(inst.StorageType, input.StorageType),
+	}
+
+	if input.MasterUserPassword != "" {
+		p.MasterUserPassword = rdsdriver.MaskedPassword
+	}
+
+	if p.IsEmpty() {
+		return nil
+	}
+
+	return p
+}
+
+// pendingStr/pendingInt/pendingBool return the requested value only when it is
+// set and differs from the current one, so a no-op change is omitted from
+// PendingModifiedValues (matching real RDS).
+func pendingStr(cur, req string) string {
+	if req != "" && req != cur {
+		return req
+	}
+
+	return ""
+}
+
+func pendingInt(cur, req int) int {
+	if req > 0 && req != cur {
+		return req
+	}
+
+	return 0
+}
+
+func pendingBool(cur bool, req *bool) *bool {
+	if req != nil && *req != cur {
+		v := *req
+
+		return &v
+	}
+
+	return nil
 }
 
 // renameInstance re-keys an instance to newID under the caller's write lock:

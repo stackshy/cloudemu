@@ -131,6 +131,7 @@ func TestModifyInstance(t *testing.T) {
 		EngineVersion:    "8.0.32",
 		MultiAZ:          &multi,
 		Tags:             map[string]string{"env": "prod"},
+		ApplyImmediately: true,
 	})
 	requireNoError(t, err)
 
