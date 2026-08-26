@@ -16,6 +16,17 @@ func conflict(kind, format string, args ...any) error {
 	return &driver.ResourceError{Kind: kind, Err: errors.Newf(errors.AlreadyExists, format, args...)}
 }
 
+// conflictWithID builds a kind-tagged AlreadyExists error that carries the id of
+// the existing resource, so the wire layer can surface it (e.g. the existing
+// file-system id inside a FileSystemAlreadyExists error for idempotent retries).
+func conflictWithID(kind, resourceID, format string, args ...any) error {
+	return &driver.ResourceError{
+		Kind:       kind,
+		ResourceID: resourceID,
+		Err:        errors.Newf(errors.AlreadyExists, format, args...),
+	}
+}
+
 // inUse builds a kind-tagged FailedPrecondition error.
 func inUse(kind, format string, args ...any) error {
 	return &driver.ResourceError{Kind: kind, Err: errors.Newf(errors.FailedPrecondition, format, args...)}

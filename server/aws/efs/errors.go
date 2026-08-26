@@ -16,20 +16,29 @@ const (
 
 // errorBody is the restJson1 error body. The SDK reads the X-Amzn-Errortype
 // header to select a typed exception, falling back to the body's __type.
+// FileSystemId is set on a FileSystemAlreadyExists error so the SDK exception's
+// FileSystemId member is populated for idempotent CreateFileSystem retries.
 type errorBody struct {
-	Type      string `json:"__type"`
-	ErrorCode string `json:"ErrorCode"`
-	Message   string `json:"Message"`
+	Type         string `json:"__type"`
+	ErrorCode    string `json:"ErrorCode"`
+	Message      string `json:"Message"`
+	FileSystemID string `json:"FileSystemId,omitempty"`
 }
 
 // writeError writes a restJson1 error response. EFS error bodies carry both
 // ErrorCode and Message; the header selects the typed exception.
 func writeError(w http.ResponseWriter, status int, errType, msg string) {
+	writeErrorBody(w, status, errType, errorBody{Type: errType, ErrorCode: errType, Message: msg})
+}
+
+// writeErrorBody writes a restJson1 error response from a fully-built body,
+// letting callers attach extra members (e.g. FileSystemId).
+func writeErrorBody(w http.ResponseWriter, status int, errType string, body errorBody) {
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.Header().Set("X-Amzn-Errortype", errType)
 	w.WriteHeader(status)
 
-	_ = json.NewEncoder(w).Encode(errorBody{Type: errType, ErrorCode: errType, Message: msg})
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // exceptionFor returns the EFS X-Amzn-Errortype for a resource kind + canonical
@@ -74,14 +83,22 @@ func exceptionFor(kind string, err error) (status int, errType string) {
 // the resource kind carried by driver.ResourceError when present.
 func writeErr(w http.ResponseWriter, err error) {
 	kind := ""
+	resourceID := ""
 
 	var re *driver.ResourceError
 	if errors.As(err, &re) {
 		kind = re.Kind
+		resourceID = re.ResourceID
 	}
 
 	status, errType := exceptionFor(kind, err)
-	writeError(w, status, errType, err.Error())
+
+	body := errorBody{Type: errType, ErrorCode: errType, Message: err.Error()}
+	if kind == driver.KindFileSystem {
+		body.FileSystemID = resourceID
+	}
+
+	writeErrorBody(w, status, errType, body)
 }
 
 func notFound(w http.ResponseWriter, path string) {
