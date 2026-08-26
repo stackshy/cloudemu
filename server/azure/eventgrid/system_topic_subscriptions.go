@@ -28,7 +28,7 @@ func (h *Handler) serveSystemTopicSubscription(w http.ResponseWriter, r *http.Re
 	case http.MethodGet:
 		h.getSystemTopicSubscription(w, rp)
 	case http.MethodDelete:
-		h.deleteSystemTopicSubscription(w, rp)
+		h.deleteSystemTopicSubscription(w, r, rp)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -71,7 +71,14 @@ func (h *Handler) createOrUpdateSystemTopicSubscription(w http.ResponseWriter, r
 
 	rec.subscriptions[rp.SubResourceName] = body.Properties
 	out := systemTopicSubscriptionJSON(rp, body.Properties)
+	source := rec.source
 	h.mu.Unlock()
+
+	// Bridge the wire-created subscription to the delivery path: register it as a
+	// rule on the system topic's delivery bus so the source producer's PutEvents
+	// matches and delivers it (mirrors the custom-topic event-subscription path).
+	busName := h.ensureSystemTopicBus(r.Context(), source)
+	h.registerSystemTopicSubscription(r.Context(), busName, rp.SubResourceName, body.Properties)
 
 	azurearm.WriteJSON(w, http.StatusCreated, out)
 }
@@ -100,16 +107,22 @@ func (h *Handler) getSystemTopicSubscription(w http.ResponseWriter, rp *azurearm
 	azurearm.WriteJSON(w, http.StatusOK, systemTopicSubscriptionJSON(rp, props))
 }
 
-func (h *Handler) deleteSystemTopicSubscription(w http.ResponseWriter, rp *azurearm.ResourcePath) {
+func (h *Handler) deleteSystemTopicSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	key := storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 
 	h.mu.Lock()
 
+	var source string
+
 	if rec := h.systemTopics[key]; rec != nil {
+		source = rec.source
 		delete(rec.subscriptions, rp.SubResourceName)
 	}
 
 	h.mu.Unlock()
+
+	// Drop the delivery rule so the deleted subscription stops receiving events.
+	h.unregisterSystemTopicSubscription(r.Context(), systemTopicBusName(source), rp.SubResourceName)
 
 	// The SDK's BeginDelete LRO completes on a 200 first response.
 	w.WriteHeader(http.StatusOK)

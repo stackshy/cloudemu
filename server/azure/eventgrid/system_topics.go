@@ -2,7 +2,9 @@ package eventgrid
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
@@ -111,7 +113,7 @@ func (h *Handler) serveSystemTopicResource(w http.ResponseWriter, r *http.Reques
 	case http.MethodGet:
 		h.getSystemTopic(w, rp)
 	case http.MethodDelete:
-		h.deleteSystemTopic(w, rp)
+		h.deleteSystemTopic(w, r, rp)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -152,7 +154,13 @@ func (h *Handler) createOrUpdateSystemTopic(w http.ResponseWriter, r *http.Reque
 	}
 
 	out := rec.toJSON(rp)
+	source := rec.source
 	h.mu.Unlock()
+
+	// Provision the internal delivery bus keyed by the source now, so the source
+	// producer's PutEvents has a bus to match even before any subscription — and
+	// so a subscription created next registers its rule against it.
+	h.ensureSystemTopicBus(r.Context(), source)
 
 	// 201 with a terminal provisioningState completes the SDK's LRO poller on
 	// the first response.
@@ -218,13 +226,32 @@ func (h *Handler) getSystemTopic(w http.ResponseWriter, rp *azurearm.ResourcePat
 	azurearm.WriteJSON(w, http.StatusOK, out)
 }
 
-func (h *Handler) deleteSystemTopic(w http.ResponseWriter, rp *azurearm.ResourcePath) {
+func (h *Handler) deleteSystemTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	key := storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 
 	h.mu.Lock()
-	_, found := h.systemTopics[key]
+
+	rec, found := h.systemTopics[key]
+
+	var (
+		source   string
+		subNames []string
+	)
+
+	if found {
+		source = rec.source
+		subNames = slices.Collect(maps.Keys(rec.subscriptions))
+	}
+
 	delete(h.systemTopics, key)
 	h.mu.Unlock()
+
+	// Remove this system topic's delivery rules (the bus may be shared with
+	// another system topic on the same source, so drop rules, not the bus).
+	busName := systemTopicBusName(source)
+	for _, name := range subNames {
+		h.unregisterSystemTopicSubscription(r.Context(), busName, name)
+	}
 
 	if !found {
 		// ARM delete is idempotent: a delete of a missing resource completes 204.
