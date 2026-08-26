@@ -129,18 +129,180 @@ func newGCPServer(t *testing.T) *httptest.Server {
 
 func insertDisk(t *testing.T, c *gcpcompute.DisksClient, disk *computepb.Disk) {
 	t.Helper()
+	insertDiskZone(t, c, testZone, disk)
+}
+
+// insertDiskZone inserts a disk into a specific zone and waits for the op.
+func insertDiskZone(t *testing.T, c *gcpcompute.DisksClient, zone string, disk *computepb.Disk) {
+	t.Helper()
 
 	ctx := context.Background()
 
 	op, err := c.Insert(ctx, &computepb.InsertDiskRequest{
-		Project: testProject, Zone: testZone, DiskResource: disk,
+		Project: testProject, Zone: zone, DiskResource: disk,
 	})
 	if err != nil {
-		t.Fatalf("disk Insert: %v", err)
+		t.Fatalf("disk Insert (%s): %v", zone, err)
 	}
 
 	if err := op.Wait(ctx); err != nil {
-		t.Fatalf("disk Insert wait: %v", err)
+		t.Fatalf("disk Insert wait (%s): %v", zone, err)
+	}
+}
+
+// otherZone is a second zone (distinct from testZone) used to prove disk
+// operations are zone-scoped and never resolve across zones.
+const otherZone = "us-west1-b"
+
+// TestSDKDiskGetCrossZoneNotFound proves get/delete/resize against a zone that
+// does not hold the disk return 404 instead of resolving another zone's disk
+// (the cross-zone data-loss bug for delete).
+func TestSDKDiskGetCrossZoneNotFound(t *testing.T) {
+	ts := newGCPServer(t)
+	client := newDisksSDKClient(t, ts)
+	ctx := context.Background()
+
+	// Disk lives in otherZone (us-west1-b).
+	insertDiskZone(t, client, otherZone, &computepb.Disk{Name: ptrStr("west-disk"), SizeGb: ptrInt64(10)})
+
+	// GET via testZone (us-central1-a) must NOT resolve the west disk.
+	if _, err := client.Get(ctx, &computepb.GetDiskRequest{
+		Project: testProject, Zone: testZone, Disk: "west-disk",
+	}); err == nil {
+		t.Fatal("Get in wrong zone resolved a disk, want 404 notFound")
+	}
+
+	// DELETE via the wrong zone must 404 (must NOT destroy the west disk).
+	if _, err := client.Delete(ctx, &computepb.DeleteDiskRequest{
+		Project: testProject, Zone: testZone, Disk: "west-disk",
+	}); err == nil {
+		t.Fatal("Delete in wrong zone succeeded, want 404 notFound (data loss)")
+	}
+
+	// RESIZE via the wrong zone must 404.
+	if _, err := client.Resize(ctx, &computepb.ResizeDiskRequest{
+		Project: testProject, Zone: testZone, Disk: "west-disk",
+		DisksResizeRequestResource: &computepb.DisksResizeRequest{SizeGb: ptrInt64(50)},
+	}); err == nil {
+		t.Fatal("Resize in wrong zone succeeded, want 404 notFound")
+	}
+
+	// The west disk is untouched: still gettable in its own zone at its size.
+	got, err := client.Get(ctx, &computepb.GetDiskRequest{
+		Project: testProject, Zone: otherZone, Disk: "west-disk",
+	})
+	if err != nil {
+		t.Fatalf("Get west-disk in its own zone: %v", err)
+	}
+
+	if got.GetSizeGb() != 10 {
+		t.Errorf("west-disk sizeGb=%d want 10 (should be untouched)", got.GetSizeGb())
+	}
+
+	if !strings.HasSuffix(got.GetZone(), "/zones/"+otherZone) {
+		t.Errorf("west-disk zone=%s want suffix /zones/%s", got.GetZone(), otherZone)
+	}
+}
+
+// TestSDKDiskListZoneScoped proves disks.list returns only the requested zone's
+// disks, each labeled with its own zone selfLink.
+func TestSDKDiskListZoneScoped(t *testing.T) {
+	ts := newGCPServer(t)
+	client := newDisksSDKClient(t, ts)
+	ctx := context.Background()
+
+	insertDiskZone(t, client, testZone, &computepb.Disk{Name: ptrStr("central-disk"), SizeGb: ptrInt64(10)})
+	insertDiskZone(t, client, otherZone, &computepb.Disk{Name: ptrStr("west-disk"), SizeGb: ptrInt64(10)})
+
+	it := client.List(ctx, &computepb.ListDisksRequest{Project: testProject, Zone: testZone})
+
+	names := map[string]string{}
+	for {
+		d, err := it.Next()
+		if err != nil {
+			break
+		}
+
+		names[d.GetName()] = d.GetZone()
+	}
+
+	if _, ok := names["west-disk"]; ok {
+		t.Error("List(us-central1-a) leaked west-disk from another zone")
+	}
+
+	zone, ok := names["central-disk"]
+	if !ok {
+		t.Fatal("List(us-central1-a) did not return central-disk")
+	}
+
+	if !strings.HasSuffix(zone, "/zones/"+testZone) {
+		t.Errorf("central-disk zone=%s want suffix /zones/%s", zone, testZone)
+	}
+
+	if len(names) != 1 {
+		t.Errorf("List returned %d disks, want 1 (only the central zone)", len(names))
+	}
+}
+
+// TestSDKDiskSameNameDifferentZones proves the same disk name inserts
+// successfully in two different zones (disk names are unique per-zone).
+func TestSDKDiskSameNameDifferentZones(t *testing.T) {
+	ts := newGCPServer(t)
+	client := newDisksSDKClient(t, ts)
+	ctx := context.Background()
+
+	insertDiskZone(t, client, testZone, &computepb.Disk{Name: ptrStr("twin"), SizeGb: ptrInt64(10)})
+
+	// Same name in a different zone must succeed, not falsely 409.
+	if _, err := client.Insert(ctx, &computepb.InsertDiskRequest{
+		Project: testProject, Zone: otherZone,
+		DiskResource: &computepb.Disk{Name: ptrStr("twin"), SizeGb: ptrInt64(20)},
+	}); err != nil {
+		t.Fatalf("same-name insert in different zone failed: %v", err)
+	}
+
+	// Both are distinct disks, each in its own zone with its own size.
+	central, err := client.Get(ctx, &computepb.GetDiskRequest{Project: testProject, Zone: testZone, Disk: "twin"})
+	if err != nil {
+		t.Fatalf("Get twin in central: %v", err)
+	}
+
+	west, err := client.Get(ctx, &computepb.GetDiskRequest{Project: testProject, Zone: otherZone, Disk: "twin"})
+	if err != nil {
+		t.Fatalf("Get twin in west: %v", err)
+	}
+
+	if central.GetSizeGb() != 10 || west.GetSizeGb() != 20 {
+		t.Errorf("sizes central=%d west=%d want 10 and 20 (distinct disks)", central.GetSizeGb(), west.GetSizeGb())
+	}
+}
+
+// TestSDKDiskAggregatedListSpansZones proves aggregatedList still spans zones
+// after the get/list scoping fix, grouping each disk under its own zone.
+func TestSDKDiskAggregatedListSpansZones(t *testing.T) {
+	ts := newGCPServer(t)
+	client := newDisksSDKClient(t, ts)
+	ctx := context.Background()
+
+	insertDiskZone(t, client, testZone, &computepb.Disk{Name: ptrStr("central-agg"), SizeGb: ptrInt64(10)})
+	insertDiskZone(t, client, otherZone, &computepb.Disk{Name: ptrStr("west-agg"), SizeGb: ptrInt64(10)})
+
+	it := client.AggregatedList(ctx, &computepb.AggregatedListDisksRequest{Project: testProject})
+
+	seen := map[string]bool{}
+	for {
+		pair, err := it.Next()
+		if err != nil {
+			break
+		}
+
+		for _, d := range pair.Value.GetDisks() {
+			seen[d.GetName()] = true
+		}
+	}
+
+	if !seen["central-agg"] || !seen["west-agg"] {
+		t.Errorf("aggregatedList missing a zone's disk: seen=%v", seen)
 	}
 }
 
