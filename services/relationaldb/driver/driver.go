@@ -364,8 +364,8 @@ type ClusterSnapshot struct {
 	// (the restored cluster reads them back). Empty for RDS/Aurora/Azure/GCP.
 	MasterUsername string
 	DatabaseName   string
-	CreatedAt                  time.Time
-	Tags                       map[string]string
+	CreatedAt      time.Time
+	Tags           map[string]string
 }
 
 // RestoreInstanceInput configures restoring an instance from a snapshot.
