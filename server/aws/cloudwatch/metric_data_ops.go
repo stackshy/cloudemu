@@ -262,21 +262,9 @@ func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarm
 	kept := make([]mondriver.AlarmHistoryEntry, 0, len(entries))
 
 	for i := range entries {
-		e := &entries[i]
-
-		if in.HistoryItemType != "" && historyItemType(e) != in.HistoryItemType {
-			continue
+		if historyEntryMatches(&entries[i], in, start, end) {
+			kept = append(kept, entries[i])
 		}
-
-		if !start.IsZero() && e.Timestamp.Before(start) {
-			continue
-		}
-
-		if !end.IsZero() && e.Timestamp.After(end) {
-			continue
-		}
-
-		kept = append(kept, *e)
 	}
 
 	if in.ScanBy == scanByAscending {
@@ -288,6 +276,24 @@ func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarm
 	}
 
 	return historyItemsToCBR(kept)
+}
+
+// historyEntryMatches reports whether an entry passes the HistoryItemType and
+// StartDate/EndDate filters of a DescribeAlarmHistory request.
+func historyEntryMatches(e *mondriver.AlarmHistoryEntry, in *describeAlarmHistoryInput, start, end time.Time) bool {
+	if in.HistoryItemType != "" && historyItemType(e) != in.HistoryItemType {
+		return false
+	}
+
+	if !start.IsZero() && e.Timestamp.Before(start) {
+		return false
+	}
+
+	if !end.IsZero() && e.Timestamp.After(end) {
+		return false
+	}
+
+	return true
 }
 
 // reverseHistory reverses the entries in place (newest-first to oldest-first).

@@ -218,7 +218,7 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 func evaluateWindow(
 	datums []driver.MetricDatum, alarm *alarmData, now time.Time,
 	periodDur time.Duration, evalPeriods, datapointsToAlarm int,
-) (string, string, bool) {
+) (state, reason string, evaluated bool) {
 	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
 
 	breaching, present := 0, 0

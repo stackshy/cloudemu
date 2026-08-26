@@ -70,11 +70,11 @@ type AlarmConfig struct {
 	Threshold               float64
 	Period                  int
 	EvaluationPeriods       int
-	DatapointsToAlarm       int    // M in the M-of-N rule; 0 defaults to EvaluationPeriods
+	DatapointsToAlarm       int // M in the M-of-N rule; 0 defaults to EvaluationPeriods
 	Stat                    string
-	ExtendedStatistic       string // percentile statistic (e.g. "p95"); alternative to Stat
-	Unit                    string // the metric unit the alarm watches
-	TreatMissingData        string // "missing" (default), "notBreaching", "breaching", "ignore"
+	ExtendedStatistic       string   // percentile statistic (e.g. "p95"); alternative to Stat
+	Unit                    string   // the metric unit the alarm watches
+	TreatMissingData        string   // "missing" (default), "notBreaching", "breaching", "ignore"
 	AlarmActions            []string // channel IDs to notify on ALARM
 	OKActions               []string // channel IDs to notify on OK
 	InsufficientDataActions []string // channel IDs to notify on INSUFFICIENT_DATA
