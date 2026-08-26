@@ -433,6 +433,7 @@ type computeConfigCompat = struct {
 	IamInstanceProfileName string
 	Identity               *computedriver.ManagedIdentity
 	NetworkInterfaces      []computedriver.AzureNICRef
+	PrivateIP              string
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package
