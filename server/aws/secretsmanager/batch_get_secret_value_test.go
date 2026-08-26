@@ -2,10 +2,12 @@ package secretsmanager_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awssm "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 )
 
 // TestSDKBatchGetSecretValue is the F7 reproduction: BatchGetSecretValue over a
@@ -61,20 +63,19 @@ func TestSDKBatchGetSecretValue(t *testing.T) {
 	}
 }
 
-// TestSDKBatchGetSecretValueEmpty verifies an empty SecretIdList is handled
-// (no values, no errors) rather than erroring.
+// TestSDKBatchGetSecretValueEmpty verifies an empty SecretIdList with no Filters
+// is rejected as InvalidParameterException, matching real AWS (which requires
+// either SecretIdList or Filters).
 func TestSDKBatchGetSecretValueEmpty(t *testing.T) {
 	client := newSecretsClient(t)
 	ctx := context.Background()
 
-	out, err := client.BatchGetSecretValue(ctx, &awssm.BatchGetSecretValueInput{
+	_, err := client.BatchGetSecretValue(ctx, &awssm.BatchGetSecretValueInput{
 		SecretIdList: []string{},
 	})
-	if err != nil {
-		t.Fatalf("BatchGetSecretValue(empty): %v", err)
-	}
 
-	if len(out.SecretValues) != 0 || len(out.Errors) != 0 {
-		t.Fatalf("empty batch = values %+v errors %+v, want both empty", out.SecretValues, out.Errors)
+	var invalid *smtypes.InvalidParameterException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("BatchGetSecretValue(empty): got %v, want InvalidParameterException", err)
 	}
 }

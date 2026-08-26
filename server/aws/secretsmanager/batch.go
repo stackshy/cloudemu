@@ -11,10 +11,18 @@ import (
 // batchGetSecretValue retrieves the AWSCURRENT value of up to a page of secrets
 // named by SecretIdList (or matched by Filters). A missing (or otherwise
 // unreadable) secret is reported per-item in Errors rather than failing the
-// whole batch, matching the real service.
+// whole batch, matching the real service. A request with neither SecretIdList
+// nor Filters is rejected as InvalidParameterException, as real AWS does.
 func (h *Handler) batchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 	var req batchGetSecretValueRequest
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if len(req.SecretIDList) == 0 && len(req.Filters) == 0 {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"InvalidParameterException", "either SecretIdList or Filters must be provided")
+
 		return
 	}
 
