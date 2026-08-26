@@ -1367,7 +1367,7 @@ func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azure
 	out := publicIPListResponse{}
 
 	for i := range infos {
-		if rp.ResourceGroup != "" && tagOr(infos[i].Tags, armPublicIPRGTag, "") != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(infos[i].Tags, armPublicIPRGTag, ""), rp.ResourceGroup) {
 			continue
 		}
 

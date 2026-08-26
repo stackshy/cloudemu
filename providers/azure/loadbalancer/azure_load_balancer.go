@@ -2,6 +2,7 @@ package loadbalancer
 
 import (
 	"context"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -69,7 +70,7 @@ func (m *Mock) ListAzureLoadBalancers(_ context.Context, rg string) ([]driver.Az
 	out := make([]driver.AzureLoadBalancer, 0, len(all))
 
 	for i := range all {
-		if rg != "" && all[i].ResourceGroup != rg {
+		if rg != "" && !strings.EqualFold(all[i].ResourceGroup, rg) {
 			continue
 		}
 
@@ -259,7 +260,7 @@ func (m *Mock) DeleteAzureLBNatRule(_ context.Context, rg, name, natRuleName str
 // hasFrontend reports whether name matches a frontend IP configuration in in.
 func hasFrontend(in []driver.AzureLBFrontend, name string) bool {
 	for i := range in {
-		if in[i].Name == name {
+		if strings.EqualFold(in[i].Name, name) {
 			return true
 		}
 	}

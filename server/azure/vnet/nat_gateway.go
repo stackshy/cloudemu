@@ -218,7 +218,7 @@ func (h *Handler) listNATGateways(w http.ResponseWriter, r *http.Request, rp azu
 	out := natGatewayListResponse{}
 
 	for i := range infos {
-		if rp.ResourceGroup != "" && tagOr(infos[i].Tags, armNATGatewayRGTag, "") != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(infos[i].Tags, armNATGatewayRGTag, ""), rp.ResourceGroup) {
 			continue
 		}
 

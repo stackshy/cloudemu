@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -189,7 +190,7 @@ func (m *Mock) ListWorkspacesByResourceGroup(_ context.Context, resourceGroup st
 	out := make([]driver.Workspace, 0)
 
 	for _, ws := range m.workspaces.All() {
-		if ws.ResourceGroup == resourceGroup {
+		if strings.EqualFold(ws.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneWorkspace(ws))
 		}
 	}

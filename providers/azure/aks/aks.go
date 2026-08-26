@@ -641,7 +641,7 @@ func (m *Mock) ListClustersByResourceGroup(_ context.Context, rg string) ([]Mana
 	defer m.mu.RUnlock()
 
 	all := m.clusters.Filter(func(_ string, c ManagedCluster) bool {
-		return c.ResourceGroup == rg
+		return strings.EqualFold(c.ResourceGroup, rg)
 	})
 
 	out := make([]ManagedCluster, 0, len(all))
@@ -788,7 +788,7 @@ func (m *Mock) ListAgentPools(_ context.Context, rg, cluster string) ([]AgentPoo
 	}
 
 	all := m.pools.Filter(func(_ string, p AgentPool) bool {
-		return p.ResourceGroup == rg && p.ClusterName == cluster
+		return strings.EqualFold(p.ResourceGroup, rg) && strings.EqualFold(p.ClusterName, cluster)
 	})
 
 	out := make([]AgentPool, 0, len(all))
@@ -877,7 +877,7 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 	}
 
 	all := m.maintenance.Filter(func(_ string, mc MaintenanceConfig) bool {
-		return mc.ResourceGroup == rg && mc.ClusterName == cluster
+		return strings.EqualFold(mc.ResourceGroup, rg) && strings.EqualFold(mc.ClusterName, cluster)
 	})
 
 	out := make([]MaintenanceConfig, 0, len(all))

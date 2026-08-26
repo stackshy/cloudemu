@@ -163,6 +163,27 @@ func TestGetSiteMetaScoped(t *testing.T) {
 	}
 }
 
+// TestGetSiteMetaResourceGroupCaseInsensitive verifies that a GET with a
+// differently-cased resource group resolves the site — ARM resource-group
+// names are case-insensitive.
+func TestGetSiteMetaResourceGroupCaseInsensitive(t *testing.T) {
+	m := newMetaMock()
+	ctx := context.Background()
+
+	if _, err := m.UpsertSiteMeta(ctx, SiteMeta{Name: "app1", Subscription: "sub1", ResourceGroup: "rgA"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := m.GetSiteMeta(ctx, "sub1", "RGA", "app1")
+	if err != nil {
+		t.Fatalf("get with differently-cased rg: %v", err)
+	}
+
+	if got.ResourceGroup != "rgA" {
+		t.Fatalf("stored rg casing = %q, want %q (comparison case-insensitive, storage unchanged)", got.ResourceGroup, "rgA")
+	}
+}
+
 // TestDeleteSiteMetaScoped covers the deep-sweep BLOCKER: DELETE against the
 // wrong resource group must not remove another resource group's site.
 func TestDeleteSiteMetaScoped(t *testing.T) {

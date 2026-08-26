@@ -216,7 +216,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]diskResponse, 0, len(vols))
 
 	for i := range vols {
-		if rp.ResourceGroup != "" && tagOr(vols[i].Tags, rgTag, "") != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(vols[i].Tags, rgTag, ""), rp.ResourceGroup) {
 			continue
 		}
 

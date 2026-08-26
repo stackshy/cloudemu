@@ -123,7 +123,7 @@ func (m *Mock) ListAccessConnectorsByResourceGroup(
 	out := make([]driver.AccessConnector, 0)
 
 	for _, ac := range m.accessConnectors.All() {
-		if ac.ResourceGroup == resourceGroup {
+		if strings.EqualFold(ac.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneAccessConnector(ac))
 		}
 	}

@@ -61,6 +61,28 @@ func TestClusterLifecycle(t *testing.T) {
 	}
 }
 
+// TestListClustersResourceGroupCaseInsensitive verifies a subscription-scoped
+// list with a differently-cased resource group still returns the cluster — ARM
+// resource-group names are case-insensitive.
+func TestListClustersResourceGroupCaseInsensitive(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateOrUpdateCluster(ctx, ClusterInput{
+		Subscription:  "sub-1",
+		ResourceGroup: "rg-1",
+		Name:          "k8s-prod",
+		Location:      "eastus",
+		AgentPools:    []AgentPoolInput{{Name: "system", Count: 1, VMSize: "Standard_D2s_v3", Mode: "System"}},
+	})
+	requireNoError(t, err)
+
+	list, err := m.ListClustersByResourceGroup(ctx, "RG-1")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(list))
+	assertEqual(t, "rg-1", list[0].ResourceGroup)
+}
+
 func TestClusterRequiresName(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

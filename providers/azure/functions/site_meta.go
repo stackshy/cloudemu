@@ -218,7 +218,7 @@ func (m *Mock) GetSiteMeta(_ context.Context, subscription, resourceGroup, name 
 	defer m.sitesMu.RUnlock()
 
 	meta, ok := m.sites.Get(name)
-	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+	if !ok || meta.Subscription != subscription || !strings.EqualFold(meta.ResourceGroup, resourceGroup) {
 		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
 	}
 
@@ -236,7 +236,7 @@ func (m *Mock) DeleteSiteMeta(_ context.Context, subscription, resourceGroup, na
 	defer m.sitesMu.Unlock()
 
 	meta, ok := m.sites.Get(name)
-	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+	if !ok || meta.Subscription != subscription || !strings.EqualFold(meta.ResourceGroup, resourceGroup) {
 		return nil
 	}
 
@@ -256,7 +256,7 @@ func (m *Mock) UpdateAppSettings(
 	defer m.sitesMu.Unlock()
 
 	meta, ok := m.sites.Get(name)
-	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+	if !ok || meta.Subscription != subscription || !strings.EqualFold(meta.ResourceGroup, resourceGroup) {
 		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
 	}
 
@@ -278,7 +278,7 @@ func (m *Mock) GetFunctionScoped(ctx context.Context, subscription, resourceGrou
 	meta, ok := m.sites.Get(name)
 	m.sitesMu.RUnlock()
 
-	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+	if !ok || meta.Subscription != subscription || !strings.EqualFold(meta.ResourceGroup, resourceGroup) {
 		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
 	}
 
@@ -296,7 +296,7 @@ func (m *Mock) DeleteFunctionScoped(ctx context.Context, subscription, resourceG
 	defer m.sitesMu.Unlock()
 
 	meta, ok := m.sites.Get(name)
-	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+	if !ok || meta.Subscription != subscription || !strings.EqualFold(meta.ResourceGroup, resourceGroup) {
 		return cerrors.Newf(cerrors.NotFound, "site %s not found", name)
 	}
 
@@ -323,7 +323,7 @@ func (m *Mock) ListSiteMeta(_ context.Context, subscription, resourceGroup strin
 			continue
 		}
 
-		if resourceGroup != "" && meta.ResourceGroup != resourceGroup {
+		if resourceGroup != "" && !strings.EqualFold(meta.ResourceGroup, resourceGroup) {
 			continue
 		}
 

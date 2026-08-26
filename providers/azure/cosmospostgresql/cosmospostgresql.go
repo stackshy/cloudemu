@@ -415,7 +415,7 @@ func (m *Mock) ListClustersByResourceGroup(_ context.Context, rg string) ([]cpgd
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.filterClusters(func(c *cpgdriver.Cluster) bool { return c.ResourceGroup == rg }), nil
+	return m.filterClusters(func(c *cpgdriver.Cluster) bool { return strings.EqualFold(c.ResourceGroup, rg) }), nil
 }
 
 // ListClustersBySubscription returns all clusters (the mock serves one
