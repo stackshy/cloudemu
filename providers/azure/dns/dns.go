@@ -35,6 +35,10 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
+// cnameType is the DNS CNAME record type. Azure enforces CNAME coexistence
+// rules against it (a CNAME cannot share a name with any other record set).
+const cnameType = "CNAME"
+
 // recordKey builds the key used to store a record in the memstore.
 // For weighted records (non-empty SetID), the SetID is appended.
 func recordKey(zoneID, name, recordType, setID string) string {
@@ -172,6 +176,11 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, cerrors.New(cerrors.InvalidArgument, "record type is required")
 	}
 
+	if m.hasCNAMEConflict(cfg.ZoneID, cfg.Name, cfg.Type) {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"a CNAME record set cannot coexist with another record set of a different type at name %q", cfg.Name)
+	}
+
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
 
 	if m.records.Has(key) {
@@ -204,6 +213,33 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	result := rec
 
 	return &result, nil
+}
+
+// hasCNAMEConflict reports whether creating a record of recordType at name
+// would violate Azure's CNAME coexistence rule: a CNAME cannot share a name
+// with any other record set, and no other record set can share a name with a
+// CNAME. Both orders are checked. A same-type match (e.g. a second CNAME) is
+// not a coexistence conflict here — it is handled as AlreadyExists.
+func (m *Mock) hasCNAMEConflict(zoneID, name, recordType string) bool {
+	newIsCNAME := strings.EqualFold(recordType, cnameType)
+	existing := m.records.SortedValues()
+
+	for i := range existing {
+		r := &existing[i]
+		if r.ZoneID != zoneID || !strings.EqualFold(r.Name, name) {
+			continue
+		}
+
+		if strings.EqualFold(r.Type, recordType) {
+			continue
+		}
+
+		if newIsCNAME || strings.EqualFold(r.Type, cnameType) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DeleteRecord deletes a DNS record set from the specified zone.
