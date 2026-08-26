@@ -142,7 +142,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 	}
 
 	id := idgen.GenerateID("AIDA")
-	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "user/"+cfg.Name)
+	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "user/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
 	u := &userData{
@@ -210,6 +210,9 @@ func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error)
 		return nil, errors.Newf(errors.NotFound, "user %q not found", name)
 	}
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	info := toUserInfo(u)
 
 	return &info, nil
@@ -219,6 +222,9 @@ func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error)
 func (m *Mock) ListUsers(_ context.Context) ([]driver.UserInfo, error) {
 	all := m.users.All()
 	result := make([]driver.UserInfo, 0, len(all))
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	for _, u := range all {
 		result = append(result, toUserInfo(u))
@@ -243,7 +249,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	}
 
 	id := idgen.GenerateID("AROA")
-	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+cfg.Name)
+	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
 	maxSession := cfg.MaxSessionDuration
@@ -312,6 +318,9 @@ func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error)
 		return nil, errors.Newf(errors.NotFound, "role %q not found", name)
 	}
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	info := toRoleInfo(r)
 
 	return &info, nil
@@ -321,6 +330,9 @@ func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error)
 func (m *Mock) ListRoles(_ context.Context) ([]driver.RoleInfo, error) {
 	all := m.roles.All()
 	result := make([]driver.RoleInfo, 0, len(all))
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	for _, r := range all {
 		result = append(result, toRoleInfo(r))
@@ -341,7 +353,7 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 	}
 
 	id := idgen.GenerateID("ANPA")
-	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "policy/"+cfg.Name)
+	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "policy/"+strings.TrimPrefix(path, "/")+cfg.Name)
 
 	if m.policies.Has(arn) {
 		return nil, errors.Newf(errors.AlreadyExists, "policy %q already exists", cfg.Name)
@@ -906,7 +918,7 @@ func (m *Mock) CreateGroup(
 	}
 
 	arn := idgen.AWSARN(
-		"iam", "", m.opts.AccountID, "group/"+cfg.Name,
+		"iam", "", m.opts.AccountID, "group/"+strings.TrimPrefix(path, "/")+cfg.Name,
 	)
 
 	g := &groupData{
@@ -1222,16 +1234,16 @@ func (m *Mock) CreateInstanceProfile(
 		)
 	}
 
-	id := idgen.GenerateID("AIPA")
-	arn := idgen.AWSARN(
-		"iam", "", m.opts.AccountID,
-		"instance-profile/"+cfg.Name,
-	)
-
 	path := cfg.Path
 	if path == "" {
 		path = "/"
 	}
+
+	id := idgen.GenerateID("AIPA")
+	arn := idgen.AWSARN(
+		"iam", "", m.opts.AccountID,
+		"instance-profile/"+strings.TrimPrefix(path, "/")+cfg.Name,
+	)
 
 	info := &driver.InstanceProfileInfo{
 		ID:        id,
