@@ -201,13 +201,22 @@ func TestDataPlaneSendReceive(t *testing.T) {
 	}
 }
 
-func TestDataPlaneSendToMissingQueue(t *testing.T) {
+// TestDataPlaneUnknownFlatEntityDeclined confirms the Service Bus handler does
+// NOT claim a flat "/{entity}/messages" request for an entity it holds no queue
+// or topic for. That shape is shared with Azure Queue Storage's azqueue SDK, so
+// Service Bus must decline unknown entities and let the Queue Storage handler
+// serve them. With only Service Bus registered here, a declined request reaches
+// no handler and returns 501; in the full server it falls through to Queue
+// Storage. (A genuinely-addressed Service Bus miss still 404s — see
+// TestDataPlaneSubscriptionNotFound for the subscription path.)
+func TestDataPlaneUnknownFlatEntityDeclined(t *testing.T) {
 	srv, _ := newTestServer(t)
 	seedNamespace(t, srv)
 
 	resp := doRequest(t, srv, http.MethodPost, "/"+nsName+"/no-such/messages", "x")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("send to missing queue = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("send to unknown flat entity = %d, want 501 (Service Bus must decline so Queue Storage can serve it)",
+			resp.StatusCode)
 	}
 }
 
