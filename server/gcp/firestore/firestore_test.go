@@ -25,8 +25,9 @@ func TestSDKFirestoreRoundTrip(t *testing.T) {
 	// has dynamic collection names, but our underlying driver wants tables
 	// pre-declared.
 	ctx := context.Background()
+	// Partition key mirrors the handler's reserved doc-id key ("\x00id").
 	_ = cloudP.Firestore.CreateTable(ctx, dbdriver.TableConfig{
-		Name: "users", PartitionKey: "id",
+		Name: "users", PartitionKey: "\x00id",
 	})
 
 	srv := gcpserver.New(gcpserver.Drivers{Firestore: cloudP.Firestore})

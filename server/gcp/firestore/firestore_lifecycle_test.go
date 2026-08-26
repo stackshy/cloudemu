@@ -54,7 +54,9 @@ func newDBClient(t *testing.T, colls ...string) (context.Context, *gcpfirestore.
 	cloudP := cloudemu.NewGCP()
 
 	for _, c := range colls {
-		if err := cloudP.Firestore.CreateTable(ctx, dbdriver.TableConfig{Name: c, PartitionKey: "id"}); err != nil {
+		// Partition key mirrors the handler's reserved doc-id key ("\x00id"),
+		// so a user field literally named "id" never collides with it.
+		if err := cloudP.Firestore.CreateTable(ctx, dbdriver.TableConfig{Name: c, PartitionKey: "\x00id"}); err != nil {
 			t.Fatalf("CreateTable(%s): %v", c, err)
 		}
 	}
