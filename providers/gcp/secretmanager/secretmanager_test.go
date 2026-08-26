@@ -370,6 +370,36 @@ func TestDeleteThenGetReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestDeleteIsHardDeleteRecreatable proves GCP secrets.delete is a permanent
+// hard delete: the same secretId is creatable again immediately (no recovery
+// window), GetSecret 404s after delete, and ListSecrets omits it.
+func TestDeleteIsHardDeleteRecreatable(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	createTestSecret(t, m, "recreate-me", "v1")
+
+	require.NoError(t, m.DeleteSecret(ctx, "recreate-me"))
+
+	_, err := m.GetSecret(ctx, "recreate-me")
+	require.Error(t, err)
+
+	list, err := m.ListSecrets(ctx)
+	require.NoError(t, err)
+	for _, s := range list {
+		assert.NotEqual(t, "recreate-me", s.Name, "deleted secret must not appear in ListSecrets")
+	}
+
+	// Same secretId re-creates cleanly — no AlreadyExists.
+	info, err := m.CreateSecret(ctx, driver.SecretConfig{Name: "recreate-me"}, []byte("v2"))
+	require.NoError(t, err)
+	assert.Equal(t, "recreate-me", info.Name)
+
+	got, err := m.GetSecretValue(ctx, "recreate-me", "")
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(got.Value))
+}
+
 func TestCreateSecretTagsCopied(t *testing.T) {
 	m := newTestMock()
 	tags := map[string]string{"key": "original"}

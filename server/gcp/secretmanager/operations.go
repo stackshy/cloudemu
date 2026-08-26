@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -227,7 +228,17 @@ func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route
 	}
 
 	if err != nil {
+		// An illegal state transition (e.g. destroy/disable/enable on a DESTROYED
+		// version) is FAILED_PRECONDITION, which GCP reports as HTTP 400. The
+		// shared gcprest mapping would turn it into 409, so answer 400 locally
+		// without altering that cross-cutting mapping.
+		if cerrors.IsFailedPrecondition(err) {
+			gcprest.WriteError(w, http.StatusBadRequest, "failedPrecondition", err.Error())
+			return
+		}
+
 		gcprest.WriteCErr(w, err)
+
 		return
 	}
 
