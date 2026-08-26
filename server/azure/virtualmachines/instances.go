@@ -210,12 +210,15 @@ func (h *Handler) updateExisting(
 }
 
 // update handles PATCH virtualMachines/{name} — ARM's BeginUpdate. Unlike PUT,
-// Update is a merge-patch: only the sections present in the body are applied,
-// and everything else is left untouched. We scope this to the operation's
-// primary real-world use — storageProfile.dataDisks attach/detach, the
-// standard non-recreating disk-attach path — rather than routing through
-// UpdateInstance (whose cfg-replace semantics assume PUT's full-body shape and
-// would blank tags/priority/licenseType a partial PATCH body omits).
+// Update is a merge-patch (RFC 7386): only the fields present in the body are
+// applied and everything else is left untouched. It applies the modeled
+// mutable fields a PATCH may carry — hardwareProfile.vmSize (resize), tags
+// (merged into the existing set), identity — via the driver's PatchInstance,
+// which leaves omitted fields (priority, licenseType, existing tags, …) intact,
+// rather than routing through UpdateInstance (whose full cfg-replace assumes
+// PUT's whole-body shape and would blank what a partial PATCH omits). Unmodeled
+// request props are preserved by the echo overlay; storageProfile.dataDisks is
+// reconciled below.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
@@ -229,6 +232,21 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
+	}
+
+	// Apply the modeled mutable fields the PATCH supplied (vmSize/tags/identity),
+	// merging into the existing VM rather than replacing its whole config.
+	if ctrl, ok := h.compute.(computedriver.AzureVMController); ok {
+		patch := computedriver.AzureVMPatch{
+			VMSize:   hardwareSize(req.Properties.HardwareProfile),
+			Tags:     req.Tags,
+			Identity: toDriverIdentity(req.Identity),
+		}
+
+		if err = ctrl.PatchInstance(r.Context(), inst.ID, patch); err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
 	}
 
 	// A PATCH that omits storageProfile.dataDisks entirely (nil slice) leaves the
@@ -608,7 +626,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	writeAcceptedAsync(w, r, rp.Subscription, "delete-"+rp.ResourceName)
 }
 
-// PurgeResourceGroup terminates every virtual machine created under the given
+// PurgeResourceGroup terminates every virtual machine — and deletes every
+// virtual machine scale set (via purgeScaleSets) — created under the given
 // resource group, backing the resource-group cascade delete. Instances record
 // their group (Instance.ResourceGroup) on the ARM create path, so membership is
 // an exact match. Resource-group comparison is case-insensitive, matching ARM.
@@ -620,6 +639,23 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 // the now-deleted VM. Detach is best-effort: a single failure is recorded but
 // does not stop the remaining teardown.
 func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	var firstErr error
+
+	if err := h.purgeInstances(ctx, resourceGroup); err != nil {
+		firstErr = err
+	}
+
+	if serr := h.purgeScaleSets(ctx, resourceGroup); serr != nil && firstErr == nil {
+		firstErr = serr
+	}
+
+	return firstErr
+}
+
+// purgeInstances detaches and terminates every virtual machine under the given
+// resource group — the VM half of the cascade. Detach is best-effort per VM so
+// one failure does not stop the rest.
+func (h *Handler) purgeInstances(ctx context.Context, resourceGroup string) error {
 	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
 	if err != nil {
 		return err
@@ -647,6 +683,36 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 
 	if terr := h.compute.TerminateInstances(ctx, ids); terr != nil && firstErr == nil {
 		firstErr = terr
+	}
+
+	return firstErr
+}
+
+// purgeScaleSets deletes every virtual machine scale set under the given
+// resource group, so an RG cascade tears down its scale sets too (matching the
+// VM teardown above). A driver that does not implement the scale-set store is a
+// no-op. Resource-group comparison is case-insensitive, matching ARM.
+func (h *Handler) purgeScaleSets(ctx context.Context, resourceGroup string) error {
+	store, ok := h.compute.(scaleSetStore)
+	if !ok {
+		return nil
+	}
+
+	sets, err := store.ListScaleSets(ctx)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range sets {
+		if !strings.EqualFold(sets[i].ResourceGroup, resourceGroup) {
+			continue
+		}
+
+		if derr := store.DeleteScaleSet(ctx, sets[i].Name); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
 	}
 
 	return firstErr

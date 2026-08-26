@@ -15,6 +15,7 @@ import (
 type scaleSetStore interface {
 	CreateScaleSet(ctx context.Context, s providervm.ScaleSet) (*providervm.ScaleSet, error)
 	ListScaleSets(ctx context.Context) ([]providervm.ScaleSet, error)
+	DeleteScaleSet(ctx context.Context, name string) error
 }
 
 // serveScaleSet dispatches PUT/GET on Microsoft.Compute/virtualMachineScaleSets.
@@ -48,9 +49,26 @@ func (h *Handler) serveScaleSet(w http.ResponseWriter, r *http.Request, rp azure
 		createScaleSet(w, r, rp, store)
 	case http.MethodGet:
 		getScaleSet(w, r, rp, store)
+	case http.MethodDelete:
+		deleteScaleSet(w, r, rp, store)
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
+}
+
+// deleteScaleSet handles DELETE virtualMachineScaleSets/{name}. Real Azure
+// returns 202 Accepted with the async-operation polling headers; the SDK's
+// poller then observes the operation Succeeded and a follow-up GET reports
+// NotFound.
+//
+//nolint:gocritic // rp is a request-scoped value
+func deleteScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
+	if err := store.DeleteScaleSet(r.Context(), rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, "vmss-delete-"+rp.ResourceName)
 }
 
 // createScaleSet handles PUT virtualMachineScaleSets/{name}.
@@ -69,10 +87,11 @@ func createScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 	}
 
 	set := providervm.ScaleSet{
-		Name:     rp.ResourceName,
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceTypeScaleSets, rp.ResourceName),
-		Location: req.Location,
-		Tags:     req.Tags,
+		Name:          rp.ResourceName,
+		ID:            azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceTypeScaleSets, rp.ResourceName),
+		Location:      req.Location,
+		Tags:          req.Tags,
+		ResourceGroup: rp.ResourceGroup,
 	}
 
 	if req.SKU != nil {
