@@ -753,3 +753,186 @@ func TestSDKReplicatorLifecycle(t *testing.T) {
 		t.Fatalf("DeleteReplicator: %v", err)
 	}
 }
+
+// createStorageCluster creates a provisioned cluster whose broker EBS volume is
+// sized to volumeGB, returning the SDK client and the cluster ARN.
+func createStorageCluster(t *testing.T, name string, volumeGB int32) (*awskafka.Client, string) {
+	t.Helper()
+
+	ctx := context.Background()
+	c := newKafkaClient(t)
+
+	create, err := c.CreateCluster(ctx, &awskafka.CreateClusterInput{
+		ClusterName:         aws.String(name),
+		KafkaVersion:        aws.String("3.6.0"),
+		NumberOfBrokerNodes: aws.Int32(3),
+		BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+			ClientSubnets: []string{"subnet-1", "subnet-2", "subnet-3"},
+			InstanceType:  aws.String("kafka.m5.large"),
+			StorageInfo: &kafkatypes.StorageInfo{
+				EbsStorageInfo: &kafkatypes.EBSStorageInfo{VolumeSize: aws.Int32(volumeGB)},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	return c, aws.ToString(create.ClusterArn)
+}
+
+func clusterVersion(t *testing.T, c *awskafka.Client, arn string) string {
+	t.Helper()
+
+	desc, err := c.DescribeCluster(context.Background(), &awskafka.DescribeClusterInput{ClusterArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	return aws.ToString(desc.ClusterInfo.CurrentVersion)
+}
+
+// TestSDKUpdateBrokerStorageReflectedInDescribe reproduces the Terraform
+// storage-drift bug: after UpdateBrokerStorage, DescribeCluster must return the
+// new EBS volume size (not the stale create-time value).
+func TestSDKUpdateBrokerStorageReflectedInDescribe(t *testing.T) {
+	ctx := context.Background()
+	c, arn := createStorageCluster(t, "sdk-storage", 100)
+
+	if _, err := c.UpdateBrokerStorage(ctx, &awskafka.UpdateBrokerStorageInput{
+		ClusterArn:     aws.String(arn),
+		CurrentVersion: aws.String(clusterVersion(t, c, arn)),
+		TargetBrokerEBSVolumeInfo: []kafkatypes.BrokerEBSVolumeInfo{{
+			KafkaBrokerNodeId: aws.String("ALL"),
+			VolumeSizeGB:      aws.Int32(200),
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateBrokerStorage: %v", err)
+	}
+
+	desc, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	bng := desc.ClusterInfo.BrokerNodeGroupInfo
+	if bng == nil || bng.StorageInfo == nil || bng.StorageInfo.EbsStorageInfo == nil {
+		t.Fatalf("storage info missing: %+v", bng)
+	}
+
+	if got := aws.ToInt32(bng.StorageInfo.EbsStorageInfo.VolumeSize); got != 200 {
+		t.Fatalf("volume size = %d, want 200 (storage drift)", got)
+	}
+}
+
+// TestSDKDescribeClusterZookeeperConnect asserts a provisioned cluster exports a
+// non-empty ZookeeperConnectString (+ Tls) that Terraform's aws_msk_cluster reads.
+func TestSDKDescribeClusterZookeeperConnect(t *testing.T) {
+	ctx := context.Background()
+	c, arn := createStorageCluster(t, "sdk-zk", 100)
+
+	desc, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	zk := aws.ToString(desc.ClusterInfo.ZookeeperConnectString)
+	if !strings.Contains(zk, ":2181") {
+		t.Fatalf("ZookeeperConnectString = %q, want a plausible :2181 endpoint", zk)
+	}
+
+	if !strings.Contains(aws.ToString(desc.ClusterInfo.ZookeeperConnectStringTls), ":2182") {
+		t.Fatalf("ZookeeperConnectStringTls = %q, want :2182",
+			aws.ToString(desc.ClusterInfo.ZookeeperConnectStringTls))
+	}
+}
+
+// TestSDKMissingClusterBadRequest asserts GetBootstrapBrokers and
+// ListClusterOperations (v1) return the SDK-typed BadRequestException for a
+// well-formed but missing cluster ARN. The aws-sdk-go-v2 smithy model does NOT
+// model NotFoundException for these two ops, so returning a 404 would only
+// deserialize as an untyped generic error — BadRequest is the correct,
+// typed-deserializable behavior. ListClusterOperationsV2 does model 404.
+func TestSDKMissingClusterBadRequest(t *testing.T) {
+	ctx := context.Background()
+	c := newKafkaClient(t)
+	missing := aws.String("arn:aws:kafka:us-east-1:123456789012:cluster/missing/x")
+
+	_, err := c.GetBootstrapBrokers(ctx, &awskafka.GetBootstrapBrokersInput{ClusterArn: missing})
+
+	var bad *kafkatypes.BadRequestException
+	if !errors.As(err, &bad) {
+		t.Fatalf("GetBootstrapBrokers missing = %v, want BadRequestException", err)
+	}
+
+	_, err = c.ListClusterOperations(ctx, &awskafka.ListClusterOperationsInput{ClusterArn: missing})
+	if !errors.As(err, &bad) {
+		t.Fatalf("ListClusterOperations missing = %v, want BadRequestException", err)
+	}
+}
+
+// TestSDKOperationSourceTargetDeltas asserts a broker-count update and a storage
+// update each record an operation carrying the before/after source/target delta.
+func TestSDKOperationSourceTargetDeltas(t *testing.T) {
+	ctx := context.Background()
+	c, arn := createStorageCluster(t, "sdk-deltas", 100)
+
+	if _, err := c.UpdateBrokerCount(ctx, &awskafka.UpdateBrokerCountInput{
+		ClusterArn:                aws.String(arn),
+		CurrentVersion:            aws.String(clusterVersion(t, c, arn)),
+		TargetNumberOfBrokerNodes: aws.Int32(6),
+	}); err != nil {
+		t.Fatalf("UpdateBrokerCount: %v", err)
+	}
+
+	if _, err := c.UpdateBrokerStorage(ctx, &awskafka.UpdateBrokerStorageInput{
+		ClusterArn:     aws.String(arn),
+		CurrentVersion: aws.String(clusterVersion(t, c, arn)),
+		TargetBrokerEBSVolumeInfo: []kafkatypes.BrokerEBSVolumeInfo{{
+			KafkaBrokerNodeId: aws.String("ALL"),
+			VolumeSizeGB:      aws.Int32(200),
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateBrokerStorage: %v", err)
+	}
+
+	ops, err := c.ListClusterOperations(ctx, &awskafka.ListClusterOperationsInput{ClusterArn: aws.String(arn)})
+	if err != nil || len(ops.ClusterOperationInfoList) != 2 {
+		t.Fatalf("ListClusterOperations: %v len=%d", err, len(ops.ClusterOperationInfoList))
+	}
+
+	assertBrokerCountDelta(t, ops.ClusterOperationInfoList[0])
+	assertStorageDelta(t, ops.ClusterOperationInfoList[1])
+}
+
+func assertBrokerCountDelta(t *testing.T, op kafkatypes.ClusterOperationInfo) {
+	t.Helper()
+
+	if op.SourceClusterInfo == nil || aws.ToInt32(op.SourceClusterInfo.NumberOfBrokerNodes) != 3 {
+		t.Fatalf("broker-count source = %+v, want 3", op.SourceClusterInfo)
+	}
+
+	if op.TargetClusterInfo == nil || aws.ToInt32(op.TargetClusterInfo.NumberOfBrokerNodes) != 6 {
+		t.Fatalf("broker-count target = %+v, want 6", op.TargetClusterInfo)
+	}
+}
+
+func assertStorageDelta(t *testing.T, op kafkatypes.ClusterOperationInfo) {
+	t.Helper()
+
+	if op.SourceClusterInfo == nil || volumeOf(op.SourceClusterInfo) != 100 {
+		t.Fatalf("storage source volume = %+v, want 100", op.SourceClusterInfo)
+	}
+
+	if op.TargetClusterInfo == nil || volumeOf(op.TargetClusterInfo) != 200 {
+		t.Fatalf("storage target volume = %+v, want 200", op.TargetClusterInfo)
+	}
+}
+
+func volumeOf(mi *kafkatypes.MutableClusterInfo) int32 {
+	if len(mi.BrokerEBSVolumeInfo) == 0 {
+		return -1
+	}
+
+	return aws.ToInt32(mi.BrokerEBSVolumeInfo[0].VolumeSizeGB)
+}

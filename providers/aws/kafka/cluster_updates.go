@@ -53,13 +53,17 @@ func (m *Mock) UpdateBrokerCount(
 	})
 }
 
-// UpdateBrokerStorage carries the requested storage change verbatim into the
-// cluster's raw options so a subsequent Describe reflects it.
+// UpdateBrokerStorage rewrites the broker EBS volume size from the request's
+// targetBrokerEBSVolumeInfo[ALL].volumeSizeGB so a subsequent DescribeCluster
+// reflects the new size (real MSK surfaces it under
+// brokerNodeGroupInfo.storageInfo.ebsStorageInfo.volumeSize).
 func (m *Mock) UpdateBrokerStorage(
 	_ context.Context, arn, currentVersion string, body json.RawMessage,
 ) (*driver.ClusterOperation, error) {
 	return m.mutateClusterBR(arn, currentVersion, opTypeUpdateBrokerStorage, func(c *driver.Cluster) {
-		setRawOption(c, "targetBrokerEBSVolumeInfo", body)
+		if size, ok := targetVolumeSizeGB(body); ok {
+			applyStorageVolume(c, size)
+		}
 	})
 }
 
@@ -90,7 +94,9 @@ func (m *Mock) UpdateStorage(
 			c.StorageMode = mode
 		}
 
-		setRawOption(c, "storageUpdate", body)
+		if size, ok := int64Field(body, "volumeSizeGB"); ok {
+			applyStorageVolume(c, size)
+		}
 	})
 }
 
@@ -203,6 +209,98 @@ func stringField(body json.RawMessage, key string) string {
 	}
 
 	return s
+}
+
+// int64Field extracts a top-level integer field from a JSON body, reporting
+// whether one was present.
+func int64Field(body json.RawMessage, key string) (int64, bool) {
+	if len(body) == 0 {
+		return 0, false
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return 0, false
+	}
+
+	raw, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+
+	var n int64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, false
+	}
+
+	return n, true
+}
+
+// targetVolumeSizeGB extracts the requested EBS volume size from an
+// UpdateBrokerStorage body's targetBrokerEBSVolumeInfo, taking the ALL-broker
+// entry (the only value real MSK allows).
+func targetVolumeSizeGB(body json.RawMessage) (int64, bool) {
+	raw := rawField(body, "targetBrokerEBSVolumeInfo", nil)
+	if len(raw) == 0 {
+		return 0, false
+	}
+
+	var entries []struct {
+		KafkaBrokerNodeID string `json:"kafkaBrokerNodeId"`
+		VolumeSizeGB      *int64 `json:"volumeSizeGB"`
+	}
+
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return 0, false
+	}
+
+	for _, e := range entries {
+		if (e.KafkaBrokerNodeID == "ALL" || e.KafkaBrokerNodeID == "") && e.VolumeSizeGB != nil {
+			return *e.VolumeSizeGB, true
+		}
+	}
+
+	return 0, false
+}
+
+// applyStorageVolume rewrites brokerNodeGroupInfo.storageInfo.ebsStorageInfo.volumeSize
+// to sizeGB, allocating the storageInfo/ebsStorageInfo blocks when absent and
+// preserving any sibling fields (e.g. provisionedThroughput). A non-positive
+// size or a cluster with no broker node group is a no-op.
+func applyStorageVolume(c *driver.Cluster, sizeGB int64) {
+	if sizeGB <= 0 || c.BrokerNodeGroupInfo == nil {
+		return
+	}
+
+	bng := c.BrokerNodeGroupInfo
+
+	storageInfo := decodeObject(bng.RawFields["storageInfo"])
+	ebs := decodeObject(storageInfo["ebsStorageInfo"])
+
+	size, _ := json.Marshal(sizeGB)
+	ebs["volumeSize"] = size
+	storageInfo["ebsStorageInfo"], _ = json.Marshal(ebs)
+
+	if bng.RawFields == nil {
+		bng.RawFields = map[string]json.RawMessage{}
+	}
+
+	bng.RawFields["storageInfo"], _ = json.Marshal(storageInfo)
+}
+
+// decodeObject unmarshals a raw JSON object into a field map, returning a fresh
+// empty map when the input is absent or not an object.
+func decodeObject(raw json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	if len(raw) == 0 {
+		return out
+	}
+
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]json.RawMessage{}
+	}
+
+	return out
 }
 
 // rawField returns the raw JSON of a top-level field, or fallback when absent.

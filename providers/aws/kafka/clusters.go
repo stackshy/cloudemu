@@ -138,7 +138,10 @@ func (m *Mock) getCluster(arn string) (*clusterData, error) {
 // absent. Several ops (GetBootstrapBrokers, ListClusterOperations v1,
 // ListClientVpcConnections, RejectClientVpcConnection, PutClusterPolicy,
 // ListTopics, UpdateBrokerCount/Storage, UpdateMonitoring) reference a cluster
-// but do NOT model NotFoundException, so a missing cluster there is a 400.
+// but do NOT model NotFoundException in the aws-sdk-go-v2 smithy model, so a
+// missing cluster there must be a 400 BadRequestException (a 404 NotFoundException
+// would deserialize as an untyped generic error — the REST API reference lists a
+// generic 404, but the smithy model, which the SDK uses, does not model it here).
 func (m *Mock) getClusterBR(arn string) (*clusterData, error) {
 	return m.getClusterErr(arn, badRequest)
 }

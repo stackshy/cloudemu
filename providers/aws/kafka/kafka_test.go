@@ -589,27 +589,80 @@ func TestConcurrentTagNoLostUpdate(t *testing.T) {
 	}
 }
 
-// TestOperationNoAlias asserts DescribeClusterOperation deep-copies RawOptions.
-func TestOperationNoAlias(t *testing.T) {
+// storageVolumeSize parses the EBS volume size from a broker node group's
+// storageInfo raw block, or -1 when absent.
+func storageVolumeSize(t *testing.T, bng *driver.BrokerNodeGroupInfo) int64 {
+	t.Helper()
+
+	if bng == nil {
+		return -1
+	}
+
+	raw, ok := bng.RawFields["storageInfo"]
+	if !ok {
+		return -1
+	}
+
+	var si struct {
+		EBSStorageInfo struct {
+			VolumeSize *int64 `json:"volumeSize"`
+		} `json:"ebsStorageInfo"`
+	}
+
+	if err := json.Unmarshal(raw, &si); err != nil || si.EBSStorageInfo.VolumeSize == nil {
+		return -1
+	}
+
+	return *si.EBSStorageInfo.VolumeSize
+}
+
+// TestUpdateBrokerStorageReflectedInDescribe asserts UpdateBrokerStorage rewrites
+// the broker EBS volume size so a subsequent DescribeCluster reflects it (guards
+// the Terraform storage-drift fix), and that the recorded operation deep-copies
+// its source/target snapshots and carries the before/after delta.
+func TestUpdateBrokerStorageReflectedInDescribe(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "op-alias", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{
+		ClusterName: "op-alias", NumberOfBrokerNodes: 3,
+		BrokerNodeGroupInfo: &driver.BrokerNodeGroupInfo{
+			InstanceType: "kafka.m5.large",
+			RawFields:    map[string]json.RawMessage{"storageInfo": json.RawMessage(`{"ebsStorageInfo":{"volumeSize":100}}`)},
+		},
+	})
 
-	op, err := m.UpdateBrokerStorage(ctx, c.ClusterARN, c.CurrentVersion, []byte(`{"targetBrokerEBSVolumeInfo":[]}`))
+	op, err := m.UpdateBrokerStorage(ctx, c.ClusterARN, c.CurrentVersion,
+		[]byte(`{"targetBrokerEBSVolumeInfo":[{"kafkaBrokerNodeId":"ALL","volumeSizeGB":200}]}`))
 	if err != nil {
 		t.Fatalf("UpdateBrokerStorage: %v", err)
 	}
 
-	// A subsequent Describe must reflect the raw option carried by the update.
 	desc, _ := m.DescribeCluster(ctx, c.ClusterARN)
-	if _, ok := desc.RawOptions["targetBrokerEBSVolumeInfo"]; !ok {
-		t.Fatal("update raw option not reflected in Describe")
+	if got := storageVolumeSize(t, desc.BrokerNodeGroupInfo); got != 200 {
+		t.Fatalf("storage volume not reflected in Describe: got %d, want 200", got)
 	}
 
+	if op.SourceClusterInfo == nil || op.SourceClusterInfo.EBSVolumeSizeGB != 100 {
+		t.Fatalf("source snapshot volume = %+v, want 100", op.SourceClusterInfo)
+	}
+
+	if op.TargetClusterInfo == nil || op.TargetClusterInfo.EBSVolumeSizeGB != 200 {
+		t.Fatalf("target snapshot volume = %+v, want 200", op.TargetClusterInfo)
+	}
+
+	// DescribeClusterOperation must deep-copy: mutating the result cannot alias
+	// stored state.
 	got, _ := m.DescribeClusterOperation(ctx, op.OperationARN)
 	if got.OperationARN != op.OperationARN {
 		t.Fatalf("operation mismatch: %s", got.OperationARN)
+	}
+
+	got.TargetClusterInfo.EBSVolumeSizeGB = 999
+
+	again, _ := m.DescribeClusterOperation(ctx, op.OperationARN)
+	if again.TargetClusterInfo.EBSVolumeSizeGB != 200 {
+		t.Fatal("operation snapshot aliased through the returned copy")
 	}
 }
 
