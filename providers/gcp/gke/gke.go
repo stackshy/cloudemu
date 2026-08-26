@@ -84,21 +84,23 @@ type Cluster struct {
 
 // NodePool is the in-memory representation of a GKE node pool.
 type NodePool struct {
-	Name              string
-	ClusterName       string
-	Location          string
-	NodeCount         int64
-	MachineType       string
-	DiskSizeGB        int64
-	Version           string
-	AutoscalingMin    int64
-	AutoscalingMax    int64
-	AutoscalingOn     bool
-	AutoUpgrade       bool
-	AutoRepair        bool
-	Status            string
-	UpgradeRolledBack bool
-	CreatedAt         time.Time
+	Name                  string
+	ClusterName           string
+	Location              string
+	NodeCount             int64
+	MachineType           string
+	DiskSizeGB            int64
+	OauthScopes           []string
+	Version               string
+	AutoscalingMin        int64
+	AutoscalingMax        int64
+	AutoscalingOn         bool
+	AutoscalingConfigured bool
+	AutoUpgrade           bool
+	AutoRepair            bool
+	Status                string
+	UpgradeRolledBack     bool
+	CreatedAt             time.Time
 }
 
 // Operation tracks GKE long-running operations. The mock completes every
@@ -256,7 +258,24 @@ type CreateClusterInput struct {
 	LoggingService    string
 	MonitoringService string
 	ResourceLabels    map[string]string
+	NodeConfig        *NodeConfigSpec
 	NodePools         []NodePoolSpec
+}
+
+// NodeConfigSpec captures the cluster-level nodeConfig that seeds the
+// auto-created default node pool when no explicit node pools are given.
+type NodeConfigSpec struct {
+	MachineType string
+	DiskSizeGB  int64
+	OauthScopes []string
+}
+
+// NodePoolManagement captures the node auto-management flags a create request
+// may set. A nil pointer means the request omitted the management block, so the
+// mock applies GKE's true/true defaults.
+type NodePoolManagement struct {
+	AutoUpgrade bool
+	AutoRepair  bool
 }
 
 // NodePoolSpec captures the node-pool fields we keep when bootstrapping a
@@ -266,10 +285,12 @@ type NodePoolSpec struct {
 	InitialNodeCount int64
 	MachineType      string
 	DiskSizeGB       int64
+	OauthScopes      []string
 	Version          string
 	AutoscalingMin   int64
 	AutoscalingMax   int64
 	AutoscalingOn    bool
+	Management       *NodePoolManagement
 }
 
 // CreateCluster registers a new cluster and any nested node pools.
@@ -309,7 +330,9 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		CreatedAt:         m.opts.Clock.Now().UTC(),
 	}
 
-	// Bootstrap default node pool when none specified — matches real GKE.
+	// Bootstrap default node pool when none specified — matches real GKE. The
+	// cluster-level nodeConfig (when present) configures that pool; absent
+	// fields fall back to defaults via nodePoolFromSpec.
 	pools := input.NodePools
 	if len(pools) == 0 {
 		count := input.InitialNodeCount
@@ -317,13 +340,19 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 			count = defaultNodeCount
 		}
 
-		pools = []NodePoolSpec{{
+		spec := NodePoolSpec{
 			Name:             "default-pool",
 			InitialNodeCount: count,
-			MachineType:      defaultMachineType,
-			DiskSizeGB:       defaultDiskSizeGB,
 			Version:          stubNodeVersion,
-		}}
+		}
+
+		if nc := input.NodeConfig; nc != nil {
+			spec.MachineType = nc.MachineType
+			spec.DiskSizeGB = nc.DiskSizeGB
+			spec.OauthScopes = nc.OauthScopes
+		}
+
+		pools = []NodePoolSpec{spec}
 	}
 
 	for i := range pools {
@@ -358,6 +387,14 @@ func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time
 		count = defaultNodeCount
 	}
 
+	// GKE defaults auto-upgrade/auto-repair to true; an explicit management
+	// block (even one setting them false) must survive the round-trip.
+	autoUpgrade, autoRepair := true, true
+	if spec.Management != nil {
+		autoUpgrade = spec.Management.AutoUpgrade
+		autoRepair = spec.Management.AutoRepair
+	}
+
 	return NodePool{
 		Name:           spec.Name,
 		ClusterName:    clusterName,
@@ -365,12 +402,13 @@ func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time
 		NodeCount:      count,
 		MachineType:    defaultIfEmpty(spec.MachineType, defaultMachineType),
 		DiskSizeGB:     defaultIfZero(spec.DiskSizeGB, defaultDiskSizeGB),
+		OauthScopes:    spec.OauthScopes,
 		Version:        defaultIfEmpty(spec.Version, stubNodeVersion),
 		AutoscalingMin: spec.AutoscalingMin,
 		AutoscalingMax: spec.AutoscalingMax,
 		AutoscalingOn:  spec.AutoscalingOn,
-		AutoUpgrade:    true,
-		AutoRepair:     true,
+		AutoUpgrade:    autoUpgrade,
+		AutoRepair:     autoRepair,
 		Status:         "RUNNING",
 		CreatedAt:      now,
 	}
@@ -705,6 +743,7 @@ func (m *Mock) SetNodePoolAutoscaling(
 		np.AutoscalingOn = on
 		np.AutoscalingMin = minNodes
 		np.AutoscalingMax = maxNodes
+		np.AutoscalingConfigured = true
 	})
 }
 

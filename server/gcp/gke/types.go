@@ -21,6 +21,7 @@ type gkeCluster struct {
 	Network           string            `json:"network,omitempty"`
 	Subnetwork        string            `json:"subnetwork,omitempty"`
 	InitialNodeCount  int64             `json:"initialNodeCount,omitempty"`
+	NodeConfig        *gkeNodeConfig    `json:"nodeConfig,omitempty"`
 	CurrentNodeCount  int64             `json:"currentNodeCount,omitempty"`
 	LoggingService    string            `json:"loggingService,omitempty"`
 	MonitoringService string            `json:"monitoringService,omitempty"`
@@ -59,12 +60,15 @@ type gkeNodePool struct {
 }
 
 type gkeNodeConfig struct {
-	MachineType string `json:"machineType,omitempty"`
-	DiskSizeGb  int64  `json:"diskSizeGb,omitempty"`
+	MachineType string   `json:"machineType,omitempty"`
+	DiskSizeGb  int64    `json:"diskSizeGb,omitempty"`
+	OauthScopes []string `json:"oauthScopes,omitempty"`
 }
 
 type gkeAutoscaling struct {
-	Enabled      bool  `json:"enabled,omitempty"`
+	// Enabled has no omitempty so a disabled pool still emits {enabled:false}
+	// rather than dropping the field — clients read it to confirm the disable.
+	Enabled      bool  `json:"enabled"`
 	MinNodeCount int64 `json:"minNodeCount,omitempty"`
 	MaxNodeCount int64 `json:"maxNodeCount,omitempty"`
 }
@@ -255,6 +259,7 @@ func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {
 		Config: &gkeNodeConfig{
 			MachineType: np.MachineType,
 			DiskSizeGb:  np.DiskSizeGB,
+			OauthScopes: np.OauthScopes,
 		},
 		Management: &gkeNodeManagement{
 			AutoUpgrade: np.AutoUpgrade,
@@ -265,11 +270,15 @@ func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {
 			"/clusters/" + np.ClusterName + "/nodePools/" + np.Name,
 	}
 
-	if np.AutoscalingOn || np.AutoscalingMin > 0 || np.AutoscalingMax > 0 {
-		out.Autoscaling = &gkeAutoscaling{
-			Enabled:      np.AutoscalingOn,
-			MinNodeCount: np.AutoscalingMin,
-			MaxNodeCount: np.AutoscalingMax,
+	// Emit the autoscaling block whenever the pool has it enabled or has been
+	// explicitly configured (e.g. disabled via :setAutoscaling), so a client
+	// confirming a disable reads {enabled:false} instead of a nil pointer. When
+	// disabled, min/max are omitted.
+	if np.AutoscalingOn || np.AutoscalingConfigured || np.AutoscalingMin > 0 || np.AutoscalingMax > 0 {
+		out.Autoscaling = &gkeAutoscaling{Enabled: np.AutoscalingOn}
+		if np.AutoscalingOn {
+			out.Autoscaling.MinNodeCount = np.AutoscalingMin
+			out.Autoscaling.MaxNodeCount = np.AutoscalingMax
 		}
 	}
 
