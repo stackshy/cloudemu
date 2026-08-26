@@ -2,6 +2,7 @@ package servicebus_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -191,6 +192,60 @@ func TestSDKCorrelationFilterRule(t *testing.T) {
 		got.Properties.CorrelationFilter.CorrelationID == nil ||
 		*got.Properties.CorrelationFilter.CorrelationID != "urgent" {
 		t.Fatalf("rule Get correlationFilter = %v", got.Properties)
+	}
+}
+
+// TestSDKSubscriptionMessageCount is the regression for subscription runtime
+// counts stuck at 0: after two publishes to the topic, an ARM GET of the
+// subscription must report messageCount and activeMessageCount >= 2, mirroring
+// the queue runtime counts.
+func TestSDKSubscriptionMessageCount(t *testing.T) {
+	ts := pubsubServer(t)
+	cf := newClientFactory(t, ts)
+	ctx := context.Background()
+
+	createNS(t, cf.NewNamespacesClient(), rgName, nsName, nil)
+
+	if _, err := cf.NewTopicsClient().CreateOrUpdate(ctx, rgName, nsName, "orders",
+		armservicebus.SBTopic{}, nil); err != nil {
+		t.Fatalf("topic CreateOrUpdate: %v", err)
+	}
+
+	if _, err := cf.NewSubscriptionsClient().CreateOrUpdate(ctx, rgName, nsName, "orders", "all",
+		armservicebus.SBSubscription{}, nil); err != nil {
+		t.Fatalf("subscription CreateOrUpdate: %v", err)
+	}
+
+	// Publish two messages to the topic over the raw data plane (using the TLS
+	// server's own client so the self-signed cert is trusted).
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/"+nsName+"/orders/messages",
+			strings.NewReader("m"))
+
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("publish %d: %v", i, err)
+		}
+
+		_ = resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("publish %d = %d, want 201", i, resp.StatusCode)
+		}
+	}
+
+	got, err := cf.NewSubscriptionsClient().Get(ctx, rgName, nsName, "orders", "all", nil)
+	if err != nil {
+		t.Fatalf("subscription Get: %v", err)
+	}
+
+	if got.Properties == nil || got.Properties.MessageCount == nil || *got.Properties.MessageCount < 2 {
+		t.Fatalf("messageCount = %v, want >= 2", got.Properties.MessageCount)
+	}
+
+	cd := got.Properties.CountDetails
+	if cd == nil || cd.ActiveMessageCount == nil || *cd.ActiveMessageCount < 2 {
+		t.Fatalf("activeMessageCount = %v, want >= 2", cd)
 	}
 }
 

@@ -763,6 +763,19 @@ func applyQueueAttributes(qd *queueData, attrs map[string]int) {
 	if v, ok := attrs["MessageRetentionPeriod"]; ok {
 		qd.messageRetention = v
 	}
+
+	// MaxDeliveryCount reconfigures the dead-letter threshold (Service Bus
+	// maxDeliveryCount): lowering it dead-letters already-enqueued messages at the
+	// new threshold on their next delivery attempt.
+	if v, ok := attrs["MaxDeliveryCount"]; ok && qd.dlqConfig != nil {
+		qd.dlqConfig.MaxReceiveCount = v
+	}
+
+	// DeadLetterOnExpiration toggles Service Bus'
+	// deadLetteringOnMessageExpiration (encoded 0/1 over the int-only map).
+	if v, ok := attrs["DeadLetterOnExpiration"]; ok {
+		qd.deadLetterOnExpiration = v != 0
+	}
 }
 
 // PurgeQueue removes all messages from the specified queue.

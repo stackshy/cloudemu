@@ -3,6 +3,7 @@ package servicebus_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -124,6 +125,171 @@ func TestDataPlaneSQLFilterSysProperty(t *testing.T) {
 	empty := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/events/subscriptions/errors-only/messages/head", "")
 	if empty.StatusCode != http.StatusNoContent {
 		t.Fatalf("second receive = %d, want 204 (info-msg must not have matched)", empty.StatusCode)
+	}
+}
+
+// replaceRuleWithSQL swaps a subscription's $Default rule for a SqlFilter over
+// the given expression.
+func replaceRuleWithSQL(t *testing.T, srv *httptest.Server, topic, sub, expr string) {
+	t.Helper()
+
+	if r := doRequest(t, srv, http.MethodDelete, ruleURL(topic, sub, "$Default")+apiVer, ""); r.StatusCode != http.StatusOK {
+		t.Fatalf("delete $Default rule = %d", r.StatusCode)
+	}
+
+	body := `{"properties":{"filterType":"SqlFilter","sqlFilter":{"sqlExpression":` + strconv.Quote(expr) + `}}}`
+	if r := doRequest(t, srv, http.MethodPut, ruleURL(topic, sub, "custom")+apiVer, body); r.StatusCode != http.StatusOK {
+		t.Fatalf("create sql rule = %d", r.StatusCode)
+	}
+}
+
+// receiveOne receive-and-deletes one message from a subscription, returning its
+// body and whether one was present (200 vs 204).
+func receiveOne(t *testing.T, srv *httptest.Server, topic, sub string) (string, bool) {
+	t.Helper()
+
+	r := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/"+topic+"/subscriptions/"+sub+"/messages/head", "")
+	switch r.StatusCode {
+	case http.StatusOK:
+		return readBody(t, r), true
+	case http.StatusNoContent:
+		return "", false
+	default:
+		t.Fatalf("receive from %s = %d, want 200 or 204", sub, r.StatusCode)
+		return "", false
+	}
+}
+
+// TestDataPlaneSQLFilterORDeliversMatch is the regression for the HIGH message-
+// loss bug: a SqlFilter using OR must deliver a message that matches either
+// disjunct, not silently drop it. Before the fix the whole "a OR b" expression
+// was parsed as one malformed equality that always failed.
+func TestDataPlaneSQLFilterORDeliversMatch(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "events", "ab-only")
+	replaceRuleWithSQL(t, srv, "events", "ab-only", "sys.Label = 'a' OR sys.Label = 'b'")
+
+	send := func(body, label string) {
+		t.Helper()
+
+		if r := doRequest(t, srv, http.MethodPost, "/"+nsName+"/events/messages", body,
+			map[string]string{"BrokerProperties": `{"Label":"` + label + `"}`}); r.StatusCode != http.StatusCreated {
+			t.Fatalf("send %q = %d, want 201", body, r.StatusCode)
+		}
+	}
+
+	send("msg-a", "a")
+	send("msg-b", "b")
+	send("msg-c", "c")
+
+	// Both matching disjuncts arrive (order preserved); the non-match does not.
+	for _, want := range []string{"msg-a", "msg-b"} {
+		if got, ok := receiveOne(t, srv, "events", "ab-only"); !ok || got != want {
+			t.Fatalf("receive = %q ok=%v, want %q (OR filter must not drop matches)", got, ok, want)
+		}
+	}
+
+	if _, ok := receiveOne(t, srv, "events", "ab-only"); ok {
+		t.Fatal("non-matching Label=c must not have been delivered")
+	}
+}
+
+// TestDataPlaneSQLFilterNumericComparison confirms a relational SqlFilter over a
+// custom numeric property (priority > 5, the common Terraform pattern) delivers
+// only messages that satisfy it, rather than over-delivering everything.
+func TestDataPlaneSQLFilterNumericComparison(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "orders", "high-pri")
+	replaceRuleWithSQL(t, srv, "orders", "high-pri", "priority > 5")
+
+	send := func(body, priority string) {
+		t.Helper()
+
+		if r := doRequest(t, srv, http.MethodPost, "/"+nsName+"/orders/messages", body,
+			map[string]string{"priority": priority}); r.StatusCode != http.StatusCreated {
+			t.Fatalf("send %q = %d, want 201", body, r.StatusCode)
+		}
+	}
+
+	send("low", "3")
+	send("high", "9")
+
+	if got, ok := receiveOne(t, srv, "orders", "high-pri"); !ok || got != "high" {
+		t.Fatalf("receive = %q ok=%v, want high", got, ok)
+	}
+
+	if _, ok := receiveOne(t, srv, "orders", "high-pri"); ok {
+		t.Fatal("priority=3 must not have matched priority > 5")
+	}
+}
+
+// TestDataPlaneSQLFilterCustomPropertyEquality confirms a SqlFilter equality
+// predicate over a custom string property (myprop = 'x') routes only matching
+// messages.
+func TestDataPlaneSQLFilterCustomPropertyEquality(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "orders", "x-only")
+	replaceRuleWithSQL(t, srv, "orders", "x-only", "myprop = 'x'")
+
+	send := func(body, val string) {
+		t.Helper()
+
+		if r := doRequest(t, srv, http.MethodPost, "/"+nsName+"/orders/messages", body,
+			map[string]string{"myprop": val}); r.StatusCode != http.StatusCreated {
+			t.Fatalf("send %q = %d, want 201", body, r.StatusCode)
+		}
+	}
+
+	send("nope", "y")
+	send("yes", "x")
+
+	if got, ok := receiveOne(t, srv, "orders", "x-only"); !ok || got != "yes" {
+		t.Fatalf("receive = %q ok=%v, want yes", got, ok)
+	}
+
+	if _, ok := receiveOne(t, srv, "orders", "x-only"); ok {
+		t.Fatal("myprop=y must not have matched myprop = 'x'")
+	}
+}
+
+// TestDataPlaneCorrelationFilterUserProperties confirms a CorrelationFilter's
+// user-defined Properties are matched against the message's custom application
+// properties (previously ignored, so every message matched).
+func TestDataPlaneCorrelationFilterUserProperties(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "orders", "region-eu")
+
+	if r := doRequest(t, srv, http.MethodDelete, ruleURL("orders", "region-eu", "$Default")+apiVer, ""); r.StatusCode != http.StatusOK {
+		t.Fatalf("delete $Default rule = %d", r.StatusCode)
+	}
+
+	ruleBody := `{"properties":{"filterType":"CorrelationFilter","correlationFilter":{"properties":{"region":"eu"}}}}`
+	if r := doRequest(t, srv, http.MethodPut, ruleURL("orders", "region-eu", "eu-rule")+apiVer, ruleBody); r.StatusCode != http.StatusOK {
+		t.Fatalf("create correlation rule = %d", r.StatusCode)
+	}
+
+	send := func(body, region string) {
+		t.Helper()
+
+		if r := doRequest(t, srv, http.MethodPost, "/"+nsName+"/orders/messages", body,
+			map[string]string{"region": region}); r.StatusCode != http.StatusCreated {
+			t.Fatalf("send %q = %d, want 201", body, r.StatusCode)
+		}
+	}
+
+	send("us-order", "us")
+	send("eu-order", "eu")
+
+	if got, ok := receiveOne(t, srv, "orders", "region-eu"); !ok || got != "eu-order" {
+		t.Fatalf("receive = %q ok=%v, want eu-order", got, ok)
+	}
+
+	if _, ok := receiveOne(t, srv, "orders", "region-eu"); ok {
+		t.Fatal("region=us must not have matched Properties{region:eu}")
 	}
 }
 
