@@ -14,27 +14,66 @@ const (
 )
 
 // copyOperation returns a deep copy of an operation record so a reader cannot
-// alias the stored RawOptions map.
+// alias the stored RawOptions map or the source/target snapshots.
 //
 //nolint:gocritic // hugeParam: takes a value to return an alias-free copy.
 func copyOperation(op driver.ClusterOperation) driver.ClusterOperation {
 	out := op
 	out.RawOptions = copyRaw(op.RawOptions)
+	out.SourceClusterInfo = copyMutableInfo(op.SourceClusterInfo)
+	out.TargetClusterInfo = copyMutableInfo(op.TargetClusterInfo)
 
 	return out
+}
+
+// copyMutableInfo returns a copy of a mutable-cluster-info snapshot (all value
+// fields, so a shallow struct copy fully de-aliases it), or nil.
+func copyMutableInfo(mi *driver.MutableClusterInfo) *driver.MutableClusterInfo {
+	if mi == nil {
+		return nil
+	}
+
+	out := *mi
+
+	return &out
+}
+
+// mutableSnapshot captures the modeled mutable attributes of a cluster so an
+// operation can record the before/after of a mutation. It reads the EBS volume
+// size by value, so the snapshot is stable even after fn rewrites storageInfo.
+func mutableSnapshot(c *driver.Cluster) *driver.MutableClusterInfo {
+	info := &driver.MutableClusterInfo{
+		NumberOfBrokerNodes: c.NumberOfBrokerNodes,
+		KafkaVersion:        c.KafkaVersion,
+		StorageMode:         c.StorageMode,
+		EnhancedMonitoring:  c.EnhancedMonitoring,
+	}
+
+	if c.BrokerNodeGroupInfo != nil {
+		info.InstanceType = c.BrokerNodeGroupInfo.InstanceType
+		if size, ok := ebsVolumeSize(c.BrokerNodeGroupInfo); ok {
+			info.EBSVolumeSizeGB = size
+		}
+	}
+
+	return info
 }
 
 // recordOperation appends a COMPLETED operation record of the given type to the
 // cluster and indexes it globally by its ARN. The caller MUST already hold
 // cd.mu for writing; recording is part of the same atomic mutation so a
 // concurrent reader never sees the new cluster state without its operation.
-func (m *Mock) recordOperation(cd *clusterData, opType string) driver.ClusterOperation {
+func (m *Mock) recordOperation(
+	cd *clusterData, opType string, source, target *driver.MutableClusterInfo,
+) driver.ClusterOperation {
 	op := driver.ClusterOperation{
-		OperationARN:   m.operationARN(),
-		ClusterARN:     cd.cluster.ClusterARN,
-		OperationType:  opType,
-		OperationState: operationStateCompleted,
-		CreationTime:   m.now(),
+		OperationARN:      m.operationARN(),
+		ClusterARN:        cd.cluster.ClusterARN,
+		OperationType:     opType,
+		OperationState:    operationStateCompleted,
+		CreationTime:      m.now(),
+		SourceClusterInfo: source,
+		TargetClusterInfo: target,
 	}
 
 	cd.operations = append(cd.operations, op)
@@ -81,13 +120,19 @@ func (m *Mock) mutateClusterErr(
 			currentVersion, cd.cluster.CurrentVersion)
 	}
 
+	// Snapshot the mutable attributes before and after fn so the recorded
+	// operation carries the source/target delta real MSK reports.
+	source := mutableSnapshot(&cd.cluster)
+
 	if fn != nil {
 		fn(&cd.cluster)
 	}
 
 	cd.cluster.CurrentVersion = bumpVersion()
 
-	op := m.recordOperation(cd, opType)
+	target := mutableSnapshot(&cd.cluster)
+
+	op := m.recordOperation(cd, opType, source, target)
 	out := copyOperation(op)
 
 	return &out, nil
@@ -100,7 +145,9 @@ func bumpVersion() string {
 }
 
 // ListClusterOperations lists a cluster's operations, oldest first, paginated.
-// The v1 op does NOT model NotFoundException, so a missing cluster is a 400.
+// The v1 op does NOT model NotFoundException in the aws-sdk-go-v2 smithy model,
+// so a missing cluster is a 400 (a 404 would deserialize as an untyped generic
+// error). The v2 op DOES model it — see ListClusterOperationsV2.
 func (m *Mock) ListClusterOperations(
 	_ context.Context, arn string, page driver.Page,
 ) (ops []driver.ClusterOperation, next string, err error) {
