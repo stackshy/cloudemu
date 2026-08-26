@@ -169,16 +169,49 @@ func canonicalHostedZoneID(region string) string {
 // balancer does not exist or has already been deleted, the call succeeds." So a
 // second delete (or a delete of an ARN that never existed) returns no error,
 // which keeps idempotent teardown flows (terraform destroy retries) working.
+//
+// A load balancer with deletion_protection.enabled=true cannot be deleted: real
+// ELBv2 rejects the call with OperationNotPermitted. This is the exact scenario
+// deletion protection exists to prevent, so honoring it stops an errant delete
+// (or a terraform destroy) from wiping a load balancer the user protected.
 func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
-	m.lbs.Delete(arn)
+	// Only an existing load balancer can be protected; a missing ARN stays
+	// idempotent (no error), matching the API reference.
+	if _, ok := m.lbs.Get(arn); ok {
+		m.attrsMu.RLock()
+		protected := m.attrs[arn].DeletionProtection
+		m.attrsMu.RUnlock()
 
-	// Delete all listeners associated with this load balancer.
-	all := m.listeners.All()
-	for key, li := range all {
-		if li.LBARN == arn {
-			m.listeners.Delete(key)
+		if protected {
+			return errors.Newf(errors.FailedPrecondition,
+				"load balancer %q cannot be deleted because deletion protection is enabled", arn)
 		}
 	}
+
+	m.lbs.Delete(arn)
+
+	// Delete listeners for this load balancer and, with them, the rules under
+	// those listeners. Leaving the rules behind would leak them for the life of
+	// the process (their parent listener is gone, so nothing ever reaches them).
+	for key, li := range m.listeners.All() {
+		if li.LBARN != arn {
+			continue
+		}
+
+		for rkey, r := range m.rules.All() {
+			if r.ListenerARN == li.ARN {
+				m.rules.Delete(rkey)
+			}
+		}
+
+		m.listeners.Delete(key)
+	}
+
+	// Drop the stored load-balancer attributes so a recreated ARN does not
+	// inherit a prior deletion-protection flag.
+	m.attrsMu.Lock()
+	delete(m.attrs, arn)
+	m.attrsMu.Unlock()
 
 	return nil
 }

@@ -192,21 +192,27 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, inUseCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 	}
 }
 
-// inUseCode picks the AWS "in use" error code for a FailedPrecondition. A
+// failedPreconditionCode picks the AWS error code for a FailedPrecondition.
+// Deleting a deletion-protected load balancer is OperationNotPermitted; a
 // listener rule reusing a priority is PriorityInUse; everything else (a target
 // group still referenced by an action) is ResourceInUse.
-func inUseCode(err error) string {
-	if strings.Contains(err.Error(), "priority") {
-		return "PriorityInUse"
-	}
+func failedPreconditionCode(err error) string {
+	msg := err.Error()
 
-	return "ResourceInUse"
+	switch {
+	case strings.Contains(msg, "deletion protection"):
+		return "OperationNotPermitted"
+	case strings.Contains(msg, "priority"):
+		return "PriorityInUse"
+	default:
+		return "ResourceInUse"
+	}
 }
 
 // duplicateNameCode distinguishes a duplicate target-group name from a

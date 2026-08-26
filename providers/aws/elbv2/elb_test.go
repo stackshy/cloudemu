@@ -248,6 +248,53 @@ func TestDeleteLoadBalancerCascadesListeners(t *testing.T) {
 	assertEqual(t, 0, len(lbs))
 }
 
+func TestDeleteLoadBalancerDeletionProtection(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+
+	requireNoError(t, m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{DeletionProtection: true}))
+
+	// A protected load balancer cannot be deleted.
+	assertError(t, m.DeleteLoadBalancer(ctx, lb.ARN), true)
+
+	lbs, _ := m.DescribeLoadBalancers(ctx, []string{lb.ARN})
+	assertEqual(t, 1, len(lbs))
+
+	// Clearing the flag lets the delete through.
+	requireNoError(t, m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{DeletionProtection: false}))
+	requireNoError(t, m.DeleteLoadBalancer(ctx, lb.ARN))
+}
+
+func TestDeleteLoadBalancerCascadesRulesAndAttributes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	tg := createTestTG(m)
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
+	requireNoError(t, err)
+
+	_, err = m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/*"}}},
+		Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	requireNoError(t, err)
+
+	requireNoError(t, m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{IdleTimeout: 120}))
+	requireNoError(t, m.DeleteLoadBalancer(ctx, lb.ARN))
+
+	// The rule under the deleted listener must be gone (no orphan leak); the
+	// listener no longer exists, so DescribeRules reports ListenerNotFound.
+	_, err = m.DescribeRules(ctx, li.ARN)
+	assertError(t, err, true)
+
+	// Deleting the target group must now succeed: no rule still references it.
+	requireNoError(t, m.DeleteTargetGroup(ctx, tg.ARN))
+}
+
 func TestRegisterTargets(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
