@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/xml"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	ecprovider "github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
@@ -23,7 +26,9 @@ type resourceTagger interface {
 type parameterGroupManager interface {
 	CreateCacheParameterGroup(ctx context.Context, name, family, description string) (*ecprovider.ParameterGroup, error)
 	DescribeCacheParameterGroups(ctx context.Context, names []string) ([]ecprovider.ParameterGroup, error)
-	ModifyCacheParameterGroup(ctx context.Context, name string) error
+	DescribeCacheParameters(ctx context.Context, name, source string) ([]ecprovider.Parameter, error)
+	ModifyCacheParameterGroup(ctx context.Context, name string, updates []ecprovider.ParameterUpdate) error
+	ResetCacheParameterGroup(ctx context.Context, name string, resetAll bool, names []string) error
 	DeleteCacheParameterGroup(ctx context.Context, name string) error
 }
 
@@ -181,6 +186,31 @@ type deleteCacheParameterGroupResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+type resetCacheParameterGroupResponse struct {
+	XMLName  xml.Name         `xml:"ResetCacheParameterGroupResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Name     string           `xml:"ResetCacheParameterGroupResult>CacheParameterGroupName"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type parameterXML struct {
+	ParameterName        string `xml:"ParameterName"`
+	ParameterValue       string `xml:"ParameterValue"`
+	Description          string `xml:"Description"`
+	Source               string `xml:"Source"`
+	DataType             string `xml:"DataType"`
+	AllowedValues        string `xml:"AllowedValues"`
+	IsModifiable         bool   `xml:"IsModifiable"`
+	MinimumEngineVersion string `xml:"MinimumEngineVersion"`
+}
+
+type describeCacheParametersResponse struct {
+	XMLName    xml.Name         `xml:"DescribeCacheParametersResponse"`
+	Xmlns      string           `xml:"xmlns,attr"`
+	Parameters []parameterXML   `xml:"DescribeCacheParametersResult>Parameters>Parameter"`
+	Metadata   responseMetadata `xml:"ResponseMetadata"`
+}
+
 func (h *Handler) paramGroups() (parameterGroupManager, bool) {
 	m, ok := h.cache.(parameterGroupManager)
 
@@ -254,7 +284,7 @@ func (h *Handler) modifyCacheParameterGroup(w http.ResponseWriter, r *http.Reque
 	}
 
 	name := r.Form.Get("CacheParameterGroupName")
-	if err := mgr.ModifyCacheParameterGroup(r.Context(), name); err != nil {
+	if err := mgr.ModifyCacheParameterGroup(r.Context(), name, parseParameterNameValues(r.Form)); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -264,6 +294,97 @@ func (h *Handler) modifyCacheParameterGroup(w http.ResponseWriter, r *http.Reque
 		Name:     name,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+func (h *Handler) resetCacheParameterGroup(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.paramGroups()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "cache parameter groups not supported"))
+		return
+	}
+
+	name := r.Form.Get("CacheParameterGroupName")
+	resetAll := strings.EqualFold(r.Form.Get("ResetAllParameters"), "true")
+
+	updates := parseParameterNameValues(r.Form)
+
+	names := make([]string, 0, len(updates))
+	for _, u := range updates {
+		names = append(names, u.Name)
+	}
+
+	if err := mgr.ResetCacheParameterGroup(r.Context(), name, resetAll, names); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, resetCacheParameterGroupResponse{
+		Xmlns:    Namespace,
+		Name:     name,
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) describeCacheParameters(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.paramGroups()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "cache parameter groups not supported"))
+		return
+	}
+
+	params, err := mgr.DescribeCacheParameters(r.Context(),
+		r.Form.Get("CacheParameterGroupName"), r.Form.Get("Source"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := make([]parameterXML, 0, len(params))
+	for i := range params {
+		out = append(out, parameterXML{
+			ParameterName:        params[i].Name,
+			ParameterValue:       params[i].Value,
+			Description:          params[i].Description,
+			Source:               params[i].Source,
+			DataType:             params[i].DataType,
+			AllowedValues:        params[i].AllowedValues,
+			IsModifiable:         params[i].IsModifiable,
+			MinimumEngineVersion: params[i].MinimumEngineVersion,
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, describeCacheParametersResponse{
+		Xmlns:      Namespace,
+		Parameters: out,
+		Metadata:   responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// parseParameterNameValues parses the ParameterNameValues.ParameterNameValue.N
+// list (each with a ParameterName and optional ParameterValue) shared by
+// ModifyCacheParameterGroup and ResetCacheParameterGroup.
+func parseParameterNameValues(form url.Values) []ecprovider.ParameterUpdate {
+	const prefix = "ParameterNameValues.ParameterNameValue"
+
+	indices := awsquery.CollectIndices(form, prefix)
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]ecprovider.ParameterUpdate, 0, len(indices))
+
+	for _, idx := range indices {
+		base := prefix + "." + strconv.Itoa(idx)
+
+		name := form.Get(base + ".ParameterName")
+		if name == "" {
+			continue
+		}
+
+		out = append(out, ecprovider.ParameterUpdate{Name: name, Value: form.Get(base + ".ParameterValue")})
+	}
+
+	return out
 }
 
 func (h *Handler) deleteCacheParameterGroup(w http.ResponseWriter, r *http.Request) {

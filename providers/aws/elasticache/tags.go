@@ -114,7 +114,7 @@ func (m *Mock) CreateCacheParameterGroup(_ context.Context, name, family, descri
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "cache parameter group %q already exists", name)
 	}
 
-	pg := ParameterGroup{Name: name, Family: family, Description: description}
+	pg := ParameterGroup{Name: name, Family: family, Description: description, Overrides: map[string]string{}}
 	m.parameterGroups.Set(name, pg)
 
 	return &pg, nil
@@ -138,16 +138,6 @@ func (m *Mock) DescribeCacheParameterGroups(_ context.Context, names []string) (
 	}
 
 	return out, nil
-}
-
-// ModifyCacheParameterGroup is a no-op beyond validating the group exists —
-// the emulator does not track individual parameter values, only group identity.
-func (m *Mock) ModifyCacheParameterGroup(_ context.Context, name string) error {
-	if !m.parameterGroups.Has(name) {
-		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
-	}
-
-	return nil
 }
 
 // DeleteCacheParameterGroup removes an ElastiCache cache parameter group.
