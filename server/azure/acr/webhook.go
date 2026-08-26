@@ -2,15 +2,20 @@ package acr
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
-// serveWebhook routes .../registries/{registry}/webhooks[/{name}].
-//
-//nolint:dupl // webhook and replication sub-resource routers are intentionally typed; sharing via generics adds noise.
+// serveWebhook routes .../registries/{registry}/webhooks[/{name}] and the
+// POST getCallbackConfig action.
 func (h *ARMHandler) serveWebhook(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if rp.SubResourceAction != "" {
+		h.serveWebhookAction(w, r, rp)
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			armMethodNotAllowed(w)
@@ -62,7 +67,7 @@ func (h *ARMHandler) createOrUpdateWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	azurearm.WriteJSON(w, createdStatus(created), toARMWebhook(wh, rp.Subscription))
+	azurearm.WriteJSON(w, createdStatus(created), toARMWebhookWithCallback(wh, rp.Subscription))
 }
 
 // updateWebhook handles the ARM PATCH (partial update): only properties present
@@ -87,7 +92,7 @@ func (h *ARMHandler) updateWebhook(w http.ResponseWriter, r *http.Request, rp *a
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMWebhook(wh, rp.Subscription))
+	azurearm.WriteJSON(w, http.StatusOK, toARMWebhookWithCallback(wh, rp.Subscription))
 }
 
 // applyWebhookProps copies the properties present in a PATCH body onto upd,
@@ -129,6 +134,33 @@ func (h *ARMHandler) getWebhook(w http.ResponseWriter, r *http.Request, rp *azur
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMWebhook(wh, rp.Subscription))
+}
+
+// serveWebhookAction handles the POST action verbs under a named webhook. Only
+// getCallbackConfig is modeled — the sole read path for a webhook's serviceUri
+// and customHeaders.
+func (h *ARMHandler) serveWebhookAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if !strings.EqualFold(rp.SubResourceAction, "getCallbackConfig") {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"ACR webhook action not implemented: "+rp.SubResourceAction)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		armMethodNotAllowed(w)
+		return
+	}
+
+	wh, err := h.mgr.GetWebhook(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, armCallbackConfig{
+		ServiceURI:    wh.ServiceURI,
+		CustomHeaders: toPtrTags(wh.CustomHeaders),
+	})
 }
 
 func (h *ARMHandler) deleteWebhook(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

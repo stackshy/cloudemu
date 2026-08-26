@@ -33,9 +33,19 @@ type armRegistrySKU struct {
 }
 
 type armRegistryIdentity struct {
-	Type        string `json:"type,omitempty"`
+	Type                   string                              `json:"type,omitempty"`
+	PrincipalID            string                              `json:"principalId,omitempty"`
+	TenantID               string                              `json:"tenantId,omitempty"`
+	UserAssignedIdentities map[string]*armUserAssignedIdentity `json:"userAssignedIdentities,omitempty"`
+}
+
+// armUserAssignedIdentity mirrors armcontainerregistry.UserIdentityProperties:
+// the principal/client pair Azure returns for one attached user-assigned
+// identity. On a request the values are empty ({}); the response synthesizes
+// them.
+type armUserAssignedIdentity struct {
 	PrincipalID string `json:"principalId,omitempty"`
-	TenantID    string `json:"tenantId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
 }
 
 type armRegistryProperties struct {
@@ -90,9 +100,10 @@ type armRegistryUsage struct {
 }
 
 // armWebhook mirrors armcontainerregistry.Webhook. Properties on create carry
-// serviceUri and customHeaders (WebhookPropertiesCreateParameters); the GET
-// response omits them (WebhookProperties), so serviceUri/customHeaders are
-// decode-only and left off the response shape.
+// serviceUri and customHeaders (WebhookPropertiesCreateParameters); the plain
+// GET response omits them (WebhookProperties) — they are exposed only via
+// getCallbackConfig. toARMWebhook builds the read shape (omitting them) and
+// toARMWebhookWithCallback the create/update shape (including them).
 type armWebhook struct {
 	ID         string             `json:"id,omitempty"`
 	Name       string             `json:"name,omitempty"`
@@ -155,15 +166,34 @@ func toARMRegistry(reg *crdriver.AzureRegistry, subscription string) armRegistry
 
 	if reg.IdentityType != "" && reg.IdentityType != "None" {
 		out.Identity = &armRegistryIdentity{
-			Type:        reg.IdentityType,
-			PrincipalID: reg.PrincipalID,
-			TenantID:    reg.TenantID,
+			Type:                   reg.IdentityType,
+			PrincipalID:            reg.PrincipalID,
+			TenantID:               reg.TenantID,
+			UserAssignedIdentities: toARMUserAssigned(reg.UserAssignedIdentities),
 		}
 	}
 
 	return out
 }
 
+// toARMUserAssigned echoes each stored user-assigned identity with its
+// synthesized principal/client pair, keyed by the identity resource ID.
+func toARMUserAssigned(in map[string]crdriver.AzureUserAssignedIdentity) map[string]*armUserAssignedIdentity {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]*armUserAssignedIdentity, len(in))
+	for id, v := range in {
+		out[id] = &armUserAssignedIdentity{PrincipalID: v.PrincipalID, ClientID: v.ClientID}
+	}
+
+	return out
+}
+
+// toARMWebhook is the read (GET/List) shape: it deliberately omits serviceUri
+// and customHeaders, mirroring real ACR's Webhooks_Get (WebhookProperties). The
+// two write-only fields are retrievable only via getCallbackConfig.
 func toARMWebhook(wh *crdriver.AzureWebhook, subscription string) armWebhook {
 	return armWebhook{
 		ID:       registryResourceID(subscription, wh.ResourceGroup, wh.RegistryName) + "/webhooks/" + wh.Name,
@@ -178,6 +208,26 @@ func toARMWebhook(wh *crdriver.AzureWebhook, subscription string) armWebhook {
 			ProvisioningState: wh.ProvisioningState,
 		},
 	}
+}
+
+// toARMWebhookWithCallback is the create/update (PUT/PATCH) response shape: it
+// carries serviceUri and customHeaders so the Azure property overlay sees them
+// as modeled and does NOT capture-and-replay them onto later plain GETs (which
+// use toARMWebhook and must never leak them). Real ACR exposes these two only
+// through getCallbackConfig.
+func toARMWebhookWithCallback(wh *crdriver.AzureWebhook, subscription string) armWebhook {
+	out := toARMWebhook(wh, subscription)
+	out.Properties.ServiceURI = wh.ServiceURI
+	out.Properties.CustomHeaders = toPtrTags(wh.CustomHeaders)
+
+	return out
+}
+
+// armCallbackConfig mirrors armcontainerregistry.CallbackConfig, the sole read
+// path for a webhook's serviceUri and customHeaders (getCallbackConfig).
+type armCallbackConfig struct {
+	ServiceURI    string             `json:"serviceUri,omitempty"`
+	CustomHeaders map[string]*string `json:"customHeaders,omitempty"`
 }
 
 func toARMReplication(rep *crdriver.AzureReplication, subscription string) armReplication {

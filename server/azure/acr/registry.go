@@ -2,6 +2,7 @@ package acr
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -119,6 +120,7 @@ func (h *ARMHandler) createOrUpdateRegistry(w http.ResponseWriter, r *http.Reque
 
 	if body.Identity != nil {
 		cfg.IdentityType = body.Identity.Type
+		cfg.UserAssignedIdentities = identityKeys(body.Identity.UserAssignedIdentities)
 	}
 
 	if body.Properties != nil {
@@ -156,6 +158,7 @@ func (h *ARMHandler) updateRegistry(w http.ResponseWriter, r *http.Request, rp *
 	if body.Identity != nil {
 		id := body.Identity.Type
 		upd.IdentityType = &id
+		upd.UserAssignedIdentities = identityKeys(body.Identity.UserAssignedIdentities)
 	}
 
 	if body.Properties != nil && body.Properties.AdminUserEnabled != nil {
@@ -268,6 +271,23 @@ func (h *ARMHandler) getListUsages(w http.ResponseWriter, r *http.Request, rp *a
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armRegistryUsageListResult{Value: out})
+}
+
+// identityKeys returns the user-assigned identity resource IDs (the map keys) in
+// deterministic order so the synthesized principal/client pairs are stable.
+func identityKeys(m map[string]*armUserAssignedIdentity) []string {
+	if len(m) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+
+	sort.Strings(out)
+
+	return out
 }
 
 func armMethodNotAllowed(w http.ResponseWriter) {

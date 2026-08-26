@@ -16,7 +16,7 @@ import (
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
-func newACRARMFactory(t *testing.T) *armcontainerregistry.ClientFactory {
+func newACRARMServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -24,6 +24,12 @@ func newACRARMFactory(t *testing.T) *armcontainerregistry.ClientFactory {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	return ts
+}
+
+func armFactoryFor(t *testing.T, ts *httptest.Server) *armcontainerregistry.ClientFactory {
+	t.Helper()
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
@@ -46,6 +52,12 @@ func newACRARMFactory(t *testing.T) *armcontainerregistry.ClientFactory {
 	}
 
 	return cf
+}
+
+func newACRARMFactory(t *testing.T) *armcontainerregistry.ClientFactory {
+	t.Helper()
+
+	return armFactoryFor(t, newACRARMServer(t))
 }
 
 func createRegistry(t *testing.T, client *armcontainerregistry.RegistriesClient, rg, name string) armcontainerregistry.Registry {

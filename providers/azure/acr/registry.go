@@ -45,6 +45,8 @@ func subResourceKey(rg, registry, name string) string {
 // CreateOrUpdateRegistry creates or replaces an ACR registry (ARM PUT). It
 // reports whether the registry was newly created (vs. replaced) so the wire
 // layer can distinguish 201 Created from 200 OK.
+//
+//nolint:gocritic // cfg mirrors the driver interface's value-type config; pointer would invite caller mutation.
 func (m *Mock) CreateOrUpdateRegistry(
 	_ context.Context, rg, name string, cfg driver.AzureRegistryConfig,
 ) (*driver.AzureRegistry, bool, error) {
@@ -82,7 +84,7 @@ func (m *Mock) CreateOrUpdateRegistry(
 	rd.reg.AdminUserEnabled = cfg.AdminUserEnabled
 	rd.reg.ProvisioningState = registryProvisioned
 	rd.reg.Tags = copyTags(cfg.Tags)
-	applyIdentity(&rd.reg, cfg.IdentityType, rg, name)
+	applyIdentity(&rd.reg, cfg.IdentityType, cfg.UserAssignedIdentities, rg, name)
 
 	m.registries.Set(key, rd)
 
@@ -122,7 +124,7 @@ func (m *Mock) UpdateRegistry(
 	}
 
 	if upd.IdentityType != nil {
-		applyIdentity(&rd.reg, *upd.IdentityType, rg, name)
+		applyIdentity(&rd.reg, *upd.IdentityType, upd.UserAssignedIdentities, rg, name)
 	}
 
 	m.registries.Set(key, rd)
@@ -133,11 +135,13 @@ func (m *Mock) UpdateRegistry(
 }
 
 // applyIdentity echoes the submitted managed-identity block, generating a
-// deterministic principal/tenant pair for a system-assigned identity.
-func applyIdentity(reg *driver.AzureRegistry, identityType, rg, name string) {
+// deterministic principal/tenant pair for a system-assigned identity and a
+// synthesized principal/client pair per user-assigned identity.
+func applyIdentity(reg *driver.AzureRegistry, identityType string, userAssigned []string, rg, name string) {
 	reg.IdentityType = identityType
 	reg.PrincipalID = ""
 	reg.TenantID = ""
+	reg.UserAssignedIdentities = nil
 
 	if identityType == "" || identityType == identityNone {
 		return
@@ -147,6 +151,28 @@ func applyIdentity(reg *driver.AzureRegistry, identityType, rg, name string) {
 		reg.PrincipalID = idgen.SyntheticGUID("principal/registry/" + rg + "/" + name)
 		reg.TenantID = emulatorTenantID
 	}
+
+	if strings.Contains(identityType, "UserAssigned") {
+		reg.UserAssignedIdentities = synthUserAssigned(userAssigned)
+	}
+}
+
+// synthUserAssigned builds the deterministic principal/client pair Azure returns
+// for each attached user-assigned identity resource ID.
+func synthUserAssigned(ids []string) map[string]driver.AzureUserAssignedIdentity {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	out := make(map[string]driver.AzureUserAssignedIdentity, len(ids))
+	for _, id := range ids {
+		out[id] = driver.AzureUserAssignedIdentity{
+			PrincipalID: idgen.SyntheticGUID("uai-principal/" + id),
+			ClientID:    idgen.SyntheticGUID("uai-client/" + id),
+		}
+	}
+
+	return out
 }
 
 func defaultIfEmpty(v, def string) string {

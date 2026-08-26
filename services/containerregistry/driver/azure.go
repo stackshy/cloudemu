@@ -25,6 +25,10 @@ type AzureRegistryConfig struct {
 	// block: "SystemAssigned", "UserAssigned", "SystemAssigned, UserAssigned"
 	// or "None"/"" for no identity.
 	IdentityType string
+	// UserAssignedIdentities holds the user-assigned managed-identity resource
+	// IDs submitted in the identity block's userAssignedIdentities map. Only
+	// meaningful when IdentityType includes "UserAssigned".
+	UserAssignedIdentities []string
 }
 
 // AzureRegistryUpdate is the partial-update payload for an ACR registry (ARM
@@ -36,6 +40,17 @@ type AzureRegistryUpdate struct {
 	SKUName          *string
 	AdminUserEnabled *bool
 	IdentityType     *string
+	// UserAssignedIdentities is the user-assigned identity resource-ID set to
+	// apply when IdentityType is updated to include "UserAssigned"; nil leaves
+	// the stored identity untouched (only consulted when IdentityType is set).
+	UserAssignedIdentities []string
+}
+
+// AzureUserAssignedIdentity is the synthesized principal/client pair Azure
+// returns for each user-assigned managed identity attached to a resource.
+type AzureUserAssignedIdentity struct {
+	PrincipalID string
+	ClientID    string
 }
 
 // AzureRegistry is a stored/returned ACR registry resource.
@@ -56,6 +71,10 @@ type AzureRegistry struct {
 	IdentityType string
 	PrincipalID  string
 	TenantID     string
+	// UserAssignedIdentities maps each attached user-assigned identity resource
+	// ID to its synthesized principal/client pair; populated only when
+	// IdentityType includes "UserAssigned".
+	UserAssignedIdentities map[string]AzureUserAssignedIdentity
 }
 
 // AzureRegistryCredentials is the admin username / password pair returned by
