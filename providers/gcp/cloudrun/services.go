@@ -3,6 +3,7 @@ package cloudrun
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -99,17 +100,40 @@ func (m *Mock) UpdateService(_ context.Context, cfg driver.ServiceConfig) (*driv
 	}
 
 	created, uid, gen := svc.CreateTime, svc.UID, svc.Generation+1
+	before := snapshotTemplate(svc)
 
-	applyServiceConfig(svc, &cfg)
+	applyUpdate(svc, &cfg)
 
 	svc.CreateTime, svc.UID, svc.Generation = created, uid, gen
 	now := m.opts.Clock.Now()
-	rev := m.materializeRevision(svc, now)
-	reconcile(svc, rev, now, regionOrDefault(cfg.Location))
+	region := regionOrDefault(cfg.Location)
+	after := snapshotTemplate(svc)
+
+	// Real Cloud Run cuts a new revision only when the revision template changes.
+	// A traffic-, label-, or annotation-only update leaves the template intact,
+	// so we reconcile status without advancing the revision pointers.
+	if templatesEqual(&before, &after) {
+		reconcileStatus(svc, now, region)
+	} else {
+		rev := m.materializeRevision(svc, now)
+		reconcile(svc, rev, now, region)
+	}
 
 	m.services.Set(name, svc)
 
 	return cloneService(svc), nil
+}
+
+// applyUpdate overlays cfg onto svc: a maskless config (Terraform's full PUT)
+// replaces every mutable field; a masked config merges only the named paths,
+// preserving everything the caller did not send.
+func applyUpdate(svc *driver.Service, cfg *driver.ServiceConfig) {
+	if len(cfg.UpdateMask) == 0 {
+		applyServiceConfig(svc, cfg)
+		return
+	}
+
+	mergeServiceConfig(svc, cfg, newFieldMask(cfg.UpdateMask))
 }
 
 // DeleteService removes a service and all of its revisions.
@@ -203,6 +227,127 @@ func applyServiceConfig(svc *driver.Service, cfg *driver.ServiceConfig) {
 	svc.Traffic = cloneTraffic(cfg.Traffic)
 	svc.Labels = cloneMap(cfg.Labels)
 	svc.Annotations = cloneMap(cfg.Annotations)
+	svc.TemplateLabels = cloneMap(cfg.TemplateLabels)
+	svc.TemplateAnnotations = cloneMap(cfg.TemplateAnnotations)
+}
+
+// fieldMask is a parsed FieldMask over a Service PATCH body. A top-level path
+// (e.g. "traffic") gates its field; a "template" (or "template.<sub>") path
+// gates a revision-template field.
+type fieldMask map[string]bool
+
+func newFieldMask(paths []string) fieldMask {
+	m := make(fieldMask, len(paths))
+	for _, p := range paths {
+		m[p] = true
+	}
+
+	return m
+}
+
+func (m fieldMask) has(field string) bool { return m[field] }
+
+// hasTemplate reports whether the template as a whole ("template") or the named
+// template subfield ("template.<sub>") is masked.
+func (m fieldMask) hasTemplate(sub string) bool {
+	return m["template"] || m["template."+sub]
+}
+
+// mergeServiceConfig overlays only the masked paths of cfg onto svc, leaving
+// every unmasked field (containers, scaling, description, …) untouched.
+func mergeServiceConfig(svc *driver.Service, cfg *driver.ServiceConfig, mask fieldMask) {
+	mergeServiceLevel(svc, cfg, mask)
+	mergeTemplateLevel(svc, cfg, mask)
+}
+
+func mergeServiceLevel(svc *driver.Service, cfg *driver.ServiceConfig, mask fieldMask) {
+	if mask.has("description") {
+		svc.Description = cfg.Description
+	}
+
+	if mask.has("ingress") {
+		if cfg.Ingress != "" {
+			svc.Ingress = cfg.Ingress
+		} else {
+			svc.Ingress = ingressDefault
+		}
+	}
+
+	if mask.has("labels") {
+		svc.Labels = cloneMap(cfg.Labels)
+	}
+
+	if mask.has("annotations") {
+		svc.Annotations = cloneMap(cfg.Annotations)
+	}
+
+	if mask.has("traffic") {
+		svc.Traffic = cloneTraffic(cfg.Traffic)
+	}
+}
+
+func mergeTemplateLevel(svc *driver.Service, cfg *driver.ServiceConfig, mask fieldMask) {
+	if mask.hasTemplate("containers") {
+		svc.Containers = cloneContainers(cfg.Containers)
+	}
+
+	if mask.hasTemplate("scaling") {
+		svc.Scaling = cloneScaling(cfg.Scaling)
+	}
+
+	if mask.hasTemplate("vpcAccess") {
+		svc.VPCAccess = cloneVPCAccess(cfg.VPCAccess)
+	}
+
+	if mask.hasTemplate("serviceAccount") {
+		svc.ServiceAccount = cfg.ServiceAccount
+	}
+
+	if mask.hasTemplate("timeout") {
+		svc.Timeout = cfg.Timeout
+	}
+
+	if mask.hasTemplate("executionEnvironment") {
+		svc.ExecutionEnvironment = cfg.ExecutionEnvironment
+	}
+
+	if mask.hasTemplate("labels") {
+		svc.TemplateLabels = cloneMap(cfg.TemplateLabels)
+	}
+
+	if mask.hasTemplate("annotations") {
+		svc.TemplateAnnotations = cloneMap(cfg.TemplateAnnotations)
+	}
+}
+
+// templateSnapshot captures the revision-defining fields of a service so an
+// update can tell whether the template changed (and thus a revision is due).
+type templateSnapshot struct {
+	Containers           []driver.Container
+	ServiceAccount       string
+	Timeout              string
+	ExecutionEnvironment string
+	VPCAccess            *driver.VpcAccess
+	Scaling              *driver.ServiceScaling
+	Labels               map[string]string
+	Annotations          map[string]string
+}
+
+func snapshotTemplate(svc *driver.Service) templateSnapshot {
+	return templateSnapshot{
+		Containers:           svc.Containers,
+		ServiceAccount:       svc.ServiceAccount,
+		Timeout:              svc.Timeout,
+		ExecutionEnvironment: svc.ExecutionEnvironment,
+		VPCAccess:            svc.VPCAccess,
+		Scaling:              svc.Scaling,
+		Labels:               svc.TemplateLabels,
+		Annotations:          svc.TemplateAnnotations,
+	}
+}
+
+func templatesEqual(a, b *templateSnapshot) bool {
+	return reflect.DeepEqual(a, b)
 }
 
 // materializeRevision creates and stores a new revision from svc's current
@@ -236,10 +381,18 @@ func (m *Mock) materializeRevision(svc *driver.Service, now time.Time) *driver.R
 // pointers, URL, traffic status, terminal condition, generation echoes, and
 // etag — the observed state a real reconcile would report.
 func reconcile(svc *driver.Service, rev *driver.Revision, now time.Time, region string) {
-	svc.UpdateTime = now
-	svc.ObservedGeneration = svc.Generation
 	svc.LatestCreatedRevision = rev.Name
 	svc.LatestReadyRevision = rev.Name
+	reconcileStatus(svc, now, region)
+}
+
+// reconcileStatus rolls the observed status a real reconcile would report onto
+// svc without touching the revision pointers, so a template-unchanged update
+// (e.g. traffic-only) can update traffic status and etag without cutting a
+// spurious revision.
+func reconcileStatus(svc *driver.Service, now time.Time, region string) {
+	svc.UpdateTime = now
+	svc.ObservedGeneration = svc.Generation
 	svc.Reconciling = false
 	svc.Etag = newEtag(now, svc.Generation)
 
@@ -317,6 +470,8 @@ func cloneService(s *driver.Service) *driver.Service {
 	cp.Containers = cloneContainers(s.Containers)
 	cp.Labels = cloneMap(s.Labels)
 	cp.Annotations = cloneMap(s.Annotations)
+	cp.TemplateLabels = cloneMap(s.TemplateLabels)
+	cp.TemplateAnnotations = cloneMap(s.TemplateAnnotations)
 	cp.Conditions = append([]driver.Condition(nil), s.Conditions...)
 	cp.Traffic = cloneTraffic(s.Traffic)
 	cp.TrafficStatuses = cloneTraffic(s.TrafficStatuses)

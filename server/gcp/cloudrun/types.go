@@ -39,12 +39,21 @@ type taskTemplate struct {
 }
 
 type container struct {
-	Name    string          `json:"name,omitempty"`
-	Image   string          `json:"image"`
-	Command []string        `json:"command,omitempty"`
-	Args    []string        `json:"args,omitempty"`
-	Env     []envVar        `json:"env,omitempty"`
-	Ports   []containerPort `json:"ports,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Image     string                `json:"image"`
+	Command   []string              `json:"command,omitempty"`
+	Args      []string              `json:"args,omitempty"`
+	Env       []envVar              `json:"env,omitempty"`
+	Ports     []containerPort       `json:"ports,omitempty"`
+	Resources *resourceRequirements `json:"resources,omitempty"`
+}
+
+// resourceRequirements is Container.resources — cpu/memory limits and CPU
+// behavior toggles that every Terraform/gcloud deploy sends and reads back.
+type resourceRequirements struct {
+	Limits          map[string]string `json:"limits,omitempty"`
+	CPUIdle         *bool             `json:"cpuIdle,omitempty"`
+	StartupCPUBoost *bool             `json:"startupCpuBoost,omitempty"`
 }
 
 type containerPort struct {

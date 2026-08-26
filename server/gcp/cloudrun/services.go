@@ -3,6 +3,7 @@ package cloudrun
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 )
@@ -183,7 +184,10 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request, p *crPat
 		return
 	}
 
-	svc, err := h.cr.UpdateService(r.Context(), serviceConfigFromWire(p.name, p.location, &body))
+	cfg := serviceConfigFromWire(p.name, p.location, &body)
+	cfg.UpdateMask = maskPaths(r.URL.Query().Get("updateMask"))
+
+	svc, err := h.cr.UpdateService(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -276,7 +280,28 @@ func serviceConfigFromWire(name, location string, body *serviceResource) driver.
 		Traffic:              toDriverTraffic(body.Traffic),
 		Labels:               body.Labels,
 		Annotations:          body.Annotations,
+		TemplateLabels:       t.Labels,
+		TemplateAnnotations:  t.Annotations,
 	}
+}
+
+// maskPaths splits a FieldMask query value (comma-separated field paths) into a
+// slice, returning nil for an absent or empty mask (a maskless full replace).
+func maskPaths(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "*" {
+		return nil
+	}
+
+	var out []string
+
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+
+	return out
 }
 
 func toDriverScaling(in *revisionScaling) *driver.ServiceScaling {
@@ -359,6 +384,8 @@ func toServiceResource(s *driver.Service, p *crPath) serviceResource {
 		Reconciling:           s.Reconciling,
 		Etag:                  s.Etag,
 		Template: revisionTemplate{
+			Labels:               s.TemplateLabels,
+			Annotations:          s.TemplateAnnotations,
 			Scaling:              toWireScaling(s.Scaling),
 			VPCAccess:            toWireVPC(s.VPCAccess),
 			Timeout:              s.Timeout,

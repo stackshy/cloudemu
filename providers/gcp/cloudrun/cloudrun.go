@@ -291,13 +291,35 @@ func cloneContainers(in []driver.Container) []driver.Container {
 	out := make([]driver.Container, len(in))
 	for i := range in {
 		out[i] = driver.Container{
-			Name:    in[i].Name,
-			Image:   in[i].Image,
-			Command: append([]string(nil), in[i].Command...),
-			Args:    append([]string(nil), in[i].Args...),
-			Env:     cloneMap(in[i].Env),
-			Ports:   append([]int(nil), in[i].Ports...),
+			Name:      in[i].Name,
+			Image:     in[i].Image,
+			Command:   append([]string(nil), in[i].Command...),
+			Args:      append([]string(nil), in[i].Args...),
+			Env:       cloneMap(in[i].Env),
+			Ports:     append([]int(nil), in[i].Ports...),
+			Resources: cloneResources(in[i].Resources),
 		}
+	}
+
+	return out
+}
+
+// cloneResources deep-copies a container's resource requirements, or nil.
+func cloneResources(in *driver.ResourceRequirements) *driver.ResourceRequirements {
+	if in == nil {
+		return nil
+	}
+
+	out := &driver.ResourceRequirements{Limits: cloneMap(in.Limits)}
+
+	if in.CPUIdle != nil {
+		v := *in.CPUIdle
+		out.CPUIdle = &v
+	}
+
+	if in.StartupCPUBoost != nil {
+		v := *in.StartupCPUBoost
+		out.StartupCPUBoost = &v
 	}
 
 	return out

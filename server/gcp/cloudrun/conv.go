@@ -30,12 +30,13 @@ func toDriverContainers(in []container) []driver.Container {
 	out := make([]driver.Container, 0, len(in))
 	for i := range in {
 		out = append(out, driver.Container{
-			Name:    in[i].Name,
-			Image:   in[i].Image,
-			Command: in[i].Command,
-			Args:    in[i].Args,
-			Env:     envToMap(in[i].Env),
-			Ports:   toDriverPorts(in[i].Ports),
+			Name:      in[i].Name,
+			Image:     in[i].Image,
+			Command:   in[i].Command,
+			Args:      in[i].Args,
+			Env:       envToMap(in[i].Env),
+			Ports:     toDriverPorts(in[i].Ports),
+			Resources: toDriverResources(in[i].Resources),
 		})
 	}
 
@@ -98,16 +99,33 @@ func toContainers(in []driver.Container) []container {
 	out := make([]container, 0, len(in))
 	for i := range in {
 		out = append(out, container{
-			Name:    in[i].Name,
-			Image:   in[i].Image,
-			Command: in[i].Command,
-			Args:    in[i].Args,
-			Env:     envToList(in[i].Env),
-			Ports:   toWirePorts(in[i].Ports),
+			Name:      in[i].Name,
+			Image:     in[i].Image,
+			Command:   in[i].Command,
+			Args:      in[i].Args,
+			Env:       envToList(in[i].Env),
+			Ports:     toWirePorts(in[i].Ports),
+			Resources: toWireResources(in[i].Resources),
 		})
 	}
 
 	return out
+}
+
+func toDriverResources(in *resourceRequirements) *driver.ResourceRequirements {
+	if in == nil {
+		return nil
+	}
+
+	return &driver.ResourceRequirements{Limits: in.Limits, CPUIdle: in.CPUIdle, StartupCPUBoost: in.StartupCPUBoost}
+}
+
+func toWireResources(in *driver.ResourceRequirements) *resourceRequirements {
+	if in == nil {
+		return nil
+	}
+
+	return &resourceRequirements{Limits: in.Limits, CPUIdle: in.CPUIdle, StartupCPUBoost: in.StartupCPUBoost}
 }
 
 func toDriverVPC(in *vpcAccess) *driver.VpcAccess {
