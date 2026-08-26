@@ -277,6 +277,7 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		Port:               port,
 		State:              rdsdriver.StateAvailable,
 		MultiAZ:            cfg.MultiAZ,
+		DeletionProtection: cfg.DeletionProtection,
 		PubliclyAccessible: cfg.PubliclyAccessible,
 		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:    cfg.SubnetGroupName,
@@ -396,6 +397,14 @@ func (m *Mock) ModifyInstance(
 		inst.AllocatedStorage = input.AllocatedStorage
 	}
 
+	if input.StorageType != "" {
+		inst.StorageType = input.StorageType
+	}
+
+	if input.DeletionProtection != nil {
+		inst.DeletionProtection = *input.DeletionProtection
+	}
+
 	if input.EngineVersion != "" {
 		// Cloud SQL's databaseVersion is stored in Engine (that is the field
 		// toSQLInstance renders as databaseVersion), so a patched databaseVersion
@@ -445,6 +454,13 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
+	}
+
+	// Deletion protection blocks the delete until the guard is cleared, matching
+	// real Cloud SQL (settings.deletionProtectionEnabled).
+	if inst.DeletionProtection {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q has deletion protection enabled", id)
 	}
 
 	// Tear down the real database backing the instance, if any.

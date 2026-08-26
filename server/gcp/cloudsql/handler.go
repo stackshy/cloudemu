@@ -261,8 +261,10 @@ func (h *Handler) serveInstance(w http.ResponseWriter, r *http.Request, p *sqlPa
 	switch r.Method {
 	case http.MethodGet:
 		h.getInstance(w, r, p)
-	case http.MethodPatch, http.MethodPut:
-		h.patchInstance(w, r, p)
+	case http.MethodPatch:
+		h.patchInstance(w, r, p, false)
+	case http.MethodPut:
+		h.patchInstance(w, r, p, true)
 	case http.MethodDelete:
 		h.deleteInstance(w, r, p)
 	default:

@@ -48,6 +48,9 @@ func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 		// the three settings sub-objects are stored as opaque JSON so they
 		// round-trip on the next Get.
 		cfg.MultiAZ = strings.EqualFold(s.AvailabilityType, availabilityRegional)
+		if s.DeletionProtectionEnabled != nil {
+			cfg.DeletionProtection = *s.DeletionProtectionEnabled
+		}
 		cfg.GCPDatabaseFlags = string(s.DatabaseFlags)
 		cfg.GCPBackupConfig = string(s.BackupConfiguration)
 		cfg.GCPIPConfig = string(s.IPConfiguration)
@@ -56,34 +59,74 @@ func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 	return cfg
 }
 
-// modifyInputFromBody builds the driver ModifyInstanceInput for a Patch: only
-// fields present in the request body are set, so absent fields mean "no change"
-// (Cloud SQL patch merges the request onto the current configuration).
-func modifyInputFromBody(body *sqlInstance) rdsdriver.ModifyInstanceInput {
+// modifyInputFromBody builds the driver ModifyInstanceInput for an instances
+// update. With replace=false (PATCH) only fields present in the request body are
+// set, so absent fields mean "no change" (Cloud SQL patch merges the request
+// onto the current configuration). With replace=true (PUT) omitted settings
+// revert to their defaults, matching Cloud SQL's full-resource update semantics.
+func modifyInputFromBody(body *sqlInstance, replace bool) rdsdriver.ModifyInstanceInput {
 	var input rdsdriver.ModifyInstanceInput
 
 	if body.DatabaseVersion != "" {
 		input.EngineVersion = body.DatabaseVersion
 	}
 
-	if body.Settings == nil {
-		return input
+	s := body.Settings
+	if s == nil {
+		if !replace {
+			return input
+		}
+
+		s = &sqlSettings{}
 	}
 
-	s := body.Settings
-	input.InstanceClass = s.Tier
-	input.AllocatedStorage = s.DataDiskSizeGb
-	input.Tags = s.UserLabels
+	input.InstanceClass = orDefaultStr(s.Tier, defaultTier, replace)
+	input.AllocatedStorage = orDefaultInt(s.DataDiskSizeGb, defaultStorage, replace)
+	input.StorageType = orDefaultStr(s.DataDiskType, defaultStorageType, replace)
 	input.GCPDatabaseFlags = string(s.DatabaseFlags)
 	input.GCPBackupConfig = string(s.BackupConfiguration)
 	input.GCPIPConfig = string(s.IPConfiguration)
 
-	if s.AvailabilityType != "" {
+	// On replace an absent userLabels clears the labels (empty non-nil map),
+	// while on merge an absent map leaves them unchanged (nil).
+	switch {
+	case s.UserLabels != nil:
+		input.Tags = s.UserLabels
+	case replace:
+		input.Tags = map[string]string{}
+	}
+
+	if s.AvailabilityType != "" || replace {
 		multiAZ := strings.EqualFold(s.AvailabilityType, availabilityRegional)
 		input.MultiAZ = &multiAZ
 	}
 
+	if s.DeletionProtectionEnabled != nil {
+		input.DeletionProtection = s.DeletionProtectionEnabled
+	} else if replace {
+		off := false
+		input.DeletionProtection = &off
+	}
+
 	return input
+}
+
+// orDefaultStr returns v, or def when v is empty and replace is set (a PUT
+// reverts an omitted field to its default; a PATCH leaves it as "no change").
+func orDefaultStr(v, def string, replace bool) string {
+	if v == "" && replace {
+		return def
+	}
+
+	return v
+}
+
+func orDefaultInt(v, def int, replace bool) int {
+	if v == 0 && replace {
+		return def
+	}
+
+	return v
 }
 
 func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -148,7 +191,10 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath
 	writeJSON(w, http.StatusOK, toSQLInstance(&insts[0], p.project))
 }
 
-func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+// patchInstance handles both instances.patch (replace=false, merge) and
+// instances.update / PUT (replace=true, full-resource replace where omitted
+// settings revert to their defaults).
+func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPath, replace bool) {
 	var body sqlInstance
 	if !decodeJSON(w, r, &body) {
 		return
@@ -170,7 +216,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPa
 		}
 	}
 
-	if _, err := h.db.ModifyInstance(r.Context(), p.name, modifyInputFromBody(&body)); err != nil {
+	if _, err := h.db.ModifyInstance(r.Context(), p.name, modifyInputFromBody(&body, replace)); err != nil {
 		writeErr(w, err)
 		return
 	}
