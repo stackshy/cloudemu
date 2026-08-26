@@ -225,9 +225,39 @@ type deleteListenerResponse struct {
 
 // --- rules ---
 
-type ruleConditionXML struct {
-	Field  string         `xml:"Field,omitempty"`
+// valuesConfigXML is the shared shape of the condition configs that carry only
+// a Values list (host-header, path-pattern, source-ip, http-request-method).
+type valuesConfigXML struct {
 	Values *stringListXML `xml:"Values,omitempty"`
+}
+
+type httpHeaderConfigXML struct {
+	HTTPHeaderName string         `xml:"HttpHeaderName,omitempty"`
+	Values         *stringListXML `xml:"Values,omitempty"`
+}
+
+type queryStringKVXML struct {
+	Key   string `xml:"Key,omitempty"`
+	Value string `xml:"Value,omitempty"`
+}
+
+type queryStringValuesXML struct {
+	Member []queryStringKVXML `xml:"member,omitempty"`
+}
+
+type queryStringConfigXML struct {
+	Values *queryStringValuesXML `xml:"Values,omitempty"`
+}
+
+type ruleConditionXML struct {
+	Field                   string                `xml:"Field,omitempty"`
+	Values                  *stringListXML        `xml:"Values,omitempty"`
+	HostHeaderConfig        *valuesConfigXML      `xml:"HostHeaderConfig,omitempty"`
+	PathPatternConfig       *valuesConfigXML      `xml:"PathPatternConfig,omitempty"`
+	HTTPHeaderConfig        *httpHeaderConfigXML  `xml:"HttpHeaderConfig,omitempty"`
+	QueryStringConfig       *queryStringConfigXML `xml:"QueryStringConfig,omitempty"`
+	SourceIPConfig          *valuesConfigXML      `xml:"SourceIpConfig,omitempty"`
+	HTTPRequestMethodConfig *valuesConfigXML      `xml:"HttpRequestMethodConfig,omitempty"`
 }
 
 type ruleConditionsXML struct {

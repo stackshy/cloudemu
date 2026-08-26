@@ -146,9 +146,56 @@ type Certificate struct {
 	IsDefault      bool
 }
 
-// RuleCondition describes a condition for a listener rule (e.g., path-pattern or host-header).
+// RuleCondition describes a condition for a listener rule. Field names the
+// condition type; Values carries the deprecated flat value list AWS still
+// echoes for path-pattern/host-header, while the typed *Config pointers carry
+// the full shape of each condition (host-header, path-pattern, http-header,
+// query-string, source-ip, http-request-method) so they round-trip on Describe.
 type RuleCondition struct {
-	Field  string // "path-pattern" or "host-header"
+	Field                   string
+	Values                  []string
+	HostHeaderConfig        *HostHeaderConditionConfig
+	PathPatternConfig       *PathPatternConditionConfig
+	HTTPHeaderConfig        *HTTPHeaderConditionConfig
+	QueryStringConfig       *QueryStringConditionConfig
+	SourceIPConfig          *SourceIPConditionConfig
+	HTTPRequestMethodConfig *HTTPRequestMethodConditionConfig
+}
+
+// HostHeaderConditionConfig matches the request Host header against patterns.
+type HostHeaderConditionConfig struct {
+	Values []string
+}
+
+// PathPatternConditionConfig matches the request path against patterns.
+type PathPatternConditionConfig struct {
+	Values []string
+}
+
+// HTTPHeaderConditionConfig matches a named HTTP header against patterns.
+type HTTPHeaderConditionConfig struct {
+	HTTPHeaderName string
+	Values         []string
+}
+
+// QueryStringConditionConfig matches query-string key/value pairs.
+type QueryStringConditionConfig struct {
+	Values []QueryStringKeyValue
+}
+
+// QueryStringKeyValue is one query-string key/value pattern.
+type QueryStringKeyValue struct {
+	Key   string
+	Value string
+}
+
+// SourceIPConditionConfig matches the source IP against CIDRs.
+type SourceIPConditionConfig struct {
+	Values []string
+}
+
+// HTTPRequestMethodConditionConfig matches the HTTP request method.
+type HTTPRequestMethodConditionConfig struct {
 	Values []string
 }
 
