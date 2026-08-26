@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	redshiftprovider "github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
 
@@ -21,10 +22,26 @@ type createClusterParameterGroupResponse struct {
 	Metadata responseMetadata         `xml:"ResponseMetadata"`
 }
 
+type subnetAvailabilityZoneXML struct {
+	Name string `xml:"Name,omitempty"`
+}
+
+type subnetXML struct {
+	SubnetIdentifier       string                    `xml:"SubnetIdentifier"`
+	SubnetAvailabilityZone subnetAvailabilityZoneXML `xml:"SubnetAvailabilityZone"`
+	SubnetStatus           string                    `xml:"SubnetStatus"`
+}
+
+type subnetsXML struct {
+	Subnet []subnetXML `xml:"Subnet,omitempty"`
+}
+
 type clusterSubnetGroupXML struct {
-	ClusterSubnetGroupName string `xml:"ClusterSubnetGroupName"`
-	Description            string `xml:"Description"`
-	SubnetGroupStatus      string `xml:"SubnetGroupStatus"`
+	ClusterSubnetGroupName string      `xml:"ClusterSubnetGroupName"`
+	Description            string      `xml:"Description"`
+	VpcID                  string      `xml:"VpcId,omitempty"`
+	SubnetGroupStatus      string      `xml:"SubnetGroupStatus"`
+	Subnets                *subnetsXML `xml:"Subnets,omitempty"`
 }
 
 type createClusterSubnetGroupResponse struct {
@@ -107,14 +124,37 @@ func (h *Handler) createClusterSubnetGroup(w http.ResponseWriter, r *http.Reques
 	}
 
 	awsquery.WriteXMLResponse(w, createClusterSubnetGroupResponse{
-		Xmlns: Namespace,
-		Group: clusterSubnetGroupXML{
-			ClusterSubnetGroupName: sg.Name,
-			Description:            sg.Description,
-			SubnetGroupStatus:      "Complete",
-		},
+		Xmlns:    Namespace,
+		Group:    toClusterSubnetGroupXML(sg),
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// toClusterSubnetGroupXML renders a provider subnet group into the wire shape,
+// emitting the derived VpcId and the full Subnets list (each with its
+// availability zone) real Redshift returns.
+func toClusterSubnetGroupXML(sg *redshiftprovider.SubnetGroup) clusterSubnetGroupXML {
+	out := clusterSubnetGroupXML{
+		ClusterSubnetGroupName: sg.Name,
+		Description:            sg.Description,
+		VpcID:                  sg.VPCID,
+		SubnetGroupStatus:      "Complete",
+	}
+
+	if len(sg.Subnets) > 0 {
+		subnets := &subnetsXML{Subnet: make([]subnetXML, 0, len(sg.Subnets))}
+		for _, s := range sg.Subnets {
+			subnets.Subnet = append(subnets.Subnet, subnetXML{
+				SubnetIdentifier:       s.ID,
+				SubnetAvailabilityZone: subnetAvailabilityZoneXML{Name: s.AvailabilityZone},
+				SubnetStatus:           "Active",
+			})
+		}
+
+		out.Subnets = subnets
+	}
+
+	return out
 }
 
 func (h *Handler) describeClusterParameterGroups(w http.ResponseWriter, r *http.Request) {
@@ -189,11 +229,7 @@ func (h *Handler) describeClusterSubnetGroups(w http.ResponseWriter, r *http.Req
 
 	out := make([]clusterSubnetGroupXML, 0, len(groups))
 	for i := range groups {
-		out = append(out, clusterSubnetGroupXML{
-			ClusterSubnetGroupName: groups[i].Name,
-			Description:            groups[i].Description,
-			SubnetGroupStatus:      "Complete",
-		})
+		out = append(out, toClusterSubnetGroupXML(&groups[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeClusterSubnetGroupsResponse{

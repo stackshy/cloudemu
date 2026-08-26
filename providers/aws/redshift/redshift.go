@@ -55,6 +55,19 @@ type SubnetGroup struct {
 	Name        string
 	Description string
 	SubnetIDs   []string
+	// VPCID is derived from the member subnets (real Redshift infers it rather
+	// than taking it as input); empty when no subnet resolver is wired in.
+	VPCID string
+	// Subnets carries each member subnet with its availability zone, resolved at
+	// create time, so DescribeClusterSubnetGroups can emit the full Subnets list.
+	Subnets []Subnet
+}
+
+// Subnet is a member subnet of a cluster subnet group with its availability
+// zone, mirroring the AWS Redshift Subnet shape returned on describe.
+type Subnet struct {
+	ID               string
+	AvailabilityZone string
 }
 
 // Mock is the in-memory AWS Redshift implementation.
@@ -67,8 +80,9 @@ type Mock struct {
 	subnetGroups     *memstore.Store[SubnetGroup]
 	tagsByARN        map[string]map[string]string // ResourceName (ARN) -> tags
 
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	opts           *config.Options
+	monitoring     mondriver.Monitoring
+	subnetResolver SubnetResolver
 }
 
 // New creates a new AWS Redshift mock.
@@ -129,7 +143,7 @@ func (m *Mock) DeleteClusterParameterGroup(_ context.Context, name string) error
 }
 
 // CreateClusterSubnetGroup registers a redshift cluster subnet group.
-func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
+func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "subnet group name is required")
 	}
@@ -138,7 +152,15 @@ func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description str
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "subnet group %q already exists", name)
 	}
 
-	sg := SubnetGroup{Name: name, Description: description, SubnetIDs: subnetIDs}
+	vpcID, subnets := m.resolveSubnets(ctx, subnetIDs)
+
+	sg := SubnetGroup{
+		Name:        name,
+		Description: description,
+		SubnetIDs:   append([]string(nil), subnetIDs...),
+		VPCID:       vpcID,
+		Subnets:     subnets,
+	}
 	m.subnetGroups.Set(name, sg)
 
 	return &sg, nil
