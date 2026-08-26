@@ -22,6 +22,7 @@ func (h *Handler) requestCertificate(w http.ResponseWriter, r *http.Request) {
 			DomainName:              req.DomainName,
 			SubjectAlternativeNames: req.SubjectAlternativeNames,
 			ValidationMethod:        req.ValidationMethod,
+			DomainValidationOptions: req.validationOptions(),
 			KeyAlgorithm:            req.KeyAlgorithm,
 			IdempotencyToken:        req.IdempotencyToken,
 			CTLoggingPreference:     ctPref(req.Options),

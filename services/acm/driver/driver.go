@@ -55,15 +55,27 @@ const (
 	RenewalIneligible = "INELIGIBLE"
 )
 
-// DomainValidation is the per-domain validation state of a certificate.
+// DomainValidation is the per-domain validation state of a certificate. For DNS
+// validation the ResourceRecord* fields carry the CNAME to add; for EMAIL
+// validation ValidationEmails lists the approver mailboxes the request was sent
+// to (rooted at ValidationDomain). The two sets are mutually exclusive.
 type DomainValidation struct {
 	DomainName       string
 	ValidationDomain string
 	ValidationStatus string
 	ValidationMethod string
-	ResourceRecordN  string // DNS validation record name
-	ResourceRecordT  string // DNS validation record type (CNAME)
-	ResourceRecordV  string // DNS validation record value
+	ResourceRecordN  string   // DNS validation record name
+	ResourceRecordT  string   // DNS validation record type (CNAME)
+	ResourceRecordV  string   // DNS validation record value
+	ValidationEmails []string // EMAIL validation approver addresses
+}
+
+// DomainValidationOption pins the domain an EMAIL validation request is routed
+// to. ValidationDomain must be DomainName or one of its superdomains; when unset
+// ACM defaults it to DomainName.
+type DomainValidationOption struct {
+	DomainName       string
+	ValidationDomain string
 }
 
 // Certificate is the full ACM certificate description plus the material needed
@@ -103,6 +115,7 @@ type RequestCertificateInput struct {
 	DomainName              string
 	SubjectAlternativeNames []string
 	ValidationMethod        string
+	DomainValidationOptions []DomainValidationOption
 	KeyAlgorithm            string
 	IdempotencyToken        string
 	CTLoggingPreference     string

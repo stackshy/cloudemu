@@ -66,7 +66,7 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 		ARN:                     arn,
 		DomainName:              in.DomainName,
 		SubjectAlternativeNames: sans,
-		DomainValidationOptions: validationOptions(sans, method),
+		DomainValidationOptions: validationOptions(sans, method, in.DomainValidationOptions),
 		Serial:                  mat.serial,
 		Subject:                 mat.subject,
 		Issuer:                  mat.issuer,
@@ -94,15 +94,36 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 	return arn, nil
 }
 
+// wellKnownMailboxes are the deterministic approver addresses ACM emails for
+// EMAIL validation (real ACM also adds WHOIS-derived contacts, which an emulator
+// cannot resolve). Each is prefixed onto the domain's validation domain.
+//
+//nolint:gochecknoglobals // fixed lookup table for EMAIL validation mailboxes
+var wellKnownMailboxes = []string{"admin", "administrator", "hostmaster", "postmaster", "webmaster"}
+
 // validationOptions builds the per-domain validation records for a set of
-// domains (DNS validation exposes a CNAME record to add).
+// domains. DNS validation exposes a CNAME record to add; EMAIL validation
+// exposes the approver mailbox list rooted at each domain's validation domain.
 //
 // A wildcard domain ("*.example.com") is validated against its BASE domain, so
-// the DNS record is rooted at "example.com" (never a literal "*", which Route53
-// rejects as a leftmost label). A wildcard and its apex SAN ("*.example.com" and
-// "example.com") share a single validation record, matching real ACM, so they
-// collapse to one DomainValidation rather than emitting a duplicate CNAME.
-func validationOptions(domains []string, method string) []driver.DomainValidation {
+// the DNS record (or email domain) is rooted at "example.com" (never a literal
+// "*", which Route53 rejects as a leftmost label). A wildcard and its apex SAN
+// ("*.example.com" and "example.com") share a single DNS validation record,
+// matching real ACM, so they collapse to one DomainValidation rather than
+// emitting a duplicate CNAME.
+//
+// reqOpts carries any caller-supplied DomainValidationOptions, letting an EMAIL
+// request route approval to a superdomain (validation domain defaults to the
+// domain itself, with any wildcard label stripped).
+func validationOptions(domains []string, method string, reqOpts []driver.DomainValidationOption) []driver.DomainValidation {
+	overrides := make(map[string]string, len(reqOpts))
+
+	for _, o := range reqOpts {
+		if o.ValidationDomain != "" {
+			overrides[o.DomainName] = o.ValidationDomain
+		}
+	}
+
 	out := make([]driver.DomainValidation, 0, len(domains))
 	seenRecord := make(map[string]bool)
 
@@ -125,9 +146,28 @@ func validationOptions(domains []string, method string) []driver.DomainValidatio
 			dv.ResourceRecordN = "_acm-validations." + base + "."
 			dv.ResourceRecordT = "CNAME"
 			dv.ResourceRecordV = "_" + strings.ReplaceAll(base, ".", "-") + ".acm-validations.aws."
+		} else {
+			validationDomain := base
+			if v, ok := overrides[d]; ok {
+				validationDomain = v
+			}
+
+			dv.ValidationDomain = validationDomain
+			dv.ValidationEmails = validationEmails(validationDomain)
 		}
 
 		out = append(out, dv)
+	}
+
+	return out
+}
+
+// validationEmails returns the well-known approver mailbox addresses for a
+// validation domain.
+func validationEmails(validationDomain string) []string {
+	out := make([]string, 0, len(wellKnownMailboxes))
+	for _, mbox := range wellKnownMailboxes {
+		out = append(out, mbox+"@"+validationDomain)
 	}
 
 	return out

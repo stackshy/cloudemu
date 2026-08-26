@@ -50,6 +50,7 @@ type domainValidationJSON struct {
 	ValidationDomain string              `json:"ValidationDomain,omitempty"`
 	ValidationStatus string              `json:"ValidationStatus,omitempty"`
 	ValidationMethod string              `json:"ValidationMethod,omitempty"`
+	ValidationEmails []string            `json:"ValidationEmails,omitempty"`
 	ResourceRecord   *resourceRecordJSON `json:"ResourceRecord,omitempty"`
 }
 
@@ -88,6 +89,7 @@ func certToWire(c *acmdriver.Certificate) certificateDetailJSON {
 		j := domainValidationJSON{
 			DomainName: d.DomainName, ValidationDomain: d.ValidationDomain,
 			ValidationStatus: d.ValidationStatus, ValidationMethod: d.ValidationMethod,
+			ValidationEmails: d.ValidationEmails,
 		}
 
 		if d.ResourceRecordN != "" {
@@ -146,14 +148,33 @@ func certToSummary(c *acmdriver.Certificate) certSummaryJSON {
 
 // --- request shapes ---
 
+type domainValidationOptionJSON struct {
+	DomainName       string `json:"DomainName"`
+	ValidationDomain string `json:"ValidationDomain"`
+}
+
 type requestCertificateRequest struct {
-	DomainName              string           `json:"DomainName"`
-	SubjectAlternativeNames []string         `json:"SubjectAlternativeNames"`
-	ValidationMethod        string           `json:"ValidationMethod"`
-	KeyAlgorithm            string           `json:"KeyAlgorithm"`
-	IdempotencyToken        string           `json:"IdempotencyToken"`
-	Options                 *certOptionsJSON `json:"Options"`
-	Tags                    []tag            `json:"Tags"`
+	DomainName              string                       `json:"DomainName"`
+	SubjectAlternativeNames []string                     `json:"SubjectAlternativeNames"`
+	ValidationMethod        string                       `json:"ValidationMethod"`
+	DomainValidationOptions []domainValidationOptionJSON `json:"DomainValidationOptions"`
+	KeyAlgorithm            string                       `json:"KeyAlgorithm"`
+	IdempotencyToken        string                       `json:"IdempotencyToken"`
+	Options                 *certOptionsJSON             `json:"Options"`
+	Tags                    []tag                        `json:"Tags"`
+}
+
+func (r *requestCertificateRequest) validationOptions() []acmdriver.DomainValidationOption {
+	if len(r.DomainValidationOptions) == 0 {
+		return nil
+	}
+
+	out := make([]acmdriver.DomainValidationOption, 0, len(r.DomainValidationOptions))
+	for _, o := range r.DomainValidationOptions {
+		out = append(out, acmdriver.DomainValidationOption{DomainName: o.DomainName, ValidationDomain: o.ValidationDomain})
+	}
+
+	return out
 }
 
 type importCertificateRequest struct {
