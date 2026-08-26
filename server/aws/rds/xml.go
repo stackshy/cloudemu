@@ -295,6 +295,7 @@ type dbClusterResult struct {
 }
 
 type dbClustersResult struct {
+	Marker     string        `xml:"Marker,omitempty"`
 	DBClusters dbClustersXML `xml:"DBClusters"`
 }
 
@@ -328,6 +329,7 @@ type dbSnapshotResult struct {
 }
 
 type dbSnapshotsResult struct {
+	Marker      string         `xml:"Marker,omitempty"`
 	DBSnapshots dbSnapshotsXML `xml:"DBSnapshots"`
 }
 

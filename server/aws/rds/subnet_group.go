@@ -42,6 +42,7 @@ type describeDBSubnetGroupsResponse struct {
 }
 
 type subnetGroupsList struct {
+	Marker         string             `xml:"Marker,omitempty"`
 	DBSubnetGroups []dbSubnetGroupXML `xml:"DBSubnetGroups>DBSubnetGroup"`
 }
 
@@ -104,14 +105,19 @@ func (h *Handler) describeDBSubnetGroups(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	out := make([]dbSubnetGroupXML, 0, len(groups))
-	for i := range groups {
-		out = append(out, toSubnetGroupXML(&groups[i]))
+	page, ok := paginateRDS(w, r, groups, func(g *rdsdriver.SubnetGroup) string { return g.Name })
+	if !ok {
+		return
+	}
+
+	out := make([]dbSubnetGroupXML, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toSubnetGroupXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBSubnetGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   subnetGroupsList{DBSubnetGroups: out},
+		Result:   subnetGroupsList{Marker: page.NextPageToken, DBSubnetGroups: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

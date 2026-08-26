@@ -3,13 +3,31 @@ package rds
 import (
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
+
+// paginateRDS stable-sorts items by the identifier that key returns, then slices a
+// Marker/MaxRecords page out of them — the shared body behind every RDS
+// Describe* list handler. On an invalid Marker it writes the RDS
+// InvalidParameterValue wire error and returns ok=false so the caller returns
+// without emitting a result.
+func paginateRDS[T any](w http.ResponseWriter, r *http.Request,
+	items []T, key func(*T) string,
+) (pagination.Page[T], bool) {
+	page, err := pagination.PaginateSorted(items,
+		func(a, b T) bool { return key(&a) < key(&b) },
+		r.Form.Get("Marker"), formInt(r.Form.Get("MaxRecords")))
+	if err != nil {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", "invalid Marker")
+		return pagination.Page[T]{}, false
+	}
+
+	return page, true
+}
 
 // instanceFromForm pulls the common DBInstance fields out of a form. Used by
 // CreateDBInstance and as the basis for ModifyDBInstance.
@@ -100,12 +118,8 @@ func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 
 	insts = filterInstances(insts, parseInstanceFilters(r.Form))
 
-	// Offset tokens require a stable ordering; sort by identifier before paging.
-	sort.Slice(insts, func(i, j int) bool { return insts[i].ID < insts[j].ID })
-
-	page, err := pagination.Paginate(insts, r.Form.Get("Marker"), formInt(r.Form.Get("MaxRecords")))
-	if err != nil {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", "invalid Marker")
+	page, ok := paginateRDS(w, r, insts, func(i *rdsdriver.Instance) string { return i.ID })
+	if !ok {
 		return
 	}
 
@@ -428,14 +442,19 @@ func (h *Handler) describeDBClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := dbClustersXML{DBCluster: make([]dbClusterXML, 0, len(clusters))}
-	for i := range clusters {
-		out.DBCluster = append(out.DBCluster, toClusterXML(&clusters[i]))
+	page, ok := paginateRDS(w, r, clusters, func(c *rdsdriver.Cluster) string { return c.ID })
+	if !ok {
+		return
+	}
+
+	out := dbClustersXML{DBCluster: make([]dbClusterXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.DBCluster = append(out.DBCluster, toClusterXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBClustersResponse{
 		Xmlns:    Namespace,
-		Result:   dbClustersResult{DBClusters: out},
+		Result:   dbClustersResult{Marker: page.NextPageToken, DBClusters: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -620,14 +639,19 @@ func (h *Handler) describeDBSnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := dbSnapshotsXML{DBSnapshot: make([]dbSnapshotXML, 0, len(snaps))}
-	for i := range snaps {
-		out.DBSnapshot = append(out.DBSnapshot, toSnapshotXML(&snaps[i]))
+	page, ok := paginateRDS(w, r, snaps, func(s *rdsdriver.Snapshot) string { return s.ID })
+	if !ok {
+		return
+	}
+
+	out := dbSnapshotsXML{DBSnapshot: make([]dbSnapshotXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.DBSnapshot = append(out.DBSnapshot, toSnapshotXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBSnapshotsResponse{
 		Xmlns:    Namespace,
-		Result:   dbSnapshotsResult{DBSnapshots: out},
+		Result:   dbSnapshotsResult{Marker: page.NextPageToken, DBSnapshots: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
