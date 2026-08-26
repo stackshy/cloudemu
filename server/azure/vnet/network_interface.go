@@ -168,7 +168,7 @@ func (h *Handler) createNIC(w http.ResponseWriter, r *http.Request, rp azurearm.
 			return
 		}
 
-		if _, nsgErr := findNSGByName(r.Context(), h.net, nsgRP.ResourceName); nsgErr != nil {
+		if _, nsgErr := findNSGInGroup(r.Context(), h.net, nsgRP.ResourceGroup, nsgRP.ResourceName); nsgErr != nil {
 			azurearm.WriteCErr(w, nsgErr)
 			return
 		}

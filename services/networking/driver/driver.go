@@ -590,6 +590,15 @@ type SubnetAttributes interface {
 	ModifySubnetAttribute(ctx context.Context, id string, update SubnetAttributeUpdate) error
 }
 
+// SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
+// changes a subnet's address prefix in place — the Azure ARM
+// Subnets.CreateOrUpdate re-PUT path allows editing a subnet's addressPrefix,
+// unlike AWS where a subnet CIDR is immutable. Providers that model an
+// immutable subnet CIDR do not implement it.
+type SubnetCIDRUpdater interface {
+	UpdateSubnetCIDR(ctx context.Context, id, cidr string) error
+}
+
 // NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
 //
 // Kept out of the Networking interface for the same reason as VPCAttributes:

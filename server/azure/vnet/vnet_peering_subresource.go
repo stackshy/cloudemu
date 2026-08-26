@@ -215,12 +215,48 @@ func (h *Handler) deleteVNetPeering(w http.ResponseWriter, r *http.Request, rp a
 		return
 	}
 
+	// Capture the peering's remote VNet before deleting it so the reciprocal
+	// side can be transitioned to Disconnected afterward.
+	deleted, hadPeering := meta.GetAzureVNetPeering(r.Context(), vnet.ID, rp.SubResourceName)
+
 	if err := meta.DeleteAzureVNetPeering(r.Context(), vnet.ID, rp.SubResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
+	if hadPeering {
+		localID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeVNet, rp.ResourceName)
+		h.disconnectReciprocalPeering(r.Context(), meta, deleted.RemoteVirtualNetworkID, localID)
+	}
+
 	writeAcceptedAsync(w, r, rp.Subscription, "peering-delete-"+rp.SubResourceName, nil)
+}
+
+// disconnectReciprocalPeering transitions the surviving reciprocal peering — the
+// one on the remote VNet pointing back at localVNetARMID — to Disconnected after
+// its counterpart has been deleted, matching real ARM: deleting one side of a
+// two-way peering leaves the other side stuck in Disconnected rather than
+// Connected. Best-effort: a remote VNet or reciprocal that can't be resolved
+// (e.g. it never existed, or the delete already removed both sides) is a no-op.
+func (h *Handler) disconnectReciprocalPeering(
+	ctx context.Context, meta netdriver.AzureNetworkMetadata, remoteVNetARMID, localVNetARMID string,
+) {
+	remoteRP, parsed := azurearm.ParsePath(remoteVNetARMID)
+	if !parsed || remoteRP.ResourceType != typeVNet {
+		return
+	}
+
+	remoteVNet, err := findVNetInGroup(ctx, h.net, remoteRP.ResourceGroup, remoteRP.ResourceName)
+	if err != nil {
+		return
+	}
+
+	reciprocal := findReciprocalPeering(ctx, meta, remoteVNet.ID, localVNetARMID)
+	if reciprocal == "" {
+		return
+	}
+
+	_ = meta.SetAzureVNetPeeringState(ctx, remoteVNet.ID, reciprocal, netdriver.AzurePeeringStateDisconnected)
 }
 
 //nolint:gocritic // rp is a request-scoped value

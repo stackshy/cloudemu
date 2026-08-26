@@ -364,6 +364,14 @@ SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
 | --- | --- |
 | `ModifySubnetAttribute` |  |
 
+### SubnetCIDRUpdater
+
+SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
+
+| Operation | Description |
+| --- | --- |
+| `UpdateSubnetCIDR` |  |
+
 ### TrafficMirroring
 
 TrafficMirroring is an OPTIONAL AWS capability (type-asserted).
