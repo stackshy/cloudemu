@@ -77,6 +77,18 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		cfg.VPCConfig = vpcRequestToDriver(body.ResourcesVpcConfig)
 	}
 
+	if body.KubernetesNetworkConfig != nil {
+		cfg.NetworkConfig = networkConfigRequestToDriver(body.KubernetesNetworkConfig)
+	}
+
+	if body.Logging != nil {
+		cfg.Logging = loggingRequestToDriver(body.Logging)
+	}
+
+	if body.AccessConfig != nil {
+		cfg.AccessConfig = accessConfigRequestToDriver(body.AccessConfig)
+	}
+
 	cluster, err := h.eks.CreateCluster(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
@@ -512,6 +524,38 @@ func vpcRequestToDriver(v *vpcConfigRequest) eksdriver.VPCConfig {
 	return out
 }
 
+// networkConfigRequestToDriver converts the wire kubernetesNetworkConfig to the
+// driver shape. serviceIpv6Cidr is provider-assigned, not a caller input.
+func networkConfigRequestToDriver(n *kubernetesNetworkConfigRequest) eksdriver.NetworkConfig {
+	return eksdriver.NetworkConfig{
+		ServiceIPv4CIDR: n.ServiceIPv4CIDR,
+		IPFamily:        n.IPFamily,
+	}
+}
+
+// loggingRequestToDriver converts the wire logging block to driver logging.
+func loggingRequestToDriver(l *loggingJSON) []eksdriver.ClusterLogging {
+	if len(l.ClusterLogging) == 0 {
+		return nil
+	}
+
+	out := make([]eksdriver.ClusterLogging, 0, len(l.ClusterLogging))
+	for _, e := range l.ClusterLogging {
+		out = append(out, eksdriver.ClusterLogging{Types: e.Types, Enabled: e.Enabled})
+	}
+
+	return out
+}
+
+// accessConfigRequestToDriver converts the wire accessConfig to the driver
+// request shape, preserving the omitted/false distinction on the bootstrap flag.
+func accessConfigRequestToDriver(a *accessConfigRequest) eksdriver.AccessConfigRequest {
+	return eksdriver.AccessConfigRequest{
+		AuthenticationMode:                      a.AuthenticationMode,
+		BootstrapClusterCreatorAdminPermissions: a.BootstrapClusterCreatorAdminPermissions,
+	}
+}
+
 // mergeScaling overlays only the sizes present in s onto dst, leaving omitted
 // fields untouched. This is the partial-update semantics real EKS applies.
 func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConfigJSON) {
@@ -604,7 +648,52 @@ func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
 		out.Identity = &identityJSON{OIDC: oidcJSON{Issuer: c.OIDCIssuer}}
 	}
 
+	out.KubernetesNetworkConfig = networkConfigToJSON(c.NetworkConfig)
+	out.Logging = loggingToJSON(c.Logging)
+	out.AccessConfig = accessConfigToJSON(c.AccessConfig)
+
 	return out
+}
+
+// networkConfigToJSON renders driver networking to the wire response shape,
+// returning nil when nothing is set so the field is omitted.
+func networkConfigToJSON(n eksdriver.NetworkConfig) *kubernetesNetworkConfigResponse {
+	if n.IPFamily == "" && n.ServiceIPv4CIDR == "" && n.ServiceIPv6CIDR == "" {
+		return nil
+	}
+
+	return &kubernetesNetworkConfigResponse{
+		ServiceIPv4CIDR: n.ServiceIPv4CIDR,
+		ServiceIPv6CIDR: n.ServiceIPv6CIDR,
+		IPFamily:        n.IPFamily,
+	}
+}
+
+// loggingToJSON renders driver logging to the wire response shape.
+func loggingToJSON(in []eksdriver.ClusterLogging) *loggingJSON {
+	if len(in) == 0 {
+		return nil
+	}
+
+	entries := make([]logSetupJSON, 0, len(in))
+	for _, l := range in {
+		entries = append(entries, logSetupJSON{Types: l.Types, Enabled: l.Enabled})
+	}
+
+	return &loggingJSON{ClusterLogging: entries}
+}
+
+// accessConfigToJSON renders driver access config to the wire response shape,
+// returning nil when unset so the field is omitted.
+func accessConfigToJSON(a eksdriver.AccessConfig) *accessConfigResponse {
+	if a.AuthenticationMode == "" {
+		return nil
+	}
+
+	return &accessConfigResponse{
+		AuthenticationMode:                      a.AuthenticationMode,
+		BootstrapClusterCreatorAdminPermissions: a.BootstrapClusterCreatorAdminPermissions,
+	}
 }
 
 func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {

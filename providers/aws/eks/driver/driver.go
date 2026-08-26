@@ -62,13 +62,51 @@ type VPCConfig struct {
 	VpcID                  string
 }
 
+// ClusterLogging is one EKS control-plane log-type group and whether it is
+// enabled. Real EKS normalizes cluster logging into (up to) two entries: the
+// enabled log types and the disabled ones. The recognized types are api,
+// audit, authenticator, controllerManager, and scheduler.
+type ClusterLogging struct {
+	Types   []string
+	Enabled bool
+}
+
+// NetworkConfig captures the Kubernetes networking configuration surfaced under
+// DescribeCluster kubernetesNetworkConfig. ServiceIPv4CIDR and IPFamily are
+// caller inputs; ServiceIPv6CIDR is provider-assigned for IPv6 clusters (the
+// caller cannot choose it), mirroring how VpcID is derived on VPCConfig.
+type NetworkConfig struct {
+	ServiceIPv4CIDR string
+	ServiceIPv6CIDR string
+	IPFamily        string
+}
+
+// AccessConfigRequest is the caller-supplied access configuration on
+// CreateCluster. BootstrapClusterCreatorAdminPermissions is a pointer so the
+// provider can distinguish "omitted" (apply the AWS default of true) from an
+// explicit false.
+type AccessConfigRequest struct {
+	AuthenticationMode                      string
+	BootstrapClusterCreatorAdminPermissions *bool
+}
+
+// AccessConfig is the resolved cluster access-management configuration surfaced
+// under DescribeCluster accessConfig.
+type AccessConfig struct {
+	AuthenticationMode                      string
+	BootstrapClusterCreatorAdminPermissions bool
+}
+
 // ClusterConfig configures a new EKS cluster.
 type ClusterConfig struct {
-	Name      string
-	Version   string
-	RoleArn   string
-	VPCConfig VPCConfig
-	Tags      map[string]string
+	Name          string
+	Version       string
+	RoleArn       string
+	VPCConfig     VPCConfig
+	Logging       []ClusterLogging
+	NetworkConfig NetworkConfig
+	AccessConfig  AccessConfigRequest
+	Tags          map[string]string
 }
 
 // Cluster is the mock-side representation of an EKS cluster.
@@ -82,6 +120,9 @@ type Cluster struct {
 	CertificateAuthority string
 	Status               string
 	VPCConfig            VPCConfig
+	Logging              []ClusterLogging
+	NetworkConfig        NetworkConfig
+	AccessConfig         AccessConfig
 	Tags                 map[string]string
 	CreatedAt            time.Time
 	// OIDCIssuer is the cluster's OpenID Connect issuer URL, surfaced under
