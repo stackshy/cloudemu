@@ -24,10 +24,13 @@ const (
 	defaultMemcachedPort = 11211
 )
 
-// defaultPort is the TCP port real ElastiCache assigns a cluster of the given
-// engine when the caller omits Port: Memcached listens on 11211, Redis/Valkey
-// on 6379.
-func defaultPort(engine string) int {
+// resolvePort returns the requested port, or the engine default when unset:
+// Memcached listens on 11211, Redis/Valkey on 6379.
+func resolvePort(engine string, port int) int {
+	if port != 0 {
+		return port
+	}
+
 	if engine == engineMemcached {
 		return defaultMemcachedPort
 	}
@@ -93,6 +96,34 @@ func validateNodeCount(engine string, numNodes int) error {
 	if numNodes > 1 {
 		return errors.Newf(errors.InvalidArgument,
 			"NumCacheNodes must be 1 for engine %q", engine)
+	}
+
+	return nil
+}
+
+// normalizeNodeCount defaults an unset node count to 1 and validates it against
+// the engine's limits.
+func normalizeNodeCount(engine string, requested int) (int, error) {
+	n := requested
+	if n < 1 {
+		n = 1
+	}
+
+	if err := validateNodeCount(engine, n); err != nil {
+		return 0, err
+	}
+
+	return n, nil
+}
+
+// requireSubnetGroup rejects a create that names a cache subnet group which does
+// not exist, matching real ElastiCache (CacheSubnetGroupNotFoundFault) rather
+// than silently accepting a typo (mirrors RDS CreateDBInstance's DBSubnetGroup
+// check). An empty name places the cluster in the default subnet group.
+func (m *Mock) requireSubnetGroup(name string) error {
+	if name != "" && !m.subnetGroups.Has(name) {
+		return errors.Newf(errors.NotFound,
+			"CacheSubnetGroupNotFoundFault: cache subnet group %q not found", name)
 	}
 
 	return nil
@@ -192,29 +223,16 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		engineVersion = defaultEngineVersion(engine)
 	}
 
-	numNodes := cfg.NumCacheNodes
-	if numNodes < 1 {
-		numNodes = 1
-	}
-
-	if err := validateNodeCount(engine, numNodes); err != nil {
+	numNodes, err := normalizeNodeCount(engine, cfg.NumCacheNodes)
+	if err != nil {
 		return nil, err
 	}
 
-	// A named subnet group must already exist — real ElastiCache rejects a
-	// missing one with CacheSubnetGroupNotFoundFault rather than silently
-	// accepting a typo (mirrors RDS CreateDBInstance's DBSubnetGroup check).
-	if cfg.SubnetGroupName != "" && !m.subnetGroups.Has(cfg.SubnetGroupName) {
-		return nil, errors.Newf(errors.NotFound,
-			"CacheSubnetGroupNotFoundFault: cache subnet group %q not found", cfg.SubnetGroupName)
+	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
+		return nil, err
 	}
 
-	port := cfg.Port
-	if port == 0 {
-		port = defaultPort(engine)
-	}
-
-	endpoint := clusterEndpoint(cfg.Name, m.opts.Region, engine, port)
+	endpoint := clusterEndpoint(cfg.Name, m.opts.Region, engine, resolvePort(engine, cfg.Port))
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -276,9 +294,11 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 	if cfg.NodeType != "" {
 		cd.info.NodeType = cfg.NodeType
 	}
+
 	if cfg.EngineVersion != "" {
 		cd.info.EngineVersion = cfg.EngineVersion
 	}
+
 	if cfg.NumCacheNodes > 0 {
 		cd.info.NumCacheNodes = cfg.NumCacheNodes
 	}

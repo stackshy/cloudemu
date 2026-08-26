@@ -10,6 +10,9 @@ import (
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
+// formTrue is the query-protocol encoding of a boolean-true flag.
+const formTrue = "true"
+
 // nodeGroupMemberXML mirrors AWS's NodeGroupMember — the per-node membership
 // record a caller reads to enumerate the primary and replicas of a shard.
 type nodeGroupMemberXML struct {
@@ -101,7 +104,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		NumCacheNodes:            nodes,
 		SubnetGroupName:          r.Form.Get("CacheSubnetGroupName"),
 		SecurityGroupIDs:         awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
-		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == "true",
+		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == formTrue,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -193,7 +196,7 @@ func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 	last := groups[0]
 
 	opts := cachedriver.DeleteReplicationGroupOptions{
-		RetainPrimaryCluster:    r.Form.Get("RetainPrimaryCluster") == "true",
+		RetainPrimaryCluster:    r.Form.Get("RetainPrimaryCluster") == formTrue,
 		FinalSnapshotIdentifier: r.Form.Get("FinalSnapshotIdentifier"),
 	}
 
