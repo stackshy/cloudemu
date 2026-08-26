@@ -89,6 +89,7 @@ type getPartitionsRequest struct {
 	CatalogID    string `json:"CatalogId"`
 	DatabaseName string `json:"DatabaseName"`
 	TableName    string `json:"TableName"`
+	Expression   string `json:"Expression"`
 	NextToken    string `json:"NextToken"`
 	MaxResults   int32  `json:"MaxResults"`
 }
@@ -101,7 +102,7 @@ type getPartitionsResponse struct {
 func (h *Handler) getPartitions(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *getPartitionsRequest) (any, error) {
 		ps, next, err := h.glue.GetPartitions(ctx, req.CatalogID, req.DatabaseName, req.TableName,
-			driver.TablePagination{NextToken: req.NextToken, MaxResults: req.MaxResults})
+			driver.TablePagination{NextToken: req.NextToken, MaxResults: req.MaxResults, Expression: req.Expression})
 		if err != nil {
 			return nil, err
 		}

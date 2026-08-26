@@ -162,13 +162,49 @@ func (m *Mock) DeletePartition(_ context.Context, catalogID, dbName, tblName str
 	return nil
 }
 
-// GetPartitions lists a table's partitions with pagination.
+// partitionFilter compiles the request's Expression into a predicate plus the
+// table's partition-key name→index map. An empty expression yields a nil
+// predicate (match everything); a malformed one is an InvalidInputException.
+func (m *Mock) partitionFilter(cat, db, table, expr string) (partPredicate, map[string]int, error) {
+	if expr == "" {
+		return nil, nil, nil
+	}
+
+	td, ok := m.tables.Get(nameKey(cat, db, table))
+	if !ok {
+		return nil, nil, nil
+	}
+
+	td.mu.RLock()
+	keys := td.table.PartitionKeys
+	idx := make(map[string]int, len(keys))
+
+	for i := range keys {
+		idx[keys[i].Name] = i
+	}
+	td.mu.RUnlock()
+
+	pred, err := compilePartitionFilter(expr)
+	if err != nil {
+		return nil, nil, invalidInput("invalid partition filter expression %q: %v", expr, err)
+	}
+
+	return pred, idx, nil
+}
+
+// GetPartitions lists a table's partitions with pagination, narrowing by the
+// optional Expression filter before paginating (as real Glue does).
 func (m *Mock) GetPartitions(
 	_ context.Context, catalogID, dbName, tblName string, page driver.TablePagination,
 ) ([]driver.Partition, string, error) {
 	cat := m.catalogOrDefault(catalogID)
 
 	if err := m.requireTable(cat, dbName, tblName); err != nil {
+		return nil, "", err
+	}
+
+	pred, idx, err := m.partitionFilter(cat, dbName, tblName, page.Expression)
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -187,8 +223,12 @@ func (m *Mock) GetPartitions(
 		}
 
 		pd.mu.RLock()
-		all = append(all, copyPartition(pd.part))
+		part := copyPartition(pd.part)
 		pd.mu.RUnlock()
+
+		if pred == nil || pred(part.Values, idx) {
+			all = append(all, part)
+		}
 	}
 
 	return paginate(all, page)

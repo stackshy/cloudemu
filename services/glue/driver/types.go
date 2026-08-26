@@ -142,22 +142,31 @@ type ResourceURI struct {
 	URI          string
 }
 
-// Crawler is a Data Catalog crawler.
+// Crawler is a Data Catalog crawler. SchemaChangePolicy, RecrawlPolicy and
+// LineageConfiguration are round-tripped opaquely (stored as decoded JSON) so
+// aws_glue_crawler does not report drift; Tags are stored in the tag store under
+// the crawler ARN, matching real Glue where GetCrawler omits tags and GetTags
+// returns them.
 type Crawler struct {
-	Name            string
-	Role            string
-	DatabaseName    string
-	Description     string
-	Targets         map[string]any
-	Classifiers     []string
-	TablePrefix     string
-	State           string
-	Schedule        string
-	Configuration   string
-	CreationTime    time.Time
-	LastUpdated     time.Time
-	Version         int64
-	LastCrawlStatus string
+	Name                  string
+	Role                  string
+	DatabaseName          string
+	Description           string
+	Targets               map[string]any
+	Classifiers           []string
+	TablePrefix           string
+	State                 string
+	Schedule              string
+	Configuration         string
+	SchemaChangePolicy    map[string]any
+	RecrawlPolicy         map[string]any
+	LineageConfiguration  map[string]any
+	SecurityConfiguration string
+	Tags                  map[string]string
+	CreationTime          time.Time
+	LastUpdated           time.Time
+	Version               int64
+	LastCrawlStatus       string
 }
 
 // Classifier is a Data Catalog classifier (grok/json/csv/xml union).
@@ -182,21 +191,29 @@ type Connection struct {
 	LastUpdatedTime      time.Time
 }
 
-// Job is a Glue ETL job definition.
+// Job is a Glue ETL job definition. ExecutionProperty, Connections and
+// NotificationProperty are round-tripped opaquely (stored as decoded JSON) so
+// aws_glue_job does not report drift; Tags are stored in the tag store under the
+// job ARN, matching real Glue where GetJob omits tags and GetTags returns them.
 type Job struct {
-	Name             string
-	Description      string
-	Role             string
-	Command          map[string]any
-	DefaultArguments map[string]string
-	MaxRetries       int32
-	Timeout          int32
-	GlueVersion      string
-	WorkerType       string
-	NumberOfWorkers  int32
-	MaxCapacity      float64
-	CreatedOn        time.Time
-	LastModifiedOn   time.Time
+	Name                  string
+	Description           string
+	Role                  string
+	Command               map[string]any
+	DefaultArguments      map[string]string
+	MaxRetries            int32
+	Timeout               int32
+	GlueVersion           string
+	WorkerType            string
+	NumberOfWorkers       int32
+	MaxCapacity           float64
+	ExecutionProperty     map[string]any
+	Connections           map[string]any
+	NotificationProperty  map[string]any
+	SecurityConfiguration string
+	Tags                  map[string]string
+	CreatedOn             time.Time
+	LastModifiedOn        time.Time
 }
 
 // JobRun is a single execution of a Job.

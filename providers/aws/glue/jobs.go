@@ -30,7 +30,7 @@ type jobRunData struct {
 // CreateJob creates an ETL job definition, atomically, returning its name.
 //
 //nolint:gocritic // hugeParam: taken by value to match the driver interface / copy semantics
-func (m *Mock) CreateJob(_ context.Context, j driver.Job) (string, error) {
+func (m *Mock) CreateJob(ctx context.Context, j driver.Job) (string, error) {
 	if !validName(j.Name) {
 		return "", invalidInput("job name %q is invalid", j.Name)
 	}
@@ -46,10 +46,18 @@ func (m *Mock) CreateJob(_ context.Context, j driver.Job) (string, error) {
 	now := m.now()
 	j.CreatedOn = now
 	j.LastModifiedOn = now
+	tags := j.Tags
+	j.Tags = nil
 	stored := copyJob(j)
 
 	if !m.jobs.SetIfAbsent(j.Name, &jobData{job: stored}) {
 		return "", alreadyExists("Job already exists: %s", j.Name)
+	}
+
+	if len(tags) > 0 {
+		// Tags on a job live in the tag store under its ARN, so GetTags (what
+		// Terraform reads) returns them; GetJob intentionally omits tags.
+		_ = m.TagResource(ctx, m.arn("job/"+j.Name), tags)
 	}
 
 	return j.Name, nil
