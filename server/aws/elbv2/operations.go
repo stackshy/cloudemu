@@ -286,6 +286,17 @@ func (h *Handler) describeListeners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort for a stable order so the offset-based Marker is meaningful.
+	sort.Slice(lis, func(i, j int) bool { return lis[i].ARN < lis[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(lis))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	lis = lis[start:end]
+
 	out := listenersXML{Member: make([]listenerXML, 0, len(lis))}
 	for i := range lis {
 		out.Member = append(out.Member, toListenerXML(&lis[i]))
@@ -293,7 +304,7 @@ func (h *Handler) describeListeners(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeListenersResponse{
 		Xmlns:    Namespace,
-		Result:   listenersResult{Listeners: out},
+		Result:   listenersResult{Listeners: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -346,6 +357,17 @@ func (h *Handler) describeRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort for a stable order so the offset-based Marker is meaningful.
+	sort.Slice(rules, func(i, j int) bool { return rules[i].ARN < rules[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(rules))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	rules = rules[start:end]
+
 	out := rulesXML{Member: make([]ruleXML, 0, len(rules))}
 	for i := range rules {
 		out.Member = append(out.Member, toRuleXML(&rules[i]))
@@ -353,7 +375,7 @@ func (h *Handler) describeRules(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeRulesResponse{
 		Xmlns:    Namespace,
-		Result:   rulesResult{Rules: out},
+		Result:   rulesResult{Rules: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

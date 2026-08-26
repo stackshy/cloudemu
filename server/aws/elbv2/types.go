@@ -199,7 +199,8 @@ type listenersXML struct {
 }
 
 type listenersResult struct {
-	Listeners listenersXML `xml:"Listeners"`
+	Listeners  listenersXML `xml:"Listeners"`
+	NextMarker string       `xml:"NextMarker,omitempty"`
 }
 
 type createListenerResponse struct {
@@ -281,7 +282,8 @@ type rulesXML struct {
 }
 
 type rulesResult struct {
-	Rules rulesXML `xml:"Rules"`
+	Rules      rulesXML `xml:"Rules"`
+	NextMarker string   `xml:"NextMarker,omitempty"`
 }
 
 type createRuleResponse struct {

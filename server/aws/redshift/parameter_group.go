@@ -58,6 +58,7 @@ type describeClusterParameterGroupsResponse struct {
 	XMLName  xml.Name                   `xml:"DescribeClusterParameterGroupsResponse"`
 	Xmlns    string                     `xml:"xmlns,attr"`
 	Groups   []clusterParameterGroupXML `xml:"DescribeClusterParameterGroupsResult>ParameterGroups>ClusterParameterGroup"`
+	Marker   string                     `xml:"DescribeClusterParameterGroupsResult>Marker,omitempty"`
 	Metadata responseMetadata           `xml:"ResponseMetadata"`
 }
 
@@ -71,6 +72,7 @@ type describeClusterSubnetGroupsResponse struct {
 	XMLName  xml.Name                `xml:"DescribeClusterSubnetGroupsResponse"`
 	Xmlns    string                  `xml:"xmlns,attr"`
 	Groups   []clusterSubnetGroupXML `xml:"DescribeClusterSubnetGroupsResult>ClusterSubnetGroups>ClusterSubnetGroup"`
+	Marker   string                  `xml:"DescribeClusterSubnetGroupsResult>Marker,omitempty"`
 	Metadata responseMetadata        `xml:"ResponseMetadata"`
 }
 
@@ -332,18 +334,26 @@ func (h *Handler) describeClusterParameterGroups(w http.ResponseWriter, r *http.
 		return
 	}
 
-	out := make([]clusterParameterGroupXML, 0, len(groups))
-	for i := range groups {
+	page, err := paginateRedshift(groups, func(g redshiftprovider.ParameterGroup) string { return g.Name },
+		r.Form.Get("Marker"), r.Form.Get("MaxRecords"))
+	if err != nil {
+		writeInvalidMarker(w)
+		return
+	}
+
+	out := make([]clusterParameterGroupXML, 0, len(page.Items))
+	for i := range page.Items {
 		out = append(out, clusterParameterGroupXML{
-			ParameterGroupName:   groups[i].Name,
-			ParameterGroupFamily: groups[i].Family,
-			Description:          groups[i].Description,
+			ParameterGroupName:   page.Items[i].Name,
+			ParameterGroupFamily: page.Items[i].Family,
+			Description:          page.Items[i].Description,
 		})
 	}
 
 	awsquery.WriteXMLResponse(w, describeClusterParameterGroupsResponse{
 		Xmlns:    Namespace,
 		Groups:   out,
+		Marker:   page.NextPageToken,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -384,14 +394,22 @@ func (h *Handler) describeClusterSubnetGroups(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	out := make([]clusterSubnetGroupXML, 0, len(groups))
-	for i := range groups {
-		out = append(out, toClusterSubnetGroupXML(&groups[i]))
+	page, err := paginateRedshift(groups, func(g redshiftprovider.SubnetGroup) string { return g.Name },
+		r.Form.Get("Marker"), r.Form.Get("MaxRecords"))
+	if err != nil {
+		writeInvalidMarker(w)
+		return
+	}
+
+	out := make([]clusterSubnetGroupXML, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toClusterSubnetGroupXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeClusterSubnetGroupsResponse{
 		Xmlns:    Namespace,
 		Groups:   out,
+		Marker:   page.NextPageToken,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
