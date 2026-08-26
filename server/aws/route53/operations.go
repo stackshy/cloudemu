@@ -355,21 +355,21 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Real Route 53 returns record sets in DNS name order. Sort by name
-	// (case-insensitive) then type so the sequence is deterministic and honors
-	// StartRecordName paging below.
+	// Real Route 53 returns record sets in DNS name order — sorted first by DNS
+	// name with the labels reversed (so the zone apex sorts before its
+	// subdomains: com.order. < com.order.a.), then by record type. This ordering
+	// is what NextRecordName/StartRecordName pagination walks.
 	sort.Slice(records, func(i, j int) bool {
-		ni, nj := strings.ToLower(records[i].Name), strings.ToLower(records[j].Name)
-		if ni != nj {
-			return ni < nj
+		if c := compareDNSName(records[i].Name, records[j].Name); c != 0 {
+			return c < 0
 		}
 
 		return records[i].Type < records[j].Type
 	})
 
 	// StartRecordName (and optional StartRecordType) skip forward to the first
-	// record at or after the requested position.
-	start := strings.ToLower(r.URL.Query().Get("name"))
+	// record at or after the requested position, in the same reversed-label order.
+	start := r.URL.Query().Get("name")
 	startType := r.URL.Query().Get("type")
 	records = recordsFrom(records, start, startType)
 
@@ -397,20 +397,64 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 }
 
 // recordsFrom returns the slice starting at the first record whose (name, type)
-// is at or after (start, startType). An empty start returns all records.
+// is at or after (start, startType) in reversed-label DNS order. An empty start
+// returns all records.
 func recordsFrom(records []dnsdriver.RecordInfo, start, startType string) []dnsdriver.RecordInfo {
 	if start == "" {
 		return records
 	}
 
 	for i := range records {
-		name := strings.ToLower(records[i].Name)
-		if name > start || (name == start && (startType == "" || records[i].Type >= startType)) {
+		c := compareDNSName(records[i].Name, start)
+		if c > 0 || (c == 0 && (startType == "" || records[i].Type >= startType)) {
 			return records[i:]
 		}
 	}
 
 	return nil
+}
+
+// compareDNSName orders two DNS names the way Route 53's ListResourceRecordSets
+// does: by the name's labels reversed (TLD first), so a zone apex sorts before
+// its subdomains. Comparison is case- and trailing-dot-insensitive. It returns
+// -1, 0, or 1.
+func compareDNSName(a, b string) int {
+	la, lb := reversedLabels(a), reversedLabels(b)
+
+	for i := 0; i < len(la) && i < len(lb); i++ {
+		if la[i] != lb[i] {
+			if la[i] < lb[i] {
+				return -1
+			}
+
+			return 1
+		}
+	}
+
+	switch {
+	case len(la) < len(lb):
+		return -1
+	case len(la) > len(lb):
+		return 1
+	default:
+		return 0
+	}
+}
+
+// reversedLabels lower-cases a DNS name, drops the trailing dot, and returns its
+// labels reversed (TLD first): "www.Order.com." → ["com", "order", "www"].
+func reversedLabels(name string) []string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	if name == "" {
+		return nil
+	}
+
+	labels := strings.Split(name, ".")
+	for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
+		labels[i], labels[j] = labels[j], labels[i]
+	}
+
+	return labels
 }
 
 // parseMaxItems reads the maxitems query param, clamping to the fixed page size
