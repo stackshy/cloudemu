@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -8,6 +9,15 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
+
+// alarmActionSetter is the optional driver capability used to re-sync a policy's
+// notificationChannels onto the backing alarm's AlarmActions in place, without
+// the state reset a CreateAlarm would cause. The GCP monitoring mock provides
+// it; keeping it optional avoids forcing every driver.Monitoring impl to carry a
+// method only the alertPolicies.patch path needs.
+type alarmActionSetter interface {
+	SetAlarmActions(ctx context.Context, name string, actions []string) error
+}
 
 // serveAlertPolicies routes /v3/projects/{p}/alertPolicies[/{id}].
 func (h *Handler) serveAlertPolicies(w http.ResponseWriter, r *http.Request, project string, rest []string) {
@@ -175,7 +185,13 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 		cur.UserLabels = body.UserLabels
 	}
 
-	if body.NotificationChannels != nil {
+	// A provided notificationChannels list replaces the policy's channels and is
+	// re-synced onto the backing alarm below. Presence (non-nil) mirrors GCP
+	// patch semantics and the rest of this handler's field-scoped updates: an
+	// unrelated patch that omits the field leaves channels — and delivery —
+	// untouched.
+	channelsProvided := body.NotificationChannels != nil
+	if channelsProvided {
 		cur.NotificationChannels = body.NotificationChannels
 	}
 
@@ -186,6 +202,18 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 	cur.MutationRecord = &mutationRecord{MutateTime: nowRFC3339(), MutatedBy: "cloudemu"}
 	h.policies[name] = cur
 	h.mu.Unlock()
+
+	// Re-sync the changed channels onto the driver alarm's AlarmActions so a
+	// later breach delivers to the new set. Done in place (SetAlarmActions), not
+	// via CreateAlarm, so the alarm's current state/history is preserved.
+	if channelsProvided {
+		if setter, ok := h.mon.(alarmActionSetter); ok {
+			if err := setter.SetAlarmActions(r.Context(), name, cur.NotificationChannels); err != nil && !cerrors.IsNotFound(err) {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
 
 	cur.Name = policyResourceName(project, name)
 

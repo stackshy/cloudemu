@@ -3,6 +3,7 @@ package monitoring_test
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
+	gcpmonitoring "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -302,4 +304,114 @@ func TestAlertPolicyPatch(t *testing.T) {
 	if !patched.Enabled {
 		t.Error("patch omitting enabled silently disabled the policy")
 	}
+}
+
+// TestAlertPolicyPatchResyncsChannels guards the patch channel gap: editing a
+// policy's notificationChannels via PATCH must re-sync them onto the backing
+// alarm's AlarmActions (so a later breach delivers to the new set) while
+// preserving the alarm's current state/history; an unrelated patch (displayName)
+// must leave the channels untouched.
+func TestAlertPolicyPatchResyncsChannels(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Monitoring: cloudP.CloudMonitoring})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	svc := newClient(t, ts)
+	ctx := context.Background()
+
+	const chanA = "projects/p1/notificationChannels/chanA"
+	const chanB = "projects/p1/notificationChannels/chanB"
+
+	created, err := svc.Projects.AlertPolicies.Create("projects/p1", &monitoring.AlertPolicy{
+		DisplayName:          "editable",
+		NotificationChannels: []string{chanA},
+	}).Do()
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	id := created.Name[strings.LastIndex(created.Name, "/")+1:]
+
+	// #806 create path: notificationChannels wired onto the alarm's AlarmActions.
+	if got := alarmActions(t, cloudP.CloudMonitoring, id); !equalStrings(got, []string{chanA}) {
+		t.Fatalf("after create AlarmActions=%v want [%s]", got, chanA)
+	}
+
+	// Simulate a prior breach so the patch's state/history preservation is provable.
+	if err := cloudP.CloudMonitoring.SetAlarmState(ctx, id, "ALARM", "breach"); err != nil {
+		t.Fatalf("set alarm state: %v", err)
+	}
+
+	histBefore, err := cloudP.CloudMonitoring.GetAlarmHistory(ctx, id, 0)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+
+	// Unrelated patch (displayName only): channels must be untouched.
+	if _, err := svc.Projects.AlertPolicies.Patch(created.Name, &monitoring.AlertPolicy{
+		DisplayName: "renamed",
+	}).UpdateMask("displayName").Do(); err != nil {
+		t.Fatalf("patch displayName: %v", err)
+	}
+
+	if got := alarmActions(t, cloudP.CloudMonitoring, id); !equalStrings(got, []string{chanA}) {
+		t.Fatalf("displayName patch changed AlarmActions to %v want [%s]", got, chanA)
+	}
+
+	// Patch notificationChannels to B: re-synced onto the alarm.
+	if _, err := svc.Projects.AlertPolicies.Patch(created.Name, &monitoring.AlertPolicy{
+		NotificationChannels: []string{chanB},
+	}).UpdateMask("notificationChannels").Do(); err != nil {
+		t.Fatalf("patch channels: %v", err)
+	}
+
+	if got := alarmActions(t, cloudP.CloudMonitoring, id); !equalStrings(got, []string{chanB}) {
+		t.Fatalf("after channel patch AlarmActions=%v want [%s]", got, chanB)
+	}
+
+	// State and history preserved across the channel patch (no CreateAlarm reset).
+	alarms, err := cloudP.CloudMonitoring.DescribeAlarms(ctx, []string{id})
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("describe: err=%v n=%d", err, len(alarms))
+	}
+
+	if alarms[0].State != "ALARM" {
+		t.Errorf("channel patch reset alarm state to %q want ALARM", alarms[0].State)
+	}
+
+	histAfter, err := cloudP.CloudMonitoring.GetAlarmHistory(ctx, id, 0)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+
+	if len(histAfter) != len(histBefore) {
+		t.Errorf("channel patch changed history len %d -> %d", len(histBefore), len(histAfter))
+	}
+}
+
+// alarmActions returns the backing alarm's AlarmActions for the given policy id.
+func alarmActions(t *testing.T, mon *gcpmonitoring.Mock, id string) []string {
+	t.Helper()
+
+	alarms, err := mon.DescribeAlarms(context.Background(), []string{id})
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("describe alarm %s: err=%v n=%d", id, err, len(alarms))
+	}
+
+	return alarms[0].AlarmActions
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }

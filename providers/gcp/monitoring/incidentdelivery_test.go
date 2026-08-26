@@ -163,6 +163,70 @@ func TestBreachEmailChannelRecordOnly(t *testing.T) {
 	assert.Empty(t, pub.topics, "email channel must not publish to pubsub")
 }
 
+// TestSetAlarmActionsResyncsChannelsPreservingState covers the patch re-sync
+// gap: after a breach delivered to channel A, replacing the alarm's actions with
+// channel B (as alertPolicies.patch does) must (1) preserve the alarm's current
+// ALARM state and its history — no CreateAlarm reset — and (2) route subsequent
+// incident deliveries to B, never again to A.
+func TestSetAlarmActionsResyncsChannelsPreservingState(t *testing.T) {
+	m, clk := newTestMock()
+
+	pub := &fakePublisher{}
+	m.SetPubSubPublisher(pub)
+
+	ctx := context.Background()
+	const topicA = "projects/test-project/topics/a"
+	const topicB = "projects/test-project/topics/b"
+	idA := createChannel(t, m, channelTypePubSub, topicA)
+	idB := createChannel(t, m, channelTypePubSub, topicB)
+
+	// Create the alarm targeting A and breach it: delivers open to A, state ALARM.
+	require.NoError(t, m.CreateAlarm(ctx, driver.AlarmConfig{
+		Name: "cpu-hot", Namespace: "gcp", MetricName: "metric",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
+		Period: 60, EvaluationPeriods: 1, Stat: "Average",
+		AlarmActions: []string{idA},
+	}))
+	require.NoError(t, m.PutMetricData(ctx, []driver.MetricDatum{{
+		Namespace: "gcp", MetricName: "metric", Value: 1, Timestamp: clk.Now(),
+	}}))
+
+	alarms, err := m.DescribeAlarms(ctx, []string{"cpu-hot"})
+	require.NoError(t, err)
+	require.Equal(t, "ALARM", alarms[0].State)
+
+	histBefore, err := m.GetAlarmHistory(ctx, "cpu-hot", 0)
+	require.NoError(t, err)
+	require.Len(t, histBefore, 1)
+
+	// Re-sync channels to B in place. State and history must be preserved.
+	require.NoError(t, m.SetAlarmActions(ctx, "cpu-hot", []string{idB}))
+
+	alarms, err = m.DescribeAlarms(ctx, []string{"cpu-hot"})
+	require.NoError(t, err)
+	assert.Equal(t, "ALARM", alarms[0].State, "re-syncing channels must not reset alarm state")
+	assert.Equal(t, []string{idB}, alarms[0].AlarmActions, "alarm actions must reflect the new channel set")
+
+	histAfter, err := m.GetAlarmHistory(ctx, "cpu-hot", 0)
+	require.NoError(t, err)
+	assert.Len(t, histAfter, 1, "re-syncing channels must not add or reset history")
+
+	// Recover then breach again: both new deliveries must target B, never A.
+	clk.Advance(60e9)
+	require.NoError(t, m.PutMetricData(ctx, []driver.MetricDatum{{
+		Namespace: "gcp", MetricName: "metric", Value: 0, Timestamp: clk.Now(),
+	}}))
+	clk.Advance(60e9)
+	require.NoError(t, m.PutMetricData(ctx, []driver.MetricDatum{{
+		Namespace: "gcp", MetricName: "metric", Value: 1, Timestamp: clk.Now(),
+	}}))
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	require.Equal(t, []string{topicA, topicB, topicB}, pub.topics,
+		"first delivery went to A; every delivery after the re-sync goes to B")
+}
+
 // TestRecoveryDeliversClosedIncident covers open+close delivery: a breach then a
 // recovery each deliver, the second carrying a closed incident — and the state /
 // history transitions are unchanged (no regression).
