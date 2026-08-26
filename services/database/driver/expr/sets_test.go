@@ -9,14 +9,14 @@ import (
 
 func TestDynamoTypeSets(t *testing.T) {
 	assert.Equal(t, "SS", dynamoType(StringSet{"a"}))
-	assert.Equal(t, "NS", dynamoType(NumberSet{1}))
+	assert.Equal(t, "NS", dynamoType(NumberSet{"1"}))
 	assert.Equal(t, "BS", dynamoType(BinarySet{{0x1}}))
 }
 
 func TestContainsOnSets(t *testing.T) {
 	item := map[string]any{
 		"ss": StringSet{"red", "blue"},
-		"ns": NumberSet{1, 2},
+		"ns": NumberSet{"1", "2"},
 		"bs": BinarySet{{0x1}, {0x2}},
 	}
 
@@ -47,7 +47,7 @@ func TestAttributeTypeSet(t *testing.T) {
 func TestSetsEqual(t *testing.T) {
 	assert.True(t, setsEqual(StringSet{"a", "b"}, StringSet{"b", "a"}), "order-independent")
 	assert.False(t, setsEqual(StringSet{"a"}, StringSet{"a", "b"}))
-	assert.False(t, setsEqual(StringSet{"a"}, NumberSet{1}), "different set types")
+	assert.False(t, setsEqual(StringSet{"a"}, NumberSet{"1"}), "different set types")
 }
 
 func TestUnionAndDifference(t *testing.T) {
@@ -56,12 +56,12 @@ func TestUnionAndDifference(t *testing.T) {
 	assert.ElementsMatch(t, StringSet{"a", "b"}, u)
 
 	// type mismatch
-	_, ok = UnionSets(StringSet{"a"}, NumberSet{1})
+	_, ok = UnionSets(StringSet{"a"}, NumberSet{"1"})
 	assert.False(t, ok)
 
-	d, ok := DifferenceSets(NumberSet{1, 2, 3}, NumberSet{2})
+	d, ok := DifferenceSets(NumberSet{"1", "2", "3"}, NumberSet{"2"})
 	require.True(t, ok)
-	assert.ElementsMatch(t, NumberSet{1, 3}, d)
+	assert.ElementsMatch(t, NumberSet{"1", "3"}, d)
 
 	assert.True(t, SetIsEmpty(StringSet{}))
 	assert.False(t, SetIsEmpty(StringSet{"a"}))

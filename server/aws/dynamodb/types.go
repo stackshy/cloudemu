@@ -2,7 +2,6 @@ package dynamodb
 
 import (
 	"encoding/base64"
-	"strconv"
 
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
@@ -136,14 +135,20 @@ func decodeNumberSet(v any) any {
 	out := make(expr.NumberSet, 0, len(list))
 
 	for _, e := range list {
+		// DynamoDB transmits NS as an array of decimal strings; keep each element's
+		// exact string (expr.Number) so large ids/high-precision decimals round-trip
+		// losslessly. Parsing through float64 here corrupts values beyond 2^53.
 		if s, ok := e.(string); ok {
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				out = append(out, f)
-			}
+			out = append(out, expr.Number(s))
 		}
 	}
 
-	return out
+	// Dedup by numeric value (union with an empty set) so equal forms such as
+	// "1" and "1.0" collapse to one element, matching DynamoDB set semantics,
+	// while values that differ beyond float64 precision are preserved distinct.
+	deduped, _ := expr.UnionSets(nil, out)
+
+	return deduped
 }
 
 func decodeBinarySet(v any) any {

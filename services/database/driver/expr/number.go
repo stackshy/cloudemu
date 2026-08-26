@@ -2,7 +2,9 @@ package expr
 
 import (
 	"encoding/json"
+	"math/big"
 	"strconv"
+	"strings"
 )
 
 // NumberJSONTag is the single key of the self-describing JSON object a Number
@@ -57,4 +59,46 @@ func (n Number) Float() (float64, bool) {
 	}
 
 	return f, true
+}
+
+// rat parses n into an exact rational so two decimals compare by their true
+// numeric value without ever passing through float64 — the difference between
+// two 30-digit ids that share the same float64 must survive. A leading '+' and
+// scientific notation are accepted; a malformed number reports ok=false.
+func (n Number) rat() (*big.Rat, bool) {
+	r, ok := new(big.Rat).SetString(strings.TrimPrefix(string(n), "+"))
+	return r, ok
+}
+
+// numberEqual reports whether a and b denote the same number. Equality is
+// numeric and exact (via big.Rat), so "1" == "1.0" == "+1" yet two values that
+// only differ beyond float64 precision stay distinct. Malformed operands fall
+// back to an exact string match so they stay type-segregated.
+func numberEqual(a, b Number) bool {
+	ra, aok := a.rat()
+	rb, bok := b.rat()
+
+	if aok && bok {
+		return ra.Cmp(rb) == 0
+	}
+
+	return string(a) == string(b)
+}
+
+// toNumber coerces the numeric kinds the drivers produce to an exact-decimal
+// Number for set membership. A Number is kept verbatim; a float/int is
+// formatted losslessly enough for membership. Non-numeric values report false.
+func toNumber(v any) (Number, bool) {
+	switch t := v.(type) {
+	case Number:
+		return t, true
+	case float64:
+		return Number(strconv.FormatFloat(t, 'f', -1, 64)), true
+	case int:
+		return Number(strconv.Itoa(t)), true
+	case int64:
+		return Number(strconv.FormatInt(t, 10)), true
+	}
+
+	return "", false
 }

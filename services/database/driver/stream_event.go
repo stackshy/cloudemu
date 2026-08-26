@@ -59,7 +59,7 @@ func marshalBinaryOrSet(v any) (map[string]any, bool) {
 	case expr.StringSet:
 		return map[string]any{"SS": []string(val)}, true
 	case expr.NumberSet:
-		return map[string]any{"NS": formatFloatSet(val)}, true
+		return map[string]any{"NS": formatNumberSet(val)}, true
 	case expr.BinarySet:
 		return map[string]any{"BS": formatBinarySet(val)}, true
 	default:
@@ -67,10 +67,12 @@ func marshalBinaryOrSet(v any) (map[string]any, bool) {
 	}
 }
 
-func formatFloatSet(ns expr.NumberSet) []string {
+// formatNumberSet renders an NS to the wire as an array of its exact decimal
+// strings, so elements beyond float64 precision encode without corruption.
+func formatNumberSet(ns expr.NumberSet) []string {
 	out := make([]string, 0, len(ns))
-	for _, f := range ns {
-		out = append(out, strconv.FormatFloat(f, 'f', -1, 64))
+	for _, n := range ns {
+		out = append(out, string(n))
 	}
 
 	return out
