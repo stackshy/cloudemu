@@ -91,6 +91,11 @@ type putEventsRequest struct {
 	Entries []putEventsEntry `json:"Entries"`
 }
 
+type testEventPatternRequest struct {
+	Event        string `json:"Event"`
+	EventPattern string `json:"EventPattern"`
+}
+
 // --- response envelopes ---
 
 type createEventBusResponse struct {
@@ -170,6 +175,10 @@ type putEventsResultEntry struct {
 type putEventsResponse struct {
 	FailedEntryCount int                    `json:"FailedEntryCount"`
 	Entries          []putEventsResultEntry `json:"Entries"`
+}
+
+type testEventPatternResponse struct {
+	Result bool `json:"Result"`
 }
 
 // --- helpers ---

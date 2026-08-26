@@ -72,6 +72,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listTargetsByRule(w, r)
 	case "PutEvents":
 		h.putEvents(w, r)
+	case "TestEventPattern":
+		h.testEventPattern(w, r)
 	case "TagResource":
 		h.tagResource(w, r)
 	case "UntagResource":

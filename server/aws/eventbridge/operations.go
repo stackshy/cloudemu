@@ -1,6 +1,7 @@
 package eventbridge
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -354,4 +355,33 @@ func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 		FailedEntryCount: failed + res.FailCount,
 		Entries:          results,
 	})
+}
+
+// testEventPattern evaluates a sample event against an event pattern using the
+// same matcher PutEvents delivery uses, so "would this rule fire?" answered here
+// is consistent with what actually gets delivered. Real users / the console call
+// it to debug a pattern before deploying a rule.
+func (*Handler) testEventPattern(w http.ResponseWriter, r *http.Request) {
+	var req testEventPatternRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// The pattern is validated with the same rule PutRule enforces, so a pattern
+	// that would be rejected at deploy time is rejected here too.
+	if err := eventmatch.ValidatePattern(req.EventPattern); err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidEventPatternException", err.Error())
+		return
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal([]byte(req.Event), &event); err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			"Event is not a valid JSON object.")
+		return
+	}
+
+	pattern, _ := eventmatch.ParsePattern(req.EventPattern)
+
+	wire.WriteJSON(w, testEventPatternResponse{Result: eventmatch.MatchEvent(pattern, event)})
 }
