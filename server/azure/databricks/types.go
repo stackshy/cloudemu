@@ -27,6 +27,19 @@ type workspaceProps struct {
 	WorkspaceURL           string `json:"workspaceUrl,omitempty"`
 	WorkspaceID            string `json:"workspaceId,omitempty"`
 	CreatedDateTime        string `json:"createdDateTime,omitempty"`
+
+	// VNet-injection, CMK, and managed-network properties. These carry the
+	// well-known armdatabricks.WorkspaceProperties fields the client PUTs and
+	// expects reflected byte-identically on GET. Reused directly from the driver
+	// so a single set of JSON-tagged types guarantees round-trip fidelity.
+	Parameters             *dbxdriver.WorkspaceCustomParameters       `json:"parameters,omitempty"`
+	PublicNetworkAccess    string                                     `json:"publicNetworkAccess,omitempty"`
+	RequiredNsgRules       string                                     `json:"requiredNsgRules,omitempty"`
+	Authorizations         []dbxdriver.WorkspaceProviderAuthorization `json:"authorizations,omitempty"`
+	UIDefinitionURI        string                                     `json:"uiDefinitionUri,omitempty"`
+	ManagedDiskIdentity    *dbxdriver.ManagedIdentityConfiguration    `json:"managedDiskIdentity,omitempty"`
+	StorageAccountIdentity *dbxdriver.ManagedIdentityConfiguration    `json:"storageAccountIdentity,omitempty"`
+	DiskEncryptionSetID    string                                     `json:"diskEncryptionSetId,omitempty"`
 }
 
 // workspaceUpdate is the PATCH body shape (tags-only update).
@@ -54,6 +67,15 @@ func toARMWorkspace(ws *dbxdriver.Workspace) armWorkspace {
 			WorkspaceURL:           ws.WorkspaceURL,
 			WorkspaceID:            ws.WorkspaceID,
 			CreatedDateTime:        ws.CreatedAt,
+
+			Parameters:             ws.Parameters,
+			PublicNetworkAccess:    ws.PublicNetworkAccess,
+			RequiredNsgRules:       ws.RequiredNsgRules,
+			Authorizations:         ws.Authorizations,
+			UIDefinitionURI:        ws.UIDefinitionURI,
+			ManagedDiskIdentity:    ws.ManagedDiskIdentity,
+			StorageAccountIdentity: ws.StorageAccountIdentity,
+			DiskEncryptionSetID:    ws.DiskEncryptionSetID,
 		},
 	}
 	if ws.SKUName != "" {
