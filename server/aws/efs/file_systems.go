@@ -139,17 +139,15 @@ func (h *Handler) describeFileSystems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	systems, err := h.efs.DescribeFileSystems(r.Context(), q.Get("FileSystemId"), q.Get("CreationToken"))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
 
-	out := make([]fileSystemJSON, 0, len(systems))
-	for i := range systems {
-		out = append(out, fileSystemToWire(&systems[i]))
-	}
+	respondPaged(w, systems, err, lessFileSystem,
+		q.Get("Marker"), parseMax(q.Get("MaxItems"), defaultPageSize), fileSystemToWire, buildFileSystems)
+}
 
-	writeJSON(w, describeFileSystemsResponse{FileSystems: out})
+func lessFileSystem(a, b *driver.FileSystem) bool { return a.FileSystemID < b.FileSystemID }
+
+func buildFileSystems(out []fileSystemJSON, next string) any {
+	return describeFileSystemsResponse{FileSystems: out, NextMarker: next}
 }
 
 func (h *Handler) updateFileSystem(w http.ResponseWriter, r *http.Request, id string) {

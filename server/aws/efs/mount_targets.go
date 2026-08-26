@@ -223,17 +223,15 @@ func (h *Handler) describeMountTargets(w http.ResponseWriter, r *http.Request) {
 
 	mts, err := h.efs.DescribeMountTargets(r.Context(),
 		q.Get("FileSystemId"), q.Get("MountTargetId"), q.Get("AccessPointId"))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
 
-	out := make([]mountTargetJSON, 0, len(mts))
-	for i := range mts {
-		out = append(out, mountTargetToWire(&mts[i]))
-	}
+	respondPaged(w, mts, err, lessMountTarget,
+		q.Get("Marker"), parseMax(q.Get("MaxItems"), defaultPageSize), mountTargetToWire, buildMountTargets)
+}
 
-	writeJSON(w, describeMountTargetsResponse{MountTargets: out})
+func lessMountTarget(a, b *driver.MountTarget) bool { return a.MountTargetID < b.MountTargetID }
+
+func buildMountTargets(out []mountTargetJSON, next string) any {
+	return describeMountTargetsResponse{MountTargets: out, NextMarker: next}
 }
 
 func (h *Handler) deleteMountTarget(w http.ResponseWriter, r *http.Request, id string) {
@@ -317,17 +315,15 @@ func (h *Handler) describeAccessPoints(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	aps, err := h.efs.DescribeAccessPoints(r.Context(), q.Get("FileSystemId"), q.Get("AccessPointId"))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
 
-	out := make([]accessPointJSON, 0, len(aps))
-	for i := range aps {
-		out = append(out, accessPointToWire(&aps[i]))
-	}
+	respondPaged(w, aps, err, lessAccessPoint,
+		q.Get("NextToken"), parseMax(q.Get("MaxResults"), defaultPageSize), accessPointToWire, buildAccessPoints)
+}
 
-	writeJSON(w, describeAccessPointsResponse{AccessPoints: out})
+func lessAccessPoint(a, b *driver.AccessPoint) bool { return a.AccessPointID < b.AccessPointID }
+
+func buildAccessPoints(out []accessPointJSON, next string) any {
+	return describeAccessPointsResponse{AccessPoints: out, NextToken: next}
 }
 
 func (h *Handler) deleteAccessPoint(w http.ResponseWriter, r *http.Request, id string) {
