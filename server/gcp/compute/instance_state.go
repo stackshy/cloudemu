@@ -23,6 +23,7 @@ const (
 	keyNetwork       = "cloudemu:gcp:network"
 	keyZone          = "cloudemu:gcp:zone"
 	keyAccessConfigs = "cloudemu:gcp:accessconfigs"
+	keyServiceAccts  = "cloudemu:gcp:serviceaccounts"
 )
 
 // internalTagPrefix marks tag keys that carry CloudEmu-internal GCP state
@@ -34,7 +35,7 @@ const kvStride = 2
 
 // internalTagCap is the number of internal keys insertTags may add, used only
 // as a map preallocation hint.
-const internalTagCap = 7
+const internalTagCap = 8
 
 func isInternalTag(key string) bool {
 	return strings.HasPrefix(key, internalTagPrefix)
@@ -75,6 +76,20 @@ func decodeAccessConfigs(tags map[string]string) []accessConfig {
 	}
 
 	return acs
+}
+
+func decodeServiceAccounts(tags map[string]string) []serviceAccount {
+	raw := tags[keyServiceAccts]
+	if raw == "" {
+		return nil
+	}
+
+	var sas []serviceAccount
+	if err := json.Unmarshal([]byte(raw), &sas); err != nil {
+		return nil
+	}
+
+	return sas
 }
 
 // ephemeralIPPrefix is the leading octet of GCP's public 34.0.0.0/8 range,

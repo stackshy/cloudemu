@@ -264,9 +264,18 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		sg := make([]string, len(cfg.SecurityGroups))
 		copy(sg, cfg.SecurityGroups)
 
+		// Honor an explicit private IP (the wire layer resolves the client's
+		// networkIP or an address from the referenced subnet's CIDR) for the
+		// first instance; the rest of a multi-count batch fall back to the
+		// synthetic allocator so they never collide on the same address.
+		privateIP := m.nextIP()
+		if cfg.PrivateIP != "" && i == 0 {
+			privateIP = cfg.PrivateIP
+		}
+
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
-			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
+			State: compute.StatePending, PrivateIP: privateIP, SubnetID: cfg.SubnetID,
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		}

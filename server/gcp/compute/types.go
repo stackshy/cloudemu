@@ -14,6 +14,7 @@ type instanceRequest struct {
 	Tags              tagsBlock          `json:"tags,omitempty"`
 	Labels            map[string]string  `json:"labels,omitempty"`
 	Metadata          metadataBlock      `json:"metadata,omitempty"`
+	ServiceAccounts   []serviceAccount   `json:"serviceAccounts,omitempty"`
 }
 
 // metadataBlock is GCP's instance metadata. The boot script is carried as a

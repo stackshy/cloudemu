@@ -23,6 +23,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Resource type names used in URL routing.
@@ -39,11 +40,18 @@ const (
 // operations.
 type Handler struct {
 	compute computedriver.Compute
+	// net resolves the subnetwork an instance references to its CIDR so a
+	// launched instance gets a networkIP inside that range. May be nil (no
+	// networking driver wired), in which case IP allocation falls back to the
+	// compute provider's synthetic allocator.
+	net netdriver.Networking
 }
 
-// New returns a Compute handler backed by c.
-func New(c computedriver.Compute) *Handler {
-	return &Handler{compute: c}
+// New returns a Compute handler backed by c. net (may be nil) lets insert
+// allocate an instance's private networkIP from the referenced subnetwork's
+// CIDR.
+func New(c computedriver.Compute, net netdriver.Networking) *Handler {
+	return &Handler{compute: c, net: net}
 }
 
 // Matches returns true for /compute/v1/projects/... URLs targeting instances
