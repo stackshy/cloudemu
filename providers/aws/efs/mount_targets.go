@@ -316,24 +316,19 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
-	id := "fsap-" + idgen.GenerateID("")
-
-	// ClientToken idempotency: atomically claim the token. A repeat returns the
-	// existing access point rather than creating a duplicate (real EFS behavior).
-	if in.ClientToken != "" && !m.apTokenIndex.SetIfAbsent(in.ClientToken, id) {
-		existingID, _ := m.apTokenIndex.Get(in.ClientToken)
-
-		return m.accessPointByID(existingID)
-	}
-
-	fd.mu.Lock()
-	defer fd.mu.Unlock()
-
 	name := in.Name
 	if name == "" {
 		name = in.Tags[nameTag]
 	}
 
+	id := "fsap-" + idgen.GenerateID("")
+
+	// Store the access point and publish it via apIndex BEFORE claiming the
+	// ClientToken, so a racing same-token loser can always resolve the winner's
+	// access point by id — there is no lookup-before-store window (the F1
+	// file-system path is safe the same way: its loser recovers by id, not by
+	// object lookup).
+	fd.mu.Lock()
 	ap := &driver.AccessPoint{
 		ClientToken:    in.ClientToken,
 		Name:           name,
@@ -346,11 +341,25 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 		RootDirectory:  rootDirOrDefault(in.RootDirectory),
 		Tags:           copyTags(in.Tags),
 	}
-
 	fd.accessPts[id] = ap
-	m.apIndex.Set(id, fd.fs.FileSystemID)
-
 	out := *ap
+	fd.mu.Unlock()
+
+	m.apIndex.Set(id, in.FileSystemID)
+
+	// ClientToken idempotency: claim the token. If another same-token call won the
+	// race, roll back this just-created access point and return the existing one —
+	// never a duplicate, never AccessPointNotFound.
+	if in.ClientToken != "" && !m.apTokenIndex.SetIfAbsent(in.ClientToken, id) {
+		fd.mu.Lock()
+		delete(fd.accessPts, id)
+		fd.mu.Unlock()
+		m.apIndex.Delete(id)
+
+		existingID, _ := m.apTokenIndex.Get(in.ClientToken)
+
+		return m.accessPointByID(existingID)
+	}
 
 	return &out, nil
 }

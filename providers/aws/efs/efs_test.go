@@ -2,6 +2,7 @@ package efs_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,5 +84,71 @@ func TestDefaultsAndPolicy(t *testing.T) {
 
 	if _, err := m.DescribeFileSystemPolicy(ctx, fs.FileSystemID); !errors.IsNotFound(err) {
 		t.Fatalf("policy after delete should be NotFound, got %v", err)
+	}
+}
+
+// TestCreateAccessPointClientTokenConcurrent stresses the ClientToken
+// idempotency contract under contention: many concurrent CreateAccessPoint calls
+// with the same token on one file system must all return the SAME access point
+// (exactly one created), and a racing loser must never see AccessPointNotFound.
+// Run with `go test -race -count=200 ./providers/aws/efs/...` to catch the TOCTOU
+// window between claiming the token and publishing the access point.
+func TestCreateAccessPointClientTokenConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	fs, err := m.CreateFileSystem(ctx, driver.CreateFileSystemInput{CreationToken: "ct-fs"})
+	if err != nil {
+		t.Fatalf("create fs: %v", err)
+	}
+
+	const workers = 40
+
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		ids  = make(map[string]struct{})
+		errs []error
+	)
+
+	wg.Add(workers)
+
+	for range workers {
+		go func() {
+			defer wg.Done()
+
+			ap, apErr := m.CreateAccessPoint(ctx, driver.CreateAccessPointInput{
+				FileSystemID: fs.FileSystemID, ClientToken: "ct-1",
+			})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if apErr != nil {
+				errs = append(errs, apErr)
+				return
+			}
+
+			ids[ap.AccessPointID] = struct{}{}
+		}()
+	}
+
+	wg.Wait()
+
+	if len(errs) != 0 {
+		t.Fatalf("racing same-token creates returned %d error(s); first: %v", len(errs), errs[0])
+	}
+
+	if len(ids) != 1 {
+		t.Fatalf("same ClientToken produced %d distinct access-point ids, want 1: %v", len(ids), ids)
+	}
+
+	aps, err := m.DescribeAccessPoints(ctx, fs.FileSystemID, "")
+	if err != nil {
+		t.Fatalf("describe access points: %v", err)
+	}
+
+	if len(aps) != 1 {
+		t.Fatalf("want exactly 1 access point after idempotent races, got %d", len(aps))
 	}
 }
