@@ -270,6 +270,59 @@ func sameDNSName(a, b string) bool {
 	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
 }
 
+// deleteMatchesRecord reports whether a DELETE request's TTL and values exactly
+// match the stored record set — Route 53's rule that a DELETE must repeat the
+// record's current values. Alias records match on their alias target instead of
+// a TTL and resource records.
+func deleteMatchesRecord(cur *dnsdriver.RecordInfo, rr *resourceRecordSetXML) bool {
+	if cur.AliasTarget != nil || rr.AliasTarget != nil {
+		if cur.AliasTarget == nil || rr.AliasTarget == nil {
+			return false
+		}
+
+		return sameDNSName(cur.AliasTarget.DNSName, rr.AliasTarget.DNSName) &&
+			cur.AliasTarget.HostedZoneID == rr.AliasTarget.HostedZoneId
+	}
+
+	reqTTL := 0
+	if rr.TTL != nil {
+		reqTTL = int(*rr.TTL)
+	}
+
+	if cur.TTL != reqTTL {
+		return false
+	}
+
+	reqValues := make([]string, 0, len(rr.ResourceRecords))
+	for _, v := range rr.ResourceRecords {
+		reqValues = append(reqValues, v.Value)
+	}
+
+	return sameValueSet(cur.Values, reqValues)
+}
+
+// sameValueSet reports whether two resource-record value lists are equal as
+// sets (order-independent), matching how Route 53 compares a DELETE's values.
+func sameValueSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	as := append([]string(nil), a...)
+	sort.Strings(as)
+
+	bs := append([]string(nil), b...)
+	sort.Strings(bs)
+
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // validateChangeBatch checks every change would apply cleanly before any is
 // applied, so an invalid batch is rejected whole (nothing half-applied). It
 // simulates the batch against the zone's current record sets, folding in each
@@ -281,38 +334,62 @@ func (h *Handler) validateChangeBatch(r *http.Request, zone *dnsdriver.ZoneInfo,
 	}
 
 	present := make(map[string]bool, len(existing))
+	byKey := make(map[string]*dnsdriver.RecordInfo, len(existing))
 	for i := range existing {
-		present[rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)] = true
+		key := rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)
+		present[key] = true
+		byKey[key] = &existing[i]
 	}
 
 	for i := range changes {
-		rr := &changes[i].ResourceRecordSet
-
-		if err := validateRecordSet(rr, zone.Name); err != nil {
+		if err := validateChange(&changes[i], zone.Name, present, byKey); err != nil {
 			return err
 		}
+	}
 
-		key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
+	return nil
+}
 
-		switch changes[i].Action {
-		case actionCreate:
-			if present[key] {
-				return cerrors.Newf(cerrors.AlreadyExists,
-					"record set %q %s already exists", rr.Name, rr.Type)
-			}
-			present[key] = true
-		case actionDelete:
-			if !present[key] {
-				return cerrors.Newf(cerrors.NotFound,
-					"record set %q %s not found", rr.Name, rr.Type)
-			}
-			present[key] = false
-		case actionUpsert:
-			present[key] = true
-		default:
-			return cerrors.Newf(cerrors.InvalidArgument,
-				"unsupported change action %q", changes[i].Action)
+// validateChange checks one change against the batch's simulated presence set
+// (present) and the zone's pre-batch record sets (byKey), folding the change's
+// effect back into present so later changes in the batch see it.
+func validateChange(
+	ch *changeItem, apex string, present map[string]bool, byKey map[string]*dnsdriver.RecordInfo,
+) error {
+	rr := &ch.ResourceRecordSet
+
+	if err := validateRecordSet(rr, apex); err != nil {
+		return err
+	}
+
+	key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
+
+	switch ch.Action {
+	case actionCreate:
+		if present[key] {
+			return cerrors.Newf(cerrors.AlreadyExists, "record set %q %s already exists", rr.Name, rr.Type)
 		}
+
+		present[key] = true
+	case actionDelete:
+		if !present[key] {
+			return cerrors.Newf(cerrors.NotFound, "record set %q %s not found", rr.Name, rr.Type)
+		}
+		// Route 53 requires a DELETE to specify the exact TTL and values of the
+		// existing record set. Enforce it only against a record that was already
+		// present before this batch (byKey); one created earlier in the same
+		// batch has no pre-existing values to match against.
+		if cur, ok := byKey[key]; ok && !deleteMatchesRecord(cur, rr) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"Tried to delete resource record set [name=%s, type=%s] but the values provided do not match the current values",
+				ensureTrailingDot(rr.Name), rr.Type)
+		}
+
+		present[key] = false
+	case actionUpsert:
+		present[key] = true
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "unsupported change action %q", ch.Action)
 	}
 
 	return nil
