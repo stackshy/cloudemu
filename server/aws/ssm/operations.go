@@ -41,6 +41,13 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// An unrecognized Type is UnsupportedParameterType, not the generic
+		// ValidationException that InvalidArgument maps to.
+		if errors.Is(err, ssmdriver.ErrUnsupportedType) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedParameterType", err.Error())
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

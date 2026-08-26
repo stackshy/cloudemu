@@ -36,6 +36,15 @@ var ErrTagsWithOverwrite = errors.New(errors.InvalidArgument,
 	"The Tags and Overwrite parameters "+
 		"can't be used at the same time.")
 
+// ErrUnsupportedType is returned by PutParameter when Type is set to a value
+// outside {String, StringList, SecureString}. Real Parameter Store rejects an
+// unrecognized type with UnsupportedParameterType rather than silently coercing
+// it. It carries the InvalidArgument code; the SDK-compat layer matches it with
+// errors.Is to return the distinct UnsupportedParameterType wire error.
+var ErrUnsupportedType = errors.New(errors.InvalidArgument,
+	"The parameter type "+
+		"isn't supported.")
+
 // Parameter types, matching AWS SSM Parameter Store.
 const (
 	// TypeString is a plain single-value string parameter.

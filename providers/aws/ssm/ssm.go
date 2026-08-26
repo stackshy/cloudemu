@@ -86,13 +86,25 @@ func ensureLeadingSlash(name string) string {
 	return "/" + name
 }
 
-func defaultType(t string) string {
+// validType reports whether t is one of the parameter types AWS accepts.
+func validType(t string) bool {
 	switch t {
 	case driver.TypeString, driver.TypeStringList, driver.TypeSecureString:
-		return t
+		return true
 	default:
-		return driver.TypeString
+		return false
 	}
+}
+
+// defaultType returns t when it is a recognized type, and String otherwise —
+// used only for an omitted (empty) type, which defaults to String. An
+// explicitly invalid type is rejected earlier by PutParameter.
+func defaultType(t string) string {
+	if validType(t) {
+		return t
+	}
+
+	return driver.TypeString
 }
 
 // resolveOverwriteType decides the type of a new version appended to an existing
@@ -128,6 +140,14 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 
 	if cfg.Overwrite && len(cfg.Tags) > 0 {
 		return 0, "", driver.ErrTagsWithOverwrite
+	}
+
+	// An explicitly set Type must be one AWS recognizes; an unrecognized value
+	// is rejected (UnsupportedParameterType) rather than coerced to String. An
+	// omitted Type is allowed here: it defaults to String on create and retains
+	// the existing type on Overwrite.
+	if cfg.Type != "" && !validType(cfg.Type) {
+		return 0, "", driver.ErrUnsupportedType
 	}
 
 	tier := cfg.Tier

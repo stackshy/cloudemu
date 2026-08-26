@@ -52,6 +52,66 @@ func TestSDKPutParameterOverwriteRetainsType(t *testing.T) {
 	}
 }
 
+// TestSDKPutParameterInvalidTypeRejected verifies that an unrecognized Type is
+// rejected with UnsupportedParameterType rather than being silently coerced to
+// String.
+func TestSDKPutParameterInvalidTypeRejected(t *testing.T) {
+	client := newSSMClient(t)
+	ctx := context.Background()
+
+	_, err := client.PutParameter(ctx, &awsssm.PutParameterInput{
+		Name:  aws.String("/app/badtype"),
+		Value: aws.String("v"),
+		Type:  ssmtypes.ParameterType("Bogus"),
+	})
+	if err == nil {
+		t.Fatal("PutParameter(invalid type): expected error, got nil")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error is not an API error: %v", err)
+	}
+
+	if apiErr.ErrorCode() != "UnsupportedParameterType" {
+		t.Fatalf("error code = %q, want UnsupportedParameterType", apiErr.ErrorCode())
+	}
+
+	// The parameter must not have been stored.
+	_, err = client.GetParameter(ctx, &awsssm.GetParameterInput{Name: aws.String("/app/badtype")})
+
+	var notFound *ssmtypes.ParameterNotFound
+	if !errors.As(err, &notFound) {
+		t.Fatalf("GetParameter after rejected put: got %v, want ParameterNotFound", err)
+	}
+}
+
+// TestSDKPutParameterValidTypesAccepted verifies each recognized Type is
+// accepted (regression guard for the invalid-type validation).
+func TestSDKPutParameterValidTypesAccepted(t *testing.T) {
+	client := newSSMClient(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		typ  ssmtypes.ParameterType
+	}{
+		{"/valid/str", ssmtypes.ParameterTypeString},
+		{"/valid/list", ssmtypes.ParameterTypeStringList},
+		{"/valid/secure", ssmtypes.ParameterTypeSecureString},
+	}
+
+	for _, tc := range cases {
+		if _, err := client.PutParameter(ctx, &awsssm.PutParameterInput{
+			Name:  aws.String(tc.name),
+			Value: aws.String("a,b"),
+			Type:  tc.typ,
+		}); err != nil {
+			t.Fatalf("PutParameter(%s): %v", tc.typ, err)
+		}
+	}
+}
+
 // TestSDKPutParameterOverwriteSameTypeAllowed verifies that re-sending the same
 // type on an Overwrite update is accepted.
 func TestSDKPutParameterOverwriteSameTypeAllowed(t *testing.T) {

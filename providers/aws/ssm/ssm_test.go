@@ -116,6 +116,24 @@ func TestPutOverwriteChangingTypeRejected(t *testing.T) {
 	}
 }
 
+func TestPutParameterInvalidTypeRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	_, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/bad", Value: "v", Type: "Bogus"})
+	if err == nil {
+		t.Fatal("PutParameter(invalid type): want error, got nil")
+	}
+
+	if !errors.Is(err, driver.ErrUnsupportedType) {
+		t.Fatalf("want ErrUnsupportedType, got %v", err)
+	}
+
+	if _, err := m.GetParameter(ctx, "/bad", false); !cerrors.IsNotFound(err) {
+		t.Fatalf("after rejected put, GetParameter err = %v, want NotFound", err)
+	}
+}
+
 func TestPutParameterTagsOnCreate(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
