@@ -67,13 +67,18 @@ type Mock struct {
 }
 
 // New creates a new Azure Monitor mock with the given configuration options.
+// It installs a real-HTTP webhook deliverer by default so an alert breach that
+// fires an action group with webhook receivers actually POSTs to them in
+// production (mirroring eventgrid.New wiring a real httpClient). Tests may swap
+// it via SetWebhookDeliverer.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:      make(map[metricKey][]driver.MetricDatum),
-		alarms:       memstore.New[*alarmData](),
-		channels:     memstore.New[*driver.NotificationChannelInfo](),
-		actionGroups: memstore.New[*actionGroupData](),
-		opts:         opts,
+		metrics:          make(map[metricKey][]driver.MetricDatum),
+		alarms:           memstore.New[*alarmData](),
+		channels:         memstore.New[*driver.NotificationChannelInfo](),
+		actionGroups:     memstore.New[*actionGroupData](),
+		webhookDeliverer: newHTTPWebhookDeliverer(),
+		opts:             opts,
 	}
 }
 

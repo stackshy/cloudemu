@@ -2,8 +2,10 @@ package monitor_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -205,6 +207,125 @@ func pushCPU(t *testing.T, mon *azmonitor.Mock, clock *config.FakeClock, resourc
 		Dimensions: map[string]string{"resourceId": resourceURI},
 	}}); err != nil {
 		t.Fatalf("PutMetricData: %v", err)
+	}
+}
+
+// createWebhookAlert creates, over the real armmonitor SDK, an action group with
+// a single webhook receiver at webhookURL and a Percentage CPU alert (threshold
+// 50) scoped to vm1 that links it. It returns the action group id.
+func createWebhookAlert(t *testing.T, ts *httptest.Server, webhookURL string) string {
+	t.Helper()
+
+	ctx := context.Background()
+
+	agClient, err := armmonitor.NewActionGroupsClient("sub-1", fakeCred{}, armClientOptions(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := agClient.CreateOrUpdate(ctx, "rg-1", "ops-ag", armmonitor.ActionGroupResource{
+		Location: to.Ptr("global"),
+		Properties: &armmonitor.ActionGroup{
+			GroupShortName: to.Ptr("ops"),
+			Enabled:        to.Ptr(true),
+			WebhookReceivers: []*armmonitor.WebhookReceiver{
+				{Name: to.Ptr("hook"), ServiceURI: to.Ptr(webhookURL)},
+			},
+		},
+	}, nil); err != nil {
+		t.Fatalf("action group CreateOrUpdate: %v", err)
+	}
+
+	const agID = "/subscriptions/sub-1/resourceGroups/rg-1/providers/microsoft.insights/actionGroups/ops-ag"
+
+	alertClient, err := armmonitor.NewMetricAlertsClient("sub-1", fakeCred{}, armClientOptions(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := alertClient.CreateOrUpdate(ctx, "rg-1", "cpu-hot", cpuAlert(vm1URI, agID, 50), nil); err != nil {
+		t.Fatalf("metric alert CreateOrUpdate: %v", err)
+	}
+
+	return agID
+}
+
+// TestSDKAlarmBreachDefaultDelivererPOSTsWebhook is the load-bearing regression
+// for the "webhook never delivered in production" finding: with NO deliverer
+// injected, the real-HTTP default installed by monitor.New must POST the alert
+// payload to an action group's webhook receiver on an OK->ALARM breach. The
+// action group and the alert are created through the real armmonitor SDK; only
+// the metric datapoint is injected via the driver, because Azure custom-metric
+// ingestion has no ARM wire path (unlike CloudWatch PutMetricData).
+func TestSDKAlarmBreachDefaultDelivererPOSTsWebhook(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+	cloudP := cloudemu.NewAzure(config.WithClock(clock))
+	// Deliberately no SetWebhookDeliverer: the production default must deliver.
+
+	srv := azureserver.New(azureserver.Drivers{Monitor: cloudP.Monitor})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	var (
+		hits int32
+		body atomic.Value
+	)
+
+	webhookSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body.Store(string(b))
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(webhookSrv.Close)
+
+	createWebhookAlert(t, ts, webhookSrv.URL)
+
+	// Delivery is synchronous inside PutMetricData -> fireActionGroups, so the
+	// receiver is hit before PutMetricData returns.
+	pushCPU(t, cloudP.Monitor, clock, vm1URI, 95)
+
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("webhook receiver hits = %d, want 1 (default deliverer did not POST)", got)
+	}
+
+	payload, _ := body.Load().(string)
+	if !strings.Contains(payload, `"alertName":"cpu-hot"`) || !strings.Contains(payload, `"newState":"ALARM"`) {
+		t.Fatalf("webhook payload = %q, want alertName cpu-hot / newState ALARM", payload)
+	}
+}
+
+// TestSDKAlarmBreachUnreachableWebhookBestEffort covers the best-effort
+// contract: an unreachable webhook endpoint must not fail the breach.
+// PutMetricData returns no error, the alarm still transitions to ALARM, and the
+// delivery is still recorded even though the POST could not complete.
+func TestSDKAlarmBreachUnreachableWebhookBestEffort(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+	cloudP := cloudemu.NewAzure(config.WithClock(clock))
+
+	srv := azureserver.New(azureserver.Drivers{Monitor: cloudP.Monitor})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	// Close the receiver immediately so its URL refuses connections — a fast,
+	// deterministic stand-in for an unreachable webhook endpoint.
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	createWebhookAlert(t, ts, deadURL)
+
+	// pushCPU fatals if PutMetricData returns an error, so a surfaced delivery
+	// error would fail here — the breach must succeed regardless.
+	pushCPU(t, cloudP.Monitor, clock, vm1URI, 95)
+
+	if state := alarmState(t, cloudP.Monitor, "cpu-hot"); state != "ALARM" {
+		t.Fatalf("alarm state = %s, want ALARM (breach must succeed despite a dead webhook)", state)
+	}
+
+	deliveries := cloudP.Monitor.ActionGroupDeliveries()
+	if len(deliveries) != 1 || deliveries[0].ReceiverType != "webhook" {
+		t.Fatalf("deliveries = %+v, want 1 recorded webhook delivery", deliveries)
 	}
 }
 
