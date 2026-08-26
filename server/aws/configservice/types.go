@@ -51,6 +51,14 @@ func epochOrNil(t time.Time) *float64 {
 	return &secs
 }
 
+func timeFromEpoch(secs *float64) time.Time {
+	if secs == nil {
+		return time.Time{}
+	}
+
+	return time.Unix(int64(*secs), 0).UTC()
+}
+
 // --- Recording group / recorder (lowerCamel document members) ---
 
 type recordingGroupJSON struct {
@@ -115,11 +123,61 @@ func recordingGroupToWire(g *cfgdriver.RecordingGroup) *recordingGroupJSON {
 	return out
 }
 
+type recordingModeOverrideJSON struct {
+	Description        string   `json:"description,omitempty"`
+	ResourceTypes      []string `json:"resourceTypes,omitempty"`
+	RecordingFrequency string   `json:"recordingFrequency,omitempty"`
+}
+
+type recordingModeJSON struct {
+	RecordingFrequency     string                      `json:"recordingFrequency,omitempty"`
+	RecordingModeOverrides []recordingModeOverrideJSON `json:"recordingModeOverrides,omitempty"`
+}
+
+func (m *recordingModeJSON) toDriver() *cfgdriver.RecordingMode {
+	if m == nil {
+		return nil
+	}
+
+	out := &cfgdriver.RecordingMode{RecordingFrequency: m.RecordingFrequency}
+
+	for i := range m.RecordingModeOverrides {
+		o := m.RecordingModeOverrides[i]
+		out.RecordingModeOverrides = append(out.RecordingModeOverrides, cfgdriver.RecordingModeOverride{
+			Description:        o.Description,
+			ResourceTypes:      o.ResourceTypes,
+			RecordingFrequency: o.RecordingFrequency,
+		})
+	}
+
+	return out
+}
+
+func recordingModeToWire(m *cfgdriver.RecordingMode) *recordingModeJSON {
+	if m == nil {
+		return nil
+	}
+
+	out := &recordingModeJSON{RecordingFrequency: m.RecordingFrequency}
+
+	for i := range m.RecordingModeOverrides {
+		o := m.RecordingModeOverrides[i]
+		out.RecordingModeOverrides = append(out.RecordingModeOverrides, recordingModeOverrideJSON{
+			Description:        o.Description,
+			ResourceTypes:      o.ResourceTypes,
+			RecordingFrequency: o.RecordingFrequency,
+		})
+	}
+
+	return out
+}
+
 type configurationRecorderJSON struct {
 	Arn            string              `json:"arn,omitempty"`
 	Name           string              `json:"name,omitempty"`
 	RoleARN        string              `json:"roleARN,omitempty"`
 	RecordingGroup *recordingGroupJSON `json:"recordingGroup,omitempty"`
+	RecordingMode  *recordingModeJSON  `json:"recordingMode,omitempty"`
 }
 
 func (c *configurationRecorderJSON) toDriver() cfgdriver.ConfigurationRecorder {
@@ -131,6 +189,7 @@ func (c *configurationRecorderJSON) toDriver() cfgdriver.ConfigurationRecorder {
 		Name:           c.Name,
 		RoleARN:        c.RoleARN,
 		RecordingGroup: c.RecordingGroup.toDriver(),
+		RecordingMode:  c.RecordingMode.toDriver(),
 	}
 }
 
@@ -140,6 +199,7 @@ func recorderToWire(r *cfgdriver.ConfigurationRecorder) configurationRecorderJSO
 		Name:           r.Name,
 		RoleARN:        r.RoleARN,
 		RecordingGroup: recordingGroupToWire(r.RecordingGroup),
+		RecordingMode:  recordingModeToWire(r.RecordingMode),
 	}
 }
 
@@ -327,6 +387,7 @@ func (e *evaluationJSON) toDriver() cfgdriver.Evaluation {
 		ComplianceResourceID:   e.ComplianceResourceID,
 		ComplianceType:         e.ComplianceType,
 		Annotation:             e.Annotation,
+		OrderingTimestamp:      timeFromEpoch(e.OrderingTimestamp),
 	}
 }
 

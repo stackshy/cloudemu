@@ -41,12 +41,34 @@ type RecordingGroup struct {
 	ExclusionByResources []string
 }
 
+// Recording frequencies accepted by a recorder's RecordingMode.
+const (
+	RecordingFrequencyContinuous = "CONTINUOUS"
+	RecordingFrequencyDaily      = "DAILY"
+)
+
+// RecordingModeOverride overrides the recording frequency for a set of resource
+// types.
+type RecordingModeOverride struct {
+	Description        string
+	ResourceTypes      []string
+	RecordingFrequency string
+}
+
+// RecordingMode controls how frequently a recorder captures resource changes,
+// with optional per-resource-type overrides.
+type RecordingMode struct {
+	RecordingFrequency     string
+	RecordingModeOverrides []RecordingModeOverride
+}
+
 // ConfigurationRecorder mirrors the customer-managed Config recorder.
 type ConfigurationRecorder struct {
 	Arn            string
 	Name           string
 	RoleARN        string
 	RecordingGroup *RecordingGroup
+	RecordingMode  *RecordingMode
 	Tags           map[string]string
 
 	// Runtime status, mutated by Start/StopConfigurationRecorder.

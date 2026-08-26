@@ -337,6 +337,162 @@ func TestSDKRecorderExclusionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSDKRecorderRecordingModeRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	putMode := func(freq cfgtypes.RecordingFrequency, overrides []cfgtypes.RecordingModeOverride) {
+		if _, err := c.PutConfigurationRecorder(ctx, &cfgsdk.PutConfigurationRecorderInput{
+			ConfigurationRecorder: &cfgtypes.ConfigurationRecorder{
+				Name:    aws.String("default"),
+				RoleARN: aws.String("arn:aws:iam::123456789012:role/config"),
+				RecordingGroup: &cfgtypes.RecordingGroup{
+					AllSupported: true,
+				},
+				RecordingMode: &cfgtypes.RecordingMode{
+					RecordingFrequency:     freq,
+					RecordingModeOverrides: overrides,
+				},
+			},
+		}); err != nil {
+			t.Fatalf("PutConfigurationRecorder(%s): %v", freq, err)
+		}
+	}
+
+	readMode := func() *cfgtypes.RecordingMode {
+		recs, err := c.DescribeConfigurationRecorders(ctx, &cfgsdk.DescribeConfigurationRecordersInput{})
+		if err != nil {
+			t.Fatalf("DescribeConfigurationRecorders: %v", err)
+		}
+
+		if len(recs.ConfigurationRecorders) != 1 {
+			t.Fatalf("want 1 recorder, got %d", len(recs.ConfigurationRecorders))
+		}
+
+		return recs.ConfigurationRecorders[0].RecordingMode
+	}
+
+	// CONTINUOUS round-trips.
+	putMode(cfgtypes.RecordingFrequencyContinuous, nil)
+
+	if rm := readMode(); rm == nil || rm.RecordingFrequency != cfgtypes.RecordingFrequencyContinuous {
+		t.Fatalf("recordingMode dropped/wrong on read-back: %+v", rm)
+	}
+
+	// DAILY with an override round-trips (upsert onto the existing recorder).
+	putMode(cfgtypes.RecordingFrequencyDaily, []cfgtypes.RecordingModeOverride{{
+		Description:        aws.String("hot types"),
+		RecordingFrequency: cfgtypes.RecordingFrequencyContinuous,
+		ResourceTypes:      []cfgtypes.ResourceType{cfgtypes.ResourceTypeInstance},
+	}})
+
+	rm := readMode()
+	if rm == nil || rm.RecordingFrequency != cfgtypes.RecordingFrequencyDaily {
+		t.Fatalf("daily recordingMode dropped/wrong on read-back: %+v", rm)
+	}
+
+	if len(rm.RecordingModeOverrides) != 1 {
+		t.Fatalf("want 1 override, got %d: %+v", len(rm.RecordingModeOverrides), rm.RecordingModeOverrides)
+	}
+
+	ov := rm.RecordingModeOverrides[0]
+	if aws.ToString(ov.Description) != "hot types" ||
+		ov.RecordingFrequency != cfgtypes.RecordingFrequencyContinuous ||
+		len(ov.ResourceTypes) != 1 || ov.ResourceTypes[0] != cfgtypes.ResourceTypeInstance {
+		t.Fatalf("override not round-tripped faithfully: %+v", ov)
+	}
+}
+
+func TestSDKRecorderInvalidRecordingFrequency(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutConfigurationRecorder(ctx, &cfgsdk.PutConfigurationRecorderInput{
+		ConfigurationRecorder: &cfgtypes.ConfigurationRecorder{
+			Name:    aws.String("default"),
+			RoleARN: aws.String("arn:aws:iam::123456789012:role/config"),
+			RecordingMode: &cfgtypes.RecordingMode{
+				RecordingFrequency: cfgtypes.RecordingFrequency("HOURLY"),
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an invalid RecordingFrequency, got nil")
+	}
+}
+
+func TestSDKComplianceDetailsEvaluationResultIdentifier(t *testing.T) {
+	ctx := context.Background()
+	c, drv := newConfigClientWithDriver(t)
+
+	if _, err := c.PutConfigRule(ctx, &cfgsdk.PutConfigRuleInput{
+		ConfigRule: &cfgtypes.ConfigRule{
+			ConfigRuleName: aws.String("s3-sse"),
+			Source: &cfgtypes.Source{
+				Owner: cfgtypes.OwnerAws, SourceIdentifier: aws.String("S3_BUCKET_SSE_ENABLED"),
+			},
+			Scope: &cfgtypes.Scope{ComplianceResourceTypes: []string{"AWS::S3::Bucket"}},
+		},
+	}); err != nil {
+		t.Fatalf("PutConfigRule: %v", err)
+	}
+
+	token, ok := drv.ResultTokenForRule("s3-sse")
+	if !ok {
+		t.Fatal("no result token issued for rule s3-sse")
+	}
+
+	ordering := nowUTC().Truncate(time.Second)
+	if _, err := c.PutEvaluations(ctx, &cfgsdk.PutEvaluationsInput{
+		ResultToken: aws.String(token),
+		Evaluations: []cfgtypes.Evaluation{{
+			ComplianceResourceType: aws.String("AWS::S3::Bucket"),
+			ComplianceResourceId:   aws.String("bucket-42"),
+			ComplianceType:         cfgtypes.ComplianceTypeNonCompliant,
+			OrderingTimestamp:      aws.Time(ordering),
+		}},
+	}); err != nil {
+		t.Fatalf("PutEvaluations: %v", err)
+	}
+
+	details, err := c.GetComplianceDetailsByConfigRule(ctx, &cfgsdk.GetComplianceDetailsByConfigRuleInput{
+		ConfigRuleName: aws.String("s3-sse"),
+	})
+	if err != nil {
+		t.Fatalf("GetComplianceDetailsByConfigRule: %v", err)
+	}
+
+	if len(details.EvaluationResults) != 1 {
+		t.Fatalf("want 1 evaluation result, got %d", len(details.EvaluationResults))
+	}
+
+	res := details.EvaluationResults[0]
+	if res.EvaluationResultIdentifier == nil || res.EvaluationResultIdentifier.EvaluationResultQualifier == nil {
+		t.Fatalf("EvaluationResultIdentifier not populated: %+v", res)
+	}
+
+	q := res.EvaluationResultIdentifier.EvaluationResultQualifier
+	if aws.ToString(q.ConfigRuleName) != "s3-sse" ||
+		aws.ToString(q.ResourceType) != "AWS::S3::Bucket" ||
+		aws.ToString(q.ResourceId) != "bucket-42" {
+		t.Fatalf("qualifier fields wrong: %+v", q)
+	}
+
+	if res.EvaluationResultIdentifier.OrderingTimestamp == nil ||
+		!res.EvaluationResultIdentifier.OrderingTimestamp.Equal(ordering) {
+		t.Fatalf("OrderingTimestamp wrong: got %v want %v",
+			res.EvaluationResultIdentifier.OrderingTimestamp, ordering)
+	}
+
+	if res.ConfigRuleInvokedTime == nil || res.ResultRecordedTime == nil {
+		t.Fatalf("ConfigRuleInvokedTime/ResultRecordedTime not populated: %+v", res)
+	}
+
+	if res.ComplianceType != cfgtypes.ComplianceTypeNonCompliant {
+		t.Fatalf("unexpected compliance type: %v", res.ComplianceType)
+	}
+}
+
 func TestSDKConformancePackRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	c := newConfigClient(t)
