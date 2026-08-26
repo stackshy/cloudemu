@@ -120,6 +120,9 @@ func (m *Mock) CreateWorkspace(_ context.Context, cfg driver.WorkspaceConfig) (*
 		updated.Tags = copyMap(cfg.Tags)
 		updated.SKUName = skuOrDefault(cfg.SKUName)
 		updated.SKUTier = cfg.SKUTier
+		// ARM PUT replaces the resource: apply the incoming VNet/CMK/network
+		// properties so a re-PUT reflects the new desired state.
+		updated.WorkspaceExtendedProperties = cfg.WorkspaceExtendedProperties
 		m.workspaces.Set(k, &updated)
 
 		return cloneWorkspace(&updated), nil
@@ -141,6 +144,8 @@ func (m *Mock) CreateWorkspace(_ context.Context, cfg driver.WorkspaceConfig) (*
 		ProvisioningState:      driver.StateSucceeded,
 		Tags:                   copyMap(cfg.Tags),
 		CreatedAt:              m.opts.Clock.Now().UTC().Format(time.RFC3339),
+
+		WorkspaceExtendedProperties: cfg.WorkspaceExtendedProperties,
 	}
 
 	m.workspaces.Set(k, ws)

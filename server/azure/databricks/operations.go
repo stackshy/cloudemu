@@ -29,6 +29,16 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 
 	if body.Properties != nil {
 		cfg.ManagedResourceGroupID = body.Properties.ManagedResourceGroupID
+		cfg.WorkspaceExtendedProperties = dbxdriver.WorkspaceExtendedProperties{
+			Parameters:             body.Properties.Parameters,
+			PublicNetworkAccess:    body.Properties.PublicNetworkAccess,
+			RequiredNsgRules:       body.Properties.RequiredNsgRules,
+			Authorizations:         body.Properties.Authorizations,
+			UIDefinitionURI:        body.Properties.UIDefinitionURI,
+			ManagedDiskIdentity:    body.Properties.ManagedDiskIdentity,
+			StorageAccountIdentity: body.Properties.StorageAccountIdentity,
+			DiskEncryptionSetID:    body.Properties.DiskEncryptionSetID,
+		}
 	}
 
 	ws, err := h.dbx.CreateWorkspace(r.Context(), cfg)
