@@ -195,7 +195,7 @@ func (m *Mock) collectFilteredDatums(
 			continue
 		}
 
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchAlarmDimensions(d.Dimensions, dims) {
 			continue
 		}
 
