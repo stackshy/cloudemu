@@ -99,16 +99,24 @@ type Handler struct {
 	subs      map[string]*subState
 	snapshots map[string]*snapState
 
+	// pushDeliverer POSTs the push envelope to a push subscription's endpoint on
+	// publish; defaulted to a real-HTTP deliverer so push works in production.
+	// functionInvoker invokes any Cloud Function whose eventTrigger targets the
+	// topic; nil until the server wires the Cloud Functions handler in.
+	pushDeliverer   PushDeliverer
+	functionInvoker FunctionInvoker
+
 	ackCounter atomic.Uint64
 }
 
 // New returns a Pub/Sub handler backed by mq.
 func New(mq mqdriver.MessageQueue) *Handler {
 	return &Handler{
-		mq:        mq,
-		topics:    make(map[string]*topicState),
-		subs:      make(map[string]*subState),
-		snapshots: make(map[string]*snapState),
+		mq:            mq,
+		topics:        make(map[string]*topicState),
+		subs:          make(map[string]*subState),
+		snapshots:     make(map[string]*snapState),
+		pushDeliverer: newHTTPPushDeliverer(),
 	}
 }
 
@@ -124,16 +132,8 @@ func (h *Handler) topicLog(name string) *topicState {
 	return ts
 }
 
-// appendMessage records a published message on a topic and returns its id.
-func (h *Handler) appendMessage(topicName string, msg *storedMessage) string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	return h.appendMessageLocked(topicName, msg)
-}
-
-// appendMessageLocked is appendMessage for callers already holding h.mu (e.g.
-// dead-letter routing from within deliver).
+// appendMessageLocked records a published message on a topic and returns its id.
+// The caller holds h.mu (publish and dead-letter routing from within deliver).
 func (h *Handler) appendMessageLocked(topicName string, msg *storedMessage) string {
 	ts := h.topicLog(topicName)
 	msg.id = fmt.Sprintf("%d", h.ackCounter.Add(1))

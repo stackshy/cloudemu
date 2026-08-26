@@ -196,6 +196,8 @@ func New(d Drivers) *server.Server {
 	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths
 	// before Firestore so the locations+functions guard wins over Firestore's
 	// /v1/projects/ prefix match.
+	var cfHandler *cloudfunctions.Handler
+
 	if d.CloudFunctions != nil {
 		var cfOpts []cloudfunctions.Option
 		if d.Storage != nil {
@@ -205,7 +207,8 @@ func New(d Drivers) *server.Server {
 			cfOpts = append(cfOpts, cloudfunctions.WithObjectStore(d.Storage))
 		}
 
-		srv.Register(cloudfunctions.New(d.CloudFunctions, cfOpts...))
+		cfHandler = cloudfunctions.New(d.CloudFunctions, cfOpts...)
+		srv.Register(cfHandler)
 	}
 
 	// Cloud Run matches /v2/projects/{p}/locations/{l}/{jobs|operations}[/…].
@@ -220,7 +223,16 @@ func New(d Drivers) *server.Server {
 	// before Firestore so its more-specific resource-type guard wins over
 	// Firestore's permissive /v1/projects/ prefix.
 	if d.PubSub != nil {
-		srv.Register(pubsub.New(d.PubSub))
+		pubsubHandler := pubsub.New(d.PubSub)
+		// PubSub -> Cloud Functions: a publish invokes every function whose
+		// eventTrigger targets the topic (gen1 resource / gen2 pubsubTopic),
+		// mirroring the AWS S3/DynamoDB -> Lambda event-delivery wiring. Push
+		// subscription HTTP delivery is self-contained in the PubSub handler.
+		if cfHandler != nil {
+			pubsubHandler.SetFunctionInvoker(cfHandler)
+		}
+
+		srv.Register(pubsubHandler)
 	}
 
 	// Cloud SQL matches /v1/projects/{p}/{instances|operations}/...; same
