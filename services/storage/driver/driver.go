@@ -323,9 +323,14 @@ type ObjectInfo struct {
 	ContentDisposition string
 	ContentLanguage    string
 	// StorageClass is the GCS object storage class (STANDARD/NEARLINE/COLDLINE/
-	// ARCHIVE), defaulting to the bucket's default class at insert. Empty for
-	// providers that don't model it.
+	// ARCHIVE), defaulting to the bucket's default class at insert; on S3 it is
+	// the object's storage class (STANDARD, STANDARD_IA, GLACIER, …), where empty
+	// is treated as STANDARD. Empty for providers that don't model it.
 	StorageClass string
+	// Expires is the S3 Expires system header (an HTTP-date string) recorded on
+	// PutObject and echoed on GET/HEAD. Empty when unset; providers that don't
+	// model it leave it empty.
+	Expires string
 }
 
 // Object is an object with its data.
@@ -366,6 +371,9 @@ type ObjectVersion struct {
 	ETag         string
 	ContentType  string
 	LastModified string
+	// StorageClass is the version's S3 storage class; empty is treated as
+	// STANDARD. Providers that don't model it leave it empty.
+	StorageClass string
 }
 
 // VersionListResult is the result of a ListObjectVersions operation: every
@@ -450,6 +458,11 @@ type CopyObjectRequest struct {
 	// source object's tags.
 	Tags        map[string]string
 	ReplaceTags bool
+	// SystemProps carries the destination's storage class (from x-amz-storage-class,
+	// which is never inherited from the source) and, when ReplaceMetadata is set,
+	// the replacement system properties. With ReplaceMetadata false the destination
+	// inherits the source object's system properties; StorageClass still applies.
+	SystemProps ObjectSystemProps
 	// Copy-source preconditions; a zero value means the header was absent. A
 	// failed precondition must abort the copy with a FailedPrecondition error.
 	IfMatch           string
@@ -652,6 +665,34 @@ type ConditionalBucket interface {
 		ctx context.Context, bucket, key string, data []byte, contentType string,
 		metadata map[string]string, pre S3PutPrecondition,
 	) (*ObjectInfo, error)
+}
+
+// ObjectSystemProps carries the S3 system-defined object properties and storage
+// class that travel with an object on PutObject/CopyObject. Every field is
+// optional; an empty field means the property is unset (StorageClass empty is
+// treated as STANDARD). It is kept separate from the shared PutObject signature
+// so drivers that don't model these properties are unaffected.
+type ObjectSystemProps struct {
+	CacheControl       string
+	ContentEncoding    string
+	ContentDisposition string
+	ContentLanguage    string
+	Expires            string
+	StorageClass       string
+}
+
+// SystemPropsBucket is an OPTIONAL capability (discovered by type assertion like
+// ConditionalBucket) for a driver that persists the S3 system-defined object
+// properties (Cache-Control, Content-Encoding, Content-Disposition,
+// Content-Language, Expires) and storage class alongside an object, so the wire
+// handler can round-trip them on GET/HEAD/List. props is nil when the caller
+// sent none of them. Providers without it keep the plain PutObject behavior and
+// leave these properties unset.
+type SystemPropsBucket interface {
+	PutObjectWithSystemProps(
+		ctx context.Context, bucket, key string, data []byte, contentType string,
+		metadata map[string]string, props *ObjectSystemProps,
+	) error
 }
 
 // GCSPrecondition carries the GCS write preconditions
