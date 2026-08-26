@@ -336,49 +336,60 @@ func captureUnmodeled(
 // — a credential leak. Matched case-insensitively at any nesting depth, since
 // missingProperties descends into nested objects.
 //
-// Every entry is a value some Azure handler in this server accepts on write and
-// drops from its to-ARM output, verified against how that handler models the
-// key:
-//   - administratorLoginPassword: the admin password for Microsoft.Sql/servers
-//     (server/azure/sql), Microsoft.DBforMySQL/flexibleServers
-//     (server/azure/mysqlflex), Microsoft.DBforPostgreSQL/flexibleServers
-//     (server/azure/postgresflex) and Cosmos DB for PostgreSQL clusters
-//     (server/azure/cosmospostgresql). Each handler's toARM* omits it.
-//   - adminPassword: the VM local-admin password under osProfile for
-//     Microsoft.Compute/virtualMachines (server/azure/virtualmachines). The
-//     handler's osProfile shape carries no password field, so it is dropped.
-//   - initialCassandraAdminPassword: the seed admin password for managed
-//     Cassandra clusters (server/azure/managedcassandra). toARMCluster omits it.
-//   - password: a Cosmos DB for PostgreSQL role password (toARMRole,
-//     server/azure/cosmospostgresql, drops it) and a Container Instances
-//     imageRegistryCredentials[].password (server/azure/containerinstances does
-//     not model the array at all, so it is captured verbatim — inside an array,
-//     hence the []any recursion in sanitizeUnmodeled). Real Azure never returns
-//     either. The one place a `password` is legitimately returned is the
-//     Container Instances exec action response, but that is a bare
-//     {webSocketUri, password} object with no id/properties, so the overlay
-//     (which only rewrites ARM resources and only ever touches keys inside a
-//     properties map) never sees it — verified no toARM*/response struct emits a
-//     `password` under properties.
-//   - secret: the AKS servicePrincipalProfile.secret (server/azure/aks
-//     armManagedClusterProperties omits the whole block). No handler returns a
-//     property named exactly `secret` on read (verified: no json:"secret" in any
-//     response struct).
-//   - gcmCredential / apnsCredential / wnsCredential / admCredential /
-//     baiduCredential / mpnsCredential: Notification Hubs PNS credential objects.
-//     toHubJSON (server/azure/notificationhubs) models only name/registrationTtl
-//     and drops these entirely; real Azure serves them only via GetPnsCredentials,
-//     never the generic hub GET. Each is an object, so denylisting the key skips
-//     the whole credential subtree.
+// A key is treated as write-only in two ways:
 //
-// The list is deliberately conservative: a key belongs here only when real
-// Azure genuinely omits it on read AND a handler relies on that omission, so it
-// never suppresses a field a handler legitimately returns.
+// 1. Suffix rule (the robust guard against wholly-unmodeled subtrees captured
+// verbatim): any key whose lowercased name ENDS WITH "password" or "secret".
+// This covers every write-only credential input real Azure accepts but never
+// echoes, regardless of the prefix a handler's model happens not to know:
+//   - administratorLoginPassword — Microsoft.Sql/servers (server/azure/sql),
+//     DBforMySQL/DBforPostgreSQL flexibleServers (mysqlflex/postgresflex) and
+//     Cosmos DB for PostgreSQL clusters (cosmospostgresql); each toARM* omits it.
+//   - adminPassword — VM osProfile (virtualmachines); the osProfile model has no
+//     password field, so it is dropped.
+//   - initialCassandraAdminPassword — managed Cassandra (managedcassandra);
+//     toARMCluster omits it.
+//   - password — Cosmos-PG role (toARMRole drops it) and Container Instances
+//     imageRegistryCredentials[].password (the array is unmodeled, captured
+//     verbatim — hence the []any recursion in sanitizeUnmodeled).
+//   - secret — AKS servicePrincipalProfile.secret (armManagedClusterProperties
+//     omits the whole block).
+//   - serverAppSecret / clientSecret — AKS aadProfile.serverAppSecret and any
+//     clientSecret-style field in a verbatim-captured subtree (aadProfile is
+//     unmodeled). The sibling serverAppID (public) does not end in the suffix,
+//     so it still round-trips, matching real Azure's aadProfile read.
+//
+// The suffix is a true endsWith, so it never touches a field that merely
+// contains the word: secretName, secretUri, secretRef, clientSecretSetting,
+// passwordPolicy and the plural list outputs secrets/accessKeys are all
+// preserved. Verified by sweeping every server/azure response/toARM* struct: no
+// field a handler RETURNS has a json name ending in "password" or "secret". The
+// sole password-ending returned field is the Container Instances exec action's
+// `password`, a bare {webSocketUri, password} object with no id/properties — the
+// overlay only rewrites ARM resources and only ever ADDS unmodeled keys onto a
+// properties map (it never removes a handler's own fields), so that response is
+// untouched. Output credential keys a client never sends on write
+// (primaryKey/secondaryKey/accessKeys/connectionString) never enter the
+// request-capture path and are correctly left alone.
+//
+// 2. Exact-match object keys: the Notification Hubs PNS credential blocks, which
+// carry secrets but do not end in the suffixes. toHubJSON (notificationhubs)
+// models only name/registrationTtl and drops these; real Azure serves them only
+// via GetPnsCredentials, never the generic hub GET. Each is an object, so
+// denylisting the key skips the whole credential subtree.
+//
+// The rule is matched case-insensitively at any nesting depth (missingProperties
+// and sanitizeUnmodeled recurse into nested objects and arrays), and never
+// suppresses a field a handler legitimately returns.
 func writeOnlyProperty(key string) bool {
-	switch strings.ToLower(key) {
-	case "administratorloginpassword", "adminpassword", "initialcassandraadminpassword",
-		"password", "secret",
-		"gcmcredential", "apnscredential", "wnscredential",
+	lower := strings.ToLower(key)
+
+	if strings.HasSuffix(lower, "password") || strings.HasSuffix(lower, "secret") {
+		return true
+	}
+
+	switch lower {
+	case "gcmcredential", "apnscredential", "wnscredential",
 		"admcredential", "baiducredential", "mpnscredential":
 		return true
 	default:

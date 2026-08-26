@@ -579,6 +579,85 @@ func TestEchoStripsSecretNestedDeepInArray(t *testing.T) {
 	}
 }
 
+// TestEchoDoesNotLeakAKSAADServerAppSecret is the 3rd-batch regression: the AKS
+// handler does not model aadProfile, so the whole block is captured verbatim.
+// serverAppSecret (which lowercases to serverappsecret, not an exact denylist
+// entry) must still be stripped by the ENDS-WITH-secret rule, while the public
+// serverAppID sibling — not ending in the suffix — round-trips as real Azure does.
+func TestEchoDoesNotLeakAKSAADServerAppSecret(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.ContainerService/managedClusters/aksaad?api-version=2024-02-01"
+
+	putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"kubernetesVersion": "1.28.0",
+			"aadProfile": map[string]any{
+				"managed":         true,
+				"serverAppID":     "public-app-id",
+				"serverAppSecret": "AAD-S3cret!",
+				"clientSecret":    "Client-S3cret!",
+			},
+		},
+	})
+
+	aad, ok := props(t, getJSON(t, c, url))["aadProfile"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET dropped the whole unmodeled aadProfile: %v", props(t, getJSON(t, c, url)))
+	}
+
+	if _, leaked := aad["serverAppSecret"]; leaked {
+		t.Fatal("GET leaked write-only aadProfile.serverAppSecret (suffix rule failed)")
+	}
+
+	if _, leaked := aad["clientSecret"]; leaked {
+		t.Fatal("GET leaked write-only aadProfile.clientSecret (suffix rule failed)")
+	}
+
+	if aad["serverAppID"] != "public-app-id" {
+		t.Errorf("overlay dropped non-secret aadProfile.serverAppID: %v", aad["serverAppID"])
+	}
+}
+
+// TestEchoSuffixRuleIsEndsWithNotContains locks the suffix semantics: keys
+// ENDING in password/secret are stripped, while keys that merely CONTAIN the
+// word (secretName, passwordPolicy) — a true endsWith, not a substring match —
+// survive. All live inside one wholly-unmodeled block so the overlay carries them.
+func TestEchoSuffixRuleIsEndsWithNotContains(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/suffixvm?api-version=2023-07-01"
+
+	putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"customCreds": map[string]any{
+				"adminPassword":  "P@ss!",     // ends password -> stripped
+				"clientSecret":   "S3cret!",   // ends secret   -> stripped
+				"secretName":     "kv-entry",  // contains, not ends -> kept
+				"passwordPolicy": "Strong",    // contains, not ends -> kept
+				"secretUri":      "https://x", // contains, not ends -> kept
+			},
+		},
+	})
+
+	cc, ok := props(t, getJSON(t, c, url))["customCreds"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET dropped the unmodeled customCreds block: %v", props(t, getJSON(t, c, url)))
+	}
+
+	for _, k := range []string{"adminPassword", "clientSecret"} {
+		if _, leaked := cc[k]; leaked {
+			t.Fatalf("suffix rule failed to strip %s", k)
+		}
+	}
+
+	for _, k := range []string{"secretName", "passwordPolicy", "secretUri"} {
+		if _, ok := cc[k]; !ok {
+			t.Fatalf("suffix rule over-suppressed non-secret %s (endsWith, not contains)", k)
+		}
+	}
+}
+
 // TestEchoStillReflectsNonSecretProperty is the REGRESSION guard: the secret
 // denylist must not disturb the overlay's legitimate job — a non-secret
 // unmodeled property (a SQL database's maxSizeBytes, which only round-trips via
