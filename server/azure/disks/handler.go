@@ -258,10 +258,21 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Tags:       mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
 	}
 
-	// ARM CreateOrUpdate is idempotent: replace an existing disk in place
-	// rather than accumulating a duplicate under the same name.
+	// ARM CreateOrUpdate is idempotent: an existing disk is updated in place —
+	// preserving its ID (and derived uniqueId), timeCreated, and any live
+	// attachment — rather than delete+recreate, which would leave a duplicate
+	// phantom volume when the disk is attached (DeleteVolume rejects an attached
+	// disk) and churn the uniqueId/timeCreated on every re-PUT.
 	if existing, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
-		_ = h.compute.DeleteVolume(r.Context(), existing.ID)
+		vol, err := h.updateExistingDisk(r.Context(), existing, cfg)
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		h.writeDiskCreateResponse(w, r, rp, req, vol)
+
+		return
 	}
 
 	vol, err := h.compute.CreateVolume(r.Context(), cfg)
@@ -270,6 +281,35 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	h.writeDiskCreateResponse(w, r, rp, req, vol)
+}
+
+// updateExistingDisk applies an idempotent CreateOrUpdate to an already-existing
+// disk. It uses the driver's in-place UpdateVolume when supported (preserving
+// the volume ID, CreatedAt, and attachment); a driver without that capability
+// falls back to the legacy delete+recreate, tolerated only for the unattached
+// case.
+//
+//nolint:gocritic // cfg mirrors the driver-interface signature.
+func (h *Handler) updateExistingDisk(
+	ctx context.Context, existing *computedriver.VolumeInfo, cfg computedriver.VolumeConfig,
+) (*computedriver.VolumeInfo, error) {
+	if updater, ok := h.compute.(computedriver.AzureDiskUpdater); ok {
+		return updater.UpdateVolume(ctx, existing.ID, cfg)
+	}
+
+	_ = h.compute.DeleteVolume(ctx, existing.ID)
+
+	return h.compute.CreateVolume(ctx, cfg)
+}
+
+// writeDiskCreateResponse writes the 202 + Azure-AsyncOperation CreateOrUpdate
+// reply for a created or updated disk.
+//
+//nolint:gocritic // rp/req are request-scoped values passed once per request.
+func (h *Handler) writeDiskCreateResponse(
+	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, req diskRequest, vol *computedriver.VolumeInfo,
+) {
 	location := req.Location
 	if location == "" {
 		location = defaultLocation

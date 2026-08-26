@@ -643,10 +643,43 @@ type AzureVMController interface {
 	// instance in place (preserving its ID and launch time), for idempotent
 	// ARM CreateOrUpdate.
 	UpdateInstance(ctx context.Context, instanceID string, cfg InstanceConfig) error
+	// PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an
+	// existing instance: only the fields present in patch are applied — vmSize
+	// resizes the VM, tags are MERGED into the existing tag set, and a non-nil
+	// identity replaces it — while everything omitted (priority, licenseType,
+	// existing tags, …) is left untouched. Unlike UpdateInstance's full cfg
+	// replace, this never blanks a field the PATCH body omitted.
+	PatchInstance(ctx context.Context, instanceID string, patch AzureVMPatch) error
 	// GeneralizeInstance marks an instance as generalized (Azure Generalize
 	// action), a precondition for capturing it into a reusable image. It is
 	// idempotent: generalizing an already-generalized VM succeeds.
 	GeneralizeInstance(ctx context.Context, instanceID string) error
+}
+
+// AzureVMPatch carries the mutable fields an ARM PATCH Update may supply. A
+// zero/nil field means the PATCH body omitted it and the existing value is
+// preserved.
+type AzureVMPatch struct {
+	// VMSize, when non-empty, resizes the VM (hardwareProfile.vmSize).
+	VMSize string
+	// Tags, when non-nil, are merged into the existing tags (a PATCH adds or
+	// overwrites the supplied keys and leaves omitted keys in place).
+	Tags map[string]string
+	// Identity, when non-nil, replaces the managed identity block.
+	Identity *ManagedIdentity
+}
+
+// AzureDiskUpdater is an optional Azure-only capability for an in-place managed
+// disk update: ARM Disks CreateOrUpdate on a disk that already exists mutates
+// the existing volume by ID rather than delete+recreate, so its ID (and the
+// derived uniqueId), CreatedAt (timeCreated), and any live attachment are
+// preserved and no duplicate volume is produced. Only the Azure VM mock
+// implements it; the disks wire handler type-asserts for it.
+type AzureDiskUpdater interface {
+	// UpdateVolume mutates the existing volume id in place from cfg (size, sku/
+	// type, iops, throughput, tier, tags), preserving the volume's ID,
+	// CreatedAt, and current attachment. Returns NotFound when id is unknown.
+	UpdateVolume(ctx context.Context, id string, cfg VolumeConfig) (*VolumeInfo, error)
 }
 
 // AzureDiskAccessor is an optional Azure-only capability for the managed-disk

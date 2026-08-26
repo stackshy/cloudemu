@@ -58,6 +58,14 @@ AzureDiskAccessor is an optional Azure-only capability for the managed-disk
 | `GrantDiskAccess` | GrantDiskAccess issues a time-bounded SAS URI granting the requested |
 | `RevokeDiskAccess` | RevokeDiskAccess revokes any SAS access previously granted to the disk. |
 
+### AzureDiskUpdater
+
+AzureDiskUpdater is an optional Azure-only capability for an in-place managed
+
+| Operation | Description |
+| --- | --- |
+| `UpdateVolume` | UpdateVolume mutates the existing volume id in place from cfg (size, sku/ |
+
 ### AzureSSHKeyUpdater
 
 AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys
@@ -74,6 +82,7 @@ AzureVMController is an optional Azure-only capability supporting the ARM
 | --- | --- |
 | `Deallocate` | Deallocate stops the guest and releases the allocated compute |
 | `GeneralizeInstance` | GeneralizeInstance marks an instance as generalized (Azure Generalize |
+| `PatchInstance` | PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an |
 | `PowerOff` | PowerOff stops the guest OS while keeping the VM allocated |
 | `UpdateInstance` | UpdateInstance overwrites the mutable configuration of an existing |
 

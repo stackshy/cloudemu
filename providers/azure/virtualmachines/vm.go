@@ -34,6 +34,7 @@ var (
 	_ driver.Compute            = (*Mock)(nil)
 	_ driver.ConsoleReader      = (*Mock)(nil)
 	_ driver.AzureVMController  = (*Mock)(nil)
+	_ driver.AzureDiskUpdater   = (*Mock)(nil)
 	_ driver.KeyPairGenerator   = (*Mock)(nil)
 	_ driver.AzureDiskAccessor  = (*Mock)(nil)
 	_ driver.AzureSSHKeyUpdater = (*Mock)(nil)
@@ -680,6 +681,43 @@ func (m *Mock) UpdateInstance(_ context.Context, instanceID string, cfg driver.I
 	return nil
 }
 
+// PatchInstance applies an ARM PATCH Update (BeginUpdate) merge-patch to an
+// existing instance. Only the fields the request supplied are applied: a
+// non-empty VMSize resizes the VM, a non-nil Tags map is MERGED into the
+// existing tags (adding/overwriting supplied keys, leaving omitted keys —
+// including the internal ARM-name tag — in place), and a non-nil Identity
+// replaces the identity block. Everything else (priority, licenseType, image,
+// zones, …) is left untouched, unlike UpdateInstance's full-config replace.
+func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.AzureVMPatch) error {
+	ok := m.instances.Update(instanceID, func(inst *instanceData) *instanceData {
+		if patch.VMSize != "" {
+			inst.InstanceType = patch.VMSize
+		}
+
+		if patch.Tags != nil {
+			if inst.Tags == nil {
+				inst.Tags = make(map[string]string, len(patch.Tags))
+			}
+
+			for k, v := range patch.Tags {
+				inst.Tags[k] = v
+			}
+		}
+
+		if patch.Identity != nil {
+			inst.Identity = resolveIdentity(patch.Identity, instanceID)
+		}
+
+		return inst
+	})
+
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	return nil
+}
+
 // GeneralizeInstance marks an instance as generalized (Azure Generalize
 // action), a precondition for capturing it into a reusable image. Real Azure
 // requires the VM to be stopped or deallocated first: generalizing a running VM
@@ -897,6 +935,44 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		Throughput:       cfg.Throughput,
 		Tier:             cfg.Tier,
 	}
+	m.volumes.Set(id, vol)
+
+	result := *vol
+
+	return &result, nil
+}
+
+// UpdateVolume mutates an existing managed disk in place (ARM Disks
+// CreateOrUpdate on a disk that already exists). It preserves the volume's ID,
+// CreatedAt, and current attachment (State/AttachedTo/Device) — so the derived
+// uniqueId and timeCreated stay stable and an attached disk is not duplicated —
+// while updating the mutable cost fields from cfg. A non-zero Size, non-empty
+// VolumeType/Tier are applied; IOPS/Throughput and Tags are replaced from cfg
+// (PUT is a full resource replacement).
+//
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
+func (m *Mock) UpdateVolume(_ context.Context, id string, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+	vol, ok := m.volumes.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "disk %q not found", id)
+	}
+
+	if cfg.Size != 0 {
+		vol.Size = cfg.Size
+	}
+
+	if cfg.VolumeType != "" {
+		vol.VolumeType = cfg.VolumeType
+	}
+
+	if cfg.Tier != "" {
+		vol.Tier = cfg.Tier
+	}
+
+	vol.IOPS = cfg.IOPS
+	vol.Throughput = cfg.Throughput
+	vol.Tags = copyTags(cfg.Tags)
+
 	m.volumes.Set(id, vol)
 
 	result := *vol
