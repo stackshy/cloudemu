@@ -163,10 +163,24 @@ type fixedResponseConfigXML struct {
 	MessageBody string `xml:"MessageBody,omitempty"`
 }
 
+type targetGroupTupleXML struct {
+	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
+	Weight         int32  `xml:"Weight"`
+}
+
+type targetGroupTuplesXML struct {
+	Member []targetGroupTupleXML `xml:"member,omitempty"`
+}
+
+type forwardConfigXML struct {
+	TargetGroups *targetGroupTuplesXML `xml:"TargetGroups,omitempty"`
+}
+
 type actionXML struct {
 	Type                string                  `xml:"Type"`
 	TargetGroupArn      string                  `xml:"TargetGroupArn,omitempty"`
 	Order               int                     `xml:"Order,omitempty"`
+	ForwardConfig       *forwardConfigXML       `xml:"ForwardConfig,omitempty"`
 	RedirectConfig      *redirectConfigXML      `xml:"RedirectConfig,omitempty"`
 	FixedResponseConfig *fixedResponseConfigXML `xml:"FixedResponseConfig,omitempty"`
 }
@@ -483,6 +497,18 @@ func toActionXML(a lbdriver.RuleAction) actionXML {
 		Type:           a.Type,
 		TargetGroupArn: a.TargetGroupARN,
 		Order:          a.Order,
+	}
+
+	if len(a.ForwardConfig) > 0 {
+		tuples := &targetGroupTuplesXML{Member: make([]targetGroupTupleXML, 0, len(a.ForwardConfig))}
+		for _, tg := range a.ForwardConfig {
+			tuples.Member = append(tuples.Member, targetGroupTupleXML{
+				TargetGroupArn: tg.TargetGroupARN,
+				Weight:         tg.Weight,
+			})
+		}
+
+		x.ForwardConfig = &forwardConfigXML{TargetGroups: tuples}
 	}
 
 	if rc := a.RedirectConfig; rc != nil {

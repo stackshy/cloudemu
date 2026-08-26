@@ -205,11 +205,23 @@ type HTTPRequestMethodConditionConfig struct {
 // forward, so the common HTTP->HTTPS redirect and custom fixed-response
 // patterns survive a create/describe cycle instead of being silently dropped.
 type RuleAction struct {
-	Type                string // "forward", "redirect", "fixed-response", "authenticate-cognito", "authenticate-oidc"
-	TargetGroupARN      string
+	Type           string // "forward", "redirect", "fixed-response", "authenticate-cognito", "authenticate-oidc"
+	TargetGroupARN string
+	// ForwardConfig holds the full weighted target-group set for a "forward"
+	// action (canary / blue-green). A single-target forward keeps only
+	// TargetGroupARN set; a multi-target forward fills ForwardConfig and sets
+	// TargetGroupARN to the primary (first) group, as real ELBv2 reports.
+	ForwardConfig       []ForwardTargetGroup
 	Order               int
 	RedirectConfig      *RedirectActionConfig
 	FixedResponseConfig *FixedResponseActionConfig
+}
+
+// ForwardTargetGroup is one weighted target group inside a forward action's
+// ForwardConfig.
+type ForwardTargetGroup struct {
+	TargetGroupARN string
+	Weight         int32
 }
 
 // RedirectActionConfig is the configuration of a "redirect" action. AWS requires

@@ -516,20 +516,57 @@ func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 
 // parseAction parses a single action at the given form prefix. Both the flat
 // TargetGroupArn field and the ForwardConfig.TargetGroups.member.N nesting are
-// accepted for forward actions.
+// accepted for forward actions; a multi-target-group (weighted) ForwardConfig is
+// preserved in full so canary / blue-green splits round-trip on Describe.
 func parseAction(form url.Values, base string) lbdriver.RuleAction {
+	forward := parseForwardConfig(form, base+".ForwardConfig")
+
 	tgARN := form.Get(base + ".TargetGroupArn")
-	if tgARN == "" {
-		tgARN = form.Get(base + ".ForwardConfig.TargetGroups.member.1.TargetGroupArn")
+	if tgARN == "" && len(forward) > 0 {
+		tgARN = forward[0].TargetGroupARN
 	}
 
 	return lbdriver.RuleAction{
 		Type:                typeOr(form.Get(base+".Type"), "forward"),
 		TargetGroupARN:      tgARN,
+		ForwardConfig:       forward,
 		Order:               formInt(form.Get(base + ".Order")),
 		RedirectConfig:      parseRedirectConfig(form, base+".RedirectConfig"),
 		FixedResponseConfig: parseFixedResponseConfig(form, base+".FixedResponseConfig"),
 	}
+}
+
+// parseForwardConfig parses a forward action's ForwardConfig.TargetGroups member
+// list into weighted target groups, returning nil when none are present. A
+// single-target forward carried only as the flat TargetGroupArn yields nil here;
+// the caller keeps the scalar field for that case.
+func parseForwardConfig(form url.Values, base string) []lbdriver.ForwardTargetGroup {
+	indices := awsquery.CollectIndices(form, base+".TargetGroups.member")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]lbdriver.ForwardTargetGroup, 0, len(indices))
+
+	for _, n := range indices {
+		member := base + ".TargetGroups.member." + strconv.Itoa(n)
+
+		arn := form.Get(member + ".TargetGroupArn")
+		if arn == "" {
+			continue
+		}
+
+		out = append(out, lbdriver.ForwardTargetGroup{
+			TargetGroupARN: arn,
+			Weight:         formInt32(form.Get(member + ".Weight")),
+		})
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // parseRedirectConfig parses a RedirectConfig sub-structure, returning nil when
@@ -911,4 +948,19 @@ func formInt(v string) int {
 	}
 
 	return n
+}
+
+// formInt32 parses a form value as an int32, returning 0 for an empty or
+// malformed value. Used for the bounded Weight field of a weighted forward.
+func formInt32(v string) int32 {
+	if v == "" {
+		return 0
+	}
+
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil {
+		return 0
+	}
+
+	return int32(n)
 }
