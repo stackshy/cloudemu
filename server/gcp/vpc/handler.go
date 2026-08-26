@@ -36,6 +36,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -86,18 +87,33 @@ func nameMatches(filter, name string) bool { return gcprest.NameMatches(filter, 
 // maxResultsOf parses the maxResults query param, defaulting when absent/invalid.
 func maxResultsOf(raw string) int { return gcprest.MaxResults(raw) }
 
+// instanceLister is the minimal, optional compute-side lookup the subnetwork
+// delete guard needs: it lists instances so the handler can reject deleting a
+// subnet that still has instances attached. Kept as a local interface (satisfied
+// by the shared compute driver) so the VPC handler gains no hard dependency on
+// the compute package and stays usable when no compute driver is wired.
+type instanceLister interface {
+	DescribeInstances(
+		ctx context.Context, instanceIDs []string, filters []computedriver.DescribeFilter,
+		opts ...computedriver.DescribeInstancesOptions,
+	) ([]computedriver.Instance, error)
+}
+
 // Handler serves the GCP networking REST surface.
 type Handler struct {
 	net       netdriver.Networking
+	compute   instanceLister
 	routers   *routerStore
 	addresses *addressStore
 	routes    *routeStore
 }
 
-// New returns a networks handler.
-func New(n netdriver.Networking) *Handler {
+// New returns a networks handler. compute is optional (may be nil): when
+// provided, deleteSubnetwork rejects deleting a subnet that still has instances.
+func New(n netdriver.Networking, compute instanceLister) *Handler {
 	return &Handler{
 		net:       n,
+		compute:   compute,
 		routers:   newRouterStore(),
 		addresses: newAddressStore(),
 		routes:    newRouteStore(),
@@ -616,6 +632,22 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// Real GCP refuses to delete a subnetwork that still has instances in it,
+	// returning 400 resourceInUseByAnotherResource (mirrors the network delete
+	// guard against live subnets above). Scan instances whose networkInterfaces
+	// subnet references this subnet and reject; delete succeeds once empty.
+	host := hostOf(r)
+	if inst, scanErr := h.instanceInSubnet(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
+		gcprest.WriteCErr(w, scanErr)
+		return
+	} else if inst != "" {
+		subnetLink := gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, rp.ScopeName, "subnetworks", rp.ResourceName)
+		gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
+			"The subnetwork resource '"+subnetLink+"' is already being used by '"+inst+"'")
+
 		return
 	}
 
@@ -1157,6 +1189,61 @@ func (h *Handler) subnetOnNetwork(ctx context.Context, vpcID, netName string) (s
 	}
 
 	return "", nil
+}
+
+// These mirror the tag keys the compute wire handler stamps on each instance
+// (server/gcp/compute) so this handler can name an in-subnet instance in the
+// delete-in-use error without importing the compute server package.
+const (
+	instNameTag = "cloudemu:gcpName"
+	instZoneTag = "cloudemu:gcp:zone"
+)
+
+// instanceInSubnet returns the self-link of the first instance whose
+// networkInterfaces subnet references the given subnet (by name, scoped to the
+// subnet's region), or "" when none. It underpins the delete-in-use guard for
+// subnetworks. A nil compute driver (compute not wired) reports no users.
+func (h *Handler) instanceInSubnet(ctx context.Context, host, project, subnetName, region string) (string, error) {
+	if h.compute == nil {
+		return "", nil
+	}
+
+	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		return "", err
+	}
+
+	for i := range instances {
+		if !subnetRefMatches(instances[i].SubnetID, subnetName, region) {
+			continue
+		}
+
+		name := tagOr(instances[i].Tags, instNameTag, instances[i].ID)
+		zone := tagOr(instances[i].Tags, instZoneTag, "")
+
+		return gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", name), nil
+	}
+
+	return "", nil
+}
+
+// subnetRefMatches reports whether a raw instance subnet reference (a bare name,
+// a relative path, or a full self-link of the form ".../regions/{r}/subnetworks/{n}")
+// points at the subnet identified by name and region. When the ref carries a
+// region segment it must match; a bare-name ref matches on name alone.
+func subnetRefMatches(ref, name, region string) bool {
+	if ref == "" || lastSegment(ref) != name {
+		return false
+	}
+
+	if idx := strings.Index(ref, "/regions/"); idx >= 0 {
+		rest := ref[idx+len("/regions/"):]
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			return rest[:slash] == region
+		}
+	}
+
+	return true
 }
 
 func findFirewallByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.SecurityGroupInfo, error) {
