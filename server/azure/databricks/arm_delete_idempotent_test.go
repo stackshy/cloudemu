@@ -30,6 +30,60 @@ func idempotentDeleteAC(t *testing.T, client *armdatabricks.AccessConnectorsClie
 	}
 }
 
+// idempotentDeleteWorkspace runs BeginDelete + PollUntilDone on a workspace and
+// fails the test if either step returns an error.
+func idempotentDeleteWorkspace(t *testing.T, client *armdatabricks.WorkspacesClient, rg, name string) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	poller, err := client.BeginDelete(ctx, rg, name, nil)
+	if err != nil {
+		t.Fatalf("BeginDelete(%q): %v", name, err)
+	}
+
+	if _, err = poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("delete PollUntilDone(%q): %v", name, err)
+	}
+}
+
+func TestSDKWorkspaceDeleteIdempotent(t *testing.T) {
+	opts, sub := newARMOptions(t)
+
+	client, err := armdatabricks.NewWorkspacesClient(sub, fakeCred{}, opts)
+	if err != nil {
+		t.Fatalf("new workspaces client: %v", err)
+	}
+
+	ctx := context.Background()
+
+	const wsName = "ws-idempotent"
+
+	// Create a workspace so the first delete has a real target.
+	createPoller, err := client.BeginCreateOrUpdate(ctx, testRG, wsName, armdatabricks.Workspace{
+		Location: to.Ptr("eastus"),
+		SKU:      &armdatabricks.SKU{Name: to.Ptr("premium")},
+		Properties: &armdatabricks.WorkspaceProperties{
+			ManagedResourceGroupID: to.Ptr(managed),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err = createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("create PollUntilDone: %v", err)
+	}
+
+	// First delete removes it, second delete on the now-missing workspace must
+	// still succeed (idempotent 204).
+	idempotentDeleteWorkspace(t, client, testRG, wsName)
+	idempotentDeleteWorkspace(t, client, testRG, wsName)
+
+	// Deleting a workspace that was never created must also succeed.
+	idempotentDeleteWorkspace(t, client, testRG, "never-existed")
+}
+
 func TestSDKAccessConnectorDeleteIdempotent(t *testing.T) {
 	opts, sub := newARMOptions(t)
 

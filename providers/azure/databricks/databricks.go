@@ -177,9 +177,13 @@ func (m *Mock) UpdateWorkspaceTags(_ context.Context, resourceGroup, name string
 	}
 
 	// Mutate a copy and swap it in rather than writing the shared struct in
-	// place, so concurrent readers never observe a torn update.
+	// place, so concurrent readers never observe a torn update. A nil tags map
+	// leaves the field unchanged (PATCH semantics); an explicit empty map clears.
 	updated := *ws
-	updated.Tags = copyMap(tags)
+	if tags != nil {
+		updated.Tags = copyMap(tags)
+	}
+
 	m.workspaces.Set(k, &updated)
 
 	return cloneWorkspace(&updated), nil
