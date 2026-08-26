@@ -44,6 +44,8 @@ func (h *Handler) serveSubscriptionVerb(w http.ResponseWriter, r *http.Request, 
 		h.modifyPushConfig(w, r, name)
 	case "seek":
 		h.seek(w, r, name)
+	case "detach":
+		h.detachSubscription(w, r, name)
 	case verbGetIamPolicy, verbSetIamPolicy, verbTestIamPermissions:
 		h.serveIam(w, r, resSubscriptions, name, action)
 	default:
@@ -59,10 +61,12 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
-	topicShort := shortName(body.Topic)
-	if topicShort == "" {
-		topicShort = name
+	if body.Topic == "" {
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "topic must be specified")
+		return
 	}
+
+	topicShort := shortName(body.Topic)
 
 	if _, err := h.findQueueByName(r, topicShort); err != nil {
 		writeErr(w, err)
@@ -71,6 +75,9 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 
 	if body.AckDeadlineSeconds == 0 {
 		body.AckDeadlineSeconds = defaultAckDeadlineSeconds
+	} else if !validAckDeadline(body.AckDeadlineSeconds) {
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, ackDeadlineRangeMsg)
+		return
 	}
 
 	filter, err := parseFilter(body.Filter)
@@ -144,6 +151,10 @@ func applySubMask(dst, src *subscription, masks []string) error {
 		switch m {
 		case "filter", "topic", "name":
 			return cerrors.Newf(cerrors.InvalidArgument, "field %q is immutable and cannot be updated", m)
+		case "ackDeadlineSeconds":
+			if !validAckDeadline(src.AckDeadlineSeconds) {
+				return cerrors.New(cerrors.InvalidArgument, ackDeadlineRangeMsg)
+			}
 		}
 
 		if set, ok := setters[m]; ok {
@@ -152,6 +163,18 @@ func applySubMask(dst, src *subscription, masks []string) error {
 	}
 
 	return nil
+}
+
+const (
+	minAckDeadlineSeconds = 10
+	maxAckDeadlineSeconds = 600
+	ackDeadlineRangeMsg   = "ackDeadlineSeconds must be between 10 and 600"
+)
+
+// validAckDeadline reports whether s is within Pub/Sub's allowed ack-deadline
+// range (10..600 seconds inclusive).
+func validAckDeadline(s int) bool {
+	return s >= minAckDeadlineSeconds && s <= maxAckDeadlineSeconds
 }
 
 // subMaskSetters maps a subscriptions.patch field-mask path to the merge that
@@ -168,6 +191,9 @@ func subMaskSetters() map[string]func(dst, src *subscription) {
 		"retainAckedMessages":      func(d, s *subscription) { d.RetainAckedMessages = s.RetainAckedMessages },
 		"enableMessageOrdering":    func(d, s *subscription) { d.EnableMessageOrdering = s.EnableMessageOrdering },
 		"detached":                 func(d, s *subscription) { d.Detached = s.Detached },
+		"enableExactlyOnceDelivery": func(d, s *subscription) {
+			d.EnableExactlyOnceDelivery = s.EnableExactlyOnceDelivery
+		},
 	}
 }
 
@@ -193,6 +219,31 @@ func (h *Handler) deleteSubscription(w http.ResponseWriter, name string) {
 	h.mu.Lock()
 	_, ok := h.subs[name]
 	delete(h.subs, name)
+	h.mu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, reasonNotFound, "subscription "+name+" not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// detachSubscription applies subscriptions.detach: it marks the subscription
+// detached (it stops receiving messages) and returns an empty body, matching the
+// real DetachSubscriptionResponse.
+func (h *Handler) detachSubscription(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	h.mu.Lock()
+	sub, ok := h.subs[name]
+
+	if ok {
+		sub.cfg.Detached = true
+	}
 	h.mu.Unlock()
 
 	if !ok {

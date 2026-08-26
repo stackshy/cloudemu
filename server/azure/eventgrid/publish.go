@@ -90,13 +90,14 @@ func (h *PublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	drvEvents := make([]ebdriver.Event, 0, len(events))
 	for i := range events {
 		drvEvents = append(drvEvents, ebdriver.Event{
-			ID:         events[i].ID,
-			Source:     topic,
-			DetailType: events[i].EventType,
-			Detail:     string(events[i].Data),
-			Time:       parseEventTime(events[i].EventTime),
-			EventBus:   topic,
-			Subject:    events[i].Subject,
+			ID:          events[i].ID,
+			Source:      topic,
+			DetailType:  events[i].EventType,
+			Detail:      string(events[i].Data),
+			Time:        parseEventTime(events[i].EventTime),
+			EventBus:    topic,
+			Subject:     events[i].Subject,
+			DataVersion: events[i].DataVersion,
 		})
 	}
 

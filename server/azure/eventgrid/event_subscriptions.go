@@ -175,6 +175,80 @@ func (h *Handler) createOrUpdateEventSubscription(w http.ResponseWriter, r *http
 	azurearm.WriteJSON(w, http.StatusCreated, toEventSubscriptionJSON(rp, rule))
 }
 
+// mergeRawProperties overlays the top-level keys of patch onto existing,
+// returning the merged properties JSON. Keys absent from patch are preserved
+// (partial-merge PATCH semantics — no nil-mask data loss); keys present in patch
+// replace their prior value. An empty patch leaves existing untouched. This
+// covers the EventSubscriptionUpdateParameters fields (destination, filter,
+// labels, deadLetterDestination, retryPolicy, eventDeliverySchema) without
+// enumerating them, and preserves any unknown fields the caller round-trips.
+func mergeRawProperties(existing, patch json.RawMessage) json.RawMessage {
+	if len(patch) == 0 {
+		return existing
+	}
+
+	base := map[string]json.RawMessage{}
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &base)
+	}
+
+	over := map[string]json.RawMessage{}
+	if err := json.Unmarshal(patch, &over); err != nil {
+		return existing
+	}
+
+	for k, v := range over {
+		base[k] = v
+	}
+
+	out, err := json.Marshal(base)
+	if err != nil {
+		return existing
+	}
+
+	return out
+}
+
+// updateEventSubscription maps TopicEventSubscriptions.Update (PATCH) onto the
+// rule model: it merges the supplied fields onto the stored properties,
+// preserving fields the caller omitted, and re-stores the subscription (200).
+// The SDK's EventSubscriptionUpdateParameters marshals its fields (destination,
+// filter, labels, deadLetterDestination, retryPolicy, eventDeliverySchema) at
+// the top level — no "properties" wrapper — matching the shape stored for the
+// subscription, so the whole body is merged. 404 when the subscription does not
+// exist, before any write.
+func (h *Handler) updateEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	existing, err := h.bus.GetRule(r.Context(), rp.ResourceName, rp.SubResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	var patch json.RawMessage
+	if !azurearm.DecodeJSON(w, r, &patch) {
+		return
+	}
+
+	merged := mergeRawProperties(json.RawMessage(existing.Description), patch)
+
+	cfg := &ebdriver.RuleConfig{
+		Name:        rp.SubResourceName,
+		EventBus:    rp.ResourceName,
+		Description: string(merged),
+		State:       existing.State,
+	}
+
+	rule, perr := h.bus.PutRule(r.Context(), cfg)
+	if perr != nil {
+		azurearm.WriteCErr(w, perr)
+		return
+	}
+
+	// The armeventgrid Update LRO poller accepts only 201 for event
+	// subscriptions; the terminal provisioningState completes it inline.
+	azurearm.WriteJSON(w, http.StatusCreated, toEventSubscriptionJSON(rp, rule))
+}
+
 func (h *Handler) getEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	rule, err := h.bus.GetRule(r.Context(), rp.ResourceName, rp.SubResourceName)
 	if err != nil {

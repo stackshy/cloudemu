@@ -22,6 +22,24 @@ import (
 // ServiceBus/Functions delivery is left as a follow-up (see PR notes).
 const endpointTypeWebHook = "WebHook"
 
+// defaultDataVersion is the dataVersion Event Grid stamps on a delivered event
+// when the publisher omitted one; metadataVersion is the read-only schema
+// version Event Grid always reports as "1".
+const (
+	defaultDataVersion = "1.0"
+	metadataVersion    = "1"
+)
+
+// dataVersionOrDefault returns the publisher's dataVersion, defaulting to "1.0"
+// only when the publisher omitted it (matching real Event Grid).
+func dataVersionOrDefault(v string) string {
+	if v == "" {
+		return defaultDataVersion
+	}
+
+	return v
+}
+
 // webhookDeliveryTimeout bounds how long PutEvents waits for a single WebHook
 // destination to respond. Real Event Grid waits up to 30s before queuing a
 // retry; this mock uses a shorter bound so a dead test endpoint can't hang a
@@ -103,13 +121,14 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event 
 	dctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(ctx))
 
 	payload := deliveryEvent{
-		ID:          event.ID,
-		Topic:       topicARN,
-		Subject:     event.Subject,
-		EventType:   event.DetailType,
-		EventTime:   event.Time.UTC().Format(time.RFC3339Nano),
-		Data:        eventDataOrEmpty(event.Detail),
-		DataVersion: "1.0",
+		ID:              event.ID,
+		Topic:           topicARN,
+		Subject:         event.Subject,
+		EventType:       event.DetailType,
+		EventTime:       event.Time.UTC().Format(time.RFC3339Nano),
+		Data:            eventDataOrEmpty(event.Detail),
+		DataVersion:     dataVersionOrDefault(event.DataVersion),
+		MetadataVersion: metadataVersion,
 	}
 
 	body, err := json.Marshal([]deliveryEvent{payload})
