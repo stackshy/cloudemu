@@ -139,5 +139,10 @@ func copyCert(c *driver.Certificate) driver.Certificate {
 	out.InUseBy = append([]string(nil), c.InUseBy...)
 	out.DomainValidationOptions = append([]driver.DomainValidation(nil), c.DomainValidationOptions...)
 
+	for i := range out.DomainValidationOptions {
+		out.DomainValidationOptions[i].ValidationEmails =
+			append([]string(nil), c.DomainValidationOptions[i].ValidationEmails...)
+	}
+
 	return out
 }
