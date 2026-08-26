@@ -123,20 +123,9 @@ func (m *Mock) DeleteRegexPatternSet(_ context.Context, ref driver.Ref, lockToke
 		return err
 	}
 
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
-
-	if sd.set.LockToken != lockToken {
-		return staleLock("stale lock token for regex pattern set %q", ref.ID)
-	}
-
-	if m.itemReferencedByWebACL(sd.set.ARN) {
-		return associated("regex pattern set %q is referenced by one or more web ACLs", ref.ID)
-	}
-
-	m.regexes.Delete(key(ref.Scope, ref.ID))
-
-	return nil
+	return deleteGuarded(&sd.mu, ref.ID, "regex pattern set", lockToken,
+		&sd.set.LockToken, sd.set.ARN, m.itemReferencedByWebACL,
+		func() { m.regexes.Delete(key(ref.Scope, ref.ID)) })
 }
 
 // ListRegexPatternSets returns all regex pattern sets in a scope.
