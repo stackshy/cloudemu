@@ -316,6 +316,14 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		return rdbdriver.Cluster{}, cerrors.Newf(cerrors.AlreadyExists, "Redshift cluster %q already exists", cfg.ID)
 	}
 
+	// A referenced subnet group must exist, matching real Redshift's
+	// ClusterSubnetGroupNotFoundFault (the handler maps "subnet group" NotFound
+	// to that code); otherwise IaC ordering mistakes are silently masked.
+	if cfg.SubnetGroupName != "" && !m.subnetGroups.Has(cfg.SubnetGroupName) {
+		return rdbdriver.Cluster{}, cerrors.Newf(cerrors.NotFound,
+			"cluster subnet group %q not found", cfg.SubnetGroupName)
+	}
+
 	engine := cfg.Engine
 	if engine == "" {
 		engine = defaultEngine
