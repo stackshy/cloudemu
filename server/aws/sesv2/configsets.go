@@ -122,5 +122,7 @@ func (h *Handler) listConfigSets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, listConfigurationSetsResponse{ConfigurationSets: names})
+	start, end, next := pageWindow(len(names), r.URL.Query())
+
+	writeJSON(w, listConfigurationSetsResponse{ConfigurationSets: names[start:end], NextToken: next})
 }

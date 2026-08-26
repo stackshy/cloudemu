@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -218,8 +219,13 @@ func (h *Handler) listLayers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]layersListItem, 0, len(layers))
-	for i := range layers {
+	// Sort by name so Marker offsets stay stable across paginated calls.
+	sort.Slice(layers, func(i, j int) bool { return layers[i].Name < layers[j].Name })
+
+	start, end, nextMarker, truncated := pageWindow(len(layers), r.URL.Query())
+
+	items := make([]layersListItem, 0, end-start)
+	for i := start; i < end; i++ {
 		items = append(items, layersListItem{
 			LayerName:             layers[i].Name,
 			LayerArn:              layerARN(&layers[i]),
@@ -227,5 +233,10 @@ func (h *Handler) listLayers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"Layers": items})
+	body := map[string]any{"Layers": items}
+	if truncated {
+		body["NextMarker"] = nextMarker
+	}
+
+	writeJSON(w, http.StatusOK, body)
 }

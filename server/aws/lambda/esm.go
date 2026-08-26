@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -190,15 +191,31 @@ func (h *Handler) listEventSourceMappings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	out := make([]eventSourceMappingJSON, 0, len(infos))
+	// Apply the EventSourceArn filter first, then sort by UUID so Marker
+	// offsets stay stable across paginated calls.
+	filtered := make([]sdrv.EventSourceMappingInfo, 0, len(infos))
 
 	for i := range infos {
 		if eventSourceArn != "" && infos[i].EventSourceArn != eventSourceArn {
 			continue
 		}
 
-		out = append(out, toESMJSON(&infos[i]))
+		filtered = append(filtered, infos[i])
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"EventSourceMappings": out})
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].UUID < filtered[j].UUID })
+
+	start, end, nextMarker, truncated := pageWindow(len(filtered), r.URL.Query())
+
+	out := make([]eventSourceMappingJSON, 0, end-start)
+	for i := start; i < end; i++ {
+		out = append(out, toESMJSON(&filtered[i]))
+	}
+
+	body := map[string]any{"EventSourceMappings": out}
+	if truncated {
+		body["NextMarker"] = nextMarker
+	}
+
+	writeJSON(w, http.StatusOK, body)
 }

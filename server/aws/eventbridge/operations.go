@@ -87,7 +87,9 @@ func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	wire.WriteJSON(w, listEventBusesResponse{EventBuses: entries})
+	entries, nextToken := paginateByCursor(entries, req.NextToken, req.Limit, func(e eventBusEntry) string { return e.Name })
+
+	wire.WriteJSON(w, listEventBusesResponse{EventBuses: entries, NextToken: nextToken})
 }
 
 func (h *Handler) deleteEventBus(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +304,9 @@ func (h *Handler) listTargetsByRule(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toTargetJSON(&targets[i]))
 	}
 
-	wire.WriteJSON(w, listTargetsByRuleResponse{Targets: out})
+	out, nextToken := paginateByCursor(out, req.NextToken, req.Limit, func(t targetJSON) string { return t.ID })
+
+	wire.WriteJSON(w, listTargetsByRuleResponse{Targets: out, NextToken: nextToken})
 }
 
 // --- events ---

@@ -590,10 +590,18 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 
 		awsCfg := h.awsFnConfig(r.Context(), name)
 
-		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, len(vers))}
-		for i := range vers {
+		// Sort by version so Marker offsets stay stable across paginated calls
+		// (ListVersions returns versions in publish order, but page deterministically).
+		sort.Slice(vers, func(i, j int) bool { return vers[i].Version < vers[j].Version })
+
+		start, end, nextMarker, _ := pageWindow(len(vers), r.URL.Query())
+
+		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, end-start)}
+		for i := start; i < end; i++ {
 			out.Versions = append(out.Versions, toVersionConfiguration(info, &vers[i], awsCfg))
 		}
+
+		out.NextMarker = nextMarker
 
 		writeJSON(w, http.StatusOK, out)
 	default:
@@ -629,10 +637,17 @@ func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name stri
 			return
 		}
 
-		out := listAliasesResponse{Aliases: make([]aliasResponse, 0, len(aliases))}
-		for i := range aliases {
+		// Sort by name so Marker offsets stay stable across paginated calls.
+		sort.Slice(aliases, func(i, j int) bool { return aliases[i].Name < aliases[j].Name })
+
+		start, end, nextMarker, _ := pageWindow(len(aliases), r.URL.Query())
+
+		out := listAliasesResponse{Aliases: make([]aliasResponse, 0, end-start)}
+		for i := start; i < end; i++ {
 			out.Aliases = append(out.Aliases, toAliasResponse(&aliases[i]))
 		}
+
+		out.NextMarker = nextMarker
 
 		writeJSON(w, http.StatusOK, out)
 	default:
