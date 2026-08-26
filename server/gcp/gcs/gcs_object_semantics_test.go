@@ -411,6 +411,39 @@ func TestGCSComposePrecondition(t *testing.T) {
 	}
 }
 
+// TestGCSComposePinnedSourceGeneration proves compose honors a source's pinned
+// generation: it composes the exact addressed revision (decoded from the
+// JSON-string generation field), not the source's live bytes.
+func TestGCSComposePinnedSourceGeneration(t *testing.T) {
+	ctx, client := newStorageClient(t)
+	bkt := mustCreateBucket(t, ctx, client, "comppin")
+
+	if _, err := bkt.Update(ctx, storage.BucketAttrsToUpdate{VersioningEnabled: true}); err != nil {
+		t.Fatalf("enable versioning: %v", err)
+	}
+
+	putObject(t, ctx, bkt, "src", "text/plain", []byte("old"), nil)
+
+	a1, err := bkt.Object("src").Attrs(ctx)
+	if err != nil {
+		t.Fatalf("Attrs: %v", err)
+	}
+
+	// Overwrite so the live generation differs from the pinned one.
+	putObject(t, ctx, bkt, "src", "text/plain", []byte("new"), nil)
+
+	comp := bkt.Object("dst").ComposerFrom(bkt.Object("src").Generation(a1.Generation))
+	comp.ContentType = "text/plain"
+
+	if _, err := comp.Run(ctx); err != nil {
+		t.Fatalf("compose with pinned source generation: %v", err)
+	}
+
+	if got := readObject(t, ctx, bkt, "dst"); string(got) != "old" {
+		t.Errorf("composed pinned generation = %q, want old (the pinned gen, not live)", got)
+	}
+}
+
 // TestGCSObjectStorageClass proves an object inherits its bucket's default
 // storage class (NEARLINE) instead of a hardcoded STANDARD.
 func TestGCSObjectStorageClass(t *testing.T) {

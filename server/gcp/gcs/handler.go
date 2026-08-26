@@ -622,10 +622,10 @@ func readPrecondition(r *http.Request) storagedriver.GCSPrecondition {
 	h := r.Header
 
 	return storagedriver.GCSPrecondition{
-		IfGenerationMatch:        firstInt64Ptr(q.Get("ifGenerationMatch"), h.Get("x-goog-if-generation-match")),
-		IfGenerationNotMatch:     firstInt64Ptr(q.Get("ifGenerationNotMatch"), h.Get("x-goog-if-generation-not-match")),
-		IfMetagenerationMatch:    firstInt64Ptr(q.Get("ifMetagenerationMatch"), h.Get("x-goog-if-metageneration-match")),
-		IfMetagenerationNotMatch: firstInt64Ptr(q.Get("ifMetagenerationNotMatch"), h.Get("x-goog-if-metageneration-not-match")),
+		IfGenerationMatch:        firstInt64Ptr(q.Get("ifGenerationMatch"), h.Get("X-Goog-If-Generation-Match")),
+		IfGenerationNotMatch:     firstInt64Ptr(q.Get("ifGenerationNotMatch"), h.Get("X-Goog-If-Generation-Not-Match")),
+		IfMetagenerationMatch:    firstInt64Ptr(q.Get("ifMetagenerationMatch"), h.Get("X-Goog-If-Metageneration-Match")),
+		IfMetagenerationNotMatch: firstInt64Ptr(q.Get("ifMetagenerationNotMatch"), h.Get("X-Goog-If-Metageneration-Not-Match")),
 	}
 }
 

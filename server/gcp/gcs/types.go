@@ -107,8 +107,10 @@ type composeRequest struct {
 }
 
 type composeSource struct {
-	Name       string `json:"name"`
-	Generation int64  `json:"generation,omitempty"`
+	Name string `json:"name"`
+	// Generation is JSON-encoded as a string by the GCS API / Go storage SDK
+	// (like objectResource.Generation), so it needs the ,string option.
+	Generation int64 `json:"generation,omitempty,string"`
 }
 
 // iamPolicyResource is the storage#policy document (Buckets: get/setIamPolicy).
