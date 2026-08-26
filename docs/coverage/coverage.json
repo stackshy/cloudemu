@@ -10851,6 +10851,15 @@
         ]
       },
       {
+        "name": "SystemPropsBucket",
+        "doc": "SystemPropsBucket is an OPTIONAL capability (discovered by type assertion like",
+        "operations": [
+          {
+            "name": "PutObjectWithSystemProps"
+          }
+        ]
+      },
+      {
         "name": "VersionedBucket",
         "doc": "VersionedBucket is an optional extension a storage provider implements when",
         "operations": [

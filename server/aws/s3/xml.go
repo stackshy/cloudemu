@@ -62,6 +62,18 @@ type copyObjectResult struct {
 	LastModified string   `xml:"LastModified"`
 }
 
+// getObjectAttributesOutput is the XML response for GetObjectAttributes. The SDK
+// deserializes children by name regardless of the root element, and reads
+// LastModified/VersionId from response headers, so only the selected attributes
+// appear here. ObjectSize is a pointer so a zero-size object still emits the tag.
+type getObjectAttributesOutput struct {
+	XMLName      xml.Name `xml:"GetObjectAttributesOutput"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	ETag         string   `xml:"ETag,omitempty"`
+	StorageClass string   `xml:"StorageClass,omitempty"`
+	ObjectSize   *int64   `xml:"ObjectSize,omitempty"`
+}
+
 // copyPartResult is the XML response for UploadPartCopy.
 type copyPartResult struct {
 	XMLName      xml.Name `xml:"CopyPartResult"`

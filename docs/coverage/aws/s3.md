@@ -163,6 +163,14 @@ StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by
 | `ListStorageAccountKeys` | ListStorageAccountKeys returns the account's access keys, generating a |
 | `RegenerateStorageAccountKey` | RegenerateStorageAccountKey rotates the value of the named key (key1/key2) |
 
+### SystemPropsBucket
+
+SystemPropsBucket is an OPTIONAL capability (discovered by type assertion like
+
+| Operation | Description |
+| --- | --- |
+| `PutObjectWithSystemProps` |  |
+
 ### VersionedBucket
 
 VersionedBucket is an optional extension a storage provider implements when

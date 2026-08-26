@@ -33,11 +33,12 @@ const (
 )
 
 var (
-	_ driver.Bucket          = (*Mock)(nil)
-	_ driver.VersionedBucket = (*Mock)(nil)
-	_ driver.RawBucketConfig = (*Mock)(nil)
-	_ driver.ObjectCopier    = (*Mock)(nil)
-	_ driver.RegionalBucket  = (*Mock)(nil)
+	_ driver.Bucket            = (*Mock)(nil)
+	_ driver.VersionedBucket   = (*Mock)(nil)
+	_ driver.RawBucketConfig   = (*Mock)(nil)
+	_ driver.ObjectCopier      = (*Mock)(nil)
+	_ driver.RegionalBucket    = (*Mock)(nil)
+	_ driver.SystemPropsBucket = (*Mock)(nil)
 )
 
 type s3Object struct {
@@ -55,6 +56,10 @@ type s3Object struct {
 	// VersionID is the version id of the current object on a versioned bucket
 	// ("null" when suspended, empty when the bucket never had versioning).
 	VersionID string
+	// SystemProps holds the S3 system-defined object properties (Cache-Control,
+	// Content-Encoding, Content-Disposition, Content-Language, Expires) and the
+	// object's storage class, recorded on PutObject and echoed back on read.
+	SystemProps driver.ObjectSystemProps
 }
 
 // s3Version is one entry in a key's version history (a stored object or a
@@ -68,6 +73,7 @@ type s3Version struct {
 	lastModified string
 	metadata     map[string]string
 	deleteMarker bool
+	storageClass string
 }
 
 type multipartUpload struct {
@@ -350,12 +356,27 @@ func multipartETag(orderedParts [][]byte) string {
 }
 
 func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
+	return m.PutObjectWithSystemProps(ctx, bucket, key, data, contentType, metadata, nil)
+}
+
+// PutObjectWithSystemProps implements driver.SystemPropsBucket: it writes the
+// object like PutObject and additionally records the S3 system-defined object
+// properties (Cache-Control, Content-Encoding, …) and storage class carried by
+// props (nil = none), so a later Head/Get/List reflects them.
+func (m *Mock) PutObjectWithSystemProps(
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, props *driver.ObjectSystemProps,
+) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
 	obj := m.newObject(key, data, contentType, metadata)
+	if props != nil {
+		obj.SystemProps = *props
+	}
+
 	m.storeObject(bkt, key, obj)
 
 	return m.afterPut(ctx, bkt, bucket, key, obj, data, contentType, metadata)
@@ -539,6 +560,7 @@ func versionFromObject(obj *s3Object, dropData bool) *s3Version {
 		etag:         obj.ETag,
 		lastModified: obj.LastModified,
 		metadata:     obj.Metadata,
+		storageClass: obj.SystemProps.StorageClass,
 	}
 }
 
@@ -588,14 +610,14 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 	m.emitMetric("GetRequests", 1, "Count", dims)
 	m.emitMetric("BytesDownloaded", float64(obj.Size), "Bytes", dims)
 
-	return &driver.Object{
-		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-			VersionID: obj.VersionID,
-		},
-		Data: dataCopy,
-	}, nil
+	info := driver.ObjectInfo{
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
+		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+		VersionID: obj.VersionID,
+	}
+	applyObjectSystemProps(&info, obj)
+
+	return &driver.Object{Info: info, Data: dataCopy}, nil
 }
 
 func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -673,11 +695,26 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
-	return &driver.ObjectInfo{
+	info := &driver.ObjectInfo{
 		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		VersionID: obj.VersionID,
-	}, nil
+	}
+	applyObjectSystemProps(info, obj)
+
+	return info, nil
+}
+
+// applyObjectSystemProps copies obj's S3 system-defined object properties and
+// storage class onto info, so a Head/Get/List response reflects what PutObject
+// recorded.
+func applyObjectSystemProps(info *driver.ObjectInfo, obj *s3Object) {
+	info.CacheControl = obj.SystemProps.CacheControl
+	info.ContentEncoding = obj.SystemProps.ContentEncoding
+	info.ContentDisposition = obj.SystemProps.ContentDisposition
+	info.ContentLanguage = obj.SystemProps.ContentLanguage
+	info.Expires = obj.SystemProps.Expires
+	info.StorageClass = obj.SystemProps.StorageClass
 }
 
 func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOptions) (*driver.ListResult, error) {
@@ -761,10 +798,12 @@ func matchListKeys(
 			continue
 		}
 
-		matchedObjects = append(matchedObjects, driver.ObjectInfo{
+		info := driver.ObjectInfo{
 			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
-		})
+		}
+		applyObjectSystemProps(&info, obj)
+		matchedObjects = append(matchedObjects, info)
 	}
 
 	return matchedObjects, commonPrefixSet
@@ -797,7 +836,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	dstObj := &s3Object{
 		Key: dstKey, Data: dataCopy, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
-		Metadata: meta, Tags: maps.Clone(srcObj.Tags),
+		Metadata: meta, Tags: maps.Clone(srcObj.Tags), SystemProps: srcObj.SystemProps,
 	}
 	m.storeObject(dstBkt, dstKey, dstObj)
 
@@ -830,6 +869,22 @@ type copySrcSnapshot struct {
 	metadata     map[string]string
 	tags         map[string]string
 	versionID    string
+	systemProps  driver.ObjectSystemProps
+}
+
+// copyDstSystemProps resolves the destination object's system properties for a
+// server-side copy: the content properties inherit from the source (default
+// COPY directive) or come from the request (REPLACE), while the storage class
+// always comes from the request's x-amz-storage-class (never inherited).
+func copyDstSystemProps(req *driver.CopyObjectRequest, src *copySrcSnapshot) driver.ObjectSystemProps {
+	props := src.systemProps
+	if req.ReplaceMetadata {
+		props = req.SystemProps
+	}
+
+	props.StorageClass = req.SystemProps.StorageClass
+
+	return props
 }
 
 // CopyObjectV2 performs a full-fidelity S3 server-side copy: it honors a
@@ -875,7 +930,7 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 	dstObj := &s3Object{
 		Key: req.DstKey, Data: dataCopy, Size: src.size, ContentType: contentType,
 		ETag: src.etag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
-		Metadata: maps.Clone(metadata), Tags: maps.Clone(tags),
+		Metadata: maps.Clone(metadata), Tags: maps.Clone(tags), SystemProps: copyDstSystemProps(req, src),
 	}
 	m.storeObject(dstBkt, req.DstKey, dstObj)
 
@@ -925,6 +980,7 @@ func (m *Mock) resolveCopySource(ctx context.Context, src driver.CopySource, ver
 	return &copySrcSnapshot{
 		data: data, size: srcObj.Size, contentType: srcObj.ContentType, etag: srcObj.ETag,
 		lastModified: srcObj.LastModified, metadata: srcObj.Metadata, tags: srcObj.Tags, versionID: srcObj.VersionID,
+		systemProps: srcObj.SystemProps,
 	}, nil
 }
 
@@ -951,6 +1007,7 @@ func (m *Mock) resolveCopySourceVersion(
 	return &copySrcSnapshot{
 		data: data, size: v.size, contentType: v.contentType, etag: v.etag,
 		lastModified: v.lastModified, metadata: v.metadata, versionID: versionID,
+		systemProps: driver.ObjectSystemProps{StorageClass: v.storageClass},
 	}, nil
 }
 
@@ -1587,6 +1644,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 					Key: k, VersionID: nullVersionID, IsLatest: true,
 					Size: obj.Size, ETag: obj.ETag,
 					ContentType: obj.ContentType, LastModified: obj.LastModified,
+					StorageClass: obj.SystemProps.StorageClass,
 				})
 			}
 
@@ -1599,6 +1657,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 				Key: k, VersionID: v.versionID, IsLatest: i == len(chain)-1,
 				DeleteMarker: v.deleteMarker, Size: v.size, ETag: v.etag,
 				ContentType: v.contentType, LastModified: v.lastModified,
+				StorageClass: v.storageClass,
 			})
 		}
 	}

@@ -34,6 +34,9 @@ const (
 	// minBucketNameLen / maxBucketNameLen bound a general-purpose bucket name.
 	minBucketNameLen = 3
 	maxBucketNameLen = 63
+	// storageClassStandard is S3's default storage class; it is never emitted in
+	// the x-amz-storage-class response header (real S3 omits it for STANDARD).
+	storageClassStandard = "STANDARD"
 )
 
 // Handler serves S3 REST requests against a storage.Bucket driver.
@@ -57,6 +60,10 @@ type Handler struct {
 	// conditional is set when the driver can perform an atomic conditional
 	// PutObject; the handler then enforces If-None-Match/If-Match on writes.
 	conditional driver.ConditionalBucket
+	// sysProps is set when the driver persists the S3 system-defined object
+	// properties (Cache-Control, Content-Encoding, …) and storage class; the
+	// handler then records them on PutObject and reflects them on read.
+	sysProps driver.SystemPropsBucket
 }
 
 // New returns an S3 handler backed by b.
@@ -80,6 +87,10 @@ func New(b driver.Bucket) *Handler {
 
 	if cb, ok := b.(driver.ConditionalBucket); ok {
 		h.conditional = cb
+	}
+
+	if sp, ok := b.(driver.SystemPropsBucket); ok {
+		h.sysProps = sp
 	}
 
 	return h
@@ -247,6 +258,13 @@ func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket stri
 
 	for _, b := range buckets {
 		if b.Name == bucket {
+			region := b.Region
+			if region == "" {
+				region = usEast1
+			}
+			// Real S3 returns the bucket's region on a 200 HeadBucket; the SDK reads
+			// it into HeadBucketOutput.BucketRegion.
+			w.Header().Set("X-Amz-Bucket-Region", region)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -531,7 +549,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			LastModified: obj.LastModified,
 			ETag:         fmt.Sprintf("%q", obj.ETag),
 			Size:         int(obj.Size),
-			StorageClass: "STANDARD",
+			StorageClass: storageClassOrDefault(obj.StorageClass),
 			Owner:        owner,
 		})
 	}
@@ -547,6 +565,12 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 	q := r.URL.Query()
 
 	switch {
+	case q.Has("attributes"):
+		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
+		// falls through to getObject and the SDK decodes an object body as the
+		// attributes response, reading zero-valued attributes.
+		h.getObjectAttributes(w, r, bucket, key)
+		return
 	case q.Has("tagging"):
 		h.objectTaggingOp(w, r, bucket, key)
 		return
@@ -608,6 +632,10 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return // error response already written
 	}
 
+	if sc := r.Header.Get("X-Amz-Storage-Class"); sc != "" && sc != storageClassStandard {
+		w.Header().Set("X-Amz-Storage-Class", sc)
+	}
+
 	// x-amz-tagging sets the object's tag set at upload time; apply it so
 	// GetObjectTagging returns it (real S3 stores it atomically with the object).
 	if !h.applyPutTagging(w, r, bucket, key) {
@@ -638,7 +666,7 @@ func (h *Handler) storePut(
 		return h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
 	}
 
-	if err := h.bucket.PutObject(r.Context(), bucket, key, data, contentType, metadata); err != nil {
+	if err := h.putObjectData(r, bucket, key, data, contentType, metadata); err != nil {
 		writeErr(w, err)
 		return "", "", false
 	}
@@ -654,6 +682,21 @@ func (h *Handler) storePut(
 	}
 
 	return etag, versionID, true
+}
+
+// putObjectData writes the object, routing through the system-properties
+// capability (recording Cache-Control/Content-Encoding/… and storage class)
+// when the driver and the request supply them, and falling back to the plain
+// PutObject otherwise.
+func (h *Handler) putObjectData(
+	r *http.Request, bucket, key string, data []byte, contentType string, metadata map[string]string,
+) error {
+	props := extractSystemProps(r.Header)
+	if h.sysProps != nil && props != (driver.ObjectSystemProps{}) {
+		return h.sysProps.PutObjectWithSystemProps(r.Context(), bucket, key, data, contentType, metadata, &props)
+	}
+
+	return h.bucket.PutObject(r.Context(), bucket, key, data, contentType, metadata)
 }
 
 // storePutConditional performs an atomic If-None-Match/If-Match PutObject. A
@@ -872,6 +915,74 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	w.WriteHeader(http.StatusOK)
 }
 
+// getObjectAttributes answers GET /{bucket}/{key}?attributes (GetObjectAttributes):
+// it returns the object's ETag, size, and storage class as selected by the
+// x-amz-object-attributes header, plus the Last-Modified and version-id headers.
+// A missing object is NoSuchKey; a missing bucket is NoSuchBucket.
+func (h *Handler) getObjectAttributes(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	versionID := r.URL.Query().Get("versionId")
+
+	var (
+		info *driver.ObjectInfo
+		err  error
+	)
+
+	if versionID != "" && h.versioned != nil {
+		info, err = h.versioned.HeadObjectVersion(r.Context(), bucket, key, versionID)
+	} else {
+		info, err = h.bucket.HeadObject(r.Context(), bucket, key)
+	}
+
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if info.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
+	}
+
+	w.Header().Set("Last-Modified", wire.ToHTTPDate(info.LastModified))
+
+	wire.WriteXML(w, http.StatusOK, buildObjectAttributes(r.Header.Values("X-Amz-Object-Attributes"), info))
+}
+
+// buildObjectAttributes assembles the GetObjectAttributes response body, filling
+// only the attributes named in the x-amz-object-attributes header. The SDK sends
+// one header line per attribute, each of which may itself be comma-separated.
+// ObjectSize is a pointer so a zero-length object still emits <ObjectSize>0.
+func buildObjectAttributes(requested []string, info *driver.ObjectInfo) getObjectAttributesOutput {
+	want := make(map[string]bool)
+
+	for _, line := range requested {
+		for _, a := range strings.Split(line, ",") {
+			want[strings.TrimSpace(a)] = true
+		}
+	}
+
+	out := getObjectAttributesOutput{Xmlns: xmlns}
+
+	if want["ETag"] {
+		out.ETag = strings.Trim(info.ETag, `"`)
+	}
+
+	if want["ObjectSize"] {
+		size := info.Size
+		out.ObjectSize = &size
+	}
+
+	if want["StorageClass"] {
+		out.StorageClass = storageClassOrDefault(info.StorageClass)
+	}
+
+	return out
+}
+
 // condReadOutcome classifies a GET/HEAD conditional-header evaluation.
 type condReadOutcome int
 
@@ -988,8 +1099,32 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 
+	writeSystemPropHeaders(w, info)
+
 	for k, v := range info.Metadata {
 		w.Header().Set("X-Amz-Meta-"+k, v)
+	}
+}
+
+// writeSystemPropHeaders emits the S3 system-defined object property response
+// headers that carry a stored value. x-amz-storage-class is emitted only for a
+// non-STANDARD class (real S3 omits it for STANDARD).
+func writeSystemPropHeaders(w http.ResponseWriter, info *driver.ObjectInfo) {
+	setIfNotEmpty(w, "Cache-Control", info.CacheControl)
+	setIfNotEmpty(w, "Content-Encoding", info.ContentEncoding)
+	setIfNotEmpty(w, "Content-Disposition", info.ContentDisposition)
+	setIfNotEmpty(w, "Content-Language", info.ContentLanguage)
+	setIfNotEmpty(w, "Expires", info.Expires)
+
+	if info.StorageClass != "" && info.StorageClass != storageClassStandard {
+		w.Header().Set("X-Amz-Storage-Class", info.StorageClass)
+	}
+}
+
+// setIfNotEmpty sets header k to v only when v is non-empty.
+func setIfNotEmpty(w http.ResponseWriter, k, v string) {
+	if v != "" {
+		w.Header().Set(k, v)
 	}
 }
 
@@ -1214,7 +1349,12 @@ func buildCopyRequest(
 	if replace {
 		req.Metadata = extractMetadata(r.Header)
 		req.ContentType = r.Header.Get("Content-Type")
+		req.SystemProps = extractSystemProps(r.Header)
 	}
+
+	// The destination storage class always comes from x-amz-storage-class (never
+	// inherited from the source), regardless of the metadata directive.
+	req.SystemProps.StorageClass = r.Header.Get("X-Amz-Storage-Class")
 
 	// x-amz-tagging-directive: REPLACE takes the destination tag set from the
 	// x-amz-tagging header; the default COPY inherits the source object's tags.
@@ -2023,7 +2163,7 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, buc
 
 		resp.Versions = append(resp.Versions, objectVersionXML{
 			Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
-			ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: "STANDARD",
+			ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: storageClassOrDefault(v.StorageClass),
 		})
 	}
 
@@ -2070,6 +2210,7 @@ func (h *Handler) collectObjectVersions(
 		entries = append(entries, driver.ObjectVersion{
 			Key: obj.Key, VersionID: "null", IsLatest: true,
 			Size: obj.Size, ETag: obj.ETag, LastModified: obj.LastModified,
+			StorageClass: obj.StorageClass,
 		})
 	}
 
@@ -2106,6 +2247,31 @@ func skipToVersionMarker(entries []driver.ObjectVersion, keyMarker, versionIDMar
 	}
 
 	return nil
+}
+
+// extractSystemProps pulls the S3 system-defined object property request headers
+// (Cache-Control, Content-Encoding, Content-Disposition, Content-Language,
+// Expires) and the x-amz-storage-class header into an ObjectSystemProps. A zero
+// value means the caller sent none of them.
+func extractSystemProps(h http.Header) driver.ObjectSystemProps {
+	return driver.ObjectSystemProps{
+		CacheControl:       h.Get("Cache-Control"),
+		ContentEncoding:    h.Get("Content-Encoding"),
+		ContentDisposition: h.Get("Content-Disposition"),
+		ContentLanguage:    h.Get("Content-Language"),
+		Expires:            h.Get("Expires"),
+		StorageClass:       h.Get("X-Amz-Storage-Class"),
+	}
+}
+
+// storageClassOrDefault returns sc, or STANDARD when sc is empty — the value S3
+// reports in a listing's <StorageClass> element for a default-class object.
+func storageClassOrDefault(sc string) string {
+	if sc == "" {
+		return storageClassStandard
+	}
+
+	return sc
 }
 
 // extractMetadata pulls x-amz-meta-* headers into a map.
