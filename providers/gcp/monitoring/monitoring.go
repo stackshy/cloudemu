@@ -458,6 +458,23 @@ func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) erro
 	return nil
 }
 
+// SetAlarmActions replaces an alert policy's notification targets (AlarmActions)
+// in place, preserving the alarm's current State/StateReason/history and its
+// evaluation config. alertPolicies.patch uses this to re-sync a changed
+// notificationChannels list onto the backing alarm without the state reset a
+// CreateAlarm would cause; a subsequent breach then delivers to the new channel
+// set. actions is copied defensively.
+func (m *Mock) SetAlarmActions(_ context.Context, name string, actions []string) error {
+	a, ok := m.alarms.Get(name)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "alert policy %q not found", name)
+	}
+
+	a.AlarmActions = append([]string{}, actions...)
+
+	return nil
+}
+
 // CreateNotificationChannel creates a new notification channel and returns its info.
 func (m *Mock) CreateNotificationChannel(
 	_ context.Context, cfg driver.NotificationChannelConfig,
