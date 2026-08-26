@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
@@ -89,6 +90,30 @@ func (s *addressStore) list(project, scope string) []json.RawMessage {
 	return out
 }
 
+// allByScope returns every stored address for a project grouped by the scope
+// ("global" or a region name) it was reserved in — the grouping aggregatedList
+// projects into per-scope buckets.
+func (s *addressStore) allByScope(project string) map[string][]json.RawMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := map[string][]json.RawMessage{}
+	prefix := project + "/"
+
+	for k, byName := range s.addresses {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+
+		scope := strings.TrimPrefix(k, prefix)
+		for _, b := range byName {
+			out[scope] = append(out[scope], b)
+		}
+	}
+
+	return out
+}
+
 func (s *addressStore) delete(project, scope, name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,8 +140,18 @@ func scopeOf(rp gcprest.ResourcePath) string {
 	return rp.ScopeName
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if rp.Scope == gcprest.ScopeAggregated {
+		if r.Method == http.MethodGet {
+			h.aggregatedListAddresses(w, r, rp)
+		} else {
+			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		}
+
+		return
+	}
+
 	if rp.ResourceName == "" {
 		switch r.Method {
 		case http.MethodPost:
@@ -249,6 +284,47 @@ func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, out)
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	byScope := h.addresses.allByScope(rp.Project)
+	filter := r.URL.Query().Get("filter")
+	host := hostOf(r)
+	items := map[string]addressesScopedList{}
+
+	for scope, bodies := range byScope {
+		key := "regions/" + scope
+		if scope == gcprest.ScopeGlobal {
+			key = gcprest.ScopeGlobal
+		}
+
+		list := make([]json.RawMessage, 0, len(bodies))
+
+		for _, b := range bodies {
+			if nameMatches(filter, rawName(b)) {
+				list = append(list, b)
+			}
+		}
+
+		sort.SliceStable(list, func(i, j int) bool { return rawName(list[i]) < rawName(list[j]) })
+
+		items[key] = addressesScopedList{Addresses: list}
+	}
+
+	// GCP always includes a global bucket, warned when it holds nothing.
+	if _, ok := items[gcprest.ScopeGlobal]; !ok {
+		items[gcprest.ScopeGlobal] = addressesScopedList{
+			Warning: &scopedWarning{Code: noResultsOnPageStr, Message: "There are no results for scope 'global' on this page."},
+		}
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, addressAggregatedListResponse{
+		Kind:     "compute#addressAggregatedList",
+		ID:       "projects/" + rp.Project + "/aggregated/addresses",
+		Items:    items,
+		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/addresses",
+	})
 }
 
 // rawName extracts the "name" field from a stored address body for filtering
