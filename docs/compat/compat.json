@@ -3275,7 +3275,39 @@
   },
   {
     "service": "logging",
+    "operation": "DeleteSubscriptionFilter",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "logging",
     "operation": "DescribeMetricFilters",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "logging",
+    "operation": "DescribeSubscriptionFilters",
     "providers": {
       "aws": {
         "native": "CloudWatchLogs"
@@ -3399,6 +3431,22 @@
   {
     "service": "logging",
     "operation": "PutMetricFilter",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "logging",
+    "operation": "PutSubscriptionFilter",
     "providers": {
       "aws": {
         "native": "CloudWatchLogs"

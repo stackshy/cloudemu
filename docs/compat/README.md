@@ -255,7 +255,9 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | DeleteLogGroup | ✅ | ✅ | ✅ |
 | DeleteLogStream | ✅ | · | · |
 | DeleteMetricFilter | · | · | · |
+| DeleteSubscriptionFilter | · | · | · |
 | DescribeMetricFilters | · | · | · |
+| DescribeSubscriptionFilters | · | · | · |
 | FilterLogEvents | ✅ | · | · |
 | GetLogEvents | ✅ | · | ✅ |
 | GetLogGroup | ✅ | ✅ | · |
@@ -263,9 +265,10 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | ListLogStreams | ✅ | · | · |
 | PutLogEvents | ✅ | · | ✅ |
 | PutMetricFilter | · | · | · |
+| PutSubscriptionFilter | · | · | · |
 | UpdateLogGroup | ✅ | ✅ | · |
 
-**logging verified via Go SDK:** AWS 11/14 · Azure 5/14 · GCP 4/14.
+**logging verified via Go SDK:** AWS 11/17 · Azure 5/17 · GCP 4/17.
 
 ## messagequeue
 
