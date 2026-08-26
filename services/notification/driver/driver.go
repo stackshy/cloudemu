@@ -16,6 +16,16 @@ type TopicConfig struct {
 	// Policy is the JSON access policy (AWS SNS). Empty leaves the topic on
 	// its synthesized default policy.
 	Policy string
+	// DeliveryPolicy is the JSON HTTP delivery policy (AWS SNS). Empty leaves
+	// the topic on its synthesized default.
+	DeliveryPolicy string
+	// KmsMasterKeyID names the KMS key for server-side encryption (AWS SNS).
+	KmsMasterKeyID string
+	// FifoTopic marks the topic as FIFO. ContentBasedDeduplication toggles
+	// content-based deduplication on a FIFO topic. Both are persisted and echoed
+	// by GetTopicAttributes; FIFO publish ordering/dedup is not yet enforced.
+	FifoTopic                 bool
+	ContentBasedDeduplication bool
 
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.
@@ -42,8 +52,17 @@ type TopicInfo struct {
 	SubscriptionsDeleted   int
 	// Policy is the JSON access policy (AWS SNS); empty means the default.
 	Policy string
-	Tags   map[string]string
-	Scope  scope.Scope
+	// DeliveryPolicy is the JSON HTTP delivery policy (AWS SNS); empty means the
+	// default. KmsMasterKeyID names the server-side-encryption KMS key.
+	DeliveryPolicy string
+	KmsMasterKeyID string
+	// FifoTopic / ContentBasedDeduplication reflect the FIFO flags captured at
+	// create time. GetTopicAttributes echoes them; publish ordering is not
+	// enforced.
+	FifoTopic                 bool
+	ContentBasedDeduplication bool
+	Tags                      map[string]string
+	Scope                     scope.Scope
 	// Region is the geographic location the resource was created in (Azure
 	// location). Empty for AWS and unscoped portable callers.
 	Region string
@@ -74,12 +93,28 @@ type SubscriptionInfo struct {
 	ConfirmationToken string
 }
 
+// MessageAttribute is a typed SNS message attribute carried on a publish.
+// DataType is "String", "Number", or "Binary". Value holds the string (or
+// Number) value; for a Binary attribute Value holds the base64-encoded bytes.
+type MessageAttribute struct {
+	DataType string
+	Value    string
+}
+
 // PublishInput configures a message publish operation.
 type PublishInput struct {
-	TopicID    string
-	Subject    string
-	Message    string
-	Attributes map[string]string
+	TopicID string
+	Subject string
+	Message string
+	// Attributes carries the flat name->value view of the message attributes,
+	// used for filter-policy matching and cross-cloud publishes. AttributeEntries
+	// carries the typed (DataType-preserving) view used to build the SNS delivery
+	// envelope; it is nil for non-SNS publishes.
+	Attributes       map[string]string
+	AttributeEntries map[string]MessageAttribute
+	// MessageStructure is "json" when Message is a per-protocol JSON blob
+	// ({"default":...,"sqs":...}); empty means Message is delivered verbatim.
+	MessageStructure string
 	// MessageGroupID / MessageDeduplicationID carry the FIFO ordering and
 	// deduplication identifiers of a publish to a FIFO topic. They are empty for
 	// standard topics and are threaded to a FIFO SQS subscription so the queue,

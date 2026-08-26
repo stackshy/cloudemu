@@ -27,6 +27,14 @@ const (
 	statusPending   = "pending"
 )
 
+// SNS message-structure and message-attribute constants.
+const (
+	messageStructureJSON  = "json"
+	defaultProtocolKey    = "default"
+	protocolSQS           = "sqs"
+	messageAttrTypeString = "String"
+)
+
 type publishedMessage struct {
 	ID         string
 	TopicID    string
@@ -142,13 +150,18 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	}
 
 	info := driver.TopicInfo{
-		ID:                idgen.GenerateID("topic-"),
-		Name:              cfg.Name,
-		Scope:             cfg.Scope,
-		ResourceID:        arn,
-		DisplayName:       cfg.DisplayName,
-		SubscriptionCount: 0,
-		Tags:              tags,
+		ID:                        idgen.GenerateID("topic-"),
+		Name:                      cfg.Name,
+		Scope:                     cfg.Scope,
+		ResourceID:                arn,
+		DisplayName:               cfg.DisplayName,
+		Policy:                    cfg.Policy,
+		DeliveryPolicy:            cfg.DeliveryPolicy,
+		KmsMasterKeyID:            cfg.KmsMasterKeyID,
+		FifoTopic:                 cfg.FifoTopic,
+		ContentBasedDeduplication: cfg.ContentBasedDeduplication,
+		SubscriptionCount:         0,
+		Tags:                      tags,
 	}
 
 	td := &topicData{
@@ -356,6 +369,10 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 		return nil, errors.New(errors.InvalidArgument, "message is required")
 	}
 
+	if err := validateMessageStructure(&input); err != nil {
+		return nil, err
+	}
+
 	msgID := idgen.GenerateID("msg-")
 
 	attrs := make(map[string]string, len(input.Attributes))
@@ -407,6 +424,65 @@ func arnResource(arn string) string {
 	return arn
 }
 
+// validateMessageStructure enforces the SNS rules for a MessageStructure=json
+// publish: only "json" is accepted, the message must parse as a JSON object of
+// string values, and it must carry a "default" entry (used for any protocol
+// without a specific key). An empty structure leaves the message unchanged.
+func validateMessageStructure(input *driver.PublishInput) error {
+	if input.MessageStructure == "" {
+		return nil
+	}
+
+	if input.MessageStructure != messageStructureJSON {
+		return errors.New(errors.InvalidArgument, "Invalid parameter: Invalid message structure. Must be json")
+	}
+
+	parsed, ok := parseStructuredMessage(input.Message)
+	if !ok {
+		return errors.New(errors.InvalidArgument,
+			"Invalid parameter: Message Structure - JSON message body failed to parse")
+	}
+
+	if _, ok := parsed[defaultProtocolKey]; !ok {
+		return errors.New(errors.InvalidArgument,
+			"Invalid parameter: Message Structure - No default entry in JSON message body")
+	}
+
+	return nil
+}
+
+// parseStructuredMessage decodes a MessageStructure=json body into its
+// per-protocol string map. It reports false when the body is not a JSON object
+// of strings.
+func parseStructuredMessage(message string) (map[string]string, bool) {
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(message), &parsed); err != nil {
+		return nil, false
+	}
+
+	return parsed, true
+}
+
+// resolveProtocolMessage returns the body a subscriber of the given protocol
+// receives. For a MessageStructure=json publish it selects the protocol-specific
+// entry, falling back to "default"; otherwise the raw message is returned as-is.
+func resolveProtocolMessage(input *driver.PublishInput, protocol string) string {
+	if input.MessageStructure != messageStructureJSON {
+		return input.Message
+	}
+
+	parsed, ok := parseStructuredMessage(input.Message)
+	if !ok {
+		return input.Message
+	}
+
+	if v, present := parsed[protocol]; present {
+		return v
+	}
+
+	return parsed[defaultProtocolKey]
+}
+
 // fanOutToSQS delivers a published message to every SQS-protocol subscription
 // on the topic, wrapping it in the SNS notification envelope real SNS uses.
 func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, input *driver.PublishInput) {
@@ -414,8 +490,10 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 		return
 	}
 
+	message := resolveProtocolMessage(input, protocolSQS)
+
 	for _, sub := range td.subscriptions.All() {
-		if sub.Protocol != "sqs" || sub.Endpoint == "" {
+		if sub.Protocol != protocolSQS || sub.Endpoint == "" {
 			continue
 		}
 
@@ -427,10 +505,10 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 
 		// With raw message delivery enabled, SNS strips its metadata and sends
 		// the published message body as-is instead of the Notification envelope.
-		body := input.Message
+		body := message
 
 		if !rawDeliveryEnabled(&sub) {
-			envelope, err := m.notificationEnvelope(td, msgID, input, sub.ID)
+			envelope, err := m.notificationEnvelope(td, msgID, input, message, sub.ID)
 			if err != nil {
 				continue
 			}
@@ -459,12 +537,14 @@ func (m *Mock) deliverToSQS(ctx context.Context, queueARN, body string, input *d
 
 // notificationEnvelope builds the SNS Notification JSON that wraps a published
 // message for a non-raw SQS subscription.
-func (m *Mock) notificationEnvelope(td *topicData, msgID string, input *driver.PublishInput, subARN string) (string, error) {
+func (m *Mock) notificationEnvelope(
+	td *topicData, msgID string, input *driver.PublishInput, message, subARN string,
+) (string, error) {
 	env := map[string]any{
 		"Type":             "Notification",
 		"MessageId":        msgID,
 		"TopicArn":         td.info.ResourceID,
-		"Message":          input.Message,
+		"Message":          message,
 		"Timestamp":        m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		"SignatureVersion": "1",
 		"Signature":        "Q2xvdWRFbXVFeGFtcGxlU2lnbmF0dXJl",
@@ -481,14 +561,9 @@ func (m *Mock) notificationEnvelope(td *topicData, msgID string, input *driver.P
 	}
 
 	// Real SNS carries publish MessageAttributes into the SQS envelope as
-	// {name: {"Type": "String", "Value": v}}; preserve them end-to-end.
-	if len(input.Attributes) > 0 {
-		attrs := make(map[string]any, len(input.Attributes))
-		for k, v := range input.Attributes {
-			attrs[k] = map[string]string{"Type": "String", "Value": v}
-		}
-
-		env["MessageAttributes"] = attrs
+	// {name: {"Type": <DataType>, "Value": v}}; preserve the DataType end-to-end.
+	if len(input.AttributeEntries) > 0 || len(input.Attributes) > 0 {
+		env["MessageAttributes"] = envelopeAttributes(input)
 	}
 
 	body, err := json.Marshal(env)
@@ -497,4 +572,35 @@ func (m *Mock) notificationEnvelope(td *topicData, msgID string, input *driver.P
 	}
 
 	return string(body), nil
+}
+
+// envelopeAttributes renders the publish's message attributes into the
+// {name: {"Type": DataType, "Value": v}} shape SNS puts on the SQS envelope. It
+// prefers the typed AttributeEntries (preserving Number/Binary), falling back to
+// the flat string attributes as "String" for non-SNS publishes.
+func envelopeAttributes(input *driver.PublishInput) map[string]any {
+	if len(input.AttributeEntries) > 0 {
+		out := make(map[string]any, len(input.AttributeEntries))
+		for k, e := range input.AttributeEntries {
+			out[k] = map[string]string{"Type": defaultDataType(e.DataType), "Value": e.Value}
+		}
+
+		return out
+	}
+
+	out := make(map[string]any, len(input.Attributes))
+	for k, v := range input.Attributes {
+		out[k] = map[string]string{"Type": messageAttrTypeString, "Value": v}
+	}
+
+	return out
+}
+
+// defaultDataType returns dt, or "String" when dt is empty.
+func defaultDataType(dt string) string {
+	if dt == "" {
+		return messageAttrTypeString
+	}
+
+	return dt
 }

@@ -213,12 +213,15 @@ func (h *Handler) publishBatch(w http.ResponseWriter, r *http.Request) {
 	for _, i := range idx {
 		base := "PublishBatchRequestEntries.member." + strconv.Itoa(i)
 		entryID := r.Form.Get(base + ".Id")
+		attrs := parseBatchMessageAttributes(r.Form, base)
 
 		out, err := h.notif.Publish(r.Context(), notifdriver.PublishInput{
 			TopicID:                topicID,
 			Subject:                r.Form.Get(base + ".Subject"),
 			Message:                r.Form.Get(base + ".Message"),
-			Attributes:             parseBatchMessageAttributes(r.Form, base),
+			Attributes:             attributeValues(attrs),
+			AttributeEntries:       attrs,
+			MessageStructure:       r.Form.Get(base + ".MessageStructure"),
 			MessageGroupID:         r.Form.Get(base + ".MessageGroupId"),
 			MessageDeduplicationID: r.Form.Get(base + ".MessageDeduplicationId"),
 		})

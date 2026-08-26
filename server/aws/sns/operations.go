@@ -94,25 +94,25 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseMessageAttributes reads SNS Publish MessageAttributes.entry.N.Name /
-// .Value.StringValue form parameters into a flat name->value map. Only string
-// values are modeled (the common case); binary values are ignored.
-func parseMessageAttributes(form url.Values) map[string]string {
+// .Value.{DataType,StringValue,BinaryValue} form parameters into typed
+// attributes, preserving the DataType (String/Number/Binary).
+func parseMessageAttributes(form url.Values) map[string]notifdriver.MessageAttribute {
 	return parseMessageAttributesAt(form, "MessageAttributes.entry")
 }
 
 // parseBatchMessageAttributes reads a PublishBatch entry's MessageAttributes,
 // which are nested under the entry's form prefix.
-func parseBatchMessageAttributes(form url.Values, entryPrefix string) map[string]string {
+func parseBatchMessageAttributes(form url.Values, entryPrefix string) map[string]notifdriver.MessageAttribute {
 	return parseMessageAttributesAt(form, entryPrefix+".MessageAttributes.entry")
 }
 
-func parseMessageAttributesAt(form url.Values, prefix string) map[string]string {
+func parseMessageAttributesAt(form url.Values, prefix string) map[string]notifdriver.MessageAttribute {
 	idx := awsquery.CollectIndices(form, prefix)
 	if len(idx) == 0 {
 		return nil
 	}
 
-	out := make(map[string]string, len(idx))
+	out := make(map[string]notifdriver.MessageAttribute, len(idx))
 
 	for _, i := range idx {
 		base := prefix + "." + strconv.Itoa(i)
@@ -122,7 +122,36 @@ func parseMessageAttributesAt(form url.Values, prefix string) map[string]string 
 			continue
 		}
 
-		out[name] = form.Get(base + ".Value.StringValue")
+		out[name] = messageAttributeFromForm(form, base)
+	}
+
+	return out
+}
+
+// messageAttributeFromForm reads one MessageAttributeValue (DataType plus the
+// string or base64 binary value) from its form prefix.
+func messageAttributeFromForm(form url.Values, base string) notifdriver.MessageAttribute {
+	value := form.Get(base + ".Value.StringValue")
+	if binary := form.Get(base + ".Value.BinaryValue"); binary != "" {
+		value = binary
+	}
+
+	return notifdriver.MessageAttribute{
+		DataType: form.Get(base + ".Value.DataType"),
+		Value:    value,
+	}
+}
+
+// attributeValues projects typed message attributes onto the flat name->value
+// map used for filter-policy matching and cross-cloud delivery.
+func attributeValues(entries map[string]notifdriver.MessageAttribute) map[string]string {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(entries))
+	for k, e := range entries {
+		out[k] = e.Value
 	}
 
 	return out
@@ -134,10 +163,17 @@ func parseMessageAttributesAt(form url.Values, prefix string) map[string]string 
 // lookup + echo of the existing topic.
 func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 	name := r.Form.Get("Name")
+	attrs := parseSubscriptionAttributes(r.Form)
 
 	info, err := h.notif.CreateTopic(r.Context(), notifdriver.TopicConfig{
-		Name: name,
-		Tags: parseSNSTags(r.Form),
+		Name:                      name,
+		Tags:                      parseSNSTags(r.Form),
+		DisplayName:               attrs["DisplayName"],
+		Policy:                    attrs["Policy"],
+		DeliveryPolicy:            attrs["DeliveryPolicy"],
+		KmsMasterKeyID:            attrs["KmsMasterKeyId"],
+		FifoTopic:                 attrs["FifoTopic"] == attrTrue,
+		ContentBasedDeduplication: attrs["ContentBasedDeduplication"] == attrTrue,
 	})
 	if err != nil {
 		if cerrors.IsAlreadyExists(err) {
@@ -261,15 +297,45 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		{Key: "Policy", Value: policy},
 		{Key: "EffectiveDeliveryPolicy", Value: defaultEffectiveDeliveryPolicy},
 	}
-	if info.DisplayName != "" {
-		entries = append(entries, attributeEntry{Key: "DisplayName", Value: info.DisplayName})
-	}
+	entries = append(entries, optionalTopicAttributes(info)...)
 
 	awsquery.WriteXMLResponse(w, getTopicAttributesResponse{
 		Xmlns:    Namespace,
 		Result:   getTopicAttributesResult{Attributes: attributesMap{Entries: entries}},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// optionalTopicAttributes returns the GetTopicAttributes entries SNS emits only
+// when set: DisplayName, DeliveryPolicy, KmsMasterKeyId, and — for a FIFO topic —
+// the FifoTopic / ContentBasedDeduplication flags.
+func optionalTopicAttributes(info *notifdriver.TopicInfo) []attributeEntry {
+	var entries []attributeEntry
+
+	entries = appendNonEmptyAttr(entries, "DisplayName", info.DisplayName)
+	entries = appendNonEmptyAttr(entries, "DeliveryPolicy", info.DeliveryPolicy)
+	entries = appendNonEmptyAttr(entries, "KmsMasterKeyId", info.KmsMasterKeyID)
+
+	if info.FifoTopic {
+		entries = append(entries,
+			attributeEntry{Key: "FifoTopic", Value: attrTrue},
+			attributeEntry{
+				Key:   "ContentBasedDeduplication",
+				Value: strconv.FormatBool(info.ContentBasedDeduplication),
+			},
+		)
+	}
+
+	return entries
+}
+
+// appendNonEmptyAttr appends a {key,value} entry only when value is non-empty.
+func appendNonEmptyAttr(entries []attributeEntry, key, value string) []attributeEntry {
+	if value == "" {
+		return entries
+	}
+
+	return append(entries, attributeEntry{Key: key, Value: value})
 }
 
 func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request) {
@@ -429,11 +495,15 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 		arn = r.Form.Get("TargetArn")
 	}
 
+	attrs := parseMessageAttributes(r.Form)
+
 	out, err := h.notif.Publish(r.Context(), notifdriver.PublishInput{
 		TopicID:                topicNameFromARN(arn),
 		Subject:                r.Form.Get("Subject"),
 		Message:                r.Form.Get("Message"),
-		Attributes:             parseMessageAttributes(r.Form),
+		Attributes:             attributeValues(attrs),
+		AttributeEntries:       attrs,
+		MessageStructure:       r.Form.Get("MessageStructure"),
 		MessageGroupID:         r.Form.Get("MessageGroupId"),
 		MessageDeduplicationID: r.Form.Get("MessageDeduplicationId"),
 	})
