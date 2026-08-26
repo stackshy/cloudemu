@@ -121,6 +121,9 @@ func (h *Handler) modifyCluster(w http.ResponseWriter, r *http.Request) {
 	input := rdbdriver.ModifyInstanceInput{
 		EngineVersion:      form.Get("ClusterVersion"),
 		MasterUserPassword: form.Get("MasterUserPassword"),
+		NodeType:           form.Get("NodeType"),
+		NumberOfNodes:      formInt(form.Get("NumberOfNodes")),
+		ClusterType:        form.Get("ClusterType"),
 		Tags:               parseRedshiftTags(form),
 	}
 

@@ -211,7 +211,13 @@ type ModifyInstanceInput struct {
 	// enabled; it is cleared automatically when HA is disabled.
 	HighAvailabilityMode    string
 	StandbyAvailabilityZone string
-	Tags                    map[string]string
+	// NodeType / NumberOfNodes / ClusterType are Redshift resize inputs on
+	// ModifyCluster (empty / zero means "no change"); RDS/Aurora ignore them.
+	// ClusterType is "single-node" | "multi-node"; single-node forces one node.
+	NodeType      string
+	NumberOfNodes int
+	ClusterType   string
+	Tags          map[string]string
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by

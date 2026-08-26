@@ -466,6 +466,8 @@ func (m *Mock) ModifyCluster(
 		cluster.EngineVersion = input.EngineVersion
 	}
 
+	applyResize(&cluster, input)
+
 	if input.Tags != nil {
 		cluster.Tags = copyTags(input.Tags)
 	}
@@ -475,6 +477,29 @@ func (m *Mock) ModifyCluster(
 	out := cluster
 
 	return &out, nil
+}
+
+// applyResize applies a Redshift ModifyCluster resize (NodeType / NumberOfNodes
+// / ClusterType) onto the cluster. A "single-node" ClusterType forces one node;
+// otherwise a positive NumberOfNodes is applied. Zero / empty inputs mean "no
+// change", so RDS/Aurora modifications (which never set these) are unaffected.
+func applyResize(cluster *rdbdriver.Cluster, input rdbdriver.ModifyInstanceInput) {
+	if input.NodeType != "" {
+		cluster.NodeType = input.NodeType
+	}
+
+	switch input.ClusterType {
+	case "single-node":
+		cluster.NumberOfNodes = singleNodeCount
+	case "multi-node":
+		if input.NumberOfNodes > 0 {
+			cluster.NumberOfNodes = input.NumberOfNodes
+		}
+	default:
+		if input.NumberOfNodes > 0 {
+			cluster.NumberOfNodes = input.NumberOfNodes
+		}
+	}
 }
 
 // DeleteCluster removes a cluster and tears down the real database backing it,
