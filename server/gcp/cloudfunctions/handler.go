@@ -597,8 +597,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 	}
 
 	// A deploy bumps versionId and cuts a fresh build, matching real Cloud
-	// Functions, and applies any changed gen1 metadata carried in the PATCH body.
-	h.bumpGen1Meta(p.fullName(), &body, p.project)
+	// Functions, and applies the gen1 metadata carried in the PATCH body under the
+	// request's update mask (so a masked field can be cleared).
+	h.bumpGen1Meta(p.fullName(), &body, p.project, parseUpdateMask(r.URL.Query()))
 
 	resource := h.toCloudFunction(info, p)
 	writeJSON(w, http.StatusOK, operation{
@@ -763,24 +764,38 @@ func (h *Handler) toCloudFunction(info *sdrv.FunctionInfo, p functionPath) cloud
 	meta := h.gen1MetaFor(scope.fullName(), p.project)
 
 	cf := cloudFunction{
-		Name:                scope.fullName(),
-		Status:              "ACTIVE",
-		Runtime:             info.Runtime,
-		EntryPoint:          info.Handler,
-		AvailableMemory:     info.Memory,
-		Labels:              info.Tags,
-		EnvVariables:        info.Environment,
-		UpdateTime:          info.LastModified,
-		VersionID:           strconv.FormatInt(meta.versionID, 10),
-		ServiceAccountEmail: meta.serviceAccountEmail,
-		IngressSettings:     meta.ingressSettings,
-		DockerRegistry:      meta.dockerRegistry,
-		BuildID:             meta.buildID,
-		// Real Cloud Functions always advertises the HTTPS trigger URL; clients
-		// read it to invoke the function.
-		HTTPSTrigger: &httpsTrigger{
+		Name:                       scope.fullName(),
+		Status:                     "ACTIVE",
+		Runtime:                    info.Runtime,
+		EntryPoint:                 info.Handler,
+		AvailableMemory:            info.Memory,
+		Labels:                     info.Tags,
+		EnvVariables:               info.Environment,
+		UpdateTime:                 info.LastModified,
+		VersionID:                  strconv.FormatInt(meta.versionID, 10),
+		ServiceAccountEmail:        meta.serviceAccountEmail,
+		IngressSettings:            meta.ingressSettings,
+		DockerRegistry:             meta.dockerRegistry,
+		BuildID:                    meta.buildID,
+		Description:                meta.description,
+		SourceArchiveURL:           meta.sourceArchiveURL,
+		SourceUploadURL:            meta.sourceUploadURL,
+		SourceRepository:           meta.sourceRepository,
+		MaxInstances:               meta.maxInstances,
+		MinInstances:               meta.minInstances,
+		VPCConnector:               meta.vpcConnector,
+		VPCConnectorEgressSettings: meta.vpcConnectorEgressSettings,
+	}
+
+	// gen1 functions carry exactly one trigger: an event-driven function created
+	// with an eventTrigger echoes it (and NO httpsTrigger); otherwise real Cloud
+	// Functions advertises the HTTPS trigger URL clients invoke through.
+	if meta.eventTrigger != nil {
+		cf.EventTrigger = meta.eventTrigger
+	} else {
+		cf.HTTPSTrigger = &httpsTrigger{
 			URL: "https://" + scope.location + "-" + scope.project + ".cloudfunctions.net/" + scope.name,
-		},
+		}
 	}
 
 	if info.Timeout > 0 {

@@ -18,6 +18,18 @@ type gen1Meta struct {
 	dockerRegistry      string
 	buildID             string
 	versionID           int64
+	// The remaining fields are client-owned inputs a real gen1 client reads back
+	// from Get/List. They have no portable Serverless-driver equivalent, so the
+	// wire handler carries them here and echoes them from toCloudFunction.
+	description                string
+	eventTrigger               *eventTrigger
+	sourceRepository           *sourceRepository
+	sourceArchiveURL           string
+	sourceUploadURL            string
+	maxInstances               int
+	minInstances               int
+	vpcConnector               string
+	vpcConnectorEgressSettings string
 }
 
 // newGen1Meta builds the initial metadata for a freshly created v1 function,
@@ -25,11 +37,20 @@ type gen1Meta struct {
 // Cloud Functions assigns.
 func newGen1Meta(body *cloudFunction, project string) *gen1Meta {
 	m := &gen1Meta{
-		serviceAccountEmail: body.ServiceAccountEmail,
-		ingressSettings:     body.IngressSettings,
-		dockerRegistry:      body.DockerRegistry,
-		buildID:             newBuildID(),
-		versionID:           1,
+		serviceAccountEmail:        body.ServiceAccountEmail,
+		ingressSettings:            body.IngressSettings,
+		dockerRegistry:             body.DockerRegistry,
+		buildID:                    newBuildID(),
+		versionID:                  1,
+		description:                body.Description,
+		eventTrigger:               body.EventTrigger,
+		sourceRepository:           body.SourceRepository,
+		sourceArchiveURL:           body.SourceArchiveURL,
+		sourceUploadURL:            body.SourceUploadURL,
+		maxInstances:               body.MaxInstances,
+		minInstances:               body.MinInstances,
+		vpcConnector:               body.VPCConnector,
+		vpcConnectorEgressSettings: body.VPCConnectorEgressSettings,
 	}
 
 	applyGen1Defaults(m, project)
@@ -69,10 +90,11 @@ func (h *Handler) putGen1Meta(name string, m *gen1Meta) {
 }
 
 // bumpGen1Meta advances the deploy generation for an updated function: versionId
-// increments, a new build id is cut, and any gen1 metadata carried in the PATCH
-// body is applied. A function whose metadata is missing (created straight through
-// the portable API) is seeded first so the bump still lands on version 2.
-func (h *Handler) bumpGen1Meta(name string, body *cloudFunction, project string) {
+// increments, a new build id is cut, and the gen1 metadata carried in the PATCH
+// body is applied under the update mask. A function whose metadata is missing
+// (created straight through the portable API) is seeded first so the bump still
+// lands on version 2.
+func (h *Handler) bumpGen1Meta(name string, body *cloudFunction, project string, mask updateMask) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -82,6 +104,8 @@ func (h *Handler) bumpGen1Meta(name string, body *cloudFunction, project string)
 		applyGen1Defaults(m, project)
 	}
 
+	// serviceAccountEmail/ingressSettings/dockerRegistry are always server-defaulted
+	// in real gen1, so they are set when supplied but never cleared.
 	if body.ServiceAccountEmail != "" {
 		m.serviceAccountEmail = body.ServiceAccountEmail
 	}
@@ -94,9 +118,40 @@ func (h *Handler) bumpGen1Meta(name string, body *cloudFunction, project string)
 		m.dockerRegistry = body.DockerRegistry
 	}
 
+	applyGen1PatchFields(m, body, mask)
+
 	m.versionID++
 	m.buildID = newBuildID()
 	h.gen1Meta[name] = m
+}
+
+// applyGen1PatchFields applies the client-owned gen1 fields from a PATCH body
+// under the update mask: a masked field absent from the body is cleared, while an
+// unmasked (legacy) PATCH merges only non-zero values.
+func applyGen1PatchFields(m *gen1Meta, body *cloudFunction, mask updateMask) {
+	applyMaskedStr(mask, "description", &m.description, body.Description)
+	applyMaskedStr(mask, "vpcConnector", &m.vpcConnector, body.VPCConnector)
+	applyMaskedStr(mask, "vpcConnectorEgressSettings", &m.vpcConnectorEgressSettings, body.VPCConnectorEgressSettings)
+	applyMaskedInt(mask, "maxInstances", &m.maxInstances, body.MaxInstances)
+	applyMaskedInt(mask, "minInstances", &m.minInstances, body.MinInstances)
+
+	if mask.covers("eventTrigger") && (mask.explicit() || body.EventTrigger != nil) {
+		m.eventTrigger = body.EventTrigger
+	}
+
+	if mask.covers("sourceRepository") && (mask.explicit() || body.SourceRepository != nil) {
+		m.sourceRepository = body.SourceRepository
+	}
+
+	// A redeploy that carries a fresh source records it so Get echoes the current
+	// deploy source.
+	if body.SourceArchiveURL != "" {
+		m.sourceArchiveURL = body.SourceArchiveURL
+	}
+
+	if body.SourceUploadURL != "" {
+		m.sourceUploadURL = body.SourceUploadURL
+	}
 }
 
 // gen1MetaFor returns a copy of the stored metadata for name, or freshly
