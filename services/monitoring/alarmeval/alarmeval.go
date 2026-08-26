@@ -87,6 +87,24 @@ func MatchDimensions(dataDims, filterDims map[string]string) bool {
 	return true
 }
 
+// MatchAlarmDimensions reports whether a datum contributes to a metric alert's
+// evaluation. Unlike MatchDimensions — which pins down one exact metric series
+// for a read query, matching how CloudWatch alarms monitor a single series —
+// Azure Monitor and GCP alerting aggregate across unspecified dimensions: a
+// criterion carrying no dimension filter evaluates over ALL timeseries of the
+// metric, and a filter naming some dimensions matches any datum whose dimensions
+// CONTAIN them (a superset is allowed). AWS/CloudWatch alarm evaluation keeps
+// using MatchDimensions; the aggregating providers use this.
+func MatchAlarmDimensions(dataDims, filterDims map[string]string) bool {
+	for k, v := range filterDims {
+		if dataDims[k] != v {
+			return false
+		}
+	}
+
+	return true
+}
+
 // EvaluateComparison reports whether value crosses threshold under operator.
 func EvaluateComparison(value float64, operator string, threshold float64) bool {
 	switch operator {
