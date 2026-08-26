@@ -195,6 +195,104 @@ func TestDataPlaneSQLFilterORDeliversMatch(t *testing.T) {
 	}
 }
 
+// sendLabelTo publishes a message with the given Label and To system props.
+func sendLabelTo(t *testing.T, srv *httptest.Server, topic, body, label, to string) {
+	t.Helper()
+
+	bp := `{"Label":"` + label + `","To":"` + to + `"}`
+	if r := doRequest(t, srv, http.MethodPost, "/"+nsName+"/"+topic+"/messages", body,
+		map[string]string{"BrokerProperties": bp}); r.StatusCode != http.StatusCreated {
+		t.Fatalf("send %q = %d, want 201", body, r.StatusCode)
+	}
+}
+
+// TestDataPlaneSQLFilterParenthesizedOrGroup is the regression for parenthesized
+// OR groups being dropped: "(sys.Label='a' OR sys.Label='b') AND sys.To='x'" is
+// the canonical Azure/Terraform shape, and a message matching it must be
+// delivered rather than lost to the paren being absorbed into a field name.
+func TestDataPlaneSQLFilterParenthesizedOrGroup(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "events", "grp")
+	replaceRuleWithSQL(t, srv, "events", "grp", "(sys.Label = 'a' OR sys.Label = 'b') AND sys.To = 'x'")
+
+	sendLabelTo(t, srv, "events", "hit-a", "a", "x")     // matches OR group + To
+	sendLabelTo(t, srv, "events", "hit-b", "b", "x")     // matches other disjunct + To
+	sendLabelTo(t, srv, "events", "wrong-to", "a", "y")  // OR group ok, To fails
+	sendLabelTo(t, srv, "events", "wrong-lbl", "c", "x") // To ok, OR group fails
+
+	for _, want := range []string{"hit-a", "hit-b"} {
+		if got, ok := receiveOne(t, srv, "events", "grp"); !ok || got != want {
+			t.Fatalf("receive = %q ok=%v, want %q (parenthesized OR group must deliver)", got, ok, want)
+		}
+	}
+
+	if _, ok := receiveOne(t, srv, "events", "grp"); ok {
+		t.Fatal("messages failing the paren filter must not have been delivered")
+	}
+}
+
+// TestDataPlaneSQLFilterSingleParenClause confirms even a trivially
+// parenthesized single clause "(sys.Label='a')" evaluates correctly.
+func TestDataPlaneSQLFilterSingleParenClause(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "events", "paren1")
+	replaceRuleWithSQL(t, srv, "events", "paren1", "(sys.Label = 'a')")
+
+	sendLabelTo(t, srv, "events", "yes", "a", "")
+	sendLabelTo(t, srv, "events", "no", "z", "")
+
+	if got, ok := receiveOne(t, srv, "events", "paren1"); !ok || got != "yes" {
+		t.Fatalf("receive = %q ok=%v, want yes", got, ok)
+	}
+
+	if _, ok := receiveOne(t, srv, "events", "paren1"); ok {
+		t.Fatal("Label=z must not have matched (sys.Label='a')")
+	}
+}
+
+// TestDataPlaneSQLFilterNestedParens confirms nested parentheses with mixed
+// OR/AND precedence: "((sys.Label='a' OR sys.Label='b') AND sys.To='x') OR
+// sys.Label='d'".
+func TestDataPlaneSQLFilterNestedParens(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "events", "nested")
+	replaceRuleWithSQL(t, srv, "events", "nested",
+		"((sys.Label = 'a' OR sys.Label = 'b') AND sys.To = 'x') OR sys.Label = 'd'")
+
+	sendLabelTo(t, srv, "events", "via-and", "a", "x") // inner group true
+	sendLabelTo(t, srv, "events", "via-d", "d", "y")   // outer OR disjunct true
+	sendLabelTo(t, srv, "events", "miss", "a", "y")    // inner To fails, not d
+
+	for _, want := range []string{"via-and", "via-d"} {
+		if got, ok := receiveOne(t, srv, "events", "nested"); !ok || got != want {
+			t.Fatalf("receive = %q ok=%v, want %q", got, ok, want)
+		}
+	}
+
+	if _, ok := receiveOne(t, srv, "events", "nested"); ok {
+		t.Fatal("non-matching nested-filter message must not have been delivered")
+	}
+}
+
+// TestDataPlaneSQLFilterUnbalancedParenNoDrop confirms the no-drop safety net: an
+// unbalanced-paren expression cannot be parsed, so it must over-deliver (match
+// everything) rather than silently drop.
+func TestDataPlaneSQLFilterUnbalancedParenNoDrop(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	seedTopicSub(t, srv, "events", "unbal")
+	replaceRuleWithSQL(t, srv, "events", "unbal", "(sys.Label = 'a'")
+
+	sendLabelTo(t, srv, "events", "kept", "anything", "")
+
+	if got, ok := receiveOne(t, srv, "events", "unbal"); !ok || got != "kept" {
+		t.Fatalf("receive = %q ok=%v, want kept (unbalanced paren must not drop)", got, ok)
+	}
+}
+
 // TestDataPlaneSQLFilterNumericComparison confirms a relational SqlFilter over a
 // custom numeric property (priority > 5, the common Terraform pattern) delivers
 // only messages that satisfy it, rather than over-delivering everything.

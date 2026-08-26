@@ -134,21 +134,25 @@ func sqlProp(field string, p *messageProps) (string, bool) {
 }
 
 // sqlMatches evaluates a SqlFilter's expression against a message. The grammar
-// is OR-of-AND-of-comparison-clauses: top-level OR groups (each an AND-joined
-// list of clauses) are tried in turn, and the message matches if any group's
-// clauses all hold. A clause is "<field> <op> <value>", where op is one of
-// =, !=, <>, <, >, <=, >=; field is a sys.<Name> system property, a bare or
-// user.<Name> custom application property; and value is a quoted string or a
-// numeric literal. Boolean literals (1=1, 1=0, true, false) work as-is.
+// is a recursive-descent one: an expression is OR-of-AND of terms, where a term
+// is a parenthesized sub-expression or a comparison clause. So OR/AND
+// precedence and arbitrarily nested parentheses --
+// "(sys.Label='a' OR sys.Label='b') AND sys.To='x'" -- evaluate correctly. A
+// clause is "<field> <op> <value>", where op is one of =, !=, <>, <, >, <=, >=;
+// field is a sys.<Name> system property, or a bare/user.<Name> custom
+// application property; and value is a quoted string or a numeric literal.
+// Boolean literals (1=1, 1=0, true, false) work as-is.
 //
-// The no-drop invariant: a clause this evaluator cannot parse (an unsupported
-// operator such as LIKE/IN, malformed syntax, or an unrecognized sys.*
-// identifier) is treated as satisfied rather than silently dropping a message a
-// real broker would deliver. A well-formed comparison that legitimately fails
-// (or references an absent custom property) still excludes the message.
+// The no-drop invariant: anything this evaluator cannot fully parse (an
+// unbalanced paren, an unterminated string, an unsupported operator such as
+// LIKE/IN, other malformed syntax, or an unrecognized sys.* identifier) is
+// treated as satisfied rather than silently dropping a message a real broker
+// would deliver -- it can only ever over-deliver. A well-formed comparison that
+// legitimately fails (or references an absent custom property) still excludes
+// the message.
 //
-// DEFER: LIKE, IN, EXISTS, IS NULL, arithmetic and parentheses are not parsed;
-// clauses using them fall back to the no-drop match=true path.
+// DEFER: LIKE, IN, EXISTS, IS NULL and arithmetic are not implemented; a clause
+// using them falls back to the no-drop match=true path.
 func sqlMatches(f *sqlFilter, p *messageProps) bool {
 	if f == nil {
 		return true
@@ -163,51 +167,192 @@ func evalSQLExpression(expr string, p *messageProps) bool {
 		return true
 	}
 
-	for _, group := range splitTopLevel(expr, "OR") {
-		if evalSQLAndGroup(group, p) {
-			return true
-		}
+	toks, ok := tokenizeSQL(expr)
+	if !ok || len(toks) == 0 {
+		return true // unterminated string / nothing to evaluate -> no-drop
 	}
 
-	return false
+	parser := &sqlParser{toks: toks, props: p}
+
+	val, ok := parser.parseExpr()
+	if !ok || parser.pos != len(toks) {
+		return true // parse error or trailing tokens -> no-drop
+	}
+
+	return val
 }
 
-// evalSQLAndGroup reports whether every AND-joined clause in one OR-group holds.
-func evalSQLAndGroup(group string, p *messageProps) bool {
-	for _, clause := range splitTopLevel(group, "AND") {
-		if !evalSQLClause(clause, p) {
-			return false
-		}
-	}
+// sqlTokenKind classifies a lexical token of a SqlFilter expression.
+type sqlTokenKind int
 
-	return true
+const (
+	tokEOF sqlTokenKind = iota
+	tokAtom
+	tokLParen
+	tokRParen
+	tokAnd
+	tokOr
+)
+
+type sqlToken struct {
+	kind sqlTokenKind
+	text string // set only for tokAtom
 }
 
-// splitTopLevel splits a SQL filter expression on a top-level boolean keyword
-// (OR/AND), case-insensitively. It does not account for the keyword appearing
-// inside a quoted string literal -- out of scope for this evaluator.
-func splitTopLevel(expr, keyword string) []string {
-	fields := strings.Fields(expr)
+// tokenizeSQL lexes a SqlFilter expression into structural tokens: parentheses,
+// the AND/OR keywords, and opaque atoms (identifiers, operators, literals). A
+// quoted string literal is a single atom, so parentheses, whitespace and the
+// AND/OR keywords inside it are not treated as structure. ok=false only for an
+// unterminated quote, which the caller maps to the no-drop path.
+func tokenizeSQL(expr string) ([]sqlToken, bool) {
+	var toks []sqlToken
 
-	var (
-		parts []string
-		cur   []string
-	)
+	i := 0
+	for i < len(expr) {
+		switch c := expr[i]; c {
+		case ' ', '\t', '\n', '\r':
+			i++
+		case '(':
+			toks = append(toks, sqlToken{kind: tokLParen})
+			i++
+		case ')':
+			toks = append(toks, sqlToken{kind: tokRParen})
+			i++
+		case '\'', '"':
+			tok, next, ok := scanSQLString(expr, i, c)
+			if !ok {
+				return nil, false // unterminated string literal
+			}
 
-	for _, f := range fields {
-		if strings.EqualFold(f, keyword) {
-			parts = append(parts, strings.Join(cur, " "))
-			cur = nil
-
-			continue
+			toks = append(toks, tok)
+			i = next
+		default:
+			word, next := scanSQLWord(expr, i)
+			toks = append(toks, classifyWord(word))
+			i = next
 		}
-
-		cur = append(cur, f)
 	}
 
-	parts = append(parts, strings.Join(cur, " "))
+	return toks, true
+}
 
-	return parts
+// scanSQLString reads a quoted string literal beginning at i (opened by quote),
+// returning it as one atom token and the index past its closing quote.
+// ok=false when the closing quote is missing.
+func scanSQLString(expr string, i int, quote byte) (tok sqlToken, next int, ok bool) {
+	rel := strings.IndexByte(expr[i+1:], quote)
+	if rel < 0 {
+		return sqlToken{}, 0, false
+	}
+
+	closing := i + 1 + rel
+
+	return sqlToken{kind: tokAtom, text: expr[i : closing+1]}, closing + 1, true
+}
+
+// scanSQLWord reads a maximal run of non-structural, non-space characters
+// starting at i, returning the word and the index past it.
+func scanSQLWord(expr string, i int) (word string, next int) {
+	j := i
+	for j < len(expr) {
+		switch expr[j] {
+		case ' ', '\t', '\n', '\r', '(', ')', '\'', '"':
+			return expr[i:j], j
+		}
+
+		j++
+	}
+
+	return expr[i:j], j
+}
+
+// classifyWord maps a bare word to an AND/OR keyword token or an opaque atom.
+func classifyWord(word string) sqlToken {
+	switch {
+	case strings.EqualFold(word, "AND"):
+		return sqlToken{kind: tokAnd}
+	case strings.EqualFold(word, "OR"):
+		return sqlToken{kind: tokOr}
+	default:
+		return sqlToken{kind: tokAtom, text: word}
+	}
+}
+
+// sqlParser is a recursive-descent parser/evaluator over a token stream.
+type sqlParser struct {
+	toks  []sqlToken
+	pos   int
+	props *messageProps
+}
+
+func (sp *sqlParser) peek() sqlTokenKind {
+	if sp.pos >= len(sp.toks) {
+		return tokEOF
+	}
+
+	return sp.toks[sp.pos].kind
+}
+
+// parseExpr parses an OR of AND-groups. It reports ok=false on any structural
+// error so the caller can apply the no-drop invariant.
+func (sp *sqlParser) parseExpr() (val, ok bool) {
+	return sp.parseBinary(tokOr, sp.parseAndGroup, func(a, b bool) bool { return a || b })
+}
+
+// parseAndGroup parses an AND of terms.
+func (sp *sqlParser) parseAndGroup() (val, ok bool) {
+	return sp.parseBinary(tokAnd, sp.parseTerm, func(a, b bool) bool { return a && b })
+}
+
+// parseBinary parses a left-associative chain of sub-productions joined by the
+// given keyword, folding results with combine.
+func (sp *sqlParser) parseBinary(kw sqlTokenKind, sub func() (bool, bool), combine func(a, b bool) bool) (val, ok bool) {
+	val, ok = sub()
+	if !ok {
+		return false, false
+	}
+
+	for sp.peek() == kw {
+		sp.pos++
+
+		rhs, rhsOK := sub()
+		if !rhsOK {
+			return false, false
+		}
+
+		val = combine(val, rhs)
+	}
+
+	return val, true
+}
+
+// parseTerm parses a parenthesized sub-expression or a single comparison clause
+// (a maximal run of atom tokens).
+func (sp *sqlParser) parseTerm() (val, ok bool) {
+	if sp.peek() == tokLParen {
+		sp.pos++
+
+		val, ok = sp.parseExpr()
+		if !ok || sp.peek() != tokRParen {
+			return false, false // empty/malformed group or unbalanced paren
+		}
+
+		sp.pos++
+
+		return val, true
+	}
+
+	if sp.peek() != tokAtom {
+		return false, false
+	}
+
+	var parts []string
+	for sp.peek() == tokAtom {
+		parts = append(parts, sp.toks[sp.pos].text)
+		sp.pos++
+	}
+
+	return evalSQLClause(strings.Join(parts, " "), sp.props), true
 }
 
 // SQL comparison operators the filter grammar understands.
