@@ -292,12 +292,16 @@ func (h *Handler) patchRecordSet(w http.ResponseWriter, r *http.Request, rp *azu
 		cfg.TTL = int(*body.Properties.TTL)
 	}
 
-	if supplied := recordValues(recordType, body.Properties); len(supplied) > 0 {
-		cfg.Values = supplied
-	}
-
 	if recordType == recTypeSOA {
+		// SOA host (and email) are system-managed: recordValues yields [host,
+		// email], so a timing-only PATCH that omits them would blindly overwrite
+		// the stored values with empties and lose the host. Merge instead —
+		// preserve the existing host/email unless the PATCH supplies new ones —
+		// while the timing fields keep merging via the SOA carrier.
+		cfg.Values = mergeSOAValues(existing.Values, body.Properties)
 		cfg.SOA = mergeSOAConfig(existing.SOA, soaConfigFromProps(body.Properties))
+	} else if supplied := recordValues(recordType, body.Properties); len(supplied) > 0 {
+		cfg.Values = supplied
 	}
 
 	info, err := h.dns.UpdateRecord(r.Context(), cfg)

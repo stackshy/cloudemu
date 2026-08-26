@@ -393,6 +393,35 @@ func soaConfigFromProps(props *recordSetProperties) *dnsdriver.SOARecord {
 	}
 }
 
+// mergeSOAValues overlays a PATCH's supplied SOA host/email onto the record's
+// existing flat values ([host, email]), preserving the existing (system-managed)
+// host and email when the PATCH omits them. Azure keeps the SOA host stable on a
+// timing-only update, so a PATCH that carries no host must never blank it.
+func mergeSOAValues(existing []string, props *recordSetProperties) []string {
+	out := []string{"", ""}
+	if len(existing) > 0 {
+		out[0] = existing[0]
+	}
+
+	if len(existing) > 1 {
+		out[1] = existing[1]
+	}
+
+	if props == nil || props.SoaRecord == nil {
+		return out
+	}
+
+	if props.SoaRecord.Host != "" {
+		out[0] = props.SoaRecord.Host
+	}
+
+	if props.SoaRecord.Email != "" {
+		out[1] = props.SoaRecord.Email
+	}
+
+	return out
+}
+
 // mergeSOAConfig overlays a PATCH's supplied SOA fields onto the stored carrier,
 // preserving any field the PATCH left unset (zero). Used by the record-set PATCH
 // merge so a partial SOA edit keeps the fields it did not resend.

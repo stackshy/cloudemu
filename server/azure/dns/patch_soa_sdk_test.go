@@ -139,6 +139,65 @@ func TestSDKAzureDNSEditApexSOA(t *testing.T) {
 	}
 }
 
+// TestSDKAzureDNSPatchSOATimingPreservesHost is the residue regression: a PATCH
+// (RecordSets.Update) that supplies ONLY a timing field on the apex SOA — with
+// host and email omitted — must keep the system-managed host and email stable
+// (recordValues would otherwise yield ["",""] and wipe them) while applying the
+// new timing value.
+func TestSDKAzureDNSPatchSOATimingPreservesHost(t *testing.T) {
+	zones, records, _ := newDNSClientsWithStatus(t)
+	ctx := context.Background()
+
+	if _, err := zones.CreateOrUpdate(ctx, testRG, "soapatch.com", armdns.Zone{
+		Location: to.Ptr("global"),
+	}, nil); err != nil {
+		t.Fatalf("Zones.CreateOrUpdate: %v", err)
+	}
+
+	before, err := records.Get(ctx, testRG, "soapatch.com", "@", armdns.RecordTypeSOA, nil)
+	if err != nil {
+		t.Fatalf("RecordSets.Get(SOA): %v", err)
+	}
+
+	host := *before.Properties.SoaRecord.Host
+	email := *before.Properties.SoaRecord.Email
+
+	// PATCH ONLY refreshTime; host and email are omitted from the body.
+	patched, err := records.Update(ctx, testRG, "soapatch.com", "@", armdns.RecordTypeSOA, armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
+			SoaRecord: &armdns.SoaRecord{RefreshTime: to.Ptr(int64(9999))},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("RecordSets.Update(timing only): %v", err)
+	}
+
+	p := patched.Properties.SoaRecord
+	if p == nil || p.Host == nil || *p.Host != host {
+		t.Fatalf("PATCH timing-only SOA host = %+v, want unchanged %q", p, host)
+	}
+	if p.Email == nil || *p.Email != email {
+		t.Fatalf("PATCH timing-only SOA email = %+v, want unchanged %q", p.Email, email)
+	}
+	if p.RefreshTime == nil || *p.RefreshTime != 9999 {
+		t.Fatalf("PATCH timing-only SOA refreshTime = %+v, want 9999", p.RefreshTime)
+	}
+
+	// Read-back confirms the host/email survived the write, not just the response.
+	after, err := records.Get(ctx, testRG, "soapatch.com", "@", armdns.RecordTypeSOA, nil)
+	if err != nil {
+		t.Fatalf("RecordSets.Get(SOA after patch): %v", err)
+	}
+
+	a := after.Properties.SoaRecord
+	if a.Host == nil || *a.Host != host || a.Email == nil || *a.Email != email {
+		t.Fatalf("read-back SOA host/email = %v/%v, want %q/%q", a.Host, a.Email, host, email)
+	}
+	if a.RefreshTime == nil || *a.RefreshTime != 9999 {
+		t.Fatalf("read-back SOA refreshTime = %+v, want 9999", a.RefreshTime)
+	}
+}
+
 // TestSDKAzureDNSAutoSOADefaults asserts that a freshly-created zone's
 // auto-provisioned apex SOA still reads back Azure's platform defaults when it
 // has not been edited (the BUG1 fix must not disturb the default path).
