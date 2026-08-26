@@ -2,10 +2,16 @@ package ecr
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+)
+
+const (
+	tagStatusTagged   = "TAGGED"
+	tagStatusUntagged = "UNTAGGED"
 )
 
 func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +144,8 @@ func (h *Handler) listImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	images = filterByTagStatus(images, req.Filter.TagStatus)
+
 	ids := make([]imageIDJSON, 0, len(images))
 	for i := range images {
 		ids = append(ids, imageIDsForDetail(&images[i])...)
@@ -200,6 +208,12 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 		wire.WriteJSONError(w, http.StatusBadRequest, "ImageNotFoundException",
 			"The image with imageId "+imageReference(*missing)+" does not exist within the repository")
 		return
+	}
+
+	// The tagStatus filter applies to the repository-wide listing (it is not
+	// combined with an explicit imageIds selection in real ECR).
+	if len(req.ImageIDs) == 0 {
+		images = filterByTagStatus(images, req.Filter.TagStatus)
 	}
 
 	details := make([]imageDetailJSON, 0, len(images))
@@ -320,8 +334,10 @@ func (h *Handler) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A missing repository is a thrown error; missing images become per-image
-	// failures, matching real ECR.
-	if _, err := h.registry.GetRepository(r.Context(), req.RepositoryName); err != nil {
+	// failures, matching real ECR. Snapshotting the images before deletion lets
+	// the response echo the digest and every tag a delete removes.
+	images, err := h.registry.ListImages(r.Context(), req.RepositoryName)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -330,7 +346,9 @@ func (h *Handler) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
 	failures := make([]imageFailureJSON, 0)
 
 	for _, id := range req.ImageIDs {
-		if err := h.registry.DeleteImage(r.Context(), req.RepositoryName, imageReference(id)); err != nil {
+		detail := findImageDetail(images, id)
+
+		if derr := h.registry.DeleteImage(r.Context(), req.RepositoryName, deleteReference(id)); derr != nil {
 			failures = append(failures, imageFailureJSON{
 				ImageID:       id,
 				FailureCode:   "ImageNotFound",
@@ -340,10 +358,76 @@ func (h *Handler) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		deleted = append(deleted, id)
+		deleted = append(deleted, deletedImageIDs(detail, id)...)
 	}
 
 	wire.WriteJSON(w, batchDeleteImageResponse{ImageIDs: deleted, Failures: failures})
+}
+
+// deleteReference chooses the delete target: a tag reference (untag) when a tag
+// is given, otherwise the digest (delete the whole manifest). This mirrors ECR,
+// where specifying a tag removes just that tag and specifying a digest removes
+// the image and all of its tags.
+func deleteReference(id imageIDJSON) string {
+	if id.ImageTag != "" {
+		return id.ImageTag
+	}
+
+	return id.ImageDigest
+}
+
+// deletedImageIDs builds the imageIds echoed for a successful delete. A tag
+// delete echoes the digest plus that tag; a digest delete echoes the digest
+// with every tag it removed (or a digest-only id when the image was untagged).
+func deletedImageIDs(detail *crdriver.ImageDetail, id imageIDJSON) []imageIDJSON {
+	if detail == nil {
+		return []imageIDJSON{id}
+	}
+
+	if id.ImageTag != "" {
+		return []imageIDJSON{{ImageDigest: detail.Digest, ImageTag: id.ImageTag}}
+	}
+
+	if len(detail.Tags) == 0 {
+		return []imageIDJSON{{ImageDigest: detail.Digest}}
+	}
+
+	out := make([]imageIDJSON, 0, len(detail.Tags))
+	for _, tag := range detail.Tags {
+		out = append(out, imageIDJSON{ImageDigest: detail.Digest, ImageTag: tag})
+	}
+
+	return out
+}
+
+// filterByTagStatus keeps only images matching an ECR tagStatus filter. An
+// empty value or ANY passes every image through.
+func filterByTagStatus(images []crdriver.ImageDetail, tagStatus string) []crdriver.ImageDetail {
+	want := strings.ToUpper(tagStatus)
+	if want != tagStatusTagged && want != tagStatusUntagged {
+		return images
+	}
+
+	out := make([]crdriver.ImageDetail, 0, len(images))
+
+	for i := range images {
+		if (want == tagStatusTagged) == hasAnyTag(&images[i]) {
+			out = append(out, images[i])
+		}
+	}
+
+	return out
+}
+
+// hasAnyTag reports whether an image carries at least one non-empty tag.
+func hasAnyTag(d *crdriver.ImageDetail) bool {
+	for _, t := range d.Tags {
+		if t != "" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func tagsToMap(tags []tagJSON) map[string]string {

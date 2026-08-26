@@ -81,17 +81,25 @@ type putImageRequest struct {
 	ImageDigest            string `json:"imageDigest"`
 }
 
+// imageFilterJSON is the ECR filter object; tagStatus is TAGGED, UNTAGGED, or
+// ANY (ListImages/DescribeImages).
+type imageFilterJSON struct {
+	TagStatus string `json:"tagStatus"`
+}
+
 type repositoryNameRequest struct {
-	RepositoryName string `json:"repositoryName"`
-	MaxResults     int    `json:"maxResults"`
-	NextToken      string `json:"nextToken"`
+	RepositoryName string          `json:"repositoryName"`
+	Filter         imageFilterJSON `json:"filter"`
+	MaxResults     int             `json:"maxResults"`
+	NextToken      string          `json:"nextToken"`
 }
 
 type imageIDsRequest struct {
-	RepositoryName string        `json:"repositoryName"`
-	ImageIDs       []imageIDJSON `json:"imageIds"`
-	MaxResults     int           `json:"maxResults"`
-	NextToken      string        `json:"nextToken"`
+	RepositoryName string          `json:"repositoryName"`
+	ImageIDs       []imageIDJSON   `json:"imageIds"`
+	Filter         imageFilterJSON `json:"filter"`
+	MaxResults     int             `json:"maxResults"`
+	NextToken      string          `json:"nextToken"`
 }
 
 // --- response envelopes ---
