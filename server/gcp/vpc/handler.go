@@ -72,56 +72,16 @@ const (
 	internalNetCIDR      = "10.0.0.0/16"
 )
 
-// defaultListMax is GCP's default page size when maxResults is absent.
-const defaultListMax = 500
-
 // nowRFC3339 returns the current time formatted the way GCP stamps
 // creationTimestamp on every resource.
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// nameMatches reports whether name satisfies a GCP list filter. Only the
-// common single-clause "name (=|!=|eq|ne) value" form is supported; any other
-// filter (or none) matches everything.
-func nameMatches(filter, name string) bool {
-	filter = strings.TrimSpace(filter)
-	if filter == "" {
-		return true
-	}
-
-	for _, cand := range []string{"!=", "=", " ne ", " eq "} {
-		idx := strings.Index(filter, cand)
-		if idx < 0 {
-			continue
-		}
-
-		field := strings.TrimSpace(filter[:idx])
-		if field != "name" {
-			return true
-		}
-
-		value := strings.Trim(strings.TrimSpace(filter[idx+len(cand):]), `"'`)
-		op := strings.TrimSpace(cand)
-		negate := op == "!=" || op == "ne"
-
-		return (name == value) != negate
-	}
-
-	return true
-}
+// nameMatches reports whether name satisfies a GCP list filter, delegating to
+// the shared gcprest codec so every GCP handler applies filters identically.
+func nameMatches(filter, name string) bool { return gcprest.NameMatches(filter, name) }
 
 // maxResultsOf parses the maxResults query param, defaulting when absent/invalid.
-func maxResultsOf(raw string) int {
-	if raw == "" {
-		return defaultListMax
-	}
-
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return defaultListMax
-	}
-
-	return n
-}
+func maxResultsOf(raw string) int { return gcprest.MaxResults(raw) }
 
 // Handler serves the GCP networking REST surface.
 type Handler struct {

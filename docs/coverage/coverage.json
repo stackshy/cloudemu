@@ -5783,6 +5783,10 @@
           {
             "name": "PutGCPResource",
             "doc": "PutGCPResource stores res, returning AlreadyExists when a resource with"
+          },
+          {
+            "name": "UpdateGCPResource",
+            "doc": "UpdateGCPResource applies mutate to the stored resource in place under the"
           }
         ]
       },

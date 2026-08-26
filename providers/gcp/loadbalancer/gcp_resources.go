@@ -61,6 +61,23 @@ func (m *Mock) DeleteGCPResource(_ context.Context, collection, scope, name stri
 	return nil
 }
 
+// UpdateGCPResource applies mutate to the stored opaque resource in place,
+// holding the store lock across the read-modify-write. Returns NotFound when no
+// resource with the (collection, scope, name) triple exists.
+func (m *Mock) UpdateGCPResource(_ context.Context, collection, scope, name string, mutate func(*driver.GCPResource)) error {
+	key := gcpResourceKey(collection, scope, name)
+
+	updated := m.gcpResources.Update(key, func(res driver.GCPResource) driver.GCPResource {
+		mutate(&res)
+		return res
+	})
+	if !updated {
+		return cerrors.Newf(cerrors.NotFound, "%s %q not found", collection, name)
+	}
+
+	return nil
+}
+
 // PatchGCPBackendService applies mutate to the target group named name, holding
 // the store lock across the read-modify-write. Returns NotFound when no backend
 // service with that name exists.

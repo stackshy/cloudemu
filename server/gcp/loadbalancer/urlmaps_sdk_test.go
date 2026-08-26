@@ -93,3 +93,56 @@ func TestSDKGCPURLMapRoundTrip(t *testing.T) {
 		t.Fatal("Get after delete: want error, got nil")
 	}
 }
+
+// TestSDKGCPURLMapUpdate covers the missing UPDATE verb: urlMaps.update
+// previously 405'd, so google_compute_url_map could never change its routing.
+// The update must replace the stored resource and be visible on the next get.
+func TestSDKGCPURLMapUpdate(t *testing.T) {
+	ts := newGCPLBServer(t)
+	ctx := context.Background()
+
+	client, err := gcpcompute.NewUrlMapsRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewUrlMapsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	svcA := "projects/" + testProject + "/global/backendServices/bs-a"
+	svcB := "projects/" + testProject + "/global/backendServices/bs-b"
+
+	insertOp, err := client.Insert(ctx, &computepb.InsertUrlMapRequest{
+		Project:        testProject,
+		UrlMapResource: &computepb.UrlMap{Name: ptrStr("edit-map"), DefaultService: ptrStr(svcA)},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := insertOp.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	updOp, err := client.Update(ctx, &computepb.UpdateUrlMapRequest{
+		Project:        testProject,
+		UrlMap:         "edit-map",
+		UrlMapResource: &computepb.UrlMap{Name: ptrStr("edit-map"), DefaultService: ptrStr(svcB)},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if err := updOp.Wait(ctx); err != nil {
+		t.Fatalf("Update wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetUrlMapRequest{Project: testProject, UrlMap: "edit-map"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetDefaultService() != svcB {
+		t.Errorf("defaultService = %q, want %q (update not applied)", got.GetDefaultService(), svcB)
+	}
+}
