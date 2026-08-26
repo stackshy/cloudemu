@@ -7,6 +7,13 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+// VPCAssociation identifies an Amazon VPC associated with an AWS Route 53
+// private hosted zone. Other providers leave it unused.
+type VPCAssociation struct {
+	VPCID     string
+	VPCRegion string
+}
+
 // ZoneConfig describes a DNS zone to create.
 type ZoneConfig struct {
 	Name    string
@@ -19,6 +26,10 @@ type ZoneConfig struct {
 	// Comment is the AWS Route 53 hosted-zone comment, persisted and returned on
 	// Create/Get. Other providers leave it empty.
 	Comment string
+	// VPCs are the Amazon VPCs a Route 53 private hosted zone is associated with
+	// at create time. A non-empty list marks the zone private. Other providers
+	// leave it nil.
+	VPCs []VPCAssociation
 	// Scope records the cloud-side container the zone was created in (Azure
 	// subscription/resource group or GCP project). The zero value is unscoped.
 	Scope scope.Scope
@@ -37,6 +48,9 @@ type ZoneInfo struct {
 	// Comment is the AWS Route 53 hosted-zone comment as stored on create. Other
 	// providers leave it empty.
 	Comment string
+	// VPCs are the Amazon VPCs a Route 53 private hosted zone is currently
+	// associated with. Other providers leave it nil.
+	VPCs []VPCAssociation
 	// Scope is the container the zone lives in; scoped list endpoints filter
 	// on it. The zero value is unscoped and visible everywhere.
 	Scope scope.Scope
