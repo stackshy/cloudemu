@@ -241,7 +241,7 @@ func (m *Mock) ListRegistries(_ context.Context, rg string) ([]driver.AzureRegis
 	out := make([]driver.AzureRegistry, 0, len(all))
 
 	for _, rd := range all {
-		if rg != "" && rd.reg.ResourceGroup != rg {
+		if rg != "" && !strings.EqualFold(rd.reg.ResourceGroup, rg) {
 			continue
 		}
 

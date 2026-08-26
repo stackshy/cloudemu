@@ -257,7 +257,7 @@ func (m *Mock) ListAccountsByResourceGroup(_ context.Context, resourceGroup stri
 	out := make([]driver.Account, 0)
 
 	for _, a := range m.accounts.All() {
-		if a.ResourceGroup == resourceGroup {
+		if strings.EqualFold(a.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneAccount(a))
 		}
 	}

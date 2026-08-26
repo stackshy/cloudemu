@@ -125,7 +125,7 @@ func (m *Mock) ListMLWorkspacesByResourceGroup(_ context.Context, resourceGroup 
 	out := make([]driver.MLWorkspace, 0)
 
 	for _, w := range m.mlWorkspaces.All() {
-		if w.ResourceGroup == resourceGroup {
+		if strings.EqualFold(w.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneMLWorkspace(w))
 		}
 	}

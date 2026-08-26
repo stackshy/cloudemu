@@ -243,7 +243,7 @@ func (m *Mock) ListServicesByResourceGroup(_ context.Context, resourceGroup stri
 	out := make([]driver.Service, 0)
 
 	for _, s := range m.services.All() {
-		if s.ResourceGroup == resourceGroup {
+		if strings.EqualFold(s.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneService(s))
 		}
 	}

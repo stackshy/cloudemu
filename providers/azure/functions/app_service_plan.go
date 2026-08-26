@@ -215,7 +215,7 @@ func (m *Mock) ListAppServicePlans(_ context.Context, subscription, resourceGrou
 			continue
 		}
 
-		if resourceGroup != "" && p.ResourceGroup != resourceGroup {
+		if resourceGroup != "" && !strings.EqualFold(p.ResourceGroup, resourceGroup) {
 			continue
 		}
 

@@ -117,7 +117,7 @@ func (h *Handler) getNamespace(w http.ResponseWriter, r *http.Request, rp *azure
 // with the namespace's stored resource group.
 func wrongResourceGroup(rp *azurearm.ResourcePath, info *notifdriver.TopicInfo) bool {
 	return rp.ResourceGroup != "" && info.Scope.ResourceGroup != "" &&
-		info.Scope.ResourceGroup != rp.ResourceGroup
+		!strings.EqualFold(info.Scope.ResourceGroup, rp.ResourceGroup)
 }
 
 // deleteNamespace removes the namespace topic and every hub topic nested under

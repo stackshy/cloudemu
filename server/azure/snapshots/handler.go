@@ -91,7 +91,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]snapshotResponse, 0, len(snaps))
 
 	for i := range snaps {
-		if rp.ResourceGroup != "" && tagOr(snaps[i].Tags, rgTag, "") != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(snaps[i].Tags, rgTag, ""), rp.ResourceGroup) {
 			continue
 		}
 

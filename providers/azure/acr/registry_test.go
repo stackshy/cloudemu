@@ -36,6 +36,21 @@ func TestCreateOrUpdateRegistry(t *testing.T) {
 	assert.Equal(t, "Standard", updated.SKUName) // default when SKU omitted
 }
 
+func TestListRegistriesResourceGroupCaseInsensitive(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	_, _, err := m.CreateOrUpdateRegistry(ctx, "rg-1", "MyReg", driver.AzureRegistryConfig{Location: "eastus"})
+	require.NoError(t, err)
+
+	// ARM resource-group names are case-insensitive: a list against "RG-1"
+	// must still return the registry created in "rg-1".
+	got, err := m.ListRegistries(ctx, "RG-1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "rg-1", got[0].ResourceGroup)
+}
+
 func TestUpdateRegistryPartialMerge(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()
@@ -58,10 +73,10 @@ func TestUpdateRegistryPartialMerge(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, updated.AdminUserEnabled)
-	assert.Equal(t, "Premium", updated.SKUName)      // untouched
-	assert.Equal(t, "eastus", updated.Location)      // untouched
+	assert.Equal(t, "Premium", updated.SKUName) // untouched
+	assert.Equal(t, "eastus", updated.Location) // untouched
 	assert.Equal(t, "SystemAssigned", updated.IdentityType)
-	assert.Equal(t, "core", updated.Tags["team"])    // untouched
+	assert.Equal(t, "core", updated.Tags["team"]) // untouched
 
 	// PATCH on a missing registry is a NotFound.
 	_, err = m.UpdateRegistry(ctx, "rg-1", "ghost", driver.AzureRegistryUpdate{AdminUserEnabled: &disabled})

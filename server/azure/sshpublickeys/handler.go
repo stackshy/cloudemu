@@ -91,7 +91,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]sshKeyResponse, 0, len(keys))
 
 	for i := range keys {
-		if rp.ResourceGroup != "" && tagOr(keys[i].Tags, rgTag, "") != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(keys[i].Tags, rgTag, ""), rp.ResourceGroup) {
 			continue
 		}
 

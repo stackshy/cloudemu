@@ -133,3 +133,57 @@ func TestSDKDiskRoundTrip(t *testing.T) {
 		t.Errorf("delete poll: %v", err)
 	}
 }
+
+// TestSDKDiskListResourceGroupCaseInsensitive verifies that a disk created in
+// "rg-1" is returned by a list against "RG-1" — ARM resource-group names are
+// case-insensitive.
+func TestSDKDiskListResourceGroupCaseInsensitive(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{
+		VirtualMachines: cloudP.VirtualMachines,
+		Disks:           cloudP.VirtualMachines,
+	})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newDisksClient(t, ts)
+	ctx := context.Background()
+
+	createPoller, err := client.BeginCreateOrUpdate(ctx, "rg-1", "data-disk-1",
+		armcompute.Disk{
+			Location: to.Ptr("eastus"),
+			SKU:      &armcompute.DiskSKU{Name: to.Ptr(armcompute.DiskStorageAccountTypesPremiumLRS)},
+			Properties: &armcompute.DiskProperties{
+				CreationData: &armcompute.CreationData{CreateOption: to.Ptr(armcompute.DiskCreateOptionEmpty)},
+				DiskSizeGB:   to.Ptr[int32](64),
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}); err != nil {
+		t.Fatalf("create poll: %v", err)
+	}
+
+	pager := client.NewListByResourceGroupPager("RG-1", nil)
+
+	found := false
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("NextPage: %v", err)
+		}
+
+		for _, d := range page.Value {
+			if d.Name != nil && *d.Name == "data-disk-1" {
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		t.Error("List against differently-cased resource group did not return data-disk-1")
+	}
+}

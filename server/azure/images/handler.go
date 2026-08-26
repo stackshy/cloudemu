@@ -91,7 +91,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]imageResponse, 0, len(imgs))
 
 	for i := range imgs {
-		if rp.ResourceGroup != "" && tagOr(imgs[i].Tags, rgTag, "") != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(imgs[i].Tags, rgTag, ""), rp.ResourceGroup) {
 			continue
 		}
 
