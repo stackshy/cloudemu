@@ -316,6 +316,16 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
+	id := "fsap-" + idgen.GenerateID("")
+
+	// ClientToken idempotency: atomically claim the token. A repeat returns the
+	// existing access point rather than creating a duplicate (real EFS behavior).
+	if in.ClientToken != "" && !m.apTokenIndex.SetIfAbsent(in.ClientToken, id) {
+		existingID, _ := m.apTokenIndex.Get(in.ClientToken)
+
+		return m.accessPointByID(existingID)
+	}
+
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
@@ -323,8 +333,6 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 	if name == "" {
 		name = in.Tags[nameTag]
 	}
-
-	id := "fsap-" + idgen.GenerateID("")
 	ap := &driver.AccessPoint{
 		ClientToken:    in.ClientToken,
 		Name:           name,
@@ -340,6 +348,32 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 
 	fd.accessPts[id] = ap
 	m.apIndex.Set(id, fd.fs.FileSystemID)
+
+	out := *ap
+
+	return &out, nil
+}
+
+// accessPointByID returns a copy of an access point by id, used to satisfy an
+// idempotent CreateAccessPoint retry from the existing access point.
+func (m *Mock) accessPointByID(accessPointID string) (*driver.AccessPoint, error) {
+	fsID, ok := m.apIndex.Get(accessPointID)
+	if !ok {
+		return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
+	}
+
+	fd, ok := m.getFS(fsID)
+	if !ok {
+		return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
+	}
+
+	fd.mu.RLock()
+	defer fd.mu.RUnlock()
+
+	ap, ok := fd.accessPts[accessPointID]
+	if !ok {
+		return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
+	}
 
 	out := *ap
 
@@ -395,6 +429,10 @@ func (m *Mock) DeleteAccessPoint(_ context.Context, accessPointID string) error 
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	if ap := fd.accessPts[accessPointID]; ap != nil && ap.ClientToken != "" {
+		m.apTokenIndex.Delete(ap.ClientToken)
+	}
 
 	delete(fd.accessPts, accessPointID)
 	m.apIndex.Delete(accessPointID)

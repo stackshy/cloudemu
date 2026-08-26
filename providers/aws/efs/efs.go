@@ -38,6 +38,10 @@ type Mock struct {
 	// via SetIfAbsent so concurrent same-token CreateFileSystem calls can't both
 	// create (EFS idempotency).
 	tokenIndex *memstore.Store[string]
+	// apTokenIndex maps a CreateAccessPoint ClientToken to its access-point id,
+	// claimed atomically via SetIfAbsent so a repeated ClientToken returns the
+	// existing access point rather than creating a duplicate (EFS idempotency).
+	apTokenIndex *memstore.Store[string]
 
 	// accountPref is the account-level resource-id preference ("LONG_ID" |
 	// "SHORT_ID"); empty until PutAccountPreferences is called.
@@ -55,11 +59,12 @@ type Mock struct {
 // New creates a new EFS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		fileSystems: memstore.New[*fsData](),
-		mtIndex:     memstore.New[string](),
-		apIndex:     memstore.New[string](),
-		tokenIndex:  memstore.New[string](),
-		opts:        opts,
+		fileSystems:  memstore.New[*fsData](),
+		mtIndex:      memstore.New[string](),
+		apIndex:      memstore.New[string](),
+		tokenIndex:   memstore.New[string](),
+		apTokenIndex: memstore.New[string](),
+		opts:         opts,
 	}
 }
 
