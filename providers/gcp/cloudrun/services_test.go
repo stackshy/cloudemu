@@ -16,7 +16,7 @@ func svcCfg() driver.ServiceConfig {
 		ServiceAccount: "web@demo.iam.gserviceaccount.com",
 		Timeout:        "300s",
 		Scaling:        &driver.ServiceScaling{MinInstanceCount: 1, MaxInstanceCount: 3},
-		Containers:     []driver.Container{{Image: "gcr.io/demo/web:v1", Ports: []int{8080}}},
+		Containers:     []driver.Container{{Image: "gcr.io/demo/web:v1", Ports: []driver.ContainerPort{{ContainerPort: 8080}}}},
 	}
 }
 
@@ -54,7 +54,7 @@ func TestCreateServiceReconciles(t *testing.T) {
 		t.Fatalf("GetService: %v", err)
 	}
 
-	if len(got.Containers) != 1 || len(got.Containers[0].Ports) != 1 || got.Containers[0].Ports[0] != 8080 {
+	if len(got.Containers) != 1 || len(got.Containers[0].Ports) != 1 || got.Containers[0].Ports[0].ContainerPort != 8080 {
 		t.Fatalf("container ports lost on round-trip: %+v", got.Containers)
 	}
 
