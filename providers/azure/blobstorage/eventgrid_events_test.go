@@ -11,7 +11,6 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
-	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -99,8 +98,10 @@ func newWiredMocks(t *testing.T) (*Mock, *eventgrid.Mock) {
 	bm := New(opts)
 	bm.SetEventGridPublisher(eg)
 
-	_, err := eg.CreateEventBus(context.Background(), ebdriver.EventBusConfig{Name: AccountName})
-	require.NoError(t, err)
+	// Blob events are system-topic-sourced (they carry the account id on Topic),
+	// so delivery flows through the isolated system-delivery store, not the
+	// user-facing custom-topic buses.
+	eg.EnsureSystemDeliveryBus(AccountName)
 
 	return bm, eg
 }
@@ -108,12 +109,7 @@ func newWiredMocks(t *testing.T) (*Mock, *eventgrid.Mock) {
 func subscribe(t *testing.T, eg *eventgrid.Mock, name, url string, filter map[string]any) {
 	t.Helper()
 
-	_, err := eg.PutRule(context.Background(), &ebdriver.RuleConfig{
-		Name:        name,
-		EventBus:    AccountName,
-		Description: blobSubscriptionProps(url, filter),
-	})
-	require.NoError(t, err)
+	require.NoError(t, eg.PutSystemDeliveryRule(AccountName, name, blobSubscriptionProps(url, filter)))
 }
 
 // TestBlobCreatedEmitsToSubscriber covers case (a): a PUT delivers a
