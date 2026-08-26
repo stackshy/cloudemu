@@ -36,6 +36,11 @@ const (
 	defaultPlatformVersion   = "eks.1"
 	defaultKubernetesVersion = "1.29"
 	namespaceEKS             = "AWS/EKS"
+
+	// Managed-nodegroup defaults real EKS applies when the caller omits them.
+	defaultNodegroupInstanceType = "t3.medium"
+	defaultNodegroupAmiType      = "AL2_x86_64"
+	defaultNodegroupDiskSize     = 20
 )
 
 // CloudWatch-style metric values emitted on cluster create. The numbers are
@@ -692,16 +697,31 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 
 	now := m.opts.Clock.Now().UTC()
 
+	instanceTypes := copyStrings(cfg.InstanceTypes)
+	if len(instanceTypes) == 0 {
+		instanceTypes = []string{defaultNodegroupInstanceType}
+	}
+
+	amiType := cfg.AmiType
+	if amiType == "" {
+		amiType = defaultNodegroupAmiType
+	}
+
+	diskSize := cfg.DiskSize
+	if diskSize == 0 {
+		diskSize = defaultNodegroupDiskSize
+	}
+
 	ng := eksdriver.Nodegroup{
 		ClusterName:    cfg.ClusterName,
 		NodegroupName:  cfg.NodegroupName,
 		ARN:            m.nodegroupARN(cfg.ClusterName, cfg.NodegroupName),
 		NodeRole:       cfg.NodeRole,
 		Subnets:        copyStrings(cfg.Subnets),
-		InstanceTypes:  copyStrings(cfg.InstanceTypes),
-		AmiType:        cfg.AmiType,
+		InstanceTypes:  instanceTypes,
+		AmiType:        amiType,
 		CapacityType:   cfg.CapacityType,
-		DiskSize:       cfg.DiskSize,
+		DiskSize:       diskSize,
 		Version:        cfg.Version,
 		ReleaseVersion: cfg.ReleaseVersion,
 		ScalingConfig:  cfg.ScalingConfig,

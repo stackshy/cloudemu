@@ -278,6 +278,27 @@ func TestNodegroupScalingValidation(t *testing.T) {
 	}
 }
 
+func TestCreateNodegroup_Defaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1"})
+	requireNoError(t, err)
+
+	ng, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
+		ClusterName:   "c1",
+		NodegroupName: "ng1",
+		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
+		Subnets:       []string{"subnet-1"},
+		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 1},
+	})
+	requireNoError(t, err)
+	assertEqual(t, 20, ng.DiskSize)
+	assertEqual(t, "AL2_x86_64", ng.AmiType)
+	assertEqual(t, 1, len(ng.InstanceTypes))
+	assertEqual(t, "t3.medium", ng.InstanceTypes[0])
+}
+
 func TestCreateNodegroup_ClusterMustExist(t *testing.T) {
 	m := newTestMock()
 
