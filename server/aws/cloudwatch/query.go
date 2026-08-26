@@ -115,14 +115,22 @@ func (h *Handler) queryListMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ns := r.Form.Get("Namespace")
-	members := make([]metricMemberXML, 0, len(names))
+	sort.Strings(names)
 
-	for _, n := range names {
+	ns := r.Form.Get("Namespace")
+	from, to, next := pageWindow(len(names), decodeOffsetToken(r.Form.Get("NextToken")), listMetricsPageSize)
+
+	members := make([]metricMemberXML, 0, to-from)
+	for _, n := range names[from:to] {
 		members = append(members, metricMemberXML{Namespace: ns, MetricName: n})
 	}
 
-	writeQueryResponse(w, "ListMetricsResponse", listMetricsResultXML{Metrics: members})
+	result := listMetricsResultXML{Metrics: members}
+	if next > 0 {
+		result.NextToken = encodeOffsetToken(next)
+	}
+
+	writeQueryResponse(w, "ListMetricsResponse", result)
 }
 
 func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Request) {
@@ -246,15 +254,29 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	members := make([]alarmMemberXML, 0, len(alarms))
-	for i := range alarms {
+	sort.SliceStable(alarms, func(i, j int) bool { return alarms[i].Name < alarms[j].Name })
+
+	size := maxAlarmPageSize
+	if v, _ := strconv.Atoi(r.Form.Get("MaxRecords")); v > 0 {
+		size = v
+	}
+
+	from, to, next := pageWindow(len(alarms), decodeOffsetToken(r.Form.Get("NextToken")), size)
+
+	members := make([]alarmMemberXML, 0, to-from)
+	for i := from; i < to; i++ {
 		members = append(members, alarmMemberXML{
 			AlarmName: alarms[i].Name, Namespace: alarms[i].Namespace, MetricName: alarms[i].MetricName,
 			StateValue: alarms[i].State, ComparisonOperator: alarms[i].ComparisonOperator, Threshold: alarms[i].Threshold,
 		})
 	}
 
-	writeQueryResponse(w, "DescribeAlarmsResponse", describeAlarmsResultXML{MetricAlarms: members})
+	result := describeAlarmsResultXML{MetricAlarms: members}
+	if next > 0 {
+		result.NextToken = encodeOffsetToken(next)
+	}
+
+	writeQueryResponse(w, "DescribeAlarmsResponse", result)
 }
 
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
@@ -373,8 +395,9 @@ type metricMemberXML struct {
 }
 
 type listMetricsResultXML struct {
-	XMLName xml.Name          `xml:"ListMetricsResult"`
-	Metrics []metricMemberXML `xml:"Metrics>member"`
+	XMLName   xml.Name          `xml:"ListMetricsResult"`
+	Metrics   []metricMemberXML `xml:"Metrics>member"`
+	NextToken string            `xml:"NextToken,omitempty"`
 }
 
 type datapointXML struct {
@@ -405,6 +428,7 @@ type alarmMemberXML struct {
 type describeAlarmsResultXML struct {
 	XMLName      xml.Name         `xml:"DescribeAlarmsResult"`
 	MetricAlarms []alarmMemberXML `xml:"MetricAlarms>member"`
+	NextToken    string           `xml:"NextToken,omitempty"`
 }
 
 // writeQueryResponse writes an AWS query-protocol XML envelope. result may be

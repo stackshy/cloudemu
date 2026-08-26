@@ -653,14 +653,9 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		matched = append(matched, toMetricAlarmCBR(&alarms[i]))
 	}
 
-	// Without paging inputs, preserve the historical "return everything" shape so
-	// existing callers are unaffected. Deterministic ordering only matters once a
-	// caller pages, so sort just in that branch.
-	if in.MaxRecords == 0 && in.NextToken == "" {
-		writeCBORResponse(w, describeAlarmsOutput{MetricAlarms: matched})
-		return
-	}
-
+	// Always paginate: real CloudWatch caps a page at 100 alarms and returns a
+	// NextToken for the rest, so an unpaged "return everything" reply would drop
+	// alarms past 100 for callers that don't pass paging inputs.
 	sort.SliceStable(matched, func(i, j int) bool {
 		return matched[i].AlarmName < matched[j].AlarmName
 	})
