@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,14 @@ const (
 
 	// numSystemProps is how many system properties render adds (Timestamp, etag).
 	numSystemProps = 2
+
+	// odataTypeSuffix marks the "<name>@odata.type" companion property Azure uses
+	// to annotate a value's EDM type (e.g. Amount@odata.type: "Edm.Int64").
+	odataTypeSuffix = "@odata.type"
+
+	// edmInt64 is the OData type for a 64-bit integer, which Azure encodes on the
+	// wire as a JSON string alongside an odataTypeSuffix companion.
+	edmInt64 = "Edm.Int64"
 )
 
 // storedEntity is one row plus its server-maintained system properties.
@@ -316,7 +325,31 @@ func sanitize(e driver.Entity) driver.Entity {
 		}
 	}
 
+	coerceEDMTypes(out)
+
 	return out
+}
+
+// coerceEDMTypes converts wire-encoded typed properties into native Go values so
+// $filter comparisons operate on numbers rather than strings. Azure encodes an
+// Edm.Int64 as a JSON string with an "<name>@odata.type" companion; we parse it
+// to int64 and keep the companion so reads re-emit the type annotation.
+func coerceEDMTypes(e driver.Entity) {
+	for k, v := range e {
+		edmType, _ := e[k+odataTypeSuffix].(string)
+		if edmType != edmInt64 {
+			continue
+		}
+
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			e[k] = n
+		}
+	}
 }
 
 // QueryEntities returns a page of entities matching opts, ordered by
@@ -417,6 +450,9 @@ func project(e driver.Entity, selectRaw string) driver.Entity {
 	for _, name := range strings.Split(selectRaw, ",") {
 		if name = strings.TrimSpace(name); name != "" {
 			keep[name] = true
+			// Keep the "<name>@odata.type" companion so a selected typed
+			// property (e.g. Edm.Int64) retains its OData type annotation.
+			keep[name+odataTypeSuffix] = true
 		}
 	}
 

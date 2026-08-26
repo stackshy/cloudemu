@@ -158,7 +158,15 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.ts.CreateTable(r.Context(), body.TableName); err != nil {
+		// A duplicate table is TableAlreadyExists, distinct from the generic
+		// EntityAlreadyExists that a duplicate entity insert reports.
+		if cerrors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, "TableAlreadyExists", err.Error())
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 

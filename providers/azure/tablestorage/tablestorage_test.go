@@ -171,3 +171,44 @@ func sameSet(a, b []string) bool {
 
 	return true
 }
+
+// TestInt64TypedStoreFilter confirms an Edm.Int64 arriving as a wire string with
+// its @odata.type companion is stored as a native int64 so $filter compares it
+// numerically, and that the companion survives a $select projection.
+func TestInt64TypedStoreFilter(t *testing.T) {
+	m := newMock(t)
+	if err := m.CreateTable(context.Background(), "t"); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	seed(t, m, "t", "p", "big", driver.Entity{"Amount": "500", "Amount@odata.type": edmInt64})
+	seed(t, m, "t", "p", "small", driver.Entity{"Amount": "50", "Amount@odata.type": edmInt64})
+
+	got := queryRowKeys(t, m, "t", "Amount gt 100")
+	if !sameSet(got, []string{"big"}) {
+		t.Errorf("Amount gt 100 = %v, want [big]", got)
+	}
+
+	ent, err := m.GetEntity(context.Background(), "t", "p", "big")
+	if err != nil {
+		t.Fatalf("GetEntity: %v", err)
+	}
+
+	if n, ok := ent["Amount"].(int64); !ok || n != 500 {
+		t.Errorf("stored Amount = %v (%T), want int64(500)", ent["Amount"], ent["Amount"])
+	}
+
+	res, err := m.QueryEntities(context.Background(), "t", driver.QueryOptions{
+		Filter: "PartitionKey eq 'p'",
+		Select: "PartitionKey,RowKey,Amount",
+	})
+	if err != nil {
+		t.Fatalf("QueryEntities: %v", err)
+	}
+
+	for _, e := range res.Entities {
+		if e["Amount@odata.type"] != edmInt64 {
+			t.Errorf("projection dropped @odata.type companion: %v", e)
+		}
+	}
+}

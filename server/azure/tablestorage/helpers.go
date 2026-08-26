@@ -113,10 +113,17 @@ func unquote(s string) string {
 }
 
 // entityToJSON copies an entity's properties into a fresh JSON map. The
-// PartitionKey/RowKey and user properties round-trip verbatim.
+// PartitionKey/RowKey and user properties round-trip verbatim, except an
+// Edm.Int64 (stored as a native int64) is rendered as a JSON string, which is
+// how Table Storage encodes 64-bit integers on the wire.
 func entityToJSON(e driver.Entity) map[string]any {
 	out := make(map[string]any, len(e)+1)
 	for k, v := range e {
+		if n, ok := v.(int64); ok {
+			out[k] = strconv.FormatInt(n, 10)
+			continue
+		}
+
 		out[k] = v
 	}
 
