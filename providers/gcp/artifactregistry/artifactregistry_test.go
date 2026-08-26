@@ -3,6 +3,7 @@ package artifactregistry
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -703,6 +704,93 @@ func TestImageScan(t *testing.T) {
 		_, err := m.StartImageScan(ctx, "nonexistent", "v1")
 		require.Error(t, err)
 	})
+}
+
+// TestPutImageSameDigestAccumulatesTags: pushing the same digest under a second
+// tag unions the tag onto the one manifest (preserving its original push time)
+// instead of blowing the stored entry away.
+func TestPutImageSameDigestAccumulatesTags(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	const digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+	first, err := m.PutImage(ctx, &driver.ImageManifest{Repository: "repo", Tag: "v1", Digest: digest, SizeBytes: 1024})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"v1"}, first.Tags)
+	firstPushedAt := first.PushedAt
+
+	fc.Advance(time.Hour) // a later re-push must not move PushedAt
+
+	second, err := m.PutImage(ctx, &driver.ImageManifest{Repository: "repo", Tag: "v2", Digest: digest, SizeBytes: 1024})
+	require.NoError(t, err)
+	assert.Equal(t, digest, second.Digest)
+	assert.ElementsMatch(t, []string{"v1", "v2"}, second.Tags)
+	assert.Equal(t, firstPushedAt, second.PushedAt, "original PushedAt must be preserved on re-push")
+
+	images, err := m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(images))
+	assert.ElementsMatch(t, []string{"v1", "v2"}, images[0].Tags)
+}
+
+// TestResolveDigestContentAddressed: an auto-generated digest is the full-width
+// (64-hex) sha256 of the manifest body, and identical content yields the same
+// digest so two pushes collapse to one manifest.
+func TestResolveDigestContentAddressed(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	const body = `{"schemaVersion":2,"layers":[]}`
+
+	a, err := m.PutImage(ctx, &driver.ImageManifest{Repository: "repo", Tag: "v1", Manifest: body, SizeBytes: 512})
+	require.NoError(t, err)
+	assert.Len(t, a.Digest, len("sha256:")+64, "digest must be full-width 64-hex sha256")
+
+	b, err := m.PutImage(ctx, &driver.ImageManifest{Repository: "repo", Tag: "v2", Manifest: body, SizeBytes: 512})
+	require.NoError(t, err)
+	assert.Equal(t, a.Digest, b.Digest, "identical content must yield the same digest")
+
+	images, err := m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(images))
+	assert.ElementsMatch(t, []string{"v1", "v2"}, images[0].Tags)
+}
+
+// TestConcurrentReadWriteRace exercises reads and writes concurrently so the
+// race detector catches unsynchronized access to repository state.
+func TestConcurrentReadWriteRace(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	var wg sync.WaitGroup
+
+	for i := range 20 {
+		wg.Add(1)
+
+		go func(n int) {
+			defer wg.Done()
+
+			_, _ = m.PutImage(ctx, &driver.ImageManifest{
+				Repository: "repo", Tag: fmt.Sprintf("v%d", n), SizeBytes: 1024,
+			})
+		}(i)
+
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = m.ListImages(ctx, "repo")
+			_, _ = m.GetRepository(ctx, "repo")
+			_, _ = m.ListRepositories(ctx)
+		}()
+	}
+
+	wg.Wait()
 }
 
 func TestMetricsEmission(t *testing.T) {

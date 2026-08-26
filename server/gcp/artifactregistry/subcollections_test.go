@@ -80,3 +80,50 @@ func TestSDKArtifactRegistrySubCollections(t *testing.T) {
 		t.Fatalf("got %d files, want 2", len(files.Files))
 	}
 }
+
+// TestSDKArtifactRegistryGetSingleVersionAndTag guards that a GET of a single
+// version / tag returns just that one resource instead of leaking the whole
+// list (the sub-collection dispatcher previously ignored the trailing id).
+func TestSDKArtifactRegistryGetSingleVersionAndTag(t *testing.T) {
+	svc, reg := newARService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Projects.Locations.Repositories.Create(testParent, &ar.Repository{Format: "DOCKER"}).
+		RepositoryId("single").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := reg.PutImage(ctx, &crdriver.ImageManifest{
+		Repository: "single", Tag: "v1", Digest: "sha256:aaa", SizeBytes: 1024,
+		MediaType: "application/vnd.docker.distribution.manifest.v2+json",
+	}); err != nil {
+		t.Fatalf("seed PutImage: %v", err)
+	}
+
+	pkgParent := testParent + "/repositories/single/packages/sha256:aaa"
+
+	ver, err := svc.Projects.Locations.Repositories.Packages.Versions.
+		Get(pkgParent + "/versions/sha256:aaa").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Versions.Get: %v", err)
+	}
+
+	if !strings.HasSuffix(ver.Name, "/versions/sha256:aaa") {
+		t.Fatalf("Versions.Get returned wrong resource: %q", ver.Name)
+	}
+
+	tag, err := svc.Projects.Locations.Repositories.Packages.Tags.
+		Get(pkgParent + "/tags/v1").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Tags.Get: %v", err)
+	}
+
+	if !strings.HasSuffix(tag.Name, "/tags/v1") {
+		t.Fatalf("Tags.Get returned wrong resource: %q", tag.Name)
+	}
+
+	if _, err := svc.Projects.Locations.Repositories.Packages.Tags.
+		Get(pkgParent + "/tags/missing").Context(ctx).Do(); err == nil {
+		t.Fatalf("Tags.Get of a missing tag should 404")
+	}
+}

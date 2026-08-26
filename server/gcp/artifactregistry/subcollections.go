@@ -25,14 +25,58 @@ func (h *Handler) servePackages(w http.ResponseWriter, r *http.Request, rt *rout
 
 	switch rt.pkgSub {
 	case versionsSeg:
+		if rt.pkgSubID != "" {
+			h.getVersion(w, r, rt)
+			return
+		}
+
 		h.listVersions(w, r, rt)
 	case tagsSeg:
+		if rt.pkgSubID != "" {
+			h.getTag(w, r, rt)
+			return
+		}
+
 		h.listTags(w, r, rt)
 	case "":
 		h.getPackage(w, r, rt)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported package sub-collection "+rt.pkgSub)
 	}
+}
+
+// getVersion returns a single version (.../packages/{pkg}/versions/{version}).
+// The driver models one version per image, keyed by the digest, so the version
+// id must equal the package's digest.
+func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request, rt *route) {
+	img, ok := h.findImage(w, r, rt)
+	if !ok {
+		return
+	}
+
+	if rt.pkgSubID != img.Digest {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "version "+rt.pkgSubID+" not found")
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(rt, img))
+}
+
+// getTag returns a single tag (.../packages/{pkg}/tags/{tag}).
+func (h *Handler) getTag(w http.ResponseWriter, r *http.Request, rt *route) {
+	img, ok := h.findImage(w, r, rt)
+	if !ok {
+		return
+	}
+
+	for _, t := range img.Tags {
+		if t == rt.pkgSubID {
+			gcprest.WriteJSON(w, http.StatusOK, toTagJSON(rt, t, img.Digest))
+			return
+		}
+	}
+
+	gcprest.WriteError(w, http.StatusNotFound, "notFound", "tag "+rt.pkgSubID+" not found")
 }
 
 func (h *Handler) repoImages(w http.ResponseWriter, r *http.Request, rt *route) ([]crdriver.ImageDetail, bool) {
