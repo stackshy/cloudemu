@@ -94,12 +94,22 @@ type JobConfig struct {
 
 // Container is one container in a job or service task template.
 type Container struct {
-	Name    string
-	Image   string
-	Command []string          // entrypoint override
-	Args    []string          // arguments to the entrypoint
-	Env     map[string]string // environment variables
-	Ports   []int             // container ports (services)
+	Name      string
+	Image     string
+	Command   []string              // entrypoint override
+	Args      []string              // arguments to the entrypoint
+	Env       map[string]string     // environment variables
+	Ports     []int                 // container ports (services)
+	Resources *ResourceRequirements // cpu/memory limits and CPU behavior
+}
+
+// ResourceRequirements is a container's compute allocation — the limits map
+// (e.g. {"cpu":"1000m","memory":"512Mi"}) plus CPU behavior toggles. Every
+// Terraform/gcloud deploy sends and reads these back, so they must round-trip.
+type ResourceRequirements struct {
+	Limits          map[string]string
+	CPUIdle         *bool
+	StartupCPUBoost *bool
 }
 
 // VpcAccess is the VPC connectivity configuration of a job or service template.
@@ -214,6 +224,12 @@ type ServiceConfig struct {
 	Traffic              []TrafficTarget
 	Labels               map[string]string
 	Annotations          map[string]string
+	TemplateLabels       map[string]string // revisionTemplate.labels
+	TemplateAnnotations  map[string]string // revisionTemplate.annotations (autoscaling.knative.dev/*)
+	// UpdateMask names the top-level (or dotted template.*) field paths a PATCH
+	// touches. Empty means full replace (a maskless PUT, as Terraform sends);
+	// non-empty means merge only the named paths onto the existing service.
+	UpdateMask []string
 }
 
 // ServiceScaling is a service's revision-template scaling bounds.
@@ -257,6 +273,8 @@ type Service struct {
 	LatestCreatedRevision string
 	Labels                map[string]string
 	Annotations           map[string]string
+	TemplateLabels        map[string]string // revisionTemplate.labels
+	TemplateAnnotations   map[string]string // revisionTemplate.annotations
 	Conditions            []Condition
 	TerminalCondition     *Condition
 	Etag                  string
