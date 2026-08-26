@@ -169,6 +169,8 @@ func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, project, na
 		h.createTopic(w, r, project, name)
 	case http.MethodGet:
 		h.getTopic(w, r, project, name)
+	case http.MethodPatch:
+		h.patchTopic(w, r, project, name)
 	case http.MethodDelete:
 		h.deleteTopic(w, r, name)
 	default:
@@ -190,7 +192,9 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, project, n
 	}
 
 	h.mu.Lock()
-	h.topicLog(name)
+	ts := h.topicLog(name)
+	ts.labels = copyLabels(info.Tags)
+	ts.labelsSet = true
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, topic{
@@ -208,8 +212,48 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, project, name
 
 	writeJSON(w, http.StatusOK, topic{
 		Name:   topicName(project, q.Name),
-		Labels: q.Tags,
+		Labels: h.topicLabels(name, q.Tags),
 	})
+}
+
+// patchTopic applies topics.patch: only the fields named by updateMask are
+// merged. Labels are the modeled updatable field.
+func (h *Handler) patchTopic(w http.ResponseWriter, r *http.Request, project, name string) {
+	var req updateTopicRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	q, err := h.findQueueByName(r, name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	masks := parseMask(req.UpdateMask)
+	if len(masks) == 0 {
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "updateMask must be specified and non-empty")
+		return
+	}
+
+	h.mu.Lock()
+	ts := h.topicLog(name)
+
+	if !ts.labelsSet {
+		ts.labels = copyLabels(q.Tags)
+		ts.labelsSet = true
+	}
+
+	for _, m := range masks {
+		if m == "labels" {
+			ts.labels = copyLabels(req.Topic.Labels)
+		}
+	}
+
+	labels := ts.labels
+	h.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, topic{Name: topicName(project, name), Labels: labels})
 }
 
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, name string) {
@@ -224,8 +268,15 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
+	// Detach subscriptions from the deleted topic (real Pub/Sub reports their
+	// topic as "_deleted-topic_"). The message log is kept so already-published
+	// messages can still drain.
 	h.mu.Lock()
-	delete(h.topics, name)
+	for _, sub := range h.subs {
+		if sub.topic == name {
+			sub.cfg.Topic = deletedTopicName
+		}
+	}
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{})
@@ -240,7 +291,10 @@ func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request, project str
 
 	items := make([]topic, 0, len(queues))
 	for i := range queues {
-		items = append(items, topic{Name: topicName(project, queues[i].Name), Labels: queues[i].Tags})
+		items = append(items, topic{
+			Name:   topicName(project, queues[i].Name),
+			Labels: h.topicLabels(queues[i].Name, queues[i].Tags),
+		})
 	}
 
 	page, err := pagination.PaginateSorted(items, func(a, b topic) bool { return a.Name < b.Name },
@@ -315,6 +369,46 @@ func subscriptionName(project, name string) string {
 
 func snapshotName(project, name string) string {
 	return "projects/" + project + "/snapshots/" + name
+}
+
+// topicLabels returns a topic's effective labels: the handler-side override
+// (set on create/patch) when present, otherwise the messagequeue driver's tags.
+func (h *Handler) topicLabels(name string, fallback map[string]string) map[string]string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if ts, ok := h.topics[name]; ok && ts.labelsSet {
+		return ts.labels
+	}
+
+	return fallback
+}
+
+// parseMask splits a comma-separated updateMask into trimmed, non-empty paths.
+func parseMask(mask string) []string {
+	parts := strings.Split(mask, ",")
+	out := make([]string, 0, len(parts))
+
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+
+	return out
+}
+
+func copyLabels(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+
+	return dst
 }
 
 // shortName returns the trailing segment of a resource path.

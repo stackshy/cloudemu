@@ -5,30 +5,14 @@ import (
 	"sort"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 )
 
 // ---------- Subscriptions ----------
 
 func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, project, name, action string) {
-	switch action {
-	case "pull":
-		h.pull(w, r, name)
-		return
-	case "acknowledge":
-		h.acknowledge(w, r, name)
-		return
-	case "modifyAckDeadline":
-		h.modifyAckDeadline(w, r, name)
-		return
-	case "modifyPushConfig":
-		h.modifyPushConfig(w, r, name)
-		return
-	case "seek":
-		h.seek(w, r, name)
-		return
-	case verbGetIamPolicy, verbSetIamPolicy, verbTestIamPermissions:
-		h.serveIam(w, r, resSubscriptions, name, action)
+	if h.serveSubscriptionVerb(w, r, name, action) {
 		return
 	}
 
@@ -37,11 +21,36 @@ func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, proj
 		h.createSubscription(w, r, project, name)
 	case http.MethodGet:
 		h.getSubscription(w, project, name)
+	case http.MethodPatch:
+		h.patchSubscription(w, r, name)
 	case http.MethodDelete:
 		h.deleteSubscription(w, name)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 	}
+}
+
+// serveSubscriptionVerb dispatches the :verb sub-resource actions, returning
+// true when it handled the request.
+func (h *Handler) serveSubscriptionVerb(w http.ResponseWriter, r *http.Request, name, action string) bool {
+	switch action {
+	case "pull":
+		h.pull(w, r, name)
+	case "acknowledge":
+		h.acknowledge(w, r, name)
+	case "modifyAckDeadline":
+		h.modifyAckDeadline(w, r, name)
+	case "modifyPushConfig":
+		h.modifyPushConfig(w, r, name)
+	case "seek":
+		h.seek(w, r, name)
+	case verbGetIamPolicy, verbSetIamPolicy, verbTestIamPermissions:
+		h.serveIam(w, r, resSubscriptions, name, action)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, project, name string) {
@@ -64,6 +73,12 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		body.AckDeadlineSeconds = defaultAckDeadlineSeconds
 	}
 
+	filter, err := parseFilter(body.Filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid filter: "+err.Error())
+		return
+	}
+
 	cfg := body
 	cfg.Name = subscriptionName(project, name)
 	cfg.Topic = topicName(project, topicShort)
@@ -76,10 +91,84 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
-	h.newSub(name, topicShort, &cfg)
+	h.newSub(name, topicShort, &cfg, filter)
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+// patchSubscription applies subscriptions.patch: it merges only the fields named
+// by updateMask into the stored config. filter/topic/name are immutable.
+func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name string) {
+	var req updateSubscriptionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	masks := parseMask(req.UpdateMask)
+	if len(masks) == 0 {
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "updateMask must be specified and non-empty")
+		return
+	}
+
+	h.mu.Lock()
+
+	sub, ok := h.subs[name]
+	if !ok {
+		h.mu.Unlock()
+		writeError(w, http.StatusNotFound, reasonNotFound, "subscription "+name+" not found")
+
+		return
+	}
+
+	if err := applySubMask(&sub.cfg, &req.Subscription, masks); err != nil {
+		h.mu.Unlock()
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, err.Error())
+
+		return
+	}
+
+	cfg := sub.cfg
+	h.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// applySubMask merges the masked fields of src into dst. filter, topic and name
+// are immutable in real Pub/Sub, so naming them in the mask is rejected;
+// unsupported masks are ignored.
+func applySubMask(dst, src *subscription, masks []string) error {
+	setters := subMaskSetters()
+
+	for _, m := range masks {
+		switch m {
+		case "filter", "topic", "name":
+			return cerrors.Newf(cerrors.InvalidArgument, "field %q is immutable and cannot be updated", m)
+		}
+
+		if set, ok := setters[m]; ok {
+			set(dst, src)
+		}
+	}
+
+	return nil
+}
+
+// subMaskSetters maps a subscriptions.patch field-mask path to the merge that
+// copies that one field from the request into the stored config.
+func subMaskSetters() map[string]func(dst, src *subscription) {
+	return map[string]func(dst, src *subscription){
+		"ackDeadlineSeconds":       func(d, s *subscription) { d.AckDeadlineSeconds = s.AckDeadlineSeconds },
+		"retryPolicy":              func(d, s *subscription) { d.RetryPolicy = s.RetryPolicy },
+		"deadLetterPolicy":         func(d, s *subscription) { d.DeadLetterPolicy = s.DeadLetterPolicy },
+		"pushConfig":               func(d, s *subscription) { d.PushConfig = s.PushConfig },
+		"labels":                   func(d, s *subscription) { d.Labels = s.Labels },
+		"messageRetentionDuration": func(d, s *subscription) { d.MessageRetentionDuration = s.MessageRetentionDuration },
+		"expirationPolicy":         func(d, s *subscription) { d.ExpirationPolicy = s.ExpirationPolicy },
+		"retainAckedMessages":      func(d, s *subscription) { d.RetainAckedMessages = s.RetainAckedMessages },
+		"enableMessageOrdering":    func(d, s *subscription) { d.EnableMessageOrdering = s.EnableMessageOrdering },
+		"detached":                 func(d, s *subscription) { d.Detached = s.Detached },
+	}
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, _, name string) {
