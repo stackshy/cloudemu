@@ -112,6 +112,20 @@ type CacheConfig struct {
 	ParameterGroupName string
 }
 
+// ModifyCacheConfig carries the mutable fields of an AWS ElastiCache
+// ModifyCacheCluster call. It is an AWS-only surface (not part of the portable
+// Cache interface); the wire handler type-asserts for a modifier that accepts
+// it. Empty/zero fields leave the corresponding attribute unchanged.
+type ModifyCacheConfig struct {
+	Name          string
+	NodeType      string
+	EngineVersion string
+
+	// NumCacheNodes rescales a Memcached cluster; zero leaves the node count
+	// unchanged. The backend re-validates it against the cluster's engine.
+	NumCacheNodes int
+}
+
 // Cache is the interface that cache provider implementations must satisfy.
 type Cache interface {
 	CreateCache(ctx context.Context, config CacheConfig) (*CacheInfo, error)

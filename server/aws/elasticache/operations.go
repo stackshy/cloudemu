@@ -72,10 +72,9 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 // cacheModifier is the AWS-specific ModifyCacheCluster surface. It's not part
-// of the portable Cache driver (Azure Cache and GCP Memorystore also implement
-// it), so the handler type-asserts for it.
+// of the portable Cache driver, so the handler type-asserts for it.
 type cacheModifier interface {
-	ModifyCache(ctx context.Context, name, nodeType, engine string) (*cachedriver.CacheInfo, error)
+	ModifyCache(ctx context.Context, cfg cachedriver.ModifyCacheConfig) (*cachedriver.CacheInfo, error)
 }
 
 func (h *Handler) modifyCacheCluster(w http.ResponseWriter, r *http.Request) {
@@ -85,8 +84,18 @@ func (h *Handler) modifyCacheCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := mod.ModifyCache(r.Context(),
-		r.Form.Get("CacheClusterId"), r.Form.Get("CacheNodeType"), r.Form.Get("Engine"))
+	nodes, err := parseNodeCount("NumCacheNodes", r.Form.Get("NumCacheNodes"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	info, err := mod.ModifyCache(r.Context(), cachedriver.ModifyCacheConfig{
+		Name:          r.Form.Get("CacheClusterId"),
+		NodeType:      r.Form.Get("CacheNodeType"),
+		EngineVersion: r.Form.Get("EngineVersion"),
+		NumCacheNodes: nodes,
+	})
 	if err != nil {
 		writeErr(w, err)
 		return

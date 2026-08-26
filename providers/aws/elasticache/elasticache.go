@@ -248,23 +248,34 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	return &result, nil
 }
 
-// ModifyCache updates the mutable fields (node type, engine) of an existing
-// cache cluster (ElastiCache ModifyCacheCluster). Empty arguments leave the
-// corresponding field unchanged.
-func (m *Mock) ModifyCache(_ context.Context, name, nodeType, engine string) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(name)
+// ModifyCache updates the mutable fields (node type, engine version, node
+// count) of an existing cache cluster (ElastiCache ModifyCacheCluster). Empty or
+// zero fields leave the corresponding attribute unchanged. A NumCacheNodes
+// change is re-validated against the cluster's engine (Memcached scales 1-40;
+// Redis/Valkey stays at 1).
+func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*driver.CacheInfo, error) {
+	cd, ok := m.caches.Get(cfg.Name)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
+		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
 	}
 
-	if nodeType != "" {
-		cd.info.NodeType = nodeType
-	}
-	if engine != "" {
-		cd.info.Engine = engine
+	if cfg.NumCacheNodes > 0 {
+		if err := validateNodeCount(cd.info.Engine, cfg.NumCacheNodes); err != nil {
+			return nil, err
+		}
 	}
 
-	m.caches.Set(name, cd)
+	if cfg.NodeType != "" {
+		cd.info.NodeType = cfg.NodeType
+	}
+	if cfg.EngineVersion != "" {
+		cd.info.EngineVersion = cfg.EngineVersion
+	}
+	if cfg.NumCacheNodes > 0 {
+		cd.info.NumCacheNodes = cfg.NumCacheNodes
+	}
+
+	m.caches.Set(cfg.Name, cd)
 
 	result := cd.info
 
