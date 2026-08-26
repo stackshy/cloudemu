@@ -200,6 +200,7 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		Values: values,
 		Weight: weight,
 		SetID:  cfg.SetID,
+		SOA:    copySOA(cfg.SOA),
 	}
 
 	m.records.Set(key, rec)
@@ -361,6 +362,7 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		Values: values,
 		Weight: weight,
 		SetID:  cfg.SetID,
+		SOA:    copySOA(cfg.SOA),
 	}
 
 	m.records.Set(key, rec)
@@ -376,6 +378,18 @@ func copyWeight(w *int) *int {
 	}
 
 	v := *w
+
+	return &v
+}
+
+// copySOA returns a deep copy of an SOA carrier so a stored record never aliases
+// the caller's struct.
+func copySOA(s *driver.SOARecord) *driver.SOARecord {
+	if s == nil {
+		return nil
+	}
+
+	v := *s
 
 	return &v
 }
