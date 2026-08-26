@@ -249,6 +249,9 @@ func (h *Handler) listIdentities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start, end, next := pageWindow(len(ids), r.URL.Query())
+	ids = ids[start:end]
+
 	out := make([]identityInfoJSON, 0, len(ids))
 	for i := range ids {
 		out = append(out, identityInfoJSON{
@@ -259,7 +262,7 @@ func (h *Handler) listIdentities(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, listEmailIdentitiesResponse{EmailIdentities: out})
+	writeJSON(w, listEmailIdentitiesResponse{EmailIdentities: out, NextToken: next})
 }
 
 func (h *Handler) putIdentityDkim(w http.ResponseWriter, r *http.Request, name string) {

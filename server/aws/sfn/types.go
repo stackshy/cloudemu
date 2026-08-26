@@ -138,6 +138,11 @@ type listStateMachinesRequest struct {
 	NextToken  string `json:"nextToken"`
 }
 
+type listActivitiesRequest struct {
+	MaxResults int32  `json:"maxResults"`
+	NextToken  string `json:"nextToken"`
+}
+
 type getExecutionHistoryRequest struct {
 	ExecutionArn string `json:"executionArn"`
 	ReverseOrder bool   `json:"reverseOrder"`

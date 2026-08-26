@@ -461,7 +461,9 @@ func (h *Handler) listDeadLetterSourceQueues(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req struct {
-		QueueURL string `json:"QueueUrl"`
+		QueueURL   string `json:"QueueUrl"`
+		MaxResults int    `json:"MaxResults"`
+		NextToken  string `json:"NextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -478,7 +480,16 @@ func (h *Handler) listDeadLetterSourceQueues(w http.ResponseWriter, r *http.Requ
 		sources = []string{}
 	}
 
-	wire.WriteJSON(w, map[string]any{"queueUrls": sources})
+	sort.Strings(sources)
+
+	page, next := paginateURLs(sources, req.MaxResults, req.NextToken)
+
+	resp := map[string]any{"queueUrls": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {

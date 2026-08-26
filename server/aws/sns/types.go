@@ -166,6 +166,7 @@ type listSubscriptionsResponse struct {
 
 type listSubscriptionsByTopicResult struct {
 	Subscriptions subscriptionsList `xml:"Subscriptions"`
+	NextToken     string            `xml:"NextToken,omitempty"`
 }
 
 type listSubscriptionsByTopicResponse struct {

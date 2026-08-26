@@ -88,7 +88,8 @@ type publishVersionRequest struct {
 
 // listVersionsResponse is the ListVersionsByFunction envelope.
 type listVersionsResponse struct {
-	Versions []functionConfiguration `json:"Versions"`
+	Versions   []functionConfiguration `json:"Versions"`
+	NextMarker string                  `json:"NextMarker,omitempty"`
 }
 
 // aliasRequest is the body of Create/UpdateAlias.
@@ -117,7 +118,8 @@ type aliasRoutingConfig struct {
 
 // listAliasesResponse is the ListAliases envelope.
 type listAliasesResponse struct {
-	Aliases []aliasResponse `json:"Aliases"`
+	Aliases    []aliasResponse `json:"Aliases"`
+	NextMarker string          `json:"NextMarker,omitempty"`
 }
 
 // addPermissionRequest is the body of AddPermission (POST .../{name}/policy).

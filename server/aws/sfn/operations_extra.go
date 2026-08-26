@@ -146,11 +146,14 @@ func (h *Handler) deleteActivity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listActivities(w http.ResponseWriter, r *http.Request) {
-	dispatch(h, w, r, func(h *Handler, ctx context.Context, _ *struct{}) (any, error) {
+	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listActivitiesRequest) (any, error) {
 		activities, err := h.sfn.ListActivities(ctx)
 		if err != nil {
 			return nil, err
 		}
+
+		start, end, next := pageWindow(len(activities), req.NextToken, req.MaxResults)
+		activities = activities[start:end]
 
 		items := make([]activityListItem, 0, len(activities))
 
@@ -159,7 +162,7 @@ func (h *Handler) listActivities(w http.ResponseWriter, r *http.Request) {
 			items = append(items, activityListItem{ActivityArn: a.ARN, Name: a.Name, CreationDate: epoch(a.CreationDate)})
 		}
 
-		return listActivitiesResponse{Activities: items}, nil
+		return listActivitiesResponse{Activities: items, NextToken: next}, nil
 	})
 }
 

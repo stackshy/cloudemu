@@ -406,10 +406,17 @@ func (h *Handler) listSubscriptionsByTopic(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Sort by subscription ARN so NextToken offsets stay stable across pages.
+	members := subscriptionMembers(info.ResourceID, subs)
+	sort.Slice(members, func(i, j int) bool { return members[i].SubscriptionArn < members[j].SubscriptionArn })
+
+	start, end, next := pageWindow(len(members), r.Form.Get("NextToken"))
+
 	awsquery.WriteXMLResponse(w, listSubscriptionsByTopicResponse{
 		Xmlns: Namespace,
 		Result: listSubscriptionsByTopicResult{
-			Subscriptions: subscriptionsList{Members: subscriptionMembers(info.ResourceID, subs)},
+			Subscriptions: subscriptionsList{Members: members[start:end]},
+			NextToken:     next,
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})

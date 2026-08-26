@@ -31,6 +31,8 @@ type nameRequest struct {
 
 type listEventBusesRequest struct {
 	NamePrefix string `json:"NamePrefix"`
+	Limit      int    `json:"Limit"`
+	NextToken  string `json:"NextToken"`
 }
 
 type putRuleRequest struct {
@@ -81,6 +83,8 @@ type removeTargetsRequest struct {
 type listTargetsByRuleRequest struct {
 	Rule         string `json:"Rule"`
 	EventBusName string `json:"EventBusName"`
+	Limit        int    `json:"Limit"`
+	NextToken    string `json:"NextToken"`
 }
 
 type putEventsEntry struct {
@@ -123,6 +127,7 @@ type eventBusEntry struct {
 
 type listEventBusesResponse struct {
 	EventBuses []eventBusEntry `json:"EventBuses"`
+	NextToken  string          `json:"NextToken,omitempty"`
 }
 
 type putRuleResponse struct {
@@ -167,7 +172,8 @@ type removeTargetsResponse struct {
 }
 
 type listTargetsByRuleResponse struct {
-	Targets []targetJSON `json:"Targets"`
+	Targets   []targetJSON `json:"Targets"`
+	NextToken string       `json:"NextToken,omitempty"`
 }
 
 type putEventsResultEntry struct {
@@ -239,27 +245,35 @@ func (h *Handler) ruleARN(bus, rule string) string {
 // the prior page, and Limit caps the page size. The returned token is empty
 // when the page is the last one.
 func paginateRules(entries []ruleEntry, nextToken string, limit int) (page []ruleEntry, next string) {
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return paginateByCursor(entries, nextToken, limit, func(e ruleEntry) string { return e.Name })
+}
+
+// paginateByCursor applies EventBridge's value-cursor pagination over a slice
+// sorted by the key returned by keyOf: NextToken resumes after the item whose
+// key equals the token, and Limit caps the page size. The returned token is the
+// key of the last item on a truncated page, or empty when the page is the last.
+func paginateByCursor[T any](items []T, nextToken string, limit int, keyOf func(T) string) (page []T, next string) {
+	sort.Slice(items, func(i, j int) bool { return keyOf(items[i]) < keyOf(items[j]) })
 
 	if nextToken != "" {
 		start := 0
 
-		for i := range entries {
-			if entries[i].Name == nextToken {
+		for i := range items {
+			if keyOf(items[i]) == nextToken {
 				start = i + 1
 
 				break
 			}
 		}
 
-		entries = entries[start:]
+		items = items[start:]
 	}
 
-	if limit > 0 && limit < len(entries) {
-		return entries[:limit], entries[limit-1].Name
+	if limit > 0 && limit < len(items) {
+		return items[:limit], keyOf(items[limit-1])
 	}
 
-	return entries, ""
+	return items, ""
 }
 
 // isValidDetail reports whether a PutEvents entry's Detail is acceptable:
