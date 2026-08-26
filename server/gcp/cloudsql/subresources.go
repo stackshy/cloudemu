@@ -95,7 +95,6 @@ func writeUnsupported(w http.ResponseWriter, what string) {
 
 // ---- Databases ----
 
-//nolint:dupl // mirrors the sibling sub-resource route by design.
 func (h *Handler) serveDatabasesRoute(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	db, ok := h.databasesCap()
 	if !ok {
@@ -119,6 +118,8 @@ func (h *Handler) serveDatabasesRoute(w http.ResponseWriter, r *http.Request, p 
 	switch r.Method {
 	case http.MethodGet:
 		h.getDatabase(w, r, p, db)
+	case http.MethodPut, http.MethodPatch:
+		h.updateDatabase(w, r, p)
 	case http.MethodDelete:
 		if err := db.DeleteDatabase(r.Context(), p.name, p.subName); err != nil {
 			writeErr(w, err)
@@ -129,6 +130,32 @@ func (h *Handler) serveDatabasesRoute(w http.ResponseWriter, r *http.Request, p 
 	default:
 		writeMethodNotAllowed(w)
 	}
+}
+
+// updateDatabase applies a databases.update / databases.patch, updating the
+// logical database's charset/collation. It requires the DatabaseUpdater
+// capability, which the Databases interface does not mandate.
+func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+	upd, ok := h.db.(rdsdriver.DatabaseUpdater)
+	if !ok {
+		writeUnsupported(w, "databases.update")
+		return
+	}
+
+	var body database
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	_, err := upd.UpdateDatabase(r.Context(), rdsdriver.DatabaseConfig{
+		Server: p.name, Name: p.subName, Charset: body.Charset, Collation: body.Collation,
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	h.completeOp(w, p.project, "update-db", "UPDATE_DATABASE", "instances", p.name)
 }
 
 //nolint:dupl // mirrors the sibling insert handler by design.
@@ -302,7 +329,6 @@ func toWireUser(u *rdsdriver.User, project string) user {
 
 // ---- SSL certs ----
 
-//nolint:dupl // mirrors the sibling sub-resource route by design.
 func (h *Handler) serveSslCertsRoute(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	sc, ok := h.sslCertsCap()
 	if !ok {
