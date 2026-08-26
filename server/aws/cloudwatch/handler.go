@@ -42,6 +42,11 @@ const (
 	opDescribeAlarms      = "DescribeAlarms"
 	opDeleteAlarms        = "DeleteAlarms"
 	opSetAlarmState       = "SetAlarmState"
+	opPutCompositeAlarm   = "PutCompositeAlarm"
+	opPutDashboard        = "PutDashboard"
+	opGetDashboard        = "GetDashboard"
+	opListDashboards      = "ListDashboards"
+	opDeleteDashboards    = "DeleteDashboards"
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
@@ -127,6 +132,16 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, bo
 		h.deleteAlarms(w, r, body)
 	case opSetAlarmState:
 		h.setAlarmState(w, r, body)
+	case opPutCompositeAlarm:
+		h.putCompositeAlarm(w, r, body)
+	case opPutDashboard:
+		h.putDashboard(w, r, body)
+	case opGetDashboard:
+		h.getDashboard(w, r, body)
+	case opListDashboards:
+		h.listDashboards(w, r, body)
+	case opDeleteDashboards:
+		h.deleteDashboards(w, r, body)
 	case "EnableAlarmActions":
 		h.setAlarmActionsEnabled(w, r, body, true)
 	case "DisableAlarmActions":

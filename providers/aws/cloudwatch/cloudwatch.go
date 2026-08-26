@@ -52,13 +52,15 @@ type metricKey struct {
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch service.
 type Mock struct {
-	mu       sync.RWMutex
-	metrics  map[metricKey][]driver.MetricDatum
-	alarms   *memstore.Store[*alarmData]
-	channels *memstore.Store[*driver.NotificationChannelInfo]
-	history  []driver.AlarmHistoryEntry
-	opts     *config.Options
-	sns      ActionPublisher
+	mu              sync.RWMutex
+	metrics         map[metricKey][]driver.MetricDatum
+	alarms          *memstore.Store[*alarmData]
+	compositeAlarms *memstore.Store[*compositeAlarmData]
+	dashboards      *memstore.Store[*storedDashboard]
+	channels        *memstore.Store[*driver.NotificationChannelInfo]
+	history         []driver.AlarmHistoryEntry
+	opts            *config.Options
+	sns             ActionPublisher
 }
 
 // SetSNSPublisher wires the SNS backend so an alarm state transition delivers
@@ -97,10 +99,12 @@ type alarmData struct {
 // New creates a new CloudWatch mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:  make(map[metricKey][]driver.MetricDatum),
-		alarms:   memstore.New[*alarmData](),
-		channels: memstore.New[*driver.NotificationChannelInfo](),
-		opts:     opts,
+		metrics:         make(map[metricKey][]driver.MetricDatum),
+		alarms:          memstore.New[*alarmData](),
+		compositeAlarms: memstore.New[*compositeAlarmData](),
+		dashboards:      memstore.New[*storedDashboard](),
+		channels:        memstore.New[*driver.NotificationChannelInfo](),
+		opts:            opts,
 	}
 }
 
