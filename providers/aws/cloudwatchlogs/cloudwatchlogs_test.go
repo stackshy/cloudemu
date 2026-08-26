@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ func TestCreateLogGroup(t *testing.T) {
 		assert.Equal(t, int64(0), info.StoredBytes)
 	})
 
-	t.Run("default retention 30 days", func(t *testing.T) {
+	t.Run("no retention policy means never-expire (unset)", func(t *testing.T) {
 		m := newTestMock()
 
 		info, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{
@@ -56,7 +57,8 @@ func TestCreateLogGroup(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		assert.Equal(t, 30, info.RetentionDays)
+		// AWS leaves retentionInDays unset (never expire) when no policy is set.
+		assert.Equal(t, 0, info.RetentionDays)
 	})
 
 	t.Run("custom retention", func(t *testing.T) {
@@ -485,19 +487,20 @@ func TestGetLogEvents(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("nonexistent stream returns empty", func(t *testing.T) {
+	t.Run("nonexistent stream is not found", func(t *testing.T) {
 		m := newTestMock()
 
 		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
+		// AWS returns ResourceNotFoundException for GetLogEvents on a missing
+		// stream, not an empty page.
+		_, err = m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup:  "grp",
 			LogStream: "no-stream",
 		})
-		require.NoError(t, err)
-
-		assert.Equal(t, 0, len(events))
+		require.Error(t, err)
+		assert.True(t, errors.IsNotFound(err))
 	})
 
 	t.Run("default limit 100", func(t *testing.T) {

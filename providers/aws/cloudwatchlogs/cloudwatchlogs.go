@@ -4,6 +4,7 @@ package cloudwatchlogs
 import (
 	"context"
 	"maps"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,10 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-const (
-	defaultRetentionDays = 30
-	defaultLogLimit      = 100
-)
+const defaultLogLimit = 100
 
 // Compile-time check that Mock implements driver.Logging.
 var _ driver.Logging = (*Mock)(nil)
@@ -79,11 +77,9 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		return nil, errors.Newf(errors.AlreadyExists, "log group %q already exists", cfg.Name)
 	}
 
-	retentionDays := cfg.RetentionDays
-	if retentionDays == 0 {
-		retentionDays = defaultRetentionDays
-	}
-
+	// A log group created without a retention policy never expires: AWS leaves
+	// retentionInDays unset (nil on the SDK) rather than defaulting to 30 days.
+	// The zero value flows through to DescribeLogGroups, which omits the field.
 	arn := idgen.AWSARN("logs", m.opts.Region, m.opts.AccountID, "log-group:"+cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
@@ -95,7 +91,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		Name:          cfg.Name,
 		Scope:         cfg.Scope,
 		ResourceID:    arn,
-		RetentionDays: retentionDays,
+		RetentionDays: cfg.RetentionDays,
 		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		StoredBytes:   0,
 		Tags:          tags,
@@ -241,6 +237,11 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 
 	s.events = append(s.events, copied...)
 
+	// CloudWatch Logs returns events in timestamp order regardless of the order
+	// they were ingested, so keep the stream's backing slice sorted on insert.
+	// The sort is stable, so equal timestamps retain ingestion order.
+	sortLogEventsAscending(s.events)
+
 	if len(events) > 0 {
 		earliest := events[0].Timestamp
 		for i := range events {
@@ -352,19 +353,29 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 		limit = defaultLogLimit
 	}
 
-	retentionCutoff := m.opts.Clock.Now().AddDate(0, 0, -g.info.RetentionDays)
+	// Only a configured retention policy drops old events. A group with no
+	// retention (RetentionDays == 0) never expires, so the cutoff stays zero.
+	var retentionCutoff time.Time
+	if g.info.RetentionDays > 0 {
+		retentionCutoff = m.opts.Clock.Now().AddDate(0, 0, -g.info.RetentionDays)
+	}
 
 	var results []driver.LogEvent
 
 	if input.LogStream != "" {
-		events := m.getStreamEvents(g, input.LogStream, input, retentionCutoff)
-		results = append(results, events...)
+		s, ok := g.streams.Get(input.LogStream)
+		if !ok {
+			return nil, errors.Newf(errors.NotFound, "log stream %q not found in group %q", input.LogStream, input.LogGroup)
+		}
+
+		results = append(results, m.filterEvents(s, input, retentionCutoff)...)
 	} else {
-		all := g.streams.All()
-		for _, s := range all {
+		for _, s := range g.streams.SortedValues() {
 			events := m.filterEvents(s, input, retentionCutoff)
 			results = append(results, events...)
 		}
+
+		sortLogEventsAscending(results)
 	}
 
 	// A negative limit means "no cap" — the wire handler fetches the full
@@ -380,13 +391,13 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 	return results, nil
 }
 
-func (m *Mock) getStreamEvents(g *logGroup, streamName string, input *driver.LogQueryInput, retentionCutoff time.Time) []driver.LogEvent {
-	s, ok := g.streams.Get(streamName)
-	if !ok {
-		return nil
-	}
-
-	return m.filterEvents(s, input, retentionCutoff)
+// sortLogEventsAscending orders log events by timestamp ascending, keeping the
+// relative order of equal-timestamp events (their ingestion order) stable —
+// matching how CloudWatch Logs returns events in timestamp order.
+func sortLogEventsAscending(events []driver.LogEvent) {
+	sort.SliceStable(events, func(i, j int) bool {
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
 }
 
 func (*Mock) filterEvents(
