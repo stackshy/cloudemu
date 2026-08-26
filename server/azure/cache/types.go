@@ -46,6 +46,20 @@ type redisProperties struct {
 	// response carries the current replicasPerPrimary field.
 	ReplicasPerMaster int `json:"replicasPerMaster,omitempty"`
 
+	// RedisConfiguration is the arbitrary Redis settings map (maxmemory-policy,
+	// maxmemory-reserved, and unmodeled passthrough keys). Decoded from the
+	// request and echoed back verbatim so IaC converges.
+	RedisConfiguration map[string]string `json:"redisConfiguration,omitempty"`
+
+	// EnableNonSSLPort is the enableNonSslPort flag; a pointer so an unset value
+	// is omitted rather than emitted as a spurious false.
+	EnableNonSSLPort *bool `json:"enableNonSslPort,omitempty"`
+
+	// MinimumTLSVersion and PublicNetworkAccess mirror the armredis fields of the
+	// same name and round-trip whatever the request supplied.
+	MinimumTLSVersion   string `json:"minimumTlsVersion,omitempty"`
+	PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
+
 	// AccessKeys carries the cache's access keys. Real Azure populates it only
 	// on the Create/Update response (never on Get/List), so it is set by the
 	// create-or-update handler and omitted elsewhere.
@@ -137,6 +151,11 @@ func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJS
 		location = defaultLocation
 	}
 
+	redisVersion := info.RedisVersion
+	if redisVersion == "" {
+		redisVersion = defaultRedisVersion
+	}
+
 	return redisJSON{
 		ID:       azurearm.BuildResourceID(sub, rg, providerName, typeRedis, info.Name),
 		Name:     info.Name,
@@ -144,14 +163,18 @@ func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJS
 		Location: location,
 		Tags:     info.Tags,
 		Properties: &redisProperties{
-			ProvisioningState:  provisioningStateSucceeded,
-			RedisVersion:       defaultRedisVersion,
-			SKU:                skuFromInfo(info),
-			HostName:           host,
-			Port:               defaultRedisPort,
-			SSLPort:            sslPort,
-			ShardCount:         info.ShardCount,
-			ReplicasPerPrimary: info.ReplicasPerPrimary,
+			ProvisioningState:   provisioningStateSucceeded,
+			RedisVersion:        redisVersion,
+			SKU:                 skuFromInfo(info),
+			HostName:            host,
+			Port:                defaultRedisPort,
+			SSLPort:             sslPort,
+			ShardCount:          info.ShardCount,
+			ReplicasPerPrimary:  info.ReplicasPerPrimary,
+			RedisConfiguration:  info.RedisConfiguration,
+			EnableNonSSLPort:    info.EnableNonSSLPort,
+			MinimumTLSVersion:   info.MinimumTLSVersion,
+			PublicNetworkAccess: info.PublicNetworkAccess,
 		},
 	}
 }

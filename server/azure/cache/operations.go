@@ -33,6 +33,7 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		Scope:    scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
 	}
 	applySKUAndClustering(&cfg, &body)
+	applyRedisProperties(&cfg, &body)
 
 	if _, err := h.cache.GetCache(r.Context(), rp.ResourceName); err == nil {
 		info, uerr := h.cache.UpdateCache(r.Context(), cfg)
@@ -121,6 +122,23 @@ func applySKUAndClustering(cfg *cachedriver.CacheConfig, body *redisJSON) {
 	if cfg.ReplicasPerPrimary == 0 {
 		cfg.ReplicasPerPrimary = body.Properties.ReplicasPerMaster
 	}
+}
+
+// applyRedisProperties copies the remaining top-level Redis properties
+// (redisConfiguration, enableNonSslPort, minimumTlsVersion, publicNetworkAccess,
+// redisVersion) from the request onto the driver config so they round-trip
+// instead of being dropped. Absent fields stay zero/nil, which the driver's
+// UpdateCache treats as "leave unchanged" so a partial PATCH does not wipe them.
+func applyRedisProperties(cfg *cachedriver.CacheConfig, body *redisJSON) {
+	if body.Properties == nil {
+		return
+	}
+
+	cfg.RedisConfiguration = body.Properties.RedisConfiguration
+	cfg.EnableNonSSLPort = body.Properties.EnableNonSSLPort
+	cfg.MinimumTLSVersion = body.Properties.MinimumTLSVersion
+	cfg.PublicNetworkAccess = body.Properties.PublicNetworkAccess
+	cfg.RedisVersion = body.Properties.RedisVersion
 }
 
 // nodeTypeFromBody derives the driver's node-type string from the request SKU.
