@@ -61,8 +61,9 @@ type Mock struct {
 	addons          *memstore.Store[eksdriver.Addon]
 	updates         *memstore.Store[eksdriver.ClusterUpdate]
 
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	opts           *config.Options
+	monitoring     mondriver.Monitoring
+	subnetResolver SubnetResolver
 
 	// k8sAPI is the shared in-memory Kubernetes data-plane server. When set,
 	// CreateCluster registers a fresh ClusterState with it and DescribeCluster
@@ -181,6 +182,16 @@ func (m *Mock) oidcIssuer(name string) string {
 	id := strings.ToUpper(hex.EncodeToString(sum[:16]))
 
 	return fmt.Sprintf("https://oidc.eks.%s.amazonaws.com/id/%s", m.opts.Region, id)
+}
+
+// clusterSecurityGroupID synthesizes the deterministic cluster security group
+// id real EKS creates for a cluster ("sg-<hash>"). It is stable across
+// DescribeCluster calls so downstream references (worker attach, SG rules) stay
+// fixed.
+func (m *Mock) clusterSecurityGroupID(name string) string {
+	sum := sha256.Sum256([]byte("eks-cluster-sg/" + m.opts.AccountID + "/" + name))
+
+	return "sg-" + hex.EncodeToString(sum[:8])
 }
 
 func (m *Mock) nodegroupARN(clusterName, nodegroupName string) string {
@@ -363,7 +374,7 @@ func (m *Mock) emitClusterMetrics(name string) {
 // CreateCluster creates a new cluster.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
-func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*eksdriver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (*eksdriver.Cluster, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "cluster name is required")
 	}
@@ -393,11 +404,13 @@ func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*e
 		Status:               eksdriver.ClusterStatusActive,
 		OIDCIssuer:           m.oidcIssuer(cfg.Name),
 		VPCConfig: eksdriver.VPCConfig{
-			SubnetIDs:             copyStrings(cfg.VPCConfig.SubnetIDs),
-			SecurityGroupIDs:      copyStrings(cfg.VPCConfig.SecurityGroupIDs),
-			EndpointPublicAccess:  cfg.VPCConfig.EndpointPublicAccess,
-			EndpointPrivateAccess: cfg.VPCConfig.EndpointPrivateAccess,
-			PublicAccessCidrs:     copyStrings(cfg.VPCConfig.PublicAccessCidrs),
+			SubnetIDs:              copyStrings(cfg.VPCConfig.SubnetIDs),
+			SecurityGroupIDs:       copyStrings(cfg.VPCConfig.SecurityGroupIDs),
+			EndpointPublicAccess:   cfg.VPCConfig.EndpointPublicAccess,
+			EndpointPrivateAccess:  cfg.VPCConfig.EndpointPrivateAccess,
+			PublicAccessCidrs:      copyStrings(cfg.VPCConfig.PublicAccessCidrs),
+			ClusterSecurityGroupID: m.clusterSecurityGroupID(cfg.Name),
+			VpcID:                  m.resolveVpcID(ctx, cfg.VPCConfig.SubnetIDs),
 		},
 		Tags:      copyTags(cfg.Tags),
 		CreatedAt: m.opts.Clock.Now().UTC(),

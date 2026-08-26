@@ -55,6 +55,11 @@ type VPCConfig struct {
 	EndpointPublicAccess  bool
 	EndpointPrivateAccess bool
 	PublicAccessCidrs     []string
+	// ClusterSecurityGroupID and VpcID are populated by the provider on cluster
+	// create (they are not caller inputs): real EKS auto-creates a cluster
+	// security group and reports it here, and derives vpcId from the subnets.
+	ClusterSecurityGroupID string
+	VpcID                  string
 }
 
 // ClusterConfig configures a new EKS cluster.

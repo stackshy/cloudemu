@@ -586,11 +586,13 @@ func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
 		PlatformVersion: c.PlatformVersion,
 		Tags:            c.Tags,
 		ResourcesVpcConfig: &vpcConfigResponse{
-			SubnetIDs:             c.VPCConfig.SubnetIDs,
-			SecurityGroupIDs:      c.VPCConfig.SecurityGroupIDs,
-			EndpointPublicAccess:  c.VPCConfig.EndpointPublicAccess,
-			EndpointPrivateAccess: c.VPCConfig.EndpointPrivateAccess,
-			PublicAccessCidrs:     c.VPCConfig.PublicAccessCidrs,
+			SubnetIDs:              c.VPCConfig.SubnetIDs,
+			SecurityGroupIDs:       c.VPCConfig.SecurityGroupIDs,
+			ClusterSecurityGroupID: c.VPCConfig.ClusterSecurityGroupID,
+			VpcID:                  c.VPCConfig.VpcID,
+			EndpointPublicAccess:   c.VPCConfig.EndpointPublicAccess,
+			EndpointPrivateAccess:  c.VPCConfig.EndpointPrivateAccess,
+			PublicAccessCidrs:      c.VPCConfig.PublicAccessCidrs,
 		},
 	}
 
