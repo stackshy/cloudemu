@@ -42,10 +42,6 @@ func (m *Mock) mutateVersion(name, versionID string,
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
 	v, ok := findVersion(sd, versionID)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", versionID, name)
@@ -114,10 +110,6 @@ func (m *Mock) PatchSecret(_ context.Context, name string, patch driver.GCPSecre
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
-
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
 
 	if patch.SetLabels {
 		labels := make(map[string]string, len(patch.Labels))

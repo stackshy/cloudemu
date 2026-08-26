@@ -19,10 +19,6 @@ func (m *Mock) GetSecretIAMPolicy(_ context.Context, name string) (*driver.GCPIA
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
 	if sd.iam == nil {
 		return &driver.GCPIAMPolicy{Version: 1, Etag: newEtag()}, nil
 	}
@@ -40,10 +36,6 @@ func (m *Mock) SetSecretIAMPolicy(_ context.Context, name string, policy driver.
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
-
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
 
 	stored := clonePolicy(&policy)
 	if stored.Version == 0 {
@@ -66,10 +58,6 @@ func (m *Mock) TestSecretIAMPermissions(_ context.Context, name string, permissi
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
-
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
 
 	granted := make([]string, len(permissions))
 	copy(granted, permissions)

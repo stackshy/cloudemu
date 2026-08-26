@@ -139,6 +139,72 @@ func TestSDKVersionLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKDestroyedVersionLifecycleIs400 proves an illegal state transition on a
+// version — destroy/disable/enable applied to an already-DESTROYED version —
+// surfaces as HTTP 400 FAILED_PRECONDITION (real GCP), not the 409 that the
+// shared gcprest FailedPrecondition mapping would otherwise produce.
+func TestSDKDestroyedVersionLifecycleIs400(t *testing.T) {
+	svc := newSMService(t)
+	ctx := context.Background()
+	name := mustCreateSecret(t, svc, "illegal-transition")
+
+	v1, err := svc.Projects.Secrets.AddVersion(name, &sm.AddSecretVersionRequest{
+		Payload: &sm.SecretPayload{Data: encode("secret")},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("AddVersion: %v", err)
+	}
+
+	if _, err := svc.Projects.Secrets.Versions.Destroy(v1.Name, &sm.DestroySecretVersionRequest{}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+
+	var gerr *googleapi.Error
+
+	// Re-destroy an already-destroyed version → 400 FAILED_PRECONDITION.
+	_, err = svc.Projects.Secrets.Versions.Destroy(v1.Name, &sm.DestroySecretVersionRequest{}).Context(ctx).Do()
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("Destroy(destroyed): got %v, want 400 FAILED_PRECONDITION", err)
+	}
+
+	// Disable a destroyed version → 400 FAILED_PRECONDITION.
+	_, err = svc.Projects.Secrets.Versions.Disable(v1.Name, &sm.DisableSecretVersionRequest{}).Context(ctx).Do()
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("Disable(destroyed): got %v, want 400 FAILED_PRECONDITION", err)
+	}
+
+	// Enable a destroyed version → 400 FAILED_PRECONDITION.
+	_, err = svc.Projects.Secrets.Versions.Enable(v1.Name, &sm.EnableSecretVersionRequest{}).Context(ctx).Do()
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("Enable(destroyed): got %v, want 400 FAILED_PRECONDITION", err)
+	}
+}
+
+// TestSDKDeleteThenRecreateSameID proves GCP secrets.delete is a permanent hard
+// delete: Get 404s afterwards and the same secretId is creatable again with no
+// ALREADY_EXISTS (no recovery window).
+func TestSDKDeleteThenRecreateSameID(t *testing.T) {
+	svc := newSMService(t)
+	ctx := context.Background()
+	name := mustCreateSecret(t, svc, "reborn")
+
+	if _, err := svc.Projects.Secrets.Delete(name).Context(ctx).Do(); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	var gerr *googleapi.Error
+	if _, err := svc.Projects.Secrets.Get(name).Context(ctx).Do(); !errors.As(err, &gerr) || gerr.Code != 404 {
+		t.Fatalf("Get after Delete: got %v, want 404 NOT_FOUND", err)
+	}
+
+	// Same secretId re-creates cleanly.
+	if _, err := svc.Projects.Secrets.Create(testParent, &sm.Secret{
+		Replication: &sm.Replication{Automatic: &sm.Automatic{}},
+	}).SecretId("reborn").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create(reborn) after Delete: %v", err)
+	}
+}
+
 // TestSDKSecretPatch proves secrets.patch updates labels (audit: Secrets.patch).
 func TestSDKSecretPatch(t *testing.T) {
 	svc := newSMService(t)

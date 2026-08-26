@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"testing"
 
@@ -402,5 +403,105 @@ func TestSDKGCPIAMListPagination(t *testing.T) {
 
 	if got.Etag == "" {
 		t.Fatal("role etag is empty, want populated")
+	}
+}
+
+const (
+	bigListCount = 150 // exceeds the default page size so multiple pages are forced
+	pageWindow   = 40  // small page size to force several round-trips
+	maxPages     = 100 // loop guard so a pagination bug can't spin forever
+)
+
+// TestSDKGCPIAMListPaginationNoDupsOrSkips guards the pagination-stability bug:
+// service accounts and roles are stored in random map order, so an offset page
+// token over an unsorted slice used to duplicate or skip entries across pages.
+// Walking every page must yield each resource exactly once.
+func TestSDKGCPIAMListPaginationNoDupsOrSkips(t *testing.T) {
+	svc := newSDKService(t)
+	ctx := context.Background()
+
+	wantSAs := make(map[string]bool, bigListCount)
+	for i := range bigListCount {
+		wantSAs[createSA(t, svc, fmt.Sprintf("sa-%03d", i))] = true
+	}
+
+	gotSAs := map[string]bool{}
+	token := ""
+
+	for page := 0; page < maxPages; page++ {
+		resp, err := svc.Projects.ServiceAccounts.List("projects/" + testProject).
+			PageSize(pageWindow).PageToken(token).Context(ctx).Do()
+		if err != nil {
+			t.Fatalf("SA List page %d: %v", page, err)
+		}
+
+		for _, sa := range resp.Accounts {
+			if gotSAs[sa.Email] {
+				t.Fatalf("service account %q returned on more than one page", sa.Email)
+			}
+
+			gotSAs[sa.Email] = true
+		}
+
+		token = resp.NextPageToken
+		if token == "" {
+			break
+		}
+	}
+
+	assertSameKeys(t, "service accounts", wantSAs, gotSAs)
+
+	wantRoles := make(map[string]bool, bigListCount)
+	for i := range bigListCount {
+		id := fmt.Sprintf("role_%03d", i)
+		if _, err := svc.Projects.Roles.Create("projects/"+testProject, &iamv1.CreateRoleRequest{
+			RoleId: id,
+			Role:   &iamv1.Role{Title: "Role " + id, Stage: "GA"},
+		}).Context(ctx).Do(); err != nil {
+			t.Fatalf("Create role %s: %v", id, err)
+		}
+
+		wantRoles["projects/"+testProject+"/roles/"+id] = true
+	}
+
+	gotRoles := map[string]bool{}
+	token = ""
+
+	for page := 0; page < maxPages; page++ {
+		resp, err := svc.Projects.Roles.List("projects/" + testProject).
+			PageSize(pageWindow).PageToken(token).Context(ctx).Do()
+		if err != nil {
+			t.Fatalf("Roles List page %d: %v", page, err)
+		}
+
+		for _, ro := range resp.Roles {
+			if gotRoles[ro.Name] {
+				t.Fatalf("role %q returned on more than one page", ro.Name)
+			}
+
+			gotRoles[ro.Name] = true
+		}
+
+		token = resp.NextPageToken
+		if token == "" {
+			break
+		}
+	}
+
+	assertSameKeys(t, "roles", wantRoles, gotRoles)
+}
+
+// assertSameKeys fails if got and want don't hold exactly the same key set.
+func assertSameKeys(t *testing.T, what string, want, got map[string]bool) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("%s: paged %d unique, want %d (dup or skip across pages)", what, len(got), len(want))
+	}
+
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("%s: %q missing from paged union", what, k)
+		}
 	}
 }

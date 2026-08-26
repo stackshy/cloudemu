@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -13,8 +12,8 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // secretsSnapshot is the full serialized state of the GCP Secret Manager mock:
-// every secret keyed by name, each with its metadata, version history, and
-// soft-delete state, so identifiers (self-link, version ids) restore unchanged.
+// every secret keyed by name, each with its metadata and version history, so
+// identifiers (self-link, version ids) restore unchanged.
 type secretsSnapshot struct {
 	Secrets map[string]*secretSnapshot `json:"secrets,omitempty"`
 }
@@ -24,7 +23,6 @@ type secretSnapshot struct {
 	Versions   []driver.SecretVersion `json:"versions,omitempty"`
 	VerCounter int                    `json:"verCounter,omitempty"`
 	IAM        *driver.GCPIAMPolicy   `json:"iam,omitempty"`
-	DeletedAt  time.Time              `json:"deletedAt,omitempty"`
 }
 
 // Snapshot captures every secret's full state as JSON. includeAssets is unused —
@@ -40,7 +38,6 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			Versions:   sd.versions,
 			VerCounter: sd.verCounter,
 			IAM:        sd.iam,
-			DeletedAt:  sd.deletedAt,
 		}
 		sd.mu.RUnlock()
 	}
@@ -62,7 +59,6 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			versions:   ss.Versions,
 			verCounter: ss.VerCounter,
 			iam:        ss.IAM,
-			deletedAt:  ss.DeletedAt,
 		})
 	}
 

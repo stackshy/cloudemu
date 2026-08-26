@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"time"
 
@@ -107,6 +108,11 @@ func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, pr
 		matched = append(matched, toServiceAccountJSON(responseProject, u.Name, &sa))
 	}
 	h.mu.RUnlock()
+
+	// ListUsers returns map order (random), so sort by the stable resource name
+	// before applying the offset page token — otherwise page boundaries shift
+	// between requests and callers see duplicated or skipped accounts.
+	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
 
 	page, next := paginate(matched, pageSizeParam(r), decodePageToken(pageTokenParam(r)))
 
@@ -273,6 +279,11 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 		props, _ := decodeRoleProps(dr.AssumeRolePolicyDoc)
 		matched = append(matched, toRoleJSON(project, dr.Name, &props))
 	}
+
+	// ListRoles returns map order (random), so sort by the stable role name
+	// before applying the offset page token to keep page boundaries consistent
+	// across requests (no duplicated or skipped roles).
+	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
 
 	page, next := paginate(matched, pageSizeParam(r), decodePageToken(pageTokenParam(r)))
 
