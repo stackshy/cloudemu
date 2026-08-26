@@ -123,17 +123,23 @@ func diskSizeFor(d *attachedDisk) string {
 func instanceNICs(inst *computedriver.Instance, host, project, zone string) []networkInterface {
 	network := qualifyNetwork(host, project, tagOr(inst.Tags, keyNetwork, ""))
 	subnet := qualifySubnetwork(host, project, zone, inst.SubnetID)
+	accessConfigs := decodeAccessConfigs(inst.Tags)
 
-	if network == "" && subnet == "" && inst.PrivateIP == "" {
+	if network == "" && subnet == "" && inst.PrivateIP == "" && len(accessConfigs) == 0 {
 		return nil
 	}
 
+	for i := range accessConfigs {
+		accessConfigs[i].Kind = "compute#accessConfig"
+	}
+
 	return []networkInterface{{
-		Name:       "nic0",
-		Network:    network,
-		Subnetwork: subnet,
-		NetworkIP:  inst.PrivateIP,
-		StackType:  "IPV4_ONLY",
+		Name:          "nic0",
+		Network:       network,
+		Subnetwork:    subnet,
+		NetworkIP:     inst.PrivateIP,
+		StackType:     "IPV4_ONLY",
+		AccessConfigs: accessConfigs,
 	}}
 }
 
