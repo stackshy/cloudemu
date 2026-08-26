@@ -15,9 +15,15 @@ const (
 // concerns, so the server can emit the right X-Amzn-Errortype (e.g.
 // MountTargetNotFound vs FileSystemNotFound) while GetCode still resolves the
 // HTTP status through Unwrap.
+//
+// ResourceID optionally carries the id of the conflicting resource. Real EFS
+// returns the existing file system's id inside a FileSystemAlreadyExists error
+// so an idempotent CreateFileSystem retry (same CreationToken) can recover it;
+// the wire layer surfaces it as the exception's FileSystemId member.
 type ResourceError struct {
-	Kind string
-	Err  error
+	Kind       string
+	ResourceID string
+	Err        error
 }
 
 func (e *ResourceError) Error() string { return e.Err.Error() }

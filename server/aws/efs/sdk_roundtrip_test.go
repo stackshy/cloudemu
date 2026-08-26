@@ -407,3 +407,31 @@ func TestSDKDescribeMountTargetsByID(t *testing.T) {
 		t.Fatalf("describe by AP id: want 1 mount target, got %d", len(byAP.MountTargets))
 	}
 }
+
+// TestSDKDuplicateTokenCarriesFileSystemId verifies a duplicate CreationToken is
+// rejected with a FileSystemAlreadyExists error that carries the existing file
+// system's id, so an idempotent CreateFileSystem retry can recover it.
+func TestSDKDuplicateTokenCarriesFileSystemId(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	first, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("idem-token")})
+	if err != nil {
+		t.Fatalf("first CreateFileSystem: %v", err)
+	}
+
+	_, err = c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("idem-token")})
+	if err == nil {
+		t.Fatal("duplicate token: want FileSystemAlreadyExists, got nil")
+	}
+
+	var already *efstypes.FileSystemAlreadyExists
+	if !errors.As(err, &already) {
+		t.Fatalf("want FileSystemAlreadyExists, got %T: %v", err, err)
+	}
+
+	if aws.ToString(already.FileSystemId) != aws.ToString(first.FileSystemId) {
+		t.Fatalf("FileSystemAlreadyExists.FileSystemId = %q, want %q",
+			aws.ToString(already.FileSystemId), aws.ToString(first.FileSystemId))
+	}
+}

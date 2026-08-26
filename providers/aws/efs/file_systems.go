@@ -41,9 +41,12 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 	id := "fs-" + idgen.GenerateID("")
 
 	// Atomically claim the creation token. If another call already owns it, this
-	// is a duplicate — reject without creating.
+	// is a duplicate — reject without creating, echoing the existing file
+	// system's id so an idempotent retry can recover it (real EFS behavior).
 	if !m.tokenIndex.SetIfAbsent(in.CreationToken, id) {
-		return nil, conflict(driver.KindFileSystem,
+		existingID, _ := m.tokenIndex.Get(in.CreationToken)
+
+		return nil, conflictWithID(driver.KindFileSystem, existingID,
 			"file system with creation token %q already exists", in.CreationToken)
 	}
 
