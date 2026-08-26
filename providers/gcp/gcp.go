@@ -135,6 +135,11 @@ func New(opts ...config.Option) *Provider {
 	p.FCM.SetMonitoring(p.CloudMonitoring)
 	p.ArtifactRegistry.SetMonitoring(p.CloudMonitoring)
 	p.Eventarc.SetMonitoring(p.CloudMonitoring)
+	// Eventarc -> destinations: a matching published event fires the trigger's
+	// Cloud Function (in-process Invoke) or Cloud Run service (HTTP delivery at
+	// the service URL), mirroring the Pub/Sub -> Cloud Functions wiring.
+	p.Eventarc.SetFunctionInvoker(p.CloudFunctions)
+	p.Eventarc.SetCloudRunInvoker(p.CloudRun)
 	p.CloudSQL.SetMonitoring(p.CloudMonitoring)
 	p.AlloyDB.SetMonitoring(p.CloudMonitoring)
 	p.GKE.SetMonitoring(p.CloudMonitoring)
