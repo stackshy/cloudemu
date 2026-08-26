@@ -8,17 +8,40 @@ import (
 )
 
 // window holds the common "active from start to start+duration" timing logic.
-// All scenarios with a duration embed it.
+// All scenarios with a duration embed it. The start (and thus end) is bound to
+// the engine's clock when the scenario is applied — see bind — so the window is
+// relative to the engine clock, not wall-clock at construction. This keeps
+// FakeClock-driven deterministic tests working. Until bound, the window is
+// inactive.
 type window struct {
-	start time.Time
-	end   time.Time
+	duration time.Duration
+	start    time.Time
+	end      time.Time
+	bound    bool
 }
 
-func newWindow(start time.Time, duration time.Duration) window {
-	return window{start: start, end: start.Add(duration)}
+func newWindow(duration time.Duration) window {
+	return window{duration: duration}
+}
+
+// bind stamps the window's start/end from now (the engine clock at Apply time).
+// It is idempotent: an already-bound window keeps its original start, so a
+// scenario is only ever anchored once.
+func (w *window) bind(now time.Time) {
+	if w.bound {
+		return
+	}
+
+	w.start = now
+	w.end = now.Add(w.duration)
+	w.bound = true
 }
 
 func (w window) active(now time.Time) bool {
+	if !w.bound {
+		return false
+	}
+
 	return !now.Before(w.start) && now.Before(w.end)
 }
 
@@ -33,7 +56,7 @@ type outage struct {
 // after the window, calls succeed normally again.
 func ServiceOutage(svc string, duration time.Duration) Scenario {
 	return &outage{
-		window:  newWindow(nowOrEpoch(), duration),
+		window:  newWindow(duration),
 		service: svc,
 	}
 }
@@ -59,7 +82,7 @@ type latencySpike struct {
 // for the next duration window. Useful for testing client-side timeouts.
 func LatencySpike(svc string, extra, duration time.Duration) Scenario {
 	return &latencySpike{
-		window:  newWindow(nowOrEpoch(), duration),
+		window:  newWindow(duration),
 		service: svc,
 		extra:   extra,
 	}
@@ -89,7 +112,7 @@ type probabilisticFailure struct {
 // to every operation on the service.
 func ProbabilisticFailure(svc, op string, err error, p float64, duration time.Duration) Scenario {
 	return &probabilisticFailure{
-		window:  newWindow(nowOrEpoch(), duration),
+		window:  newWindow(duration),
 		service: svc,
 		op:      op,
 		err:     err,
@@ -137,7 +160,7 @@ func Throttle(svc, op string, qps int, duration time.Duration) Scenario {
 	}
 
 	return &throttle{
-		window:  newWindow(nowOrEpoch(), duration),
+		window:  newWindow(duration),
 		service: svc,
 		op:      op,
 		qps:     qps,
@@ -208,7 +231,12 @@ func (c *composite) Active(now time.Time) bool {
 	return false
 }
 
-// nowOrEpoch returns the wall-clock time. Scenarios constructed by callers
-// outside the engine don't have access to the engine's clock, so they pin
-// their start time at construction; the engine still drives expiry via Active.
-func nowOrEpoch() time.Time { return time.Now() }
+// bind propagates the engine clock to every child that has a time-bounded
+// window, so a composite anchors all its children at Apply time.
+func (c *composite) bind(now time.Time) {
+	for _, s := range c.scenarios {
+		if b, ok := s.(clockBinder); ok {
+			b.bind(now)
+		}
+	}
+}
