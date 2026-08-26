@@ -26,6 +26,12 @@ func Paginate[T any](items []T, pageToken string, maxResults int) (Page[T], erro
 	}
 
 	offset := token.Offset
+	// Defensive: DecodeToken already rejects negative offsets, but guard the
+	// slice bound directly so no token input can panic here.
+	if offset < 0 {
+		return Page[T]{}, ErrInvalidToken
+	}
+
 	if offset >= len(items) {
 		return Page[T]{Items: nil, HasMore: false}, nil
 	}
