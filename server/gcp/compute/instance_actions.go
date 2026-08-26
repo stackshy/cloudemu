@@ -27,6 +27,11 @@ func (h *Handler) setLabels(w http.ResponseWriter, r *http.Request, rp gcprest.R
 		return
 	}
 
+	if !fingerprintMatches(body.LabelFingerprint, labelFingerprintFor(userLabels(inst.Tags))) {
+		writeConditionNotMet(w, "labelFingerprint")
+		return
+	}
+
 	// Remove existing user labels that the new set drops.
 	var remove []string
 
@@ -54,6 +59,11 @@ func (h *Handler) setMetadata(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
+	if !fingerprintMatches(body.Fingerprint, metadataResponse(decodeMetadata(inst.Tags)).Fingerprint) {
+		writeConditionNotMet(w, "metadata fingerprint")
+		return
+	}
+
 	h.applyMutation(w, r, rp, inst.ID, "setMetadata",
 		map[string]string{keyMetadata: encodeJSON(body.Items)}, nil, "")
 }
@@ -73,6 +83,11 @@ func (h *Handler) setTags(w http.ResponseWriter, r *http.Request, rp gcprest.Res
 		return
 	}
 
+	if !fingerprintMatches(body.Fingerprint, fingerprint(strings.Join(decodeNetTags(inst.Tags), ","))) {
+		writeConditionNotMet(w, "tags fingerprint")
+		return
+	}
+
 	h.applyMutation(w, r, rp, inst.ID, "setTags",
 		map[string]string{keyNetTags: encodeJSON(body.Items)}, nil, "")
 }
@@ -89,6 +104,15 @@ func (h *Handler) setMachineType(w http.ResponseWriter, r *http.Request, rp gcpr
 	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// Real GCP rejects changing the machine type of an instance that is not
+	// TERMINATED (stopped) with a 400 — the VM must be stopped first.
+	if gcpStatusFor(inst.State) != statusTerminated {
+		gcprest.WriteError(w, http.StatusBadRequest, "conditionNotMet",
+			"Instance "+rp.ResourceName+" must be stopped before the machine type can be changed.")
+
 		return
 	}
 
@@ -169,6 +193,21 @@ func (h *Handler) applyMutation(
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// fingerprintMatches enforces optimistic-concurrency on the update verbs: an
+// incoming fingerprint must equal the resource's current one. An empty incoming
+// fingerprint skips the check, matching real GCP's leniency when a client omits
+// it.
+func fingerprintMatches(incoming, current string) bool {
+	return incoming == "" || incoming == current
+}
+
+// writeConditionNotMet responds with GCP's 412 conditionNotMet, returned when a
+// stale fingerprint loses the optimistic-concurrency check on an update verb.
+func writeConditionNotMet(w http.ResponseWriter, what string) {
+	gcprest.WriteError(w, http.StatusPreconditionFailed, "conditionNotMet",
+		what+" does not match; the resource was modified concurrently")
+}
+
 // parseMaxResults parses the maxResults query param, defaulting to GCP's page
 // size when absent or invalid.
 func parseMaxResults(raw string) int {
@@ -186,8 +225,11 @@ func parseMaxResults(raw string) int {
 
 // parseFilter compiles a GCP list filter into a predicate. It supports the
 // common single-clause forms "<field> <op> <value>" where op is one of
-// "=", "!=", "eq", "ne" and field is name/status/machineType/zone. An
-// unrecognized or empty filter matches everything.
+// "=", "!=", "eq", "ne" and field is name/status/machineType/zone or a
+// "labels.<key>" selector. An empty filter, an unparseable clause, or a
+// clause naming a field the emulator does not model all match everything —
+// mirroring real GCP's leniency (and gcprest.NameMatches) so an unknown
+// field never silently excludes every instance.
 func parseFilter(raw string) func(*instanceResponse) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -202,7 +244,11 @@ func parseFilter(raw string) func(*instanceResponse) bool {
 	negate := op == "!=" || op == "ne"
 
 	return func(resp *instanceResponse) bool {
-		got := filterField(resp, field)
+		got, known := filterField(resp, field)
+		if !known {
+			return true
+		}
+
 		eq := got == value
 
 		return eq != negate
@@ -223,17 +269,24 @@ func splitFilter(raw string) (field, op, value string, ok bool) {
 	return "", "", "", false
 }
 
-func filterField(resp *instanceResponse, field string) string {
+// filterField resolves a filter field to its value on resp. The second return
+// reports whether the field is one the emulator models: an unknown field
+// returns known=false so the caller can match-all rather than exclude all.
+func filterField(resp *instanceResponse, field string) (value string, known bool) {
 	switch field {
 	case "name":
-		return resp.Name
+		return resp.Name, true
 	case "status":
-		return resp.Status
+		return resp.Status, true
 	case "machineType":
-		return lastSegment(resp.MachineType)
+		return lastSegment(resp.MachineType), true
 	case "zone":
-		return lastSegment(resp.Zone)
-	default:
-		return ""
+		return lastSegment(resp.Zone), true
 	}
+
+	if key := strings.TrimPrefix(field, "labels."); key != field {
+		return resp.Labels[key], true
+	}
+
+	return "", false
 }
