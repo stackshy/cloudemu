@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
@@ -27,6 +28,13 @@ var (
 
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
 const defaultIdleTimeoutSec = 60
+
+// Load balancer provisioning states. A new load balancer starts in
+// provisioning and settles to active after a short window.
+const (
+	lbStateProvisioning = "provisioning"
+	lbStateActive       = "active"
+)
 
 // targetKey is the identity of a registered target within a target group.
 // AWS lets the same instance ID or IP be registered multiple times with
@@ -46,6 +54,7 @@ func keyFor(t driver.Target) targetKey {
 // Mock is an in-memory mock implementation of the AWS ELB service.
 type Mock struct {
 	lbs       *memstore.Store[driver.LBInfo]
+	lbSettle  *memstore.Store[settle.Window] // lbARN -> provisioning->active window
 	tgs       *memstore.Store[driver.TargetGroupInfo]
 	listeners *memstore.Store[driver.ListenerInfo]
 	rules     *memstore.Store[driver.RuleInfo]
@@ -70,6 +79,7 @@ type Mock struct {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		lbs:       memstore.New[driver.LBInfo](),
+		lbSettle:  memstore.New[settle.Window](),
 		tgs:       memstore.New[driver.TargetGroupInfo](),
 		listeners: memstore.New[driver.ListenerInfo](),
 		rules:     memstore.New[driver.RuleInfo](),
@@ -117,26 +127,35 @@ func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*dr
 		ipType = "ipv4"
 	}
 
+	now := m.opts.Clock.Now().UTC()
+
 	lb := driver.LBInfo{
 		ID:                    id,
 		ARN:                   arn,
 		Name:                  cfg.Name,
 		Type:                  cfg.Type,
 		Scheme:                cfg.Scheme,
-		State:                 "active",
+		State:                 lbStateActive,
 		DNSName:               dnsName,
 		Subnets:               subnets,
 		SecurityGroups:        sgs,
 		IPAddressType:         ipType,
 		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
 		VPCID:                 m.resolveVPCID(ctx, cfg.Subnets),
-		CreatedTime:           m.opts.Clock.Now().UTC(),
+		CreatedTime:           now,
 		Tags:                  tags,
 	}
 
 	m.lbs.Set(arn, lb)
 
+	// Real ELBv2 returns a new load balancer in "provisioning" and settles it to
+	// "active" a short time later. The window overlays the observed State at read
+	// time; the stored final State stays "active".
+	window := settle.Pending(lbStateProvisioning, now, m.opts.SettleDuration(settle.DefaultLBSettle))
+	m.lbSettle.Set(arn, window)
+
 	result := lb
+	result.State = window.Observe(now, result.State)
 
 	return &result, nil
 }
@@ -195,6 +214,7 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 	}
 
 	m.lbs.Delete(arn)
+	m.lbSettle.Delete(arn)
 
 	// Delete listeners for this load balancer and, with them, the rules under
 	// those listeners. Leaving the rules behind would leak them for the life of
@@ -241,7 +261,17 @@ func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver
 		}
 	}
 
-	return describeResources(m.lbs, arns), nil
+	out := describeResources(m.lbs, arns)
+
+	now := m.opts.Clock.Now()
+
+	for i := range out {
+		if w, ok := m.lbSettle.Get(out[i].ARN); ok {
+			out[i].State = w.Observe(now, out[i].State)
+		}
+	}
+
+	return out, nil
 }
 
 // CreateTargetGroup creates a new target group.
