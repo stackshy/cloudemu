@@ -131,7 +131,7 @@ func (m *Mock) RenewCertificate(_ context.Context, arn string) error {
 
 		now := m.now()
 
-		mat, err := generateCertificate(cd.cert.DomainName, cd.cert.SubjectAlternativeNames, now)
+		mat, err := generateCertificate(cd.cert.KeyAlgorithm, cd.cert.DomainName, cd.cert.SubjectAlternativeNames, now)
 		if err != nil {
 			return err
 		}

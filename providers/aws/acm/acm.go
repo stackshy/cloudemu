@@ -24,6 +24,13 @@ const (
 	maxDomains = 100
 	// maxTags is ACM's cap on tags per certificate.
 	maxTags = 50
+	// maxDomainNameLen / maxLabelLen bound a valid FQDN (RFC 5280 / ACM pattern).
+	maxDomainNameLen = 253
+	maxLabelLen      = 63
+	// minTLDLen is the minimum length of the final (top-level) label; minLabels is
+	// the minimum number of dot-separated labels an FQDN must have.
+	minTLDLen = 2
+	minLabels = 2
 )
 
 // Mock is an in-memory implementation of AWS ACM.
