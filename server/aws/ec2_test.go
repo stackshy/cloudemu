@@ -2044,7 +2044,8 @@ func TestNatGatewayLifecycle(t *testing.T) {
 	require.NoError(t, err)
 
 	nat, err := client.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
-		SubnetId: sub.Subnet.SubnetId,
+		SubnetId:         sub.Subnet.SubnetId,
+		ConnectivityType: ec2types.ConnectivityTypePrivate,
 	})
 	require.NoError(t, err)
 	natID := aws.ToString(nat.NatGateway.NatGatewayId)

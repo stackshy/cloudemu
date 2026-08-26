@@ -161,14 +161,21 @@ func writeNatErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "NatGatewayNotFound", "DependencyViolation")
 }
 
-// writeCreateNatErr maps CreateNatGateway's not-found: the NAT does not exist yet,
-// so a not-found on create is the target subnet — InvalidSubnetID.NotFound, not
-// the NatGatewayNotFound the generic mapper would emit.
+// writeCreateNatErr maps CreateNatGateway's create-only codes. A not-found on
+// create is the target subnet — InvalidSubnetID.NotFound, not the NatGatewayNotFound
+// the generic mapper would emit. The Elastic IP pairing errors carry a marker so a
+// missing or mismatched AllocationId surfaces the resource-specific EC2 code
+// (MissingParameter / InvalidAllocationID.NotFound) rather than a bare
+// InvalidParameterValue.
 func writeCreateNatErr(w http.ResponseWriter, err error) {
-	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "subnet") {
+	switch {
+	case cerrors.IsNotFound(err) && strings.Contains(err.Error(), "subnet"):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnetID.NotFound", cerrors.Message(err))
-		return
+	case strings.Contains(err.Error(), "InvalidAllocationID.NotFound:"):
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAllocationID.NotFound", cerrors.Message(err))
+	case strings.Contains(err.Error(), "MissingParameter:"):
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "MissingParameter", cerrors.Message(err))
+	default:
+		writeNatErr(w, err)
 	}
-
-	writeNatErr(w, err)
 }

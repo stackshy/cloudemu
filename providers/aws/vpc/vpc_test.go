@@ -705,13 +705,47 @@ func TestCreateNATGateway(t *testing.T) {
 	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
 
 	t.Run("success", func(t *testing.T) {
-		nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		requireNoError(t, err)
+
+		nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, AllocationID: eip.AllocationID})
 		requireNoError(t, err)
 		assertNotEmpty(t, nat.ID)
 		assertEqual(t, s.ID, nat.SubnetID)
 		assertEqual(t, v.ID, nat.VPCID)
 		assertEqual(t, "available", nat.State)
-		assertNotEmpty(t, nat.PublicIP)
+		// A public NAT gateway reflects its Elastic IP's public address, not a
+		// fabricated one.
+		assertEqual(t, eip.PublicIP, nat.PublicIP)
+		assertEqual(t, eip.AllocationID, nat.AllocationID)
+	})
+
+	t.Run("public without allocation rejected", func(t *testing.T) {
+		_, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+		assertError(t, err, true)
+	})
+
+	t.Run("public with unknown allocation rejected", func(t *testing.T) {
+		_, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, AllocationID: "eipalloc-nope"})
+		assertError(t, err, true)
+	})
+
+	t.Run("private without allocation succeeds", func(t *testing.T) {
+		nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
+		requireNoError(t, err)
+		assertEqual(t, "private", nat.ConnectivityType)
+		// A private NAT gateway has no public IP.
+		assertEqual(t, "", nat.PublicIP)
+	})
+
+	t.Run("private with allocation rejected", func(t *testing.T) {
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		requireNoError(t, err)
+
+		_, err = m.CreateNATGateway(ctx, driver.NATGatewayConfig{
+			SubnetID: s.ID, ConnectivityType: "private", AllocationID: eip.AllocationID,
+		})
+		assertError(t, err, true)
 	})
 
 	t.Run("empty subnet ID", func(t *testing.T) {
@@ -730,7 +764,7 @@ func TestDeleteNATGateway(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
-	nat, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+	nat, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
 
 	t.Run("success", func(t *testing.T) {
 		err := m.DeleteNATGateway(ctx, nat.ID)
@@ -748,8 +782,8 @@ func TestDescribeNATGateways(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
-	nat1, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
-	_, _ = m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+	nat1, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
+	_, _ = m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
 
 	t.Run("all", func(t *testing.T) {
 		nats, err := m.DescribeNATGateways(ctx, nil)

@@ -13,16 +13,17 @@ import (
 const defaultVPCEndpointType = "Gateway"
 
 type vpcEndpointXML struct {
-	VpcEndpointID   string    `xml:"vpcEndpointId"`
-	VpcEndpointType string    `xml:"vpcEndpointType"`
-	VpcID           string    `xml:"vpcId"`
-	ServiceName     string    `xml:"serviceName"`
-	State           string    `xml:"state"`
-	RouteTableIDs   []string  `xml:"routeTableIdSet>item,omitempty"`
-	SubnetIDs       []string  `xml:"subnetIdSet>item,omitempty"`
-	Groups          []string  `xml:"groupSet>item,omitempty"`
-	CreationTime    string    `xml:"creationTimestamp,omitempty"`
-	Tags            []tagItem `xml:"tagSet>item,omitempty"`
+	VpcEndpointID       string    `xml:"vpcEndpointId"`
+	VpcEndpointType     string    `xml:"vpcEndpointType"`
+	VpcID               string    `xml:"vpcId"`
+	ServiceName         string    `xml:"serviceName"`
+	State               string    `xml:"state"`
+	RouteTableIDs       []string  `xml:"routeTableIdSet>item,omitempty"`
+	SubnetIDs           []string  `xml:"subnetIdSet>item,omitempty"`
+	Groups              []string  `xml:"groupSet>item,omitempty"`
+	NetworkInterfaceIDs []string  `xml:"networkInterfaceIdSet>item,omitempty"`
+	CreationTime        string    `xml:"creationTimestamp,omitempty"`
+	Tags                []tagItem `xml:"tagSet>item,omitempty"`
 }
 
 func (h *Handler) routeVPCEndpoints(w http.ResponseWriter, r *http.Request, action string) bool {
@@ -214,16 +215,17 @@ func vpcEndpointMatchesFilter(ep *netdriver.VPCEndpoint, f awsquery.Filter) bool
 
 func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
 	return vpcEndpointXML{
-		VpcEndpointID:   ep.ID,
-		VpcEndpointType: nonEmpty(ep.EndpointType, defaultVPCEndpointType),
-		VpcID:           ep.VPCID,
-		ServiceName:     ep.ServiceName,
-		State:           nonEmpty(ep.State, stateAvailable),
-		RouteTableIDs:   ep.RouteTableIDs,
-		SubnetIDs:       ep.SubnetIDs,
-		Groups:          ep.SecurityGroupIDs,
-		CreationTime:    ep.CreatedAt,
-		Tags:            toTagItems(ep.Tags),
+		VpcEndpointID:       ep.ID,
+		VpcEndpointType:     nonEmpty(ep.EndpointType, defaultVPCEndpointType),
+		VpcID:               ep.VPCID,
+		ServiceName:         ep.ServiceName,
+		State:               nonEmpty(ep.State, stateAvailable),
+		RouteTableIDs:       ep.RouteTableIDs,
+		SubnetIDs:           ep.SubnetIDs,
+		Groups:              ep.SecurityGroupIDs,
+		NetworkInterfaceIDs: ep.NetworkInterfaceIDs,
+		CreationTime:        ep.CreatedAt,
+		Tags:                toTagItems(ep.Tags),
 	}
 }
 

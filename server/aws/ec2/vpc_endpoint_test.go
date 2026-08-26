@@ -48,6 +48,10 @@ func TestVPCEndpointGatewayLifecycle(t *testing.T) {
 	if string(ep.State) != "available" {
 		t.Errorf("State = %q, want available", ep.State)
 	}
+	// A Gateway endpoint is a route-table entry and provisions no ENIs.
+	if len(ep.NetworkInterfaceIds) != 0 {
+		t.Errorf("Gateway endpoint NetworkInterfaceIds = %v, want none", ep.NetworkInterfaceIds)
+	}
 
 	desc, err := client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
 		VpcEndpointIds: []string{epID},
@@ -112,6 +116,23 @@ func TestVPCEndpointInterfaceCarriesSubnetsAndGroups(t *testing.T) {
 	ep := create.VpcEndpoint
 	if len(ep.SubnetIds) != 1 || ep.SubnetIds[0] != subnetID {
 		t.Errorf("SubnetIds = %v, want [%s]", ep.SubnetIds, subnetID)
+	}
+
+	// An Interface endpoint provisions one backing ENI per subnet; Terraform's
+	// aws_vpc_endpoint reads network_interface_ids off the response.
+	if len(ep.NetworkInterfaceIds) != 1 {
+		t.Fatalf("NetworkInterfaceIds = %v, want one per subnet", ep.NetworkInterfaceIds)
+	}
+
+	// The ENI is a real interface DescribeNetworkInterfaces can see.
+	enis, err := client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{ep.NetworkInterfaceIds[0]},
+	})
+	if err != nil {
+		t.Fatalf("DescribeNetworkInterfaces: %v", err)
+	}
+	if len(enis.NetworkInterfaces) != 1 {
+		t.Errorf("endpoint ENI %q not found via DescribeNetworkInterfaces", ep.NetworkInterfaceIds[0])
 	}
 }
 
