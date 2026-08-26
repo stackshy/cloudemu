@@ -3,6 +3,7 @@ package route53_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -292,5 +293,112 @@ func TestSDKListHostedZonesByVPC(t *testing.T) {
 	if out.HostedZoneSummaries[0].Owner == nil ||
 		aws.ToString(out.HostedZoneSummaries[0].Owner.OwningAccount) == "" {
 		t.Errorf("summary Owner = %+v, want an OwningAccount", out.HostedZoneSummaries[0].Owner)
+	}
+}
+
+// TestSDKListHostedZonesByVPCPaginates associates several private zones with one
+// VPC and walks ListHostedZonesByVPC with a small MaxItems, asserting each page
+// is bounded by MaxItems, NextToken continues, and every zone is returned exactly
+// once — no duplicate, no skip — across the NextToken walk.
+func TestSDKListHostedZonesByVPCPaginates(t *testing.T) {
+	client := newRoute53Client(t)
+	ctx := context.Background()
+
+	const total = 5
+	want := make(map[string]int, total)
+	for i := range total {
+		id := createPrivateZone(t, client,
+			fmt.Sprintf("vpczone-%d.internal.", i), fmt.Sprintf("vpc-page-ref-%d", i), "vpc-page")
+		want[id] = 0
+	}
+
+	got := make(map[string]int, total)
+	var token *string
+	for pages := 0; ; pages++ {
+		if pages > pageWalkLimit {
+			t.Fatal("ListHostedZonesByVPC did not terminate — NextToken never cleared")
+		}
+
+		out, err := client.ListHostedZonesByVPC(ctx, &awsr53.ListHostedZonesByVPCInput{
+			VPCId:     aws.String("vpc-page"),
+			VPCRegion: r53types.VPCRegionUsEast1,
+			MaxItems:  aws.Int32(2),
+			NextToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListHostedZonesByVPC: %v", err)
+		}
+
+		if n := len(out.HostedZoneSummaries); n > 2 {
+			t.Fatalf("page returned %d summaries, want <= MaxItems 2", n)
+		}
+
+		if aws.ToInt32(out.MaxItems) != 2 {
+			t.Errorf("echoed MaxItems = %d, want 2", aws.ToInt32(out.MaxItems))
+		}
+
+		for i := range out.HostedZoneSummaries {
+			got[aws.ToString(out.HostedZoneSummaries[i].HostedZoneId)]++
+		}
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	assertEachOnce(t, want, got)
+}
+
+// TestSDKListHostedZonesByVPCStableOrder proves the summaries come back in a
+// stable HostedZoneId order across the paginated walk, so a NextToken resumes at
+// exactly the next zone.
+func TestSDKListHostedZonesByVPCStableOrder(t *testing.T) {
+	client := newRoute53Client(t)
+	ctx := context.Background()
+
+	const total = 4
+	for i := range total {
+		createPrivateZone(t, client,
+			fmt.Sprintf("ordered-%d.internal.", i), fmt.Sprintf("vpc-order-ref-%d", i), "vpc-order")
+	}
+
+	var ids []string
+	var token *string
+	for pages := 0; ; pages++ {
+		if pages > pageWalkLimit {
+			t.Fatal("ListHostedZonesByVPC did not terminate")
+		}
+
+		out, err := client.ListHostedZonesByVPC(ctx, &awsr53.ListHostedZonesByVPCInput{
+			VPCId:     aws.String("vpc-order"),
+			VPCRegion: r53types.VPCRegionUsEast1,
+			MaxItems:  aws.Int32(1),
+			NextToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListHostedZonesByVPC: %v", err)
+		}
+
+		for i := range out.HostedZoneSummaries {
+			ids = append(ids, aws.ToString(out.HostedZoneSummaries[i].HostedZoneId))
+		}
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if len(ids) != total {
+		t.Fatalf("walked %d summaries, want %d", len(ids), total)
+	}
+
+	for i := 1; i < len(ids); i++ {
+		if ids[i-1] >= ids[i] {
+			t.Errorf("summaries not in strictly increasing id order: %q then %q", ids[i-1], ids[i])
+		}
 	}
 }
