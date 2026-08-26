@@ -221,11 +221,14 @@ func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 	threshold, _ := strconv.ParseFloat(r.Form.Get("Threshold"), 64)
 	period, _ := strconv.Atoi(r.Form.Get("Period"))
 	evalPeriods, _ := strconv.Atoi(r.Form.Get("EvaluationPeriods"))
+	datapointsToAlarm, _ := strconv.Atoi(r.Form.Get("DatapointsToAlarm"))
 
 	err := h.monitoring.CreateAlarm(r.Context(), mondriver.AlarmConfig{
 		Name: r.Form.Get("AlarmName"), Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
 		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: comparisonOperator,
-		Threshold: threshold, Period: period, EvaluationPeriods: evalPeriods, Stat: r.Form.Get("Statistic"),
+		Threshold: threshold, Period: period, EvaluationPeriods: evalPeriods, DatapointsToAlarm: datapointsToAlarm,
+		Stat: r.Form.Get("Statistic"), ExtendedStatistic: r.Form.Get("ExtendedStatistic"),
+		Unit: r.Form.Get("Unit"), TreatMissingData: r.Form.Get("TreatMissingData"),
 		AlarmActions: queryStringList(r, "AlarmActions.member."), OKActions: queryStringList(r, "OKActions.member."),
 	})
 	if err != nil {
@@ -255,8 +258,10 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
+	// AWS tolerates incorrect alarm names: valid ones are still deleted and no
+	// ResourceNotFound is returned.
 	for _, name := range queryStringList(r, "AlarmNames.member.") {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil {
+		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 			writeQueryDriverErr(w, err)
 			return
 		}

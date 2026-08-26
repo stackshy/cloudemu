@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -496,7 +497,11 @@ type putMetricAlarmInput struct {
 	Threshold               float64        `cbor:"Threshold"`
 	Period                  int            `cbor:"Period"`
 	EvaluationPeriods       int            `cbor:"EvaluationPeriods"`
+	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
 	Statistic               string         `cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
+	Unit                    string         `cbor:"Unit,omitempty"`
+	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
 	Dimensions              []dimensionCBR `cbor:"Dimensions,omitempty"`
 	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
 	OKActions               []string       `cbor:"OKActions,omitempty"`
@@ -548,7 +553,11 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		Threshold:               in.Threshold,
 		Period:                  in.Period,
 		EvaluationPeriods:       in.EvaluationPeriods,
+		DatapointsToAlarm:       in.DatapointsToAlarm,
 		Stat:                    in.Statistic,
+		ExtendedStatistic:       in.ExtendedStatistic,
+		Unit:                    in.Unit,
+		TreatMissingData:        in.TreatMissingData,
 		AlarmActions:            in.AlarmActions,
 		OKActions:               in.OKActions,
 		InsufficientDataActions: in.InsufficientDataActions,
@@ -605,7 +614,11 @@ type metricAlarmCBR struct {
 	Threshold               float64        `cbor:"Threshold"`
 	Period                  int            `cbor:"Period,omitempty"`
 	EvaluationPeriods       int            `cbor:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
 	Statistic               string         `cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
+	Unit                    string         `cbor:"Unit,omitempty"`
+	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
 	ActionsEnabled          bool           `cbor:"ActionsEnabled"`
 	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
 	OKActions               []string       `cbor:"OKActions,omitempty"`
@@ -711,7 +724,11 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		Threshold:               a.Threshold,
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
+		DatapointsToAlarm:       a.DatapointsToAlarm,
 		Statistic:               a.Statistic,
+		ExtendedStatistic:       a.ExtendedStatistic,
+		Unit:                    a.Unit,
+		TreatMissingData:        a.TreatMissingData,
 		ActionsEnabled:          a.ActionsEnabled,
 		AlarmActions:            a.AlarmActions,
 		OKActions:               a.OKActions,
@@ -758,8 +775,12 @@ func (h *Handler) deleteAlarms(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 
+	// AWS tolerates incorrect alarm names: the correctly named alarms are still
+	// deleted and no ResourceNotFound is returned. Skip not-found names so a
+	// batch that includes an already-gone alarm (e.g. terraform destroy) never
+	// fails spuriously or leaves a half-deleted state.
 	for _, name := range in.AlarmNames {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil {
+		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 			writeDriverErr(w, err)
 			return
 		}

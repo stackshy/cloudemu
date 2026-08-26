@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -31,6 +32,9 @@ const (
 	stateOK               = "OK"
 	stateInsufficientData = "INSUFFICIENT_DATA"
 )
+
+// historyStateUpdate is the HistoryItemType stamped on a recorded state change.
+const historyStateUpdate = "StateUpdate"
 
 // ActionPublisher publishes an alarm-state-change notification to an SNS topic
 // by ARN. It is satisfied by the SNS backend's PublishExternal, mirroring the
@@ -73,7 +77,11 @@ type alarmData struct {
 	Threshold               float64
 	Period                  int
 	EvaluationPeriods       int
+	DatapointsToAlarm       int
 	Stat                    string
+	ExtendedStatistic       string
+	Unit                    string
+	TreatMissingData        string
 	State                   string
 	StateReason             string
 	StateUpdatedTimestamp   time.Time
@@ -127,21 +135,6 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 	return nil
 }
 
-func evaluateComparison(value float64, operator string, threshold float64) bool {
-	switch operator {
-	case "GreaterThanThreshold":
-		return value > threshold
-	case "GreaterThanOrEqualToThreshold":
-		return value >= threshold
-	case "LessThanThreshold":
-		return value < threshold
-	case "LessThanOrEqualToThreshold":
-		return value <= threshold
-	default:
-		return false
-	}
-}
-
 func (m *Mock) evaluateAlarms(namespace, metricName string) {
 	allAlarms := m.alarms.All()
 
@@ -154,62 +147,71 @@ func (m *Mock) evaluateAlarms(namespace, metricName string) {
 	}
 }
 
+// alarmParams projects an alarm's thresholds onto the shared evaluator's Params.
+func alarmParams(alarm *alarmData) alarmeval.Params {
+	return alarmeval.Params{
+		Period:             alarm.Period,
+		EvaluationPeriods:  alarm.EvaluationPeriods,
+		DatapointsToAlarm:  alarm.DatapointsToAlarm,
+		Stat:               alarm.Stat,
+		ComparisonOperator: alarm.ComparisonOperator,
+		Threshold:          alarm.Threshold,
+		TreatMissingData:   alarm.TreatMissingData,
+	}
+}
+
 func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
-	period := alarm.Period
-	if period <= 0 {
-		period = 60
-	}
-
-	evalPeriods := alarm.EvaluationPeriods
-	if evalPeriods <= 0 {
-		evalPeriods = 1
-	}
-
 	now := m.opts.Clock.Now()
-	windowDur := time.Duration(period*evalPeriods) * time.Second
-	windowStart := now.Add(-windowDur)
+	params := alarmParams(alarm)
 
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, windowStart, now)
-
+	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, params.WindowStart(now), now)
 	if len(filtered) == 0 {
 		return
 	}
 
-	stat := aggregateDatums(filtered).stat(alarm.Stat)
-
-	var newState, reason string
-	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
-		newState = stateAlarm
-		reason = "Threshold crossed"
-	} else {
-		newState = stateOK
-		reason = "Threshold not crossed"
+	newState, reason, ok := alarmeval.EvaluateWindow(filtered, &params, now)
+	if !ok {
+		return
 	}
 
+	m.transitionAlarm(alarm, newState, reason, now)
+}
+
+// transitionAlarm sets an alarm's state and — only when the state actually
+// changes — records a history entry and fires the new state's actions. This
+// matches CloudWatch, where both the history entry and the action invocation
+// happen on a state change regardless of whether the change came from metric
+// evaluation or a manual SetAlarmState. An alarm invokes its actions only when
+// it changes state; it never re-fires while the state is steady.
+func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
 	oldState := alarm.State
 
 	if oldState != newState {
-		m.mu.Lock()
-		m.history = append(m.history, driver.AlarmHistoryEntry{
-			AlarmName: alarm.Name,
-			Timestamp: now,
-			OldState:  oldState,
-			NewState:  newState,
-			Reason:    fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
-		})
-		m.mu.Unlock()
-
+		m.appendHistory(alarm.Name, oldState, newState, reason, now)
 		alarm.StateUpdatedTimestamp = now
 	}
 
 	alarm.State = newState
 	alarm.StateReason = reason
 
-	// An alarm invokes its actions only when it changes state — matching real
-	// CloudWatch, which never re-fires actions while the state is steady.
 	if oldState != newState {
 		m.fireAlarmActions(alarm, oldState, newState, now)
 	}
+}
+
+// appendHistory records one alarm state transition in the history log.
+func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.history = append(m.history, driver.AlarmHistoryEntry{
+		AlarmName:       name,
+		Timestamp:       now,
+		OldState:        oldState,
+		NewState:        newState,
+		HistoryItemType: historyStateUpdate,
+		Reason:          fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
+	})
 }
 
 // fireAlarmActions delivers an alarm's state-change actions. Only SNS-topic
@@ -302,7 +304,7 @@ func (m *Mock) collectFilteredDatums(
 			continue
 		}
 
-		if !matchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
 			continue
 		}
 
@@ -350,7 +352,7 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 			continue
 		}
 
-		if !matchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
 			continue
 		}
 
@@ -385,7 +387,7 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 			continue
 		}
 
-		s := aggregateDatums(periodDatums).stat(stat)
+		s := alarmeval.StatOf(periodDatums, stat)
 
 		result.Timestamps = append(result.Timestamps, periodStart)
 		result.Values = append(result.Values, s)
@@ -573,7 +575,11 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		Threshold:               cfg.Threshold,
 		Period:                  cfg.Period,
 		EvaluationPeriods:       cfg.EvaluationPeriods,
+		DatapointsToAlarm:       cfg.DatapointsToAlarm,
 		Stat:                    cfg.Stat,
+		ExtendedStatistic:       cfg.ExtendedStatistic,
+		Unit:                    cfg.Unit,
+		TreatMissingData:        cfg.TreatMissingData,
 		State:                   state,
 		StateReason:             stateReason,
 		StateUpdatedTimestamp:   stateUpdated,
@@ -627,16 +633,18 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 	return result, nil
 }
 
-// SetAlarmState manually sets the state of an alarm.
+// SetAlarmState manually sets the state of an alarm. Like a metric-driven
+// transition, a state change records a history entry and invokes the actions
+// configured for the new state (AlarmActions / OKActions /
+// InsufficientDataActions), so the documented "force ALARM to test wiring"
+// workflow delivers its notifications.
 func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
 
-	a.State = state
-	a.StateReason = reason
-	a.StateUpdatedTimestamp = m.opts.Clock.Now()
+	m.transitionAlarm(a, state, reason, m.opts.Clock.Now())
 
 	return nil
 }
@@ -698,21 +706,24 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 	return result, nil
 }
 
-// GetAlarmHistory returns alarm history entries filtered by alarm name, limited by limit.
+// GetAlarmHistory returns an alarm's history entries newest-first (CloudWatch's
+// default TimestampDescending order). When limit > 0 it keeps the newest limit
+// entries. Passing limit <= 0 returns the full history so a caller can apply its
+// own filters before truncating.
 func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var filtered []driver.AlarmHistoryEntry
 
-	for _, entry := range m.history {
-		if entry.AlarmName == alarmName {
-			filtered = append(filtered, entry)
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].AlarmName == alarmName {
+			filtered = append(filtered, m.history[i])
 		}
 	}
 
 	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
+		filtered = filtered[:limit]
 	}
 
 	return filtered, nil
@@ -789,101 +800,6 @@ func (m *Mock) AlarmTags(_ context.Context, alarmName string) (map[string]string
 	return copyDims(a.Tags), nil
 }
 
-// matchDimensions returns true if the data point dimensions contain all of the
-// requested filter dimensions.
-func matchDimensions(dataDims, filterDims map[string]string) bool {
-	for k, v := range filterDims {
-		if dataDims[k] != v {
-			return false
-		}
-	}
-
-	return true
-}
-
-// statAgg accumulates SampleCount / Sum / Minimum / Maximum across a set of
-// metric datums so any requested statistic can be derived. It treats a plain
-// Value, a pre-aggregated StatisticValues set, and paired Values/Counts arrays
-// uniformly, matching how real CloudWatch folds all three into one series.
-type statAgg struct {
-	count float64
-	sum   float64
-	min   float64
-	max   float64
-	seen  bool
-}
-
-// add folds one observation (or sub-aggregate) into the accumulator: count
-// samples summing to sum, whose smallest and largest observed values are low
-// and high. Non-positive counts contribute nothing, matching AWS.
-func (a *statAgg) add(count, sum, low, high float64) {
-	if count <= 0 {
-		return
-	}
-
-	a.count += count
-	a.sum += sum
-
-	if !a.seen || low < a.min {
-		a.min = low
-	}
-
-	if !a.seen || high > a.max {
-		a.max = high
-	}
-
-	a.seen = true
-}
-
-// stat returns the requested statistic, or 0 when no data was accumulated.
-func (a statAgg) stat(stat string) float64 {
-	if !a.seen {
-		return 0
-	}
-
-	switch stat {
-	case "Sum":
-		return a.sum
-	case "Min", "Minimum":
-		return a.min
-	case "Max", "Maximum":
-		return a.max
-	case "SampleCount":
-		return a.count
-	default: // "Average" or unspecified
-		return a.sum / a.count
-	}
-}
-
-// aggregateDatums folds every datum — plain Value, StatisticValues set, or
-// Values/Counts arrays — into a single accumulator.
-func aggregateDatums(datums []driver.MetricDatum) statAgg {
-	var a statAgg
-
-	for i := range datums {
-		d := &datums[i]
-
-		switch {
-		case d.StatisticValues != nil:
-			s := d.StatisticValues
-			a.add(s.SampleCount, s.Sum, s.Minimum, s.Maximum)
-		case len(d.Values) > 0:
-			for j, v := range d.Values {
-				count := 1.0
-				if j < len(d.Counts) {
-					count = d.Counts[j]
-				}
-
-				a.add(count, v*count, v, v)
-			}
-		default:
-			a.add(1, d.Value, d.Value, d.Value)
-		}
-	}
-
-	return a
-}
-
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 	dims := make(map[string]string, len(a.Dimensions))
 	for k, v := range a.Dimensions {
@@ -901,7 +817,11 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
+		DatapointsToAlarm:       a.DatapointsToAlarm,
 		Statistic:               a.Stat,
+		ExtendedStatistic:       a.ExtendedStatistic,
+		Unit:                    a.Unit,
+		TreatMissingData:        a.TreatMissingData,
 		ActionsEnabled:          a.ActionsEnabled,
 		AlarmActions:            append([]string{}, a.AlarmActions...),
 		OKActions:               append([]string{}, a.OKActions...),

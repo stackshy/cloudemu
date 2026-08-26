@@ -204,10 +204,20 @@ func dimensionsEqual(a, b map[string]string) bool {
 }
 
 type describeAlarmHistoryInput struct {
-	AlarmName       string `cbor:"AlarmName,omitempty"`
-	HistoryItemType string `cbor:"HistoryItemType,omitempty"`
-	MaxRecords      int    `cbor:"MaxRecords,omitempty"`
+	AlarmName       string     `cbor:"AlarmName,omitempty"`
+	HistoryItemType string     `cbor:"HistoryItemType,omitempty"`
+	StartDate       *time.Time `cbor:"StartDate,omitempty"`
+	EndDate         *time.Time `cbor:"EndDate,omitempty"`
+	ScanBy          string     `cbor:"ScanBy,omitempty"`
+	MaxRecords      int        `cbor:"MaxRecords,omitempty"`
 }
+
+// scanByAscending requests oldest-first ordering; the default (and any other
+// value) is TimestampDescending, newest-first.
+const scanByAscending = "TimestampAscending"
+
+// historyTypeStateUpdate is the default HistoryItemType for a recorded entry.
+const historyTypeStateUpdate = "StateUpdate"
 
 type alarmHistoryItemCBR struct {
 	AlarmName       string    `cbor:"AlarmName"`
@@ -230,24 +240,92 @@ func (h *Handler) describeAlarmHistory(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	entries, err := h.monitoring.GetAlarmHistory(r.Context(), in.AlarmName, in.MaxRecords)
+	// Fetch the full history (newest-first) and apply the request filters here so
+	// MaxRecords is honored after HistoryItemType / date-window filtering.
+	entries, err := h.monitoring.GetAlarmHistory(r.Context(), in.AlarmName, 0)
 	if err != nil {
 		writeDriverErr(w, err)
 		return
 	}
 
+	writeCBORResponse(w, describeAlarmHistoryOutput{AlarmHistoryItems: filterAlarmHistory(entries, &in)})
+}
+
+// filterAlarmHistory applies the DescribeAlarmHistory request filters to the
+// newest-first entries: HistoryItemType, the StartDate/EndDate window, ScanBy
+// ordering, then the MaxRecords cap (kept last so it truncates the far end of the
+// chosen order).
+func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarmHistoryInput) []alarmHistoryItemCBR {
+	start := timeOrZero(in.StartDate)
+	end := timeOrZero(in.EndDate)
+
+	kept := make([]mondriver.AlarmHistoryEntry, 0, len(entries))
+
+	for i := range entries {
+		if historyEntryMatches(&entries[i], in, start, end) {
+			kept = append(kept, entries[i])
+		}
+	}
+
+	if in.ScanBy == scanByAscending {
+		reverseHistory(kept)
+	}
+
+	if in.MaxRecords > 0 && len(kept) > in.MaxRecords {
+		kept = kept[:in.MaxRecords]
+	}
+
+	return historyItemsToCBR(kept)
+}
+
+// historyEntryMatches reports whether an entry passes the HistoryItemType and
+// StartDate/EndDate filters of a DescribeAlarmHistory request.
+func historyEntryMatches(e *mondriver.AlarmHistoryEntry, in *describeAlarmHistoryInput, start, end time.Time) bool {
+	if in.HistoryItemType != "" && historyItemType(e) != in.HistoryItemType {
+		return false
+	}
+
+	if !start.IsZero() && e.Timestamp.Before(start) {
+		return false
+	}
+
+	if !end.IsZero() && e.Timestamp.After(end) {
+		return false
+	}
+
+	return true
+}
+
+// reverseHistory reverses the entries in place (newest-first to oldest-first).
+func reverseHistory(entries []mondriver.AlarmHistoryEntry) {
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+}
+
+func historyItemsToCBR(entries []mondriver.AlarmHistoryEntry) []alarmHistoryItemCBR {
 	out := make([]alarmHistoryItemCBR, 0, len(entries))
 	for i := range entries {
 		out = append(out, alarmHistoryItemCBR{
 			AlarmName:       entries[i].AlarmName,
 			Timestamp:       entries[i].Timestamp.UTC(),
-			HistoryItemType: "StateUpdate",
+			HistoryItemType: historyItemType(&entries[i]),
 			HistorySummary:  entries[i].Reason,
 			HistoryData:     alarmHistoryData(&entries[i]),
 		})
 	}
 
-	writeCBORResponse(w, describeAlarmHistoryOutput{AlarmHistoryItems: out})
+	return out
+}
+
+// historyItemType returns the entry's classification, defaulting to StateUpdate
+// for entries recorded before the field existed.
+func historyItemType(e *mondriver.AlarmHistoryEntry) string {
+	if e.HistoryItemType == "" {
+		return historyTypeStateUpdate
+	}
+
+	return e.HistoryItemType
 }
 
 func alarmHistoryData(e *mondriver.AlarmHistoryEntry) string {
