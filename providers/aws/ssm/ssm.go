@@ -387,6 +387,10 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 		return nil, errors.New(errors.InvalidArgument, "path must begin with '/'")
 	}
 
+	if err := validateByPathFilters(in.ParameterFilters); err != nil {
+		return nil, err
+	}
+
 	prefix := path
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -407,7 +411,7 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 		}
 
 		pd.mu.RLock()
-		if v, ok := pd.versionByNumber(pd.latest); ok {
+		if v, ok := pd.versionByNumber(pd.latest); ok && matchesByPathFilters(v, in.ParameterFilters) {
 			out = append(out, m.toParameter(pd, v, ""))
 		}
 		pd.mu.RUnlock()

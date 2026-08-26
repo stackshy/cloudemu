@@ -249,6 +249,92 @@ func TestGetParametersByPathRecursive(t *testing.T) {
 	}
 }
 
+func TestGetParametersByPathTypeFilter(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/f/a", Value: "1", Type: driver.TypeString}); err != nil {
+		t.Fatalf("Put /f/a: %v", err)
+	}
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/f/b", Value: "x,y", Type: driver.TypeStringList}); err != nil {
+		t.Fatalf("Put /f/b: %v", err)
+	}
+
+	got, err := m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path: "/f",
+		ParameterFilters: []driver.ParameterStringFilter{
+			{Key: "Type", Option: "Equals", Values: []string{driver.TypeString}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetParametersByPath(Type=String): %v", err)
+	}
+
+	if len(got) != 1 || got[0].Name != "/f/a" {
+		t.Fatalf("got %+v, want only /f/a", paramNamesOf(got))
+	}
+}
+
+func TestGetParametersByPathLabelFilter(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	for _, n := range []string{"/g/a", "/g/b"} {
+		if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: n, Value: "v", Type: driver.TypeString}); err != nil {
+			t.Fatalf("Put %s: %v", n, err)
+		}
+	}
+
+	if _, _, err := m.LabelParameterVersion(ctx, "/g/a", 0, []string{"prod"}); err != nil {
+		t.Fatalf("LabelParameterVersion: %v", err)
+	}
+
+	got, err := m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path: "/g",
+		ParameterFilters: []driver.ParameterStringFilter{
+			{Key: "Label", Option: "Equals", Values: []string{"prod"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetParametersByPath(Label=prod): %v", err)
+	}
+
+	if len(got) != 1 || got[0].Name != "/g/a" {
+		t.Fatalf("got %v, want only /g/a", paramNamesOf(got))
+	}
+}
+
+func TestGetParametersByPathInvalidFilter(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	_, err := m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path:             "/f",
+		ParameterFilters: []driver.ParameterStringFilter{{Key: "Name", Option: "Equals", Values: []string{"x"}}},
+	})
+	if !errors.Is(err, driver.ErrInvalidFilterKey) {
+		t.Fatalf("unsupported key: got %v, want ErrInvalidFilterKey", err)
+	}
+
+	_, err = m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path:             "/f",
+		ParameterFilters: []driver.ParameterStringFilter{{Key: "Type", Option: "Contains", Values: []string{"String"}}},
+	})
+	if !errors.Is(err, driver.ErrInvalidFilterOption) {
+		t.Fatalf("unsupported option: got %v, want ErrInvalidFilterOption", err)
+	}
+}
+
+func paramNamesOf(ps []driver.Parameter) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, p.Name)
+	}
+
+	return out
+}
+
 // TestDeleteParameterStripsSelector covers #266: DeleteParameter strips a
 // ":version"/":label" selector (like the read paths) so a selector addresses
 // the base parameter rather than a literal name containing ':'.

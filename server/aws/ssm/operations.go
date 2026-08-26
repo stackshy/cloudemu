@@ -103,11 +103,24 @@ func (h *Handler) getParametersByPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	found, err := h.store.GetParametersByPath(r.Context(), ssmdriver.GetByPathInput{
-		Path:           req.Path,
-		Recursive:      req.Recursive,
-		WithDecryption: req.WithDecryption,
+		Path:             req.Path,
+		Recursive:        req.Recursive,
+		WithDecryption:   req.WithDecryption,
+		ParameterFilters: toDriverFilters(req.ParameterFilters),
 	})
 	if err != nil {
+		// GetParametersByPath rejects an unsupported filter key/option with the
+		// distinct InvalidFilterKey/InvalidFilterOption, not ValidationException.
+		if errors.Is(err, ssmdriver.ErrInvalidFilterKey) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterKey", err.Error())
+			return
+		}
+
+		if errors.Is(err, ssmdriver.ErrInvalidFilterOption) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterOption", err.Error())
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

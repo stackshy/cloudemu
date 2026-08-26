@@ -45,6 +45,21 @@ var ErrUnsupportedType = errors.New(errors.InvalidArgument,
 	"The parameter type "+
 		"isn't supported.")
 
+// ErrInvalidFilterKey is returned by GetParametersByPath when a ParameterFilters
+// entry uses a Key the operation doesn't support (only Type, KeyId, and Label
+// are valid). It carries InvalidArgument; the SDK-compat layer maps it to the
+// distinct InvalidFilterKey wire error.
+var ErrInvalidFilterKey = errors.New(errors.InvalidArgument,
+	"The specified key "+
+		"isn't valid.")
+
+// ErrInvalidFilterOption is returned by GetParametersByPath when a
+// ParameterFilters entry uses an Option other than Equals or BeginsWith. It
+// carries InvalidArgument; the SDK-compat layer maps it to InvalidFilterOption.
+var ErrInvalidFilterOption = errors.New(errors.InvalidArgument,
+	"The specified filter option isn't valid. "+
+		"Valid options are Equals and BeginsWith.")
+
 // Parameter types, matching AWS SSM Parameter Store.
 const (
 	// TypeString is a plain single-value string parameter.
@@ -105,11 +120,23 @@ type ParameterMetadata struct {
 	LastModifiedUser string
 }
 
+// ParameterStringFilter is a GetParametersByPath filter: a Key, an Option
+// (Equals or BeginsWith; empty means Equals), and one or more Values that are
+// OR'd. Multiple filters are AND'd.
+type ParameterStringFilter struct {
+	Key    string
+	Option string
+	Values []string
+}
+
 // GetByPathInput describes a GetParametersByPath request.
 type GetByPathInput struct {
 	Path           string
 	Recursive      bool
 	WithDecryption bool
+	// ParameterFilters narrows the result. GetParametersByPath supports the
+	// Type, KeyId, and Label keys only; other keys are rejected.
+	ParameterFilters []ParameterStringFilter
 }
 
 // ParameterStore is the interface SSM Parameter Store provider implementations
