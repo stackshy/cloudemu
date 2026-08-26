@@ -183,17 +183,64 @@ type commitRequest struct {
 }
 
 type writeOp struct {
-	Update          *document     `json:"update,omitempty"`
-	Delete          string        `json:"delete,omitempty"`
-	CurrentDocument *precondition `json:"currentDocument,omitempty"`
-	UpdateMask      *struct {
+	Update           *document        `json:"update,omitempty"`
+	Delete           string           `json:"delete,omitempty"`
+	CurrentDocument  *precondition    `json:"currentDocument,omitempty"`
+	UpdateTransforms []fieldTransform `json:"updateTransforms,omitempty"`
+	UpdateMask       *struct {
 		FieldPaths []string `json:"fieldPaths"`
 	} `json:"updateMask,omitempty"`
 }
 
-// precondition mirrors google.firestore.v1.Precondition (exists only).
+// fieldTransform mirrors google.firestore.v1.DocumentTransform.FieldTransform:
+// a field path plus exactly one transform kind. The SDK sends these in
+// Write.updateTransforms, applied atomically after the update against the
+// document's current server value.
+type fieldTransform struct {
+	FieldPath             string      `json:"fieldPath"`
+	SetToServerValue      serverValue `json:"setToServerValue,omitempty"` // "REQUEST_TIME"
+	Increment             *value      `json:"increment,omitempty"`
+	Maximum               *value      `json:"maximum,omitempty"`
+	Minimum               *value      `json:"minimum,omitempty"`
+	AppendMissingElements *arrayValue `json:"appendMissingElements,omitempty"`
+	RemoveAllFromArray    *arrayValue `json:"removeAllFromArray,omitempty"`
+}
+
+// serverValue decodes a DocumentTransform.FieldTransform.ServerValue sent as
+// its enum name ("REQUEST_TIME") or its protobuf number (REQUEST_TIME=1), as
+// the REST client does.
+type serverValue string
+
+//nolint:gochecknoglobals // static lookup table
+var serverValueNames = map[int]serverValue{1: serverValueRequestTime}
+
+func (s *serverValue) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+
+		*s = serverValue(v)
+
+		return nil
+	}
+
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+
+	*s = serverValueNames[n] // unknown numbers stay "" and are ignored downstream
+
+	return nil
+}
+
+// precondition mirrors google.firestore.v1.Precondition: an exists check or an
+// optimistic-concurrency updateTime match.
 type precondition struct {
-	Exists *bool `json:"exists,omitempty"`
+	Exists     *bool   `json:"exists,omitempty"`
+	UpdateTime *string `json:"updateTime,omitempty"`
 }
 
 type commitResponse struct {
@@ -202,7 +249,8 @@ type commitResponse struct {
 }
 
 type writeResult struct {
-	UpdateTime string `json:"updateTime"`
+	UpdateTime       string  `json:"updateTime"`
+	TransformResults []value `json:"transformResults,omitempty"`
 }
 
 // commit handles POST .../documents:commit — the batch-write endpoint the
@@ -225,13 +273,15 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 
 		switch {
 		case op.Update != nil:
-			if !h.commitUpdate(w, r, op, now) {
+			transformResults, ok := h.commitUpdate(w, r, op, now)
+			if !ok {
 				return
 			}
 
-			out.WriteResults = append(out.WriteResults, writeResult{UpdateTime: nowStr})
+			out.WriteResults = append(out.WriteResults,
+				writeResult{UpdateTime: nowStr, TransformResults: transformResults})
 		case op.Delete != "":
-			if !h.commitDelete(w, r, op.Delete) {
+			if !h.commitDelete(w, r, op) {
 				return
 			}
 
@@ -242,10 +292,78 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// commitUpdate applies one Update write. It returns false when it has already
-// written an error response and the caller must stop.
-func (h *Handler) commitUpdate(w http.ResponseWriter, r *http.Request, op *writeOp, now time.Time) bool {
+// commitUpdate applies one Update write. It returns the transform results and a
+// false ok when it has already written an error response and the caller must
+// stop.
+//
+// A write that carries field transforms is always treated as a MERGE against the
+// stored document: a transform-only write (empty update.fields, empty mask) must
+// increment/append/stamp its target fields WITHOUT wiping the rest of the
+// document. Only a plain Set (no mask, no transforms) replaces wholesale.
+func (h *Handler) commitUpdate(w http.ResponseWriter, r *http.Request, op *writeOp, now time.Time) ([]value, bool) {
 	p, id, err := splitDocumentName(op.Update.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return nil, false
+	}
+
+	existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: id})
+	if gerr != nil && !cerrors.IsNotFound(gerr) {
+		writeErr(w, gerr)
+		return nil, false
+	}
+
+	exists := gerr == nil
+
+	updateTime := existingUpdateTime(existing)
+	if !checkPrecondition(w, op.CurrentDocument, exists, updateTime, op.Update.Name) {
+		return nil, false
+	}
+
+	body := fieldsToMap(op.Update.Fields)
+	body[fieldID] = id
+
+	item := mergeUpdateBase(existing, body, id, op)
+
+	var results []value
+	if len(op.UpdateTransforms) > 0 {
+		results = applyTransforms(item, existing, op.UpdateTransforms, now)
+	}
+
+	stampTimes(item, existing, now)
+
+	h.ensureCollection(r.Context(), p.collection)
+
+	if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
+		writeErr(w, perr)
+		return nil, false
+	}
+
+	return results, true
+}
+
+// mergeUpdateBase produces the item to write before transforms are applied.
+// A masked write merges the masked paths onto the stored document. A
+// transform-carrying write with no field writes also merges (clones the stored
+// document) so the transforms layer onto the existing fields rather than
+// replacing them. A plain Set (no mask, no transforms) replaces wholesale.
+func mergeUpdateBase(existing, body map[string]any, id string, op *writeOp) map[string]any {
+	switch {
+	case op.UpdateMask != nil:
+		return mergeMasked(existing, body, id, op.UpdateMask.FieldPaths)
+	case len(op.UpdateTransforms) > 0 && len(op.Update.Fields) == 0:
+		return mergeMasked(existing, body, id, nil)
+	default:
+		return body
+	}
+}
+
+// commitDelete applies one Delete write, returning false when an error
+// response has already been written. A currentDocument precondition is enforced
+// (a Delete guarded by exists=true on a missing document → NOT_FOUND, an
+// updateTime guard on a stale document → FAILED_PRECONDITION).
+func (h *Handler) commitDelete(w http.ResponseWriter, r *http.Request, op *writeOp) bool {
+	p, id, err := splitDocumentName(op.Delete)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 		return false
@@ -258,37 +376,9 @@ func (h *Handler) commitUpdate(w http.ResponseWriter, r *http.Request, op *write
 	}
 
 	exists := gerr == nil
-	if !checkPrecondition(w, op.CurrentDocument, exists, op.Update.Name) {
-		return false
-	}
 
-	item := fieldsToMap(op.Update.Fields)
-	item[fieldID] = id
-
-	// updateMask selects merge semantics: masked paths written (or deleted when
-	// absent from the body), all other stored fields kept.
-	if op.UpdateMask != nil && len(op.UpdateMask.FieldPaths) > 0 {
-		item = mergeMasked(existing, item, id, op.UpdateMask.FieldPaths)
-	}
-
-	stampTimes(item, existing, now)
-
-	h.ensureCollection(r.Context(), p.collection)
-
-	if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
-		writeErr(w, perr)
-		return false
-	}
-
-	return true
-}
-
-// commitDelete applies one Delete write, returning false when an error
-// response has already been written.
-func (h *Handler) commitDelete(w http.ResponseWriter, r *http.Request, name string) bool {
-	p, id, err := splitDocumentName(name)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+	updateTime := existingUpdateTime(existing)
+	if !checkPrecondition(w, op.CurrentDocument, exists, updateTime, op.Delete) {
 		return false
 	}
 
@@ -300,10 +390,35 @@ func (h *Handler) commitDelete(w http.ResponseWriter, r *http.Request, name stri
 	return true
 }
 
-// checkPrecondition enforces a currentDocument.exists precondition, writing the
-// matching Firestore error and returning false on violation.
-func checkPrecondition(w http.ResponseWriter, pc *precondition, exists bool, name string) bool {
-	if pc == nil || pc.Exists == nil {
+// existingUpdateTime reads the stored commit timestamp of a document, returning
+// the zero time when the item is absent or predates timestamp tracking.
+func existingUpdateTime(item map[string]any) time.Time {
+	if t, ok := item[fieldUpdateTime].(time.Time); ok {
+		return t
+	}
+
+	return time.Time{}
+}
+
+// checkPrecondition enforces a currentDocument precondition, writing the
+// matching Firestore error and returning false on violation. An exists check
+// gates presence; an updateTime check enforces optimistic concurrency (the
+// stored commit time must match exactly).
+func checkPrecondition(w http.ResponseWriter, pc *precondition, exists bool, updateTime time.Time, name string) bool {
+	if pc == nil {
+		return true
+	}
+
+	if !checkExistsPrecondition(w, pc, exists, name) {
+		return false
+	}
+
+	return checkUpdateTimePrecondition(w, pc, exists, updateTime, name)
+}
+
+// checkExistsPrecondition enforces currentDocument.exists.
+func checkExistsPrecondition(w http.ResponseWriter, pc *precondition, exists bool, name string) bool {
+	if pc.Exists == nil {
 		return true
 	}
 
@@ -314,6 +429,29 @@ func checkPrecondition(w http.ResponseWriter, pc *precondition, exists bool, nam
 
 	if *pc.Exists && !exists {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "no document to update: "+name)
+		return false
+	}
+
+	return true
+}
+
+// checkUpdateTimePrecondition enforces currentDocument.updateTime: the stored
+// commit time must exist and match exactly (optimistic concurrency).
+func checkUpdateTimePrecondition(w http.ResponseWriter, pc *precondition, exists bool, updateTime time.Time, name string) bool {
+	if pc.UpdateTime == nil {
+		return true
+	}
+
+	want, perr := time.Parse(time.RFC3339Nano, *pc.UpdateTime)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid updateTime precondition: "+*pc.UpdateTime)
+		return false
+	}
+
+	if !exists || !updateTime.Equal(want) {
+		writeError(w, http.StatusPreconditionFailed, "FAILED_PRECONDITION",
+			"document update time mismatch: "+name)
+
 		return false
 	}
 
