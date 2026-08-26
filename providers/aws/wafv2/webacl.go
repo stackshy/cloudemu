@@ -153,6 +153,10 @@ func (m *Mock) DeleteWebACL(_ context.Context, ref driver.Ref, lockToken string)
 		return staleLock("stale lock token for web ACL %q", ref.ID)
 	}
 
+	if m.webACLAssociated(wd.acl.ARN) {
+		return associated("web ACL %q is still associated with one or more resources", ref.ID)
+	}
+
 	m.webACLs.Delete(key(ref.Scope, ref.ID))
 
 	return nil

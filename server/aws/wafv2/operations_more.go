@@ -44,8 +44,8 @@ func (h *Handler) deleteRuleGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRuleGroups(w http.ResponseWriter, r *http.Request) {
-	listOp(h, w, r, h.waf.ListRuleGroups, ruleGroupSummary, func(s []summaryJSON) listRuleGroupsResponse {
-		return listRuleGroupsResponse{RuleGroups: s}
+	listOp(h, w, r, h.waf.ListRuleGroups, ruleGroupSummary, func(s []summaryJSON, marker string) listRuleGroupsResponse {
+		return listRuleGroupsResponse{RuleGroups: s, NextMarker: marker}
 	})
 }
 
@@ -83,8 +83,8 @@ func (h *Handler) deleteRegexSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRegexSets(w http.ResponseWriter, r *http.Request) {
-	listOp(h, w, r, h.waf.ListRegexPatternSets, regexSetSummary, func(s []summaryJSON) listRegexSetsResponse {
-		return listRegexSetsResponse{RegexPatternSets: s}
+	listOp(h, w, r, h.waf.ListRegexPatternSets, regexSetSummary, func(s []summaryJSON, marker string) listRegexSetsResponse {
+		return listRegexSetsResponse{RegexPatternSets: s, NextMarker: marker}
 	})
 }
 

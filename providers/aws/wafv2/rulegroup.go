@@ -136,6 +136,10 @@ func (m *Mock) DeleteRuleGroup(_ context.Context, ref driver.Ref, lockToken stri
 		return staleLock("stale lock token for rule group %q", ref.ID)
 	}
 
+	if m.itemReferencedByWebACL(gd.grp.ARN) {
+		return associated("rule group %q is referenced by one or more web ACLs", ref.ID)
+	}
+
 	m.ruleGrps.Delete(key(ref.Scope, ref.ID))
 
 	return nil

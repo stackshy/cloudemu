@@ -130,6 +130,10 @@ func (m *Mock) DeleteRegexPatternSet(_ context.Context, ref driver.Ref, lockToke
 		return staleLock("stale lock token for regex pattern set %q", ref.ID)
 	}
 
+	if m.itemReferencedByWebACL(sd.set.ARN) {
+		return associated("regex pattern set %q is referenced by one or more web ACLs", ref.ID)
+	}
+
 	m.regexes.Delete(key(ref.Scope, ref.ID))
 
 	return nil

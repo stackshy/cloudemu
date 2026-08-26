@@ -133,6 +133,10 @@ func (m *Mock) DeleteIPSet(_ context.Context, ref driver.Ref, lockToken string) 
 		return staleLock("stale lock token for IP set %q", ref.ID)
 	}
 
+	if m.itemReferencedByWebACL(sd.set.ARN) {
+		return associated("IP set %q is referenced by one or more web ACLs", ref.ID)
+	}
+
 	m.ipSets.Delete(key(ref.Scope, ref.ID))
 
 	return nil
