@@ -33,13 +33,23 @@ const (
 	shardIDFmt  = "shardId-%012d"
 	hashKeyBits = 128
 	base10      = 10
+	// onDemandStartShards is the shard count an on-demand stream starts with.
+	onDemandStartShards = 4
+	// maxTargetShardCount / shardScaleFactor bound a single UpdateShardCount call:
+	// AWS caps the target at 10000 and permits scaling by at most a factor of two.
+	maxTargetShardCount = 10000
+	shardScaleFactor    = 2
 )
 
-// shardState is a shard plus its stored records and open/closed flag.
+// shardState is a shard plus its stored records and open/closed flag. createdAt
+// and closedAt (zero while open) time-stamp the shard's lifetime so ListShards
+// can honor the timestamp-based ShardFilter types.
 type shardState struct {
-	shard   driver.Shard
-	records []driver.Record
-	closed  bool
+	shard     driver.Shard
+	records   []driver.Record
+	closed    bool
+	createdAt time.Time
+	closedAt  time.Time
 }
 
 // streamData is the full server-side state of a stream.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
@@ -46,14 +47,16 @@ func (m *Mock) SplitShard(_ context.Context, name, arn, shardToSplit, newStartin
 		return invalidArg("NewStartingHashKey must fall within the parent shard's hash-key range")
 	}
 
+	now := m.now()
 	endSeq := sd.nextSeq()
 	parent.closed = true
+	parent.closedAt = now
 	parent.shard.SequenceNumberRange.EndingSequenceNumber = endSeq
 
 	startSeq := sd.nextSeq()
 	left := m.childShard(len(sd.shards), start.String(),
-		new(big.Int).Sub(newStart, big.NewInt(1)).String(), startSeq, shardToSplit, "")
-	right := m.childShard(len(sd.shards)+1, newStart.String(), end.String(), startSeq, shardToSplit, "")
+		new(big.Int).Sub(newStart, big.NewInt(1)).String(), startSeq, shardToSplit, "", now)
+	right := m.childShard(len(sd.shards)+1, newStart.String(), end.String(), startSeq, shardToSplit, "", now)
 	sd.shards = append(sd.shards, left, right)
 
 	return nil
@@ -83,22 +86,27 @@ func (m *Mock) MergeShards(_ context.Context, name, arn, shardToMerge, adjacentS
 		return invalidArg("shards %q and %q are not adjacent", shardToMerge, adjacentShardToMerge)
 	}
 
+	now := m.now()
 	endSeq := sd.nextSeq()
 
 	for _, ss := range []*shardState{a, b} {
 		ss.closed = true
+		ss.closedAt = now
 		ss.shard.SequenceNumberRange.EndingSequenceNumber = endSeq
 	}
 
 	child := m.childShard(len(sd.shards), a.shard.HashKeyRange.StartingHashKey,
-		b.shard.HashKeyRange.EndingHashKey, sd.nextSeq(), shardToMerge, adjacentShardToMerge)
+		b.shard.HashKeyRange.EndingHashKey, sd.nextSeq(), shardToMerge, adjacentShardToMerge, now)
 	sd.shards = append(sd.shards, child)
 
 	return nil
 }
 
-func (*Mock) childShard(index int, startKey, endKey, startSeq, parent, adjacentParent string) *shardState {
+func (*Mock) childShard(
+	index int, startKey, endKey, startSeq, parent, adjacentParent string, createdAt time.Time,
+) *shardState {
 	return &shardState{
+		createdAt: createdAt,
 		shard: driver.Shard{
 			ShardID:               fmt.Sprintf(shardIDFmt, index),
 			ParentShardID:         parent,
