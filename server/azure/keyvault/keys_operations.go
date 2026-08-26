@@ -120,6 +120,18 @@ func (h *KeysHandler) updateKey(w http.ResponseWriter, r *http.Request, name, ve
 	writeJSON(w, toKeyBundle(r, key))
 }
 
+// rotateKey generates a new current version of an existing key and returns the
+// new version's bundle (POST /keys/{name}/rotate).
+func (h *KeysHandler) rotateKey(w http.ResponseWriter, r *http.Request, name string) {
+	key, err := h.kv.RotateKey(r.Context(), vaultFromRequest(r), name)
+	if err != nil {
+		writeKeyErr(w, err)
+		return
+	}
+
+	writeJSON(w, toKeyBundle(r, key))
+}
+
 func (h *KeysHandler) deleteKey(w http.ResponseWriter, r *http.Request, name string) {
 	deleted, err := h.kv.DeleteKey(r.Context(), vaultFromRequest(r), name)
 	if err != nil {

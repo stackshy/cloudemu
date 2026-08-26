@@ -38,6 +38,7 @@ type secretVersion struct {
 	created     time.Time
 	updated     time.Time
 	current     bool
+	managed     bool
 }
 
 type secretData struct {

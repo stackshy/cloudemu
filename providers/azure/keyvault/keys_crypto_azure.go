@@ -63,7 +63,45 @@ func (m *Mock) opKey(vault, name, version, op string) (*keyVersion, error) {
 		return nil, errors.Newf(errors.PermissionDenied, "operation %q is not permitted on key %q", op, name)
 	}
 
+	if err := m.checkKeyWindow(v, op, name); err != nil {
+		return nil, err
+	}
+
 	return v, nil
+}
+
+// checkKeyWindow enforces the key's nbf/exp validity window. Per Azure Key
+// Vault semantics, operations outside the window are automatically disallowed
+// except for decrypt, release, unwrap and verify, which must keep working on a
+// not-yet-valid or expired key (test-before-production and recovery scenarios).
+func (m *Mock) checkKeyWindow(v *keyVersion, op, name string) error {
+	if !windowEnforcedOp(op) {
+		return nil
+	}
+
+	now := m.opts.Clock.Now().UTC().Unix()
+
+	if v.notBefore != 0 && now < v.notBefore {
+		return errors.Newf(errors.PermissionDenied, "key %q is not yet valid", name)
+	}
+
+	if v.expires != 0 && now >= v.expires {
+		return errors.Newf(errors.PermissionDenied, "key %q has expired", name)
+	}
+
+	return nil
+}
+
+// windowEnforcedOp reports whether op is one of the operations Key Vault blocks
+// outside a key's nbf/exp window (encrypt, sign, wrapKey). decrypt, unwrapKey
+// and verify are intentionally excluded.
+func windowEnforcedOp(op string) bool {
+	switch op {
+	case "encrypt", "sign", "wrapKey":
+		return true
+	default:
+		return false
+	}
 }
 
 func opAllowed(ops []string, op string) bool {

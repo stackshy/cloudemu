@@ -68,6 +68,7 @@ KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
 | `ListKeys` |  |
 | `PurgeDeletedKey` |  |
 | `RecoverDeletedKey` |  |
+| `RotateKey` |  |
 | `SignKey` |  |
 | `UnwrapKey` |  |
 | `UpdateKey` |  |

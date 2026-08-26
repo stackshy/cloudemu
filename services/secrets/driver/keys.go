@@ -173,6 +173,7 @@ type KeyVaultKeys interface {
 	ListKeys(ctx context.Context, vault string) ([]KVKey, error)
 	ListKeyVersions(ctx context.Context, vault, name string) ([]KVKey, error)
 	UpdateKey(ctx context.Context, vault, name, version string, patch KVKeyPatch) (*KVKey, error)
+	RotateKey(ctx context.Context, vault, name string) (*KVKey, error)
 	DeleteKey(ctx context.Context, vault, name string) (*KVDeletedKey, error)
 	GetDeletedKey(ctx context.Context, vault, name string) (*KVDeletedKey, error)
 	ListDeletedKeys(ctx context.Context, vault string) ([]KVDeletedKey, error)
