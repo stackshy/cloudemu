@@ -590,6 +590,7 @@ func tagsToMap(tags []tagCBR) map[string]string {
 type describeAlarmsInput struct {
 	AlarmNames      []string `cbor:"AlarmNames,omitempty"`
 	AlarmNamePrefix string   `cbor:"AlarmNamePrefix,omitempty"`
+	AlarmTypes      []string `cbor:"AlarmTypes,omitempty"`
 	StateValue      string   `cbor:"StateValue,omitempty"`
 	ActionPrefix    string   `cbor:"ActionPrefix,omitempty"`
 	MaxRecords      int      `cbor:"MaxRecords,omitempty"`
@@ -626,8 +627,9 @@ type metricAlarmCBR struct {
 }
 
 type describeAlarmsOutput struct {
-	MetricAlarms []metricAlarmCBR `cbor:"MetricAlarms"`
-	NextToken    string           `cbor:"NextToken,omitempty"`
+	MetricAlarms    []metricAlarmCBR    `cbor:"MetricAlarms"`
+	CompositeAlarms []compositeAlarmCBR `cbor:"CompositeAlarms,omitempty"`
+	NextToken       string              `cbor:"NextToken,omitempty"`
 }
 
 func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -637,20 +639,23 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
-	if err != nil {
-		writeDriverErr(w, err)
-		return
-	}
+	matched := make([]metricAlarmCBR, 0)
 
-	matched := make([]metricAlarmCBR, 0, len(alarms))
-
-	for i := range alarms {
-		if !alarmMatchesFilters(&alarms[i], &in) {
-			continue
+	// AlarmTypes selects metric alarms, composite alarms, or (when omitted) both.
+	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
+		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
+		if err != nil {
+			writeDriverErr(w, err)
+			return
 		}
 
-		matched = append(matched, toMetricAlarmCBR(&alarms[i]))
+		for i := range alarms {
+			if !alarmMatchesFilters(&alarms[i], &in) {
+				continue
+			}
+
+			matched = append(matched, toMetricAlarmCBR(&alarms[i]))
+		}
 	}
 
 	// Always paginate: real CloudWatch caps a page at 100 alarms and returns a
@@ -665,11 +670,24 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		size = maxAlarmPageSize
 	}
 
-	from, to, next := pageWindow(len(matched), decodeOffsetToken(in.NextToken), size)
+	offset := decodeOffsetToken(in.NextToken)
+	from, to, next := pageWindow(len(matched), offset, size)
 
 	resp := describeAlarmsOutput{MetricAlarms: matched[from:to]}
 	if next > 0 {
 		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	// Composite alarms are a small, separate collection; return them all on the
+	// first page (offset 0) so they aren't duplicated across metric-alarm pages.
+	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
+		composites, err := h.compositeAlarmRows(r, &in)
+		if err != nil {
+			writeDriverErr(w, err)
+			return
+		}
+
+		resp.CompositeAlarms = composites
 	}
 
 	writeCBORResponse(w, resp)
@@ -776,6 +794,15 @@ func (h *Handler) deleteAlarms(w http.ResponseWriter, r *http.Request, body []by
 	// fails spuriously or leaves a half-deleted state.
 	for _, name := range in.AlarmNames {
 		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
+			writeDriverErr(w, err)
+			return
+		}
+	}
+
+	// DeleteAlarms accepts both metric and composite alarm names in one call; a
+	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
+	if store, ok := h.monitoring.(compositeAlarmStore); ok {
+		if err := store.DeleteCompositeAlarms(r.Context(), in.AlarmNames); err != nil {
 			writeDriverErr(w, err)
 			return
 		}
