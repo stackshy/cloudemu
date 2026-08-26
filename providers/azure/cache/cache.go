@@ -114,21 +114,26 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:               cfg.Name,
-		Scope:              cfg.Scope,
-		Location:           cfg.Location,
-		NodeType:           nodeType,
-		Engine:             engine,
-		Status:             "Running",
-		Endpoint:           endpoint,
-		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:               tags,
-		SKUFamily:          cfg.SKUFamily,
-		SKUCapacity:        cfg.SKUCapacity,
-		ShardCount:         cfg.ShardCount,
-		ReplicasPerPrimary: cfg.ReplicasPerPrimary,
-		PrimaryKey:         generateAccessKey(),
-		SecondaryKey:       generateAccessKey(),
+		Name:                cfg.Name,
+		Scope:               cfg.Scope,
+		Location:            cfg.Location,
+		NodeType:            nodeType,
+		Engine:              engine,
+		Status:              "Running",
+		Endpoint:            endpoint,
+		CreatedAt:           m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:                tags,
+		SKUFamily:           cfg.SKUFamily,
+		SKUCapacity:         cfg.SKUCapacity,
+		ShardCount:          cfg.ShardCount,
+		ReplicasPerPrimary:  cfg.ReplicasPerPrimary,
+		RedisConfiguration:  cloneStringMap(cfg.RedisConfiguration),
+		EnableNonSSLPort:    cfg.EnableNonSSLPort,
+		MinimumTLSVersion:   cfg.MinimumTLSVersion,
+		PublicNetworkAccess: cfg.PublicNetworkAccess,
+		RedisVersion:        cfg.RedisVersion,
+		PrimaryKey:          generateAccessKey(),
+		SecondaryKey:        generateAccessKey(),
 	}
 
 	// Opt-in: back the cache with a real Redis, replacing the synthetic endpoint
@@ -228,6 +233,28 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		updated.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
 	}
 
+	// Nil/empty means "not supplied" on a partial update: a tags-only or
+	// scale-only PATCH must not wipe redisConfiguration/enableNonSslPort/etc.
+	if cfg.RedisConfiguration != nil {
+		updated.info.RedisConfiguration = cloneStringMap(cfg.RedisConfiguration)
+	}
+
+	if cfg.EnableNonSSLPort != nil {
+		updated.info.EnableNonSSLPort = cfg.EnableNonSSLPort
+	}
+
+	if cfg.MinimumTLSVersion != "" {
+		updated.info.MinimumTLSVersion = cfg.MinimumTLSVersion
+	}
+
+	if cfg.PublicNetworkAccess != "" {
+		updated.info.PublicNetworkAccess = cfg.PublicNetworkAccess
+	}
+
+	if cfg.RedisVersion != "" {
+		updated.info.RedisVersion = cfg.RedisVersion
+	}
+
 	if cfg.Tags != nil {
 		updated.info.Tags = maps.Clone(cfg.Tags)
 	}
@@ -278,6 +305,16 @@ func (m *Mock) RegenerateCacheKey(_ context.Context, name, keyType string) (prim
 	m.caches.Set(name, &updated)
 
 	return updated.info.PrimaryKey, updated.info.SecondaryKey, nil
+}
+
+// cloneStringMap returns a copy of m, or nil when m is nil, so stored cache
+// state never aliases the caller's map.
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+
+	return maps.Clone(m)
 }
 
 // generateAccessKey returns a fresh 44-character base64 Redis access key,
