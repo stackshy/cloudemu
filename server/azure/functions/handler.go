@@ -74,10 +74,14 @@ type appServicePlanStore interface {
 // portable behavior (or 501 for Azure-only sub-routes).
 type azureFunctionApps interface {
 	UpsertSiteMeta(ctx context.Context, in azfunctions.SiteMeta) (*azfunctions.SiteMeta, error)
+	PatchSiteMeta(
+		ctx context.Context, subscription, resourceGroup, name string, patch azfunctions.SiteMetaPatch,
+	) (*azfunctions.SiteMeta, error)
+	SetSiteState(ctx context.Context, subscription, resourceGroup, name, state string) (*azfunctions.SiteMeta, error)
 	GetSiteMeta(ctx context.Context, subscription, resourceGroup, name string) (*azfunctions.SiteMeta, error)
 	DeleteSiteMeta(ctx context.Context, subscription, resourceGroup, name string) error
 	ListSiteMeta(ctx context.Context, subscription, resourceGroup string) ([]azfunctions.SiteMeta, error)
-	CreateSiteFunction(ctx context.Context, site string, fn azfunctions.SiteFunction) (*azfunctions.SiteFunction, error)
+	CreateSiteFunction(ctx context.Context, site string, fn azfunctions.SiteFunction) (*azfunctions.SiteFunction, bool, error)
 	GetSiteFunction(ctx context.Context, site, name string) (*azfunctions.SiteFunction, error)
 	ListSiteFunctions(ctx context.Context, site string) ([]azfunctions.SiteFunction, error)
 	DeleteSiteFunction(ctx context.Context, site, name string) error
@@ -191,6 +195,8 @@ func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rp azure
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.patch(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -280,6 +286,125 @@ func (h *Handler) upsertSiteMeta(
 		Identity:       toSiteMetaIdentity(req.Identity),
 		AppSettings:    appSettingsToMap(settings),
 	})
+	if err != nil {
+		return nil
+	}
+
+	return meta
+}
+
+// patch serves PATCH .../sites/{name} — WebApps_Update (`az functionapp update`,
+// `az functionapp identity assign`, SDK .Update()). Unlike PUT, PATCH is a
+// partial update: only the fields the body carries are applied; everything else
+// is left as stored. The site must already exist (404 otherwise).
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) patch(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if rp.ResourceGroup == "" {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing resourceGroups segment")
+		return
+	}
+
+	// PATCH targets an existing resource; resolving it first (scoped) yields the
+	// 404 real Azure returns for a PATCH against a missing site or the wrong
+	// resource group, before any partial write lands.
+	if _, err := h.getFunction(r.Context(), rp); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxControlBytes)
+
+	var req patchSiteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
+		return
+	}
+
+	handler, settings, hasSettings := extractPatchSettings(req)
+
+	info, err := h.fn.UpdateFunction(r.Context(), rp.ResourceName, patchFunctionConfig(rp, req, handler, settings, hasSettings))
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	meta := h.patchSiteMeta(r, rp, req, settings, hasSettings)
+
+	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, meta))
+}
+
+// extractPatchSettings splits the handler entrypoint out of a PATCH body's app
+// settings (as createOrUpdate does for PUT). hasSettings reports whether the
+// body carried a siteConfig.appSettings block at all, so an omitted block
+// preserves the stored settings instead of clearing them.
+func extractPatchSettings(req patchSiteRequest) (handler string, settings []nameValue, hasSettings bool) {
+	if req.Properties == nil || req.Properties.SiteConfig == nil || req.Properties.SiteConfig.AppSettings == nil {
+		return "", nil, false
+	}
+
+	handler, settings = extractHandlerSetting(req.Properties.SiteConfig.AppSettings)
+
+	return handler, settings, true
+}
+
+// patchFunctionConfig builds the partial FunctionConfig a PATCH applies to the
+// portable function. Only fields the body supplied are set; UpdateFunction's
+// applyConfigUpdates then preserves every zero field, so an omitted runtime,
+// handler, tags or app-settings block is left untouched.
+//
+//nolint:gocritic // rp/req travel the dispatch chain once per request.
+func patchFunctionConfig(
+	rp azurearm.ResourcePath, req patchSiteRequest, handler string, settings []nameValue, hasSettings bool,
+) sdrv.FunctionConfig {
+	cfg := sdrv.FunctionConfig{Name: rp.ResourceName, Handler: handler, Tags: req.Tags}
+
+	if req.Properties != nil && req.Properties.SiteConfig != nil && req.Properties.SiteConfig.LinuxFxVersion != nil {
+		cfg.Runtime = *req.Properties.SiteConfig.LinuxFxVersion
+	}
+
+	if hasSettings {
+		cfg.Environment = appSettingsToMap(settings)
+	}
+
+	return cfg
+}
+
+// patchSiteMeta applies the PATCH's partial site metadata when the backend
+// supports the Azure site surface, returning the stored view for the response.
+// A nil field in the built patch preserves the stored value.
+//
+//nolint:gocritic // rp/req travel the dispatch chain once per request.
+func (h *Handler) patchSiteMeta(
+	r *http.Request, rp azurearm.ResourcePath, req patchSiteRequest, settings []nameValue, hasSettings bool,
+) *azfunctions.SiteMeta {
+	store, ok := h.siteStore()
+	if !ok {
+		return nil
+	}
+
+	patch := azfunctions.SiteMetaPatch{Location: req.Location, Kind: req.Kind}
+
+	if req.Identity != nil {
+		patch.Identity = toSiteMetaIdentity(req.Identity)
+	}
+
+	if req.Properties != nil {
+		patch.ServerFarmID = req.Properties.ServerFarmID
+		patch.HTTPSOnly = req.Properties.HTTPSOnly
+		patch.Reserved = req.Properties.Reserved
+
+		if req.Properties.SiteConfig != nil {
+			patch.LinuxFxVersion = req.Properties.SiteConfig.LinuxFxVersion
+		}
+	}
+
+	if hasSettings {
+		m := appSettingsToMap(settings)
+		patch.AppSettings = &m
+	}
+
+	meta, err := store.PatchSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, patch)
 	if err != nil {
 		return nil
 	}
@@ -735,6 +860,7 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 	location := defaultLocation
 	provisioningState := "Succeeded"
 	kind := functionAppKind
+	state := siteStateRunning
 
 	var serverFarmID string
 
@@ -753,6 +879,10 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 		if meta.Kind != "" {
 			kind = meta.Kind
 		}
+
+		if meta.State != "" {
+			state = meta.State
+		}
 	}
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
@@ -769,7 +899,7 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 		Identity: identity,
 		Tags:     info.Tags,
 		Properties: siteProperties{
-			State:             "Running",
+			State:             state,
 			ProvisioningState: provisioningState,
 			HostNames:         []string{hostName},
 			DefaultHostName:   hostName,

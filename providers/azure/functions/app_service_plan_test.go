@@ -28,6 +28,67 @@ func TestCreateAppServicePlanDefaults(t *testing.T) {
 	assert.NotEmpty(t, plan.Location)
 }
 
+func TestDeriveSKUTier(t *testing.T) {
+	cases := []struct {
+		name, sku, want string
+	}{
+		{"consumption Y1", "Y1", "Dynamic"},
+		{"basic B1", "B1", "Basic"},
+		{"standard S1", "S1", "Standard"},
+		{"premium legacy P1", "P1", "Premium"},
+		{"premium v2 P1v2", "P1v2", "PremiumV2"},
+		{"premium v3 P1v3", "P1v3", "PremiumV3"},
+		{"elastic premium EP1", "EP1", "ElasticPremium"},
+		{"free F1", "F1", "Free"},
+		{"shared D1", "D1", "Shared"},
+		{"isolated I1", "I1", "Isolated"},
+		{"isolated v2 I1v2", "I1v2", "IsolatedV2"},
+		{"workflow standard WS1", "WS1", "WorkflowStandard"},
+		{"lowercase b1", "b1", "Basic"},
+		{"empty defaults to Dynamic", "", "Dynamic"},
+		{"unknown falls back to Standard, not Dynamic", "ZZ9", "Standard"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, deriveSKUTier(tc.sku))
+		})
+	}
+}
+
+// TestCreateAppServicePlanDerivesTierFromSKU covers the fix for a hardcoded
+// "Dynamic" tier: when the tier is omitted, Azure derives it from the SKU name.
+func TestCreateAppServicePlanDerivesTierFromSKU(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct{ sku, want string }{
+		{"B1", "Basic"},
+		{"S1", "Standard"},
+		{"P1v3", "PremiumV3"},
+		{"Y1", "Dynamic"},
+		{"EP1", "ElasticPremium"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.sku, func(t *testing.T) {
+			m := newTestMock()
+
+			plan, err := m.CreateAppServicePlan(ctx, AppServicePlan{Name: "p", SKUName: tc.sku})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, plan.SKUTier)
+		})
+	}
+}
+
+// TestCreateAppServicePlanPreservesExplicitTier confirms an explicitly-provided
+// tier is never overwritten by the SKU-name derivation.
+func TestCreateAppServicePlanPreservesExplicitTier(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	plan, err := m.CreateAppServicePlan(ctx, AppServicePlan{Name: "p", SKUName: "B1", SKUTier: "Standard"})
+	require.NoError(t, err)
+	assert.Equal(t, "Standard", plan.SKUTier)
+}
+
 func TestCreateAppServicePlanEmptyName(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

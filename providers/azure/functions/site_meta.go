@@ -28,6 +28,13 @@ const emulatorTenantID = "11111111-1111-1111-1111-111111111111"
 // attached.
 const identityTypeNone = "None"
 
+// siteStateRunning is the state a freshly-created site reports; a stop switches
+// it to siteStateStopped and a start switches it back.
+const (
+	siteStateRunning = "Running"
+	siteStateStopped = "Stopped"
+)
+
 // SiteIdentity is the managed-service-identity attached to a function app
 // (Microsoft.Web/sites identity envelope). For a system-assigned identity the
 // PrincipalID/TenantID are synthesized on store; for each user-assigned
@@ -120,6 +127,9 @@ type SiteMeta struct {
 	Reserved          bool
 	LinuxFxVersion    string
 	ProvisioningState string
+	// State is the running state reported on the ARM site ("Running" on create,
+	// "Stopped" after a stop). Start/stop toggle it; a plain update leaves it.
+	State string
 	// Identity is the resolved managed-service-identity, nil when the site has
 	// none attached. It is resolved (synthesized) on upsert.
 	Identity         *SiteIdentity
@@ -194,6 +204,7 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 	meta := in.clone()
 	meta.Identity = resolveSiteIdentity(in.Identity, identitySeed(&in))
 	meta.ProvisioningState = "Succeeded"
+	meta.State = siteStateRunning
 	meta.MasterKey = generateKey()
 	meta.HostFunctionKeys = map[string]string{defaultKeyName: generateKey()}
 	meta.SystemKeys = map[string]string{}
@@ -203,6 +214,98 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 	}
 
 	m.sites.Set(in.Name, meta)
+
+	return meta.clone(), nil
+}
+
+// SiteMetaPatch carries only the fields a PATCH (WebApps_Update) request
+// supplied. A nil field is left as stored — this is what distinguishes PATCH's
+// partial-update semantics from PUT's full replace: real Azure preserves any
+// property the PATCH body omits.
+type SiteMetaPatch struct {
+	Location       *string
+	Kind           *string
+	ServerFarmID   *string
+	HTTPSOnly      *bool
+	Reserved       *bool
+	LinuxFxVersion *string
+	// Identity, when non-nil, replaces the attached identity (a Type of "None"
+	// detaches it, matching `az functionapp identity remove`); nil preserves the
+	// current identity.
+	Identity *SiteIdentity
+	// AppSettings, when non-nil, replaces the stored settings; nil preserves them.
+	AppSettings *map[string]string
+}
+
+// PatchSiteMeta applies a partial update to a site's metadata, scoped like
+// GetSiteMeta, preserving every field the patch leaves nil (unlike UpsertSiteMeta,
+// which is a full replace suited to PUT). Generated keys, deployed functions and
+// the running state are untouched.
+func (m *Mock) PatchSiteMeta(
+	_ context.Context, subscription, resourceGroup, name string, patch SiteMetaPatch,
+) (*SiteMeta, error) {
+	m.sitesMu.Lock()
+	defer m.sitesMu.Unlock()
+
+	meta, ok := m.sites.Get(name)
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
+	}
+
+	applySiteMetaPatch(meta, patch)
+	m.sites.Set(name, meta)
+
+	return meta.clone(), nil
+}
+
+// applySiteMetaPatch overlays the supplied (non-nil) patch fields onto meta.
+func applySiteMetaPatch(meta *SiteMeta, patch SiteMetaPatch) {
+	if patch.Location != nil {
+		meta.Location = *patch.Location
+	}
+
+	if patch.Kind != nil {
+		meta.Kind = *patch.Kind
+	}
+
+	if patch.ServerFarmID != nil {
+		meta.ServerFarmID = *patch.ServerFarmID
+	}
+
+	if patch.HTTPSOnly != nil {
+		meta.HTTPSOnly = *patch.HTTPSOnly
+	}
+
+	if patch.Reserved != nil {
+		meta.Reserved = *patch.Reserved
+	}
+
+	if patch.LinuxFxVersion != nil {
+		meta.LinuxFxVersion = *patch.LinuxFxVersion
+	}
+
+	if patch.Identity != nil {
+		meta.Identity = resolveSiteIdentity(patch.Identity, identitySeed(meta))
+	}
+
+	if patch.AppSettings != nil {
+		meta.AppSettings = maps.Clone(*patch.AppSettings)
+	}
+}
+
+// SetSiteState toggles a site's running state (start/stop), scoped like
+// GetSiteMeta. It leaves every other field untouched.
+func (m *Mock) SetSiteState(_ context.Context, subscription, resourceGroup, name, state string) (*SiteMeta, error) {
+	m.sitesMu.Lock()
+	defer m.sitesMu.Unlock()
+
+	meta, ok := m.sites.Get(name)
+	if !ok || meta.Subscription != subscription || meta.ResourceGroup != resourceGroup {
+		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", name)
+	}
+
+	meta.State = state
+	m.sites.Set(name, meta)
 
 	return meta.clone(), nil
 }
@@ -335,25 +438,36 @@ func (m *Mock) ListSiteMeta(_ context.Context, subscription, resourceGroup strin
 	return out, nil
 }
 
-// CreateSiteFunction adds a function to a site, generating its default key.
-func (m *Mock) CreateSiteFunction(_ context.Context, site string, fn SiteFunction) (*SiteFunction, error) {
+// CreateSiteFunction adds a function to a site (ARM CreateOrUpdate is a PUT, so
+// this also updates an existing function). It reports created=true only when the
+// function is new. A newly-created function gets a generated default key; an
+// overwrite preserves the existing function's keys (unless the request supplies
+// its own), so a re-PUT with no keys — the shape the wire handler sends — never
+// silently rotates the caller's function key.
+func (m *Mock) CreateSiteFunction(_ context.Context, site string, fn SiteFunction) (*SiteFunction, bool, error) {
 	m.sitesMu.Lock()
 	defer m.sitesMu.Unlock()
 
 	meta, ok := m.sites.Get(site)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "site %s not found", site)
+		return nil, false, cerrors.Newf(cerrors.NotFound, "site %s not found", site)
 	}
+
+	existing, existed := meta.Functions[fn.Name]
 
 	stored := fn.clone()
 	if len(stored.Keys) == 0 {
-		stored.Keys = map[string]string{defaultKeyName: generateKey()}
+		if existed {
+			stored.Keys = maps.Clone(existing.Keys)
+		} else {
+			stored.Keys = map[string]string{defaultKeyName: generateKey()}
+		}
 	}
 
 	meta.Functions[fn.Name] = stored
 	m.sites.Set(site, meta)
 
-	return stored.clone(), nil
+	return stored.clone(), !existed, nil
 }
 
 // GetSiteFunction returns one function of a site, or NotFound.
