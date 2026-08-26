@@ -243,6 +243,8 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 		Protocol:       form.Get("Protocol"),
 		Port:           formInt(form.Get("Port")),
 		DefaultActions: parseActions(form, "DefaultActions.member"),
+		SslPolicy:      form.Get("SslPolicy"),
+		Certificates:   parseCertificates(form, "Certificates.member"),
 	}
 
 	li, err := h.lb.CreateListener(r.Context(), cfg)
@@ -541,6 +543,29 @@ func parseFixedResponseConfig(form url.Values, base string) *lbdriver.FixedRespo
 	}
 
 	return &fr
+}
+
+// parseCertificates parses a listener Certificates member list. The listener's
+// create certificate is its default, so the first entry is marked IsDefault —
+// matching what real ELBv2 reports on DescribeListeners.
+func parseCertificates(form url.Values, prefix string) []lbdriver.Certificate {
+	indices := awsquery.CollectIndices(form, prefix)
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]lbdriver.Certificate, 0, len(indices))
+
+	for i, n := range indices {
+		arn := form.Get(prefix + "." + strconv.Itoa(n) + ".CertificateArn")
+		if arn == "" {
+			continue
+		}
+
+		out = append(out, lbdriver.Certificate{CertificateArn: arn, IsDefault: i == 0})
+	}
+
+	return out
 }
 
 // parseConditions parses a Conditions member list into driver RuleConditions.

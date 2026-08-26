@@ -86,6 +86,65 @@ func assertRedirect(t *testing.T, actions []elbtypes.Action, where string) {
 	}
 }
 
+// TestSDKListenerHTTPSCertificatesAndSslPolicy proves an HTTPS listener stores
+// and round-trips its SslPolicy and default certificate.
+func TestSDKListenerHTTPSCertificatesAndSslPolicy(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	lbARN := createTestLBForListener(t, client, "https-alb")
+
+	tgOut, err := client.CreateTargetGroup(ctx, &elb.CreateTargetGroupInput{
+		Name:     aws.String("https-tg"),
+		Protocol: elbtypes.ProtocolEnumHttps,
+		Port:     aws.Int32(443),
+		VpcId:    aws.String("vpc-1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateTargetGroup: %v", err)
+	}
+
+	tgARN := aws.ToString(tgOut.TargetGroups[0].TargetGroupArn)
+	certARN := "arn:aws:acm:us-east-1:000000000000:certificate/abc"
+
+	created, err := client.CreateListener(ctx, &elb.CreateListenerInput{
+		LoadBalancerArn: aws.String(lbARN),
+		Protocol:        elbtypes.ProtocolEnumHttps,
+		Port:            aws.Int32(443),
+		SslPolicy:       aws.String("ELBSecurityPolicy-2016-08"),
+		Certificates:    []elbtypes.Certificate{{CertificateArn: aws.String(certARN)}},
+		DefaultActions: []elbtypes.Action{{
+			Type:           elbtypes.ActionTypeEnumForward,
+			TargetGroupArn: aws.String(tgARN),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateListener: %v", err)
+	}
+
+	liARN := aws.ToString(created.Listeners[0].ListenerArn)
+
+	desc, err := client.DescribeListeners(ctx, &elb.DescribeListenersInput{
+		ListenerArns: []string{liARN},
+	})
+	if err != nil {
+		t.Fatalf("DescribeListeners: %v", err)
+	}
+
+	li := desc.Listeners[0]
+	if aws.ToString(li.SslPolicy) != "ELBSecurityPolicy-2016-08" {
+		t.Fatalf("SslPolicy = %q, want ELBSecurityPolicy-2016-08", aws.ToString(li.SslPolicy))
+	}
+
+	if len(li.Certificates) != 1 || aws.ToString(li.Certificates[0].CertificateArn) != certARN {
+		t.Fatalf("Certificates = %+v, want the default cert %s", li.Certificates, certARN)
+	}
+
+	if !aws.ToBool(li.Certificates[0].IsDefault) {
+		t.Fatalf("create certificate should be the default (IsDefault=true), got %+v", li.Certificates[0])
+	}
+}
+
 // TestSDKListenerFixedResponseAction proves a fixed-response default action
 // round-trips its status code, content type and message body.
 func TestSDKListenerFixedResponseAction(t *testing.T) {

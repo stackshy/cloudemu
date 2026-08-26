@@ -121,6 +121,9 @@ type ListenerConfig struct {
 	Port           int
 	TargetGroupARN string
 	DefaultActions []RuleAction
+	// SslPolicy and Certificates apply to TLS-terminating (HTTPS/TLS) listeners.
+	SslPolicy    string
+	Certificates []Certificate
 }
 
 // ListenerInfo describes a listener. See ListenerConfig for the relationship
@@ -132,6 +135,15 @@ type ListenerInfo struct {
 	Port           int
 	TargetGroupARN string
 	DefaultActions []RuleAction
+	SslPolicy      string
+	Certificates   []Certificate
+}
+
+// Certificate is a server certificate bound to an HTTPS/TLS listener. The
+// listener's default certificate has IsDefault set.
+type Certificate struct {
+	CertificateArn string
+	IsDefault      bool
 }
 
 // RuleCondition describes a condition for a listener rule (e.g., path-pattern or host-header).
@@ -190,12 +202,15 @@ type RuleInfo struct {
 	IsDefault   bool
 }
 
-// ModifyListenerInput describes modifications to apply to a listener.
+// ModifyListenerInput describes modifications to apply to a listener. A
+// zero/empty field means "leave unchanged".
 type ModifyListenerInput struct {
 	ListenerARN    string
 	Port           int
 	Protocol       string
 	DefaultActions []RuleAction
+	SslPolicy      string
+	Certificates   []Certificate
 }
 
 // LBAttributes describes configurable attributes of a load balancer.

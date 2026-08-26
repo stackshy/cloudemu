@@ -494,6 +494,8 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		Protocol:       cfg.Protocol,
 		Port:           cfg.Port,
 		DefaultActions: cloneActions(cfg.DefaultActions),
+		SslPolicy:      cfg.SslPolicy,
+		Certificates:   cloneCertificates(cfg.Certificates),
 	}
 
 	m.listeners.Set(arn, li)
@@ -501,6 +503,15 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 	result := li
 
 	return &result, nil
+}
+
+// cloneCertificates returns an independent copy of a certificate slice.
+func cloneCertificates(certs []driver.Certificate) []driver.Certificate {
+	if len(certs) == 0 {
+		return nil
+	}
+
+	return append([]driver.Certificate(nil), certs...)
 }
 
 // validateForwardActions reports TargetGroupNotFound when any forward action
@@ -663,6 +674,14 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 
 	if len(input.DefaultActions) > 0 {
 		li.DefaultActions = cloneActions(input.DefaultActions)
+	}
+
+	if input.SslPolicy != "" {
+		li.SslPolicy = input.SslPolicy
+	}
+
+	if len(input.Certificates) > 0 {
+		li.Certificates = cloneCertificates(input.Certificates)
 	}
 
 	m.listeners.Set(input.ListenerARN, li)

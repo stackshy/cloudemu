@@ -175,12 +175,23 @@ type actionsXML struct {
 	Member []actionXML `xml:"member,omitempty"`
 }
 
+type certificateXML struct {
+	CertificateArn string `xml:"CertificateArn,omitempty"`
+	IsDefault      bool   `xml:"IsDefault,omitempty"`
+}
+
+type certificatesXML struct {
+	Member []certificateXML `xml:"member,omitempty"`
+}
+
 type listenerXML struct {
-	ListenerArn     string      `xml:"ListenerArn"`
-	LoadBalancerArn string      `xml:"LoadBalancerArn,omitempty"`
-	Protocol        string      `xml:"Protocol,omitempty"`
-	Port            int         `xml:"Port,omitempty"`
-	DefaultActions  *actionsXML `xml:"DefaultActions,omitempty"`
+	ListenerArn     string           `xml:"ListenerArn"`
+	LoadBalancerArn string           `xml:"LoadBalancerArn,omitempty"`
+	Protocol        string           `xml:"Protocol,omitempty"`
+	Port            int              `xml:"Port,omitempty"`
+	SslPolicy       string           `xml:"SslPolicy,omitempty"`
+	Certificates    *certificatesXML `xml:"Certificates,omitempty"`
+	DefaultActions  *actionsXML      `xml:"DefaultActions,omitempty"`
 }
 
 type listenersXML struct {
@@ -395,8 +406,27 @@ func toListenerXML(li *lbdriver.ListenerInfo) listenerXML {
 		LoadBalancerArn: li.LBARN,
 		Protocol:        li.Protocol,
 		Port:            li.Port,
+		SslPolicy:       li.SslPolicy,
+		Certificates:    toCertificatesXML(li.Certificates),
 		DefaultActions:  toActionsXML(li.DefaultActions),
 	}
+}
+
+// toCertificatesXML renders a listener's certificate list, or nil when empty.
+func toCertificatesXML(certs []lbdriver.Certificate) *certificatesXML {
+	if len(certs) == 0 {
+		return nil
+	}
+
+	out := &certificatesXML{Member: make([]certificateXML, 0, len(certs))}
+	for _, c := range certs {
+		out.Member = append(out.Member, certificateXML{
+			CertificateArn: c.CertificateArn,
+			IsDefault:      c.IsDefault,
+		})
+	}
+
+	return out
 }
 
 // toActionsXML renders a driver action slice as ELBv2 action members, or nil
