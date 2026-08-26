@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -26,8 +27,12 @@ const (
 	blobDefaultSASExpiry = time.Hour
 	blobDefaultMaxKeys   = 1000
 	blobTimeFormat       = "2006-01-02T15:04:05Z"
-	blobAccountName      = "cloudemu"
-	blobHoursPerDay      = 24
+	// AccountName is the single storage account the blob data plane models. The
+	// blob URL host and the Event Grid system-topic routing key both derive from
+	// it, so a system-topic subscription created for this account (a bus of this
+	// name on the Event Grid mock) receives the account's Blob events.
+	AccountName     = "cloudemu"
+	blobHoursPerDay = 24
 )
 
 // Compile-time check that Mock implements driver.Bucket.
@@ -149,6 +154,14 @@ type Mock struct {
 	accountEncryption *memstore.Store[driver.AccountEncryption]
 	opts              *config.Options
 	monitoring        mondriver.Monitoring
+	// eventgrid, when wired, receives a Microsoft.Storage.BlobCreated/BlobDeleted
+	// event on every blob write/delete so an Event Grid system-topic subscription
+	// for this account can deliver it. nil in library/typed use, where blob writes
+	// simply skip event emission.
+	eventgrid EventGridPublisher
+	// blobEventSeq backs the monotonically increasing sequencer stamped on each
+	// emitted blob event (Event Grid's per-blob ordering token).
+	blobEventSeq atomic.Uint64
 }
 
 // Compile-time check that Mock satisfies the optional BucketAttributes
@@ -421,6 +434,7 @@ func (m *Mock) putBlockBlobInternal(
 	ctr.objects.Set(key, obj)
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
+	m.emitBlobCreated(ctx, obj, bucket)
 
 	info := objectInfo(obj)
 
@@ -504,7 +518,8 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
-	if !ctr.objects.Has(key) {
+	obj, ok := ctr.objects.Get(key)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
@@ -515,6 +530,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
+	m.emitBlobDeleted(ctx, obj, bucket)
 
 	return nil
 }
@@ -748,7 +764,7 @@ func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRe
 
 	url := fmt.Sprintf(
 		"https://%s.blob.core.windows.net/%s/%s?sv=2023-11-03&sig=%s&se=%s&sp=%s",
-		blobAccountName, req.Bucket, req.Key, sig,
+		AccountName, req.Bucket, req.Key, sig,
 		expiresAt.Format(blobTimeFormat), permissions,
 	)
 

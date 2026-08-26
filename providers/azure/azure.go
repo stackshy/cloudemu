@@ -213,6 +213,7 @@ func New(opts ...config.Option) *Provider {
 	p.EventGrid.SetMonitoring(p.Monitor)
 	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
 	p.EventGrid.SetFunctionInvoker(p.Functions)
+	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
