@@ -25,7 +25,10 @@ func (e *Engine) Resolve(ctx context.Context, hostname string) ([]string, error)
 		}
 
 		for _, rec := range records {
-			if rec.Name == hostname && isResolvableType(rec.Type) {
+			// Route 53 stores record names as FQDNs (trailing dot) while a query
+			// hostname may omit it, so compare trailing-dot-insensitively.
+			if strings.TrimSuffix(rec.Name, ".") == strings.TrimSuffix(hostname, ".") &&
+				isResolvableType(rec.Type) {
 				return rec.Values, nil
 			}
 		}

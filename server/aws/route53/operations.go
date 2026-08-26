@@ -31,7 +31,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := dnsdriver.ZoneConfig{Name: req.Name}
+	cfg := dnsdriver.ZoneConfig{Name: ensureTrailingDot(req.Name)}
 	if req.HostedZoneConfig != nil {
 		cfg.Private = req.HostedZoneConfig.PrivateZone
 	}
@@ -191,6 +191,14 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 	}
 
 	zoneID := trimZonePrefix(id)
+
+	// Route 53 stores and returns record names as FQDNs (with a trailing dot).
+	// Normalize once here so validation, create, delete, and upsert all agree on
+	// the stored name whether the client sent the dot or not.
+	for i := range req.ChangeBatch.Changes {
+		rr := &req.ChangeBatch.Changes[i].ResourceRecordSet
+		rr.Name = ensureTrailingDot(rr.Name)
+	}
 
 	// The hosted zone must exist before the change batch is validated: a change
 	// against a missing zone is NoSuchHostedZone (404), not the batch-level
@@ -470,6 +478,17 @@ func parseMaxItems(v string) int {
 	}
 
 	return n
+}
+
+// ensureTrailingDot returns name as an FQDN (with a trailing dot), the form
+// Route 53 stores and returns zone and record names in. An empty name is left
+// as-is, and a name that already ends in a dot is unchanged.
+func ensureTrailingDot(name string) string {
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+
+	return name + "."
 }
 
 // recordConfig builds a driver RecordConfig from a parsed record set element.

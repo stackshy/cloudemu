@@ -128,7 +128,9 @@ func (h *Handler) testDNSAnswer(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	zoneID := trimZonePrefix(q.Get("hostedzoneid"))
-	name := q.Get("recordname")
+	// Records are stored as FQDNs, so normalize the queried name to a trailing
+	// dot to match whether the client sent it dotted or not.
+	name := ensureTrailingDot(q.Get("recordname"))
 	rtype := q.Get("recordtype")
 
 	resp := testDNSAnswerResponse{
