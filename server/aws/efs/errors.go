@@ -25,10 +25,17 @@ type errorBody struct {
 	FileSystemID string `json:"FileSystemId,omitempty"`
 }
 
-// writeError writes a restJson1 error response. EFS error bodies carry both
-// ErrorCode and Message; the header selects the typed exception.
-func writeError(w http.ResponseWriter, status int, errType, msg string) {
-	writeErrorBody(w, status, errType, errorBody{Type: errType, ErrorCode: errType, Message: msg})
+// genericErrorType is the X-Amzn-Errortype EFS uses for protocol-level errors
+// (bad path, method, JSON body, pagination token) that carry no per-resource
+// typed exception.
+const genericErrorType = "BadRequest"
+
+// writeError writes a restJson1 error response for a protocol-level fault. EFS
+// error bodies carry both ErrorCode and Message; the header selects the typed
+// exception (always BadRequest here).
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeErrorBody(w, status, genericErrorType,
+		errorBody{Type: genericErrorType, ErrorCode: genericErrorType, Message: msg})
 }
 
 // writeErrorBody writes a restJson1 error response from a fully-built body,
@@ -102,11 +109,11 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 func notFound(w http.ResponseWriter, path string) {
-	writeError(w, http.StatusNotFound, "BadRequest", "unsupported path: "+path)
+	writeError(w, http.StatusNotFound, "unsupported path: "+path)
 }
 
 func methodNotAllowed(w http.ResponseWriter) {
-	writeError(w, http.StatusMethodNotAllowed, "BadRequest", "method not allowed")
+	writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 // decodeJSON decodes the request body into v. An empty body is treated as an
@@ -119,7 +126,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 			return true
 		}
 
-		writeError(w, http.StatusBadRequest, "BadRequest", "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 
 		return false
 	}
