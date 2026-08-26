@@ -32,6 +32,17 @@ const (
 	stateInsufficientData = "INSUFFICIENT_DATA"
 )
 
+// defaultAlarmPeriodSeconds is the period assumed when an alarm omits one.
+const defaultAlarmPeriodSeconds = 60
+
+// TreatMissingData policies from PutMetricAlarm. Any other value (including the
+// empty string) is the AWS default "missing": a period with no data is simply
+// not counted toward the M-of-N rule.
+const (
+	treatMissingBreaching    = "breaching"
+	treatMissingNotBreaching = "notBreaching"
+)
+
 // ActionPublisher publishes an alarm-state-change notification to an SNS topic
 // by ARN. It is satisfied by the SNS backend's PublishExternal, mirroring the
 // S3 -> SNS notification wiring, so an alarm transition fans a message out to
@@ -161,7 +172,7 @@ func (m *Mock) evaluateAlarms(namespace, metricName string) {
 func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
 	period := alarm.Period
 	if period <= 0 {
-		period = 60
+		period = defaultAlarmPeriodSeconds
 	}
 
 	evalPeriods := alarm.EvaluationPeriods
@@ -169,28 +180,97 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 		evalPeriods = 1
 	}
 
+	// DatapointsToAlarm is the M in the M-of-N rule; it defaults to (and can't
+	// exceed) EvaluationPeriods.
+	datapointsToAlarm := alarm.DatapointsToAlarm
+	if datapointsToAlarm <= 0 || datapointsToAlarm > evalPeriods {
+		datapointsToAlarm = evalPeriods
+	}
+
 	now := m.opts.Clock.Now()
-	windowDur := time.Duration(period*evalPeriods) * time.Second
-	windowStart := now.Add(-windowDur)
+	periodDur := time.Duration(period) * time.Second
+	windowStart := now.Add(-periodDur * time.Duration(evalPeriods))
 
 	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, windowStart, now)
-
 	if len(filtered) == 0 {
 		return
 	}
 
-	stat := aggregateDatums(filtered).stat(alarm.Stat)
-
-	var newState, reason string
-	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
-		newState = stateAlarm
-		reason = "Threshold crossed"
-	} else {
-		newState = stateOK
-		reason = "Threshold not crossed"
+	newState, reason, ok := evaluateWindow(filtered, alarm, now, periodDur, evalPeriods, datapointsToAlarm)
+	if !ok {
+		return
 	}
 
 	m.transitionAlarm(alarm, newState, reason, now)
+}
+
+// evaluateWindow applies CloudWatch's M-of-N rule. It groups the datums into the
+// last evalPeriods per-period buckets (bucket 0 is the most recent period),
+// evaluates the alarm statistic per bucket, and returns ALARM when at least
+// datapointsToAlarm buckets breach — otherwise OK, which is how an alarm recovers
+// once the breaching periods age out of the window. Empty periods are counted per
+// the alarm's TreatMissingData policy. ok is false when there is nothing to
+// evaluate (all periods missing under a non-breaching policy), leaving the state
+// unchanged rather than forcing a transition.
+func evaluateWindow(
+	datums []driver.MetricDatum, alarm *alarmData, now time.Time,
+	periodDur time.Duration, evalPeriods, datapointsToAlarm int,
+) (string, string, bool) {
+	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
+
+	breaching, present := 0, 0
+
+	for _, b := range buckets {
+		switch {
+		case b != nil:
+			present++
+
+			if evaluateComparison(b.stat(alarm.Stat), alarm.ComparisonOperator, alarm.Threshold) {
+				breaching++
+			}
+		case alarm.TreatMissingData == treatMissingBreaching:
+			present++
+			breaching++
+		case alarm.TreatMissingData == treatMissingNotBreaching:
+			present++
+		}
+	}
+
+	if present == 0 {
+		return "", "", false
+	}
+
+	if breaching >= datapointsToAlarm {
+		return stateAlarm, "Threshold crossed", true
+	}
+
+	return stateOK, "Threshold not crossed", true
+}
+
+// bucketByPeriod groups datums into evalPeriods accumulators indexed by age,
+// where bucket 0 covers the most recent period. A nil bucket had no data.
+func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.Duration, evalPeriods int) []*statAgg {
+	buckets := make([]*statAgg, evalPeriods)
+
+	for i := range datums {
+		age := now.Sub(datums[i].Timestamp)
+		if age < 0 {
+			continue
+		}
+
+		idx := int(age / periodDur)
+		if idx >= evalPeriods {
+			continue
+		}
+
+		if buckets[idx] == nil {
+			buckets[idx] = &statAgg{}
+		}
+
+		foldDatum(buckets[idx], &datums[i])
+	}
+
+	return buckets
 }
 
 // transitionAlarm sets an alarm's state and — only when the state actually
@@ -892,27 +972,32 @@ func aggregateDatums(datums []driver.MetricDatum) statAgg {
 	var a statAgg
 
 	for i := range datums {
-		d := &datums[i]
-
-		switch {
-		case d.StatisticValues != nil:
-			s := d.StatisticValues
-			a.add(s.SampleCount, s.Sum, s.Minimum, s.Maximum)
-		case len(d.Values) > 0:
-			for j, v := range d.Values {
-				count := 1.0
-				if j < len(d.Counts) {
-					count = d.Counts[j]
-				}
-
-				a.add(count, v*count, v, v)
-			}
-		default:
-			a.add(1, d.Value, d.Value, d.Value)
-		}
+		foldDatum(&a, &datums[i])
 	}
 
 	return a
+}
+
+// foldDatum folds one datum — plain Value, StatisticValues set, or Values/Counts
+// arrays — into the accumulator, matching how CloudWatch treats all three forms
+// uniformly within a series.
+func foldDatum(a *statAgg, d *driver.MetricDatum) {
+	switch {
+	case d.StatisticValues != nil:
+		s := d.StatisticValues
+		a.add(s.SampleCount, s.Sum, s.Minimum, s.Maximum)
+	case len(d.Values) > 0:
+		for j, v := range d.Values {
+			count := 1.0
+			if j < len(d.Counts) {
+				count = d.Counts[j]
+			}
+
+			a.add(count, v*count, v, v)
+		}
+	default:
+		a.add(1, d.Value, d.Value, d.Value)
+	}
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {
