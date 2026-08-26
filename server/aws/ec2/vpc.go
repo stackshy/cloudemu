@@ -204,7 +204,7 @@ func vpcFilterMatch(v *netdriver.VPCInfo, f awsquery.Filter) (matched, known boo
 		return containsString(f.Values, v.CIDRBlock), true
 	case filterState:
 		return containsString(f.Values, nonEmpty(v.State, stateAvailable)), true
-	case "dhcp-options-id":
+	case filterDHCPOptionsID:
 		return containsString(f.Values, nonEmpty(v.DhcpOptionsID, dhcpDefault)), true
 	case "isDefault", "is-default":
 		return containsString(f.Values, boolFilterValue(false)), true

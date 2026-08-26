@@ -81,7 +81,6 @@ func (*Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netd
 	writeReturnTrue(w, "DeleteDhcpOptionsResponse")
 }
 
-//nolint:dupl // parallel per-resource marshaling
 func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	items, err := d.DescribeDHCPOptions(r.Context(), awsquery.ListStrings(r.Form, "DhcpOptionsId"))
 	if err != nil {
@@ -89,10 +88,13 @@ func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d ne
 		return
 	}
 
-	out := make([]dhcpOptionsXML, 0, len(items))
-	for i := range items {
-		out = append(out, toDHCPOptionsXML(&items[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, dhcpFilterMatch); err != nil {
+		writeDHCPErr(w, err)
+		return
 	}
+
+	out := filterXML(items, filters, dhcpMatchesFilters, toDHCPOptionsXML)
 
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name         `xml:"DescribeDhcpOptionsResponse"`
@@ -151,6 +153,48 @@ func toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
 	}
 
 	return dhcpOptionsXML{DhcpOptionsID: d.ID, OwnerID: ownerID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
+}
+
+func dhcpMatchesFilters(d *netdriver.DHCPOptions, filters []awsquery.Filter) bool {
+	return matchNetworkingFilters(d, filters, dhcpFilterMatch)
+}
+
+// dhcpFilterMatch reports whether d satisfies filter f and whether f is a filter
+// DescribeDhcpOptions recognizes. The key/value filters match against the option
+// set's configuration entries (e.g. key=domain-name-servers).
+func dhcpFilterMatch(d *netdriver.DHCPOptions, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case filterDHCPOptionsID:
+		return containsString(f.Values, d.ID), true
+	case "key":
+		return dhcpConfigHasKey(d.Configuration, f.Values), true
+	case "value":
+		return dhcpConfigHasValue(d.Configuration, f.Values), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, d.Tags)
+	}
+}
+
+func dhcpConfigHasKey(cfg map[string][]string, values []string) bool {
+	for k := range cfg {
+		if containsString(values, k) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func dhcpConfigHasValue(cfg map[string][]string, values []string) bool {
+	for _, vals := range cfg {
+		for _, v := range vals {
+			if containsString(values, v) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func writeDHCPErr(w http.ResponseWriter, err error) {

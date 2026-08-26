@@ -118,6 +118,7 @@ func (h *Handler) deleteNetworkACL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // per-resource describe+filter pattern, mirrors describeNatGateways
 func (h *Handler) describeNetworkACLs(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "NetworkAclId")
 
@@ -127,11 +128,13 @@ func (h *Handler) describeNetworkACLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]networkACLXML, 0, len(acls))
-	for i := range acls {
-		out = append(out, toNetworkACLXML(&acls[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, naclFilterMatch); err != nil {
+		writeNetworkACLErr(w, err)
+		return
 	}
 
+	out := filterXML(acls, filters, naclMatchesFilters, toNetworkACLXML)
 	page, next := pageNetworkingXML(out, r, func(a networkACLXML) string { return a.NetworkACLID })
 
 	awsquery.WriteXMLResponse(w, describeNetworkACLsResponseXML{
@@ -310,6 +313,35 @@ func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
 	}
 
 	return x
+}
+
+func naclMatchesFilters(a *netdriver.NetworkACL, filters []awsquery.Filter) bool {
+	return matchNetworkingFilters(a, filters, naclFilterMatch)
+}
+
+// naclFilterMatch reports whether a satisfies filter f and whether f is a filter
+// DescribeNetworkAcls recognizes. Terraform's aws_network_acl data source looks a
+// network ACL up by vpc-id / association.subnet-id and expects only the matching
+// ACL back; without honoring the filter every ACL in the account is returned.
+func naclFilterMatch(a *netdriver.NetworkACL, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "network-acl-id":
+		return containsString(f.Values, a.ID), true
+	case filterVPCID:
+		return containsString(f.Values, a.VPCID), true
+	case "default":
+		return containsString(f.Values, boolFilterValue(a.IsDefault)), true
+	case filterAssocSubnetID:
+		for i := range a.Associations {
+			if containsString(f.Values, a.Associations[i].SubnetID) {
+				return true, true
+			}
+		}
+
+		return false, true
+	default:
+		return tagFilterMatch(f.Name, f.Values, a.Tags)
+	}
 }
 
 func writeNetworkACLErr(w http.ResponseWriter, err error) {

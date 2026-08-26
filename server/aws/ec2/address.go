@@ -112,9 +112,20 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, addressFilterMatch); err != nil {
+		writeVPCErr(w, err)
+
+		return
+	}
+
 	out := make([]addressXML, 0, len(eips))
 
 	for i := range eips {
+		if !matchNetworkingFilters(&eips[i], filters, addressFilterMatch) {
+			continue
+		}
+
 		addr := addressXML{
 			PublicIP:           eips[i].PublicIP,
 			AllocationID:       eips[i].AllocationID,
@@ -138,6 +149,26 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, describeAddressesResponseXML{
 		Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, AddressSet: out,
 	})
+}
+
+// addressFilterMatch reports whether e satisfies filter f and whether f is a
+// filter DescribeAddresses recognizes. Every allocation is a VPC domain address
+// (EC2-Classic is retired), so a domain filter only matches "vpc".
+func addressFilterMatch(e *netdriver.ElasticIP, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "allocation-id":
+		return containsString(f.Values, e.AllocationID), true
+	case "public-ip":
+		return containsString(f.Values, e.PublicIP), true
+	case "association-id":
+		return containsString(f.Values, e.AssociationID), true
+	case "instance-id":
+		return containsString(f.Values, e.InstanceID), true
+	case "domain":
+		return containsString(f.Values, domainVPC), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, e.Tags)
+	}
 }
 
 // allocationIDForPublicIP resolves a public address back to its allocation id.

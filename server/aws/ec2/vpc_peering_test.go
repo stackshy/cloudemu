@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	smithy "github.com/aws/smithy-go"
 )
 
@@ -111,6 +112,92 @@ func TestRejectVpcPeeringConnection(t *testing.T) {
 	if got := string(desc.VpcPeeringConnections[0].Status.Code); got != "rejected" {
 		t.Errorf("status code = %q, want rejected", got)
 	}
+}
+
+// TestDescribeVpcPeeringConnectionsFilters pins that the requester-vpc-info.vpc-id
+// / status-code filters narrow the result instead of returning every connection,
+// that a non-matching filter yields an empty set, and that an explicit id list
+// still resolves.
+func TestDescribeVpcPeeringConnectionsFilters(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	reqA := mkPeeringVPC(t, c, "10.0.0.0/16")
+	accA := mkPeeringVPC(t, c, "10.1.0.0/16")
+	reqB := mkPeeringVPC(t, c, "10.2.0.0/16")
+	accB := mkPeeringVPC(t, c, "10.3.0.0/16")
+
+	pcxA := mkPeering(ctx, t, c, reqA, accA)
+	pcxB := mkPeering(ctx, t, c, reqB, accB)
+
+	// Reject B so status-code distinguishes the two connections.
+	if _, err := c.RejectVpcPeeringConnection(ctx, &ec2.RejectVpcPeeringConnectionInput{
+		VpcPeeringConnectionId: aws.String(pcxB),
+	}); err != nil {
+		t.Fatalf("RejectVpcPeeringConnection: %v", err)
+	}
+
+	byReq, err := c.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("requester-vpc-info.vpc-id"), Values: []string{reqA}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeVpcPeeringConnections(requester): %v", err)
+	}
+
+	if len(byReq.VpcPeeringConnections) != 1 ||
+		aws.ToString(byReq.VpcPeeringConnections[0].VpcPeeringConnectionId) != pcxA {
+		t.Fatalf("requester filter = %d connections, want only %s", len(byReq.VpcPeeringConnections), pcxA)
+	}
+
+	byStatus, err := c.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("status-code"), Values: []string{"rejected"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeVpcPeeringConnections(status-code): %v", err)
+	}
+
+	if len(byStatus.VpcPeeringConnections) != 1 ||
+		aws.ToString(byStatus.VpcPeeringConnections[0].VpcPeeringConnectionId) != pcxB {
+		t.Fatalf("status-code filter = %d connections, want only %s", len(byStatus.VpcPeeringConnections), pcxB)
+	}
+
+	none, err := c.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("status-code"), Values: []string{"deleted"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeVpcPeeringConnections(bogus): %v", err)
+	}
+
+	if len(none.VpcPeeringConnections) != 0 {
+		t.Fatalf("non-matching filter returned %d connections, want 0", len(none.VpcPeeringConnections))
+	}
+
+	byList, err := c.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		VpcPeeringConnectionIds: []string{pcxA},
+	})
+	if err != nil {
+		t.Fatalf("DescribeVpcPeeringConnections(id list): %v", err)
+	}
+
+	if len(byList.VpcPeeringConnections) != 1 ||
+		aws.ToString(byList.VpcPeeringConnections[0].VpcPeeringConnectionId) != pcxA {
+		t.Fatalf("id list = %d connections, want only %s", len(byList.VpcPeeringConnections), pcxA)
+	}
+}
+
+// mkPeering creates a peering connection and returns its id.
+func mkPeering(ctx context.Context, t *testing.T, c *ec2.Client, reqVPC, accVPC string) string {
+	t.Helper()
+
+	out, err := c.CreateVpcPeeringConnection(ctx, &ec2.CreateVpcPeeringConnectionInput{
+		VpcId:     aws.String(reqVPC),
+		PeerVpcId: aws.String(accVPC),
+	})
+	if err != nil {
+		t.Fatalf("CreateVpcPeeringConnection: %v", err)
+	}
+
+	return aws.ToString(out.VpcPeeringConnection.VpcPeeringConnectionId)
 }
 
 func mkPeeringVPC(t *testing.T, c *ec2.Client, cidr string) string {

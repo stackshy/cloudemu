@@ -145,8 +145,19 @@ func (h *Handler) describeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, peeringFilterMatch); err != nil {
+		writePeeringErr(w, err)
+		return
+	}
+
 	out := make([]peeringConnectionXML, 0, len(peerings))
+
 	for i := range peerings {
+		if !matchNetworkingFilters(&peerings[i], filters, peeringFilterMatch) {
+			continue
+		}
+
 		out = append(out, h.enrichedPeeringXML(r, &peerings[i]))
 	}
 
@@ -155,6 +166,25 @@ func (h *Handler) describeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 		RequestID:            awsquery.RequestID,
 		VpcPeeringConnection: out,
 	})
+}
+
+// peeringFilterMatch reports whether p satisfies filter f and whether f is a
+// filter DescribeVpcPeeringConnections recognizes. Terraform's
+// aws_vpc_peering_connection data source looks a connection up by status-code and
+// requester/accepter vpc id; without honoring the filter every connection returns.
+func peeringFilterMatch(p *netdriver.PeeringConnection, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "vpc-peering-connection-id":
+		return containsString(f.Values, p.ID), true
+	case "status-code":
+		return containsString(f.Values, p.Status), true
+	case "requester-vpc-info.vpc-id":
+		return containsString(f.Values, p.RequesterVPC), true
+	case "accepter-vpc-info.vpc-id":
+		return containsString(f.Values, p.AccepterVPC), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, p.Tags)
+	}
 }
 
 func toPeeringXML(p *netdriver.PeeringConnection) peeringConnectionXML {
