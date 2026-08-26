@@ -203,11 +203,22 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 	mediaType := resolveMediaType(manifest.MediaType)
 
+	tags := []string{}
+	if manifest.Tag != "" {
+		tags = append(tags, manifest.Tag)
+	}
+
+	// Content-addressing parity: re-pushing the same digest under a new tag must
+	// preserve the pre-existing tags on that manifest rather than clobbering them.
+	if existing, ok := rd.images.Get(digest); ok {
+		tags = unionTags(existing.detail.Tags, manifest.Tag)
+	}
+
 	detail := driver.ImageDetail{
 		RegistryID: registryName,
 		Repository: manifest.Repository,
 		Digest:     digest,
-		Tags:       []string{manifest.Tag},
+		Tags:       tags,
 		SizeBytes:  manifest.SizeBytes,
 		PushedAt:   now,
 		MediaType:  mediaType,
@@ -711,6 +722,19 @@ func removeTag(tags []string, tag string) []string {
 		if t != tag {
 			result = append(result, t)
 		}
+	}
+
+	return result
+}
+
+// unionTags returns existing tags with tag appended if not already present,
+// preserving order and de-duplicating.
+func unionTags(existing []string, tag string) []string {
+	result := make([]string, len(existing))
+	copy(result, existing)
+
+	if tag != "" && !hasTag(result, tag) {
+		result = append(result, tag)
 	}
 
 	return result

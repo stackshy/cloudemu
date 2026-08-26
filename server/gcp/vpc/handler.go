@@ -70,6 +70,9 @@ const (
 	defaultSubnetPurpose = "PRIVATE"
 	defaultStackType     = "IPV4_ONLY"
 	internalNetCIDR      = "10.0.0.0/16"
+
+	defaultFirewallDirection = "INGRESS"
+	defaultFirewallPriority  = 1000
 )
 
 // nowRFC3339 returns the current time formatted the way GCP stamps
@@ -168,6 +171,8 @@ func (h *Handler) routeNetworks(w http.ResponseWriter, r *http.Request, rp gcpre
 	switch r.Method {
 	case http.MethodGet:
 		h.getNetwork(w, r, rp)
+	case http.MethodPatch, http.MethodPut:
+		h.patchNetwork(w, r, rp)
 	case http.MethodDelete:
 		h.deleteNetwork(w, r, rp)
 	default:
@@ -214,6 +219,8 @@ func (h *Handler) routeSubnetworks(w http.ResponseWriter, r *http.Request, rp gc
 	switch r.Method {
 	case http.MethodGet:
 		h.getSubnetwork(w, r, rp)
+	case http.MethodPatch, http.MethodPut:
+		h.patchSubnetwork(w, r, rp)
 	case http.MethodDelete:
 		h.deleteSubnetwork(w, r, rp)
 	default:
@@ -239,6 +246,8 @@ func (h *Handler) routeFirewalls(w http.ResponseWriter, r *http.Request, rp gcpr
 	switch r.Method {
 	case http.MethodGet:
 		h.getFirewall(w, r, rp)
+	case http.MethodPatch, http.MethodPut:
+		h.patchFirewall(w, r, rp)
 	case http.MethodDelete:
 		h.deleteFirewall(w, r, rp)
 	default:
@@ -409,6 +418,51 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// patchNetwork applies GCP merge-patch semantics to the mutable network fields
+// (description, routingConfig.routingMode, mtu). Only fields present in the
+// patch body are updated; the rest ride unchanged in the network's tag set.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchNetwork(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	v, err := findNetByName(r.Context(), h.net, rp.ResourceName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var req networkRequest
+
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tags := map[string]string{}
+
+	if req.Description != "" {
+		tags[netDescTag] = req.Description
+	}
+
+	if req.RoutingConfig != nil && req.RoutingConfig.RoutingMode != "" {
+		tags[netRoutingModeTag] = req.RoutingConfig.RoutingMode
+	}
+
+	if req.Mtu > 0 {
+		tags[netMtuTag] = strconv.Itoa(int(req.Mtu))
+	}
+
+	if len(tags) > 0 {
+		if err := h.net.UpdateVPCTags(r.Context(), v.ID, tags); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		"networks", rp.ResourceName, "patch")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
 // Subnetwork operations.
 
 //nolint:gocritic // rp is a request-scoped value
@@ -426,6 +480,16 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 
 	if req.Name == "" {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "name required")
+		return
+	}
+
+	// Subnetwork names are unique per region; a duplicate insert in the same
+	// region must 409. Without this the shadow subnet leaks — get/delete resolve
+	// only the first match, so the second one can never be reached or removed.
+	if _, err := findSubnetByName(r.Context(), h.net, req.Name, rp.ScopeName); err == nil {
+		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
+			"subnetwork "+req.Name+" already exists")
+
 		return
 	}
 
@@ -564,6 +628,82 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		"subnetworks", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// patchSubnetwork applies merge-patch semantics to the mutable subnetwork
+// fields (privateIpGoogleAccess, secondaryIpRanges, description). GCP guards
+// the patch with the resource fingerprint: a caller echoes the fingerprint it
+// read, and a stale one (the subnet changed underneath it) is rejected 412.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchSubnetwork(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var req subnetworkRequest
+
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	name := tagOr(s.Tags, subnetNameTag, s.ID)
+	if req.Fingerprint != "" && req.Fingerprint != fingerprintOf(name, s.CIDRBlock) {
+		gcprest.WriteError(w, http.StatusPreconditionFailed, "conditionNotMet",
+			"subnetwork fingerprint does not match the current resource")
+
+		return
+	}
+
+	set, remove := subnetPatchTags(&req)
+
+	if len(set) > 0 {
+		if err := h.net.UpdateSubnetTags(r.Context(), s.ID, set); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+	}
+
+	if len(remove) > 0 {
+		if err := h.net.RemoveSubnetTags(r.Context(), s.ID, remove); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+		"subnetworks", rp.ResourceName, "patch")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// subnetPatchTags translates a subnetwork patch into the tag keys to set and
+// the keys to remove. privateIpGoogleAccess=false clears its tag rather than
+// storing a falsey marker, so the read path stays a simple presence check.
+func subnetPatchTags(req *subnetworkRequest) (set map[string]string, remove []string) {
+	set = map[string]string{}
+
+	if req.PrivateIPGoogleAccess != nil {
+		if *req.PrivateIPGoogleAccess {
+			set[subnetPGATag] = trueValue
+		} else {
+			remove = append(remove, subnetPGATag)
+		}
+	}
+
+	if len(req.SecondaryIPRanges) > 0 {
+		if b, err := json.Marshal(req.SecondaryIPRanges); err == nil {
+			set[subnetSecondaryTag] = string(b)
+		}
+	}
+
+	if req.Description != "" {
+		set[subnetDescTag] = req.Description
+	}
+
+	return set, remove
 }
 
 // subnetCIDRExpander is the optional provider capability for widening a
@@ -710,6 +850,26 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	// A firewall name is unique per project; a duplicate insert must 409 rather
+	// than silently shadow the existing rule (get/delete would only ever resolve
+	// the first match, leaking the shadow).
+	if _, err := findFirewallByName(r.Context(), h.net, req.Name); err == nil {
+		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
+			"firewall "+req.Name+" already exists")
+
+		return
+	}
+
+	// GCP stamps defaults a minimal firewall omits; populate them at insert so
+	// the resource reads back with a concrete direction/priority.
+	if req.Direction == "" {
+		req.Direction = defaultFirewallDirection
+	}
+
+	if req.Priority == 0 {
+		req.Priority = defaultFirewallPriority
+	}
+
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
 	// A supplied network MUST exist — real GCP rejects a firewall insert that
 	// references an unknown network. Propagate the resolve error (404) rather
@@ -832,6 +992,111 @@ func (h *Handler) deleteFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		"firewalls", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// patchFirewall applies GCP merge-patch semantics to the stored firewall spec:
+// only fields present in the patch body overwrite the existing rule, so a
+// caller adjusting one field (e.g. allowed) keeps everything else intact.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	f, err := findFirewallByName(r.Context(), h.net, rp.ResourceName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var req firewallRequest
+
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	spec, _ := unmarshalFirewallSpec(f.Tags[firewallSpecTag])
+	mergeFirewallPatch(&spec, &req)
+
+	b, mErr := json.Marshal(spec)
+	if mErr != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed firewall body")
+		return
+	}
+
+	if err := h.net.UpdateSecurityGroupTags(r.Context(), f.ID,
+		map[string]string{firewallSpecTag: string(b)}); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		"firewalls", rp.ResourceName, "patch")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// mergeFirewallPatch overwrites only the spec fields the patch actually
+// carries. Scalars merge when non-empty; slices and pointers merge when
+// present (non-nil), matching GCP's JSON merge-patch handling.
+func mergeFirewallPatch(spec *firewallSpec, req *firewallRequest) {
+	mergeFirewallScalars(spec, req)
+	mergeFirewallCollections(spec, req)
+}
+
+// mergeFirewallScalars merges the scalar and single-value firewall fields.
+func mergeFirewallScalars(spec *firewallSpec, req *firewallRequest) {
+	if req.Network != "" {
+		spec.Network = req.Network
+	}
+
+	if req.Direction != "" {
+		spec.Direction = req.Direction
+	}
+
+	if req.Priority != 0 {
+		spec.Priority = req.Priority
+	}
+
+	if req.LogConfig != nil {
+		spec.LogConfig = req.LogConfig
+	}
+
+	if req.Disabled != nil {
+		spec.Disabled = req.Disabled
+	}
+}
+
+// mergeFirewallCollections merges the rule and list-valued firewall fields.
+func mergeFirewallCollections(spec *firewallSpec, req *firewallRequest) {
+	if req.Allowed != nil {
+		spec.Allowed = req.Allowed
+	}
+
+	if req.Denied != nil {
+		spec.Denied = req.Denied
+	}
+
+	if req.SourceRanges != nil {
+		spec.SourceRanges = req.SourceRanges
+	}
+
+	if req.DestinationRanges != nil {
+		spec.DestinationRanges = req.DestinationRanges
+	}
+
+	if req.SourceTags != nil {
+		spec.SourceTags = req.SourceTags
+	}
+
+	if req.TargetTags != nil {
+		spec.TargetTags = req.TargetTags
+	}
+
+	if req.SourceServiceAccounts != nil {
+		spec.SourceServiceAccounts = req.SourceServiceAccounts
+	}
+
+	if req.TargetServiceAccounts != nil {
+		spec.TargetServiceAccounts = req.TargetServiceAccounts
+	}
 }
 
 // Lookup helpers.
@@ -1088,7 +1353,13 @@ func toFirewallResponse(info *netdriver.SecurityGroupInfo, rp gcprest.ResourcePa
 		resp.Allowed = spec.Allowed
 		resp.Denied = spec.Denied
 		resp.SourceRanges = spec.SourceRanges
+		resp.DestinationRanges = spec.DestinationRanges
+		resp.SourceTags = spec.SourceTags
 		resp.TargetTags = spec.TargetTags
+		resp.SourceServiceAccounts = spec.SourceServiceAccounts
+		resp.TargetServiceAccounts = spec.TargetServiceAccounts
+		resp.LogConfig = spec.LogConfig
+		resp.Disabled = spec.Disabled
 	}
 
 	return resp
@@ -1097,25 +1368,23 @@ func toFirewallResponse(info *netdriver.SecurityGroupInfo, rp gcprest.ResourcePa
 // firewallSpec is the GCP firewall rule shape persisted verbatim (as JSON in a
 // reserved tag) because the driver's SecurityGroup model can't express it.
 type firewallSpec struct {
-	Network      string         `json:"network,omitempty"`
-	Priority     int            `json:"priority,omitempty"`
-	Direction    string         `json:"direction,omitempty"`
-	Allowed      []firewallRule `json:"allowed,omitempty"`
-	Denied       []firewallRule `json:"denied,omitempty"`
-	SourceRanges []string       `json:"sourceRanges,omitempty"`
-	TargetTags   []string       `json:"targetTags,omitempty"`
+	Network               string             `json:"network,omitempty"`
+	Priority              int                `json:"priority,omitempty"`
+	Direction             string             `json:"direction,omitempty"`
+	Allowed               []firewallRule     `json:"allowed,omitempty"`
+	Denied                []firewallRule     `json:"denied,omitempty"`
+	SourceRanges          []string           `json:"sourceRanges,omitempty"`
+	DestinationRanges     []string           `json:"destinationRanges,omitempty"`
+	SourceTags            []string           `json:"sourceTags,omitempty"`
+	TargetTags            []string           `json:"targetTags,omitempty"`
+	SourceServiceAccounts []string           `json:"sourceServiceAccounts,omitempty"`
+	TargetServiceAccounts []string           `json:"targetServiceAccounts,omitempty"`
+	LogConfig             *firewallLogConfig `json:"logConfig,omitempty"`
+	Disabled              *bool              `json:"disabled,omitempty"`
 }
 
 func marshalFirewallSpec(req *firewallRequest) string {
-	spec := firewallSpec{
-		Network:      req.Network,
-		Priority:     req.Priority,
-		Direction:    req.Direction,
-		Allowed:      req.Allowed,
-		Denied:       req.Denied,
-		SourceRanges: req.SourceRanges,
-		TargetTags:   req.TargetTags,
-	}
+	spec := specFromFirewallRequest(req)
 
 	b, err := json.Marshal(spec)
 	if err != nil {
@@ -1123,6 +1392,25 @@ func marshalFirewallSpec(req *firewallRequest) string {
 	}
 
 	return string(b)
+}
+
+// specFromFirewallRequest projects a wire request onto the stored spec shape.
+func specFromFirewallRequest(req *firewallRequest) firewallSpec {
+	return firewallSpec{
+		Network:               req.Network,
+		Priority:              req.Priority,
+		Direction:             req.Direction,
+		Allowed:               req.Allowed,
+		Denied:                req.Denied,
+		SourceRanges:          req.SourceRanges,
+		DestinationRanges:     req.DestinationRanges,
+		SourceTags:            req.SourceTags,
+		TargetTags:            req.TargetTags,
+		SourceServiceAccounts: req.SourceServiceAccounts,
+		TargetServiceAccounts: req.TargetServiceAccounts,
+		LogConfig:             req.LogConfig,
+		Disabled:              req.Disabled,
+	}
 }
 
 func unmarshalFirewallSpec(s string) (firewallSpec, bool) {
