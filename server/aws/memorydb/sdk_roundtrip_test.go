@@ -602,17 +602,112 @@ func TestSDKErrorFaults(t *testing.T) {
 		t.Fatalf("duplicate create: got %v, want ClusterAlreadyExistsFault", err)
 	}
 
-	// Referencing a missing ACL -> InvalidParameterValueException (writeErr
-	// InvalidArgument / FailedPrecondition).
+	// A dangling sibling reference surfaces the specific SDK-modeled fault, not a
+	// generic InvalidParameterValueException, so typed errors.As matches work.
 	_, err = client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
-		ClusterName: aws.String("badref"),
+		ClusterName: aws.String("bad-acl"),
 		NodeType:    aws.String("db.r6g.large"),
 		ACLName:     aws.String("no-such-acl"),
 		NumShards:   aws.Int32(1),
 	})
 
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValueException" {
-		t.Fatalf("bad ACL ref: got %v, want InvalidParameterValueException", err)
+	var aclNF *mdbtypes.ACLNotFoundFault
+	if !errors.As(err, &aclNF) {
+		t.Fatalf("bad ACL ref: got %v, want ACLNotFoundFault", err)
+	}
+
+	_, err = client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
+		ClusterName:     aws.String("bad-subnet"),
+		NodeType:        aws.String("db.r6g.large"),
+		ACLName:         aws.String("open-access"),
+		SubnetGroupName: aws.String("no-such-subnet-group"),
+		NumShards:       aws.Int32(1),
+	})
+
+	var subnetNF *mdbtypes.SubnetGroupNotFoundFault
+	if !errors.As(err, &subnetNF) {
+		t.Fatalf("bad subnet group ref: got %v, want SubnetGroupNotFoundFault", err)
+	}
+
+	_, err = client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
+		ClusterName:        aws.String("bad-pg"),
+		NodeType:           aws.String("db.r6g.large"),
+		ACLName:            aws.String("open-access"),
+		ParameterGroupName: aws.String("no-such-parameter-group"),
+		NumShards:          aws.Int32(1),
+	})
+
+	var pgNF *mdbtypes.ParameterGroupNotFoundFault
+	if !errors.As(err, &pgNF) {
+		t.Fatalf("bad parameter group ref: got %v, want ParameterGroupNotFoundFault", err)
+	}
+}
+
+func TestSDKClusterCreateDefaults(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	// Omitting TLSEnabled and NumReplicasPerShard must match AWS defaults:
+	// TLS on, 1 replica/shard (2 nodes) and MultiAZ. A custom Port propagates to
+	// every node endpoint, not just the cluster endpoint.
+	out, err := client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
+		ClusterName: aws.String("defaults"),
+		NodeType:    aws.String("db.r6g.large"),
+		ACLName:     aws.String("open-access"),
+		NumShards:   aws.Int32(2),
+		Port:        aws.Int32(6380),
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	c := out.Cluster
+	if !aws.ToBool(c.TLSEnabled) {
+		t.Errorf("TLSEnabled default = false, want true")
+	}
+
+	if c.AvailabilityMode != mdbtypes.AZStatusMultiAZ {
+		t.Errorf("AvailabilityMode = %q, want multiaz", c.AvailabilityMode)
+	}
+
+	if len(c.Shards) != 2 || aws.ToInt32(c.Shards[0].NumberOfNodes) != 2 || len(c.Shards[0].Nodes) != 2 {
+		t.Fatalf("topology = %d shards / %d nodes, want 2 shards / 2 nodes/shard",
+			len(c.Shards), aws.ToInt32(c.Shards[0].NumberOfNodes))
+	}
+
+	if p := c.ClusterEndpoint.Port; p != 6380 {
+		t.Errorf("ClusterEndpoint.Port = %d, want 6380", p)
+	}
+
+	if p := c.Shards[0].Nodes[0].Endpoint.Port; p != 6380 {
+		t.Errorf("node Endpoint.Port = %d, want 6380 (custom port must reach nodes)", p)
+	}
+
+	// An explicit TLSEnabled=false and NumReplicasPerShard=0 must be preserved,
+	// yielding a single node per shard and SingleAZ.
+	out, err = client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
+		ClusterName:         aws.String("explicit"),
+		NodeType:            aws.String("db.r6g.large"),
+		ACLName:             aws.String("open-access"),
+		NumShards:           aws.Int32(2),
+		NumReplicasPerShard: aws.Int32(0),
+		TLSEnabled:          aws.Bool(false),
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster explicit: %v", err)
+	}
+
+	c = out.Cluster
+	if aws.ToBool(c.TLSEnabled) {
+		t.Errorf("explicit TLSEnabled=false not preserved")
+	}
+
+	if c.AvailabilityMode != mdbtypes.AZStatusSingleAZ {
+		t.Errorf("AvailabilityMode = %q, want singleaz", c.AvailabilityMode)
+	}
+
+	if aws.ToInt32(c.Shards[0].NumberOfNodes) != 1 || len(c.Shards[0].Nodes) != 1 {
+		t.Errorf("explicit 0 replicas: nodes/shard = %d, want 1", aws.ToInt32(c.Shards[0].NumberOfNodes))
 	}
 }
 

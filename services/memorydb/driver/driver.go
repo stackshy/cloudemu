@@ -7,8 +7,23 @@ package driver
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
+
+// NotFoundError reports that a sibling resource referenced by a cluster
+// operation (its ACL, subnet group, or parameter group) does not exist. Kind is
+// the resource kind ("ACL", "SubnetGroup", "ParameterGroup"); the wire layer
+// maps it to the matching <Kind>NotFoundFault that the AWS SDK deserializes.
+type NotFoundError struct {
+	Kind string
+	Name string
+}
+
+// Error implements the error interface.
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("%s %q not found", e.Kind, e.Name)
+}
 
 // Cluster lifecycle statuses (a representative subset of MemoryDB's).
 const (
@@ -86,19 +101,24 @@ type Cluster struct {
 
 // CreateClusterConfig configures a new cluster.
 type CreateClusterConfig struct {
-	Name                    string
-	Description             string
-	NodeType                string
-	Engine                  string
-	EngineVersion           string
-	NumShards               int
-	NumReplicasPerShard     int
-	ACLName                 string
-	ParameterGroupName      string
-	SubnetGroupName         string
-	SecurityGroupIDs        []string
-	Port                    int
-	TLSEnabled              bool
+	Name          string
+	Description   string
+	NodeType      string
+	Engine        string
+	EngineVersion string
+	NumShards     int
+	// NumReplicasPerShard is a pointer so an omitted value (nil) is
+	// distinguishable from an explicit 0: AWS defaults it to 1 when omitted,
+	// while an explicit 0 means a single node per shard.
+	NumReplicasPerShard *int32
+	ACLName             string
+	ParameterGroupName  string
+	SubnetGroupName     string
+	SecurityGroupIDs    []string
+	Port                int
+	// TLSEnabled is a pointer so an omitted value (nil) is distinguishable from
+	// an explicit false: AWS defaults it to true when omitted.
+	TLSEnabled              *bool
 	AutoMinorVersionUpgrade bool
 	DataTiering             bool
 	KmsKeyID                string
