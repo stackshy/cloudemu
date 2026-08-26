@@ -80,6 +80,9 @@ func (h *Handler) putMetricFilter(w http.ResponseWriter, r *http.Request) {
 		MetricName:      mt.MetricName,
 		MetricNamespace: mt.MetricNamespace,
 		MetricValue:     mt.MetricValue,
+		DefaultValue:    mt.DefaultValue,
+		Unit:            mt.Unit,
+		Dimensions:      mt.Dimensions,
 	}); err != nil {
 		writeErr(w, err)
 		return
@@ -119,6 +122,9 @@ func (h *Handler) describeMetricFilters(w http.ResponseWriter, r *http.Request) 
 				MetricName:      mf.MetricName,
 				MetricNamespace: mf.MetricNamespace,
 				MetricValue:     mf.MetricValue,
+				DefaultValue:    mf.DefaultValue,
+				Unit:            mf.Unit,
+				Dimensions:      mf.Dimensions,
 			}},
 		})
 	}

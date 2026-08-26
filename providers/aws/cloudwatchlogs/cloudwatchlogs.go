@@ -558,6 +558,9 @@ func (m *Mock) PutMetricFilter(
 		MetricName:      cfg.MetricName,
 		MetricNamespace: cfg.MetricNamespace,
 		MetricValue:     cfg.MetricValue,
+		DefaultValue:    cfg.DefaultValue,
+		Unit:            cfg.Unit,
+		Dimensions:      maps.Clone(cfg.Dimensions),
 		CreatedAt:       m.opts.Clock.Now().UTC(),
 	}
 
