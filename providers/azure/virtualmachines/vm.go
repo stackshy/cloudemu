@@ -525,6 +525,103 @@ func (m *Mock) detachNICs(ctx context.Context, inst *instanceData) error {
 	return errors.Join(errs...)
 }
 
+// reconcileNICs brings inst's attached network interfaces into line with the
+// desired set a PUT CreateOrUpdate supplied in networkProfile.networkInterfaces
+// (Azure's full-replace on the network profile). NICs newly present in desired
+// are attached (setting their properties.virtualMachine back-reference); NICs
+// inst still holds but that are no longer desired are detached (clearing it, so
+// they return to Unattached and can be deleted); NICs in both are left as-is
+// (attach is idempotent on the same VM). New NICs are attached first — with
+// rollback of just those on failure — before any detach runs, so a failed
+// attach (e.g. a NIC already attached to another VM) leaves the VM's existing
+// attachments untouched. inst.NICRefs is then set to the desired set, whose
+// first entry stays the primary NIC. A no-op when no NICAttacher is wired.
+func (m *Mock) reconcileNICs(ctx context.Context, inst *instanceData, desired []driver.AzureNICRef) error {
+	if m.nicAttacher == nil {
+		return nil
+	}
+
+	vmID := m.armResourceID(inst)
+	desiredSet := nicRefSet(desired)
+
+	if err := m.attachNewNICs(ctx, vmID, nicRefSet(inst.NICRefs), desired); err != nil {
+		return err
+	}
+
+	if err := m.detachRemovedNICs(ctx, vmID, inst.NICRefs, desiredSet); err != nil {
+		return err
+	}
+
+	inst.NICRefs = append([]driver.AzureNICRef(nil), desired...)
+
+	return nil
+}
+
+// nicRefSet indexes a slice of NIC references as a set, for membership tests
+// during reconcile.
+func nicRefSet(refs []driver.AzureNICRef) map[driver.AzureNICRef]bool {
+	set := make(map[driver.AzureNICRef]bool, len(refs))
+	for _, ref := range refs {
+		set[ref] = true
+	}
+
+	return set
+}
+
+// attachNewNICs attaches every desired NIC not already present in current
+// (deduping repeats within desired), rolling back only the NICs it attached
+// during this call if one fails — so a failed attach leaves the VM's existing
+// attachments untouched.
+func (m *Mock) attachNewNICs(
+	ctx context.Context, vmID string, current map[driver.AzureNICRef]bool, desired []driver.AzureNICRef,
+) error {
+	seen := make(map[driver.AzureNICRef]bool, len(desired))
+	attached := make([]driver.AzureNICRef, 0, len(desired))
+
+	for _, ref := range desired {
+		if seen[ref] || current[ref] {
+			seen[ref] = true
+
+			continue
+		}
+
+		seen[ref] = true
+
+		if err := m.nicAttacher.AttachNetworkInterface(ctx, ref.ResourceGroup, ref.Name, vmID); err != nil {
+			for _, done := range attached {
+				_ = m.nicAttacher.DetachNetworkInterface(ctx, done.ResourceGroup, done.Name, vmID)
+			}
+
+			return err
+		}
+
+		attached = append(attached, ref)
+	}
+
+	return nil
+}
+
+// detachRemovedNICs detaches every currently-attached NIC absent from
+// desiredSet, best-effort: every removal is attempted so one failure doesn't
+// strand the rest still holding a stale back-reference.
+func (m *Mock) detachRemovedNICs(
+	ctx context.Context, vmID string, current []driver.AzureNICRef, desiredSet map[driver.AzureNICRef]bool,
+) error {
+	var errs []error
+
+	for _, ref := range current {
+		if desiredSet[ref] {
+			continue
+		}
+
+		if err := m.nicAttacher.DetachNetworkInterface(ctx, ref.ResourceGroup, ref.Name, vmID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 // rollbackInstances best-effort tears down instances already provisioned earlier
 // in a RunInstances batch that then failed: every NIC the instance attached at
 // launch is detached (so no NIC keeps a virtualMachine back-reference to a VM
@@ -633,52 +730,76 @@ func (m *Mock) Deallocate(ctx context.Context, instanceID string) error {
 // rather than provisioning a duplicate.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) UpdateInstance(_ context.Context, instanceID string, cfg driver.InstanceConfig) error {
-	ok := m.instances.Update(instanceID, func(inst *instanceData) *instanceData {
-		if cfg.InstanceType != "" {
-			inst.InstanceType = cfg.InstanceType
+func (m *Mock) UpdateInstance(ctx context.Context, instanceID string, cfg driver.InstanceConfig) error {
+	inst, found := m.instances.Get(instanceID)
+	if !found {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	// Reconcile networkProfile.networkInterfaces before mutating the rest of the
+	// config, so an unattachable NIC (already attached to another VM) aborts the
+	// whole PUT rather than half-applying it. Only when the request actually
+	// supplied a networkProfile (>=1 NIC): an omitted/empty set on a PUT leaves
+	// the existing NICs untouched (no wipe), mirroring applyDataDisks'
+	// present-vs-omitted discriminator for data disks.
+	if len(cfg.NetworkInterfaces) > 0 {
+		if err := m.reconcileNICs(ctx, inst, cfg.NetworkInterfaces); err != nil {
+			return err
 		}
+	}
 
-		if cfg.ImageID != "" {
-			inst.ImageID = cfg.ImageID
-		}
-
-		if cfg.SubnetID != "" {
-			inst.SubnetID = cfg.SubnetID
-		}
-
-		if cfg.OSType != "" {
-			inst.OSType = cfg.OSType
-		}
-
-		inst.Priority = cfg.Priority
-		inst.LicenseType = cfg.LicenseType
-
-		if len(cfg.Zones) > 0 {
-			inst.Zones = append([]string(nil), cfg.Zones...)
-		}
-
-		if cfg.Region != "" {
-			inst.Region = cfg.Region
-		}
-
-		inst.Tags = copyTags(cfg.Tags)
-
-		// A nil cfg.Identity means the request omitted the identity block
-		// entirely (real Azure preserves the existing identity in that case);
-		// a non-nil one (including an explicit "None") replaces it.
-		if cfg.Identity != nil {
-			inst.Identity = resolveIdentity(cfg.Identity, instanceID)
-		}
+	if ok := m.instances.Update(instanceID, func(inst *instanceData) *instanceData {
+		applyMutableConfig(inst, cfg, instanceID)
 
 		return inst
-	})
-
-	if !ok {
+	}); !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
 	}
 
 	return nil
+}
+
+// applyMutableConfig overwrites inst's mutable fields from a PUT CreateOrUpdate
+// cfg (the whole-body replace UpdateInstance backs). Empty scalars leave the
+// corresponding field untouched; Priority/LicenseType and Tags are always
+// replaced. A nil cfg.Identity preserves the existing identity (the request
+// omitted the block); a non-nil one (including an explicit "None") replaces it.
+// NIC reconciliation is handled separately by reconcileNICs before this runs.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface config shape.
+func applyMutableConfig(inst *instanceData, cfg driver.InstanceConfig, instanceID string) {
+	if cfg.InstanceType != "" {
+		inst.InstanceType = cfg.InstanceType
+	}
+
+	if cfg.ImageID != "" {
+		inst.ImageID = cfg.ImageID
+	}
+
+	if cfg.SubnetID != "" {
+		inst.SubnetID = cfg.SubnetID
+	}
+
+	if cfg.OSType != "" {
+		inst.OSType = cfg.OSType
+	}
+
+	inst.Priority = cfg.Priority
+	inst.LicenseType = cfg.LicenseType
+
+	if len(cfg.Zones) > 0 {
+		inst.Zones = append([]string(nil), cfg.Zones...)
+	}
+
+	if cfg.Region != "" {
+		inst.Region = cfg.Region
+	}
+
+	inst.Tags = copyTags(cfg.Tags)
+
+	if cfg.Identity != nil {
+		inst.Identity = resolveIdentity(cfg.Identity, instanceID)
+	}
 }
 
 // PatchInstance applies an ARM PATCH Update (BeginUpdate) merge-patch to an
