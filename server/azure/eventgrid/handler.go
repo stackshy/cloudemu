@@ -212,6 +212,8 @@ func (h *Handler) serveEventSubscription(w http.ResponseWriter, r *http.Request,
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateEventSubscription(w, r, rp)
+	case http.MethodPatch:
+		h.updateEventSubscription(w, r, rp)
 	case http.MethodGet:
 		h.getEventSubscription(w, r, rp)
 	case http.MethodDelete:

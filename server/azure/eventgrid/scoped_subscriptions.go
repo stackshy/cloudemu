@@ -142,6 +142,8 @@ func (h *Handler) serveScopedEventSubscription(w http.ResponseWriter, r *http.Re
 	switch r.Method {
 	case http.MethodPut:
 		h.putScopedEventSubscription(w, r, sp)
+	case http.MethodPatch:
+		h.patchScopedEventSubscription(w, r, sp)
 	case http.MethodGet:
 		h.getScopedEventSubscription(w, sp)
 	case http.MethodDelete:
@@ -173,6 +175,36 @@ func (h *Handler) putScopedEventSubscription(w http.ResponseWriter, r *http.Requ
 	h.mu.Unlock()
 
 	azurearm.WriteJSON(w, http.StatusCreated, toScopedSubJSON(rec))
+}
+
+// patchScopedEventSubscription maps EventSubscriptions.Update (PATCH) onto a
+// wire-owned scope-bound subscription: it merges the supplied properties onto
+// the stored ones, preserving fields the caller omitted, and returns the updated
+// subscription (200). 404 when the subscription does not exist, before any write.
+func (h *Handler) patchScopedEventSubscription(w http.ResponseWriter, r *http.Request, sp *scopedSubPath) {
+	var patch json.RawMessage
+	if !azurearm.DecodeJSON(w, r, &patch) {
+		return
+	}
+
+	h.mu.Lock()
+
+	rec, ok := h.scopedSubs[scopedSubKey(sp.scope, sp.name)]
+	if !ok {
+		h.mu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "event subscription not found")
+
+		return
+	}
+
+	rec.properties = mergeRawProperties(rec.properties, patch)
+
+	out := toScopedSubJSON(rec)
+	h.mu.Unlock()
+
+	// The armeventgrid EventSubscriptions Update LRO poller accepts only 201;
+	// the enriched terminal provisioningState completes it inline.
+	azurearm.WriteJSON(w, http.StatusCreated, out)
 }
 
 func (h *Handler) getScopedEventSubscription(w http.ResponseWriter, sp *scopedSubPath) {
