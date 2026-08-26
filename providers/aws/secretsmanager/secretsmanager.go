@@ -30,6 +30,9 @@ type secretData struct {
 	// recoveryWindow is the number of days between the delete request and the
 	// scheduled deletion date, captured from DeleteSecret's RecoveryWindowInDays.
 	recoveryWindow int
+	// resourcePolicy is the JSON resource-based policy attached to the secret
+	// (PutResourcePolicy); empty when none is set.
+	resourcePolicy string
 	mu             sync.RWMutex
 }
 

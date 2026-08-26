@@ -51,6 +51,15 @@ type secretStager interface {
 	) (*secretsdriver.SecretInfo, error)
 }
 
+// secretPolicyManager is the AWS-specific resource-based-policy surface the
+// handler type-asserts for (implemented by the AWS provider), keeping the
+// portable Secrets driver minimal so Azure/GCP are unaffected.
+type secretPolicyManager interface {
+	PutResourcePolicy(ctx context.Context, name, policy string) (*secretsdriver.SecretInfo, error)
+	GetResourcePolicy(ctx context.Context, name string) (*secretsdriver.SecretInfo, string, error)
+	DeleteResourcePolicy(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+}
+
 // Handler serves Secrets Manager JSON-RPC requests against a Secrets driver.
 type Handler struct {
 	secrets secretsdriver.Secrets
@@ -65,8 +74,12 @@ func New(s secretsdriver.Secrets) *Handler {
 		"DeleteSecret":             h.deleteSecret,
 		"DescribeSecret":           h.describeSecret,
 		"GetResourcePolicy":        h.getResourcePolicy,
+		"PutResourcePolicy":        h.putResourcePolicy,
+		"DeleteResourcePolicy":     h.deleteResourcePolicy,
+		"ValidateResourcePolicy":   h.validateResourcePolicy,
 		"ListSecrets":              h.listSecrets,
 		"GetSecretValue":           h.getSecretValue,
+		"BatchGetSecretValue":      h.batchGetSecretValue,
 		"PutSecretValue":           h.putSecretValue,
 		"ListSecretVersionIds":     h.listSecretVersionIDs,
 		"UpdateSecret":             h.updateSecret,

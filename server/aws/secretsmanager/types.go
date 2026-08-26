@@ -159,7 +159,9 @@ type deleteSecretResponse struct {
 	DeletionDate float64 `json:"DeletionDate,omitempty"`
 }
 
-type restoreSecretResponse struct {
+// secretRefResponse is the {ARN, Name} envelope returned by the operations that
+// only echo the secret reference: RestoreSecret and Put/DeleteResourcePolicy.
+type secretRefResponse struct {
 	ARN  string `json:"ARN"`
 	Name string `json:"Name"`
 }
@@ -200,6 +202,67 @@ type listSecretVersionIDsResponse struct {
 	ARN      string        `json:"ARN"`
 	Name     string        `json:"Name"`
 	Versions []versionJSON `json:"Versions"`
+}
+
+type putResourcePolicyRequest struct {
+	SecretID          string `json:"SecretId"`
+	ResourcePolicy    string `json:"ResourcePolicy"`
+	BlockPublicPolicy bool   `json:"BlockPublicPolicy"`
+}
+
+// getResourcePolicyResponse omits ResourcePolicy when none is set, which the SDK
+// reads as "no policy".
+type getResourcePolicyResponse struct {
+	ARN            string `json:"ARN"`
+	Name           string `json:"Name"`
+	ResourcePolicy string `json:"ResourcePolicy,omitempty"`
+}
+
+type validateResourcePolicyRequest struct {
+	SecretID       string `json:"SecretId"`
+	ResourcePolicy string `json:"ResourcePolicy"`
+}
+
+type validationErrorEntry struct {
+	CheckName    string `json:"CheckName"`
+	ErrorMessage string `json:"ErrorMessage"`
+}
+
+type validateResourcePolicyResponse struct {
+	PolicyValidationPassed bool                   `json:"PolicyValidationPassed"`
+	ValidationErrors       []validationErrorEntry `json:"ValidationErrors"`
+}
+
+type batchGetSecretValueRequest struct {
+	SecretIDList []string       `json:"SecretIdList"`
+	Filters      []secretFilter `json:"Filters"`
+	MaxResults   int32          `json:"MaxResults"`
+	NextToken    string         `json:"NextToken"`
+}
+
+// secretValueEntry is one resolved secret in a BatchGetSecretValue response.
+type secretValueEntry struct {
+	ARN           string   `json:"ARN"`
+	Name          string   `json:"Name"`
+	VersionID     string   `json:"VersionId"`
+	SecretString  string   `json:"SecretString,omitempty"`
+	SecretBinary  []byte   `json:"SecretBinary,omitempty"`
+	VersionStages []string `json:"VersionStages,omitempty"`
+	CreatedDate   float64  `json:"CreatedDate,omitempty"`
+}
+
+// batchErrorEntry reports a per-secret failure (e.g. a missing secret) in a
+// BatchGetSecretValue response, so one bad id does not fail the whole batch.
+type batchErrorEntry struct {
+	SecretID  string `json:"SecretId"`
+	ErrorCode string `json:"ErrorCode"`
+	Message   string `json:"Message"`
+}
+
+type batchGetSecretValueResponse struct {
+	SecretValues []secretValueEntry `json:"SecretValues"`
+	Errors       []batchErrorEntry  `json:"Errors"`
+	NextToken    string             `json:"NextToken,omitempty"`
 }
 
 // epochSeconds converts an RFC3339 timestamp to Unix epoch seconds, the form
