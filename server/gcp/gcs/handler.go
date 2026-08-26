@@ -72,6 +72,8 @@ const (
 
 	// subresIAM is the /b/{bucket}/iam sub-collection segment.
 	subresIAM = "iam"
+	// subresNotificationConfigs is the /b/{bucket}/notificationConfigs segment.
+	subresNotificationConfigs = "notificationConfigs"
 	// defaultLocation / defaultStorageClass are the GCS defaults a bucket reads
 	// back when none was set at create.
 	defaultLocation     = "US"
@@ -85,6 +87,11 @@ type Handler struct {
 	// doesn't implement it), covering preconditions, generation, compose,
 	// object patch, versioned listing, and bucket location/IAM/metageneration.
 	ext storagedriver.GCSExtensions
+
+	// publisher emits object-change events to Pub/Sub for matching bucket
+	// notification configs. Nil (the default) makes object events a no-op, so
+	// object writes/deletes still succeed without Pub/Sub wired.
+	publisher TopicPublisher
 
 	// resumable holds in-progress resumable-upload sessions keyed by upload id.
 	// A session buffers the object's bytes as Content-Range chunks arrive over
@@ -206,16 +213,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.listObjects(w, r, parts[1])
 		case subresIAM:
 			h.bucketIAM(w, r, parts[1])
+		case subresNotificationConfigs:
+			h.notificationCollection(w, r, parts[1])
 		default:
 			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
 		}
 	default:
-		// /b/{bucket}/o/{obj}[/...] or /b/{bucket}/iam/testPermissions
+		// /b/{bucket}/o/{obj}[/...], /b/{bucket}/iam/testPermissions, or
+		// /b/{bucket}/notificationConfigs/{id}.
 		switch {
 		case parts[2] == "o":
 			h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
 		case parts[2] == subresIAM && parts[3] == "testPermissions":
 			h.testIAMPermissions(w, r, parts[1])
+		case parts[2] == subresNotificationConfigs:
+			h.notificationResourceOp(w, r, parts[1], parts[3])
 		default:
 			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
 		}
@@ -991,30 +1003,35 @@ func (h *Handler) storeObject(
 	w http.ResponseWriter, r *http.Request, bucket, name, contentType string,
 	data []byte, metadata map[string]string, attrs *storagedriver.GCSObjectAttrs,
 ) {
+	var (
+		info *storagedriver.ObjectInfo
+		err  error
+	)
+
 	if h.ext != nil {
-		info, err := h.ext.PutObjectGCS(r.Context(), bucket, name, data, contentType, metadata, attrs, parsePrecondition(r.URL.Query()))
+		info, err = h.ext.PutObjectGCS(r.Context(), bucket, name, data, contentType, metadata, attrs, parsePrecondition(r.URL.Query()))
 		if err != nil {
 			writePreconditionOrErr(w, err)
 			return
 		}
+	} else {
+		if putErr := h.bucket.PutObject(r.Context(), bucket, name, data, contentType, metadata); putErr != nil {
+			writeErr(w, putErr)
+			return
+		}
 
-		writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
-
-		return
+		if info, err = h.bucket.HeadObject(r.Context(), bucket, name); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 
-	if putErr := h.bucket.PutObject(r.Context(), bucket, name, data, contentType, metadata); putErr != nil {
-		writeErr(w, putErr)
-		return
-	}
+	resource := toObjectResource(info, bucket, r)
+	writeJSON(w, http.StatusOK, resource)
 
-	info, err := h.bucket.HeadObject(r.Context(), bucket, name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
+	// A successful create/overwrite is an OBJECT_FINALIZE event; emit it to any
+	// matching bucket notification config (best-effort, never fails the write).
+	h.emitObjectEvent(r, bucket, &resource, eventTypeObjectFinalize)
 }
 
 func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request, bucket, name string) {
@@ -1431,24 +1448,40 @@ func (h *Handler) fetchObject(r *http.Request, bucket, key string, gen *int64) (
 }
 
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	q := r.URL.Query()
+	gen := parseGeneration(q)
+
+	// Capture the object resource for the OBJECT_DELETE event before it is
+	// removed (best-effort: skip the event when it can't be read).
+	deletedRes, haveRes := h.objectResourceForEvent(r, bucket, key, gen)
+
 	if h.ext != nil {
-		q := r.URL.Query()
-		if err := h.ext.DeleteObjectGCS(r.Context(), bucket, key, parseGeneration(q), parsePrecondition(q)); err != nil {
+		if err := h.ext.DeleteObjectGCS(r.Context(), bucket, key, gen, parsePrecondition(q)); err != nil {
 			writePreconditionOrErr(w, err)
 			return
 		}
-
-		w.WriteHeader(http.StatusNoContent)
-
-		return
-	}
-
-	if err := h.bucket.DeleteObject(r.Context(), bucket, key); err != nil {
+	} else if err := h.bucket.DeleteObject(r.Context(), bucket, key); err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+
+	if haveRes {
+		h.emitObjectEvent(r, bucket, &deletedRes, eventTypeObjectDelete)
+	}
+}
+
+// objectResourceForEvent reads the object's current metadata as an
+// objectResource for a notification event, returning ok=false when it can't be
+// read (a missing object or a driver without head support).
+func (h *Handler) objectResourceForEvent(r *http.Request, bucket, key string, gen *int64) (objectResource, bool) {
+	info, err := h.headObject(r, bucket, key, gen)
+	if err != nil || info == nil {
+		return objectResource{}, false
+	}
+
+	return toObjectResource(info, bucket, r), true
 }
 
 // directMedia handles direct /{bucket}/{object} URLs for media download.

@@ -854,4 +854,40 @@ type GCSExtensions interface {
 	// policy document verbatim (Buckets: setIamPolicy / getIamPolicy).
 	SetBucketIAMPolicy(ctx context.Context, bucket string, policyJSON []byte) error
 	BucketIAMPolicy(ctx context.Context, bucket string) ([]byte, error)
+
+	// CreateNotificationConfig registers a Pub/Sub notification config on a
+	// bucket (Notifications: insert), returning the stored config with its
+	// minted id and etag. GCS emits an event to the config's topic on matching
+	// object changes.
+	CreateNotificationConfig(ctx context.Context, bucket string, cfg *GCSNotificationConfig) (GCSNotificationConfig, error)
+	// GetNotificationConfig returns a bucket's notification config by id
+	// (Notifications: get).
+	GetNotificationConfig(ctx context.Context, bucket, id string) (GCSNotificationConfig, error)
+	// ListNotificationConfigs returns every notification config on a bucket
+	// (Notifications: list).
+	ListNotificationConfigs(ctx context.Context, bucket string) ([]GCSNotificationConfig, error)
+	// DeleteNotificationConfig removes a bucket's notification config by id
+	// (Notifications: delete).
+	DeleteNotificationConfig(ctx context.Context, bucket, id string) error
+}
+
+// GCSNotificationConfig is one bucket Pub/Sub notification configuration: which
+// Pub/Sub topic receives events, which object-change event types fire, and the
+// payload format + custom attributes attached to each message.
+type GCSNotificationConfig struct {
+	// ID is the server-minted numeric notification id (also the etag).
+	ID string
+	// Topic is the destination in the //pubsub.googleapis.com/projects/{p}/
+	// topics/{t} form the storage SDK sends and reads back.
+	Topic string
+	// PayloadFormat is JSON_API_V1 (object resource JSON as data) or NONE.
+	PayloadFormat string
+	// EventTypes filters which changes fire; empty means all event types.
+	EventTypes []string
+	// CustomAttributes are added verbatim to every published message.
+	CustomAttributes map[string]string
+	// ObjectNamePrefix fires only for objects whose name has this prefix.
+	ObjectNamePrefix string
+	// Etag mirrors the id, as real GCS returns.
+	Etag string
 }

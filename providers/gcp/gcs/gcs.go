@@ -99,6 +99,9 @@ type bucketMeta struct {
 	// versions holds archived (non-current) object generations keyed by object
 	// key, oldest-first, populated on overwrite when versioning is enabled.
 	versions map[string][]*gcsObject
+	// notifications holds the bucket's Pub/Sub notification configs keyed by
+	// their minted numeric id, lazily created on first insert.
+	notifications map[string]driver.GCSNotificationConfig
 }
 
 // Mock is an in-memory mock implementation of Google Cloud Storage.
@@ -108,6 +111,9 @@ type Mock struct {
 	monitoring mondriver.Monitoring
 	// gen is the source of unique, monotonically increasing object generations.
 	gen atomic.Int64
+	// notifGen is the source of unique, monotonically increasing notification
+	// config ids (numeric strings, as real GCS mints).
+	notifGen atomic.Int64
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -1673,4 +1679,90 @@ func (m *Mock) BucketIAMPolicy(_ context.Context, bucket string) ([]byte, error)
 	}
 
 	return append([]byte(nil), bkt.iamPolicy...), nil
+}
+
+// CreateNotificationConfig registers a Pub/Sub notification config on the
+// bucket, minting a numeric id (also used as the etag) and returning the stored
+// config.
+func (m *Mock) CreateNotificationConfig(
+	_ context.Context, bucket string, cfg *driver.GCSNotificationConfig,
+) (driver.GCSNotificationConfig, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return driver.GCSNotificationConfig{}, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	stored := *cfg
+	id := fmt.Sprintf("%d", m.notifGen.Add(1))
+	stored.ID = id
+	stored.Etag = id
+
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	if bkt.notifications == nil {
+		bkt.notifications = make(map[string]driver.GCSNotificationConfig)
+	}
+
+	bkt.notifications[id] = stored
+
+	return stored, nil
+}
+
+// GetNotificationConfig returns a bucket's notification config by id.
+func (m *Mock) GetNotificationConfig(_ context.Context, bucket, id string) (driver.GCSNotificationConfig, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return driver.GCSNotificationConfig{}, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	cfg, ok := bkt.notifications[id]
+	if !ok {
+		return driver.GCSNotificationConfig{}, cerrors.Newf(cerrors.NotFound, "notification %q not found", id)
+	}
+
+	return cfg, nil
+}
+
+// ListNotificationConfigs returns every notification config on a bucket, sorted
+// by id for a stable listing.
+func (m *Mock) ListNotificationConfigs(_ context.Context, bucket string) ([]driver.GCSNotificationConfig, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	out := make([]driver.GCSNotificationConfig, 0, len(bkt.notifications))
+	for _, cfg := range bkt.notifications {
+		out = append(out, cfg)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+
+	return out, nil
+}
+
+// DeleteNotificationConfig removes a bucket's notification config by id.
+func (m *Mock) DeleteNotificationConfig(_ context.Context, bucket, id string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	if _, ok := bkt.notifications[id]; !ok {
+		return cerrors.Newf(cerrors.NotFound, "notification %q not found", id)
+	}
+
+	delete(bkt.notifications, id)
+
+	return nil
 }

@@ -161,6 +161,30 @@ func pushEndpoint(raw json.RawMessage) string {
 	return pc.PushEndpoint
 }
 
+// PublishToTopic records one message on a topic's log and runs the same
+// cross-service fan-out (push subscriptions + event-triggered Cloud Functions)
+// as the REST publish path. It is the in-process entrypoint other producers —
+// notably GCS object-change notifications — use to emit into Pub/Sub. It is
+// best-effort: a topic that was never created still records the message so a
+// later pull sees it, and a nil data payload is delivered as an empty body.
+func (h *Handler) PublishToTopic(ctx context.Context, project, topicShort string, data []byte, attributes map[string]string) {
+	publishTime := time.Now().UTC()
+
+	h.mu.Lock()
+	sm := storedMessage{
+		body:        string(data),
+		attributes:  attributes,
+		publishTime: publishTime,
+	}
+	id := h.appendMessageLocked(topicShort, &sm)
+	ts := h.topicLog(topicShort)
+	msg := publishedMessage{idx: len(ts.messages) - 1, msg: buildPubsubMessage(id, &sm)}
+	pushSubs := h.pushSubscribersLocked(topicShort)
+	h.mu.Unlock()
+
+	h.dispatchPublished(ctx, project, topicShort, []publishedMessage{msg}, pushSubs)
+}
+
 // dispatchPublished performs the cross-service delivery a publish triggers,
 // outside h.mu so slow HTTP / function calls never hold the lock:
 //
