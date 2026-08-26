@@ -123,6 +123,57 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 	return &result, nil
 }
 
+// PutImageTagMutability updates a repository's image tag mutability setting.
+// This is AWS-specific (not part of the portable ContainerRegistry driver), so
+// the ECR wire handler reaches it via type assertion. The new value takes effect
+// immediately: it is read by checkTagMutability on subsequent pushes.
+func (m *Mock) PutImageTagMutability(
+	_ context.Context, repository, mutability string,
+) (*driver.Repository, error) {
+	if mutability != mutableTag && mutability != immutableTag {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	rd.tagMutability = mutability
+	rd.info.ImageTagMutability = mutability
+
+	result := rd.info
+	result.ImageCount = rd.images.Len()
+
+	return &result, nil
+}
+
+// PutImageScanningConfiguration updates a repository's scan-on-push setting.
+// AWS-specific; reached by the ECR wire handler via type assertion.
+func (m *Mock) PutImageScanningConfiguration(
+	_ context.Context, repository string, scanOnPush bool,
+) (*driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	rd.scanOnPush = scanOnPush
+	rd.info.ScanOnPush = scanOnPush
+
+	result := rd.info
+	result.ImageCount = rd.images.Len()
+
+	return &result, nil
+}
+
 // DeleteRepository deletes an ECR repository.
 func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) error {
 	m.mu.Lock()
@@ -715,7 +766,7 @@ func copyLifecyclePolicy(p driver.LifecyclePolicy) driver.LifecyclePolicy {
 	rules := make([]driver.LifecycleRule, len(p.Rules))
 	copy(rules, p.Rules)
 
-	return driver.LifecyclePolicy{Rules: rules}
+	return driver.LifecyclePolicy{Rules: rules, Document: p.Document}
 }
 
 func removeTag(tags []string, tag string) []string {

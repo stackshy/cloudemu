@@ -56,6 +56,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeRepositories(w, r)
 	case "DeleteRepository":
 		h.deleteRepository(w, r)
+	case "PutImageTagMutability":
+		h.putImageTagMutability(w, r)
+	case "PutImageScanningConfiguration":
+		h.putImageScanningConfiguration(w, r)
 	case "PutImage":
 		h.putImage(w, r)
 	case "ListImages":

@@ -153,7 +153,10 @@ func parseLifecyclePolicyText(text string) (crdriver.LifecyclePolicy, error) {
 		})
 	}
 
-	return crdriver.LifecyclePolicy{Rules: rules}, nil
+	// Preserve the original document verbatim so GetLifecyclePolicy round-trips it
+	// byte-faithfully (Terraform sees no drift), while the structured Rules remain
+	// available for lifecycle evaluation.
+	return crdriver.LifecyclePolicy{Rules: rules, Document: text}, nil
 }
 
 func firstTagPattern(sel *lifecycleSelection) string {
@@ -169,6 +172,14 @@ func firstTagPattern(sel *lifecycleSelection) string {
 }
 
 func marshalLifecyclePolicyText(policy *crdriver.LifecyclePolicy) (string, error) {
+	// Return the stored document verbatim when available, so a multi-rule policy
+	// with full tagPrefixList/tagPatternList arrays comes back exactly as it went
+	// in. Fall back to re-serializing the structured rules for policies stored
+	// without a raw document.
+	if policy.Document != "" {
+		return policy.Document, nil
+	}
+
 	doc := lifecyclePolicyText{Rules: make([]lifecycleRuleText, 0, len(policy.Rules))}
 
 	for i := range policy.Rules {

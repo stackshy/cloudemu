@@ -84,6 +84,11 @@ type LifecycleRule struct {
 // LifecyclePolicy is a set of lifecycle rules.
 type LifecyclePolicy struct {
 	Rules []LifecycleRule
+	// Document is the original policy document text, preserved verbatim so it can
+	// be returned byte-faithfully on read (AWS ECR lifecyclePolicyText round-trips
+	// without drift). Optional; providers that model policies purely structurally
+	// leave it empty and callers fall back to serializing Rules.
+	Document string
 }
 
 // ScanResult represents an image vulnerability scan result.
