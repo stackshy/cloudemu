@@ -231,8 +231,13 @@ type listHostedZonesResponse struct {
 	XMLName     xml.Name        `xml:"ListHostedZonesResponse"`
 	Xmlns       string          `xml:"xmlns,attr"`
 	HostedZones []hostedZoneXML `xml:"HostedZones>HostedZone"`
-	IsTruncated bool            `xml:"IsTruncated"`
-	MaxItems    int32           `xml:"MaxItems"`
+	// Marker echoes the request marker (the id listing resumed from), empty on the
+	// first page. NextMarker is present only on a truncated page and carries the id
+	// the caller passes back as Marker to fetch the next page.
+	Marker      string `xml:"Marker,omitempty"`
+	IsTruncated bool   `xml:"IsTruncated"`
+	NextMarker  string `xml:"NextMarker,omitempty"`
+	MaxItems    int32  `xml:"MaxItems"`
 }
 
 type changeResourceRecordSetsResponse struct {
@@ -248,7 +253,11 @@ type listResourceRecordSetsResponse struct {
 	IsTruncated        bool                   `xml:"IsTruncated"`
 	NextRecordName     string                 `xml:"NextRecordName,omitempty"`
 	NextRecordType     string                 `xml:"NextRecordType,omitempty"`
-	MaxItems           int32                  `xml:"MaxItems"`
+	// NextRecordIdentifier continues a weighted/latency/failover/geo record set that
+	// straddles a page boundary: it names the exact SetIdentifier the next page
+	// resumes from so a multi-value group is never re-emitted or skipped.
+	NextRecordIdentifier string `xml:"NextRecordIdentifier,omitempty"`
+	MaxItems             int32  `xml:"MaxItems"`
 }
 
 // errorResponse is the Route 53 XML error body the SDK maps to a typed
