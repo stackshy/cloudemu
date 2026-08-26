@@ -1,18 +1,21 @@
 package keyvault
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1" //nolint:gosec // x5t is defined by Key Vault as the SHA-1 thumbprint of the DER cert
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"math/big"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
@@ -117,17 +120,17 @@ func commonName(subject, fallback string) string {
 // not-before/not-after instants.
 func generateSelfSigned(
 	subject, name string, dnsNames []string, months int, now time.Time,
-) (der []byte, notBefore, notAfter time.Time, err error) {
-	key, err := rsa.GenerateKey(rand.Reader, certRSABits)
+) (der []byte, key *rsa.PrivateKey, notBefore, notAfter time.Time, err error) {
+	key, err = rsa.GenerateKey(rand.Reader, certRSABits)
 	if err != nil {
-		return nil, time.Time{}, time.Time{}, err
+		return nil, nil, time.Time{}, time.Time{}, err
 	}
 
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), certSerialBits)
 
 	serial, err := rand.Int(rand.Reader, serialLimit)
 	if err != nil {
-		return nil, time.Time{}, time.Time{}, err
+		return nil, nil, time.Time{}, time.Time{}, err
 	}
 
 	notBefore = now
@@ -146,10 +149,21 @@ func generateSelfSigned(
 
 	der, err = x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, time.Time{}, time.Time{}, err
+		return nil, nil, time.Time{}, time.Time{}, err
 	}
 
-	return der, notBefore, notAfter, nil
+	return der, key, notBefore, notAfter, nil
+}
+
+// certAndKeyPEM encodes the certificate and its RSA private key as a PEM bundle,
+// the form Key Vault's addressable secret returns for an exportable certificate.
+func certAndKeyPEM(der []byte, key *rsa.PrivateKey) []byte {
+	var buf bytes.Buffer
+
+	_ = pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: der})
+	_ = pem.Encode(&buf, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+
+	return buf.Bytes()
 }
 
 // CreateCertificate generates a self-signed certificate and stores it as the
@@ -168,7 +182,7 @@ func (m *Mock) CreateCertificate(
 
 	now := m.opts.Clock.Now().UTC()
 
-	der, notBefore, notAfter, err := generateSelfSigned(params.Subject, name, params.DNSNames, months, now)
+	der, key, notBefore, notAfter, err := generateSelfSigned(params.Subject, name, params.DNSNames, months, now)
 	if err != nil {
 		return nil, errors.Newf(errors.Internal, "generate certificate: %v", err)
 	}
@@ -190,6 +204,28 @@ func (m *Mock) CreateCertificate(
 		current:     true,
 	}
 
+	if err := m.storeCertVersion(vault, name, &v); err != nil {
+		return nil, err
+	}
+
+	// A Key Vault certificate also creates an addressable key and secret with
+	// the same name and version: the secret returns the certificate value, the
+	// key exposes the certificate's key operations. Their attributes mirror the
+	// certificate's, so SID/KID on the certificate bundle resolve to real
+	// objects (Terraform azurerm_key_vault_certificate.secret_id, azcertificates
+	// CertificateBundle.SID/KID).
+	m.mintCertSecret(vault, name, &v, certAndKeyPEM(der, key))
+	m.mintCertKey(vault, name, &v, key)
+
+	kv := v.toKV(name)
+
+	return &kv, nil
+}
+
+// storeCertVersion appends v as the current version of name, creating the
+// certificate if it does not yet exist. A soft-deleted name cannot be reused
+// until recovered.
+func (m *Mock) storeCertVersion(vault, name string, v *certVersion) error {
 	store := m.vault(vault).certs
 
 	if cd, ok := store.Get(name); ok {
@@ -197,25 +233,102 @@ func (m *Mock) CreateCertificate(
 		defer cd.mu.Unlock()
 
 		if !cd.deletedAt.IsZero() {
-			return nil, errors.Newf(errors.AlreadyExists, "certificate %q is in a deleted but recoverable state", name)
+			return errors.Newf(errors.AlreadyExists, "certificate %q is in a deleted but recoverable state", name)
 		}
 
 		for i := range cd.versions {
 			cd.versions[i].current = false
 		}
 
-		cd.versions = append(cd.versions, v)
-		kv := v.toKV(name)
+		cd.versions = append(cd.versions, *v)
 
-		return &kv, nil
+		return nil
 	}
 
-	cd := &certData{name: name, versions: []certVersion{v}}
-	store.Set(name, cd)
+	store.Set(name, &certData{name: name, versions: []certVersion{*v}})
 
-	kv := v.toKV(name)
+	return nil
+}
 
-	return &kv, nil
+// mintCertSecret inserts the managed addressable secret backing a certificate
+// version, carrying the certificate as a PEM bundle. The secret shares the
+// certificate's version id so the certificate's SID resolves to it.
+func (m *Mock) mintCertSecret(vault, name string, v *certVersion, pemBundle []byte) {
+	sv := secretVersion{
+		versionID:   v.versionID,
+		value:       pemBundle,
+		contentType: "application/x-pem-file",
+		enabled:     v.enabled,
+		expires:     v.expires,
+		notBefore:   v.notBefore,
+		created:     v.created,
+		updated:     v.updated,
+		current:     true,
+		managed:     true,
+	}
+
+	store := m.vault(vault).secrets
+
+	if sd, ok := store.Get(name); ok {
+		sd.mu.Lock()
+		defer sd.mu.Unlock()
+
+		for i := range sd.versions {
+			sd.versions[i].current = false
+		}
+
+		sd.versions = append(sd.versions, sv)
+		sd.info.UpdatedAt = v.updated.Format(time.RFC3339)
+
+		return
+	}
+
+	store.Set(name, &secretData{
+		info: driver.SecretInfo{
+			ID:         idgen.GenerateID("secret-"),
+			Name:       name,
+			ResourceID: idgen.AzureID(m.opts.AccountID, "rg-default", "Microsoft.KeyVault", "vaults/default/secrets", name),
+			CreatedAt:  v.created.Format(time.RFC3339),
+			UpdatedAt:  v.updated.Format(time.RFC3339),
+		},
+		versions: []secretVersion{sv},
+	})
+}
+
+// mintCertKey inserts the managed addressable key backing a certificate
+// version, reusing the certificate's RSA key material. The key shares the
+// certificate's version id so the certificate's KID resolves to it.
+func (m *Mock) mintCertKey(vault, name string, v *certVersion, key *rsa.PrivateKey) {
+	kvv := keyVersion{
+		versionID: v.versionID,
+		kty:       ktyRSA,
+		keyOps:    defaultKeyOps(ktyRSA),
+		rsaKey:    key,
+		enabled:   v.enabled,
+		expires:   v.expires,
+		notBefore: v.notBefore,
+		created:   v.created,
+		updated:   v.updated,
+		current:   true,
+		managed:   true,
+	}
+
+	store := m.vault(vault).keys
+
+	if kd, ok := store.Get(name); ok {
+		kd.mu.Lock()
+		defer kd.mu.Unlock()
+
+		for i := range kd.versions {
+			kd.versions[i].current = false
+		}
+
+		kd.versions = append(kd.versions, kvv)
+
+		return
+	}
+
+	store.Set(name, &keyData{name: name, versions: []keyVersion{kvv}})
 }
 
 // GetCertificate returns one certificate version. Empty version returns the

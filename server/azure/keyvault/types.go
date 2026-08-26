@@ -141,6 +141,7 @@ func toBundle(r *http.Request, kv *secretsdriver.KVSecret) secretBundleJSON {
 		ContentType: kv.ContentType,
 		Attributes:  attributesOf(kv),
 		Tags:        kv.Tags,
+		Managed:     managedPtr(kv.Managed),
 	}
 }
 
@@ -150,7 +151,21 @@ func toItem(r *http.Request, kv *secretsdriver.KVSecret) secretItemJSON {
 		ContentType: kv.ContentType,
 		Attributes:  attributesOf(kv),
 		Tags:        kv.Tags,
+		Managed:     managedPtr(kv.Managed),
 	}
+}
+
+// managedPtr returns a pointer to true when managed, nil otherwise, so the
+// "managed" field is emitted only for objects Key Vault manages (the addressable
+// secret and key created alongside a certificate).
+func managedPtr(managed bool) *bool {
+	if !managed {
+		return nil
+	}
+
+	t := true
+
+	return &t
 }
 
 func toDeletedBundle(r *http.Request, d *secretsdriver.KVDeletedSecret) deletedSecretBundleJSON {

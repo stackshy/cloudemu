@@ -8,6 +8,8 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"math/big"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,6 +36,11 @@ const (
 	rsaBits3072        = 3072
 	rsaBits4096        = 4096
 	versionBytes       = 16
+
+	daysPerYear  = 365
+	daysPerMonth = 30
+	daysPerWeek  = 7
+	hoursPerDay  = 24
 )
 
 // keyVersion is one stored key version with its Key Vault attributes and the
@@ -247,6 +254,90 @@ func storeVersion(store *memstore.Store[*keyData], name string, v *keyVersion) (
 	kv := toKVKey(name, &kd.versions[0])
 
 	return &kv, nil
+}
+
+// RotateKey generates a new current version of an existing key, reusing its key
+// type, curve, size and key operations, and advancing the current pointer to
+// the new version. When the key has a rotation policy with an expiry duration,
+// the new version's exp attribute is set from it (Key Vault's rotate actuator).
+func (m *Mock) RotateKey(_ context.Context, vault, name string) (*driver.KVKey, error) {
+	kd := liveKey(m.vault(vault).keys, name)
+	if kd == nil {
+		return nil, errors.Newf(errors.NotFound, "key %q not found", name)
+	}
+
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+
+	cur := findKeyVersion(kd, "")
+	if cur == nil {
+		return nil, errors.Newf(errors.NotFound, "no current version for key %q", name)
+	}
+
+	params := rotateParams(cur)
+
+	if kd.rotationPolicy != nil && kd.rotationPolicy.ExpiryTime != "" {
+		if d, ok := parseISO8601Duration(kd.rotationPolicy.ExpiryTime); ok {
+			params.Attributes.Expires = m.opts.Clock.Now().UTC().Add(d).Unix()
+		}
+	}
+
+	v, err := m.generateVersion(params)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range kd.versions {
+		kd.versions[i].current = false
+	}
+
+	kd.versions = append(kd.versions, *v)
+	kv := toKVKey(name, &kd.versions[len(kd.versions)-1])
+
+	return &kv, nil
+}
+
+// rotateParams derives the create parameters for a rotated version from the key
+// version being rotated, preserving its type, curve, size and operations.
+func rotateParams(cur *keyVersion) *driver.KVCreateKeyParams {
+	params := &driver.KVCreateKeyParams{
+		Kty:        cur.kty,
+		Curve:      cur.curve,
+		KeyOps:     append([]string(nil), cur.keyOps...),
+		Tags:       copyTags(cur.tags),
+		Attributes: driver.KVKeyAttributes{Enabled: true},
+	}
+
+	if cur.rsaKey != nil {
+		params.KeySize = cur.rsaKey.N.BitLen()
+	}
+
+	return params
+}
+
+// parseISO8601Duration parses the subset of ISO 8601 durations (PnYnMnWnDTnHnMnS)
+// Key Vault rotation policies use, approximating a year as 365 and a month as 30
+// days. It returns false for an unrecognized or zero-length duration.
+func parseISO8601Duration(s string) (time.Duration, bool) {
+	re := regexp.MustCompile(`^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$`)
+
+	m := re.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+
+	atoi := func(x string) int { n, _ := strconv.Atoi(x); return n }
+
+	days := atoi(m[1])*daysPerYear + atoi(m[2])*daysPerMonth + atoi(m[3])*daysPerWeek + atoi(m[4])
+
+	total := time.Duration(days*hoursPerDay+atoi(m[5]))*time.Hour +
+		time.Duration(atoi(m[6]))*time.Minute +
+		time.Duration(atoi(m[7]))*time.Second
+	if total == 0 {
+		return 0, false
+	}
+
+	return total, true
 }
 
 // ImportKey stores a caller-supplied key. RSA and EC keys are reconstructed

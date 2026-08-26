@@ -41,6 +41,7 @@ const (
 	keysPrefix        = "/keys"
 	deletedKeysPrefix = "/deletedkeys"
 	createSeg         = "create"
+	rotateSeg         = "rotate"
 	rotationPolicySeg = "rotationpolicy"
 	encryptSeg        = "encrypt"
 	decryptSeg        = "decrypt"
@@ -122,21 +123,10 @@ func (h *KeysHandler) routeBareKey(w http.ResponseWriter, r *http.Request, name 
 
 // routeNamedKey dispatches /keys/{name}/{sub}[/{op}] requests.
 func (h *KeysHandler) routeNamedKey(w http.ResponseWriter, r *http.Request, name, sub string) {
-	if sub == createSeg && r.Method == http.MethodPost {
-		h.createKey(w, r, name)
-		return
-	}
-
-	if sub == versionsSeg && r.Method == http.MethodGet {
-		h.listKeyVersions(w, r, name)
-		return
-	}
-
-	// rotationpolicy is not version-scoped (there is no /keys/{name}/{version}/
-	// rotationpolicy shape) and must be routed before the version/op split
-	// below, which would otherwise misread "rotationpolicy" as a version.
-	if sub == rotationPolicySeg {
-		h.routeKeyRotationPolicy(w, r, name)
+	// Fixed named sub-resources (create, rotate, versions, rotationpolicy) are
+	// matched first; rotationpolicy in particular must be routed before the
+	// version/op split below, which would otherwise misread it as a version.
+	if h.routeKeySubcommand(w, r, name, sub) {
 		return
 	}
 
@@ -162,6 +152,27 @@ func (h *KeysHandler) routeNamedKey(w http.ResponseWriter, r *http.Request, name
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
 	}
+}
+
+// routeKeySubcommand handles the fixed, non-version-scoped named sub-resources
+// of a key. It returns true when it has handled (or rejected) the request; a
+// false return means sub is a version (or version/op) to be routed by the
+// caller.
+func (h *KeysHandler) routeKeySubcommand(w http.ResponseWriter, r *http.Request, name, sub string) bool {
+	switch {
+	case sub == createSeg && r.Method == http.MethodPost:
+		h.createKey(w, r, name)
+	case sub == rotateSeg && r.Method == http.MethodPost:
+		h.rotateKey(w, r, name)
+	case sub == versionsSeg && r.Method == http.MethodGet:
+		h.listKeyVersions(w, r, name)
+	case sub == rotationPolicySeg:
+		h.routeKeyRotationPolicy(w, r, name)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func isCryptoOp(seg string) bool {

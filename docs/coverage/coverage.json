@@ -9829,6 +9829,9 @@
             "name": "RecoverDeletedKey"
           },
           {
+            "name": "RotateKey"
+          },
+          {
             "name": "SignKey"
           },
           {

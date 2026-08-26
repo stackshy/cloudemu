@@ -42,6 +42,7 @@ func (v *secretVersion) toKV(name string) driver.KVSecret {
 		NotBefore:   v.notBefore,
 		Created:     v.created.Unix(),
 		Updated:     v.updated.Unix(),
+		Managed:     v.managed,
 		Current:     v.current,
 	}
 }

@@ -46,6 +46,7 @@ type secretVersionSnapshot struct {
 	Created     time.Time         `json:"created,omitempty"`
 	Updated     time.Time         `json:"updated,omitempty"`
 	Current     bool              `json:"current,omitempty"`
+	Managed     bool              `json:"managed,omitempty"`
 }
 
 type keyDataSnapshot struct {
@@ -121,7 +122,7 @@ func snapshotSecret(sd *secretData) *secretDataSnapshot {
 		ss.Versions = append(ss.Versions, secretVersionSnapshot{
 			VersionID: v.versionID, Value: copyBytes(v.value), ContentType: v.contentType,
 			Tags: copyTags(v.tags), Enabled: v.enabled, Expires: v.expires, NotBefore: v.notBefore,
-			Created: v.created, Updated: v.updated, Current: v.current,
+			Created: v.created, Updated: v.updated, Current: v.current, Managed: v.managed,
 		})
 	}
 
@@ -206,7 +207,7 @@ func restoreSecret(ss *secretDataSnapshot) *secretData {
 		sd.versions = append(sd.versions, secretVersion{
 			versionID: v.VersionID, value: copyBytes(v.Value), contentType: v.ContentType,
 			tags: copyTags(v.Tags), enabled: v.Enabled, expires: v.Expires, notBefore: v.NotBefore,
-			created: v.Created, updated: v.Updated, current: v.Current,
+			created: v.Created, updated: v.Updated, current: v.Current, managed: v.Managed,
 		})
 	}
 

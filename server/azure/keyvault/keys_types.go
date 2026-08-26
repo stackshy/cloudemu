@@ -289,6 +289,7 @@ func toKeyBundle(r *http.Request, k *secretsdriver.KVKey) keyBundleJSON {
 		Key:        toJWK(r, k),
 		Attributes: keyAttributesOf(k),
 		Tags:       k.Tags,
+		Managed:    managedPtr(k.Managed),
 	}
 }
 
@@ -306,6 +307,7 @@ func toKeyItem(r *http.Request, k *secretsdriver.KVKey) keyItemJSON {
 		KID:        keyID(r, k.Name, k.Version),
 		Attributes: keyAttributesOf(k),
 		Tags:       k.Tags,
+		Managed:    managedPtr(k.Managed),
 	}
 }
 
