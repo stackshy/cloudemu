@@ -80,6 +80,11 @@ func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJS
 		inputSchema = defaultInputSchema
 	}
 
+	publicNetworkAccess := info.PublicNetworkAccess
+	if publicNetworkAccess == "" {
+		publicNetworkAccess = defaultPublicNetworkAccess
+	}
+
 	return topicJSON{
 		ID:       id,
 		Name:     info.Name,
@@ -90,7 +95,7 @@ func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJS
 			ProvisioningState:   provisioningSucceeded,
 			Endpoint:            topicEndpoint(info.Name, loc),
 			InputSchema:         inputSchema,
-			PublicNetworkAccess: defaultPublicNetworkAccess,
+			PublicNetworkAccess: publicNetworkAccess,
 			MetricResourceID:    id,
 		},
 	}

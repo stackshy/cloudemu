@@ -16,6 +16,10 @@ const (
 	domainDefaultNetworkAcces = "Enabled"
 	subActionListKeys         = "listKeys"
 	subActionRegenerateKey    = "regenerateKey"
+	// keyName1 and keyName2 are the two shared-access-key identifiers a topic
+	// or domain exposes, used both to derive keys and to route RegenerateKey.
+	keyName1 = "key1"
+	keyName2 = "key2"
 )
 
 // domainRecord is the wire-handler-owned state for one Event Grid domain. A
@@ -31,6 +35,10 @@ type domainRecord struct {
 	tags     map[string]string
 	key1     string
 	key2     string
+	// inputSchema is fixed at creation (immutable, like a topic's);
+	// publicNetworkAccess is mutable across CreateOrUpdate calls.
+	inputSchema         string
+	publicNetworkAccess string
 	// topics holds the DomainTopics sub-resources created under this domain.
 	// A domain topic carries no state of its own beyond existing (real Event
 	// Grid domain topics are typically auto-created on first publish and
@@ -82,6 +90,35 @@ func domainID(rp *azurearm.ResourcePath) string {
 	return azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeDomains, rp.ResourceName)
 }
 
+// orDefault returns v, or def when v is empty.
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
+}
+
+// domainInputSchemaFromBody reads the caller's requested InputSchema off a
+// Domains CreateOrUpdate body (empty when properties are omitted).
+func domainInputSchemaFromBody(body *domainJSON) string {
+	if body.Properties == nil {
+		return ""
+	}
+
+	return body.Properties.InputSchema
+}
+
+// domainPublicNetworkAccessFromBody reads the caller's requested
+// PublicNetworkAccess off a Domains CreateOrUpdate body (empty when omitted).
+func domainPublicNetworkAccessFromBody(body *domainJSON) string {
+	if body.Properties == nil {
+		return ""
+	}
+
+	return body.Properties.PublicNetworkAccess
+}
+
 func (rec *domainRecord) toJSON(rp *azurearm.ResourcePath) domainJSON {
 	id := domainID(rp)
 
@@ -95,8 +132,8 @@ func (rec *domainRecord) toJSON(rp *azurearm.ResourcePath) domainJSON {
 			Endpoint:            topicEndpoint(rec.name, rec.location),
 			MetricResourceID:    id,
 			ProvisioningState:   domainProvisioningState,
-			InputSchema:         domainDefaultInputSchema,
-			PublicNetworkAccess: domainDefaultNetworkAcces,
+			InputSchema:         orDefault(rec.inputSchema, domainDefaultInputSchema),
+			PublicNetworkAccess: orDefault(rec.publicNetworkAccess, domainDefaultNetworkAcces),
 		},
 	}
 }
@@ -165,15 +202,21 @@ func (h *Handler) createOrUpdateDomain(w http.ResponseWriter, r *http.Request, r
 			name:   rp.ResourceName,
 			sub:    rp.Subscription,
 			rg:     rp.ResourceGroup,
-			key1:   domainKey(rp.ResourceName, "key1", 0),
-			key2:   domainKey(rp.ResourceName, "key2", 0),
+			key1:   domainKey(rp.ResourceName, keyName1, 0),
+			key2:   domainKey(rp.ResourceName, keyName2, 0),
 			topics: make(map[string]struct{}),
+			// inputSchema is immutable, so it is stamped only on creation.
+			inputSchema: orDefault(domainInputSchemaFromBody(&body), domainDefaultInputSchema),
 		}
 		h.domains[key] = rec
 	}
 
 	rec.location = loc
 	rec.tags = tagsFromPtr(body.Tags)
+
+	if pna := domainPublicNetworkAccessFromBody(&body); pna != "" {
+		rec.publicNetworkAccess = pna
+	}
 
 	out := rec.toJSON(rp)
 	h.mu.Unlock()
@@ -275,10 +318,10 @@ func (h *Handler) regenerateDomainKey(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	switch body.KeyName {
-	case "key1":
-		rec.key1 = domainKey(rec.name, "key1", nextKeyGen(rec.key1))
-	case "key2":
-		rec.key2 = domainKey(rec.name, "key2", nextKeyGen(rec.key2))
+	case keyName1:
+		rec.key1 = domainKey(rec.name, keyName1, nextKeyGen(rec.key1))
+	case keyName2:
+		rec.key2 = domainKey(rec.name, keyName2, nextKeyGen(rec.key2))
 	default:
 		h.mu.Unlock()
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "keyName must be key1 or key2")

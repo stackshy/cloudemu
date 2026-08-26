@@ -23,6 +23,10 @@ type EventBusInfo struct {
 	// Grid: "EventGridSchema", "CustomEventSchema", "CloudEventSchemaV1_0").
 	// Empty for AWS and GCP.
 	InputSchema string
+	// PublicNetworkAccess records whether the topic accepts traffic over the
+	// public network (Azure Event Grid: "Enabled", "Disabled"). Empty for AWS
+	// and GCP.
+	PublicNetworkAccess string
 }
 
 // EventBusConfig configures a new event bus.
@@ -40,6 +44,10 @@ type EventBusConfig struct {
 	// Grid: "EventGridSchema", "CustomEventSchema", "CloudEventSchemaV1_0").
 	// Empty for AWS and GCP, and for an Azure caller accepting the default.
 	InputSchema string
+	// PublicNetworkAccess records whether the topic accepts traffic over the
+	// public network (Azure Event Grid: "Enabled", "Disabled"). Empty for AWS
+	// and GCP, and for an Azure caller accepting the default.
+	PublicNetworkAccess string
 }
 
 // Rule defines an event routing rule with filtering.

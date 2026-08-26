@@ -5,10 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
+
+// topicRegenerateKeyRequest is the Topics.RegenerateKey request body
+// (armeventgrid.TopicRegenerateKeyRequest).
+type topicRegenerateKeyRequest struct {
+	KeyName string `json:"keyName"`
+}
 
 // eventSubscriptionJSON is the ARM EventSubscription resource shape. The
 // properties are stored and echoed verbatim so the caller's destination/filter
@@ -24,10 +31,27 @@ type eventSubscriptionListResult struct {
 	Value []eventSubscriptionJSON `json:"value"`
 }
 
-// subscriptionKey derives the deterministic topic access keys.
-func topicKey(topicName, which string) string {
-	sum := sha256.Sum256([]byte("eventgrid" + "\x00" + topicName + "\x00" + which))
+// topicKey derives a deterministic topic shared access key. gen bumps on each
+// regeneration so a rotated key differs from its predecessor.
+func topicKey(topicName, which string, gen int) string {
+	sum := sha256.Sum256([]byte("eventgrid" + "\x00" + topicName + "\x00" + which + "\x00" + strconv.Itoa(gen)))
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// topicKeysFor returns the current key1/key2 for a topic at their present
+// generations. The caller must hold at least a read lock.
+func (h *Handler) topicKeysFor(rp *azurearm.ResourcePath) topicSharedAccessKeys {
+	gens := h.topicKeyGens[storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)]
+
+	g1, g2 := 0, 0
+	if gens != nil {
+		g1, g2 = gens.key1Gen, gens.key2Gen
+	}
+
+	return topicSharedAccessKeys{
+		Key1: topicKey(rp.ResourceName, keyName1, g1),
+		Key2: topicKey(rp.ResourceName, keyName2, g2),
+	}
 }
 
 // listTopicKeys serves Topics.ListSharedAccessKeys.
@@ -37,10 +61,52 @@ func (h *Handler) listTopicKeys(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, topicSharedAccessKeys{
-		Key1: topicKey(rp.ResourceName, "key1"),
-		Key2: topicKey(rp.ResourceName, "key2"),
-	})
+	h.mu.RLock()
+	keys := h.topicKeysFor(rp)
+	h.mu.RUnlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, keys)
+}
+
+// regenerateTopicKey serves Topics.RegenerateKey: it bumps the requested key's
+// generation (leaving the other untouched) and returns the refreshed keys.
+func (h *Handler) regenerateTopicKey(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if _, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	var body topicRegenerateKeyRequest
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	h.mu.Lock()
+
+	key := storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+
+	gens := h.topicKeyGens[key]
+	if gens == nil {
+		gens = &topicKeyGens{}
+		h.topicKeyGens[key] = gens
+	}
+
+	switch body.KeyName {
+	case keyName1:
+		gens.key1Gen++
+	case keyName2:
+		gens.key2Gen++
+	default:
+		h.mu.Unlock()
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "keyName must be key1 or key2")
+
+		return
+	}
+
+	keys := h.topicKeysFor(rp)
+	h.mu.Unlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, keys)
 }
 
 // enrichSubscriptionProperties parses stored properties, stamps the read-only
