@@ -19,11 +19,13 @@
 // Coverage:
 //
 //	PUT    .../dnsZones/{z}                              — Zones.CreateOrUpdate
+//	PATCH  .../dnsZones/{z}                              — Zones.Update (tags merge)
 //	GET    .../dnsZones/{z}                              — Zones.Get
 //	DELETE .../dnsZones/{z}                              — Zones.Delete (LRO, completes inline)
 //	GET    .../providers/Microsoft.Network/dnsZones      — Zones.List (subscription scope)
 //	GET    .../resourceGroups/{rg}/…/dnsZones            — Zones.ListByResourceGroup
 //	PUT    .../dnsZones/{z}/{type}/{name}                — RecordSets.CreateOrUpdate
+//	PATCH  .../dnsZones/{z}/{type}/{name}                — RecordSets.Update (merge supplied)
 //	GET    .../dnsZones/{z}/{type}/{name}                — RecordSets.Get
 //	DELETE .../dnsZones/{z}/{type}/{name}                — RecordSets.Delete
 //	GET    .../dnsZones/{z}/recordsets|all               — RecordSets.ListByDnsZone / ListAllByDnsZone
@@ -116,6 +118,8 @@ func (h *Handler) serveZone(w http.ResponseWriter, r *http.Request, rp *azurearm
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateZone(w, r, rp)
+	case http.MethodPatch:
+		h.patchZone(w, r, rp)
 	case http.MethodGet:
 		h.getZone(w, r, rp)
 	case http.MethodDelete:
@@ -146,6 +150,8 @@ func (h *Handler) serveRecordSet(w http.ResponseWriter, r *http.Request, rp *azu
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateRecordSet(w, r, rp)
+	case http.MethodPatch:
+		h.patchRecordSet(w, r, rp)
 	case http.MethodGet:
 		h.getRecordSet(w, r, rp)
 	case http.MethodDelete:

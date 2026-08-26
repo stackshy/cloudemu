@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -172,25 +173,140 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 		Type:   recordType,
 		TTL:    ttlOrDefault(body.Properties),
 		Values: recordValues(recordType, body.Properties),
+		SOA:    soaConfigFromProps(body.Properties),
 	}
 
-	info, err := h.upsertRecord(r, cfg)
+	info, created, err := h.upsertRecord(r, &cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusCreated, toRecordSetJSON(rp, rp.ResourceName, info))
+	// Azure returns 201 Created when the record set is newly created and 200 OK
+	// when an existing one is updated (the zone path already distinguishes the
+	// two the same way).
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+
+	azurearm.WriteJSON(w, status, toRecordSetJSON(rp, rp.ResourceName, info))
 }
 
 // upsertRecord updates the record if it already exists, otherwise creates it —
-// Azure's RecordSets.CreateOrUpdate is upsert semantics.
-func (h *Handler) upsertRecord(r *http.Request, cfg dnsdriver.RecordConfig) (*dnsdriver.RecordInfo, error) {
+// Azure's RecordSets.CreateOrUpdate is upsert semantics. The bool reports
+// whether the record set was newly created (true) or updated in place (false),
+// so the caller can pick the 201/200 status Azure returns.
+func (h *Handler) upsertRecord(r *http.Request, cfg *dnsdriver.RecordConfig) (*dnsdriver.RecordInfo, bool, error) {
 	if _, err := h.dns.GetRecord(r.Context(), cfg.ZoneID, cfg.Name, cfg.Type); err == nil {
-		return h.dns.UpdateRecord(r.Context(), cfg)
+		info, uerr := h.dns.UpdateRecord(r.Context(), *cfg)
+		return info, false, uerr
 	}
 
-	return h.dns.CreateRecord(r.Context(), cfg)
+	info, cerr := h.dns.CreateRecord(r.Context(), *cfg)
+
+	return info, true, cerr
+}
+
+// patchZone backs Zones.Update: a PATCH that merges the supplied tags over the
+// zone's existing tags (existing tags the caller did not resend are preserved),
+// returning 200. Unmodeled zone properties are preserved by the server's overlay
+// middleware, which unions a PATCH's fresh unmodeled keys over the stored ones.
+func (h *Handler) patchZone(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body zoneJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	id, err := h.resolveZoneID(r.Context(), rp)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	existing, err := h.dns.GetZone(r.Context(), id)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	merged := maps.Clone(existing.Tags)
+	if merged == nil {
+		merged = make(map[string]string, len(body.Tags))
+	}
+
+	for k, v := range body.Tags {
+		merged[k] = v
+	}
+
+	info, err := h.dns.UpdateZone(r.Context(), dnsdriver.ZoneConfig{
+		Name:    rp.ResourceName,
+		Private: existing.Private,
+		Tags:    merged,
+		Scope:   scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	})
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, info))
+}
+
+// patchRecordSet backs RecordSets.Update: a PATCH that merges the supplied
+// fields (TTL, the record data for its type, and — for SOA — the editable timing
+// fields) over the existing record set, preserving any field the caller omitted
+// rather than nil-masking it. Metadata and other unmodeled properties are merged
+// by the server's overlay middleware. Returns 200.
+func (h *Handler) patchRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body recordSetJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	zoneID, err := h.resolveZoneID(r.Context(), rp)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	recordType := recordTypeSegment(rp.SubResource)
+	name := rp.SubResourceName
+
+	existing, err := h.dns.GetRecord(r.Context(), zoneID, name, recordType)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	cfg := dnsdriver.RecordConfig{
+		ZoneID: zoneID,
+		Name:   name,
+		Type:   recordType,
+		TTL:    existing.TTL,
+		Values: existing.Values,
+		SOA:    existing.SOA,
+	}
+
+	if body.Properties != nil && body.Properties.TTL != nil {
+		cfg.TTL = int(*body.Properties.TTL)
+	}
+
+	if supplied := recordValues(recordType, body.Properties); len(supplied) > 0 {
+		cfg.Values = supplied
+	}
+
+	if recordType == recTypeSOA {
+		cfg.SOA = mergeSOAConfig(existing.SOA, soaConfigFromProps(body.Properties))
+	}
+
+	info, err := h.dns.UpdateRecord(r.Context(), cfg)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toRecordSetJSON(rp, rp.ResourceName, info))
 }
 
 func (h *Handler) getRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

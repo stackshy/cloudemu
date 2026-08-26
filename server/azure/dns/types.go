@@ -306,16 +306,18 @@ func toRecordSetProperties(rec *dnsdriver.RecordInfo) *recordSetProperties {
 			props.PtrRecords = append(props.PtrRecords, ptrRecordJSON{Ptrdname: v})
 		}
 	case recTypeSOA:
-		props.SoaRecord = toSOARecord(rec.Values)
+		props.SoaRecord = toSOARecord(rec)
 	}
 
 	return props
 }
 
-// toSOARecord rebuilds the Azure SOA body from the driver's flat values
-// ([host, email]), filling the timing fields with the platform defaults Azure
-// stamps on the auto-created apex SOA.
-func toSOARecord(values []string) *soaRecordJSON {
+// toSOARecord rebuilds the Azure SOA body from a driver record. host and email
+// come from the flat values ([host, email]); the timing fields start at the
+// platform defaults Azure stamps on the auto-created apex SOA and are overridden
+// by any caller-edited field carried on rec.SOA, so a user-edited SOA reads back
+// the edited values while an unedited one keeps Azure's defaults.
+func toSOARecord(rec *dnsdriver.RecordInfo) *soaRecordJSON {
 	soa := &soaRecordJSON{
 		Email:        soaEmail,
 		SerialNumber: soaSerial,
@@ -325,15 +327,111 @@ func toSOARecord(values []string) *soaRecordJSON {
 		MinimumTTL:   soaMinimumTTL,
 	}
 
-	if len(values) > 0 {
-		soa.Host = values[0]
+	if len(rec.Values) > 0 {
+		soa.Host = rec.Values[0]
 	}
 
-	if len(values) > 1 && values[1] != "" {
-		soa.Email = values[1]
+	if len(rec.Values) > 1 && rec.Values[1] != "" {
+		soa.Email = rec.Values[1]
 	}
+
+	applyEditedSOA(soa, rec.SOA)
 
 	return soa
+}
+
+// applyEditedSOA overrides the SOA body's editable timing/serial/email fields
+// with any non-zero value the caller edited (carried on the driver's SOA
+// carrier). host is read-only and never touched here.
+func applyEditedSOA(soa *soaRecordJSON, edited *dnsdriver.SOARecord) {
+	if edited == nil {
+		return
+	}
+
+	if edited.Email != "" {
+		soa.Email = edited.Email
+	}
+
+	if edited.SerialNumber != 0 {
+		soa.SerialNumber = edited.SerialNumber
+	}
+
+	if edited.RefreshTime != 0 {
+		soa.RefreshTime = edited.RefreshTime
+	}
+
+	if edited.RetryTime != 0 {
+		soa.RetryTime = edited.RetryTime
+	}
+
+	if edited.ExpireTime != 0 {
+		soa.ExpireTime = edited.ExpireTime
+	}
+
+	if edited.MinimumTTL != 0 {
+		soa.MinimumTTL = edited.MinimumTTL
+	}
+}
+
+// soaConfigFromProps extracts the editable SOA timing fields from a request
+// body's SOA record into the driver's typed carrier, or nil when the body
+// carries no SOA record. host stays in the flat values (read-only).
+func soaConfigFromProps(props *recordSetProperties) *dnsdriver.SOARecord {
+	if props == nil || props.SoaRecord == nil {
+		return nil
+	}
+
+	s := props.SoaRecord
+
+	return &dnsdriver.SOARecord{
+		Email:        s.Email,
+		SerialNumber: s.SerialNumber,
+		RefreshTime:  s.RefreshTime,
+		RetryTime:    s.RetryTime,
+		ExpireTime:   s.ExpireTime,
+		MinimumTTL:   s.MinimumTTL,
+	}
+}
+
+// mergeSOAConfig overlays a PATCH's supplied SOA fields onto the stored carrier,
+// preserving any field the PATCH left unset (zero). Used by the record-set PATCH
+// merge so a partial SOA edit keeps the fields it did not resend.
+func mergeSOAConfig(base, patch *dnsdriver.SOARecord) *dnsdriver.SOARecord {
+	if patch == nil {
+		return base
+	}
+
+	if base == nil {
+		return patch
+	}
+
+	out := *base
+
+	if patch.Email != "" {
+		out.Email = patch.Email
+	}
+
+	if patch.SerialNumber != 0 {
+		out.SerialNumber = patch.SerialNumber
+	}
+
+	if patch.RefreshTime != 0 {
+		out.RefreshTime = patch.RefreshTime
+	}
+
+	if patch.RetryTime != 0 {
+		out.RetryTime = patch.RetryTime
+	}
+
+	if patch.ExpireTime != 0 {
+		out.ExpireTime = patch.ExpireTime
+	}
+
+	if patch.MinimumTTL != 0 {
+		out.MinimumTTL = patch.MinimumTTL
+	}
+
+	return &out
 }
 
 // toRecordSetJSON converts a driver record into its ARM element.

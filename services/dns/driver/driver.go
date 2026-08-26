@@ -107,6 +107,20 @@ type GeoLocation struct {
 	SubdivisionCode string
 }
 
+// SOARecord carries the editable timing fields of an Azure DNS zone's apex SOA
+// record set. Azure lets a caller edit an SOA record set's refresh/retry/expire
+// times, minimum TTL, serial number and email; the host (authoritative name
+// server) is read-only. Other providers leave it nil, and the auto-created apex
+// SOA leaves it nil too so it reads back Azure's platform defaults.
+type SOARecord struct {
+	Email        string
+	SerialNumber int64
+	RefreshTime  int64
+	RetryTime    int64
+	ExpireTime   int64
+	MinimumTTL   int64
+}
+
 // RecordConfig describes a DNS record.
 type RecordConfig struct {
 	ZoneID string
@@ -125,6 +139,10 @@ type RecordConfig struct {
 	MultiValueAnswer *bool
 	GeoLocation      *GeoLocation
 	AliasTarget      *AliasTarget
+	// SOA carries the editable Azure SOA timing fields so a caller-edited apex
+	// SOA reads back the edited values. Nil for non-SOA records and for the
+	// auto-created apex SOA (which reads back platform defaults).
+	SOA *SOARecord
 }
 
 // RecordInfo describes a DNS record.
@@ -143,6 +161,9 @@ type RecordInfo struct {
 	MultiValueAnswer *bool
 	GeoLocation      *GeoLocation
 	AliasTarget      *AliasTarget
+	// SOA carries the editable Azure SOA timing fields as stored. Nil for
+	// non-SOA records and for the auto-created apex SOA.
+	SOA *SOARecord
 }
 
 // HealthCheckConfig describes a health check to create.
