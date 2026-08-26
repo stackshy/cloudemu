@@ -516,38 +516,25 @@ func recordsFrom(records []dnsdriver.RecordInfo, start, startType string) []dnsd
 }
 
 // compareDNSName orders two DNS names the way Route 53's ListResourceRecordSets
-// does: by the name's labels reversed (TLD first), so a zone apex sorts before
-// its subdomains. Comparison is case- and trailing-dot-insensitive. It returns
-// -1, 0, or 1.
+// does: by the name with its labels reversed (TLD first), compared as a flat
+// ASCII string with the dots — including the trailing dot — kept in place. The
+// trailing dot matters: a character whose ASCII value is below '.' (0x2e), such
+// as '-' (0x2d) or the wildcard '*' (0x2a), sorts a longer label before the
+// terminator, so "com.order.api-v2." < "com.order.api." (api-v2 sorts first).
+// A per-label compare would wrongly treat "api" as the prefix that wins.
+// Comparison is case-insensitive (DNS names are); it returns -1, 0, or 1.
 func compareDNSName(a, b string) int {
-	la, lb := reversedLabels(a), reversedLabels(b)
-
-	for i := 0; i < len(la) && i < len(lb); i++ {
-		if la[i] != lb[i] {
-			if la[i] < lb[i] {
-				return -1
-			}
-
-			return 1
-		}
-	}
-
-	switch {
-	case len(la) < len(lb):
-		return -1
-	case len(la) > len(lb):
-		return 1
-	default:
-		return 0
-	}
+	return strings.Compare(reversedDotted(a), reversedDotted(b))
 }
 
-// reversedLabels lower-cases a DNS name, drops the trailing dot, and returns its
-// labels reversed (TLD first): "www.Order.com." → ["com", "order", "www"].
-func reversedLabels(name string) []string {
+// reversedDotted lower-cases a DNS name, drops the trailing dot, reverses the
+// LABEL order, and rejoins with dots plus a trailing dot — the flat key Route 53
+// sorts on: "api-v2.Order.com." → "com.order.api-v2.". Comparing these keys as
+// plain strings (dots included) reproduces Route 53's ordering exactly.
+func reversedDotted(name string) string {
 	name = strings.ToLower(strings.TrimSuffix(name, "."))
 	if name == "" {
-		return nil
+		return "."
 	}
 
 	labels := strings.Split(name, ".")
@@ -555,7 +542,7 @@ func reversedLabels(name string) []string {
 		labels[i], labels[j] = labels[j], labels[i]
 	}
 
-	return labels
+	return strings.Join(labels, ".") + "."
 }
 
 // parseMaxItems reads the maxitems query param, clamping to the fixed page size
