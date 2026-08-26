@@ -245,6 +245,16 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 		return nil, errors.Newf(errors.NotFound, "event bus %q not found", busName)
 	}
 
+	// Reject a structurally invalid event pattern at deploy time. Without this a
+	// typo'd pattern (e.g. a non-array leaf) would store "successfully" and then
+	// silently match nothing, so targets never fire — the worst failure mode for
+	// an event-driven app.
+	if cfg.EventPattern != "" {
+		if err := eventmatch.ValidatePattern(cfg.EventPattern); err != nil {
+			return nil, errors.New(errors.InvalidArgument, err.Error())
+		}
+	}
+
 	state := cfg.State
 	if state == "" {
 		state = defaultRuleState

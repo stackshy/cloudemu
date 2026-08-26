@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/eventmatch"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -107,6 +108,15 @@ func (h *Handler) putRule(w http.ResponseWriter, r *http.Request) {
 		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
 			"Parameter(s) EventPattern or ScheduleExpression must be specified.")
 		return
+	}
+
+	// A structurally invalid event pattern is rejected up front with
+	// InvalidEventPatternException, the exact exception real EventBridge returns.
+	if req.EventPattern != "" {
+		if err := eventmatch.ValidatePattern(req.EventPattern); err != nil {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidEventPatternException", err.Error())
+			return
+		}
 	}
 
 	rule, err := h.bus.PutRule(r.Context(), &ebdriver.RuleConfig{
