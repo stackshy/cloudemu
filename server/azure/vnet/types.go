@@ -46,6 +46,7 @@ type subnetRequestProps struct {
 	AddressPrefix        string    `json:"addressPrefix,omitempty"`
 	NatGateway           *armIDRef `json:"natGateway,omitempty"`
 	NetworkSecurityGroup *armIDRef `json:"networkSecurityGroup,omitempty"`
+	RouteTable           *armIDRef `json:"routeTable,omitempty"`
 }
 
 type subnetResponse struct {
@@ -60,6 +61,7 @@ type subnetResponseProps struct {
 	AddressPrefix        string    `json:"addressPrefix,omitempty"`
 	NatGateway           *armIDRef `json:"natGateway,omitempty"`
 	NetworkSecurityGroup *armIDRef `json:"networkSecurityGroup,omitempty"`
+	RouteTable           *armIDRef `json:"routeTable,omitempty"`
 }
 
 type subnetListResponse struct {
@@ -243,4 +245,52 @@ type vnetPeeringResponseProps struct {
 
 type vnetPeeringListResponse struct {
 	Value []vnetPeeringResponse `json:"value"`
+}
+
+// RouteTables (RouteTablesClient / azurerm_route_table).
+
+type routeTableRequest struct {
+	Location   string                 `json:"location"`
+	Tags       map[string]string      `json:"tags,omitempty"`
+	Properties routeTableRequestProps `json:"properties,omitempty"`
+}
+
+type routeTableRequestProps struct {
+	Routes []route `json:"routes,omitempty"`
+}
+
+type route struct {
+	Name       string     `json:"name,omitempty"`
+	ID         string     `json:"id,omitempty"`
+	Properties routeProps `json:"properties,omitempty"`
+}
+
+type routeProps struct {
+	AddressPrefix     string `json:"addressPrefix,omitempty"`
+	NextHopType       string `json:"nextHopType,omitempty"`
+	NextHopIPAddress  string `json:"nextHopIpAddress,omitempty"`
+	ProvisioningState string `json:"provisioningState,omitempty"`
+}
+
+type routeTableResponse struct {
+	ID         string                  `json:"id"`
+	Name       string                  `json:"name"`
+	Type       string                  `json:"type"`
+	Location   string                  `json:"location"`
+	Etag       string                  `json:"etag,omitempty"`
+	Tags       map[string]string       `json:"tags,omitempty"`
+	Properties routeTableResponseProps `json:"properties"`
+}
+
+type routeTableResponseProps struct {
+	ProvisioningState string  `json:"provisioningState"`
+	Routes            []route `json:"routes"`
+	// Subnets is the read-only back-reference real ARM reports on a routeTables
+	// GET once the route table is associated with a subnet (mirrors
+	// nsgResponseProps.Subnets).
+	Subnets []armIDRef `json:"subnets,omitempty"`
+}
+
+type routeTableListResponse struct {
+	Value []routeTableResponse `json:"value"`
 }

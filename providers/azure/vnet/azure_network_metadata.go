@@ -130,6 +130,45 @@ func (m *Mock) DeleteAzureNSGRule(_ context.Context, id, ruleName string) error 
 	return nil
 }
 
+// PutAzureRouteTableMetadata stores the Azure-only route-table fields (region,
+// routes and user tags) for the route table with the given driver id, replacing
+// any previously stored metadata.
+func (m *Mock) PutAzureRouteTableMetadata(_ context.Context, id string, meta driver.AzureRouteTableMetadata) error {
+	m.azureRouteTableMeta.Set(id, cloneRouteTableMeta(meta))
+	return nil
+}
+
+// GetAzureRouteTableMetadata returns the stored Azure route-table metadata for id.
+func (m *Mock) GetAzureRouteTableMetadata(_ context.Context, id string) (driver.AzureRouteTableMetadata, bool) {
+	meta, ok := m.azureRouteTableMeta.Get(id)
+	if !ok {
+		return driver.AzureRouteTableMetadata{}, false
+	}
+
+	return cloneRouteTableMeta(meta), true
+}
+
+// DeleteAzureRouteTableMetadata drops the stored metadata for id (called when
+// the route table is deleted).
+func (m *Mock) DeleteAzureRouteTableMetadata(_ context.Context, id string) {
+	m.azureRouteTableMeta.Delete(id)
+}
+
+// cloneRouteTableMeta deep-copies the route slice and tag map so stored and
+// returned values never alias a caller's slice/map.
+func cloneRouteTableMeta(meta driver.AzureRouteTableMetadata) driver.AzureRouteTableMetadata {
+	out := driver.AzureRouteTableMetadata{Location: meta.Location}
+	if len(meta.Routes) > 0 {
+		out.Routes = append([]driver.AzureRoute(nil), meta.Routes...)
+	}
+
+	if len(meta.Tags) > 0 {
+		out.Tags = copyTags(meta.Tags)
+	}
+
+	return out
+}
+
 // cloneVNetMeta deep-copies the address-prefix slice so stored and returned
 // values never alias a caller's slice.
 func cloneVNetMeta(meta driver.AzureVNetMetadata) driver.AzureVNetMetadata {

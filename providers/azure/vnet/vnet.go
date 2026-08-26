@@ -69,6 +69,10 @@ type Mock struct {
 	// list, Azure security rules), keyed by the driver resource id.
 	azureVNetMeta *memstore.Store[driver.AzureVNetMetadata]
 	azureNSGMeta  *memstore.Store[driver.AzureNSGMetadata]
+	// azureRouteTableMeta holds the ARM-specific route-table fields (region,
+	// routes, user tags) the cross-cloud RouteTable model cannot represent, keyed
+	// by the driver route table id.
+	azureRouteTableMeta *memstore.Store[driver.AzureRouteTableMetadata]
 	// azureVNetPeerings holds the ARM-specific virtualNetworkPeerings
 	// sub-resources for each VNet, keyed by the VNet's driver id, separately
 	// from azureVNetMeta so a whole-VNet PUT's PutAzureVNetMetadata (which
@@ -85,23 +89,24 @@ type Mock struct {
 // New creates a new Azure Virtual Network mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		vpcs:              memstore.New[*vpcData](),
-		subnets:           memstore.New[*subnetData](),
-		securityGroups:    memstore.New[*sgData](),
-		peerings:          memstore.New[*peeringData](),
-		natGateways:       memstore.New[*natGatewayData](),
-		flowLogs:          memstore.New[*flowLogData](),
-		routeTables:       memstore.New[*routeTableData](),
-		networkACLs:       memstore.New[*networkACLData](),
-		igws:              memstore.New[*igwData](),
-		eips:              memstore.New[*eipData](),
-		rtAssocs:          memstore.New[*rtAssocData](),
-		endpoints:         memstore.New[*driver.VPCEndpoint](),
-		nics:              memstore.New[*nicData](),
-		azureVNetMeta:     memstore.New[driver.AzureVNetMetadata](),
-		azureNSGMeta:      memstore.New[driver.AzureNSGMetadata](),
-		azureVNetPeerings: memstore.New[[]driver.AzureVNetPeering](),
-		opts:              opts,
+		vpcs:                memstore.New[*vpcData](),
+		subnets:             memstore.New[*subnetData](),
+		securityGroups:      memstore.New[*sgData](),
+		peerings:            memstore.New[*peeringData](),
+		natGateways:         memstore.New[*natGatewayData](),
+		flowLogs:            memstore.New[*flowLogData](),
+		routeTables:         memstore.New[*routeTableData](),
+		networkACLs:         memstore.New[*networkACLData](),
+		igws:                memstore.New[*igwData](),
+		eips:                memstore.New[*eipData](),
+		rtAssocs:            memstore.New[*rtAssocData](),
+		endpoints:           memstore.New[*driver.VPCEndpoint](),
+		nics:                memstore.New[*nicData](),
+		azureVNetMeta:       memstore.New[driver.AzureVNetMetadata](),
+		azureNSGMeta:        memstore.New[driver.AzureNSGMetadata](),
+		azureRouteTableMeta: memstore.New[driver.AzureRouteTableMetadata](),
+		azureVNetPeerings:   memstore.New[[]driver.AzureVNetPeering](),
+		opts:                opts,
 	}
 }
 
