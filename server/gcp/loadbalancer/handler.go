@@ -44,6 +44,11 @@ const (
 	resourceForwardingRules = "forwardingRules"
 )
 
+// reasonResourceInUse is the GCP error reason returned when a delete is rejected
+// because another resource still references the target. Real GCP answers such a
+// delete with HTTP 400 and this reason, so dependents are never orphaned.
+const reasonResourceInUse = "resourceInUseByAnotherResource"
+
 // Handler serves the GCP load-balancing REST surface.
 type Handler struct {
 	lb lbdriver.LoadBalancer

@@ -49,6 +49,10 @@ func TestSDKGCPBackendServiceRoundTrip(t *testing.T) {
 
 	t.Cleanup(func() { _ = client.Close() })
 
+	// The backend service references hc1, which must exist first (real GCP
+	// rejects a healthChecks[] reference to a missing health check).
+	insertHealthCheck(ctx, t, ts, "hc1")
+
 	insertOp, err := client.Insert(ctx, &computepb.InsertBackendServiceRequest{
 		Project: testProject,
 		BackendServiceResource: &computepb.BackendService{

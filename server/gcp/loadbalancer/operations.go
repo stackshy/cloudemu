@@ -36,6 +36,11 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if err := h.validateHealthCheckRefs(r.Context(), rp, req.HealthChecks); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	tags := backendServiceTags(&req)
 	tags[bsCreationTag] = time.Now().UTC().Format(time.RFC3339)
 	tags[bsNameTag] = req.Name
@@ -77,6 +82,11 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 
 	var req backendServiceRequest
 	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := h.validateHealthCheckRefs(r.Context(), rp, req.HealthChecks); err != nil {
+		gcprest.WriteCErr(w, err)
 		return
 	}
 
@@ -168,6 +178,17 @@ func (h *Handler) deleteBackendService(w http.ResponseWriter, r *http.Request, r
 	tg, err := h.findTGByName(r.Context(), rp, rp.ResourceName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// Real GCP refuses to delete a backend service still referenced by a
+	// forwarding rule or a url-map (400 resourceInUseByAnotherResource); deleting
+	// it here would orphan the dependent (a dangling listener, or a url-map whose
+	// service no longer resolves).
+	if ref := h.backendServiceInUse(r.Context(), rp, rp.ResourceName, tg.ARN); ref != "" {
+		gcprest.WriteError(w, http.StatusBadRequest, reasonResourceInUse,
+			"The backend_service resource '"+rp.ResourceName+"' is already being used by '"+ref+"'")
+
 		return
 	}
 
@@ -597,6 +618,140 @@ func backendServiceName(ref string) string {
 	}
 
 	return ref
+}
+
+// backendServiceInUse returns the name of a resource still referencing the
+// backend service, or "" when it is safe to delete. A forwarding rule (via its
+// linked listener) or a url-map (defaultService / pathMatchers) both pin it.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) backendServiceInUse(ctx context.Context, rp gcprest.ResourcePath, bsName, tgARN string) string {
+	if fr := h.forwardingRuleRefTG(ctx, tgARN); fr != "" {
+		return fr
+	}
+
+	return h.urlMapRefBackendService(ctx, rp, bsName)
+}
+
+// forwardingRuleRefTG returns the name of a forwarding rule whose listener
+// targets tgARN, or "" when none does.
+func (h *Handler) forwardingRuleRefTG(ctx context.Context, tgARN string) string {
+	lbs, err := h.lb.DescribeLoadBalancers(ctx, nil)
+	if err != nil {
+		return ""
+	}
+
+	for i := range lbs {
+		listeners, lerr := h.lb.DescribeListeners(ctx, lbs[i].ARN)
+		if lerr != nil {
+			continue
+		}
+
+		for j := range listeners {
+			if listeners[j].TargetGroupARN == tgARN {
+				return displayName(lbs[i].Tags, frNameTag, lbs[i].Name)
+			}
+		}
+	}
+
+	return ""
+}
+
+// urlMapRefBackendService returns the name of a same-scope url-map referencing
+// bsName (as defaultService or in a pathMatcher), or "" when none does.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) urlMapRefBackendService(ctx context.Context, rp gcprest.ResourcePath, bsName string) string {
+	store, ok := h.gcpStore()
+	if !ok {
+		return ""
+	}
+
+	maps, err := store.ListGCPResources(ctx, resourceURLMaps, scopeKeyOf(rp))
+	if err != nil {
+		return ""
+	}
+
+	for i := range maps {
+		if bodyRefsBackendService(maps[i].Body, bsName) {
+			return maps[i].Name
+		}
+	}
+
+	return ""
+}
+
+// bodyRefsBackendService walks an opaque url-map body for any "service" /
+// "defaultService" member whose reference resolves to bsName.
+func bodyRefsBackendService(v any, bsName string) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		return mapRefsBackendService(t, bsName)
+	case []any:
+		for i := range t {
+			if bodyRefsBackendService(t[i], bsName) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// mapRefsBackendService checks one map node for a backend-service reference and
+// recurses into its members.
+func mapRefsBackendService(m map[string]any, bsName string) bool {
+	for k, val := range m {
+		if k == "service" || k == "defaultService" {
+			if s, ok := val.(string); ok && backendServiceName(s) == bsName {
+				return true
+			}
+		}
+
+		if bodyRefsBackendService(val, bsName) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// validateHealthCheckRefs rejects a create/patch whose healthChecks[] names a
+// health check that does not exist in the same scope, matching real GCP's
+// "Invalid value for field 'resource.healthChecks[N]'" rejection. It is a no-op
+// when the driver has no GCP resource store (the health checks can't be
+// resolved) so non-GCP drivers stay unaffected.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) validateHealthCheckRefs(ctx context.Context, rp gcprest.ResourcePath, refs []string) error {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	store, ok := h.gcpStore()
+	if !ok {
+		return nil
+	}
+
+	scope := scopeKeyOf(rp)
+
+	for i, ref := range refs {
+		name := lastPathSegment(ref)
+
+		_, err := store.GetGCPResource(ctx, resourceHealthChecks, scope, name)
+		if err == nil {
+			continue
+		}
+
+		if cerrors.IsNotFound(err) {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"Invalid value for field 'resource.healthChecks[%d]': '%s'. The referenced health check resource cannot be found.", i, ref)
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // firstPort parses the low end of a GCP portRange (e.g. "80" or "80-80").

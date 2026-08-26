@@ -1,8 +1,10 @@
 package loadbalancer
 
 import (
+	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
@@ -247,6 +249,20 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 		return
 	}
 
+	// A health check referenced by a backend service's healthChecks[] cannot be
+	// deleted in real GCP (400 resourceInUseByAnotherResource); deleting it here
+	// would leave the backend service pointing at a health check that no longer
+	// exists. (url-maps are pinned only by target-proxies, which are
+	// unimplemented, so no url-map delete guard is reachable yet.)
+	if rp.ResourceType == resourceHealthChecks {
+		if bs := h.healthCheckInUse(r.Context(), rp); bs != "" {
+			gcprest.WriteError(w, http.StatusBadRequest, reasonResourceInUse,
+				"The health_check resource '"+rp.ResourceName+"' is already being used by '"+bs+"'")
+
+			return
+		}
+	}
+
 	if err := store.DeleteGCPResource(r.Context(), rp.ResourceType, scopeKeyOf(rp), rp.ResourceName); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -283,6 +299,50 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 // adds on top of the stored body (kind, id, name, creationTimestamp, selfLink,
 // region).
 const internalFieldCount = 6
+
+// healthCheckInUse returns the name of a same-scope backend service whose
+// healthChecks[] references the health check being deleted, or "" when none
+// does.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath) string {
+	tgs, err := h.lb.DescribeTargetGroups(ctx, nil)
+	if err != nil {
+		return ""
+	}
+
+	scope := scopeKeyOf(rp)
+
+	for i := range tgs {
+		if tgs[i].Tags[bsScopeTag] != scope {
+			continue
+		}
+
+		refs := tgs[i].Tags[bsHealthChecksTag]
+		if refs == "" {
+			continue
+		}
+
+		for _, ref := range strings.Split(refs, ",") {
+			if lastPathSegment(ref) == rp.ResourceName {
+				return displayName(tgs[i].Tags, bsNameTag, tgs[i].Name)
+			}
+		}
+	}
+
+	return ""
+}
+
+// lastPathSegment returns the trailing name of a GCP self-link or relative
+// reference (e.g. ".../global/healthChecks/hc1" → "hc1"), or the input when it
+// has no separator.
+func lastPathSegment(ref string) string {
+	if idx := strings.LastIndex(ref, "/"); idx >= 0 {
+		return ref[idx+1:]
+	}
+
+	return ref
+}
 
 // listScopeSegment renders the scope path segment used in a list envelope's id.
 //
