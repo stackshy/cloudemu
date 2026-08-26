@@ -187,7 +187,7 @@ func setContains(v, target any) bool {
 		t, ok := target.(string)
 		return ok && stringSetHas(s, t)
 	case NumberSet:
-		t, ok := toFloat(target)
+		t, ok := toNumber(target)
 		return ok && numberSetHas(s, t)
 	case BinarySet:
 		t, ok := target.([]byte)

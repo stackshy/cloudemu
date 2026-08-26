@@ -73,12 +73,12 @@ func TestUpdateAddSet(t *testing.T) {
 }
 
 func TestUpdateAddNumberSet(t *testing.T) {
-	out := mustUpdate(t, map[string]any{"nums": NumberSet{1, 2}}, "ADD nums :n",
-		map[string]any{":n": NumberSet{2, 3}})
+	out := mustUpdate(t, map[string]any{"nums": NumberSet{"1", "2"}}, "ADD nums :n",
+		map[string]any{":n": NumberSet{"2", "3"}})
 
 	ns, ok := out["nums"].(NumberSet)
 	require.True(t, ok)
-	assert.ElementsMatch(t, NumberSet{1, 2, 3}, ns)
+	assert.ElementsMatch(t, NumberSet{"1", "2", "3"}, ns)
 }
 
 func TestUpdateDeleteSet(t *testing.T) {
