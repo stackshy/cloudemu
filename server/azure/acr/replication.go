@@ -8,8 +8,6 @@ import (
 )
 
 // serveReplication routes .../registries/{registry}/replications[/{name}].
-//
-//nolint:dupl // webhook and replication sub-resource routers are intentionally typed; sharing via generics adds noise.
 func (h *ARMHandler) serveReplication(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
