@@ -162,6 +162,19 @@ func TestSDKGCEInstanceUpdateVerbs(t *testing.T) {
 		t.Fatalf("SetLabels wait: %v", err)
 	}
 
+	// Real GCP requires the instance to be stopped (TERMINATED) before its
+	// machine type can be changed, so stop it first.
+	stopOp, err := client.Stop(ctx, &computepb.StopInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "upd-vm",
+	})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if err := stopOp.Wait(ctx); err != nil {
+		t.Fatalf("Stop wait: %v", err)
+	}
+
 	mtOp, err := client.SetMachineType(ctx, &computepb.SetMachineTypeInstanceRequest{
 		Project: testProject, Zone: testZone, Instance: "upd-vm",
 		InstancesSetMachineTypeRequestResource: &computepb.InstancesSetMachineTypeRequest{
@@ -479,6 +492,186 @@ func TestGCEInstanceListFilterAndPagination(t *testing.T) {
 
 	if page.NextPageToken == "" {
 		t.Error("nextPageToken empty with more pages remaining")
+	}
+}
+
+// TestGCEInstanceListFilterLabelsAndUnknownField covers BUG3: a "labels.<k>=<v>"
+// filter returns only the matching instances, and a filter naming a field the
+// emulator does not model matches everything (never silently excludes all).
+func TestGCEInstanceListFilterLabelsAndUnknownField(t *testing.T) {
+	client, _, ctx := newInstancesEnv(t)
+
+	mustInsert(t, client, testZone, &computepb.Instance{
+		Name: ptrStr("prod-vm"), MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+		Labels: map[string]string{"env": "prod"},
+	})
+	mustInsert(t, client, testZone, &computepb.Instance{
+		Name: ptrStr("dev-vm"), MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+		Labels: map[string]string{"env": "dev"},
+	})
+
+	prod := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
+		Project: testProject, Zone: testZone, Filter: ptrStr("labels.env=prod"),
+	}))
+	if len(prod) != 1 || prod[0] != "prod-vm" {
+		t.Errorf("labels.env=prod returned %v, want [prod-vm]", prod)
+	}
+
+	// An unrecognized field must match everything, not exclude all.
+	all := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
+		Project: testProject, Zone: testZone, Filter: ptrStr("someUnknownField=whatever"),
+	}))
+	if len(all) != 2 {
+		t.Errorf("unknown-field filter returned %v, want both instances", all)
+	}
+}
+
+// TestGCEInstanceFingerprintPrecondition covers BUG1: setLabels/setMetadata/
+// setTags enforce the incoming fingerprint — a stale one is rejected 412
+// conditionNotMet, the current one succeeds.
+func TestGCEInstanceFingerprintPrecondition(t *testing.T) {
+	client, _, ctx := newInstancesEnv(t)
+
+	mustInsert(t, client, testZone, &computepb.Instance{
+		Name: ptrStr("fp-vm"), MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+	})
+
+	const stale = "c3RhbGU=" // base64("stale"), never a real fingerprint
+
+	// setLabels: stale rejected, current accepted.
+	_, err := client.SetLabels(ctx, &computepb.SetLabelsInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "fp-vm",
+		InstancesSetLabelsRequestResource: &computepb.InstancesSetLabelsRequest{
+			Labels: map[string]string{"env": "prod"}, LabelFingerprint: ptrStr(stale),
+		},
+	})
+	assertConditionNotMet(t, "setLabels", err)
+
+	labelFp := mustGet(t, client, testZone, "fp-vm").GetLabelFingerprint()
+	mustWait(t, ctx, mustSetLabels(t, ctx, client, "fp-vm", map[string]string{"env": "prod"}, labelFp))
+
+	// setMetadata: stale rejected, current accepted.
+	_, err = client.SetMetadata(ctx, &computepb.SetMetadataInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "fp-vm",
+		MetadataResource: &computepb.Metadata{
+			Items:       []*computepb.Items{{Key: ptrStr("k"), Value: ptrStr("v")}},
+			Fingerprint: ptrStr(stale),
+		},
+	})
+	assertConditionNotMet(t, "setMetadata", err)
+
+	metaFp := mustGet(t, client, testZone, "fp-vm").GetMetadata().GetFingerprint()
+	mdOp, err := client.SetMetadata(ctx, &computepb.SetMetadataInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "fp-vm",
+		MetadataResource: &computepb.Metadata{
+			Items:       []*computepb.Items{{Key: ptrStr("k"), Value: ptrStr("v")}},
+			Fingerprint: ptrStr(metaFp),
+		},
+	})
+	if err != nil {
+		t.Fatalf("setMetadata current fingerprint: %v", err)
+	}
+
+	mustWait(t, ctx, mdOp)
+
+	// setTags: stale rejected, current accepted.
+	_, err = client.SetTags(ctx, &computepb.SetTagsInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "fp-vm",
+		TagsResource: &computepb.Tags{Items: []string{"web"}, Fingerprint: ptrStr(stale)},
+	})
+	assertConditionNotMet(t, "setTags", err)
+
+	tagsFp := mustGet(t, client, testZone, "fp-vm").GetTags().GetFingerprint()
+	tagsOp, err := client.SetTags(ctx, &computepb.SetTagsInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "fp-vm",
+		TagsResource: &computepb.Tags{Items: []string{"web"}, Fingerprint: ptrStr(tagsFp)},
+	})
+	if err != nil {
+		t.Fatalf("setTags current fingerprint: %v", err)
+	}
+
+	mustWait(t, ctx, tagsOp)
+}
+
+// TestGCEInstanceSetMachineTypeRequiresStopped covers BUG2: setMachineType is
+// rejected 400 on a running instance and succeeds once it is stopped.
+func TestGCEInstanceSetMachineTypeRequiresStopped(t *testing.T) {
+	client, _, ctx := newInstancesEnv(t)
+
+	mustInsert(t, client, testZone, &computepb.Instance{
+		Name: ptrStr("mt-vm"), MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+	})
+
+	req := &computepb.SetMachineTypeInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "mt-vm",
+		InstancesSetMachineTypeRequestResource: &computepb.InstancesSetMachineTypeRequest{
+			MachineType: ptrStr("zones/" + testZone + "/machineTypes/n2-standard-4"),
+		},
+	}
+
+	if _, err := client.SetMachineType(ctx, req); err == nil {
+		t.Fatal("setMachineType on running instance succeeded, want 400")
+	} else if !strings.Contains(err.Error(), "400") && !strings.Contains(err.Error(), "must be stopped") {
+		t.Errorf("err=%v want 400/must be stopped", err)
+	}
+
+	stopOp, err := client.Stop(ctx, &computepb.StopInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "mt-vm",
+	})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	mustWait(t, ctx, stopOp)
+
+	mtOp, err := client.SetMachineType(ctx, req)
+	if err != nil {
+		t.Fatalf("setMachineType on stopped instance: %v", err)
+	}
+
+	mustWait(t, ctx, mtOp)
+
+	if !strings.HasSuffix(mustGet(t, client, testZone, "mt-vm").GetMachineType(), "/machineTypes/n2-standard-4") {
+		t.Error("machineType not updated after stop")
+	}
+}
+
+func assertConditionNotMet(t *testing.T, verb string, err error) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("%s with stale fingerprint succeeded, want 412 conditionNotMet", verb)
+	}
+
+	if !strings.Contains(err.Error(), "412") && !strings.Contains(err.Error(), "conditionNotMet") {
+		t.Errorf("%s err=%v want 412/conditionNotMet", verb, err)
+	}
+}
+
+func mustSetLabels(
+	t *testing.T, ctx context.Context, client *gcpcompute.InstancesClient,
+	name string, labels map[string]string, fingerprint string,
+) *gcpcompute.Operation {
+	t.Helper()
+
+	op, err := client.SetLabels(ctx, &computepb.SetLabelsInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: name,
+		InstancesSetLabelsRequestResource: &computepb.InstancesSetLabelsRequest{
+			Labels: labels, LabelFingerprint: ptrStr(fingerprint),
+		},
+	})
+	if err != nil {
+		t.Fatalf("setLabels current fingerprint: %v", err)
+	}
+
+	return op
+}
+
+func mustWait(t *testing.T, ctx context.Context, op *gcpcompute.Operation) {
+	t.Helper()
+
+	if err := op.Wait(ctx); err != nil {
+		t.Fatalf("operation wait: %v", err)
 	}
 }
 
