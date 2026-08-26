@@ -19,6 +19,10 @@ const (
 	// maxBatchRecords / maxBatchBytes are the PutRecords request limits.
 	maxBatchRecords = 500
 	maxBatchBytes   = 5 << 20
+	// shardIteratorTTL is how long a shard iterator stays valid after it is
+	// returned. Real Kinesis expires iterators 5 minutes after creation; a
+	// GetRecords call refreshes the NextShardIterator it hands back.
+	shardIteratorTTL = 5 * time.Minute
 )
 
 // recordSizeLimit returns the per-record byte cap for a stream, honoring a
@@ -55,10 +59,14 @@ func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) 
 
 // iteratorToken is the opaque state a shard iterator carries. Records are never
 // trimmed in the emulator, so a stable slice index is a sufficient cursor.
+// CreatedAtMillis stamps when the iterator was minted (Unix milliseconds) so
+// GetRecords can reject iterators older than shardIteratorTTL without any extra
+// server-side state.
 type iteratorToken struct {
-	StreamName string `json:"s"`
-	ShardID    string `json:"h"`
-	NextIndex  int    `json:"i"`
+	StreamName      string `json:"s"`
+	ShardID         string `json:"h"`
+	NextIndex       int    `json:"i"`
+	CreatedAtMillis int64  `json:"c"`
 }
 
 func encodeIterator(t iteratorToken) string {
@@ -253,7 +261,18 @@ func (m *Mock) GetShardIterator(_ context.Context, in driver.GetShardIteratorInp
 		return "", err
 	}
 
-	return encodeIterator(iteratorToken{StreamName: sd.desc.StreamName, ShardID: in.ShardID, NextIndex: idx}), nil
+	return m.encodeFreshIterator(sd.desc.StreamName, in.ShardID, idx), nil
+}
+
+// encodeFreshIterator mints an iterator stamped with the current clock time, so
+// its shardIteratorTTL window starts now.
+func (m *Mock) encodeFreshIterator(streamName, shardID string, nextIndex int) string {
+	return encodeIterator(iteratorToken{
+		StreamName:      streamName,
+		ShardID:         shardID,
+		NextIndex:       nextIndex,
+		CreatedAtMillis: m.now().UnixMilli(),
+	})
 }
 
 // findShardByID returns the shard with the given id, or nil.
@@ -320,6 +339,13 @@ func (m *Mock) GetRecords(_ context.Context, shardIterator string, limit int32) 
 		return nil, err
 	}
 
+	createdAt := time.UnixMilli(tok.CreatedAtMillis).UTC()
+	if m.now().Sub(createdAt) > shardIteratorTTL {
+		return nil, expiredIterator(
+			"Iterator expired. The iterator was created at time %s which is now expired.",
+			createdAt.Format(time.RFC1123))
+	}
+
 	sd, ok := m.streams.Get(tok.StreamName)
 	if !ok {
 		return nil, errNotFoundName(tok.StreamName)
@@ -345,7 +371,7 @@ func (m *Mock) GetRecords(_ context.Context, shardIterator string, limit int32) 
 
 	out := &driver.GetRecordsOutput{
 		Records:            recs,
-		NextShardIterator:  encodeIterator(iteratorToken{StreamName: tok.StreamName, ShardID: tok.ShardID, NextIndex: end}),
+		NextShardIterator:  m.encodeFreshIterator(tok.StreamName, tok.ShardID, end),
 		MillisBehindLatest: 0,
 	}
 
