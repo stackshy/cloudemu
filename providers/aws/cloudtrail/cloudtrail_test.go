@@ -246,6 +246,100 @@ func TestEventSelectorsMutualExclusion(t *testing.T) {
 	assert.Equal(t, "WriteOnly", gotSel[0].ReadWriteType)
 }
 
+// TestGetEventSelectorsDefaultOnFreshTrail asserts a trail created without
+// explicit selectors reports CloudTrail's implicit default management selector
+// (ReadWriteType "All", IncludeManagementEvents true), and that an explicit
+// PutEventSelectors then overrides it.
+func TestGetEventSelectorsDefaultOnFreshTrail(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	_, err := m.CreateTrail(ctx, driver.CreateTrailInput{Name: "fresh-trail", S3BucketName: "b"})
+	require.NoError(t, err)
+
+	_, sel, adv, err := m.GetEventSelectors(ctx, "fresh-trail")
+	require.NoError(t, err)
+	assert.Empty(t, adv)
+	require.Len(t, sel, 1)
+	assert.Equal(t, "All", sel[0].ReadWriteType)
+	require.NotNil(t, sel[0].IncludeManagementEvents)
+	assert.True(t, *sel[0].IncludeManagementEvents)
+	assert.Empty(t, sel[0].DataResources)
+
+	// The default selector is not "custom".
+	tr, err := m.GetTrail(ctx, "fresh-trail")
+	require.NoError(t, err)
+	assert.False(t, tr.HasCustomEventSelectors)
+
+	// An explicit put overrides the default.
+	_, _, _, err = m.PutEventSelectors(ctx, "fresh-trail",
+		[]driver.EventSelector{{ReadWriteType: "WriteOnly"}}, nil)
+	require.NoError(t, err)
+
+	_, sel, _, err = m.GetEventSelectors(ctx, "fresh-trail")
+	require.NoError(t, err)
+	require.Len(t, sel, 1)
+	assert.Equal(t, "WriteOnly", sel[0].ReadWriteType)
+}
+
+// TestPutEventSelectorsBasicDefaults asserts a basic selector with fields
+// omitted reads back with CloudTrail's defaults applied: ReadWriteType "All"
+// and IncludeManagementEvents true.
+func TestPutEventSelectorsBasicDefaults(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	_, err := m.CreateTrail(ctx, driver.CreateTrailInput{Name: "def-trail", S3BucketName: "b"})
+	require.NoError(t, err)
+
+	include := true
+	_, sel, _, err := m.PutEventSelectors(ctx, "def-trail",
+		[]driver.EventSelector{{IncludeManagementEvents: &include}}, nil)
+	require.NoError(t, err)
+	require.Len(t, sel, 1)
+	assert.Equal(t, "All", sel[0].ReadWriteType)
+
+	_, sel, _, err = m.GetEventSelectors(ctx, "def-trail")
+	require.NoError(t, err)
+	require.Len(t, sel, 1)
+	assert.Equal(t, "All", sel[0].ReadWriteType)
+	require.NotNil(t, sel[0].IncludeManagementEvents)
+	assert.True(t, *sel[0].IncludeManagementEvents)
+}
+
+// TestListTagsARNValidation asserts ListTags validates each resource ARN like
+// AddTags/RemoveTags: malformed → CloudTrailARNInvalidException, well-formed
+// but absent → ResourceNotFoundException, valid trail ARN → its tags.
+func TestListTagsARNValidation(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	tr, err := m.CreateTrail(ctx, driver.CreateTrailInput{
+		Name: "tag-trail", S3BucketName: "b", Tags: map[string]string{"env": "prod"},
+	})
+	require.NoError(t, err)
+
+	// Malformed ARN.
+	_, err = m.ListTags(ctx, []string{"not-an-arn"})
+	require.Error(t, err)
+	var apiErr *driver.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExCloudTrailARNInvalid, apiErr.Exception)
+
+	// Well-formed but absent trail ARN.
+	absent := "arn:aws:cloudtrail:us-east-1:123456789012:trail/nope"
+	_, err = m.ListTags(ctx, []string{absent})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExResourceNotFound, apiErr.Exception)
+	assert.True(t, cerrors.IsNotFound(err))
+
+	// Valid trail ARN returns its tags.
+	tags, err := m.ListTags(ctx, []string{tr.TrailARN})
+	require.NoError(t, err)
+	assert.Equal(t, "prod", tags[tr.TrailARN]["env"])
+}
+
 // TestNoAliasOnReads asserts Get returns deep copies: mutating a returned
 // value's Tags map or nested selector slices must not affect stored state.
 func TestNoAliasOnReads(t *testing.T) {
@@ -585,10 +679,12 @@ func TestTagNonexistentResource(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, driver.ExResourceNotFound, apiErr.Exception)
 
-	// A phantom tag must not have been created.
-	tags, err := m.ListTags(ctx, []string{absent})
-	require.NoError(t, err)
-	assert.Empty(t, tags[absent])
+	// ListTags on the same absent-but-well-formed ARN is ResourceNotFoundException
+	// (no phantom tag was created, and the ARN is validated like AddTags).
+	_, err = m.ListTags(ctx, []string{absent})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExResourceNotFound, apiErr.Exception)
 
 	err = m.RemoveTags(ctx, absent, []string{"k"})
 	require.Error(t, err)

@@ -36,6 +36,7 @@ const (
 	maxEventSizeStd   = "Standard"
 	arnPrefix         = "arn"
 	serviceName       = "cloudtrail"
+	readWriteAll      = "All"
 )
 
 // trailData is a trail plus its logging status, selectors, and lock.
