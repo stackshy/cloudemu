@@ -97,6 +97,8 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `PutAzureNSGMetadata` |  |
 | `PutAzureVNetMetadata` |  |
 | `SetAzureVNetPeeringState` | SetAzureVNetPeeringState atomically updates just the peeringState field of |
+| `UpdateAzureNATGateway` | UpdateAzureNATGateway re-applies the mutable fields of an existing NAT |
+| `UpdateAzurePublicIP` | UpdateAzurePublicIP overwrites the mutable fields of an existing public IP |
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
 | `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 

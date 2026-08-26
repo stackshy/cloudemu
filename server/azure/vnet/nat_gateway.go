@@ -174,6 +174,16 @@ func (h *Handler) resolveNATGatewayAllocation(ctx context.Context, publicIPAddre
 // re-PUT) or creates one.
 func (h *Handler) upsertNATGateway(ctx context.Context, rg, name string, cfg netdriver.NATGatewayConfig) (*netdriver.NATGateway, error) {
 	if existing, err := findNATGatewayByName(ctx, h.net, rg, name); err == nil {
+		if meta, ok := h.azureMeta(); ok {
+			if uerr := meta.UpdateAzureNATGateway(ctx, existing.ID, cfg.AllocationID, cfg.Tags); uerr != nil {
+				return nil, uerr
+			}
+
+			if refreshed, rerr := findNATGatewayByName(ctx, h.net, rg, name); rerr == nil {
+				existing = refreshed
+			}
+		}
+
 		return existing, nil
 	}
 

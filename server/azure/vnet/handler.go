@@ -1146,6 +1146,14 @@ func (h *Handler) upsertNSG(ctx context.Context, rg, name string,
 	tags map[string]string,
 ) (*netdriver.SecurityGroupInfo, error) {
 	if existing, err := findNSGInGroup(ctx, h.net, rg, name); err == nil {
+		if len(tags) > 0 {
+			_ = h.net.UpdateSecurityGroupTags(ctx, existing.ID, tags)
+
+			if refreshed, rerr := findNSGInGroup(ctx, h.net, rg, name); rerr == nil {
+				existing = refreshed
+			}
+		}
+
 		return existing, nil
 	}
 
@@ -1287,7 +1295,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		cfg.DNSDomainNameLabel = req.Properties.DNSSettings.DomainNameLabel
 	}
 
-	info, err := h.net.AllocateAddress(r.Context(), cfg)
+	info, err := h.upsertPublicIP(r.Context(), rp.ResourceGroup, rp.ResourceName, cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -1301,6 +1309,37 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	body := h.toPublicIPResponse(r.Context(), info, rp, loc)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "publicip-create-"+rp.ResourceName, body)
+}
+
+// upsertPublicIP reuses an existing public IP of the same name (idempotent
+// re-PUT — real ARM CreateOrUpdate) or allocates a new one. On the found branch
+// it mutates the existing allocation in place rather than allocating a second,
+// hidden one, so LIST returns exactly one entry per name and the allocation
+// never leaks.
+//
+//nolint:gocritic // hugeParam: cfg mirrors AllocateAddress's driver signature.
+func (h *Handler) upsertPublicIP(ctx context.Context, rg, name string,
+	cfg netdriver.ElasticIPConfig,
+) (*netdriver.ElasticIP, error) {
+	existing, err := findPublicIPByName(ctx, h.net, rg, name)
+	if err != nil {
+		return h.net.AllocateAddress(ctx, cfg)
+	}
+
+	meta, ok := h.azureMeta()
+	if !ok {
+		return existing, nil
+	}
+
+	if uerr := meta.UpdateAzurePublicIP(ctx, existing.AllocationID, cfg); uerr != nil {
+		return nil, uerr
+	}
+
+	if refreshed, rerr := findPublicIPByName(ctx, h.net, rg, name); rerr == nil {
+		existing = refreshed
+	}
+
+	return existing, nil
 }
 
 //nolint:gocritic // rp is a request-scoped value

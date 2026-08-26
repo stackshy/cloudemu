@@ -318,3 +318,83 @@ func TestSDKCheckIPAddressAvailability(t *testing.T) {
 		t.Fatalf("CheckIPAddressAvailability(10.0.1.20).available = %v, want true (free)", free.Available)
 	}
 }
+
+// TestSDKNSGRePUTUpdatesTags guards the re-PUT idempotency fix for network
+// security groups: a second CreateOrUpdate with changed tags must reflect on a
+// subsequent GET (previously the found branch returned the NSG unchanged and
+// dropped tag edits), while the security rules stay correct.
+func TestSDKNSGRePUTUpdatesTags(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+
+	nsgs, err := armnetwork.NewSecurityGroupsClient("sub-1", fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := armnetwork.SecurityGroup{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("dev")},
+		Properties: &armnetwork.SecurityGroupPropertiesFormat{
+			SecurityRules: []*armnetwork.SecurityRule{{
+				Name: to.Ptr("allow-ssh"),
+				Properties: &armnetwork.SecurityRulePropertiesFormat{
+					Priority: to.Ptr(int32(100)), Direction: to.Ptr(armnetwork.SecurityRuleDirectionInbound),
+					Access: to.Ptr(armnetwork.SecurityRuleAccessAllow), Protocol: to.Ptr(armnetwork.SecurityRuleProtocolTCP),
+					SourceAddressPrefix: to.Ptr("*"), DestinationAddressPrefix: to.Ptr("*"),
+					SourcePortRange: to.Ptr("*"), DestinationPortRange: to.Ptr("22"),
+				},
+			}},
+		},
+	}
+
+	first, err := nsgs.BeginCreateOrUpdate(ctx, "rg-1", "nsg-reput", body, nil)
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	pollDone(t, first)
+
+	// Re-PUT with a changed tag value and a new tag.
+	body.Tags = map[string]*string{"env": to.Ptr("prod"), "team": to.Ptr("net")}
+
+	second, err := nsgs.BeginCreateOrUpdate(ctx, "rg-1", "nsg-reput", body, nil)
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+
+	pollDone(t, second)
+
+	got, err := nsgs.Get(ctx, "rg-1", "nsg-reput", nil)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.Tags["env"] == nil || *got.Tags["env"] != "prod" {
+		t.Errorf("tags[env]=%v want prod (updated by re-PUT)", got.Tags["env"])
+	}
+
+	if got.Tags["team"] == nil || *got.Tags["team"] != "net" {
+		t.Errorf("tags[team]=%v want net (added by re-PUT)", got.Tags["team"])
+	}
+
+	// Rules must still be correct: the seeded allow-ssh rule survives.
+	found := false
+
+	if got.Properties != nil {
+		for _, rule := range got.Properties.SecurityRules {
+			if rule.Name != nil && *rule.Name == "allow-ssh" {
+				found = true
+
+				if rule.Properties == nil || rule.Properties.DestinationPortRange == nil ||
+					*rule.Properties.DestinationPortRange != "22" {
+					t.Errorf("allow-ssh destinationPortRange=%v want 22", rule.Properties)
+				}
+			}
+		}
+	}
+
+	if !found {
+		t.Error("allow-ssh security rule missing after re-PUT")
+	}
+}

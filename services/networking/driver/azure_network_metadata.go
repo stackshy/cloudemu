@@ -118,4 +118,20 @@ type AzureNetworkMetadata interface {
 	// Returns NotFound when either the virtual network or the named peering
 	// doesn't exist.
 	SetAzureVNetPeeringState(ctx context.Context, vnetID, peeringName, state string) error
+
+	// UpdateAzurePublicIP overwrites the mutable fields of an existing public IP
+	// (SKU, allocation method, idle timeout, DNS label, tags) in place, keyed by
+	// its allocation id, so a repeat ARM CreateOrUpdate PUT to the same
+	// publicIPAddresses/{name} updates the resource rather than allocating a
+	// duplicate. Its allocation id, address and any association are preserved.
+	// Returns NotFound when no public IP has that allocation id.
+	UpdateAzurePublicIP(ctx context.Context, allocationID string, cfg ElasticIPConfig) error
+
+	// UpdateAzureNATGateway re-applies the mutable fields of an existing NAT
+	// gateway (its bound public-IP allocation and tags), keyed by its id, so a
+	// repeat ARM CreateOrUpdate PUT re-associates the public IP and reflects tag
+	// changes rather than discarding them. A changed allocation id rebinds the
+	// public IP (freeing the previous one); an empty one detaches it. Returns
+	// NotFound when the NAT gateway doesn't exist.
+	UpdateAzureNATGateway(ctx context.Context, id, allocationID string, tags map[string]string) error
 }
