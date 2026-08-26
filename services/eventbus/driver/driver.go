@@ -127,6 +127,11 @@ type Event struct {
 	// concept, e.g. "/blobServices/default/containers/x"). Empty for AWS
 	// and GCP.
 	Subject string
+	// DataVersion is the publisher-supplied schema version of Detail (Azure
+	// Event Grid's dataVersion). Preserved end-to-end so subscribers see the
+	// version the publisher declared. Empty for AWS and GCP, and for an Azure
+	// publisher that omitted it (delivery then defaults it to "1.0").
+	DataVersion string
 }
 
 // PublishResult is the result of publishing events.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -117,6 +118,31 @@ func TestRegenerateRegistryCredential(t *testing.T) {
 
 	_, err = m.RegenerateRegistryCredential(ctx, "rg-1", "reg", "bogus")
 	require.Error(t, err)
+}
+
+func TestRegenerateRegistryCredentialRequiresAdmin(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	_, _, err := m.CreateOrUpdateRegistry(ctx, "rg-1", "noadmin", driver.AzureRegistryConfig{})
+	require.NoError(t, err)
+
+	// Admin user disabled: regenerating a credential is a failed precondition.
+	_, err = m.RegenerateRegistryCredential(ctx, "rg-1", "noadmin", "password")
+	require.Error(t, err)
+	assert.True(t, errors.IsFailedPrecondition(err))
+
+	// Enable admin, then regeneration rotates the password.
+	enabled := true
+	_, err = m.UpdateRegistry(ctx, "rg-1", "noadmin", driver.AzureRegistryUpdate{AdminUserEnabled: &enabled})
+	require.NoError(t, err)
+
+	before, err := m.ListRegistryCredentials(ctx, "rg-1", "noadmin")
+	require.NoError(t, err)
+
+	after, err := m.RegenerateRegistryCredential(ctx, "rg-1", "noadmin", "password")
+	require.NoError(t, err)
+	assert.NotEqual(t, before.Password, after.Password)
 }
 
 func TestDeleteTagKeepsManifest(t *testing.T) {
