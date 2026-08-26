@@ -59,6 +59,7 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		Tags:          copyTags(cfg.Tags),
 		SKUName:       skuName,
 		SKUTier:       skuTier,
+		SKUCapacity:   cfg.SKUCapacity,
 		ZoneRedundant: cfg.ZoneRedundant,
 		ElasticPoolID: cfg.ElasticPoolID,
 	}

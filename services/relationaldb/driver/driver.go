@@ -480,8 +480,12 @@ type DatabaseConfig struct {
 	// SKUName / SKUTier are the database compute SKU (e.g. "GP_Gen5_2" /
 	// "GeneralPurpose") and ZoneRedundant is the HA flag — cost inputs a
 	// discoverer reads from an Azure SQL database's sku / properties.
-	SKUName       string
-	SKUTier       string
+	SKUName string
+	SKUTier string
+	// SKUCapacity is the vCore/DTU count on an Azure SQL database SKU
+	// (sku.capacity). Optional — zero means unset, so a request that omits it
+	// carries no capacity. Only the Azure SQL provider populates it.
+	SKUCapacity   int
 	ZoneRedundant bool
 	// ElasticPoolID is the Azure SQL elastic pool this database belongs to (a
 	// bare pool name or a full ARM resource ID); empty for a standalone
@@ -503,8 +507,11 @@ type Database struct {
 	Tags     map[string]string
 	// SKUName / SKUTier / ZoneRedundant are echoed on read for cost discovery
 	// (Azure SQL database sku.name + properties.currentSku / zoneRedundant).
-	SKUName       string
-	SKUTier       string
+	SKUName string
+	SKUTier string
+	// SKUCapacity echoes the vCore/DTU count on read (sku.capacity /
+	// properties.currentSku.capacity); zero when unset. Azure SQL only.
+	SKUCapacity   int
 	ZoneRedundant bool
 	// ElasticPoolID echoes the elastic pool this database belongs to on read
 	// (properties.elasticPoolId); empty for a standalone database.

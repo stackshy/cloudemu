@@ -87,7 +87,9 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 }
 
 func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.db.DeleteCluster(r.Context(), rp.ResourceName); err != nil {
+	// ARM DELETE is idempotent: deleting an absent server is a success, not a
+	// 404 (Servers-Delete documents 204 = "does not exist").
+	if err := h.db.DeleteCluster(r.Context(), rp.ResourceName); err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -131,6 +133,7 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 	if body.SKU != nil {
 		cfg.SKUName = body.SKU.Name
 		cfg.SKUTier = body.SKU.Tier
+		cfg.SKUCapacity = body.SKU.Capacity
 	}
 
 	if body.Properties != nil {
@@ -223,6 +226,10 @@ func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *r
 		merged.SKUTier = cfg.SKUTier
 	}
 
+	if cfg.SKUCapacity != 0 {
+		merged.SKUCapacity = cfg.SKUCapacity
+	}
+
 	if cfg.Collation != "" {
 		merged.Collation = cfg.Collation
 	}
@@ -282,6 +289,7 @@ func replaceDatabase(
 		Tags:          merged.Tags,
 		SKUName:       merged.SKUName,
 		SKUTier:       merged.SKUTier,
+		SKUCapacity:   merged.SKUCapacity,
 		ZoneRedundant: merged.ZoneRedundant,
 		ElasticPoolID: merged.ElasticPoolID,
 	})
@@ -320,7 +328,9 @@ func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm
 func (*Handler) deleteDatabase(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases,
 ) {
-	if err := db.DeleteDatabase(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil {
+	// ARM DELETE is idempotent: deleting an absent database is a success, not a
+	// 404 (Databases-Delete documents 204 = "does not exist").
+	if err := db.DeleteDatabase(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}
