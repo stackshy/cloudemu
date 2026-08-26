@@ -161,6 +161,24 @@ type BlockInfo struct {
 	Size int64
 }
 
+// BlockListEntry is one entry in a Put Block List request: a block id together
+// with the source list Azure must resolve it against. List is "Committed"
+// (a block already committed on the blob), "Uncommitted" (a freshly staged
+// block), or "Latest" (the staged block if present, else the committed one).
+// Preserving the source list lets a commit reference already-committed blocks,
+// so the "re-commit existing blocks + a new one" append pattern works.
+type BlockListEntry struct {
+	ID   string
+	List string
+}
+
+// Block source-list values for BlockListEntry.List.
+const (
+	BlockListCommitted   = "Committed"
+	BlockListUncommitted = "Uncommitted"
+	BlockListLatest      = "Latest"
+)
+
 // BlobLeaseResult is the outcome of a successful Lease Blob acquire, renew, or
 // change operation.
 type BlobLeaseResult struct {
@@ -189,9 +207,21 @@ type AzureBlobExtensions interface {
 	// under blockID; the blob need not exist yet.
 	StageBlock(ctx context.Context, container, blob, blockID string, data []byte) error
 	// CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist)
-	// from the previously-staged blocks named by blockIDs, in the given order.
+	// from the given block entries, in order. Each entry names a block id and the
+	// source list to resolve it against (Committed/Uncommitted/Latest), so a
+	// commit can reference blocks already committed on the blob, not just freshly
+	// staged ones. Content properties from props (nil when none supplied) are
+	// persisted on the blob.
 	CommitBlockList(
-		ctx context.Context, container, blob string, blockIDs []string, contentType string, metadata map[string]string,
+		ctx context.Context, container, blob string, blocks []BlockListEntry,
+		contentType string, props *BlobProperties, metadata map[string]string,
+	) (*ObjectInfo, error)
+
+	// PutBlockBlob writes a block blob's content together with its system content
+	// properties (Put Blob), so Content-Encoding/Cache-Control/Content-Language/
+	// Content-Disposition round-trip on a later read. props may be nil.
+	PutBlockBlob(
+		ctx context.Context, container, blob string, data []byte, props *BlobProperties, metadata map[string]string,
 	) (*ObjectInfo, error)
 
 	// SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata,

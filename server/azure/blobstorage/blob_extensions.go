@@ -57,13 +57,15 @@ func (h *Handler) commitBlockList(w http.ResponseWriter, r *http.Request, ext bl
 		return
 	}
 
-	blockIDs, err := parseBlockListXML(body)
+	blocks, err := parseBlockListXML(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "InvalidBlockList", err.Error())
 		return
 	}
 
-	info, err := ext.CommitBlockList(r.Context(), container, blob, blockIDs, blobContentType(r), extractMetadata(r.Header))
+	info, err := ext.CommitBlockList(
+		r.Context(), container, blob, blocks, blobContentType(r), blobContentProps(r), extractMetadata(r.Header),
+	)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -253,14 +255,16 @@ func readLimitedBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	return data, true
 }
 
-// parseBlockListXML extracts the ordered block IDs from a Put Block List body,
-// preserving document order across Latest/Committed/Uncommitted elements.
-func parseBlockListXML(body []byte) ([]string, error) {
+// parseBlockListXML extracts the ordered block entries from a Put Block List
+// body, preserving both document order and each block's source list
+// (Latest/Committed/Uncommitted) so the commit can resolve a block against the
+// correct source rather than collapsing all three into one list.
+func parseBlockListXML(body []byte) ([]storagedriver.BlockListEntry, error) {
 	dec := xml.NewDecoder(bytes.NewReader(body))
 
 	var (
-		ids     []string
-		capture bool
+		entries []storagedriver.BlockListEntry
+		list    string
 	)
 
 	for {
@@ -275,25 +279,36 @@ func parseBlockListXML(body []byte) ([]string, error) {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			capture = isBlockElement(t.Name.Local)
+			list = blockListSource(t.Name.Local)
 		case xml.CharData:
-			if capture {
+			if list != "" {
 				if id := string(bytes.TrimSpace([]byte(t))); id != "" {
-					ids = append(ids, id)
+					entries = append(entries, storagedriver.BlockListEntry{ID: id, List: list})
 				}
 			}
 		case xml.EndElement:
-			capture = false
+			list = ""
 		}
 	}
 
-	if len(ids) == 0 {
+	if len(entries) == 0 {
 		return nil, cerrors.New(cerrors.InvalidArgument, "block list is empty")
 	}
 
-	return ids, nil
+	return entries, nil
 }
 
-func isBlockElement(name string) bool {
-	return name == "Latest" || name == "Committed" || name == "Uncommitted"
+// blockListSource maps a Put Block List element name to its source-list value,
+// returning "" for any non-block element.
+func blockListSource(name string) string {
+	switch name {
+	case "Latest":
+		return storagedriver.BlockListLatest
+	case "Committed":
+		return storagedriver.BlockListCommitted
+	case "Uncommitted":
+		return storagedriver.BlockListUncommitted
+	default:
+		return ""
+	}
 }

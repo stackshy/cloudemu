@@ -10688,6 +10688,10 @@
             "doc": "GetBlockList returns the blob's committed and uncommitted blocks (Get"
           },
           {
+            "name": "PutBlockBlob",
+            "doc": "PutBlockBlob writes a block blob's content together with its system content"
+          },
+          {
             "name": "ReleaseLease",
             "doc": "ReleaseLease releases the blob's current lease."
           },

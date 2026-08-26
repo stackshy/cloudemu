@@ -55,6 +55,10 @@ type blobObject struct {
 	// CommittedBlocks records the block id/size pairs assembled by the most
 	// recent Put Block List commit, in commit order, for Get Block List.
 	CommittedBlocks []driver.BlockInfo
+	// committedBlockData retains the bytes of each committed block by id, so a
+	// later Put Block List can re-reference an already-committed block
+	// (<Committed>/<Latest>) instead of only freshly staged ones.
+	committedBlockData map[string][]byte
 	// mu guards the in-place mutations of the new Azure ops (append, metadata /
 	// property / tier updates, leases). Whole-object replacements via the
 	// container store don't need it.
@@ -351,9 +355,35 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 // PutObject stores a blob in a container. When a real StorageEngine is wired the
 // bytes flow through it and the in-memory object holds metadata only (Data nil).
 func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
+	_, err := m.putBlockBlobInternal(ctx, bucket, key, data, contentType, nil, metadata)
+
+	return err
+}
+
+// PutBlockBlob writes a block blob's content together with its system content
+// properties (Put Blob), so Content-Encoding/Cache-Control/Content-Language/
+// Content-Disposition round-trip on a later read. props may be nil.
+func (m *Mock) PutBlockBlob(
+	ctx context.Context, bucket, key string, data []byte, props *driver.BlobProperties, metadata map[string]string,
+) (*driver.ObjectInfo, error) {
+	contentType := ""
+	if props != nil {
+		contentType = props.ContentType
+	}
+
+	return m.putBlockBlobInternal(ctx, bucket, key, data, contentType, props, metadata)
+}
+
+// putBlockBlobInternal is the shared Put Blob path: it stores the content,
+// optional content properties (props may be nil), and metadata, carrying over
+// any active lease, and returns the new object info.
+func (m *Mock) putBlockBlobInternal(
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	props *driver.BlobProperties, metadata map[string]string,
+) (*driver.ObjectInfo, error) {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
 	size := int64(len(data))
@@ -368,11 +398,18 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		Metadata:     meta,
 	}
 
+	if props != nil {
+		obj.ContentEncoding = props.ContentEncoding
+		obj.ContentLanguage = props.ContentLanguage
+		obj.ContentDisposition = props.ContentDisposition
+		obj.CacheControl = props.CacheControl
+	}
+
 	if m.opts.StorageEngine != nil {
 		if err := storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
 			Bucket: bucket, Key: key, Data: data, ContentType: contentType, Metadata: meta,
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		dataCopy := make([]byte, len(data))
@@ -385,7 +422,9 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
 
-	return nil
+	info := objectInfo(obj)
+
+	return &info, nil
 }
 
 // GetObject retrieves a blob from a container.
@@ -431,6 +470,8 @@ func objectInfo(obj *blobObject) driver.ObjectInfo {
 		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		BlobType: obj.BlobType, AccessTier: obj.AccessTier,
+		CacheControl: obj.CacheControl, ContentEncoding: obj.ContentEncoding,
+		ContentDisposition: obj.ContentDisposition, ContentLanguage: obj.ContentLanguage,
 	}
 }
 
@@ -495,6 +536,15 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	return &info, nil
 }
 
+// listEntry is one item in the merged list stream — either a blob or a
+// delimiter-rolled-up common prefix — so both count toward maxresults and
+// paginate together (matching real Azure's List Blobs).
+type listEntry struct {
+	name     string
+	isPrefix bool
+	obj      *blobObject
+}
+
 // ListObjects lists blobs in a container with optional prefix/delimiter filtering.
 func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOptions) (*driver.ListResult, error) {
 	ctr, ok := m.containers.Get(bucket)
@@ -502,12 +552,47 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
+	entries := collectListEntries(ctr, opts)
+
+	maxKeys := opts.MaxKeys
+	if maxKeys <= 0 {
+		maxKeys = blobDefaultMaxKeys
+	}
+
+	// Blobs and common prefixes fold into ONE sorted stream so both count
+	// toward maxresults and neither is duplicated nor skipped across pages.
+	page, err := pagination.PaginateSorted(entries, func(a, b listEntry) bool {
+		if a.name != b.name {
+			return a.name < b.name
+		}
+
+		return !a.isPrefix && b.isPrefix
+	}, opts.PageToken, maxKeys)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
+
+	objects, commonPrefixes := splitListPage(page.Items)
+
+	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
+
+	return &driver.ListResult{
+		Objects:        objects,
+		CommonPrefixes: commonPrefixes,
+		NextPageToken:  page.NextPageToken,
+		IsTruncated:    page.HasMore,
+	}, nil
+}
+
+// collectListEntries builds the unsorted merged blob+prefix stream for a list
+// request, applying the prefix filter and (when set) the delimiter rollup.
+func collectListEntries(ctr *containerMeta, opts driver.ListOptions) []listEntry {
 	allKeys := ctr.objects.Keys()
 	sort.Strings(allKeys)
 
-	var matchedObjects []driver.ObjectInfo
+	var entries []listEntry
 
-	commonPrefixSet := make(map[string]struct{})
+	seenPrefix := make(map[string]struct{})
 
 	for _, k := range allKeys {
 		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
@@ -517,9 +602,14 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		if opts.Delimiter != "" {
 			rest := k[len(opts.Prefix):]
 
-			idx := strings.Index(rest, opts.Delimiter)
-			if idx >= 0 {
-				commonPrefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
+			if idx := strings.Index(rest, opts.Delimiter); idx >= 0 {
+				prefix := opts.Prefix + rest[:idx+len(opts.Delimiter)]
+				if _, dup := seenPrefix[prefix]; !dup {
+					seenPrefix[prefix] = struct{}{}
+
+					entries = append(entries, listEntry{name: prefix, isPrefix: true})
+				}
+
 				continue
 			}
 		}
@@ -529,44 +619,27 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 			continue
 		}
 
-		matchedObjects = append(matchedObjects, driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
-			BlobType: obj.BlobType, AccessTier: obj.AccessTier,
-		})
+		entries = append(entries, listEntry{name: obj.Key, obj: obj})
 	}
 
-	commonPrefixes := make([]string, 0, len(commonPrefixSet))
-	for p := range commonPrefixSet {
-		commonPrefixes = append(commonPrefixes, p)
+	return entries
+}
+
+// splitListPage separates a paginated merged page back into the blob objects
+// and common prefixes the driver.ListResult reports, preserving page order.
+// objectInfo (which clones metadata) runs only for the page actually returned,
+// not for every match, keeping a paged scan cheap on a large container.
+func splitListPage(items []listEntry) (objects []driver.ObjectInfo, commonPrefixes []string) {
+	for i := range items {
+		if items[i].isPrefix {
+			commonPrefixes = append(commonPrefixes, items[i].name)
+			continue
+		}
+
+		objects = append(objects, objectInfo(items[i].obj))
 	}
 
-	sort.Strings(commonPrefixes)
-
-	maxKeys := opts.MaxKeys
-	if maxKeys <= 0 {
-		maxKeys = blobDefaultMaxKeys
-	}
-
-	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
-	}
-
-	// Clone metadata only for the page actually returned — cloning every
-	// match would make a paged scan O(bucket) allocations per request.
-	for i := range page.Items {
-		page.Items[i].Metadata = maps.Clone(page.Items[i].Metadata)
-	}
-
-	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
-
-	return &driver.ListResult{
-		Objects:        page.Items,
-		CommonPrefixes: commonPrefixes,
-		NextPageToken:  page.NextPageToken,
-		IsTruncated:    page.HasMore,
-	}, nil
+	return objects, commonPrefixes
 }
 
 // CopyObject copies a blob from one location to another, inheriting the source

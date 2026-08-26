@@ -68,16 +68,22 @@ func (m *Mock) StageBlock(_ context.Context, container, blob, blockID string, da
 	return nil
 }
 
-// CommitBlockList assembles a block blob from previously-staged blocks.
+// CommitBlockList assembles a block blob from the given block entries. Each
+// entry is resolved against its source list (Committed/Uncommitted/Latest), so
+// a commit can re-reference blocks already committed on the blob — the "append
+// by re-committing existing blocks plus a new one" pattern.
 func (m *Mock) CommitBlockList(
-	ctx context.Context, container, blob string, blockIDs []string, contentType string, metadata map[string]string,
+	ctx context.Context, container, blob string, blocks []driver.BlockListEntry,
+	contentType string, props *driver.BlobProperties, metadata map[string]string,
 ) (*driver.ObjectInfo, error) {
 	ctr, ok := m.containers.Get(container)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
-	data, blocks, err := assembleStagedBlocks(ctr, blob, blockIDs)
+	existing, _ := ctr.objects.Get(blob)
+
+	data, blockInfos, committedData, err := assembleBlocks(ctr, blob, blocks, existing)
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +96,16 @@ func (m *Mock) CommitBlockList(
 		Key: blob, Size: int64(len(data)), ContentType: contentType,
 		LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
 		Metadata:     maps.Clone(metadata), BlobType: blobTypeBlock,
-		CommittedBlocks: blocks,
+		CommittedBlocks: blockInfos, committedBlockData: committedData,
 	}
+
+	if props != nil {
+		obj.ContentEncoding = props.ContentEncoding
+		obj.ContentLanguage = props.ContentLanguage
+		obj.ContentDisposition = props.ContentDisposition
+		obj.CacheControl = props.CacheControl
+	}
+
 	obj.ETag = fmt.Sprintf("%x", sha256.Sum256(data))
 
 	if m.opts.StorageEngine != nil {
@@ -115,32 +129,81 @@ func (m *Mock) CommitBlockList(
 	return &info, nil
 }
 
-// assembleStagedBlocks concatenates the named staged blocks in order and
-// records each block's id/size for Get Block List.
-func assembleStagedBlocks(ctr *containerMeta, blob string, blockIDs []string) ([]byte, []driver.BlockInfo, error) {
+// assembleBlocks concatenates the requested blocks in order, resolving each
+// against its source list, and returns the assembled bytes, the per-block
+// id/size list for Get Block List, and the retained per-block bytes so a later
+// commit can re-reference these now-committed blocks.
+func assembleBlocks(
+	ctr *containerMeta, blob string, entries []driver.BlockListEntry, existing *blobObject,
+) (data []byte, blocks []driver.BlockInfo, committedData map[string][]byte, err error) {
+	staged := snapshotStagedBlocks(ctr, blob)
+
+	var committed map[string][]byte
+	if existing != nil {
+		committed = existing.committedBlockData
+	}
+
+	committedData = make(map[string][]byte, len(entries))
+	blocks = make([]driver.BlockInfo, 0, len(entries))
+
+	for _, e := range entries {
+		block, ok := resolveBlock(e, staged, committed)
+		if !ok {
+			return nil, nil, nil, cerrors.Newf(cerrors.InvalidArgument,
+				"block %q (%s) not found for blob %q", e.ID, e.List, blob)
+		}
+
+		data = append(data, block...)
+		blocks = append(blocks, driver.BlockInfo{Name: e.ID, Size: int64(len(block))})
+		committedData[e.ID] = block
+	}
+
+	return data, blocks, committedData, nil
+}
+
+// resolveBlock returns a block's bytes from the source list named by the entry:
+// Committed reads the blob's existing committed blocks, Uncommitted reads the
+// freshly staged blocks, and Latest (the default) prefers a staged block, then
+// falls back to a committed one.
+func resolveBlock(e driver.BlockListEntry, staged, committed map[string][]byte) ([]byte, bool) {
+	switch e.List {
+	case driver.BlockListCommitted:
+		block, ok := committed[e.ID]
+		return block, ok
+	case driver.BlockListUncommitted:
+		block, ok := staged[e.ID]
+		return block, ok
+	default: // Latest: staged first, else committed.
+		if block, ok := staged[e.ID]; ok {
+			return block, true
+		}
+
+		block, ok := committed[e.ID]
+
+		return block, ok
+	}
+}
+
+// snapshotStagedBlocks copies a blob's staged blocks under the staging lock so
+// block resolution runs without holding it.
+func snapshotStagedBlocks(ctr *containerMeta, blob string) map[string][]byte {
 	stg, ok := ctr.staging.Get(blob)
 	if !ok {
-		return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "no staged blocks for blob %q", blob)
+		return nil
 	}
 
 	stg.mu.Lock()
 	defer stg.mu.Unlock()
 
-	var data []byte
+	staged := make(map[string][]byte, len(stg.blocks))
 
-	blocks := make([]driver.BlockInfo, 0, len(blockIDs))
-
-	for _, id := range blockIDs {
-		block, ok := stg.blocks[id]
-		if !ok {
-			return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "block %q not staged for blob %q", id, blob)
-		}
-
-		data = append(data, block...)
-		blocks = append(blocks, driver.BlockInfo{Name: id, Size: int64(len(block))})
+	for id, block := range stg.blocks {
+		cp := make([]byte, len(block))
+		copy(cp, block)
+		staged[id] = cp
 	}
 
-	return data, blocks, nil
+	return staged
 }
 
 // SetBlobMetadata replaces only a blob's metadata, preserving its content.
