@@ -139,16 +139,38 @@ type TracingConfig struct {
 	Mode string
 }
 
+// EphemeralStorage is a function's /tmp size in MB (AWS Lambda EphemeralStorage).
+// Real Lambda accepts 512–10240 and defaults to 512 when the client omits it.
+type EphemeralStorage struct {
+	Size int
+}
+
+// FunctionLayer is one layer version imported by a function, echoed back in the
+// function configuration's Layers list (AWS Lambda Layer). CodeSize is the layer
+// version's deployment-package size.
+type FunctionLayer struct {
+	ARN      string
+	CodeSize int64
+}
+
 // AWSFunctionConfig bundles the AWS Lambda-only function settings — VpcConfig,
-// DeadLetterConfig and TracingConfig. These have no Azure Functions or GCP Cloud
-// Functions equivalent, so they are kept off the shared FunctionConfig/
-// FunctionInfo structs and applied/read back through an AWS-only optional
-// interface (type-asserted by the AWS Lambda server handler), the same way
-// Function URLs are exposed.
+// DeadLetterConfig, TracingConfig, Architectures, EphemeralStorage and the
+// imported Layers. These have no Azure Functions or GCP Cloud Functions
+// equivalent, so they are kept off the shared FunctionConfig/FunctionInfo structs
+// and applied/read back through an AWS-only optional interface (type-asserted by
+// the AWS Lambda server handler), the same way Function URLs are exposed.
 type AWSFunctionConfig struct {
 	VPCConfig        *VPCConfig
 	DeadLetterConfig *DeadLetterConfig
 	TracingConfig    *TracingConfig
+	// Architectures is the instruction-set list (["x86_64"] or ["arm64"]). Empty
+	// means the handler emits the AWS default ["x86_64"].
+	Architectures []string
+	// EphemeralStorage is the /tmp size; nil means the handler emits the default 512.
+	EphemeralStorage *EphemeralStorage
+	// Layers is the ordered list of imported layer versions echoed back on the
+	// function configuration.
+	Layers []FunctionLayer
 }
 
 // FunctionConfig describes a serverless function to create.

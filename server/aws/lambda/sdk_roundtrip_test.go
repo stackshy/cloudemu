@@ -219,10 +219,17 @@ func TestSDKLambdaConcurrencyRoundtrip(t *testing.T) {
 		t.Fatalf("DeleteFunctionConcurrency: %v", err)
 	}
 
-	if _, err := client.GetFunctionConcurrency(ctx, &awslambda.GetFunctionConcurrencyInput{
+	// After delete the function still exists with no reserved concurrency, so
+	// GetFunctionConcurrency is HTTP 200 with an empty body (nil executions), not
+	// a 404 — only a missing function is NotFound.
+	after, err := client.GetFunctionConcurrency(ctx, &awslambda.GetFunctionConcurrencyInput{
 		FunctionName: aws.String("busy"),
-	}); err == nil {
-		t.Fatal("GetFunctionConcurrency after delete returned nil error, want NotFound")
+	})
+	if err != nil {
+		t.Fatalf("GetFunctionConcurrency after delete: %v, want 200 empty", err)
+	}
+	if after.ReservedConcurrentExecutions != nil {
+		t.Fatalf("ReservedConcurrentExecutions = %v, want nil after delete", *after.ReservedConcurrentExecutions)
 	}
 }
 

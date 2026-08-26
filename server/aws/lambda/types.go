@@ -26,6 +26,19 @@ type tracingConfigEnvelope struct {
 	Mode string `json:"Mode,omitempty"`
 }
 
+// ephemeralStorageEnvelope is the Lambda EphemeralStorage request/response shape:
+// the function's /tmp size in MB.
+type ephemeralStorageEnvelope struct {
+	Size int `json:"Size"`
+}
+
+// layerReference is one entry of the function configuration's Layers list (the
+// AWS Layer output shape). Only Arn and CodeSize are modeled.
+type layerReference struct {
+	Arn      string `json:"Arn"`
+	CodeSize int64  `json:"CodeSize,omitempty"`
+}
+
 // functionConfiguration is the response body shared by Create / Get / Update.
 // Field set is the minimum the AWS SDK populates for a function description.
 type functionConfiguration struct {
@@ -51,6 +64,12 @@ type functionConfiguration struct {
 	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig,omitempty"`
 	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig,omitempty"`
 	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig,omitempty"`
+	// Architectures echoes the function's instruction set (["x86_64"] or
+	// ["arm64"]); EphemeralStorage its /tmp size; Layers the imported layer
+	// versions. All default when the function was created without them.
+	Architectures    []string                  `json:"Architectures,omitempty"`
+	EphemeralStorage *ephemeralStorageEnvelope `json:"EphemeralStorage,omitempty"`
+	Layers           []layerReference          `json:"Layers,omitempty"`
 }
 
 // updateFunctionConfigurationRequest captures the mutable fields of
@@ -66,6 +85,11 @@ type updateFunctionConfigurationRequest struct {
 	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig"`
 	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig"`
 	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
+	// Layers replaces the function's imported layer versions (their ARNs).
+	Layers []string `json:"Layers"`
+	// Publish, when true, cuts a new version from the updated configuration and
+	// returns that version's configuration (qualified ARN), matching AWS.
+	Publish bool `json:"Publish"`
 }
 
 // updateFunctionCodeRequest captures the deployment-package fields of
@@ -79,6 +103,9 @@ type updateFunctionCodeRequest struct {
 	S3Key           string   `json:"S3Key"`
 	S3ObjectVersion string   `json:"S3ObjectVersion"`
 	Layers          []string `json:"Layers"`
+	// Publish, when true, cuts a new version from the updated code and returns
+	// that version's configuration (qualified ARN), matching AWS.
+	Publish bool `json:"Publish"`
 }
 
 // publishVersionRequest is the body of PublishVersion (POST .../{name}/versions).
@@ -182,6 +209,11 @@ type createFunctionRequest struct {
 	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig"`
 	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig"`
 	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
+	Architectures    []string                  `json:"Architectures"`
+	EphemeralStorage *ephemeralStorageEnvelope `json:"EphemeralStorage"`
+	// Publish, when true, publishes version 1 from the created function and
+	// returns that version's configuration (Version "1", qualified ARN).
+	Publish bool `json:"Publish"`
 }
 
 // functionCode is the deployment package in a CreateFunction body. The AWS SDK
