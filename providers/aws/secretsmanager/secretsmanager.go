@@ -2,6 +2,7 @@
 package secretsmanager
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -17,8 +18,14 @@ import (
 var _ driver.Secrets = (*Mock)(nil)
 
 type secretData struct {
-	info      driver.SecretInfo
-	versions  []driver.SecretVersion
+	info     driver.SecretInfo
+	versions []driver.SecretVersion
+	// stages maps a staging label (AWSCURRENT/AWSPREVIOUS/AWSPENDING/custom) to
+	// the version id that currently carries it. AWS attaches each label to at
+	// most one version, so this is the authoritative per-secret staging index;
+	// SecretVersion.Current is kept in sync as a derived convenience for the
+	// portable read path.
+	stages    map[string]string
 	deletedAt time.Time
 	// recoveryWindow is the number of days between the delete request and the
 	// scheduled deletion date, captured from DeleteSecret's RecoveryWindowInDays.
@@ -67,7 +74,11 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	arn := idgen.AWSARN("secretsmanager", m.opts.Region, m.opts.AccountID, "secret:"+cfg.Name)
+	// The ARN resource segment ends with a deterministic 6-char suffix
+	// (:secret:<name>-<suffix>), matching real Secrets Manager. resolveSecretID
+	// on the wire side strips it, so lookups by the friendly name still resolve.
+	suffix := idgen.SecretARNSuffix(m.opts.Region + ":" + m.opts.AccountID + ":" + cfg.Name)
+	arn := idgen.AWSARN("secretsmanager", m.opts.Region, m.opts.AccountID, "secret:"+cfg.Name+"-"+suffix)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -88,7 +99,13 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	data := make([]byte, len(value))
 	copy(data, value)
 
-	versionID := idgen.GenerateID("ver-")
+	// AWS uses the ClientRequestToken as the version id (a UUID); absent one, it
+	// generates a UUID itself.
+	versionID := cfg.ClientRequestToken
+	if versionID == "" {
+		versionID = idgen.UUID()
+	}
+
 	version := driver.SecretVersion{
 		VersionID: versionID,
 		Value:     data,
@@ -99,6 +116,7 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	sd := &secretData{
 		info:     info,
 		versions: []driver.SecretVersion{version},
+		stages:   map[string]string{stageCurrent: versionID},
 	}
 
 	m.secrets.Set(cfg.Name, sd)
@@ -211,8 +229,25 @@ func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 	return secrets, nil
 }
 
-// PutSecretValue stores a new version of a secret value.
+// PutSecretValue stores a new version of a secret value and promotes it to
+// AWSCURRENT. It is the shared cross-cloud append-a-version path; the AWS wire
+// layer uses PutSecretValueStaged to honor ClientRequestToken and VersionStages.
 func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*driver.SecretVersion, error) {
+	return m.PutSecretValueStaged(context.Background(), name, value, "", nil)
+}
+
+// PutSecretValueStaged stores a new secret version honoring the AWS
+// ClientRequestToken/VersionStages semantics:
+//   - clientRequestToken, when set, becomes the new version's id. Reusing it with
+//     identical content is an idempotent no-op (the existing version is returned);
+//     reusing it with different content is ResourceExistsException.
+//   - versionStages, when non-empty, are the exact labels the new version takes,
+//     and AWSCURRENT is NOT implied — so staging a candidate as [AWSPENDING]
+//     leaves the prior AWSCURRENT untouched. An empty versionStages promotes the
+//     new version to AWSCURRENT (demoting the prior current to AWSPREVIOUS).
+func (m *Mock) PutSecretValueStaged(
+	_ context.Context, name string, value []byte, clientRequestToken string, versionStages []string,
+) (*driver.SecretVersion, error) {
 	sd, ok := m.secrets.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
@@ -226,30 +261,46 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
-
-	// Mark all existing versions as not current.
-	for i := range sd.versions {
-		sd.versions[i].Current = false
-	}
-
 	data := make([]byte, len(value))
 	copy(data, value)
 
-	versionID := idgen.GenerateID("ver-")
-	version := driver.SecretVersion{
+	if clientRequestToken != "" {
+		if existing, dup := sd.versionByID(clientRequestToken); dup {
+			return m.reusedTokenVersion(existing, data, clientRequestToken)
+		}
+	}
+
+	versionID := clientRequestToken
+	if versionID == "" {
+		versionID = idgen.UUID()
+	}
+
+	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	sd.versions = append(sd.versions, driver.SecretVersion{
 		VersionID: versionID,
 		Value:     data,
 		CreatedAt: now,
-		Current:   true,
-	}
-
-	sd.versions = append(sd.versions, version)
+	})
+	sd.applyStages(versionID, versionStages)
 	sd.info.UpdatedAt = now
 
-	result := version
+	result, _ := sd.versionByID(versionID)
 
-	return &result, nil
+	return copyVersion(result), nil
+}
+
+// reusedTokenVersion enforces ClientRequestToken idempotency: same token + same
+// content returns the existing version unchanged; same token + different content
+// is ResourceExistsException.
+func (*Mock) reusedTokenVersion(
+	existing *driver.SecretVersion, data []byte, token string,
+) (*driver.SecretVersion, error) {
+	if bytes.Equal(existing.Value, data) {
+		return copyVersion(existing), nil
+	}
+
+	return nil, errors.Newf(errors.AlreadyExists,
+		"a version with ClientRequestToken %q already exists with different content", token)
 }
 
 // GetSecretValue retrieves a secret value. Empty versionID returns the current version.

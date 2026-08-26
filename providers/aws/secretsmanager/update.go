@@ -10,20 +10,21 @@ import (
 )
 
 // UpdateSecret updates a secret's description and, when value is non-nil,
-// stores it as a new current version (SecretsManager UpdateSecret semantics:
+// stores it as a new AWSCURRENT version (SecretsManager UpdateSecret semantics:
 // SecretString/SecretBinary are optional). An empty description leaves the
-// existing one unchanged.
-func (m *Mock) UpdateSecret(_ context.Context, name, description string, value []byte) (*driver.SecretInfo, error) {
+// existing one unchanged. It returns the created version's id (empty when no
+// value change created a version), which UpdateSecret echoes to the caller.
+func (m *Mock) UpdateSecret(_ context.Context, name, description string, value []byte) (*driver.SecretInfo, string, error) {
 	sd, ok := m.secrets.Get(name)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
+		return nil, "", errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
+		return nil, "", errors.New(errors.FailedPrecondition,
 			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
@@ -33,27 +34,26 @@ func (m *Mock) UpdateSecret(_ context.Context, name, description string, value [
 		sd.info.Description = description
 	}
 
-	if value != nil {
-		for i := range sd.versions {
-			sd.versions[i].Current = false
-		}
+	var versionID string
 
+	if value != nil {
 		data := make([]byte, len(value))
 		copy(data, value)
 
+		versionID = idgen.UUID()
 		sd.versions = append(sd.versions, driver.SecretVersion{
-			VersionID: idgen.GenerateID("ver-"),
+			VersionID: versionID,
 			Value:     data,
 			CreatedAt: now,
-			Current:   true,
 		})
+		sd.promoteToCurrent(versionID)
 	}
 
 	sd.info.UpdatedAt = now
 
 	result := sd.info
 
-	return &result, nil
+	return &result, versionID, nil
 }
 
 // TagSecret adds or overwrites tags on a secret (SecretsManager TagResource).

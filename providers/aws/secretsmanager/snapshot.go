@@ -20,10 +20,13 @@ type secretsSnapshot struct {
 }
 
 type secretSnapshot struct {
-	Info           driver.SecretInfo      `json:"info"`
-	Versions       []driver.SecretVersion `json:"versions,omitempty"`
-	DeletedAt      time.Time              `json:"deletedAt,omitempty"`
-	RecoveryWindow int                    `json:"recoveryWindow,omitempty"`
+	Info     driver.SecretInfo      `json:"info"`
+	Versions []driver.SecretVersion `json:"versions,omitempty"`
+	// Stages maps each staging label to the version id holding it, preserving the
+	// AWSCURRENT/AWSPREVIOUS/custom assignment across snapshot/restore.
+	Stages         map[string]string `json:"stages,omitempty"`
+	DeletedAt      time.Time         `json:"deletedAt,omitempty"`
+	RecoveryWindow int               `json:"recoveryWindow,omitempty"`
 }
 
 // Snapshot captures every secret's full state as JSON. includeAssets is unused —
@@ -37,6 +40,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		snap.Secrets[name] = &secretSnapshot{
 			Info:           sd.info,
 			Versions:       sd.versions,
+			Stages:         sd.stages,
 			DeletedAt:      sd.deletedAt,
 			RecoveryWindow: sd.recoveryWindow,
 		}
@@ -58,6 +62,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.secrets.Set(name, &secretData{
 			info:           ss.Info,
 			versions:       ss.Versions,
+			stages:         ss.Stages,
 			deletedAt:      ss.DeletedAt,
 			recoveryWindow: ss.RecoveryWindow,
 		})
