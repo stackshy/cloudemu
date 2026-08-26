@@ -29,8 +29,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/cosmossql"
@@ -75,16 +77,41 @@ type Handler struct {
 	// uniqueness check and its insert must be one uninterruptible step (see
 	// keyedMutex), and a lazy TTL sweep must not race a concurrent write.
 	writeMu *keyedMutex
+
+	// clock stamps write-time system properties (_ts) and drives container-TTL
+	// expiry, sourced from the backing driver when it exposes one (see
+	// clockProvider) so a FakeClock injected into the provider drives the wire
+	// layer too; a RealClock otherwise.
+	clock config.Clock
+
+	// etagSeq backs the rotating document _etag: every write increments it, so a
+	// document's etag changes on each mutation and an If-Match precondition can
+	// actually detect a stale write.
+	etagSeq atomic.Uint64
+}
+
+// clockProvider is the optional capability a backing driver exposes to share its
+// injected clock with the wire layer, so a FakeClock set on the provider drives
+// container-TTL expiry and write-time timestamps here too. The Azure cosmos
+// provider implements it; drivers that don't fall back to a RealClock.
+type clockProvider interface {
+	Clock() config.Clock
 }
 
 // New returns a Cosmos handler backed by db.
 func New(db dbdriver.Database) *Handler {
+	clock := config.Clock(config.RealClock{})
+	if cp, ok := db.(clockProvider); ok && cp.Clock() != nil {
+		clock = cp.Clock()
+	}
+
 	return &Handler{
 		db:        db,
 		offers:    make(map[string]offerState),
 		databases: make(map[string]struct{}),
-		attrs:     newAttrsStore(),
+		attrs:     newAttrsStore(clock),
 		writeMu:   newKeyedMutex(),
+		clock:     clock,
 	}
 }
 
@@ -699,12 +726,14 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, coll st
 		return
 	}
 
-	if err := h.insertDocument(r.Context(), coll, cfg, item, isUpsert(r)); err != nil {
+	etag, err := h.insertDocument(r.Context(), coll, cfg, item, isUpsert(r))
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	addSystemProps(item)
+	w.Header().Set("ETag", etag)
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -716,33 +745,37 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, coll st
 // wire layer maps them to a 409.
 func (h *Handler) insertDocument(
 	ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any, upsert bool,
-) error {
+) (string, error) {
 	unlock := h.writeMu.lock(coll)
 	defer unlock()
 
 	// A plain create (not an upsert) must fail if a document with the same
 	// (partition key, id) already exists, matching real Cosmos's 409 Conflict.
 	if !upsert && h.documentExists(ctx, coll, cfg, item) {
-		return cerrors.New(cerrors.AlreadyExists, "Resource with specified id or name already exists.")
+		return "", cerrors.New(cerrors.AlreadyExists, "Resource with specified id or name already exists.")
 	}
 
 	if err := h.checkUniqueKeys(ctx, coll, cfg, item); err != nil {
-		return err
+		return "", err
 	}
 
+	etag := h.stampWrite(item)
+
 	if err := h.db.PutItem(ctx, coll, item); err != nil {
-		return err
+		return "", err
 	}
 
 	h.attrs.recordWrite(coll, cfg, item)
 
-	return nil
+	return etag, nil
 }
 
 // replaceDocument overwrites a document and refreshes its TTL bookkeeping under
 // the container's write lock, so a concurrent TTL reap cannot delete the item
 // between the write and the expiry update.
-func (h *Handler) replaceDocument(ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any) error {
+func (h *Handler) replaceDocument(
+	ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any, ifMatch string,
+) (string, error) {
 	unlock := h.writeMu.lock(coll)
 	defer unlock()
 
@@ -750,28 +783,51 @@ func (h *Handler) replaceDocument(ctx context.Context, coll string, cfg *dbdrive
 	// for a replace of a missing id (creation is the upsert path). The existence
 	// check runs under the write lock already held, so the check and the PutItem
 	// stay atomic and no new race is introduced.
-	if !h.documentExists(ctx, coll, cfg, item) {
-		return cerrors.New(cerrors.NotFound, "Entity with the specified id does not exist in the system.")
+	existing, err := h.db.GetItem(ctx, coll, docKey(cfg, item))
+	if err != nil {
+		return "", cerrors.New(cerrors.NotFound, "Entity with the specified id does not exist in the system.")
 	}
 
-	if err := h.db.PutItem(ctx, coll, item); err != nil {
-		return err
+	// Optimistic concurrency: a stale/mismatched If-Match is a 412 before any
+	// mutation, so the caller's overwrite is rejected rather than clobbering a
+	// newer write.
+	if cerr := checkIfMatch(ifMatch, existing); cerr != nil {
+		return "", cerr
+	}
+
+	etag := h.stampWrite(item)
+
+	if perr := h.db.PutItem(ctx, coll, item); perr != nil {
+		return "", perr
 	}
 
 	h.attrs.recordWrite(coll, cfg, item)
 
-	return nil
+	return etag, nil
 }
 
 // deleteDocument removes a document and its TTL bookkeeping under the
 // container's write lock, keeping the delete and forget serialized against
-// creates, replaces and TTL reaps.
-func (h *Handler) deleteDocument(ctx context.Context, coll string, cfg *dbdriver.TableConfig, keyMap map[string]any) error {
+// creates, replaces and TTL reaps. A delete of a missing (id, partition key) is
+// a 404 (real Cosmos), and a stale If-Match precondition is a 412 — both checked
+// under the same lock so they stay atomic with the delete.
+func (h *Handler) deleteDocument(
+	ctx context.Context, coll string, cfg *dbdriver.TableConfig, keyMap map[string]any, ifMatch string,
+) error {
 	unlock := h.writeMu.lock(coll)
 	defer unlock()
 
-	if err := h.db.DeleteItem(ctx, coll, keyMap); err != nil {
-		return err
+	existing, err := h.db.GetItem(ctx, coll, keyMap)
+	if err != nil {
+		return cerrors.New(cerrors.NotFound, "Entity with the specified id does not exist in the system.")
+	}
+
+	if cerr := checkIfMatch(ifMatch, existing); cerr != nil {
+		return cerr
+	}
+
+	if derr := h.db.DeleteItem(ctx, coll, keyMap); derr != nil {
+		return derr
 	}
 
 	h.attrs.forget(coll, cfg, keyMap)
@@ -784,14 +840,57 @@ func (h *Handler) deleteDocument(ctx context.Context, coll string, cfg *dbdriver
 func (h *Handler) documentExists(
 	ctx context.Context, coll string, cfg *dbdriver.TableConfig, item map[string]any,
 ) bool {
+	_, err := h.db.GetItem(ctx, coll, docKey(cfg, item))
+
+	return err == nil
+}
+
+// docKey builds the (partition key, id) lookup key for item.
+func docKey(cfg *dbdriver.TableConfig, item map[string]any) map[string]any {
 	key := map[string]any{idAttr: item[idAttr]}
 	if cfg != nil && cfg.PartitionKey != "" && cfg.PartitionKey != idAttr {
 		key[cfg.PartitionKey] = item[cfg.PartitionKey]
 	}
 
-	_, err := h.db.GetItem(ctx, coll, key)
+	return key
+}
 
-	return err == nil
+// newETag returns a fresh, rotating entity tag. Each call yields a distinct
+// quoted token, so every write changes the document's _etag the way real Cosmos
+// rotates it on mutation, giving optimistic-concurrency preconditions something
+// to detect.
+func (h *Handler) newETag() string {
+	return `"` + strconv.FormatUint(h.etagSeq.Add(1), 10) + `"`
+}
+
+// stampWrite records the write-time system properties on item: a fresh rotating
+// _etag and the write timestamp _ts (from the injected clock, so both are
+// deterministic under a FakeClock). It returns the etag so the caller can echo
+// it in the ETag response header. Called on every create/replace/upsert so the
+// stored document — and later reads of it — reflect the last write, not the read.
+func (h *Handler) stampWrite(item map[string]any) string {
+	etag := h.newETag()
+	item["_etag"] = etag
+	item["_ts"] = h.clock.Now().Unix()
+
+	return etag
+}
+
+// checkIfMatch enforces an If-Match precondition against the stored document.
+// An empty header means no precondition; "*" matches any existing document;
+// otherwise the header must equal the document's current _etag, else real Cosmos
+// returns 412 PreconditionFailed (mapped from FailedPrecondition in writeErr).
+func checkIfMatch(ifMatch string, existing map[string]any) error {
+	if ifMatch == "" || ifMatch == "*" {
+		return nil
+	}
+
+	cur, _ := existing["_etag"].(string)
+	if ifMatch != cur {
+		return cerrors.New(cerrors.FailedPrecondition, "One of the specified pre-condition is not met.")
+	}
+
+	return nil
 }
 
 // readDocument serves the GET case of documentResource: a point read that
@@ -810,6 +909,11 @@ func (h *Handler) readDocument(w http.ResponseWriter, r *http.Request, coll stri
 	}
 
 	addSystemProps(item)
+
+	if etag, ok := item["_etag"].(string); ok {
+		w.Header().Set("ETag", etag)
+	}
+
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -929,6 +1033,12 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 		return
 	}
 
+	cfg, derr := h.db.DescribeTable(r.Context(), coll)
+	if derr != nil {
+		writeErr(w, derr)
+		return
+	}
+
 	// Fetch the whole container and evaluate the query here with full fidelity.
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: coll, Limit: allResults})
 	if err != nil {
@@ -937,6 +1047,7 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 	}
 
 	items := h.dropExpired(r.Context(), coll, result.Items)
+	items = scopeToPartition(r, cfg, items)
 
 	matched, ferr := cosmosFilter(items, stmt.Where)
 	if ferr != nil {
@@ -994,15 +1105,17 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, accou
 			return
 		}
 
-		if err := h.replaceDocument(r.Context(), coll, cfg, item); err != nil {
+		etag, err := h.replaceDocument(r.Context(), coll, cfg, item, ifMatch(r))
+		if err != nil {
 			writeErr(w, err)
 			return
 		}
 
 		addSystemProps(item)
+		w.Header().Set("ETag", etag)
 		writeJSON(w, http.StatusOK, item)
 	case http.MethodDelete:
-		if err := h.deleteDocument(r.Context(), coll, cfg, keyMap); err != nil {
+		if err := h.deleteDocument(r.Context(), coll, cfg, keyMap, ifMatch(r)); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -1049,6 +1162,39 @@ func docPartitionKey(r *http.Request) string {
 	return fmt.Sprintf("%v", parsed[0])
 }
 
+// scopeToPartition narrows a query's candidate documents to a single logical
+// partition when the request pins one via x-ms-documentdb-partitionkey. A
+// partition-scoped query in real Cosmos only ever sees its own partition's
+// documents; without this filter a scoped `SELECT * FROM c` over a
+// multi-partition container would leak every partition's rows, since the WHERE
+// clause alone does not constrain the partition. The azcosmos SDK sends
+// x-ms-documentdb-query-enablecrosspartition on every query by default, so the
+// presence of the partition-key header — not that flag — is what scopes: a
+// specific partition key always wins over the cross-partition permission, and
+// only a query with no partition key header fans out across the container.
+func scopeToPartition(r *http.Request, cfg *dbdriver.TableConfig, items []map[string]any) []map[string]any {
+	if r.Header.Get("X-Ms-Documentdb-Partitionkey") == "" {
+		return items
+	}
+
+	pkAttr := idAttr
+	if cfg != nil && cfg.PartitionKey != "" {
+		pkAttr = cfg.PartitionKey
+	}
+
+	pkVal := docPartitionKey(r)
+
+	out := make([]map[string]any, 0, len(items))
+
+	for _, it := range items {
+		if fmt.Sprintf("%v", it[pkAttr]) == pkVal {
+			out = append(out, it)
+		}
+	}
+
+	return out
+}
+
 // buildKey constructs the key map the driver expects to look up a document by
 // its (partition key, id) identity. pkAttr is the container's declared
 // partition-key attribute name (e.g. "pk", "category"); pkVal is the value from
@@ -1089,6 +1235,13 @@ func partitionKeyMutated(cfg *dbdriver.TableConfig, headerPK string, item map[st
 // duplicate-id conflict.
 func isUpsert(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("X-Ms-Documentdb-Is-Upsert"), "true")
+}
+
+// ifMatch returns the If-Match precondition etag a replace/delete carries, or ""
+// when none is set. The azcosmos SDK sends ItemOptions.IfMatchEtag as this
+// header; the value is compared verbatim against the document's stored _etag.
+func ifMatch(r *http.Request) string {
+	return r.Header.Get("If-Match")
 }
 
 func partitionKeyAttribute(pk *partitionKeyDef) string {
@@ -1241,6 +1394,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "Conflict", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "BadRequest", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 	}

@@ -131,6 +131,13 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
+// Clock exposes the mock's injected clock so the Cosmos wire handler can drive
+// its container-TTL expiry and write-time timestamps from the same clock,
+// letting a FakeClock set on the provider make those deterministic in tests.
+func (m *Mock) Clock() config.Clock {
+	return m.opts.Clock
+}
+
 func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 	if m.monitoring == nil {
 		return

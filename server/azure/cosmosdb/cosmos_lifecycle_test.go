@@ -17,8 +17,6 @@
 //
 // Emulator divergences from real Cosmos that these tests pin down (asserting
 // the emulator's actual, documented behavior, marked DIVERGENCE below):
-//   - ReplaceItem ignores IfMatchEtag (real Cosmos: 412 on stale etag).
-//   - DeleteItem on a missing document returns 204 (real Cosmos: 404).
 //   - PATCH (PatchItem) is not routed at all (405 MethodNotAllowed).
 //   - NOT over a composite predicate (AND/OR of several fields) uses two-valued
 //     logic, so an absent field is not excluded; NOT over a single-field
@@ -346,10 +344,10 @@ func TestCosmosTypedErrors(t *testing.T) {
 
 // TestCosmosWriteDivergences pins down the emulator's write semantics: the
 // (partition key, id) identity model — duplicate create 409s, an upsert of the
-// same id succeeds, and same-pk/different-id documents coexist — plus the
-// remaining knowing divergences from real Cosmos (see file header): etag
-// preconditions are ignored, deleting a missing document succeeds, and PATCH is
-// not routed.
+// same id succeeds, and same-pk/different-id documents coexist — plus
+// optimistic concurrency (a stale If-Match is 412) and a 404 on deleting a
+// missing document. The one remaining knowing divergence is that PATCH is not
+// routed (405).
 func TestCosmosWriteDivergences(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
@@ -382,18 +380,17 @@ func TestCosmosWriteDivergences(t *testing.T) {
 		t.Errorf("rev=%v want 2 (upsert should have overwritten)", got["rev"])
 	}
 
-	// DIVERGENCE: ReplaceItem with a deliberately stale IfMatchEtag succeeds
-	// (real Cosmos returns 412 PreconditionFailed). ConditionExpression-style
-	// guards are not implemented anywhere in the driver.
+	// ReplaceItem with a deliberately stale IfMatchEtag is rejected 412
+	// PreconditionFailed, matching real Cosmos optimistic concurrency, and the
+	// stored document is left untouched (still rev 2 from the upsert above).
 	stale := azcore.ETag(`"definitely-stale-etag"`)
 	repl, _ := json.Marshal(map[string]any{"id": "u1", "pk": "team-a", "name": "Alice-3", "rev": 3})
 
-	if _, err := cc.ReplaceItem(ctx, pk, "u1", repl, &azcosmos.ItemOptions{IfMatchEtag: &stale}); err != nil {
-		t.Fatalf("ReplaceItem with stale etag (emulator ignores preconditions): %v", err)
-	}
+	_, staleErr := cc.ReplaceItem(ctx, pk, "u1", repl, &azcosmos.ItemOptions{IfMatchEtag: &stale})
+	wantRespErr(t, staleErr, 412, "ReplaceItem with stale etag")
 
-	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(3) {
-		t.Errorf("rev=%v want 3 (stale-etag replace should have applied)", got["rev"])
+	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(2) {
+		t.Errorf("rev=%v want 2 (stale-etag replace must not apply)", got["rev"])
 	}
 
 	// DIVERGENCE: PATCH is not routed by the handler → 405 (real Cosmos
@@ -403,16 +400,9 @@ func TestCosmosWriteDivergences(t *testing.T) {
 	_, patchErr := cc.PatchItem(ctx, pk, "u1", patch, nil)
 	wantRespErr(t, patchErr, 405, "PatchItem (unrouted PATCH)")
 
-	// DIVERGENCE: deleting a document that does not exist succeeds with 204
-	// (real Cosmos returns 404) — the driver delete is idempotent.
-	delResp, err := cc.DeleteItem(ctx, pk, "never-existed", nil)
-	if err != nil {
-		t.Fatalf("DeleteItem missing doc (emulator is idempotent): %v", err)
-	}
-
-	if delResp.RawResponse.StatusCode != 204 {
-		t.Errorf("DeleteItem missing doc status=%d want 204", delResp.RawResponse.StatusCode)
-	}
+	// Deleting a document that does not exist is a 404, matching real Cosmos.
+	_, missErr := cc.DeleteItem(ctx, pk, "never-existed", nil)
+	wantRespErr(t, missErr, 404, "DeleteItem missing doc")
 
 	// Item identity is (pk, id): two docs with the same partition key but
 	// different ids coexist, and each point-reads back independently.
@@ -479,15 +469,15 @@ func TestCosmosReplaceSemantics(t *testing.T) {
 // TestCosmosQueryAndPagination drives the SDK query pager: empty container
 // first, then 30 documents across two partitions. The WHERE clause is
 // evaluated faithfully, so `c.part = 'part-a'` returns exactly the 15 part-a
-// documents. The partition-key header is advisory in the emulator (its item
-// model conflates partition and document identity), so cross-partition WHERE
-// does the filtering.
+// documents. Each document has a distinct partition key (pk = its id), so the
+// WHERE filtering is exercised as a cross-partition query (no partition key);
+// a partition-scoped query would only ever see its own partition's document.
 func TestCosmosQueryAndPagination(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "querydb", "events")
 
-	pkA := azcosmos.NewPartitionKeyString("part-a")
+	pkA := azcosmos.NewPartitionKey()
 
 	countAll := func(label string) int {
 		t.Helper()
@@ -840,7 +830,10 @@ func TestCosmosQueryFidelity(t *testing.T) {
 		createDoc(ctx, t, cc, d["pk"].(string), d)
 	}
 
-	pk := azcosmos.NewPartitionKeyString("p1") // advisory in the emulator
+	// Documents live in distinct partitions (pk = p1/p2/p3), so query fidelity is
+	// exercised cross-partition (no partition key); the WHERE/ORDER BY/projection
+	// logic is what's under test, not partition routing.
+	pk := azcosmos.NewPartitionKey()
 
 	rawItems := func(sql string, opts *azcosmos.QueryOptions) [][]byte {
 		t.Helper()

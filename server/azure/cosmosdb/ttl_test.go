@@ -15,6 +15,8 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos"
+
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 // ttlContainer creates a container with the given DefaultTimeToLive (nil
@@ -88,12 +90,14 @@ func TestSDKContainerNoDefaultTTL(t *testing.T) {
 }
 
 // TestSDKItemDefaultTTLExpires asserts a document written into a container
-// with a short DefaultTimeToLive is honored: present immediately after
-// create, gone (404) once the TTL elapses.
+// with a DefaultTimeToLive is honored: present immediately after create, gone
+// (404) once the injected clock advances past the TTL. The container-TTL path
+// is clock-driven, so expiry is deterministic rather than wall-clock timed.
 func TestSDKItemDefaultTTLExpires(t *testing.T) {
 	ctx := context.Background()
-	e := newCosmosEnv(t)
-	cc := ttlContainer(ctx, t, e, "ttlexpiredb", "sessions", to.Ptr[int32](1))
+	clk := config.NewFakeClock(time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
+	e := newCosmosEnv(t, config.WithClock(clk))
+	cc := ttlContainer(ctx, t, e, "ttlexpiredb", "sessions", to.Ptr[int32](60))
 
 	doc := map[string]any{"id": "s1", "pk": "s1", "user": "alice"}
 	createDoc(ctx, t, cc, "s1", doc)
@@ -103,7 +107,7 @@ func TestSDKItemDefaultTTLExpires(t *testing.T) {
 		t.Errorf("pre-expiry user=%v want alice", got["user"])
 	}
 
-	time.Sleep(1200 * time.Millisecond)
+	clk.Advance(90 * time.Second)
 
 	_, err := cc.ReadItem(ctx, azcosmos.NewPartitionKeyString("s1"), "s1", nil)
 	wantRespErr(t, err, 404, "ReadItem after container defaultTtl elapsed")
@@ -130,8 +134,9 @@ func TestSDKItemDefaultTTLExpires(t *testing.T) {
 // the container's default expiry, matching real Cosmos precedence.
 func TestSDKItemTTLOverride(t *testing.T) {
 	ctx := context.Background()
-	e := newCosmosEnv(t)
-	cc := ttlContainer(ctx, t, e, "ttloverridedb", "sessions", to.Ptr[int32](1))
+	clk := config.NewFakeClock(time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
+	e := newCosmosEnv(t, config.WithClock(clk))
+	cc := ttlContainer(ctx, t, e, "ttloverridedb", "sessions", to.Ptr[int32](60))
 
 	doc := map[string]any{"id": "keep", "pk": "keep", "user": "bob", "ttl": -1}
 	b, err := json.Marshal(doc)
@@ -143,7 +148,7 @@ func TestSDKItemTTLOverride(t *testing.T) {
 		t.Fatalf("CreateItem: %v", err)
 	}
 
-	time.Sleep(1200 * time.Millisecond)
+	clk.Advance(90 * time.Second)
 
 	got := readDoc(ctx, t, cc, "keep", "keep")
 	if got["user"] != "bob" {
@@ -156,7 +161,8 @@ func TestSDKItemTTLOverride(t *testing.T) {
 // Cosmos: TTL must first be enabled at the container.
 func TestSDKItemTTLDisabledOnContainer(t *testing.T) {
 	ctx := context.Background()
-	e := newCosmosEnv(t)
+	clk := config.NewFakeClock(time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
+	e := newCosmosEnv(t, config.WithClock(clk))
 	cc := ttlContainer(ctx, t, e, "ttldisableddb", "sessions", nil)
 
 	doc := map[string]any{"id": "s1", "pk": "s1", "user": "alice", "ttl": 1}
@@ -169,7 +175,7 @@ func TestSDKItemTTLDisabledOnContainer(t *testing.T) {
 		t.Fatalf("CreateItem: %v", err)
 	}
 
-	time.Sleep(1200 * time.Millisecond)
+	clk.Advance(90 * time.Second)
 
 	got := readDoc(ctx, t, cc, "s1", "s1")
 	if got["user"] != "alice" {

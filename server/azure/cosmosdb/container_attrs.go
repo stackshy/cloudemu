@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
@@ -37,10 +38,14 @@ type attrsStore struct {
 	// expiry maps an item identity (table|partitionValue|id) to its computed
 	// expiry time. An item absent here never expires.
 	expiry map[string]time.Time
+	// clock computes expiry at write time and evaluates it at read time, so a
+	// FakeClock injected into the provider drives container-TTL deterministically
+	// rather than the wall clock.
+	clock config.Clock
 }
 
-func newAttrsStore() *attrsStore {
-	return &attrsStore{attrs: make(map[string]containerAttrs), expiry: make(map[string]time.Time)}
+func newAttrsStore(clock config.Clock) *attrsStore {
+	return &attrsStore{attrs: make(map[string]containerAttrs), expiry: make(map[string]time.Time), clock: clock}
 }
 
 func (s *attrsStore) set(table string, ttl *int32, uk *uniqueKeyPolicy, indexing map[string]any) {
@@ -120,7 +125,7 @@ func (s *attrsStore) recordWrite(table string, cfg *dbdriver.TableConfig, item m
 		return
 	}
 
-	s.expiry[key] = time.Now().Add(time.Duration(effective) * time.Second)
+	s.expiry[key] = s.clock.Now().Add(time.Duration(effective) * time.Second)
 }
 
 // expired reports whether the item at (table, id, partition value) has
@@ -133,7 +138,7 @@ func (s *attrsStore) expired(table string, cfg *dbdriver.TableConfig, item map[s
 	exp, ok := s.expiry[key]
 	s.mu.RUnlock()
 
-	return ok && time.Now().After(exp)
+	return ok && s.clock.Now().After(exp)
 }
 
 // forget removes an item's TTL bookkeeping, called on delete.
