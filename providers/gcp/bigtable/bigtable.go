@@ -186,16 +186,52 @@ func (m *Mock) updateInstanceLocked(name string, cfg btdriver.UpdateInstanceConf
 		return btdriver.Instance{}, cerrors.Newf(cerrors.NotFound, "instance %q not found", name)
 	}
 
-	inst.DisplayName = orKeep(cfg.DisplayName, inst.DisplayName)
-	inst.Type = orKeep(cfg.Type, inst.Type)
-
-	if cfg.Labels != nil {
-		inst.Labels = copyLabels(cfg.Labels)
-	}
-
+	applyInstanceUpdate(&inst, cfg)
 	m.instances.Set(name, inst)
 
 	return inst, nil
+}
+
+// applyInstanceUpdate mutates inst per cfg. With no field mask it uses presence
+// heuristics (a non-empty value replaces, an empty one is kept), preserving the
+// pre-mask semantics. With a mask it writes only the masked fields — even to an
+// empty value, which clears them — and preserves every unmasked field.
+func applyInstanceUpdate(inst *btdriver.Instance, cfg btdriver.UpdateInstanceConfig) {
+	if cfg.UpdateMask == nil {
+		inst.DisplayName = orKeep(cfg.DisplayName, inst.DisplayName)
+		inst.Type = orKeep(cfg.Type, inst.Type)
+
+		if cfg.Labels != nil {
+			inst.Labels = copyLabels(cfg.Labels)
+		}
+
+		return
+	}
+
+	if maskHas(cfg.UpdateMask, "displayname") {
+		inst.DisplayName = cfg.DisplayName
+	}
+
+	if maskHas(cfg.UpdateMask, "type") {
+		inst.Type = cfg.Type
+	}
+
+	if maskHas(cfg.UpdateMask, "labels") {
+		inst.Labels = copyLabels(cfg.Labels)
+	}
+}
+
+// maskHas reports whether the normalized field-mask tokens name field. Tokens
+// are pre-normalized by the caller (lowercased, underscores stripped), so this
+// is a plain membership check.
+func maskHas(mask []string, field string) bool {
+	for _, p := range mask {
+		if p == field {
+			return true
+		}
+	}
+
+	return false
 }
 
 // UpdateInstance replaces an instance's mutable fields (synchronous Update RPC).

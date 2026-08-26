@@ -68,9 +68,14 @@ func (h *Handler) listAppProfiles(w http.ResponseWriter, r *http.Request, rt *ro
 		return
 	}
 
-	out := &bt.ListAppProfilesResponse{}
-	for i := range profiles {
-		out.AppProfiles = append(out.AppProfiles, toWireAppProfile(&profiles[i]))
+	page, next, ok := paginate(w, r, profiles)
+	if !ok {
+		return
+	}
+
+	out := &bt.ListAppProfilesResponse{NextPageToken: next}
+	for i := range page {
+		out.AppProfiles = append(out.AppProfiles, toWireAppProfile(&page[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, out)
@@ -82,7 +87,22 @@ func (h *Handler) updateAppProfile(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	cfg := fromWireAppProfile(rt.parent, lastSegment(rt.name), &in)
+	id := lastSegment(rt.name)
+
+	// Without a mask, replace the profile from the body (legacy behavior). With
+	// a mask, overlay only the masked fields onto the current profile so an
+	// unmasked routing policy or description is preserved rather than wiped.
+	cfg := fromWireAppProfile(rt.parent, id, &in)
+
+	if mask := parseFieldMask(r.URL.Query().Get("updateMask")); mask != nil {
+		cur, err := h.db.GetAppProfile(r.Context(), rt.name)
+		if err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+
+		cfg = mergeAppProfileConfig(rt.parent, id, cur, &in, mask)
+	}
 
 	a, op, err := h.db.UpdateAppProfile(r.Context(), rt.name, cfg)
 	if err != nil {

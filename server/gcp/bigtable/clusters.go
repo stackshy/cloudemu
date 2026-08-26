@@ -87,9 +87,14 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, rt *route
 		return
 	}
 
-	out := &bt.ListClustersResponse{}
-	for i := range clusters {
-		out.Clusters = append(out.Clusters, toWireCluster(&clusters[i]))
+	page, next, ok := paginate(w, r, clusters)
+	if !ok {
+		return
+	}
+
+	out := &bt.ListClustersResponse{NextPageToken: next}
+	for i := range page {
+		out.Clusters = append(out.Clusters, toWireCluster(&page[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, out)
@@ -101,7 +106,23 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	c, op, err := h.db.UpdateCluster(r.Context(), rt.name, int(in.ServeNodes), fromWireAutoscaling(&in))
+	serveNodes := int(in.ServeNodes)
+	autoscaling := fromWireAutoscaling(&in)
+
+	// With a field mask, apply only the masked scaling fields: an unmasked
+	// serveNodes/autoscaling is dropped so the driver preserves it instead of
+	// switching the cluster's scaling mode as a side effect.
+	if mask := parseFieldMask(r.URL.Query().Get("updateMask")); mask != nil {
+		if !mask.has("serveNodes") {
+			serveNodes = 0
+		}
+
+		if !mask.contains("autoscaling") {
+			autoscaling = nil
+		}
+	}
+
+	c, op, err := h.db.UpdateCluster(r.Context(), rt.name, serveNodes, autoscaling)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return

@@ -100,9 +100,14 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request, rt *route) 
 		return
 	}
 
-	out := &bt.ListTablesResponse{}
-	for i := range tables {
-		out.Tables = append(out.Tables, toWireTable(&tables[i]))
+	page, next, ok := paginate(w, r, tables)
+	if !ok {
+		return
+	}
+
+	out := &bt.ListTablesResponse{NextPageToken: next}
+	for i := range page {
+		out.Tables = append(out.Tables, toWireTable(&page[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, out)
@@ -114,9 +119,18 @@ func (h *Handler) patchTable(w http.ResponseWriter, r *http.Request, rt *route) 
 		return
 	}
 
+	// Without a mask, always write deletionProtection from the body (legacy
+	// behavior). With a mask, write it only when masked — so a patch of some
+	// other field (e.g. changeStreamConfig) leaves deletionProtection intact
+	// instead of silently resetting it to false.
 	dp := in.DeletionProtection
+	dpPtr := &dp
 
-	t, op, err := h.db.UpdateTable(r.Context(), rt.name, &dp)
+	if mask := parseFieldMask(r.URL.Query().Get("updateMask")); mask != nil && !mask.has("deletionProtection") {
+		dpPtr = nil
+	}
+
+	t, op, err := h.db.UpdateTable(r.Context(), rt.name, dpPtr)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
