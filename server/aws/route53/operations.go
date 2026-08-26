@@ -31,7 +31,10 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := dnsdriver.ZoneConfig{Name: ensureTrailingDot(req.Name)}
+	cfg := dnsdriver.ZoneConfig{
+		Name:            ensureTrailingDot(req.Name),
+		CallerReference: req.CallerReference,
+	}
 	if req.HostedZoneConfig != nil {
 		cfg.Private = req.HostedZoneConfig.PrivateZone
 	}
@@ -53,12 +56,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		info = refreshed
 	}
 
-	// Echo the caller's CallerReference back faithfully (the driver doesn't
-	// persist it, so this is only recoverable on the create response).
 	hz := toHostedZoneXML(info)
-	if req.CallerReference != "" {
-		hz.CallerReference = req.CallerReference
-	}
 
 	// Real Route 53 returns a Location header pointing at the new zone.
 	w.Header().Set("Location", pathPrefix+"/"+info.ID)

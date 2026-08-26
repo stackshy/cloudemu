@@ -127,12 +127,13 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	}
 
 	zone := driver.ZoneInfo{
-		ID:          id,
-		Name:        cfg.Name,
-		Private:     cfg.Private,
-		RecordCount: 0,
-		Tags:        tags,
-		Scope:       cfg.Scope,
+		ID:              id,
+		Name:            cfg.Name,
+		Private:         cfg.Private,
+		RecordCount:     0,
+		Tags:            tags,
+		CallerReference: cfg.CallerReference,
+		Scope:           cfg.Scope,
 	}
 
 	m.zones.Set(id, zone)
