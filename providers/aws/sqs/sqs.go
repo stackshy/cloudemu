@@ -31,6 +31,8 @@ const (
 	defaultMessageRetention  = 345600
 	maxReceiveMessages       = 10
 	deduplicationWindow      = 5 * time.Minute
+	maxReceiveWaitSeconds    = 20
+	longPollInterval         = 50 * time.Millisecond
 )
 
 // sqsMessage represents an internal message stored in a queue.
@@ -735,12 +737,47 @@ func findDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time)
 
 // ReceiveMessages receives messages from the specified SQS queue.
 // Returns messages where VisibleAt <= now, and sets a new VisibleAt based on the visibility timeout.
-func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInput) ([]driver.Message, error) {
+// When WaitTimeSeconds (or the queue's ReceiveMessageWaitTimeSeconds default) is > 0, it long-polls:
+// it retries on a short interval until a message is available, the deadline elapses, or ctx is canceled.
+func (m *Mock) ReceiveMessages(ctx context.Context, input driver.ReceiveMessageInput) ([]driver.Message, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", input.QueueURL)
 	}
 
+	deadline := time.Now().Add(resolveWaitDuration(qd, input.WaitTimeSeconds))
+
+	results, err := m.pollForMessages(ctx, qd, input, deadline)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitReceiveMetrics(qd, len(results))
+
+	return results, nil
+}
+
+// pollForMessages performs the bounded long-poll loop. It never holds qd.mu across
+// the wait: each attempt acquires the lock via receiveOnce, releases it, then sleeps.
+func (m *Mock) pollForMessages(
+	ctx context.Context, qd *queueData, input driver.ReceiveMessageInput, deadline time.Time,
+) ([]driver.Message, error) {
+	for {
+		results := m.receiveOnce(qd, input)
+		if len(results) > 0 || !time.Now().Before(deadline) {
+			return results, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(longPollInterval):
+		}
+	}
+}
+
+// receiveOnce performs a single, immediate receive attempt under the queue lock.
+func (m *Mock) receiveOnce(qd *queueData, input driver.ReceiveMessageInput) []driver.Message {
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
@@ -761,17 +798,44 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	}
 
 	if results == nil {
-		results = []driver.Message{}
+		return []driver.Message{}
 	}
 
+	return results
+}
+
+// emitReceiveMetrics records the CloudWatch receive counters for a single receive call.
+func (m *Mock) emitReceiveMetrics(qd *queueData, count int) {
 	dims := map[string]string{"QueueName": qd.info.Name}
-	if len(results) > 0 {
-		m.emitMetric("NumberOfMessagesReceived", float64(len(results)), "Count", dims)
+	if count > 0 {
+		m.emitMetric("NumberOfMessagesReceived", float64(count), "Count", dims)
 	} else {
 		m.emitMetric("NumberOfEmptyReceives", 1, "Count", dims)
 	}
+}
 
-	return results, nil
+// resolveWaitDuration derives the long-poll window: the request's WaitTimeSeconds,
+// falling back to the queue's ReceiveMessageWaitTimeSeconds default when unset,
+// capped at the SQS maximum of 20 seconds.
+func resolveWaitDuration(qd *queueData, requested int) time.Duration {
+	qd.mu.Lock()
+	queueDefault := qd.receiveWaitTime
+	qd.mu.Unlock()
+
+	seconds := requested
+	if seconds <= 0 {
+		seconds = queueDefault
+	}
+
+	if seconds > maxReceiveWaitSeconds {
+		seconds = maxReceiveWaitSeconds
+	}
+
+	if seconds < 0 {
+		seconds = 0
+	}
+
+	return time.Duration(seconds) * time.Second
 }
 
 func clampMaxMessages(maxMessages int) int {
@@ -793,9 +857,20 @@ func (m *Mock) collectVisibleMessages(
 
 	var toRemove []int
 
+	// FIFO: any group that already has an in-flight message (received in a prior
+	// call, visibility not yet expired) is skipped entirely this call, so a
+	// group's messages are delivered strictly in order across consumers. Within
+	// a single call a non-blocked group still yields its consecutive messages
+	// (up to MaxNumberOfMessages), matching real SQS FIFO batch receives.
+	blocked := fifoInFlightGroups(qd, now)
+
 	for i, msg := range qd.messages {
 		if len(results) >= maxMessages {
 			break
+		}
+
+		if blocked[msg.GroupID] {
+			continue
 		}
 
 		if msg.VisibleAt.After(now) {
@@ -817,6 +892,26 @@ func (m *Mock) collectVisibleMessages(
 	}
 
 	return results, toRemove
+}
+
+// fifoInFlightGroups returns the set of FIFO message groups that have at least
+// one in-flight message (VisibleAt in the future) as of now, computed before the
+// receive marks anything. Such groups are skipped for this call so their next
+// message is not delivered until the in-flight one is deleted or its visibility
+// expires. Returns an empty (never nil) set for non-FIFO queues.
+func fifoInFlightGroups(qd *queueData, now time.Time) map[string]bool {
+	blocked := make(map[string]bool)
+	if !qd.info.FIFO {
+		return blocked
+	}
+
+	for _, msg := range qd.messages {
+		if msg.GroupID != "" && msg.VisibleAt.After(now) {
+			blocked[msg.GroupID] = true
+		}
+	}
+
+	return blocked
 }
 
 func buildReceivedMessage(msg *sqsMessage, visibilityTimeout int, now time.Time) driver.Message {
