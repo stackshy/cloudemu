@@ -195,6 +195,19 @@ type ReplicationGroup struct {
 	PrimaryPort     int
 	SubnetGroupName string
 	ARN             string
+
+	// ReaderAddress / ReaderPort are the read-only endpoint clients use to scale
+	// reads across the group's replicas. AWS-only; empty for other clouds.
+	ReaderAddress string
+	ReaderPort    int
+
+	// MemberClusters is the set of cache cluster ids that make up the group
+	// (`<id>-001`, `<id>-002`, …), read by IaC to enumerate the group's nodes.
+	MemberClusters []string
+
+	// AutomaticFailover is the failover status ("enabled" / "disabled") IaC
+	// reads back to confirm the requested setting took effect.
+	AutomaticFailover string
 }
 
 // ReplicationGroupConfig describes a replication group to create.
@@ -207,6 +220,10 @@ type ReplicationGroupConfig struct {
 	NumCacheNodes    int
 	SubnetGroupName  string
 	SecurityGroupIDs []string
+
+	// AutomaticFailoverEnabled requests automatic failover for the group,
+	// reflected as AutomaticFailover ("enabled"/"disabled") on Describe.
+	AutomaticFailoverEnabled bool
 }
 
 // DeleteReplicationGroupOptions carries the optional delete-time behaviors of
