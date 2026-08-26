@@ -199,15 +199,27 @@ func (h *MachineLearningHandler) getWorkspace(w http.ResponseWriter, r *http.Req
 }
 
 func (h *MachineLearningHandler) patchWorkspace(w http.ResponseWriter, r *http.Request, p *mlPath, name string) {
+	// Pointer fields distinguish "absent" (leave unchanged) from "present", so a
+	// PATCH that omits tags never wipes them.
 	var body struct {
-		Tags map[string]string `json:"tags"`
+		Tags       *map[string]string `json:"tags"`
+		Properties *struct {
+			FriendlyName *string `json:"friendlyName"`
+			Description  *string `json:"description"`
+		} `json:"properties"`
 	}
 
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
-	ws, err := h.svc.UpdateMLWorkspaceTags(r.Context(), p.resourceGroup, name, body.Tags)
+	upd := mldriver.MLWorkspaceUpdate{Tags: body.Tags}
+	if body.Properties != nil {
+		upd.FriendlyName = body.Properties.FriendlyName
+		upd.Description = body.Properties.Description
+	}
+
+	ws, err := h.svc.UpdateMLWorkspace(r.Context(), p.resourceGroup, name, upd)
 	writeML(w, mlWorkspaceJSON, ws, err)
 }
 

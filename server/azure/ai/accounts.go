@@ -81,15 +81,33 @@ func (h *CognitiveServicesHandler) getAccount(w http.ResponseWriter, r *http.Req
 }
 
 func (h *CognitiveServicesHandler) patchAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// Pointer fields distinguish "absent" (nil, leave unchanged) from "present",
+	// so a PATCH that omits tags never wipes them and a PATCH of another field is
+	// not a silent no-op.
 	var body struct {
-		Tags map[string]string `json:"tags"`
+		Tags *map[string]string `json:"tags"`
+		SKU  *struct {
+			Name string `json:"name"`
+		} `json:"sku"`
+		Properties *struct {
+			CustomSubDomainName *string `json:"customSubDomainName"`
+		} `json:"properties"`
 	}
 
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
-	a, err := h.svc.UpdateAccountTags(r.Context(), rp.ResourceGroup, rp.ResourceName, body.Tags)
+	upd := csdriver.AccountUpdate{Tags: body.Tags}
+	if body.SKU != nil {
+		upd.SKUName = &body.SKU.Name
+	}
+
+	if body.Properties != nil && body.Properties.CustomSubDomainName != nil {
+		upd.CustomDomain = body.Properties.CustomSubDomainName
+	}
+
+	a, err := h.svc.UpdateAccount(r.Context(), rp.ResourceGroup, rp.ResourceName, upd)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 

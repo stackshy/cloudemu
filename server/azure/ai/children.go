@@ -39,7 +39,9 @@ func deploymentJSON(d *csdriver.Deployment) map[string]any {
 		"id": d.ID, "name": d.Name, "type": csProvider + "/accounts/deployments",
 		"sku": map[string]any{"name": d.SKUName, "capacity": d.SKUCapacity},
 		"properties": map[string]any{
-			"provisioningState": d.ProvisioningState,
+			"provisioningState":    d.ProvisioningState,
+			"raiPolicyName":        d.RaiPolicyName,
+			"versionUpgradeOption": d.VersionUpgradeOption,
 			"model": map[string]any{
 				"name": d.ModelName, "version": d.ModelVersion, "format": d.ModelFormat,
 			},
@@ -104,6 +106,8 @@ func (h *CognitiveServicesHandler) putChild(w http.ResponseWriter, r *http.Reque
 					Version string `json:"version"`
 					Format  string `json:"format"`
 				} `json:"model"`
+				RaiPolicyName        string `json:"raiPolicyName"`
+				VersionUpgradeOption string `json:"versionUpgradeOption"`
 			} `json:"properties"`
 		}
 
@@ -113,9 +117,11 @@ func (h *CognitiveServicesHandler) putChild(w http.ResponseWriter, r *http.Reque
 
 		cfg := csdriver.DeploymentConfig{
 			Account: account, ResourceGroup: rg, Name: name,
-			ModelName:    body.Properties.Model.Name,
-			ModelVersion: body.Properties.Model.Version,
-			ModelFormat:  body.Properties.Model.Format,
+			ModelName:            body.Properties.Model.Name,
+			ModelVersion:         body.Properties.Model.Version,
+			ModelFormat:          body.Properties.Model.Format,
+			RaiPolicyName:        body.Properties.RaiPolicyName,
+			VersionUpgradeOption: body.Properties.VersionUpgradeOption,
 		}
 		if body.SKU != nil {
 			cfg.SKUName = body.SKU.Name
