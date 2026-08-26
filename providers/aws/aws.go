@@ -286,6 +286,9 @@ func New(opts ...config.Option) *Provider {
 	p.CloudWatch.SetSNSPublisher(p.SNS)
 	// SNS -> SQS fan-out: publishes deliver to SQS-protocol subscriptions.
 	p.SNS.SetSQSDeliverer(p.SQS)
+	// SNS -> Lambda fan-out: publishes invoke lambda-protocol subscriptions with
+	// the SNS Records event (reuses the shared InvokeExternal choke point).
+	p.SNS.SetLambdaInvoker(p.Lambda)
 	// EventBridge -> targets: matched rules deliver events to their first-class
 	// target types — SQS queues, Lambda functions (ASYNC), SNS topics, and Step
 	// Functions state machines (ASYNC). Lambda reuses the shared InvokeExternal
