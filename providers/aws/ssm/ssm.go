@@ -7,11 +7,14 @@
 //
 // Values are stored verbatim regardless of Type; SecureString parameters are
 // NOT encrypted (there is no real KMS integration), so WithDecryption is a
-// no-op and the raw value is always returned.
+// no-op and the raw value is always returned. A SecureString's KeyId is still
+// recorded and round-tripped (defaulting to alias/aws/ssm) — the emulator
+// models the KeyId association without performing the encryption.
 package ssm
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,12 +33,14 @@ var _ driver.ParameterStore = (*Mock)(nil)
 
 // version is a single stored revision of a parameter.
 type version struct {
-	value        string
-	typ          string
-	dataType     string
-	version      int64
-	lastModified string
-	labels       []string
+	value          string
+	typ            string
+	dataType       string
+	version        int64
+	lastModified   string
+	labels         []string
+	keyID          string
+	allowedPattern string
 }
 
 // paramData holds all versions and current metadata for a parameter name.
@@ -107,6 +112,46 @@ func defaultType(t string) string {
 	return driver.TypeString
 }
 
+// resolveKeyID validates and resolves the KMS KeyId for a parameter of the
+// given effective type. KeyId is only valid for SecureString: supplying it for
+// a String/StringList is rejected. An omitted KeyId on a SecureString defaults
+// to the AWS-managed key alias/aws/ssm.
+func resolveKeyID(effectiveType, keyID string) (string, error) {
+	if effectiveType != driver.TypeSecureString {
+		if keyID != "" {
+			return "", driver.ErrKeyIDOnNonSecure
+		}
+
+		return "", nil
+	}
+
+	if keyID == "" {
+		return driver.DefaultSecureStringKeyID, nil
+	}
+
+	return keyID, nil
+}
+
+// validateAllowedPattern checks that value satisfies pattern. An empty pattern
+// is a no-op. A pattern that is not a valid regexp is rejected, as is a value
+// that does not match it — matching real Parameter Store validation.
+func validateAllowedPattern(pattern, value string) error {
+	if pattern == "" {
+		return nil
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return driver.ErrInvalidAllowedPattern
+	}
+
+	if !re.MatchString(value) {
+		return driver.ErrValuePatternMismatch
+	}
+
+	return nil
+}
+
 // resolveOverwriteType decides the type of a new version appended to an existing
 // parameter. A type isn't required when updating: omitting it retains the
 // existing type (a SecureString stays SecureString). Specifying a type that
@@ -150,6 +195,12 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 		return 0, "", driver.ErrUnsupportedType
 	}
 
+	// AllowedPattern (if set) must be a valid regexp and the Value must match it.
+	// This is independent of the parameter type, so validate it up front.
+	if err := validateAllowedPattern(cfg.AllowedPattern, cfg.Value); err != nil {
+		return 0, "", err
+	}
+
 	tier := cfg.Tier
 	if tier == "" {
 		tier = "Standard"
@@ -188,13 +239,20 @@ func overwriteParameter(
 		return 0, "", err
 	}
 
+	keyID, err := resolveKeyID(newType, cfg.KeyID)
+	if err != nil {
+		return 0, "", err
+	}
+
 	next := existing.latest + 1
 	existing.versions = append(existing.versions, &version{
-		value:        cfg.Value,
-		typ:          newType,
-		dataType:     dataType,
-		version:      next,
-		lastModified: now,
+		value:          cfg.Value,
+		typ:            newType,
+		dataType:       dataType,
+		version:        next,
+		lastModified:   now,
+		keyID:          keyID,
+		allowedPattern: cfg.AllowedPattern,
 	})
 	existing.latest = next
 	existing.description = cfg.Description
@@ -207,17 +265,26 @@ func overwriteParameter(
 func (m *Mock) createParameter(
 	ctx context.Context, cfg *driver.PutConfig, tier, dataType, now string,
 ) (ver int64, assignedTier string, err error) {
+	newType := defaultType(cfg.Type)
+
+	keyID, err := resolveKeyID(newType, cfg.KeyID)
+	if err != nil {
+		return 0, "", err
+	}
+
 	pd := &paramData{
 		name:        cfg.Name,
 		description: cfg.Description,
 		tier:        tier,
 		latest:      1,
 		versions: []*version{{
-			value:        cfg.Value,
-			typ:          defaultType(cfg.Type),
-			dataType:     dataType,
-			version:      1,
-			lastModified: now,
+			value:          cfg.Value,
+			typ:            newType,
+			dataType:       dataType,
+			version:        1,
+			lastModified:   now,
+			keyID:          keyID,
+			allowedPattern: cfg.AllowedPattern,
 		}},
 		tags: copyTags(cfg.Tags),
 	}
@@ -470,6 +537,8 @@ func (m *Mock) DescribeParameters(_ context.Context) ([]driver.ParameterMetadata
 				DataType:         v.dataType,
 				LastModified:     v.lastModified,
 				LastModifiedUser: idgen.AWSARN("iam", "", m.opts.AccountID, "user/cloudemu"),
+				KeyID:            v.keyID,
+				AllowedPattern:   v.allowedPattern,
 			})
 		}
 		pd.mu.RUnlock()
@@ -507,6 +576,8 @@ func (m *Mock) GetParameterHistory(_ context.Context, name string) ([]driver.Par
 			Description:      pd.description,
 			Tier:             pd.tier,
 			LastModifiedUser: lastModifiedUser,
+			KeyID:            v.keyID,
+			AllowedPattern:   v.allowedPattern,
 		})
 	}
 

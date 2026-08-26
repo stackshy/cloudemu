@@ -23,14 +23,16 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	version, tier, err := h.store.PutParameter(r.Context(), ssmdriver.PutConfig{
-		Name:        req.Name,
-		Value:       req.Value,
-		Type:        req.Type,
-		Description: req.Description,
-		Overwrite:   req.Overwrite,
-		Tier:        req.Tier,
-		DataType:    req.DataType,
-		Tags:        tags,
+		Name:           req.Name,
+		Value:          req.Value,
+		Type:           req.Type,
+		Description:    req.Description,
+		Overwrite:      req.Overwrite,
+		Tier:           req.Tier,
+		DataType:       req.DataType,
+		KeyID:          req.KeyID,
+		AllowedPattern: req.AllowedPattern,
+		Tags:           tags,
 	})
 	if err != nil {
 		// Changing a parameter's type on an Overwrite update is rejected by
@@ -206,9 +208,11 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 	out := make([]parameterMetadataJSON, 0, end-start)
 	for _, md := range metas[start:end] {
 		out = append(out, parameterMetadataJSON{
+			AllowedPattern:   md.AllowedPattern,
 			ARN:              md.ARN,
 			DataType:         md.DataType,
 			Description:      md.Description,
+			KeyID:            md.KeyID,
 			LastModifiedDate: epochSeconds(md.LastModified),
 			LastModifiedUser: md.LastModifiedUser,
 			Name:             md.Name,
@@ -243,9 +247,11 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 	out := make([]parameterHistoryJSON, 0, end-start)
 	for _, p := range history[start:end] {
 		out = append(out, parameterHistoryJSON{
+			AllowedPattern:   p.AllowedPattern,
 			ARN:              p.ARN,
 			DataType:         p.DataType,
 			Description:      p.Description,
+			KeyID:            p.KeyID,
 			Labels:           p.Labels,
 			LastModifiedDate: epochSeconds(p.LastModified),
 			LastModifiedUser: p.LastModifiedUser,
