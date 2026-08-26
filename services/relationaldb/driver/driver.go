@@ -211,7 +211,13 @@ type ModifyInstanceInput struct {
 	// enabled; it is cleared automatically when HA is disabled.
 	HighAvailabilityMode    string
 	StandbyAvailabilityZone string
-	Tags                    map[string]string
+	// NodeType / NumberOfNodes / ClusterType are Redshift resize inputs on
+	// ModifyCluster (empty / zero means "no change"); RDS/Aurora ignore them.
+	// ClusterType is "single-node" | "multi-node"; single-node forces one node.
+	NodeType      string
+	NumberOfNodes int
+	ClusterType   string
+	Tags          map[string]string
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by
@@ -353,8 +359,13 @@ type ClusterSnapshot struct {
 	NumberOfNodes              int
 	Encrypted                  bool
 	TotalBackupSizeInMegaBytes float64
-	CreatedAt                  time.Time
-	Tags                       map[string]string
+	// MasterUsername / DatabaseName capture the source cluster's admin user and
+	// database at snapshot time so a Redshift restore is a self-contained image
+	// (the restored cluster reads them back). Empty for RDS/Aurora/Azure/GCP.
+	MasterUsername string
+	DatabaseName   string
+	CreatedAt      time.Time
+	Tags           map[string]string
 }
 
 // RestoreInstanceInput configures restoring an instance from a snapshot.

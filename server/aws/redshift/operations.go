@@ -37,6 +37,7 @@ func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
 		NodeType:                    form.Get("NodeType"),
 		NumberOfNodes:               formInt(form.Get("NumberOfNodes")),
 		Encrypted:                   formBool(form.Get("Encrypted")),
+		KmsKeyID:                    form.Get("KmsKeyId"),
 		PubliclyAccessible:          formBool(form.Get("PubliclyAccessible")),
 		AvailabilityZone:            form.Get("AvailabilityZone"),
 		Tags:                        parseRedshiftTags(form),
@@ -121,6 +122,9 @@ func (h *Handler) modifyCluster(w http.ResponseWriter, r *http.Request) {
 	input := rdbdriver.ModifyInstanceInput{
 		EngineVersion:      form.Get("ClusterVersion"),
 		MasterUserPassword: form.Get("MasterUserPassword"),
+		NodeType:           form.Get("NodeType"),
+		NumberOfNodes:      formInt(form.Get("NumberOfNodes")),
+		ClusterType:        form.Get("ClusterType"),
 		Tags:               parseRedshiftTags(form),
 	}
 

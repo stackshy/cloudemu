@@ -269,6 +269,9 @@ func New(opts ...config.Option) *Provider {
 	// ELBv2 target group as the scheduler converges/drains the service.
 	p.ECS.SetTargetRegistrar(p.ELB)
 	p.Redshift.SetMonitoring(p.CloudWatch)
+	// A Redshift cluster subnet group derives its VpcId and per-subnet AZs from
+	// the member subnets, matching RDS/ElastiCache DB subnet groups.
+	p.Redshift.SetSubnetResolver(p.VPC)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	// An EKS cluster's resourcesVpcConfig.vpcId is derived from its subnets,
 	// matching real EKS (which auto-creates the cluster SG and infers the VPC).

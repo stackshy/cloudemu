@@ -48,6 +48,9 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 	"CreateClusterParameterGroup":    {},
 	"DescribeClusterParameterGroups": {},
 	"DeleteClusterParameterGroup":    {},
+	"ModifyClusterParameterGroup":    {},
+	"DescribeClusterParameters":      {},
+	"ResetClusterParameterGroup":     {},
 	"CreateClusterSubnetGroup":       {},
 	"DescribeClusterSubnetGroups":    {},
 	"DeleteClusterSubnetGroup":       {},
@@ -62,6 +65,13 @@ type clusterGroupManager interface {
 	CreateClusterParameterGroup(ctx context.Context, name, family, description string) (*redshiftprovider.ParameterGroup, error)
 	DescribeClusterParameterGroups(ctx context.Context, names []string) ([]redshiftprovider.ParameterGroup, error)
 	DeleteClusterParameterGroup(ctx context.Context, name string) error
+	ModifyClusterParameterGroup(
+		ctx context.Context, name string, params []rdbdriver.Parameter,
+	) (*redshiftprovider.ParameterGroup, error)
+	DescribeClusterParameters(ctx context.Context, name string) ([]rdbdriver.Parameter, error)
+	ResetClusterParameterGroup(
+		ctx context.Context, name string, paramNames []string, resetAll bool,
+	) (*redshiftprovider.ParameterGroup, error)
 	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
 	DescribeClusterSubnetGroups(ctx context.Context, names []string) ([]redshiftprovider.SubnetGroup, error)
 	DeleteClusterSubnetGroup(ctx context.Context, name string) error
@@ -173,6 +183,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeClusterParameterGroups(w, r)
 	case "DeleteClusterParameterGroup":
 		h.deleteClusterParameterGroup(w, r)
+	case "ModifyClusterParameterGroup":
+		h.modifyClusterParameterGroup(w, r)
+	case "DescribeClusterParameters":
+		h.describeClusterParameters(w, r)
+	case "ResetClusterParameterGroup":
+		h.resetClusterParameterGroup(w, r)
 	case "CreateClusterSubnetGroup":
 		h.createClusterSubnetGroup(w, r)
 	case "DescribeClusterSubnetGroups":

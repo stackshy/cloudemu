@@ -12,6 +12,7 @@ package redshift
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -49,12 +50,29 @@ type ParameterGroup struct {
 	Name        string
 	Family      string
 	Description string
+	// Parameters holds the group's engine parameters keyed by name. A freshly
+	// created group is seeded with the family's engine-default values; a
+	// ModifyClusterParameterGroup override flips a parameter's Source to "user".
+	Parameters map[string]rdbdriver.Parameter
 }
 
 type SubnetGroup struct {
 	Name        string
 	Description string
 	SubnetIDs   []string
+	// VPCID is derived from the member subnets (real Redshift infers it rather
+	// than taking it as input); empty when no subnet resolver is wired in.
+	VPCID string
+	// Subnets carries each member subnet with its availability zone, resolved at
+	// create time, so DescribeClusterSubnetGroups can emit the full Subnets list.
+	Subnets []Subnet
+}
+
+// Subnet is a member subnet of a cluster subnet group with its availability
+// zone, mirroring the AWS Redshift Subnet shape returned on describe.
+type Subnet struct {
+	ID               string
+	AvailabilityZone string
 }
 
 // Mock is the in-memory AWS Redshift implementation.
@@ -67,8 +85,9 @@ type Mock struct {
 	subnetGroups     *memstore.Store[SubnetGroup]
 	tagsByARN        map[string]map[string]string // ResourceName (ARN) -> tags
 
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	opts           *config.Options
+	monitoring     mondriver.Monitoring
+	subnetResolver SubnetResolver
 }
 
 // New creates a new AWS Redshift mock.
@@ -92,10 +111,128 @@ func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, desc
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "parameter group %q already exists", name)
 	}
 
-	pg := ParameterGroup{Name: name, Family: family, Description: description}
+	pg := ParameterGroup{
+		Name:        name,
+		Family:      family,
+		Description: description,
+		Parameters:  defaultRedshiftParameters(),
+	}
 	m.parameterGroups.Set(name, pg)
 
 	return &pg, nil
+}
+
+// ModifyClusterParameterGroup applies parameter overrides to a group. Each
+// modified parameter's Source becomes "user". An unknown parameter name is an
+// InvalidArgument (mapped to InvalidParameterValue), matching real Redshift's
+// rejection of parameters not in the group's family.
+func (m *Mock) ModifyClusterParameterGroup(
+	_ context.Context, name string, params []rdbdriver.Parameter,
+) (*ParameterGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pg, ok := m.parameterGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	if pg.Parameters == nil {
+		pg.Parameters = defaultRedshiftParameters()
+	}
+
+	// Validate every parameter before applying any, so a bad entry never leaves
+	// earlier ones half-applied.
+	for i := range params {
+		if _, known := pg.Parameters[params[i].Name]; !known {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"could not find parameter with name: %s", params[i].Name)
+		}
+	}
+
+	for i := range params {
+		cur := pg.Parameters[params[i].Name]
+		cur.Value = params[i].Value
+		cur.Source = "user"
+		pg.Parameters[params[i].Name] = cur
+	}
+
+	m.parameterGroups.Set(name, pg)
+
+	out := pg
+
+	return &out, nil
+}
+
+// DescribeClusterParameters returns the parameters of a group, sorted by name.
+func (m *Mock) DescribeClusterParameters(_ context.Context, name string) ([]rdbdriver.Parameter, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	pg, ok := m.parameterGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	params := pg.Parameters
+	if params == nil {
+		params = defaultRedshiftParameters()
+	}
+
+	names := make([]string, 0, len(params))
+	for n := range params {
+		names = append(names, n)
+	}
+
+	sort.Strings(names)
+
+	out := make([]rdbdriver.Parameter, 0, len(names))
+	for _, n := range names {
+		out = append(out, params[n])
+	}
+
+	return out, nil
+}
+
+// ResetClusterParameterGroup restores parameters to their engine defaults —
+// the named ones, or all of them when resetAll is set.
+func (m *Mock) ResetClusterParameterGroup(
+	_ context.Context, name string, paramNames []string, resetAll bool,
+) (*ParameterGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pg, ok := m.parameterGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	defaults := defaultRedshiftParameters()
+
+	if resetAll {
+		pg.Parameters = defaults
+		m.parameterGroups.Set(name, pg)
+
+		out := pg
+
+		return &out, nil
+	}
+
+	if pg.Parameters == nil {
+		pg.Parameters = defaultRedshiftParameters()
+	}
+
+	for _, n := range paramNames {
+		if def, known := defaults[n]; known {
+			pg.Parameters[n] = def
+		}
+	}
+
+	m.parameterGroups.Set(name, pg)
+
+	out := pg
+
+	return &out, nil
 }
 
 // DescribeClusterParameterGroups returns the named parameter groups, or all of
@@ -129,7 +266,7 @@ func (m *Mock) DeleteClusterParameterGroup(_ context.Context, name string) error
 }
 
 // CreateClusterSubnetGroup registers a redshift cluster subnet group.
-func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
+func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "subnet group name is required")
 	}
@@ -138,7 +275,15 @@ func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description str
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "subnet group %q already exists", name)
 	}
 
-	sg := SubnetGroup{Name: name, Description: description, SubnetIDs: subnetIDs}
+	vpcID, subnets := m.resolveSubnets(ctx, subnetIDs)
+
+	sg := SubnetGroup{
+		Name:        name,
+		Description: description,
+		SubnetIDs:   append([]string(nil), subnetIDs...),
+		VPCID:       vpcID,
+		Subnets:     subnets,
+	}
 	m.subnetGroups.Set(name, sg)
 
 	return &sg, nil
@@ -316,6 +461,14 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		return rdbdriver.Cluster{}, cerrors.Newf(cerrors.AlreadyExists, "Redshift cluster %q already exists", cfg.ID)
 	}
 
+	// A referenced subnet group must exist, matching real Redshift's
+	// ClusterSubnetGroupNotFoundFault (the handler maps "subnet group" NotFound
+	// to that code); otherwise IaC ordering mistakes are silently masked.
+	if cfg.SubnetGroupName != "" && !m.subnetGroups.Has(cfg.SubnetGroupName) {
+		return rdbdriver.Cluster{}, cerrors.Newf(cerrors.NotFound,
+			"cluster subnet group %q not found", cfg.SubnetGroupName)
+	}
+
 	engine := cfg.Engine
 	if engine == "" {
 		engine = defaultEngine
@@ -347,6 +500,7 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		NodeType:                    cfg.NodeType,
 		NumberOfNodes:               numberOfNodes,
 		Encrypted:                   cfg.Encrypted,
+		KmsKeyID:                    cfg.KmsKeyID,
 		PubliclyAccessible:          cfg.PubliclyAccessible,
 		AvailabilityZone:            cfg.AvailabilityZone,
 		CreatedAt:                   m.opts.Clock.Now().UTC(),
@@ -466,6 +620,8 @@ func (m *Mock) ModifyCluster(
 		cluster.EngineVersion = input.EngineVersion
 	}
 
+	applyResize(&cluster, &input)
+
 	if input.Tags != nil {
 		cluster.Tags = copyTags(input.Tags)
 	}
@@ -475,6 +631,29 @@ func (m *Mock) ModifyCluster(
 	out := cluster
 
 	return &out, nil
+}
+
+// applyResize applies a Redshift ModifyCluster resize (NodeType / NumberOfNodes
+// / ClusterType) onto the cluster. A "single-node" ClusterType forces one node;
+// otherwise a positive NumberOfNodes is applied. Zero / empty inputs mean "no
+// change", so RDS/Aurora modifications (which never set these) are unaffected.
+func applyResize(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInstanceInput) {
+	if input.NodeType != "" {
+		cluster.NodeType = input.NodeType
+	}
+
+	switch input.ClusterType {
+	case "single-node":
+		cluster.NumberOfNodes = singleNodeCount
+	case "multi-node":
+		if input.NumberOfNodes > 0 {
+			cluster.NumberOfNodes = input.NumberOfNodes
+		}
+	default:
+		if input.NumberOfNodes > 0 {
+			cluster.NumberOfNodes = input.NumberOfNodes
+		}
+	}
 }
 
 // DeleteCluster removes a cluster and tears down the real database backing it,
@@ -666,6 +845,8 @@ func (m *Mock) CreateClusterSnapshot(
 		NumberOfNodes:              cluster.NumberOfNodes,
 		Encrypted:                  cluster.Encrypted,
 		TotalBackupSizeInMegaBytes: snapshotBackupSizeMB,
+		MasterUsername:             cluster.MasterUsername,
+		DatabaseName:               cluster.DatabaseName,
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(cfg.Tags),
 	}
@@ -741,16 +922,26 @@ func (m *Mock) RestoreClusterFromSnapshot(
 
 	now := m.opts.Clock.Now().UTC()
 
+	numberOfNodes := snap.NumberOfNodes
+	if numberOfNodes == 0 {
+		numberOfNodes = singleNodeCount
+	}
+
 	cluster := rdbdriver.Cluster{
-		ID:            input.NewClusterID,
-		ARN:           clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
-		Engine:        snap.Engine,
-		EngineVersion: snap.EngineVersion,
-		Endpoint:      endpointFor(input.NewClusterID),
-		Port:          defaultPort,
-		State:         rdbdriver.StateAvailable,
-		CreatedAt:     now,
-		Tags:          copyTags(input.Tags),
+		ID:             input.NewClusterID,
+		ARN:            clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
+		Engine:         snap.Engine,
+		EngineVersion:  snap.EngineVersion,
+		MasterUsername: snap.MasterUsername,
+		DatabaseName:   snap.DatabaseName,
+		Endpoint:       endpointFor(input.NewClusterID),
+		Port:           defaultPort,
+		State:          rdbdriver.StateAvailable,
+		NodeType:       snap.NodeType,
+		NumberOfNodes:  numberOfNodes,
+		Encrypted:      snap.Encrypted,
+		CreatedAt:      now,
+		Tags:           copyTags(input.Tags),
 	}
 
 	m.clusters.Set(input.NewClusterID, cluster)
