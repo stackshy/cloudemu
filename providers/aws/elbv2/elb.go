@@ -199,13 +199,17 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 	// Delete listeners for this load balancer and, with them, the rules under
 	// those listeners. Leaving the rules behind would leak them for the life of
 	// the process (their parent listener is gone, so nothing ever reaches them).
-	for key, li := range m.listeners.All() {
-		if li.LBARN != arn {
+	// Range over keys and index the map for field access so the large
+	// ListenerInfo value is never copied per iteration.
+	listeners := m.listeners.All()
+	for key := range listeners {
+		if listeners[key].LBARN != arn {
 			continue
 		}
 
+		listenerARN := listeners[key].ARN
 		for rkey, r := range m.rules.All() {
-			if r.ListenerARN == li.ARN {
+			if r.ListenerARN == listenerARN {
 				m.rules.Delete(rkey)
 			}
 		}
@@ -396,8 +400,11 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 // target group is still referenced by a listener default action or a rule
 // action, so a delete cannot silently orphan a forward target.
 func (m *Mock) checkTargetGroupNotInUse(arn string) error {
-	for _, li := range m.listeners.All() {
-		for _, a := range li.DefaultActions {
+	// Range over keys and index the map so the large ListenerInfo value is not
+	// copied per iteration.
+	listeners := m.listeners.All()
+	for key := range listeners {
+		for _, a := range listeners[key].DefaultActions {
 			if a.TargetGroupARN == arn {
 				return errors.Newf(errors.FailedPrecondition,
 					"target group %q is currently in use by a listener", arn)
