@@ -29,6 +29,9 @@ const (
 	// defaultInputSchema is the event schema a topic accepts when the caller
 	// doesn't specify one, matching real Event Grid's default.
 	defaultInputSchema = "EventGridSchema"
+	// defaultPublicNetworkAccess is the public-network-access setting a topic
+	// gets when the caller doesn't specify one, matching real Event Grid.
+	defaultPublicNetworkAccess = "Enabled"
 )
 
 // Compile-time check that Mock implements driver.EventBus.
@@ -128,15 +131,21 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 		inputSchema = defaultInputSchema
 	}
 
+	publicNetworkAccess := cfg.PublicNetworkAccess
+	if publicNetworkAccess == "" {
+		publicNetworkAccess = defaultPublicNetworkAccess
+	}
+
 	info := driver.EventBusInfo{
-		Name:        cfg.Name,
-		Scope:       cfg.Scope,
-		ARN:         topicID,
-		State:       activeTopicState,
-		CreatedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:        tags,
-		Region:      cfg.Region,
-		InputSchema: inputSchema,
+		Name:                cfg.Name,
+		Scope:               cfg.Scope,
+		ARN:                 topicID,
+		State:               activeTopicState,
+		CreatedAt:           m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:                tags,
+		Region:              cfg.Region,
+		InputSchema:         inputSchema,
+		PublicNetworkAccess: publicNetworkAccess,
 	}
 
 	bd := &busData{
@@ -558,6 +567,11 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	}
 	if cfg.Region != "" {
 		bd.info.Region = cfg.Region
+	}
+	// InputSchema is immutable after creation, so it is intentionally not
+	// updated here; PublicNetworkAccess is mutable and applied when supplied.
+	if cfg.PublicNetworkAccess != "" {
+		bd.info.PublicNetworkAccess = cfg.PublicNetworkAccess
 	}
 
 	m.buses.Set(cfg.Name, bd)

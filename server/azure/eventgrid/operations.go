@@ -19,11 +19,12 @@ func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	cfg := ebdriver.EventBusConfig{
-		Name:        rp.ResourceName,
-		Tags:        tagsFromPtr(body.Tags),
-		Scope:       scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
-		Region:      body.Location,
-		InputSchema: inputSchemaFromBody(&body),
+		Name:                rp.ResourceName,
+		Tags:                tagsFromPtr(body.Tags),
+		Scope:               scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+		Region:              body.Location,
+		InputSchema:         inputSchemaFromBody(&body),
+		PublicNetworkAccess: publicNetworkAccessFromBody(&body),
 	}
 
 	if _, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err == nil {
@@ -60,6 +61,87 @@ func inputSchemaFromBody(body *topicJSON) string {
 	}
 
 	return body.Properties.InputSchema
+}
+
+// publicNetworkAccessFromBody reads the caller's requested PublicNetworkAccess
+// off a Topics CreateOrUpdate request body. CreateEventBus falls back to the
+// real default (Enabled) when this is empty.
+func publicNetworkAccessFromBody(body *topicJSON) string {
+	if body.Properties == nil {
+		return ""
+	}
+
+	return body.Properties.PublicNetworkAccess
+}
+
+// topicUpdateJSON is the Topics.Update (PATCH) request body: mutable tags plus
+// mutable properties (publicNetworkAccess). Identity and input schema are not
+// changeable here, mirroring real Event Grid.
+type topicUpdateJSON struct {
+	Tags       map[string]*string `json:"tags,omitempty"`
+	Properties *struct {
+		PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
+	} `json:"properties,omitempty"`
+}
+
+// updateTopic maps Topics.Update (PATCH) onto UpdateEventBus: it merges the
+// supplied tags onto the topic's existing tags and applies the mutable
+// publicNetworkAccess, returning the updated topic (200).
+func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body topicUpdateJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	current, err := h.bus.GetEventBus(r.Context(), rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	cfg := ebdriver.EventBusConfig{
+		Name:                rp.ResourceName,
+		Tags:                mergeTags(current.Tags, tagsFromPtr(body.Tags)),
+		PublicNetworkAccess: updatePublicNetworkAccess(&body),
+	}
+
+	info, uerr := h.bus.UpdateEventBus(r.Context(), cfg)
+	if uerr != nil {
+		azurearm.WriteCErr(w, uerr)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toTopicJSON(rp, info))
+}
+
+// updatePublicNetworkAccess pulls the mutable publicNetworkAccess off a PATCH
+// body, empty when the caller omitted properties (UpdateEventBus then leaves it
+// unchanged).
+func updatePublicNetworkAccess(body *topicUpdateJSON) string {
+	if body.Properties == nil {
+		return ""
+	}
+
+	return body.Properties.PublicNetworkAccess
+}
+
+// mergeTags overlays patch onto base, returning the merged set. A nil result
+// (both empty) leaves UpdateEventBus's existing tags untouched.
+func mergeTags(base, patch map[string]string) map[string]string {
+	if len(base) == 0 && len(patch) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(base)+len(patch))
+	for k, v := range base {
+		out[k] = v
+	}
+
+	for k, v := range patch {
+		out[k] = v
+	}
+
+	return out
 }
 
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

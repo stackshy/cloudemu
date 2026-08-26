@@ -16,8 +16,10 @@
 // Coverage:
 //
 //	PUT/GET/DELETE .../topics/{t}                           — Topics CRUD (LRO, completes inline)
+//	PATCH          .../topics/{t}                           — Topics.Update (merge tags + mutable properties)
 //	GET            .../topics                               — Topics.ListBySubscription / ListByResourceGroup
 //	POST           .../topics/{t}/listKeys                  — Topics.ListSharedAccessKeys
+//	POST           .../topics/{t}/regenerateKey            — Topics.RegenerateKey
 //	PUT/GET/DELETE .../topics/{t}/eventSubscriptions/{s}    — TopicEventSubscriptions CRUD
 //	GET            .../topics/{t}/eventSubscriptions        — TopicEventSubscriptions.List
 //	PUT/GET/DELETE .../domains/{d}/topics/{t}               — DomainTopics CRUD
@@ -58,6 +60,19 @@ type Handler struct {
 	// These have no eventbus-driver topic to hang off, so — like systemTopics
 	// and domains — the wire handler owns their state. Keyed by scope+name.
 	scopedSubs map[string]*scopedSubRecord
+	// topicKeyGens holds the per-topic shared-access-key generation counters.
+	// A topic's keys are derived deterministically from its name plus a
+	// per-key generation; RegenerateKey bumps the requested key's generation so
+	// the rotated key differs while the other is left untouched. Keyed by
+	// scope+name; a missing entry means both keys are at generation zero.
+	topicKeyGens map[string]*topicKeyGens
+}
+
+// topicKeyGens tracks the generation counter of each of a topic's two shared
+// access keys. Bumping a counter rotates only that key.
+type topicKeyGens struct {
+	key1Gen int
+	key2Gen int
 }
 
 // New returns an Azure Event Grid handler backed by b.
@@ -67,6 +82,7 @@ func New(b ebdriver.EventBus) *Handler {
 		systemTopics: make(map[string]*systemTopicRecord),
 		domains:      make(map[string]*domainRecord),
 		scopedSubs:   make(map[string]*scopedSubRecord),
+		topicKeyGens: make(map[string]*topicKeyGens),
 	}
 }
 
@@ -149,6 +165,13 @@ func (h *Handler) serveTopicResource(w http.ResponseWriter, r *http.Request, rp 
 		}
 
 		h.listTopicKeys(w, r, rp)
+	case subActionRegenerateKey:
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+
+		h.regenerateTopicKey(w, r, rp)
 	case subEventSubscriptions:
 		h.serveEventSubscription(w, r, rp)
 	case "":
@@ -162,6 +185,8 @@ func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, rp *azurear
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateTopic(w, r, rp)
+	case http.MethodPatch:
+		h.updateTopic(w, r, rp)
 	case http.MethodGet:
 		h.getTopic(w, r, rp)
 	case http.MethodDelete:
