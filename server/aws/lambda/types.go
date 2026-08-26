@@ -87,9 +87,6 @@ type updateFunctionConfigurationRequest struct {
 	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
 	// Layers replaces the function's imported layer versions (their ARNs).
 	Layers []string `json:"Layers"`
-	// Publish, when true, cuts a new version from the updated configuration and
-	// returns that version's configuration (qualified ARN), matching AWS.
-	Publish bool `json:"Publish"`
 }
 
 // updateFunctionCodeRequest captures the deployment-package fields of

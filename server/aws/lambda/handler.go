@@ -528,11 +528,6 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		Layers:           h.resolveLayers(req.Layers),
 	}, false)
 
-	if req.Publish {
-		h.writePublished(r.Context(), w, http.StatusOK, name, info, awsCfg)
-		return
-	}
-
 	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
 }
 
