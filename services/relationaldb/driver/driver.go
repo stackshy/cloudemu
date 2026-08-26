@@ -416,9 +416,14 @@ type ClusterSnapshot struct {
 	// NodeType / NumberOfNodes / Encrypted / TotalBackupSizeInMegaBytes echo the
 	// AWS Redshift snapshot attributes on read (copied from the source cluster);
 	// zero for RDS/Aurora/Azure/GCP cluster snapshots.
-	NodeType                   string
-	NumberOfNodes              int
-	Encrypted                  bool
+	NodeType      string
+	NumberOfNodes int
+	Encrypted     bool
+	// KmsKeyID is the KMS key protecting an encrypted Redshift snapshot, copied
+	// from the source cluster at snapshot time so a restore preserves the
+	// encryption key (AWS Redshift Snapshot KmsKeyId). Empty for unencrypted
+	// snapshots and for RDS/Aurora/Azure/GCP cluster snapshots.
+	KmsKeyID                   string
 	TotalBackupSizeInMegaBytes float64
 	// MasterUsername / DatabaseName capture the source cluster's admin user and
 	// database at snapshot time so a Redshift restore is a self-contained image
@@ -445,7 +450,11 @@ type RestoreInstanceInput struct {
 type RestoreClusterInput struct {
 	NewClusterID string
 	SnapshotID   string
-	Tags         map[string]string
+	// KmsKeyID overrides the encryption key on the restored cluster. When empty,
+	// the restored cluster inherits the snapshot's KmsKeyId (AWS Redshift
+	// RestoreFromClusterSnapshot KmsKeyId). Zero for RDS/Aurora/Azure/GCP.
+	KmsKeyID string
+	Tags     map[string]string
 }
 
 // RelationalDB is the interface that relational-database providers must satisfy.

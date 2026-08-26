@@ -287,6 +287,7 @@ func (h *Handler) restoreFromClusterSnapshot(w http.ResponseWriter, r *http.Requ
 	input := rdbdriver.RestoreClusterInput{
 		NewClusterID: form.Get("ClusterIdentifier"),
 		SnapshotID:   form.Get("SnapshotIdentifier"),
+		KmsKeyID:     form.Get("KmsKeyId"),
 		Tags:         parseRedshiftTags(form),
 	}
 

@@ -25,9 +25,12 @@ import (
 )
 
 const (
-	defaultEngine            = "redshift"
-	defaultPort              = 5439
-	singleNodeCount          = 1
+	defaultEngine   = "redshift"
+	defaultPort     = 5439
+	singleNodeCount = 1
+	// defaultKMSKeyAlias is the account-default Redshift KMS key real AWS fills in
+	// when a cluster is created encrypted without an explicit KmsKeyId.
+	defaultKMSKeyAlias       = "alias/aws/redshift"
 	snapshotBackupSizeMB     = 100.0
 	cpuUtilizationRunning    = 25.0
 	databaseConnectionsRun   = 5.0
@@ -500,7 +503,7 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		NodeType:                    cfg.NodeType,
 		NumberOfNodes:               numberOfNodes,
 		Encrypted:                   cfg.Encrypted,
-		KmsKeyID:                    cfg.KmsKeyID,
+		KmsKeyID:                    resolveKMSKeyID(cfg.Encrypted, cfg.KmsKeyID),
 		PubliclyAccessible:          cfg.PubliclyAccessible,
 		AvailabilityZone:            cfg.AvailabilityZone,
 		CreatedAt:                   m.opts.Clock.Now().UTC(),
@@ -844,6 +847,7 @@ func (m *Mock) CreateClusterSnapshot(
 		NodeType:                   cluster.NodeType,
 		NumberOfNodes:              cluster.NumberOfNodes,
 		Encrypted:                  cluster.Encrypted,
+		KmsKeyID:                   cluster.KmsKeyID,
 		TotalBackupSizeInMegaBytes: snapshotBackupSizeMB,
 		MasterUsername:             cluster.MasterUsername,
 		DatabaseName:               cluster.DatabaseName,
@@ -940,6 +944,7 @@ func (m *Mock) RestoreClusterFromSnapshot(
 		NodeType:       snap.NodeType,
 		NumberOfNodes:  numberOfNodes,
 		Encrypted:      snap.Encrypted,
+		KmsKeyID:       restoredKMSKeyID(snap.Encrypted, snap.KmsKeyID, input.KmsKeyID),
 		CreatedAt:      now,
 		Tags:           copyTags(input.Tags),
 	}
@@ -952,6 +957,41 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	out := cluster
 
 	return &out, nil
+}
+
+// resolveKMSKeyID mirrors real Redshift: an encrypted cluster created without an
+// explicit KmsKeyId gets the account's default key; an explicit key always wins,
+// and an unencrypted cluster carries no key.
+func resolveKMSKeyID(encrypted bool, kmsKeyID string) string {
+	if !encrypted {
+		return ""
+	}
+
+	if kmsKeyID == "" {
+		return defaultKMSKeyAlias
+	}
+
+	return kmsKeyID
+}
+
+// restoredKMSKeyID picks the encryption key for a cluster restored from a
+// snapshot: an unencrypted snapshot yields no key; a RestoreFromClusterSnapshot
+// KmsKeyId override wins; otherwise the restored cluster inherits the snapshot's
+// key (falling back to the account default if the snapshot predates key capture).
+func restoredKMSKeyID(encrypted bool, snapKmsKeyID, overrideKmsKeyID string) string {
+	if !encrypted {
+		return ""
+	}
+
+	if overrideKmsKeyID != "" {
+		return overrideKmsKeyID
+	}
+
+	if snapKmsKeyID == "" {
+		return defaultKMSKeyAlias
+	}
+
+	return snapKmsKeyID
 }
 
 func stringSet(values []string) map[string]struct{} {
