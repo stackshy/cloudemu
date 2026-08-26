@@ -598,7 +598,7 @@ func writeRawJSON(w http.ResponseWriter, raw []byte) {
 
 // upload handles POST /upload/storage/v1/b/{bucket}/o, dispatching on
 // uploadType: media (raw body), multipart (JSON metadata + payload), and
-// resumable (a session initialised here, then chunked Content-Range uploads
+// resumable (a session initialized here, then chunked Content-Range uploads
 // that carry the issued upload_id).
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, uploadAPIPrefix)
@@ -724,30 +724,46 @@ func (h *Handler) uploadResumableChunk(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
-	start, end, total, ok := parseContentRange(r.Header.Get("Content-Range"))
+	// end is intentionally ignored: finality is decided by the buffered length
+	// reaching the declared total, never by a chunk claiming to carry the last
+	// byte (which could arrive after a gap and truncate the object).
+	start, _, total, ok := parseContentRange(r.Header.Get("Content-Range"))
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid", "malformed Content-Range")
 		return
 	}
 
-	sess.mu.Lock()
+	buffered, contiguous := sess.appendChunk(start, data)
 
-	// Chunks arrive in order; append only when the range begins exactly at the
-	// current buffer length (a status-probe PUT carries no bytes and no-ops).
-	if len(data) > 0 && start == int64(len(sess.buf)) {
-		sess.buf = append(sess.buf, data...)
-	}
-
-	buffered := int64(len(sess.buf))
-	sess.mu.Unlock()
-
-	final := total != rangeTotalUnknown && (end == total-1 || buffered >= total)
-	if !final {
+	// The upload commits only once the buffer holds the full declared size and no
+	// gap was left behind. Gating finality on a chunk claiming the last byte would
+	// wrongly commit a short object when that chunk arrives after a gap.
+	if !contiguous || total == rangeTotalUnknown || buffered < total {
 		writeResumeIncomplete(w, r, buffered)
 		return
 	}
 
 	h.commitResumable(w, r, sessionID, sess)
+}
+
+// appendChunk appends a contiguous chunk's bytes and reports the resulting
+// buffered length. contiguous is false when a bytes-carrying chunk begins past
+// the current buffer length (a gap) — nothing is appended in that case. A
+// status-probe (no bytes) or an already-buffered replay no-ops but stays
+// contiguous.
+func (s *resumableSession) appendChunk(start int64, data []byte) (buffered int64, contiguous bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(data) > 0 && start > int64(len(s.buf)) {
+		return int64(len(s.buf)), false
+	}
+
+	if len(data) > 0 && start == int64(len(s.buf)) {
+		s.buf = append(s.buf, data...)
+	}
+
+	return int64(len(s.buf)), true
 }
 
 // writeResumeIncomplete signals the client that the bytes so far are stored and
@@ -757,7 +773,7 @@ func (h *Handler) uploadResumableChunk(w http.ResponseWriter, r *http.Request, s
 func writeResumeIncomplete(w http.ResponseWriter, r *http.Request, buffered int64) {
 	w.Header().Set("Range", "bytes=0-"+strconv.FormatInt(maxInt64(buffered-1, 0), 10))
 
-	if strings.EqualFold(r.Header.Get("X-GUploader-No-308"), "yes") {
+	if strings.EqualFold(r.Header.Get("X-Guploader-No-308"), "yes") {
 		w.Header().Set("X-Http-Status-Code-Override", "308")
 		w.WriteHeader(http.StatusOK)
 

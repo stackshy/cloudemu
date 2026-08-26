@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"cloud.google.com/go/storage"
@@ -111,6 +113,98 @@ func TestSDKGCSResumableUpload(t *testing.T) {
 
 	if attrs.Size != int64(size) {
 		t.Errorf("Attrs.Size=%d want %d", attrs.Size, size)
+	}
+}
+
+// TestResumableGappedChunkDoesNotTruncate drives the resumable protocol
+// directly (the SDK only ever sends contiguous chunks) to prove that a chunk
+// arriving after a gap is never accepted as final: it must not commit a
+// truncated object even when its Content-Range claims to carry the last byte.
+func TestResumableGappedChunkDoesNotTruncate(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Storage: cloudP.GCS})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+
+	client, err := storage.NewClient(ctx,
+		option.WithEndpoint(ts.URL+"/storage/v1/"),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(ts.Client()),
+	)
+	if err != nil {
+		t.Fatalf("storage.NewClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	bucket := client.Bucket("b1")
+	if err := bucket.Create(ctx, "p1", nil); err != nil {
+		t.Fatalf("bucket.Create: %v", err)
+	}
+
+	httpc := ts.Client()
+
+	// Initialise a resumable session and read back its session URI.
+	initReq, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+		ts.URL+"/upload/storage/v1/b/b1/o?uploadType=resumable&name=gapped",
+		strings.NewReader(`{"name":"gapped"}`))
+	initReq.Header.Set("Content-Type", "application/json")
+
+	initResp, err := httpc.Do(initReq)
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	_ = initResp.Body.Close()
+
+	if initResp.StatusCode != http.StatusOK {
+		t.Fatalf("init status=%d want 200", initResp.StatusCode)
+	}
+
+	loc := initResp.Header.Get("Location")
+	if loc == "" {
+		t.Fatal("init returned no Location session URI")
+	}
+
+	// resumeIncomplete asserts a chunk POST was acknowledged as "resume
+	// incomplete" (200 + X-Http-Status-Code-Override: 308) rather than committing
+	// the object.
+	sendChunk := func(contentRange string, body []byte) *http.Response {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, loc, bytes.NewReader(body))
+		req.Header.Set("Content-Range", contentRange)
+		req.Header.Set("X-Guploader-No-308", "yes")
+
+		resp, err := httpc.Do(req)
+		if err != nil {
+			t.Fatalf("chunk %q: %v", contentRange, err)
+		}
+
+		return resp
+	}
+
+	// First chunk (0-99) with the total still unknown → resume incomplete.
+	r1 := sendChunk("bytes 0-99/*", bytes.Repeat([]byte("A"), 100))
+	_ = r1.Body.Close()
+
+	if got := r1.Header.Get("X-Http-Status-Code-Override"); got != "308" {
+		t.Fatalf("first chunk override=%q want 308 (should be resume-incomplete)", got)
+	}
+
+	// Second chunk skips 100-199 and claims the final byte of a 300-byte object.
+	// It must NOT be committed as a (truncated) object.
+	r2 := sendChunk("bytes 200-299/300", bytes.Repeat([]byte("B"), 100))
+	_ = r2.Body.Close()
+
+	if r2.Header.Get("X-Http-Status-Code-Override") != "308" {
+		t.Fatalf("gapped final chunk was committed (status=%d) — truncation bug", r2.StatusCode)
+	}
+
+	// The object must not exist: the upload never completed.
+	if _, err := bucket.Object("gapped").Attrs(ctx); err == nil {
+		t.Fatal("object was committed despite an incomplete (gapped) upload")
 	}
 }
 
