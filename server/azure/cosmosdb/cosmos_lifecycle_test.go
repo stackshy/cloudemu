@@ -428,6 +428,54 @@ func TestCosmosWriteDivergences(t *testing.T) {
 	}
 }
 
+// TestCosmosReplaceSemantics pins the two replace-path invariants real Cosmos
+// enforces: the partition key is immutable (a replace that would move the
+// document to a new partition is rejected 400 and leaves no orphan), and a
+// replace of a non-existent id is a 404, not a silent create.
+func TestCosmosReplaceSemantics(t *testing.T) {
+	ctx := context.Background()
+	env := newCosmosEnv(t)
+	cc := env.container(ctx, t, "repldb", "items")
+
+	createDoc(ctx, t, cc, "books", map[string]any{"id": "i1", "pk": "books", "title": "Dune"})
+
+	// Replacing the document with a body that changes the partition key value
+	// is rejected 400 — the partition key is immutable.
+	moved, _ := json.Marshal(map[string]any{"id": "i1", "pk": "movies", "title": "Dune"})
+
+	_, err := cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "i1", moved, nil)
+	wantRespErr(t, err, 400, "ReplaceItem with mutated partition key")
+
+	// No orphan landed under the attempted new partition.
+	_, err = cc.ReadItem(ctx, azcosmos.NewPartitionKeyString("movies"), "i1", nil)
+	wantRespErr(t, err, 404, "point read under new partition (no orphan)")
+
+	// The original document under the real partition is untouched.
+	if got := readDoc(ctx, t, cc, "books", "i1"); got["title"] != "Dune" || got["pk"] != "books" {
+		t.Errorf("original doc mutated: title=%v pk=%v want Dune/books", got["title"], got["pk"])
+	}
+
+	// A same-partition replace (other fields change) still succeeds.
+	same, _ := json.Marshal(map[string]any{"id": "i1", "pk": "books", "title": "Dune Messiah"})
+	if _, err := cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "i1", same, nil); err != nil {
+		t.Fatalf("same-partition ReplaceItem: %v", err)
+	}
+
+	if got := readDoc(ctx, t, cc, "books", "i1"); got["title"] != "Dune Messiah" {
+		t.Errorf("after same-pk replace title=%v want Dune Messiah", got["title"])
+	}
+
+	// Replacing an id that does not exist is a 404, not a create.
+	ghost, _ := json.Marshal(map[string]any{"id": "ghost", "pk": "books", "title": "Nope"})
+
+	_, err = cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "ghost", ghost, nil)
+	wantRespErr(t, err, 404, "ReplaceItem on non-existent id")
+
+	// The rejected replace did not create the document.
+	_, err = cc.ReadItem(ctx, azcosmos.NewPartitionKeyString("books"), "ghost", nil)
+	wantRespErr(t, err, 404, "point read of ghost after rejected replace")
+}
+
 // TestCosmosQueryAndPagination drives the SDK query pager: empty container
 // first, then 30 documents across two partitions. The WHERE clause is
 // evaluated faithfully, so `c.part = 'part-a'` returns exactly the 15 part-a

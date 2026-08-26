@@ -746,6 +746,14 @@ func (h *Handler) replaceDocument(ctx context.Context, coll string, cfg *dbdrive
 	unlock := h.writeMu.lock(coll)
 	defer unlock()
 
+	// A replace targets a document that already exists: real Cosmos returns 404
+	// for a replace of a missing id (creation is the upsert path). The existence
+	// check runs under the write lock already held, so the check and the PutItem
+	// stay atomic and no new race is introduced.
+	if !h.documentExists(ctx, coll, cfg, item) {
+		return cerrors.New(cerrors.NotFound, "Entity with the specified id does not exist in the system.")
+	}
+
 	if err := h.db.PutItem(ctx, coll, item); err != nil {
 		return err
 	}
@@ -973,6 +981,19 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, accou
 			item[idAttr] = id
 		}
 
+		// The partition key is immutable: a replace whose body carries a
+		// different partition-key value than the one addressed by the request
+		// would land the document under a new partition and orphan the
+		// original. Real Cosmos rejects the mutation with 400 rather than
+		// writing the duplicate.
+		if partitionKeyMutated(cfg, pk, item) {
+			writeErr(w, cerrors.New(cerrors.InvalidArgument,
+				"Partition key provided either doesn't correspond to definition in the collection "+
+					"or doesn't match partition key field values specified in the document."))
+
+			return
+		}
+
 		if err := h.replaceDocument(r.Context(), coll, cfg, item); err != nil {
 			writeErr(w, err)
 			return
@@ -1040,6 +1061,27 @@ func buildKey(pkAttr, pkVal, id string) map[string]any {
 	}
 
 	return key
+}
+
+// partitionKeyMutated reports whether a replace body would move the document to
+// a different partition than the one addressed by the request. Cosmos treats the
+// partition key as immutable, so the body's partition-key value must match the
+// x-ms-documentdb-partitionkey header. Only meaningful for a custom partition
+// key — an /id (or unset) partition key is pinned by the request URL's document
+// id. A body omitting the partition-key attribute is left to the normal write
+// path (it stores under the same identity), so only a present-and-different
+// value is flagged.
+func partitionKeyMutated(cfg *dbdriver.TableConfig, headerPK string, item map[string]any) bool {
+	if cfg == nil || cfg.PartitionKey == "" || cfg.PartitionKey == idAttr {
+		return false
+	}
+
+	bodyPK, ok := item[cfg.PartitionKey]
+	if !ok {
+		return false
+	}
+
+	return fmt.Sprintf("%v", bodyPK) != headerPK
 }
 
 // isUpsert reports whether a document write carries the Cosmos upsert flag,
