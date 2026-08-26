@@ -23,6 +23,7 @@ package queue
 import (
 	"encoding/xml"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,6 +58,11 @@ const (
 	// defaultMessageTTLSeconds is the message time-to-live Put Message applies
 	// when the messagettl query parameter is omitted.
 	defaultMessageTTLSeconds = 7 * 24 * 60 * 60
+
+	// defaultVisibilityTimeoutSeconds is the visibility timeout Get Messages applies
+	// when the visibilitytimeout query parameter is omitted, matching the driver's
+	// effective default; used only to report TimeNextVisible on the dequeue response.
+	defaultVisibilityTimeoutSeconds = 30
 
 	// neverExpireTTL is the messagettl value meaning "the message never expires".
 	neverExpireTTL = -1
@@ -252,12 +258,12 @@ func setQueueMetadata(w http.ResponseWriter, r *http.Request, svc mqdriver.Azure
 }
 
 func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, queue string) {
-	_, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: queue})
+	metadata := metadataFromHeaders(r.Header)
+
+	_, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: queue, Metadata: metadata})
 	if err != nil {
-		// Azure returns 204 No Content when the queue already exists with the
-		// same metadata (idempotent create).
 		if cerrors.IsAlreadyExists(err) {
-			w.WriteHeader(http.StatusNoContent)
+			h.handleDuplicateCreate(w, r, queue, metadata)
 			return
 		}
 
@@ -267,6 +273,36 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, queue stri
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleDuplicateCreate resolves the idempotency of a Create Queue on a name that
+// already exists: Azure returns 204 No Content when the requested metadata matches
+// the existing queue's, and 409 QueueAlreadyExists when it differs.
+func (h *Handler) handleDuplicateCreate(w http.ResponseWriter, r *http.Request, queue string, requested map[string]string) {
+	svc, ok := h.mq.(mqdriver.AzureQueueStorage)
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	url, err := h.resolveQueueURL(r, queue)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	meta, err := svc.GetQueueMetadata(r.Context(), url)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if maps.Equal(requested, meta.Metadata) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	writeError(w, http.StatusConflict, "QueueAlreadyExists", "The specified queue already exists.")
 }
 
 func (h *Handler) deleteQueue(w http.ResponseWriter, r *http.Request, queue string) {
@@ -363,7 +399,7 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 		MessageID:       out.MessageID,
 		InsertionTime:   now.Format(time.RFC1123),
 		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(time.RFC1123),
-		PopReceipt:      out.MessageID,
+		PopReceipt:      out.PopReceipt,
 		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
 	}}}
 
@@ -393,16 +429,24 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 	}
 
 	now := time.Now().UTC()
+	// The driver defaults an omitted visibilitytimeout to 30s; mirror that so the
+	// reported TimeNextVisible matches when the message actually reappears.
+	effectiveVis := visTimeout
+	if effectiveVis == 0 {
+		effectiveVis = defaultVisibilityTimeoutSeconds
+	}
+
+	timeNextVisible := now.Add(time.Duration(effectiveVis) * time.Second).Format(time.RFC1123)
 	out := messagesList{}
 
 	for i := range msgs {
 		m := &msgs[i]
 		out.Messages = append(out.Messages, messageXML{
 			MessageID:       m.MessageID,
-			InsertionTime:   now.Format(time.RFC1123),
+			InsertionTime:   m.InsertedAt.UTC().Format(time.RFC1123),
 			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
 			PopReceipt:      m.ReceiptHandle,
-			TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
+			TimeNextVisible: timeNextVisible,
 			DequeueCount:    int64(m.ReceiveCount),
 			MessageText:     m.Body,
 		})
@@ -508,7 +552,15 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, queue st
 	}
 
 	if err := h.mq.DeleteMessage(r.Context(), url, popReceipt); err != nil {
+		// The queue was already resolved, so a NotFound here means the message or
+		// its pop receipt did not match — Azure returns 404 MessageNotFound.
+		if cerrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 

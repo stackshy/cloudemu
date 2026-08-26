@@ -154,6 +154,11 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		tags[k] = v
 	}
 
+	metadata := make(map[string]string, len(cfg.Metadata))
+	for k, v := range cfg.Metadata {
+		metadata[k] = v
+	}
+
 	visibilityTimeout := cfg.VisibilityTimeout
 	if visibilityTimeout == 0 {
 		visibilityTimeout = defaultVisibilityTimeout
@@ -182,7 +187,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		deduplicationIndex:     make(map[string]time.Time),
 		dlqConfig:              cfg.DeadLetterQueue,
 		deadLetterOnExpiration: cfg.DeadLetterOnExpiration,
-		metadata:               make(map[string]string),
+		metadata:               metadata,
 	}
 
 	m.queues.Set(url, qd)
@@ -292,6 +297,12 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	// For a non-scheduled send visibleAt == now, so this is unchanged.
 	expiresAt := computeExpiry(visibleAt, input.MessageTTLSeconds)
 
+	// Mint a pop receipt at enqueue time so the message can be deleted or updated
+	// with the Put Message-returned receipt before its first dequeue, as Azure
+	// Queue Storage allows. A subsequent dequeue issues a fresh receipt that
+	// supersedes this one.
+	receiptHandle := idgen.GenerateID("sb-lock-")
+
 	msg := &sbMessage{
 		ID:              msgID,
 		Body:            input.Body,
@@ -299,6 +310,7 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
 		SystemProps:     sysProps,
+		ReceiptHandle:   receiptHandle,
 		VisibleAt:       visibleAt,
 		SentAt:          now,
 		ExpiresAt:       expiresAt,
@@ -331,8 +343,9 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	})
 
 	return &driver.SendMessageOutput{
-		MessageID: msgID,
-		ExpiresAt: expiresAt,
+		MessageID:  msgID,
+		ExpiresAt:  expiresAt,
+		PopReceipt: receiptHandle,
 	}, nil
 }
 
@@ -517,6 +530,7 @@ func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) 
 		GroupID:          msg.GroupID,
 		ReceiveCount:     msg.ReceiveCount,
 		ExpiresAt:        msg.ExpiresAt,
+		InsertedAt:       msg.SentAt,
 	}
 }
 
