@@ -380,11 +380,49 @@ func childShardsOf(shards []*shardState, parentID string) []driver.ChildShard {
 }
 
 // listShardsToken is the opaque NextToken ListShards hands back: real Kinesis
-// forbids passing StreamName alongside NextToken, so the token must carry the
-// stream identity plus the cursor to resume after.
+// forbids passing StreamName or ShardFilter alongside NextToken, so the token
+// must carry the stream identity, the cursor to resume after, and any active
+// filter so later pages stay consistent with the first.
 type listShardsToken struct {
 	StreamName string `json:"s"`
 	AfterShard string `json:"a"`
+	FilterType string `json:"f,omitempty"`
+	FilterTS   int64  `json:"t,omitempty"` // Unix seconds; 0 when no timestamp
+}
+
+// filter reconstructs the ShardFilter a paginating token must keep applying.
+// Full-set and AFTER_SHARD_ID filters aren't persisted — the AfterShard cursor
+// already captures them — so only the state-narrowing types come back here.
+func (t listShardsToken) filter() *driver.ShardFilter {
+	if t.FilterType == "" {
+		return nil
+	}
+
+	f := &driver.ShardFilter{Type: t.FilterType}
+	if t.FilterTS != 0 {
+		f.Timestamp = time.Unix(t.FilterTS, 0).UTC()
+	}
+
+	return f
+}
+
+// newListShardsToken builds the next-page token, persisting only filters that
+// still constrain subsequent pages.
+func newListShardsToken(streamName, afterShard string, f *driver.ShardFilter) listShardsToken {
+	t := listShardsToken{StreamName: streamName, AfterShard: afterShard}
+
+	if f != nil {
+		switch f.Type {
+		case driver.ShardFilterAtLatest, driver.ShardFilterAtTrimHorizon,
+			driver.ShardFilterAtTimestamp, driver.ShardFilterFromTimestamp:
+			t.FilterType = f.Type
+			if !f.Timestamp.IsZero() {
+				t.FilterTS = f.Timestamp.Unix()
+			}
+		}
+	}
+
+	return t
 }
 
 func encodeListShardsToken(t listShardsToken) string {
@@ -407,20 +445,27 @@ func decodeListShardsToken(s string) (listShardsToken, error) {
 	return t, nil
 }
 
-// ListShards lists a stream's shards.
+// ListShards lists a stream's shards, optionally narrowed by a ShardFilter.
+//
+//nolint:gocritic // in is the public ListShards input, taken by value to match the driver API
 func (m *Mock) ListShards(_ context.Context, in driver.ListShardsInput) (*driver.ListShardsOutput, error) {
 	streamName, streamARN := in.StreamName, in.StreamARN
 
-	// A NextToken from a prior page carries the stream identity + resume cursor.
+	// A NextToken from a prior page carries the stream identity + resume cursor
+	// (+ any active filter). Otherwise AFTER_SHARD_ID sets the initial cursor.
 	start := in.ExclusiveStartShardID
+	filter := in.ShardFilter
 
-	if in.NextToken != "" {
+	switch {
+	case in.NextToken != "":
 		tok, err := decodeListShardsToken(in.NextToken)
 		if err != nil {
 			return nil, err
 		}
 
-		streamName, streamARN, start = tok.StreamName, "", tok.AfterShard
+		streamName, streamARN, start, filter = tok.StreamName, "", tok.AfterShard, tok.filter()
+	case filter != nil && filter.Type == driver.ShardFilterAfterShardID:
+		start = filter.ShardID
 	}
 
 	sd, err := m.resolve(streamName, streamARN)
@@ -431,15 +476,86 @@ func (m *Mock) ListShards(_ context.Context, in driver.ListShardsInput) (*driver
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	shards, more := pageShards(sd.shards, in.MaxResults, start)
+	filtered, err := filterShards(sd.shards, filter, sd.desc.StreamCreationTimestamp)
+	if err != nil {
+		return nil, err
+	}
+
+	shards, more := pageShards(filtered, in.MaxResults, start)
 
 	out := &driver.ListShardsOutput{Shards: shards}
 	if more && len(shards) > 0 {
-		out.NextToken = encodeListShardsToken(listShardsToken{
-			StreamName: sd.desc.StreamName,
-			AfterShard: shards[len(shards)-1].ShardID,
-		})
+		out.NextToken = encodeListShardsToken(
+			newListShardsToken(sd.desc.StreamName, shards[len(shards)-1].ShardID, filter))
 	}
 
 	return out, nil
+}
+
+// filterShards returns the subset of shards a ShardFilter selects. Records are
+// never trimmed in the emulator, so the trim horizon is the stream's creation
+// time and the retention window spans creation→now.
+func filterShards(shards []*shardState, f *driver.ShardFilter, trimHorizon time.Time) ([]*shardState, error) {
+	if f == nil || f.Type == "" {
+		return shards, nil
+	}
+
+	switch f.Type {
+	case driver.ShardFilterFromTrimHorizon, driver.ShardFilterAfterShardID:
+		// Whole shard set; AFTER_SHARD_ID additionally advances the start cursor.
+		return shards, nil
+	case driver.ShardFilterAtLatest:
+		return selectShards(shards, func(ss *shardState) bool { return !ss.closed }), nil
+	case driver.ShardFilterAtTrimHorizon:
+		return selectShards(shards, func(ss *shardState) bool { return openAt(ss, trimHorizon) }), nil
+	case driver.ShardFilterAtTimestamp, driver.ShardFilterFromTimestamp:
+		return filterByTimestamp(shards, f, trimHorizon)
+	default:
+		return nil, invalidArg("unsupported ShardFilter type %q", f.Type)
+	}
+}
+
+// filterByTimestamp applies the AT_TIMESTAMP / FROM_TIMESTAMP filters, both of
+// which require a Timestamp. AT_TIMESTAMP returns shards open at that instant;
+// FROM_TIMESTAMP returns open shards plus closed shards ending at/after it
+// (clamped up to the trim horizon).
+func filterByTimestamp(shards []*shardState, f *driver.ShardFilter, trimHorizon time.Time) ([]*shardState, error) {
+	if f.Timestamp.IsZero() {
+		return nil, invalidArg("ShardFilter %s requires a Timestamp", f.Type)
+	}
+
+	if f.Type == driver.ShardFilterAtTimestamp {
+		return selectShards(shards, func(ss *shardState) bool { return openAt(ss, f.Timestamp) }), nil
+	}
+
+	ts := f.Timestamp
+	if ts.Before(trimHorizon) {
+		ts = trimHorizon
+	}
+
+	return selectShards(shards, func(ss *shardState) bool {
+		return !ss.closed || !ss.closedAt.Before(ts)
+	}), nil
+}
+
+// openAt reports whether a shard was open at ts: created at or before ts and not
+// yet closed at ts (start <= ts <= end, or still open).
+func openAt(ss *shardState, ts time.Time) bool {
+	if ss.createdAt.After(ts) {
+		return false
+	}
+
+	return ss.closedAt.IsZero() || !ss.closedAt.Before(ts)
+}
+
+func selectShards(shards []*shardState, keep func(*shardState) bool) []*shardState {
+	out := make([]*shardState, 0, len(shards))
+
+	for _, ss := range shards {
+		if keep(ss) {
+			out = append(out, ss)
+		}
+	}
+
+	return out
 }

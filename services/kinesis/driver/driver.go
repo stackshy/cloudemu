@@ -45,6 +45,16 @@ const (
 	ConsumerActive   = "ACTIVE"
 )
 
+// ShardFilter types narrow ListShards to a subset of a stream's shards.
+const (
+	ShardFilterAfterShardID    = "AFTER_SHARD_ID"
+	ShardFilterAtTrimHorizon   = "AT_TRIM_HORIZON"
+	ShardFilterFromTrimHorizon = "FROM_TRIM_HORIZON"
+	ShardFilterAtLatest        = "AT_LATEST"
+	ShardFilterAtTimestamp     = "AT_TIMESTAMP"
+	ShardFilterFromTimestamp   = "FROM_TIMESTAMP"
+)
+
 // HashKeyRange is the range of MD5 hash-key values a shard owns.
 type HashKeyRange struct {
 	StartingHashKey string
@@ -199,6 +209,15 @@ type SubscribeToShardResult struct {
 	MillisBehindLatest         int64
 }
 
+// ShardFilter narrows ListShards to a subset of shards. Type is one of the
+// ShardFilter* constants; ShardID applies only to AFTER_SHARD_ID and Timestamp
+// only to AT_TIMESTAMP / FROM_TIMESTAMP.
+type ShardFilter struct {
+	Type      string
+	ShardID   string
+	Timestamp time.Time
+}
+
 // ListShardsInput narrows ListShards.
 type ListShardsInput struct {
 	StreamName            string
@@ -206,6 +225,7 @@ type ListShardsInput struct {
 	NextToken             string
 	MaxResults            int32
 	ExclusiveStartShardID string
+	ShardFilter           *ShardFilter
 }
 
 // ListShardsOutput is the result of ListShards.
@@ -247,7 +267,7 @@ type Kinesis interface {
 	DeleteStream(ctx context.Context, name, arn string, enforceConsumerDeletion bool) error
 	DescribeStream(ctx context.Context, name, arn string, limit int32, exclusiveStartShardID string) (*StreamDescription, error)
 	DescribeStreamSummary(ctx context.Context, name, arn string) (*StreamSummary, error)
-	ListStreams(ctx context.Context, nextToken string, limit int32) (*ListStreamsOutput, error)
+	ListStreams(ctx context.Context, nextToken, exclusiveStartStreamName string, limit int32) (*ListStreamsOutput, error)
 	IncreaseStreamRetentionPeriod(ctx context.Context, name, arn string, hours int32) error
 	DecreaseStreamRetentionPeriod(ctx context.Context, name, arn string, hours int32) error
 	UpdateShardCount(ctx context.Context, name, arn string, targetCount int32, scalingType string) (current, target int32, err error)

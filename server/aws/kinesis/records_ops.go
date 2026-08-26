@@ -152,12 +152,32 @@ func (h *Handler) getRecords(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type shardFilterJSON struct {
+	Type      string   `json:"Type"`
+	ShardID   string   `json:"ShardId"`
+	Timestamp *float64 `json:"Timestamp"`
+}
+
+func (f *shardFilterJSON) toDriver() *kinesisdriver.ShardFilter {
+	if f == nil {
+		return nil
+	}
+
+	out := &kinesisdriver.ShardFilter{Type: f.Type, ShardID: f.ShardID}
+	if f.Timestamp != nil {
+		out.Timestamp = time.Unix(int64(*f.Timestamp), 0).UTC()
+	}
+
+	return out
+}
+
 type listShardsRequest struct {
-	StreamName            string `json:"StreamName"`
-	StreamARN             string `json:"StreamARN"`
-	NextToken             string `json:"NextToken"`
-	MaxResults            int32  `json:"MaxResults"`
-	ExclusiveStartShardID string `json:"ExclusiveStartShardId"`
+	StreamName            string           `json:"StreamName"`
+	StreamARN             string           `json:"StreamARN"`
+	NextToken             string           `json:"NextToken"`
+	MaxResults            int32            `json:"MaxResults"`
+	ExclusiveStartShardID string           `json:"ExclusiveStartShardId"`
+	ShardFilter           *shardFilterJSON `json:"ShardFilter"`
 }
 
 func (h *Handler) listShards(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +188,7 @@ func (h *Handler) listShards(w http.ResponseWriter, r *http.Request) {
 			NextToken:             req.NextToken,
 			MaxResults:            req.MaxResults,
 			ExclusiveStartShardID: req.ExclusiveStartShardID,
+			ShardFilter:           req.ShardFilter.toDriver(),
 		})
 		if err != nil {
 			return nil, err
