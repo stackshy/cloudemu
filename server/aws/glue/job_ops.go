@@ -8,19 +8,23 @@ import (
 )
 
 type jobJSON struct {
-	Name             string            `json:"Name"`
-	Description      string            `json:"Description,omitempty"`
-	Role             string            `json:"Role,omitempty"`
-	Command          map[string]any    `json:"Command,omitempty"`
-	DefaultArguments map[string]string `json:"DefaultArguments,omitempty"`
-	MaxRetries       int32             `json:"MaxRetries,omitempty"`
-	Timeout          int32             `json:"Timeout,omitempty"`
-	GlueVersion      string            `json:"GlueVersion,omitempty"`
-	WorkerType       string            `json:"WorkerType,omitempty"`
-	NumberOfWorkers  int32             `json:"NumberOfWorkers,omitempty"`
-	MaxCapacity      float64           `json:"MaxCapacity,omitempty"`
-	CreatedOn        *float64          `json:"CreatedOn,omitempty"`
-	LastModifiedOn   *float64          `json:"LastModifiedOn,omitempty"`
+	Name                  string            `json:"Name"`
+	Description           string            `json:"Description,omitempty"`
+	Role                  string            `json:"Role,omitempty"`
+	Command               map[string]any    `json:"Command,omitempty"`
+	DefaultArguments      map[string]string `json:"DefaultArguments,omitempty"`
+	MaxRetries            int32             `json:"MaxRetries,omitempty"`
+	Timeout               int32             `json:"Timeout,omitempty"`
+	GlueVersion           string            `json:"GlueVersion,omitempty"`
+	WorkerType            string            `json:"WorkerType,omitempty"`
+	NumberOfWorkers       int32             `json:"NumberOfWorkers,omitempty"`
+	MaxCapacity           float64           `json:"MaxCapacity,omitempty"`
+	ExecutionProperty     map[string]any    `json:"ExecutionProperty,omitempty"`
+	Connections           map[string]any    `json:"Connections,omitempty"`
+	NotificationProperty  map[string]any    `json:"NotificationProperty,omitempty"`
+	SecurityConfiguration string            `json:"SecurityConfiguration,omitempty"`
+	CreatedOn             *float64          `json:"CreatedOn,omitempty"`
+	LastModifiedOn        *float64          `json:"LastModifiedOn,omitempty"`
 }
 
 func jobToWire(j *driver.Job) jobJSON {
@@ -28,21 +32,27 @@ func jobToWire(j *driver.Job) jobJSON {
 		Name: j.Name, Description: j.Description, Role: j.Role, Command: j.Command,
 		DefaultArguments: j.DefaultArguments, MaxRetries: j.MaxRetries, Timeout: j.Timeout,
 		GlueVersion: j.GlueVersion, WorkerType: j.WorkerType, NumberOfWorkers: j.NumberOfWorkers,
-		MaxCapacity: j.MaxCapacity, CreatedOn: epochOrNil(j.CreatedOn), LastModifiedOn: epochOrNil(j.LastModifiedOn),
+		MaxCapacity: j.MaxCapacity, ExecutionProperty: j.ExecutionProperty, Connections: j.Connections,
+		NotificationProperty: j.NotificationProperty, SecurityConfiguration: j.SecurityConfiguration,
+		CreatedOn: epochOrNil(j.CreatedOn), LastModifiedOn: epochOrNil(j.LastModifiedOn),
 	}
 }
 
 type jobInputJSON struct {
-	Description      string            `json:"Description"`
-	Role             string            `json:"Role"`
-	Command          map[string]any    `json:"Command"`
-	DefaultArguments map[string]string `json:"DefaultArguments"`
-	MaxRetries       int32             `json:"MaxRetries"`
-	Timeout          int32             `json:"Timeout"`
-	GlueVersion      string            `json:"GlueVersion"`
-	WorkerType       string            `json:"WorkerType"`
-	NumberOfWorkers  int32             `json:"NumberOfWorkers"`
-	MaxCapacity      float64           `json:"MaxCapacity"`
+	Description           string            `json:"Description"`
+	Role                  string            `json:"Role"`
+	Command               map[string]any    `json:"Command"`
+	DefaultArguments      map[string]string `json:"DefaultArguments"`
+	MaxRetries            int32             `json:"MaxRetries"`
+	Timeout               int32             `json:"Timeout"`
+	GlueVersion           string            `json:"GlueVersion"`
+	WorkerType            string            `json:"WorkerType"`
+	NumberOfWorkers       int32             `json:"NumberOfWorkers"`
+	MaxCapacity           float64           `json:"MaxCapacity"`
+	ExecutionProperty     map[string]any    `json:"ExecutionProperty"`
+	Connections           map[string]any    `json:"Connections"`
+	NotificationProperty  map[string]any    `json:"NotificationProperty"`
+	SecurityConfiguration string            `json:"SecurityConfiguration"`
 }
 
 //nolint:gocritic // hugeParam: taken by value to match the driver interface / copy semantics
@@ -51,22 +61,28 @@ func jobFromInput(name string, in jobInputJSON) driver.Job {
 		Name: name, Description: in.Description, Role: in.Role, Command: in.Command,
 		DefaultArguments: in.DefaultArguments, MaxRetries: in.MaxRetries, Timeout: in.Timeout,
 		GlueVersion: in.GlueVersion, WorkerType: in.WorkerType, NumberOfWorkers: in.NumberOfWorkers,
-		MaxCapacity: in.MaxCapacity,
+		MaxCapacity: in.MaxCapacity, ExecutionProperty: in.ExecutionProperty, Connections: in.Connections,
+		NotificationProperty: in.NotificationProperty, SecurityConfiguration: in.SecurityConfiguration,
 	}
 }
 
 type createJobRequest struct {
-	Name             string            `json:"Name"`
-	Description      string            `json:"Description"`
-	Role             string            `json:"Role"`
-	Command          map[string]any    `json:"Command"`
-	DefaultArguments map[string]string `json:"DefaultArguments"`
-	MaxRetries       int32             `json:"MaxRetries"`
-	Timeout          int32             `json:"Timeout"`
-	GlueVersion      string            `json:"GlueVersion"`
-	WorkerType       string            `json:"WorkerType"`
-	NumberOfWorkers  int32             `json:"NumberOfWorkers"`
-	MaxCapacity      float64           `json:"MaxCapacity"`
+	Name                  string            `json:"Name"`
+	Description           string            `json:"Description"`
+	Role                  string            `json:"Role"`
+	Command               map[string]any    `json:"Command"`
+	DefaultArguments      map[string]string `json:"DefaultArguments"`
+	MaxRetries            int32             `json:"MaxRetries"`
+	Timeout               int32             `json:"Timeout"`
+	GlueVersion           string            `json:"GlueVersion"`
+	WorkerType            string            `json:"WorkerType"`
+	NumberOfWorkers       int32             `json:"NumberOfWorkers"`
+	MaxCapacity           float64           `json:"MaxCapacity"`
+	ExecutionProperty     map[string]any    `json:"ExecutionProperty"`
+	Connections           map[string]any    `json:"Connections"`
+	NotificationProperty  map[string]any    `json:"NotificationProperty"`
+	SecurityConfiguration string            `json:"SecurityConfiguration"`
+	Tags                  map[string]string `json:"Tags"`
 }
 
 type nameResponse struct {
@@ -79,7 +95,9 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 			Name: req.Name, Description: req.Description, Role: req.Role, Command: req.Command,
 			DefaultArguments: req.DefaultArguments, MaxRetries: req.MaxRetries, Timeout: req.Timeout,
 			GlueVersion: req.GlueVersion, WorkerType: req.WorkerType, NumberOfWorkers: req.NumberOfWorkers,
-			MaxCapacity: req.MaxCapacity,
+			MaxCapacity: req.MaxCapacity, ExecutionProperty: req.ExecutionProperty, Connections: req.Connections,
+			NotificationProperty: req.NotificationProperty, SecurityConfiguration: req.SecurityConfiguration,
+			Tags: req.Tags,
 		}
 
 		name, err := h.glue.CreateJob(ctx, j)
