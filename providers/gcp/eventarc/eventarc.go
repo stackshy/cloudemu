@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/http"
 	"sync"
 	"time"
 
@@ -44,11 +45,28 @@ type Mock struct {
 	buses      *memstore.Store[*busData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	functions  FunctionInvoker
+	cloudRun   CloudRunResolver
+	httpClient *http.Client
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetFunctionInvoker wires the Cloud Functions backend so a matching PutEvents
+// invokes every trigger whose destination is a Cloud Function. Nil (the default)
+// leaves Cloud Function delivery a graceful no-op.
+func (m *Mock) SetFunctionInvoker(fi FunctionInvoker) {
+	m.functions = fi
+}
+
+// SetCloudRunInvoker wires the Cloud Run backend so a matching PutEvents delivers
+// the CloudEvent over HTTP to every trigger whose destination is a Cloud Run
+// service. Nil (the default) leaves Cloud Run delivery a graceful no-op.
+func (m *Mock) SetCloudRunInvoker(r CloudRunResolver) {
+	m.cloudRun = r
 }
 
 func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
@@ -71,8 +89,9 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 // New creates a new Eventarc mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		buses: memstore.New[*busData](),
-		opts:  opts,
+		buses:      memstore.New[*busData](),
+		opts:       opts,
+		httpClient: &http.Client{Timeout: cloudRunDeliveryTimeout},
 	}
 }
 
@@ -397,6 +416,7 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 		}
 
 		m.storeEvent(bd, &events[i])
+		m.dispatchEvent(ctx, bd, &events[i])
 
 		result.SuccessCount++
 		result.EventIDs = append(result.EventIDs, eventID)
