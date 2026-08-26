@@ -110,12 +110,15 @@ func (h *Handler) describeVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	page, next := pageNetworkingXML(out, r, func(e vpcEndpointXML) string { return e.VpcEndpointID })
+
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name         `xml:"DescribeVpcEndpointsResponse"`
 		Xmlns   string           `xml:"xmlns,attr"`
 		Req     string           `xml:"requestId"`
 		Set     []vpcEndpointXML `xml:"vpcEndpointSet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		Next    string           `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: page, Next: next})
 }
 
 // modifyVPCEndpoint applies the Add*/Remove* set mutations real EC2 uses to

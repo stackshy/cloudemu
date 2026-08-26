@@ -45,6 +45,19 @@ type describeTagsResponseXML struct {
 	Xmlns     string               `xml:"xmlns,attr"`
 	RequestID string               `xml:"requestId"`
 	TagSet    []describeTagItemXML `xml:"tagSet>item"`
+	NextToken string               `xml:"nextToken,omitempty"`
+}
+
+// tagCursorSep joins a tag's resource id and key into the stable cursor/sort key
+// DescribeTags pages on. A resource holds each key at most once, so the pair is
+// unique; the NUL separator cannot appear in an id or key, so it never collides.
+const tagCursorSep = "\x00"
+
+// tagItemCursor is the stable per-item id DescribeTags sorts and pages on. Tags
+// come from map iteration, so a composite key (not the resource id alone) is
+// what makes the base64 NextToken deterministic across calls.
+func tagItemCursor(it describeTagItemXML) string {
+	return it.ResourceID + tagCursorSep + it.Key
 }
 
 // tagRecord is one flattened resource/tag pair gathered from the compute and
@@ -98,10 +111,13 @@ func (h *Handler) describeTags(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	page, next := pageNetworkingXML(items, r, tagItemCursor)
+
 	awsquery.WriteXMLResponse(w, describeTagsResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		TagSet:    items,
+		TagSet:    page,
+		NextToken: next,
 	})
 }
 
