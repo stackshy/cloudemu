@@ -108,11 +108,12 @@ var azureExemptions = []exemption{
 	{
 		field:  "Monitor",
 		method: "SetWebhookDeliverer",
-		reason: "SetWebhookDeliverer is a test-injection seam for the metric-alert " +
-			"action-group webhook path: the Monitor uses a default real-HTTP " +
-			"deliverer internally, and tests inject a fake one to assert delivery. " +
-			"Production New() deliberately does not override the default deliverer, " +
-			"so this setter is intentionally not wired.",
+		reason: "monitor.New defaults webhookDeliverer to a real-HTTP deliverer " +
+			"(mirroring how eventgrid.New wires a real httpClient), so an alert " +
+			"breach that fires an action group with webhook receivers POSTs to " +
+			"them in production without any azure.go wiring. SetWebhookDeliverer " +
+			"is only a test override that swaps in a fake to assert delivery, so " +
+			"New deliberately does not call this setter.",
 	},
 }
 

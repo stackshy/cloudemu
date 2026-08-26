@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -13,6 +15,11 @@ const (
 	receiverSMS           = "sms"
 	receiverAzureFunction = "azureFunction"
 )
+
+// webhookDeliveryTimeout bounds how long a single webhook POST waits for the
+// receiver to respond, so a dead endpoint can't hang an alarm evaluation /
+// PutMetricData indefinitely. It mirrors eventgrid's webhookDeliveryTimeout.
+const webhookDeliveryTimeout = 10 * time.Second
 
 // ActionGroupReceiver is one resolved receiver of an action group. Endpoint is
 // the receiver's address: the email address, webhook URI, phone number, or
@@ -46,16 +53,57 @@ type actionGroupData struct {
 }
 
 // WebhookDeliverer delivers an alert notification to a webhook receiver's URI.
-// It mirrors the AWS ActionPublisher wiring: nil (the default) records the
-// delivery without a network call, while a wired deliverer additionally
-// performs the real HTTP POST so an end-to-end webhook flow can be exercised.
+// New() defaults it to a real-HTTP implementation (httpWebhookDeliverer), so a
+// breach that targets an action group with webhook receivers performs the real
+// POST in production — mirroring how eventgrid.New wires a real httpClient and
+// POSTs to WebHook destinations. SetWebhookDeliverer is a test seam that swaps
+// in a fake so a test can assert delivery without a live receiver.
 type WebhookDeliverer interface {
 	Deliver(ctx context.Context, uri, payload string) error
 }
 
-// SetWebhookDeliverer wires a webhook deliverer so an alert breach that targets
-// an action group with webhook receivers performs the real HTTP POST in
-// addition to recording the delivery. Nil leaves webhook delivery record-only.
+// httpWebhookDeliverer is the production WebhookDeliverer: a best-effort real
+// HTTP POST of the alert payload to a webhook receiver's URI. It mirrors
+// eventgrid.Mock's postWebhook — a bounded http.Client, and errors are surfaced
+// to the caller (deliverWebhook), which swallows them so a breach / PutMetricData
+// never fails because a receiver is unreachable.
+type httpWebhookDeliverer struct {
+	client *http.Client
+}
+
+// newHTTPWebhookDeliverer builds the default deliverer with a bounded client,
+// matching eventgrid.New's http.Client{Timeout: webhookDeliveryTimeout}.
+func newHTTPWebhookDeliverer() *httpWebhookDeliverer {
+	return &httpWebhookDeliverer{client: &http.Client{Timeout: webhookDeliveryTimeout}}
+}
+
+// Deliver POSTs the payload to uri as the action-group webhook body, with the
+// JSON content-type real Azure action-group webhooks carry.
+func (d *httpWebhookDeliverer) Deliver(ctx context.Context, uri, payload string) error {
+	reqCtx, cancel := context.WithTimeout(ctx, webhookDeliveryTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, uri, strings.NewReader(payload))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}
+
+// SetWebhookDeliverer overrides the webhook deliverer. It is a test seam: tests
+// inject a fake to observe delivery. New() already installs a real-HTTP default,
+// so production never calls this. Nil leaves webhook delivery record-only.
 func (m *Mock) SetWebhookDeliverer(d WebhookDeliverer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -93,8 +141,8 @@ func (m *Mock) ActionGroupDeliveries() []ActionGroupDelivery {
 
 // fireActionGroups delivers an alarm's action groups on a transition into
 // ALARM: each AlarmActions id is resolved against the registered action groups
-// and every receiver is recorded (and, for webhook receivers with a wired
-// deliverer, POSTed). A disabled action group delivers to none of its receivers.
+// and every receiver is recorded (and, for webhook receivers, POSTed by the
+// deliverer). A disabled action group delivers to none of its receivers.
 func (m *Mock) fireActionGroups(alarm *alarmData, newState string, now time.Time) {
 	for _, agID := range alarm.AlarmActions {
 		ag, ok := m.actionGroups.Get(strings.ToLower(agID))
@@ -118,8 +166,9 @@ func (m *Mock) fireActionGroups(alarm *alarmData, newState string, now time.Time
 	}
 }
 
-// deliverWebhook performs the real HTTP POST for a webhook receiver when a
-// deliverer is wired; it is a no-op for non-webhook receivers or when none is.
+// deliverWebhook performs the best-effort HTTP POST for a webhook receiver
+// using the wired deliverer (a real-HTTP one by default from New); it is a
+// no-op for non-webhook receivers, or when a test cleared the deliverer to nil.
 func (m *Mock) deliverWebhook(rcv ActionGroupReceiver, alarm *alarmData, newState string, now time.Time) {
 	if rcv.Type != receiverWebhook || rcv.Endpoint == "" {
 		return

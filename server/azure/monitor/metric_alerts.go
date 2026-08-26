@@ -82,8 +82,9 @@ func singleScope(props map[string]any) (string, bool) {
 // actionGroupIDs extracts properties.actions[].actionGroupId — the action
 // group resource ids linked to a metric alert — and stores them on the alarm
 // so DescribeAlarms echoes the linkage back (mirroring the AWS CloudWatch
-// alarm's AlarmActions field). Actual delivery to the action group on a breach
-// is not simulated. Entries with no actionGroupId are skipped rather than
+// alarm's AlarmActions field). On a breach the alarm resolves these ids to the
+// registered action groups and delivers to their receivers (webhook receivers
+// are POSTed for real). Entries with no actionGroupId are skipped rather than
 // producing an empty AlarmActions entry.
 func actionGroupIDs(props map[string]any) []string {
 	actions, ok := props["actions"].([]any)
