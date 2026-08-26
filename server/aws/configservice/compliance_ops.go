@@ -73,10 +73,23 @@ func (h *Handler) describeComplianceByResource(w http.ResponseWriter, r *http.Re
 	})
 }
 
+type evaluationResultQualifierJSON struct {
+	ConfigRuleName string `json:"ConfigRuleName,omitempty"`
+	ResourceType   string `json:"ResourceType,omitempty"`
+	ResourceID     string `json:"ResourceId,omitempty"`
+}
+
+type evaluationResultIdentifierJSON struct {
+	EvaluationResultQualifier *evaluationResultQualifierJSON `json:"EvaluationResultQualifier,omitempty"`
+	OrderingTimestamp         *float64                       `json:"OrderingTimestamp,omitempty"`
+}
+
 type evaluationResultJSON struct {
-	ComplianceType     string   `json:"ComplianceType,omitempty"`
-	Annotation         string   `json:"Annotation,omitempty"`
-	ResultRecordedTime *float64 `json:"ResultRecordedTime,omitempty"`
+	EvaluationResultIdentifier *evaluationResultIdentifierJSON `json:"EvaluationResultIdentifier,omitempty"`
+	ComplianceType             string                          `json:"ComplianceType,omitempty"`
+	ConfigRuleInvokedTime      *float64                        `json:"ConfigRuleInvokedTime,omitempty"`
+	ResultRecordedTime         *float64                        `json:"ResultRecordedTime,omitempty"`
+	Annotation                 string                          `json:"Annotation,omitempty"`
 }
 
 type complianceDetailsResp struct {
@@ -92,7 +105,7 @@ func (h *Handler) getComplianceDetailsByConfigRule(w http.ResponseWriter, r *htt
 			return nil, err
 		}
 
-		return complianceDetailsResp{EvaluationResults: evalResults(evals), NextToken: next}, nil
+		return complianceDetailsResp{EvaluationResults: evalResults(req.ConfigRuleName, evals), NextToken: next}, nil
 	})
 }
 
@@ -104,7 +117,10 @@ func (h *Handler) getComplianceDetailsByResource(w http.ResponseWriter, r *http.
 			return nil, err
 		}
 
-		return complianceDetailsResp{EvaluationResults: evalResults(evals), NextToken: next}, nil
+		// The by-resource driver call spans every rule and does not surface which
+		// rule produced each evaluation, so the qualifier's ConfigRuleName is left
+		// empty; ResourceType/ResourceId still come from the stored evaluation.
+		return complianceDetailsResp{EvaluationResults: evalResults("", evals), NextToken: next}, nil
 	})
 }
 
@@ -160,14 +176,25 @@ func (h *Handler) getComplianceSummaryByResourceType(w http.ResponseWriter, r *h
 	})
 }
 
-// evalResults converts driver evaluations into wire EvaluationResult records.
-func evalResults(evals []cfgEvaluation) []evaluationResultJSON {
+// evalResults converts driver evaluations into wire EvaluationResult records,
+// each carrying the EvaluationResultIdentifier that consumers key results by.
+func evalResults(configRuleName string, evals []cfgEvaluation) []evaluationResultJSON {
 	out := make([]evaluationResultJSON, 0, len(evals))
 	for i := range evals {
+		ordering := epochOrNil(evals[i].OrderingTimestamp)
 		out = append(out, evaluationResultJSON{
-			ComplianceType:     evals[i].ComplianceType,
-			Annotation:         evals[i].Annotation,
-			ResultRecordedTime: epochOrNil(evals[i].OrderingTimestamp),
+			EvaluationResultIdentifier: &evaluationResultIdentifierJSON{
+				EvaluationResultQualifier: &evaluationResultQualifierJSON{
+					ConfigRuleName: configRuleName,
+					ResourceType:   evals[i].ComplianceResourceType,
+					ResourceID:     evals[i].ComplianceResourceID,
+				},
+				OrderingTimestamp: ordering,
+			},
+			ComplianceType:        evals[i].ComplianceType,
+			ConfigRuleInvokedTime: ordering,
+			ResultRecordedTime:    ordering,
+			Annotation:            evals[i].Annotation,
 		})
 	}
 

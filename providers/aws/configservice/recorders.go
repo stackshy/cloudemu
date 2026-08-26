@@ -23,6 +23,10 @@ func (m *Mock) PutConfigurationRecorder(_ context.Context, rec driver.Configurat
 		return invalidParameter("RoleARN is required")
 	}
 
+	if err := validateRecordingMode(rec.RecordingMode); err != nil {
+		return err
+	}
+
 	now := m.now()
 
 	// Hold createMu across the scan+insert: the single-recorder cap is not atomic
@@ -42,6 +46,7 @@ func (m *Mock) PutConfigurationRecorder(_ context.Context, rec driver.Configurat
 		existing.mu.Lock()
 		existing.rec.RoleARN = rec.RoleARN
 		existing.rec.RecordingGroup = rec.RecordingGroup
+		existing.rec.RecordingMode = rec.RecordingMode
 		existing.rec.Tags = copyTags(rec.Tags)
 		existing.mu.Unlock()
 
@@ -70,7 +75,58 @@ func copyRecorder(r *driver.ConfigurationRecorder) driver.ConfigurationRecorder 
 		out.RecordingGroup = &rg
 	}
 
+	if r.RecordingMode != nil {
+		out.RecordingMode = copyRecordingMode(r.RecordingMode)
+	}
+
 	return out
+}
+
+func copyRecordingMode(rm *driver.RecordingMode) *driver.RecordingMode {
+	out := *rm
+
+	if rm.RecordingModeOverrides != nil {
+		overrides := make([]driver.RecordingModeOverride, len(rm.RecordingModeOverrides))
+
+		for i := range rm.RecordingModeOverrides {
+			ov := rm.RecordingModeOverrides[i]
+			ov.ResourceTypes = copyStrings(rm.RecordingModeOverrides[i].ResourceTypes)
+			overrides[i] = ov
+		}
+
+		out.RecordingModeOverrides = overrides
+	}
+
+	return &out
+}
+
+// validateRecordingMode rejects a recording frequency outside CONTINUOUS/DAILY.
+// An absent frequency is allowed (the field is optional).
+func validateRecordingMode(rm *driver.RecordingMode) error {
+	if rm == nil {
+		return nil
+	}
+
+	if err := validateRecordingFrequency(rm.RecordingFrequency); err != nil {
+		return err
+	}
+
+	for i := range rm.RecordingModeOverrides {
+		if err := validateRecordingFrequency(rm.RecordingModeOverrides[i].RecordingFrequency); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateRecordingFrequency(f string) error {
+	switch f {
+	case "", driver.RecordingFrequencyContinuous, driver.RecordingFrequencyDaily:
+		return nil
+	default:
+		return invalidParameter("RecordingFrequency %q is invalid", f)
+	}
 }
 
 func (m *Mock) allRecorders() []driver.ConfigurationRecorder {

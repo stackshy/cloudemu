@@ -142,7 +142,7 @@ func (h *Handler) getConformancePackComplianceDetails(w http.ResponseWriter, r *
 
 		return packComplianceDetailsResp{
 			ConformancePackName:                  req.ConformancePackName,
-			ConformancePackRuleEvaluationResults: evalResults(evals),
+			ConformancePackRuleEvaluationResults: evalResults("", evals),
 			NextToken:                            next,
 		}, nil
 	})

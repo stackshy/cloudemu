@@ -76,10 +76,18 @@ func (m *Mock) PutEvaluations(
 		return nil, invalidResultToken(resultToken)
 	}
 
+	now := m.now()
+
+	for i := range evals {
+		if evals[i].OrderingTimestamp.IsZero() {
+			evals[i].OrderingTimestamp = now
+		}
+	}
+
 	rd.mu.Lock()
 	rd.evals = append(rd.evals, evals...)
 	rd.rule.Compliance = rollUpCompliance(rd.evals)
-	rd.rule.LastSuccessfulEval = m.now()
+	rd.rule.LastSuccessfulEval = now
 	rd.mu.Unlock()
 
 	return nil, nil
@@ -143,6 +151,10 @@ func (m *Mock) PutExternalEvaluation(_ context.Context, ruleName string, eval dr
 	rd, ok := m.rules.Get(ruleName)
 	if !ok {
 		return noSuchConfigRule(ruleName)
+	}
+
+	if eval.OrderingTimestamp.IsZero() {
+		eval.OrderingTimestamp = m.now()
 	}
 
 	rd.mu.Lock()

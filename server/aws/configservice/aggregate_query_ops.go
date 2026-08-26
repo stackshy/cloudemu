@@ -83,7 +83,10 @@ func (h *Handler) getAggregateComplianceDetailsByConfigRule(w http.ResponseWrite
 			return nil, err
 		}
 
-		return map[string]any{"AggregateEvaluationResults": evalResults(evals), "NextToken": next}, nil
+		return map[string]any{
+			"AggregateEvaluationResults": evalResults(req.ConfigRuleName, evals),
+			"NextToken":                  next,
+		}, nil
 	})
 }
 
