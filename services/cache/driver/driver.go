@@ -62,6 +62,12 @@ type CacheInfo struct {
 	// it. Both are empty/zero for non-AWS providers.
 	NumCacheNodes   int
 	SubnetGroupName string
+
+	// ParameterGroupName is the custom AWS ElastiCache cache parameter group
+	// attached to the cluster, echoed back on Describe so IaC that references a
+	// custom group converges. Empty means the backend reports the engine's
+	// default (default.<family>). AWS-only and left empty by other callers.
+	ParameterGroupName string
 }
 
 // CacheConfig describes a cache instance to create.
@@ -94,6 +100,30 @@ type CacheConfig struct {
 	// Both are AWS-only and left zero/empty by other callers.
 	NumCacheNodes   int
 	SubnetGroupName string
+
+	// Port is the requested TCP port the AWS ElastiCache cluster listens on;
+	// zero means unspecified and the backend defaults it per engine (Redis
+	// 6379, Memcached 11211). AWS-only and left zero by other callers.
+	Port int
+
+	// ParameterGroupName names a custom AWS ElastiCache cache parameter group
+	// to attach; empty means the backend reports the engine's default
+	// (default.<family>). AWS-only and left empty by other callers.
+	ParameterGroupName string
+}
+
+// ModifyCacheConfig carries the mutable fields of an AWS ElastiCache
+// ModifyCacheCluster call. It is an AWS-only surface (not part of the portable
+// Cache interface); the wire handler type-asserts for a modifier that accepts
+// it. Empty/zero fields leave the corresponding attribute unchanged.
+type ModifyCacheConfig struct {
+	Name          string
+	NodeType      string
+	EngineVersion string
+
+	// NumCacheNodes rescales a Memcached cluster; zero leaves the node count
+	// unchanged. The backend re-validates it against the cluster's engine.
+	NumCacheNodes int
 }
 
 // Cache is the interface that cache provider implementations must satisfy.
@@ -165,6 +195,19 @@ type ReplicationGroup struct {
 	PrimaryPort     int
 	SubnetGroupName string
 	ARN             string
+
+	// ReaderAddress / ReaderPort are the read-only endpoint clients use to scale
+	// reads across the group's replicas. AWS-only; empty for other clouds.
+	ReaderAddress string
+	ReaderPort    int
+
+	// MemberClusters is the set of cache cluster ids that make up the group
+	// (`<id>-001`, `<id>-002`, …), read by IaC to enumerate the group's nodes.
+	MemberClusters []string
+
+	// AutomaticFailover is the failover status ("enabled" / "disabled") IaC
+	// reads back to confirm the requested setting took effect.
+	AutomaticFailover string
 }
 
 // ReplicationGroupConfig describes a replication group to create.
@@ -177,6 +220,10 @@ type ReplicationGroupConfig struct {
 	NumCacheNodes    int
 	SubnetGroupName  string
 	SecurityGroupIDs []string
+
+	// AutomaticFailoverEnabled requests automatic failover for the group,
+	// reflected as AutomaticFailover ("enabled"/"disabled") on Describe.
+	AutomaticFailoverEnabled bool
 }
 
 // DeleteReplicationGroupOptions carries the optional delete-time behaviors of

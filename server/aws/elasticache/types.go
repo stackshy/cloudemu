@@ -16,6 +16,10 @@ import (
 
 const defaultRedisPort = 6379
 
+// memcachedEngine is the ElastiCache engine name whose endpoint semantics differ
+// from Redis/Valkey (single configuration endpoint on port 11211).
+const memcachedEngine = "memcached"
+
 type responseMetadata struct {
 	RequestID string `xml:"RequestId"`
 }
@@ -252,14 +256,26 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 	}
 
 	if info.Engine != "" {
+		// A custom parameter group the caller attached is echoed verbatim;
+		// otherwise report the engine family's default (default.<family>).
+		paramGroup := info.ParameterGroupName
+		if paramGroup == "" {
+			paramGroup = defaultParamGroupName(info.Engine, info.EngineVersion)
+		}
+
 		out.CacheParameterGroup = &cacheParameterGroupStatusXML{
-			CacheParameterGroupName: defaultParamGroupName(info.Engine, info.EngineVersion),
+			CacheParameterGroupName: paramGroup,
 			ParameterApplyStatus:    "in-sync",
 		}
 	}
 
 	if ep := splitEndpoint(info.Endpoint); ep != nil {
-		out.ConfigurationEndpt = ep
+		// ConfigurationEndpoint is a Memcached-only field in the real API (its
+		// host always carries ".cfg"). Redis/Valkey clusters leave it nil and
+		// expose their address through the per-node CacheNodes endpoint instead.
+		if info.Engine == memcachedEngine {
+			out.ConfigurationEndpt = ep
+		}
 
 		nodes := make([]cacheNodeXML, 0, numNodes)
 		for i := 1; i <= numNodes; i++ {

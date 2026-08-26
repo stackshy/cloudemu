@@ -10,10 +10,23 @@ import (
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
+// formTrue is the query-protocol encoding of a boolean-true flag.
+const formTrue = "true"
+
+// nodeGroupMemberXML mirrors AWS's NodeGroupMember — the per-node membership
+// record a caller reads to enumerate the primary and replicas of a shard.
+type nodeGroupMemberXML struct {
+	CacheClusterID string `xml:"CacheClusterId"`
+	CacheNodeID    string `xml:"CacheNodeId"`
+	CurrentRole    string `xml:"CurrentRole,omitempty"`
+}
+
 type nodeGroupXML struct {
-	NodeGroupID     string       `xml:"NodeGroupId"`
-	Status          string       `xml:"Status"`
-	PrimaryEndpoint *endpointXML `xml:"PrimaryEndpoint,omitempty"`
+	NodeGroupID      string               `xml:"NodeGroupId"`
+	Status           string               `xml:"Status"`
+	PrimaryEndpoint  *endpointXML         `xml:"PrimaryEndpoint,omitempty"`
+	ReaderEndpoint   *endpointXML         `xml:"ReaderEndpoint,omitempty"`
+	NodeGroupMembers []nodeGroupMemberXML `xml:"NodeGroupMembers>NodeGroupMember,omitempty"`
 }
 
 type replicationGroupXML struct {
@@ -21,6 +34,8 @@ type replicationGroupXML struct {
 	Description        string         `xml:"Description,omitempty"`
 	Status             string         `xml:"Status"`
 	CacheNodeType      string         `xml:"CacheNodeType,omitempty"`
+	AutomaticFailover  string         `xml:"AutomaticFailover,omitempty"`
+	MemberClusters     []string       `xml:"MemberClusters>ClusterId,omitempty"`
 	ARN                string         `xml:"ARN,omitempty"`
 	NodeGroups         []nodeGroupXML `xml:"NodeGroups>NodeGroup,omitempty"`
 }
@@ -81,14 +96,15 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 	}
 
 	rg, err := store.CreateReplicationGroup(r.Context(), cachedriver.ReplicationGroupConfig{
-		ID:               r.Form.Get("ReplicationGroupId"),
-		Description:      r.Form.Get("ReplicationGroupDescription"),
-		Engine:           r.Form.Get("Engine"),
-		EngineVersion:    r.Form.Get("EngineVersion"),
-		NodeType:         r.Form.Get("CacheNodeType"),
-		NumCacheNodes:    nodes,
-		SubnetGroupName:  r.Form.Get("CacheSubnetGroupName"),
-		SecurityGroupIDs: awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
+		ID:                       r.Form.Get("ReplicationGroupId"),
+		Description:              r.Form.Get("ReplicationGroupDescription"),
+		Engine:                   r.Form.Get("Engine"),
+		EngineVersion:            r.Form.Get("EngineVersion"),
+		NodeType:                 r.Form.Get("CacheNodeType"),
+		NumCacheNodes:            nodes,
+		SubnetGroupName:          r.Form.Get("CacheSubnetGroupName"),
+		SecurityGroupIDs:         awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
+		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == formTrue,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -180,7 +196,7 @@ func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 	last := groups[0]
 
 	opts := cachedriver.DeleteReplicationGroupOptions{
-		RetainPrimaryCluster:    r.Form.Get("RetainPrimaryCluster") == "true",
+		RetainPrimaryCluster:    r.Form.Get("RetainPrimaryCluster") == formTrue,
 		FinalSnapshotIdentifier: r.Form.Get("FinalSnapshotIdentifier"),
 	}
 
@@ -223,19 +239,51 @@ func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML
 		Description:        rg.Description,
 		Status:             rg.Status,
 		CacheNodeType:      rg.NodeType,
+		AutomaticFailover:  rg.AutomaticFailover,
+		MemberClusters:     rg.MemberClusters,
 		ARN:                rg.ARN,
 	}
 
 	// The primary endpoint is how a caller reaches the cache at all — it reads
 	// NodeGroups[0].PrimaryEndpoint.Address to build the connection string, so
-	// the node group has to be present even for a single-node group.
+	// the node group has to be present even for a single-node group. The reader
+	// endpoint and per-node membership let clients scale reads and enumerate the
+	// group's nodes.
 	if rg.PrimaryAddress != "" {
-		x.NodeGroups = []nodeGroupXML{{
-			NodeGroupID:     "0001",
-			Status:          rg.Status,
-			PrimaryEndpoint: &endpointXML{Address: rg.PrimaryAddress, Port: rg.PrimaryPort},
-		}}
+		ng := nodeGroupXML{
+			NodeGroupID:      "0001",
+			Status:           rg.Status,
+			PrimaryEndpoint:  &endpointXML{Address: rg.PrimaryAddress, Port: rg.PrimaryPort},
+			NodeGroupMembers: nodeGroupMembers(rg.MemberClusters),
+		}
+
+		if rg.ReaderAddress != "" {
+			ng.ReaderEndpoint = &endpointXML{Address: rg.ReaderAddress, Port: rg.ReaderPort}
+		}
+
+		x.NodeGroups = []nodeGroupXML{ng}
 	}
 
 	return x
+}
+
+// nodeGroupMembers builds the per-node membership list from the group's member
+// cluster ids: the first is the primary, the rest are replicas.
+func nodeGroupMembers(members []string) []nodeGroupMemberXML {
+	out := make([]nodeGroupMemberXML, 0, len(members))
+
+	for i, id := range members {
+		role := "replica"
+		if i == 0 {
+			role = "primary"
+		}
+
+		out = append(out, nodeGroupMemberXML{
+			CacheClusterID: id,
+			CacheNodeID:    "0001",
+			CurrentRole:    role,
+		})
+	}
+
+	return out
 }

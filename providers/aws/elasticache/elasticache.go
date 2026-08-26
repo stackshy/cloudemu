@@ -19,7 +19,35 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-const defaultRedisPort = 6379
+const (
+	defaultRedisPort     = 6379
+	defaultMemcachedPort = 11211
+)
+
+// resolvePort returns the requested port, or the engine default when unset:
+// Memcached listens on 11211, Redis/Valkey on 6379.
+func resolvePort(engine string, port int) int {
+	if port != 0 {
+		return port
+	}
+
+	if engine == engineMemcached {
+		return defaultMemcachedPort
+	}
+
+	return defaultRedisPort
+}
+
+// clusterEndpoint builds the synthetic host:port a client connects to. Memcached
+// exposes a single configuration endpoint whose host carries the ".cfg" segment
+// real AWS uses; Redis/Valkey use a plain per-cluster host.
+func clusterEndpoint(name, region, engine string, port int) string {
+	if engine == engineMemcached {
+		return fmt.Sprintf("%s.cfg.%s.cache.amazonaws.com:%d", name, region, port)
+	}
+
+	return fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", name, region, port)
+}
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -68,6 +96,34 @@ func validateNodeCount(engine string, numNodes int) error {
 	if numNodes > 1 {
 		return errors.Newf(errors.InvalidArgument,
 			"NumCacheNodes must be 1 for engine %q", engine)
+	}
+
+	return nil
+}
+
+// normalizeNodeCount defaults an unset node count to 1 and validates it against
+// the engine's limits.
+func normalizeNodeCount(engine string, requested int) (int, error) {
+	n := requested
+	if n < 1 {
+		n = 1
+	}
+
+	if err := validateNodeCount(engine, n); err != nil {
+		return 0, err
+	}
+
+	return n, nil
+}
+
+// requireSubnetGroup rejects a create that names a cache subnet group which does
+// not exist, matching real ElastiCache (CacheSubnetGroupNotFoundFault) rather
+// than silently accepting a typo (mirrors RDS CreateDBInstance's DBSubnetGroup
+// check). An empty name places the cluster in the default subnet group.
+func (m *Mock) requireSubnetGroup(name string) error {
+	if name != "" && !m.subnetGroups.Has(name) {
+		return errors.Newf(errors.NotFound,
+			"CacheSubnetGroupNotFoundFault: cache subnet group %q not found", name)
 	}
 
 	return nil
@@ -167,16 +223,16 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		engineVersion = defaultEngineVersion(engine)
 	}
 
-	numNodes := cfg.NumCacheNodes
-	if numNodes < 1 {
-		numNodes = 1
-	}
-
-	if err := validateNodeCount(engine, numNodes); err != nil {
+	numNodes, err := normalizeNodeCount(engine, cfg.NumCacheNodes)
+	if err != nil {
 		return nil, err
 	}
 
-	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
+	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
+		return nil, err
+	}
+
+	endpoint := clusterEndpoint(cfg.Name, m.opts.Region, engine, resolvePort(engine, cfg.Port))
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -184,18 +240,19 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:            cfg.Name,
-		Scope:           cfg.Scope,
-		NodeType:        nodeType,
-		Engine:          engine,
-		EngineVersion:   engineVersion,
-		Status:          statusAvailable,
-		Endpoint:        endpoint,
-		ARN:             m.cacheARN(cfg.Name),
-		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:            tags,
-		NumCacheNodes:   numNodes,
-		SubnetGroupName: cfg.SubnetGroupName,
+		Name:               cfg.Name,
+		Scope:              cfg.Scope,
+		NodeType:           nodeType,
+		Engine:             engine,
+		EngineVersion:      engineVersion,
+		Status:             statusAvailable,
+		Endpoint:           endpoint,
+		ARN:                m.cacheARN(cfg.Name),
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:               tags,
+		NumCacheNodes:      numNodes,
+		SubnetGroupName:    cfg.SubnetGroupName,
+		ParameterGroupName: cfg.ParameterGroupName,
 	}
 
 	// Opt-in: back the cache with a real server, replacing the synthetic
@@ -217,23 +274,36 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	return &result, nil
 }
 
-// ModifyCache updates the mutable fields (node type, engine) of an existing
-// cache cluster (ElastiCache ModifyCacheCluster). Empty arguments leave the
-// corresponding field unchanged.
-func (m *Mock) ModifyCache(_ context.Context, name, nodeType, engine string) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(name)
+// ModifyCache updates the mutable fields (node type, engine version, node
+// count) of an existing cache cluster (ElastiCache ModifyCacheCluster). Empty or
+// zero fields leave the corresponding attribute unchanged. A NumCacheNodes
+// change is re-validated against the cluster's engine (Memcached scales 1-40;
+// Redis/Valkey stays at 1).
+func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*driver.CacheInfo, error) {
+	cd, ok := m.caches.Get(cfg.Name)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
+		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
 	}
 
-	if nodeType != "" {
-		cd.info.NodeType = nodeType
-	}
-	if engine != "" {
-		cd.info.Engine = engine
+	if cfg.NumCacheNodes > 0 {
+		if err := validateNodeCount(cd.info.Engine, cfg.NumCacheNodes); err != nil {
+			return nil, err
+		}
 	}
 
-	m.caches.Set(name, cd)
+	if cfg.NodeType != "" {
+		cd.info.NodeType = cfg.NodeType
+	}
+
+	if cfg.EngineVersion != "" {
+		cd.info.EngineVersion = cfg.EngineVersion
+	}
+
+	if cfg.NumCacheNodes > 0 {
+		cd.info.NumCacheNodes = cfg.NumCacheNodes
+	}
+
+	m.caches.Set(cfg.Name, cd)
 
 	result := cd.info
 

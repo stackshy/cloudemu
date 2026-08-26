@@ -45,20 +45,31 @@ func (m *Mock) CreateReplicationGroup(
 		nodes = 1
 	}
 
+	engineVersion := cfg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(engine)
+	}
+
 	rg := cachedriver.ReplicationGroup{
 		ID:            cfg.ID,
 		Description:   cfg.Description,
 		Status:        statusAvailable,
 		Engine:        engine,
-		EngineVersion: cfg.EngineVersion,
+		EngineVersion: engineVersion,
 		NodeType:      nodeType,
 		NumCacheNodes: nodes,
 		// Callers read the primary endpoint to build a connection string; a
 		// group without one is indistinguishable from a broken provision.
 		PrimaryAddress: fmt.Sprintf("%s.%s.cache.amazonaws.com",
 			cfg.ID, m.opts.Region),
-		PrimaryPort:     defaultRedisPort,
-		SubnetGroupName: cfg.SubnetGroupName,
+		PrimaryPort: defaultRedisPort,
+		// The reader endpoint lets clients scale reads across the replicas.
+		ReaderAddress: fmt.Sprintf("%s-ro.%s.cache.amazonaws.com",
+			cfg.ID, m.opts.Region),
+		ReaderPort:        defaultRedisPort,
+		MemberClusters:    memberClusters(cfg.ID, nodes),
+		AutomaticFailover: failoverStatus(cfg.AutomaticFailoverEnabled),
+		SubnetGroupName:   cfg.SubnetGroupName,
 		ARN: "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID +
 			":replicationgroup:" + cfg.ID,
 	}
@@ -73,6 +84,27 @@ func (m *Mock) CreateReplicationGroup(
 	m.replicationGroups.Set(cfg.ID, rg)
 
 	return &rg, nil
+}
+
+// memberClusters synthesizes the cache cluster ids that make up a replication
+// group, matching the "<id>-001", "<id>-002", … naming real ElastiCache assigns.
+func memberClusters(id string, nodes int) []string {
+	members := make([]string, 0, nodes)
+	for i := 1; i <= nodes; i++ {
+		members = append(members, fmt.Sprintf("%s-%03d", id, i))
+	}
+
+	return members
+}
+
+// failoverStatus maps the requested AutomaticFailoverEnabled flag to the
+// "enabled"/"disabled" status ElastiCache reports on Describe.
+func failoverStatus(enabled bool) string {
+	if enabled {
+		return "enabled"
+	}
+
+	return "disabled"
 }
 
 // provisionPrimaryEndpoint backs the replication group's primary with the
@@ -151,6 +183,7 @@ func (m *Mock) ModifyReplicationGroup(
 
 	if numCacheNodes > 0 {
 		rg.NumCacheNodes = numCacheNodes
+		rg.MemberClusters = memberClusters(id, numCacheNodes)
 	}
 
 	m.replicationGroups.Set(id, rg)
