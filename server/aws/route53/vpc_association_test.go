@@ -243,6 +243,26 @@ func TestSDKAssociateVPCOnPublicZone(t *testing.T) {
 	}
 }
 
+// TestSDKAssociateVPCMissingZone proves associating a VPC with a hosted zone
+// that doesn't exist is rejected with NoSuchHostedZone.
+func TestSDKAssociateVPCMissingZone(t *testing.T) {
+	client := newRoute53Client(t)
+	ctx := context.Background()
+
+	_, err := client.AssociateVPCWithHostedZone(ctx, &awsr53.AssociateVPCWithHostedZoneInput{
+		HostedZoneId: aws.String("ZDOESNOTEXIST"),
+		VPC:          &r53types.VPC{VPCId: aws.String("vpc-1111"), VPCRegion: r53types.VPCRegionUsEast1},
+	})
+	if err == nil {
+		t.Fatal("AssociateVPCWithHostedZone(missing zone) succeeded, want NoSuchHostedZone")
+	}
+
+	var notFound *r53types.NoSuchHostedZone
+	if !errors.As(err, &notFound) {
+		t.Fatalf("error = %v, want *NoSuchHostedZone", err)
+	}
+}
+
 // TestSDKListHostedZonesByVPC proves the private zones a VPC is associated with
 // are listed, and unassociated zones are excluded.
 func TestSDKListHostedZonesByVPC(t *testing.T) {
