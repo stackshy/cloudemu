@@ -170,9 +170,10 @@ func anyAttrContainsFold(info *secretsdriver.SecretInfo, word string) bool {
 	return false
 }
 
-// randomPassword generates a password honoring GetRandomPassword's character-set
-// toggles. RequireEachIncludedType is not enforced (best-effort emulation).
-func randomPassword(req getRandomPasswordRequest) (string, error) {
+// passwordClasses returns the included character classes for a
+// GetRandomPassword request, each already stripped of ExcludeCharacters, in the
+// order lower, upper, digit, punctuation, space. Empty classes are omitted.
+func passwordClasses(req getRandomPasswordRequest) []string {
 	const (
 		lower = "abcdefghijklmnopqrstuvwxyz"
 		upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -181,30 +182,39 @@ func randomPassword(req getRandomPasswordRequest) (string, error) {
 		space = " "
 	)
 
-	var b strings.Builder
-
-	if !req.ExcludeLowercase {
-		b.WriteString(lower)
+	candidates := []struct {
+		set     string
+		exclude bool
+	}{
+		{lower, req.ExcludeLowercase},
+		{upper, req.ExcludeUppercase},
+		{digit, req.ExcludeNumbers},
+		{punct, req.ExcludePunctuation},
+		{space, !req.IncludeSpace},
 	}
 
-	if !req.ExcludeUppercase {
-		b.WriteString(upper)
+	var classes []string
+
+	for _, c := range candidates {
+		if c.exclude {
+			continue
+		}
+
+		if s := stripExcluded(c.set, req.ExcludeCharacters); s != "" {
+			classes = append(classes, s)
+		}
 	}
 
-	if !req.ExcludeNumbers {
-		b.WriteString(digit)
-	}
+	return classes
+}
 
-	if !req.ExcludePunctuation {
-		b.WriteString(punct)
-	}
-
-	if req.IncludeSpace {
-		b.WriteString(space)
-	}
-
-	pool := stripExcluded(b.String(), req.ExcludeCharacters)
-	if pool == "" {
+// randomPassword generates a password honoring GetRandomPassword's character-set
+// toggles. When RequireEachIncludedType is set the result is guaranteed to carry
+// at least one character from every included class, and a length shorter than
+// the number of included classes is rejected.
+func randomPassword(req getRandomPasswordRequest) (string, error) {
+	classes := passwordClasses(req)
+	if len(classes) == 0 {
 		return "", cerrors.New(cerrors.InvalidArgument, "no characters available to generate password")
 	}
 
@@ -213,19 +223,77 @@ func randomPassword(req getRandomPasswordRequest) (string, error) {
 		length = defaultPasswordLength
 	}
 
-	runes := []rune(pool)
-	out := make([]rune, 0, length)
+	if req.RequireEachIncludedType && length < int64(len(classes)) {
+		return "", cerrors.New(cerrors.InvalidArgument,
+			"PasswordLength too short to include one of each required character type")
+	}
 
-	for i := int64(0); i < length; i++ {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(runes))))
-		if err != nil {
-			return "", cerrors.New(cerrors.Internal, "random source failure")
-		}
+	out, err := buildPassword(classes, length, req.RequireEachIncludedType)
+	if err != nil {
+		return "", err
+	}
 
-		out = append(out, runes[n.Int64()])
+	if err := shuffleRunes(out); err != nil {
+		return "", err
 	}
 
 	return string(out), nil
+}
+
+// buildPassword assembles the character slice: when requireEach is set it seeds
+// one guaranteed rune from each class, then fills the remainder from the pooled
+// classes. The result is unshuffled.
+func buildPassword(classes []string, length int64, requireEach bool) ([]rune, error) {
+	pool := []rune(strings.Join(classes, ""))
+	out := make([]rune, 0, length)
+
+	if requireEach {
+		for _, class := range classes {
+			c, err := pickRune([]rune(class))
+			if err != nil {
+				return nil, err
+			}
+
+			out = append(out, c)
+		}
+	}
+
+	for int64(len(out)) < length {
+		c, err := pickRune(pool)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, c)
+	}
+
+	return out, nil
+}
+
+// pickRune returns a uniformly random rune from runes.
+func pickRune(runes []rune) (rune, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(runes))))
+	if err != nil {
+		return 0, cerrors.New(cerrors.Internal, "random source failure")
+	}
+
+	return runes[n.Int64()], nil
+}
+
+// shuffleRunes performs a Fisher-Yates shuffle so the guaranteed seed characters
+// aren't clustered at the front.
+func shuffleRunes(r []rune) error {
+	for i := len(r) - 1; i > 0; i-- {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return cerrors.New(cerrors.Internal, "random source failure")
+		}
+
+		k := j.Int64()
+		r[i], r[k] = r[k], r[i]
+	}
+
+	return nil
 }
 
 func stripExcluded(pool, exclude string) string {

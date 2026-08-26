@@ -24,7 +24,7 @@ const targetPrefix = "secretsmanager."
 // Manager also implement it), so the handler type-asserts for them rather than
 // widening the shared interface.
 type secretMutator interface {
-	UpdateSecret(ctx context.Context, name, description string, value []byte) (*secretsdriver.SecretInfo, error)
+	UpdateSecret(ctx context.Context, name, description string, value []byte) (*secretsdriver.SecretInfo, string, error)
 	TagSecret(ctx context.Context, name string, tags map[string]string) error
 	UntagSecret(ctx context.Context, name string, keys []string) error
 }
@@ -43,6 +43,12 @@ type secretStager interface {
 	) (*secretsdriver.SecretInfo, string, error)
 	RestoreSecret(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
 	RotateSecret(ctx context.Context, name string) (*secretsdriver.SecretVersion, error)
+	PutSecretValueStaged(
+		ctx context.Context, name string, value []byte, clientRequestToken string, versionStages []string,
+	) (*secretsdriver.SecretVersion, error)
+	UpdateSecretVersionStage(
+		ctx context.Context, name, versionStage, removeFrom, moveTo string,
+	) (*secretsdriver.SecretInfo, error)
 }
 
 // Handler serves Secrets Manager JSON-RPC requests against a Secrets driver.
@@ -55,20 +61,21 @@ type Handler struct {
 func New(s secretsdriver.Secrets) *Handler {
 	h := &Handler{secrets: s}
 	h.routes = map[string]http.HandlerFunc{
-		"CreateSecret":         h.createSecret,
-		"DeleteSecret":         h.deleteSecret,
-		"DescribeSecret":       h.describeSecret,
-		"GetResourcePolicy":    h.getResourcePolicy,
-		"ListSecrets":          h.listSecrets,
-		"GetSecretValue":       h.getSecretValue,
-		"PutSecretValue":       h.putSecretValue,
-		"ListSecretVersionIds": h.listSecretVersionIDs,
-		"UpdateSecret":         h.updateSecret,
-		"RestoreSecret":        h.restoreSecret,
-		"RotateSecret":         h.rotateSecret,
-		"GetRandomPassword":    h.getRandomPassword,
-		"TagResource":          h.tagResource,
-		"UntagResource":        h.untagResource,
+		"CreateSecret":             h.createSecret,
+		"DeleteSecret":             h.deleteSecret,
+		"DescribeSecret":           h.describeSecret,
+		"GetResourcePolicy":        h.getResourcePolicy,
+		"ListSecrets":              h.listSecrets,
+		"GetSecretValue":           h.getSecretValue,
+		"PutSecretValue":           h.putSecretValue,
+		"ListSecretVersionIds":     h.listSecretVersionIDs,
+		"UpdateSecret":             h.updateSecret,
+		"UpdateSecretVersionStage": h.updateSecretVersionStage,
+		"RestoreSecret":            h.restoreSecret,
+		"RotateSecret":             h.rotateSecret,
+		"GetRandomPassword":        h.getRandomPassword,
+		"TagResource":              h.tagResource,
+		"UntagResource":            h.untagResource,
 	}
 
 	return h

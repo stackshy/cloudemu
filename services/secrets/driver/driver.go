@@ -12,6 +12,10 @@ type SecretConfig struct {
 	// encrypted with (AWS Secrets Manager). Empty means the default
 	// aws/secretsmanager key. Ignored by Azure/GCP.
 	KMSKeyID string
+	// ClientRequestToken pins the initial version's id (AWS Secrets Manager uses
+	// the token as the VersionId, a UUID). Empty means the provider generates
+	// one. Ignored by Azure/GCP.
+	ClientRequestToken string
 }
 
 // SecretInfo describes a secret.

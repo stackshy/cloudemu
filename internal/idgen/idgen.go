@@ -2,6 +2,7 @@
 package idgen
 
 import (
+	"crypto/rand"
 	"fmt"
 	"hash/fnv"
 	"sync/atomic"
@@ -9,6 +10,62 @@ import (
 
 // guidNodeMask isolates the low 48 bits used as a GUID's node field.
 const guidNodeMask = 0xffffffffffff
+
+// uuidByteLen is the number of random bytes in a version-4 UUID.
+const uuidByteLen = 16
+
+// RFC 4122 version/variant bit masks for a version-4 UUID.
+const (
+	versionMask  = 0x0f
+	version4Bits = 0x40
+	variantMask  = 0x3f
+	variantBits  = 0x80
+)
+
+// UUID returns a random RFC 4122 version-4 UUID as a 36-character string
+// (8-4-4-4-12 hex with hyphens). AWS Secrets Manager version ids take this
+// shape, and callers can pin one via a client request token. It draws from
+// crypto/rand; a random source failure falls back to a zero-filled UUID so the
+// function never panics.
+func UUID() string {
+	var b [uuidByteLen]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Degrade to an all-zero UUID rather than panic; still 36 chars.
+		b = [uuidByteLen]byte{}
+	}
+
+	// RFC 4122: set the version to 4 and the variant to 10xx.
+	b[6] = (b[6] & versionMask) | version4Bits
+	b[8] = (b[8] & variantMask) | variantBits
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// suffixAlphabet is the 6-character random-suffix character set AWS appends to a
+// Secrets Manager ARN's resource segment (:secret:<name>-<suffix>).
+const suffixAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// secretARNSuffixLen is the length of the ARN suffix AWS appends.
+const secretARNSuffixLen = 6
+
+// SecretARNSuffix derives a deterministic 6-character alphanumeric suffix from
+// seed, matching the trailing "-XXXXXX" AWS adds to a Secrets Manager ARN. It is
+// deterministic per seed so the same secret keeps a stable ARN across a run
+// (and under a FakeClock), while distinct secrets get distinct suffixes.
+func SecretARNSuffix(seed string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(seed))
+	n := h.Sum64()
+
+	out := make([]byte, secretARNSuffixLen)
+	for i := range out {
+		out[i] = suffixAlphabet[n%uint64(len(suffixAlphabet))]
+		n /= uint64(len(suffixAlphabet))
+	}
+
+	return string(out)
+}
 
 // SyntheticGUID derives a deterministic GUID-shaped string from seed. The value
 // is synthetic (a stand-in for an Azure principal/tenant id), not a real

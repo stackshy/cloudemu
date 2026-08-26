@@ -45,12 +45,13 @@ type versionJSON struct {
 // --- request envelopes ---
 
 type createSecretRequest struct {
-	Name         string    `json:"Name"`
-	Description  string    `json:"Description"`
-	SecretString string    `json:"SecretString"`
-	SecretBinary []byte    `json:"SecretBinary"`
-	Tags         []tagJSON `json:"Tags"`
-	KmsKeyID     string    `json:"KmsKeyId"`
+	Name               string    `json:"Name"`
+	Description        string    `json:"Description"`
+	SecretString       string    `json:"SecretString"`
+	SecretBinary       []byte    `json:"SecretBinary"`
+	Tags               []tagJSON `json:"Tags"`
+	KmsKeyID           string    `json:"KmsKeyId"`
+	ClientRequestToken string    `json:"ClientRequestToken"`
 }
 
 type secretIDRequest struct {
@@ -102,9 +103,18 @@ type listSecretsRequest struct {
 }
 
 type putSecretValueRequest struct {
-	SecretID     string `json:"SecretId"`
-	SecretString string `json:"SecretString"`
-	SecretBinary []byte `json:"SecretBinary"`
+	SecretID           string   `json:"SecretId"`
+	SecretString       string   `json:"SecretString"`
+	SecretBinary       []byte   `json:"SecretBinary"`
+	ClientRequestToken string   `json:"ClientRequestToken"`
+	VersionStages      []string `json:"VersionStages"`
+}
+
+type updateSecretVersionStageRequest struct {
+	SecretID            string `json:"SecretId"`
+	VersionStage        string `json:"VersionStage"`
+	RemoveFromVersionID string `json:"RemoveFromVersionId"`
+	MoveToVersionID     string `json:"MoveToVersionId"`
 }
 
 type updateSecretRequest struct {
@@ -125,6 +135,12 @@ type untagResourceRequest struct {
 }
 
 type updateSecretResponse struct {
+	ARN       string `json:"ARN"`
+	Name      string `json:"Name"`
+	VersionID string `json:"VersionId,omitempty"`
+}
+
+type updateSecretVersionStageResponse struct {
 	ARN  string `json:"ARN"`
 	Name string `json:"Name"`
 }
@@ -198,9 +214,11 @@ func epochSeconds(iso string) float64 {
 }
 
 // resolveSecretID accepts either a plain secret name or a full ARN
-// ("arn:aws:secretsmanager:<region>:<account>:secret:<name>") — real Secrets
-// Manager accepts both forms for SecretId — and returns the bare name the
-// driver keys on.
+// ("arn:aws:secretsmanager:<region>:<account>:secret:<name>-<suffix>") — real
+// Secrets Manager accepts both forms for SecretId — and returns the bare name
+// the driver keys on. For an ARN, the trailing 6-char "-<suffix>" AWS appends is
+// stripped so a lookup by the suffixed ARN resolves to the same secret as the
+// friendly name. A plain name is returned untouched (its own hyphens are kept).
 func resolveSecretID(id string) string {
 	const marker = ":secret:"
 
@@ -208,11 +226,41 @@ func resolveSecretID(id string) string {
 		return id
 	}
 
-	if i := strings.LastIndex(id, marker); i >= 0 {
-		return id[i+len(marker):]
+	i := strings.LastIndex(id, marker)
+	if i < 0 {
+		return id
 	}
 
-	return id
+	return stripARNSuffix(id[i+len(marker):])
+}
+
+// arnSuffixLen is the length of the random suffix (excluding the hyphen) AWS
+// appends to a Secrets Manager ARN's resource segment.
+const arnSuffixLen = 6
+
+// stripARNSuffix removes a trailing "-XXXXXX" (hyphen + 6 alphanumerics) from an
+// ARN resource segment, recovering the friendly secret name.
+func stripARNSuffix(seg string) string {
+	if len(seg) < arnSuffixLen+1 {
+		return seg
+	}
+
+	cut := len(seg) - arnSuffixLen - 1
+	if seg[cut] != '-' {
+		return seg
+	}
+
+	for _, c := range seg[cut+1:] {
+		if !isAlphaNum(c) {
+			return seg
+		}
+	}
+
+	return seg[:cut]
+}
+
+func isAlphaNum(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 // secretValue picks the string payload if present, else the binary one — the

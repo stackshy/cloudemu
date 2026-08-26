@@ -15,10 +15,11 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := h.secrets.CreateSecret(r.Context(), secretsdriver.SecretConfig{
-		Name:        req.Name,
-		Description: req.Description,
-		Tags:        tagsToMap(req.Tags),
-		KMSKeyID:    req.KmsKeyID,
+		Name:               req.Name,
+		Description:        req.Description,
+		Tags:               tagsToMap(req.Tags),
+		KMSKeyID:           req.KmsKeyID,
+		ClientRequestToken: req.ClientRequestToken,
 	}, secretValue(req.SecretString, req.SecretBinary))
 	if err != nil {
 		writeErr(w, err)
@@ -340,7 +341,7 @@ func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ver, err := h.secrets.PutSecretValue(r.Context(), name, secretValue(req.SecretString, req.SecretBinary))
+	ver, err := h.putSecretVersion(r, name, &req)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -358,6 +359,21 @@ func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
 		VersionID:     ver.VersionID,
 		VersionStages: stagesForVersion(h.versionStages(r, name), ver),
 	})
+}
+
+// putSecretVersion appends a new version. When the AWS staging surface is
+// available it honors ClientRequestToken (idempotency + version id) and
+// VersionStages; otherwise it falls back to the portable append-a-version path.
+func (h *Handler) putSecretVersion(
+	r *http.Request, name string, req *putSecretValueRequest,
+) (*secretsdriver.SecretVersion, error) {
+	value := secretValue(req.SecretString, req.SecretBinary)
+
+	if st, ok := h.secrets.(secretStager); ok {
+		return st.PutSecretValueStaged(r.Context(), name, value, req.ClientRequestToken, req.VersionStages)
+	}
+
+	return h.secrets.PutSecretValue(r.Context(), name, value)
 }
 
 func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +402,7 @@ func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
 	stageMap := h.versionStages(r, name)
 
 	out := make([]versionJSON, 0, len(versions))
+
 	for _, v := range versions {
 		stages := stagesForVersion(stageMap, &v)
 		if len(stages) == 0 && !req.IncludeDeprecated {
@@ -414,14 +431,39 @@ func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := mut.UpdateSecret(r.Context(), resolveSecretID(req.SecretID),
+	info, versionID, err := mut.UpdateSecret(r.Context(), resolveSecretID(req.SecretID),
 		req.Description, secretValue(req.SecretString, req.SecretBinary))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, updateSecretResponse{ARN: info.ResourceID, Name: info.Name})
+	wire.WriteJSON(w, updateSecretResponse{ARN: info.ResourceID, Name: info.Name, VersionID: versionID})
+}
+
+// updateSecretVersionStage moves a staging label between versions (the
+// finishSecret step of the AWS rotation contract). It requires the AWS staging
+// surface; providers without it report the operation as unsupported.
+func (h *Handler) updateSecretVersionStage(w http.ResponseWriter, r *http.Request) {
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req updateSecretVersionStageRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	info, err := st.UpdateSecretVersionStage(r.Context(), resolveSecretID(req.SecretID),
+		req.VersionStage, req.RemoveFromVersionID, req.MoveToVersionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, updateSecretVersionStageResponse{ARN: info.ResourceID, Name: info.Name})
 }
 
 func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
