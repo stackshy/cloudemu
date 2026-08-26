@@ -190,30 +190,43 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 		reason = "Threshold not crossed"
 	}
 
+	m.transitionAlarm(alarm, newState, reason, now)
+}
+
+// transitionAlarm sets an alarm's state and — only when the state actually
+// changes — records a history entry and fires the new state's actions. This
+// matches CloudWatch, where both the history entry and the action invocation
+// happen on a state change regardless of whether the change came from metric
+// evaluation or a manual SetAlarmState. An alarm invokes its actions only when
+// it changes state; it never re-fires while the state is steady.
+func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
 	oldState := alarm.State
 
 	if oldState != newState {
-		m.mu.Lock()
-		m.history = append(m.history, driver.AlarmHistoryEntry{
-			AlarmName: alarm.Name,
-			Timestamp: now,
-			OldState:  oldState,
-			NewState:  newState,
-			Reason:    fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
-		})
-		m.mu.Unlock()
-
+		m.appendHistory(alarm.Name, oldState, newState, reason, now)
 		alarm.StateUpdatedTimestamp = now
 	}
 
 	alarm.State = newState
 	alarm.StateReason = reason
 
-	// An alarm invokes its actions only when it changes state — matching real
-	// CloudWatch, which never re-fires actions while the state is steady.
 	if oldState != newState {
 		m.fireAlarmActions(alarm, oldState, newState, now)
 	}
+}
+
+// appendHistory records one alarm state transition in the history log.
+func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.history = append(m.history, driver.AlarmHistoryEntry{
+		AlarmName: name,
+		Timestamp: now,
+		OldState:  oldState,
+		NewState:  newState,
+		Reason:    fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
+	})
 }
 
 // fireAlarmActions delivers an alarm's state-change actions. Only SNS-topic
@@ -635,16 +648,18 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 	return result, nil
 }
 
-// SetAlarmState manually sets the state of an alarm.
+// SetAlarmState manually sets the state of an alarm. Like a metric-driven
+// transition, a state change records a history entry and invokes the actions
+// configured for the new state (AlarmActions / OKActions /
+// InsufficientDataActions), so the documented "force ALARM to test wiring"
+// workflow delivers its notifications.
 func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
 
-	a.State = state
-	a.StateReason = reason
-	a.StateUpdatedTimestamp = m.opts.Clock.Now()
+	m.transitionAlarm(a, state, reason, m.opts.Clock.Now())
 
 	return nil
 }
