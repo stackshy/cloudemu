@@ -318,8 +318,9 @@ func TestSDKCloudAsset_KubernetesIndexing(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	npCount := int64(1)
 	_, _, err = cloudP.GKE.CreateNodePool(ctx, "us-central1", "prod", &gke.NodePoolSpec{
-		Name: "np-1", InitialNodeCount: 1,
+		Name: "np-1", InitialNodeCount: &npCount,
 	})
 	require.NoError(t, err)
 

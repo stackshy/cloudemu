@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"sync"
 	"time"
 
@@ -73,6 +74,7 @@ type Cluster struct {
 	NetworkPolicy     bool
 	MasterUsername    string
 	ResourceLabels    map[string]string
+	LabelFingerprint  string // opaque hash of ResourceLabels; computed on read.
 	MaintenanceWindow string // RFC-3339 daily window encoding; empty = none.
 	IPRotationActive  bool
 	NodePoolNames     []string
@@ -249,12 +251,15 @@ func (m *Mock) recordOperation(opType, location, target string) Operation {
 
 // CreateClusterInput captures the subset of CreateCluster we honor.
 type CreateClusterInput struct {
-	Name              string
-	Location          string
-	Description       string
-	Network           string
-	Subnetwork        string
-	InitialNodeCount  int64
+	Name        string
+	Location    string
+	Description string
+	Network     string
+	Subnetwork  string
+	// InitialNodeCount is a pointer so an explicitly-requested 0 (autoscale
+	// from zero) is distinguishable from an absent field. nil = unset →
+	// bootstrap the GKE default; non-nil (including *0) is honored verbatim.
+	InitialNodeCount  *int64
 	LoggingService    string
 	MonitoringService string
 	ResourceLabels    map[string]string
@@ -281,8 +286,11 @@ type NodePoolManagement struct {
 // NodePoolSpec captures the node-pool fields we keep when bootstrapping a
 // cluster from a CreateClusterRequest.
 type NodePoolSpec struct {
-	Name             string
-	InitialNodeCount int64
+	Name string
+	// InitialNodeCount is a pointer so an explicit 0 (autoscale-from-zero
+	// pool) survives; nil means the field was absent and the GKE default
+	// applies. See nodePoolFromSpec.
+	InitialNodeCount *int64
 	MachineType      string
 	DiskSizeGB       int64
 	OauthScopes      []string
@@ -318,7 +326,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		Description:       input.Description,
 		Network:           defaultIfEmpty(input.Network, "default"),
 		Subnetwork:        defaultIfEmpty(input.Subnetwork, "default"),
-		InitialNodeCount:  input.InitialNodeCount,
+		InitialNodeCount:  derefInt64(input.InitialNodeCount),
 		NodeIPv4CIDRSize:  defaultNodeIPv4CIDRSize,
 		ClusterIPv4CIDR:   defaultClusterCIDR,
 		ServicesIPv4CIDR:  defaultServicesCIDR,
@@ -335,14 +343,12 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	// fields fall back to defaults via nodePoolFromSpec.
 	pools := input.NodePools
 	if len(pools) == 0 {
-		count := input.InitialNodeCount
-		if count == 0 {
-			count = defaultNodeCount
-		}
-
+		// Carry the pointer through untouched so an explicit initialNodeCount=0
+		// (autoscale-from-zero) reaches the default pool; nodePoolFromSpec
+		// resolves a nil (absent) count to the GKE default.
 		spec := NodePoolSpec{
 			Name:             "default-pool",
-			InitialNodeCount: count,
+			InitialNodeCount: input.InitialNodeCount,
 			Version:          stubNodeVersion,
 		}
 
@@ -382,9 +388,11 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 }
 
 func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time.Time) NodePool {
-	count := spec.InitialNodeCount
-	if count == 0 {
-		count = defaultNodeCount
+	// Honor an explicit count (including 0 for autoscale-from-zero); only
+	// backfill the GKE default when the field was genuinely absent (nil).
+	count := int64(defaultNodeCount)
+	if spec.InitialNodeCount != nil {
+		count = *spec.InitialNodeCount
 	}
 
 	// GKE defaults auto-upgrade/auto-repair to true; an explicit management
@@ -425,6 +433,7 @@ func (m *Mock) GetCluster(_ context.Context, location, name string) (*Cluster, e
 	}
 
 	out := c
+	out.LabelFingerprint = labelFingerprint(out.ResourceLabels)
 
 	return &out, nil
 }
@@ -443,6 +452,7 @@ func (m *Mock) ListClusters(_ context.Context, location string) ([]Cluster, erro
 			continue
 		}
 
+		c.LabelFingerprint = labelFingerprint(c.ResourceLabels)
 		out = append(out, c)
 	}
 
@@ -456,13 +466,18 @@ type UpdateClusterInput struct {
 	NodeVersion       string
 	MasterVersion     string
 	ResourceLabels    map[string]string
+	// NodePoolID scopes a desiredNodeVersion roll to a single pool; empty
+	// rolls every pool in the cluster (real GKE ClusterUpdate semantics).
+	NodePoolID string
 }
 
-// UpdateCluster applies a partial update.
+// UpdateCluster applies a partial update. A desiredNodeVersion also rolls the
+// version of the targeted node pool(s), matching real GKE where a cluster-level
+// node-version update propagates to the pools it upgrades.
 func (m *Mock) UpdateCluster(
 	_ context.Context, location, name string, input UpdateClusterInput,
 ) (*Operation, error) {
-	return m.mutateCluster(location, name, func(c *Cluster) {
+	op, err := m.mutateCluster(location, name, func(c *Cluster) {
 		if input.LoggingService != "" {
 			c.LoggingService = input.LoggingService
 		}
@@ -483,6 +498,42 @@ func (m *Mock) UpdateCluster(
 			c.NodeVersion = input.NodeVersion
 		}
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	if input.NodeVersion != "" {
+		m.rollNodePoolVersions(location, name, input.NodePoolID, input.NodeVersion)
+	}
+
+	return op, nil
+}
+
+// rollNodePoolVersions applies version to the cluster's node pools. When
+// nodePoolID is set only that pool rolls; otherwise every pool in the cluster
+// does.
+func (m *Mock) rollNodePoolVersions(location, clusterName, nodePoolID, version string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	prefix := location + "/" + clusterName + "/"
+	for _, k := range m.nodePools.Keys() {
+		if !hasPrefix(k, prefix) {
+			continue
+		}
+
+		np, ok := m.nodePools.Get(k)
+		if !ok {
+			continue
+		}
+
+		if nodePoolID != "" && np.Name != nodePoolID {
+			continue
+		}
+
+		np.Version = version
+		m.nodePools.Set(k, np)
+	}
 }
 
 // DeleteCluster removes a cluster and its node pools.
@@ -559,13 +610,35 @@ func (m *Mock) SetMaintenancePolicy(_ context.Context, location, name, window st
 	})
 }
 
-// SetResourceLabels implements :setResourceLabels.
+// SetResourceLabels implements :setResourceLabels. When fingerprint is
+// non-empty it must match the cluster's current label fingerprint (optimistic
+// concurrency, as real GKE enforces); a stale value fails with
+// FAILED_PRECONDITION. An empty fingerprint skips the check.
 func (m *Mock) SetResourceLabels(
-	_ context.Context, location, name string, labels map[string]string,
+	_ context.Context, location, name string, labels map[string]string, fingerprint string,
 ) (*Operation, error) {
-	return m.mutateCluster(location, name, func(c *Cluster) {
-		c.ResourceLabels = copyLabels(labels)
-	})
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := clusterKey(location, name)
+
+	c, ok := m.clusters.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found in %q", name, location)
+	}
+
+	if fingerprint != "" && fingerprint != labelFingerprint(c.ResourceLabels) {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"labelFingerprint %q does not match current labels", fingerprint)
+	}
+
+	c.ResourceLabels = copyLabels(labels)
+	m.clusters.Set(key, c)
+
+	op := m.recordOperation("SET_LABELS", location,
+		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+name)
+
+	return &op, nil
 }
 
 // StartIPRotation implements :startIpRotation.
@@ -882,6 +955,38 @@ func defaultIfZero(v, fallback int64) int64 {
 	}
 
 	return v
+}
+
+func derefInt64(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+
+	return *v
+}
+
+// labelFingerprint returns a deterministic opaque hash of a cluster's resource
+// labels. Real GKE returns such a fingerprint on cluster reads and requires it
+// on :setResourceLabels for optimistic concurrency; the mock derives it from
+// the sorted key=value pairs so it is stable across reads and changes whenever
+// the labels change. An empty label set hashes deterministically too.
+func labelFingerprint(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	h := fnv.New64a()
+	for _, k := range keys {
+		_, _ = h.Write([]byte(k))
+		_, _ = h.Write([]byte{'='})
+		_, _ = h.Write([]byte(labels[k]))
+		_, _ = h.Write([]byte{'\n'})
+	}
+
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 func copyLabels(src map[string]string) map[string]string {

@@ -21,7 +21,7 @@ func TestSetK8sAPI_CreateRegistersWithAPIServer(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestEndpoint_RealURLWhenWired(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestEndpoint_NoAPIReturnsControlPlaneIP(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestEndpoint_APIWithoutBaseURLReturnsControlPlaneIP(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestDeleteCluster_DeregistersK8sState(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
