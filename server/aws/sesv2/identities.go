@@ -216,6 +216,7 @@ func (h *Handler) getIdentity(w http.ResponseWriter, r *http.Request, name strin
 		VerificationStatus:       id.VerificationStatus,
 		ConfigurationSetName:     id.ConfigurationSetName,
 		DkimAttributes:           identityToDkimJSON(id),
+		Policies:                 id.Policies,
 		Tags:                     mapToTags(id.Tags),
 	}
 

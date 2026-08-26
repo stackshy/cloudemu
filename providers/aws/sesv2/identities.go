@@ -11,6 +11,7 @@ func copyIdentity(id *driver.Identity) driver.Identity {
 	out := *id
 	out.Tags = copyTags(id.Tags)
 	out.DkimTokens = append([]string(nil), id.DkimTokens...)
+	out.Policies = copyTags(id.Policies)
 
 	return out
 }

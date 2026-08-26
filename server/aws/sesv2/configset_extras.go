@@ -43,6 +43,7 @@ func edInputFromJSON(configSet, name string, ed *eventDestinationDefJSON) driver
 
 	if ed.KinesisFirehoseDestination != nil {
 		in.KinesisFirehoseARN = ed.KinesisFirehoseDestination.DeliveryStreamArn
+		in.KinesisFirehoseRoleARN = ed.KinesisFirehoseDestination.IamRoleArn
 	}
 
 	if ed.SnsDestination != nil {
@@ -51,9 +52,77 @@ func edInputFromJSON(configSet, name string, ed *eventDestinationDefJSON) driver
 
 	if ed.CloudWatchDestination != nil {
 		in.CloudWatchNamespace = "cloudwatch"
+		in.CloudWatchDimensions = dimsToDriver(ed.CloudWatchDestination.DimensionConfigurations)
+	}
+
+	if ed.PinpointDestination != nil {
+		in.PinpointApplicationARN = ed.PinpointDestination.ApplicationArn
 	}
 
 	return in
+}
+
+func dimsToDriver(dims []cloudWatchDimensionConfigJSON) []driver.CloudWatchDimension {
+	if len(dims) == 0 {
+		return nil
+	}
+
+	out := make([]driver.CloudWatchDimension, 0, len(dims))
+	for i := range dims {
+		out = append(out, driver.CloudWatchDimension{
+			DimensionName:         dims[i].DimensionName,
+			DimensionValueSource:  dims[i].DimensionValueSource,
+			DefaultDimensionValue: dims[i].DefaultDimensionValue,
+		})
+	}
+
+	return out
+}
+
+func dimsToWire(dims []driver.CloudWatchDimension) []cloudWatchDimensionConfigJSON {
+	out := make([]cloudWatchDimensionConfigJSON, 0, len(dims))
+	for i := range dims {
+		out = append(out, cloudWatchDimensionConfigJSON{
+			DimensionName:         dims[i].DimensionName,
+			DimensionValueSource:  dims[i].DimensionValueSource,
+			DefaultDimensionValue: dims[i].DefaultDimensionValue,
+		})
+	}
+
+	return out
+}
+
+// eventDestinationToJSON renders a stored event destination as its wire shape,
+// including whichever destination sub-block was configured.
+func eventDestinationToJSON(ed *driver.EventDestination) eventDestinationJSON {
+	out := eventDestinationJSON{
+		Name:               ed.Name,
+		Enabled:            ed.Enabled,
+		MatchingEventTypes: ed.MatchingEventTypes,
+	}
+
+	if ed.SNSTopicARN != "" {
+		out.SnsDestination = &snsDestinationJSON{TopicArn: ed.SNSTopicARN}
+	}
+
+	if ed.KinesisFirehoseARN != "" || ed.KinesisFirehoseRoleARN != "" {
+		out.KinesisFirehoseDestination = &kinesisFirehoseDestinationJSON{
+			IamRoleArn:        ed.KinesisFirehoseRoleARN,
+			DeliveryStreamArn: ed.KinesisFirehoseARN,
+		}
+	}
+
+	if ed.CloudWatchNamespace != "" {
+		out.CloudWatchDestination = &cloudWatchDestinationJSON{
+			DimensionConfigurations: dimsToWire(ed.CloudWatchDimensions),
+		}
+	}
+
+	if ed.PinpointApplicationARN != "" {
+		out.PinpointDestination = &pinpointDestinationJSON{ApplicationArn: ed.PinpointApplicationARN}
+	}
+
+	return out
 }
 
 func (h *Handler) createEventDestination(w http.ResponseWriter, r *http.Request, configSet string) {
@@ -108,11 +177,7 @@ func (h *Handler) getEventDestinations(w http.ResponseWriter, r *http.Request, c
 
 	out := make([]eventDestinationJSON, 0, len(eds))
 	for i := range eds {
-		out = append(out, eventDestinationJSON{
-			Name:               eds[i].Name,
-			Enabled:            eds[i].Enabled,
-			MatchingEventTypes: eds[i].MatchingEventTypes,
-		})
+		out = append(out, eventDestinationToJSON(&eds[i]))
 	}
 
 	writeJSON(w, getEventDestinationsResponse{EventDestinations: out})

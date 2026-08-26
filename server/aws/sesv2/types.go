@@ -79,6 +79,7 @@ type getEmailIdentityResponse struct {
 	ConfigurationSetName     string                  `json:"ConfigurationSetName,omitempty"`
 	DkimAttributes           dkimAttributesJSON      `json:"DkimAttributes"`
 	MailFromAttributes       *mailFromAttributesJSON `json:"MailFromAttributes,omitempty"`
+	Policies                 map[string]string       `json:"Policies,omitempty"`
 	Tags                     []tag                   `json:"Tags"`
 }
 
