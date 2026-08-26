@@ -38,6 +38,11 @@ type QueueConfig struct {
 	// omitted value (defaulted to 30). The wire handler sets it from attribute
 	// presence; the typed Go API leaves it false, where 0 means "use the default".
 	VisibilityTimeoutSet bool
+
+	// Metadata is Azure Queue Storage's user metadata (the x-ms-meta-* headers on
+	// Create Queue), persisted so Get Queue Metadata / Get Properties returns it.
+	// Ignored by non-Azure providers.
+	Metadata map[string]string
 }
 
 // DeadLetterConfig configures a dead-letter queue for failed messages.
@@ -96,6 +101,11 @@ type SendMessageOutput struct {
 	// MessageTTLSeconds (Azure Queue Storage). Providers that don't track
 	// per-message TTL leave it zero.
 	ExpiresAt time.Time
+	// PopReceipt is the pop receipt minted for the just-enqueued message (Azure
+	// Queue Storage Put Message), usable to delete or update the message before
+	// its first dequeue. Providers that don't issue enqueue-time receipts leave
+	// it empty.
+	PopReceipt string
 }
 
 // ReceiveMessageInput configures a message receive operation.
@@ -126,6 +136,9 @@ type Message struct {
 	// ExpiresAt is the message's absolute expiration time (Azure Queue Storage's
 	// per-message TTL). Providers that don't track per-message TTL leave it zero.
 	ExpiresAt time.Time
+	// InsertedAt is the message's enqueue time, surfaced by Azure Queue Storage as
+	// InsertionTime. Providers that don't track it leave it zero.
+	InsertedAt time.Time
 	// SystemProperties carries Azure Service Bus brokered-message system
 	// properties preserved from the send (see SendMessageInput.SystemProperties).
 	SystemProperties map[string]string
