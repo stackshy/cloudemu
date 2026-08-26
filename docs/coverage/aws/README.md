@@ -11,7 +11,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
-| [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 14 |
+| [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
 | [Config](./config.md) | `configservice` | 102 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
 | [EC2](./ec2.md) | `compute` | 37 |

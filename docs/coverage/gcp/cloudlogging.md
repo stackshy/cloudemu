@@ -3,7 +3,7 @@
 
 GCP's `logging` service · portable interface `driver.Logging` · [GCP index](./README.md)
 
-## Operations (14)
+## Operations (17)
 
 | Operation | Description |
 | --- | --- |
@@ -12,7 +12,9 @@ GCP's `logging` service · portable interface `driver.Logging` · [GCP index](./
 | `DeleteLogGroup` |  |
 | `DeleteLogStream` |  |
 | `DeleteMetricFilter` |  |
+| `DeleteSubscriptionFilter` |  |
 | `DescribeMetricFilters` |  |
+| `DescribeSubscriptionFilters` |  |
 | `FilterLogEvents` |  |
 | `GetLogEvents` |  |
 | `GetLogGroup` |  |
@@ -20,6 +22,7 @@ GCP's `logging` service · portable interface `driver.Logging` · [GCP index](./
 | `ListLogStreams` |  |
 | `PutLogEvents` |  |
 | `PutMetricFilter` |  |
+| `PutSubscriptionFilter` |  |
 | `UpdateLogGroup` | UpdateLogGroup replaces the mutable fields (retention, tags) of an |
 
 ## Optional capabilities

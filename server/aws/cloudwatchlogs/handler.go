@@ -15,6 +15,7 @@
 //	CreateLogStream     DescribeLogStreams  DeleteLogStream
 //	PutLogEvents        GetLogEvents        FilterLogEvents
 //	PutMetricFilter     DescribeMetricFilters DeleteMetricFilter
+//	PutSubscriptionFilter DescribeSubscriptionFilters DeleteSubscriptionFilter
 package cloudwatchlogs
 
 import (
@@ -79,8 +80,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// dispatchManagement handles the retention, metric-filter, and tagging
-// operations, and reports the unknown-operation error for anything unmatched.
+// dispatchManagement handles the retention, metric-filter, and
+// subscription-filter operations, delegating tagging (and the
+// unknown-operation error) to dispatchTags.
 func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op string) {
 	switch op {
 	case "PutRetentionPolicy":
@@ -91,6 +93,22 @@ func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op 
 		h.describeMetricFilters(w, r)
 	case "DeleteMetricFilter":
 		h.deleteMetricFilter(w, r)
+	case "PutSubscriptionFilter":
+		h.putSubscriptionFilter(w, r)
+	case "DescribeSubscriptionFilters":
+		h.describeSubscriptionFilters(w, r)
+	case "DeleteSubscriptionFilter":
+		h.deleteSubscriptionFilter(w, r)
+	default:
+		h.dispatchTags(w, r, op)
+	}
+}
+
+// dispatchTags handles the tagging operations, reporting the unknown-operation
+// error for anything unmatched. Split out of dispatchManagement to keep each
+// switch within the cyclomatic-complexity budget.
+func (h *Handler) dispatchTags(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
 	case "TagResource", "TagLogGroup":
 		h.tagLogGroup(w, r)
 	case "UntagResource", "UntagLogGroup":
