@@ -695,11 +695,15 @@ type VNetRules interface {
 
 // ElasticPoolConfig describes an elastic pool to create (Azure SQL).
 type ElasticPoolConfig struct {
-	Server       string
-	Name         string
-	Location     string
-	SKUName      string
-	SKUTier      string
+	Server   string
+	Name     string
+	Location string
+	SKUName  string
+	SKUTier  string
+	// SKUCapacity is the vCore/DTU count on the pool SKU (sku.capacity).
+	// Optional — zero means unset, so a request that omits it carries no
+	// capacity. Only the Azure SQL provider populates it.
+	SKUCapacity  int
 	MaxSizeBytes int64
 	MinCapacity  float64
 	MaxCapacity  float64
@@ -707,11 +711,14 @@ type ElasticPoolConfig struct {
 
 // ElasticPool is a shared-resource pool that databases on a server draw from.
 type ElasticPool struct {
-	Server       string
-	Name         string
-	Location     string
-	SKUName      string
-	SKUTier      string
+	Server   string
+	Name     string
+	Location string
+	SKUName  string
+	SKUTier  string
+	// SKUCapacity echoes the vCore/DTU count on read (sku.capacity); zero
+	// when unset. Azure SQL only.
+	SKUCapacity  int
 	MaxSizeBytes int64
 	MinCapacity  float64
 	MaxCapacity  float64
