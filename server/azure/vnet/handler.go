@@ -12,6 +12,8 @@
 //	GET .../virtualNetworks/{vn}/subnets                 — list subnets
 //	PUT/GET/DELETE  .../networkSecurityGroups/{name}     — NSG CRUD
 //	GET .../networkSecurityGroups                        — list NSGs
+//	PUT/GET/DELETE  .../routeTables/{name}               — route table CRUD
+//	GET .../routeTables                                  — list route tables
 //	PUT/GET/DELETE  .../networkInterfaces/{name}         — NIC CRUD
 //	GET .../networkInterfaces                            — list NICs
 //	PUT/GET/DELETE  .../virtualNetworks/{vn}/virtualNetworkPeerings/{n} — peering CRUD
@@ -32,6 +34,7 @@ const (
 	providerName     = "Microsoft.Network"
 	typeVNet         = "virtualNetworks"
 	typeNSG          = "networkSecurityGroups"
+	typeRouteTable   = "routeTables"
 	typePublicIP     = "publicIPAddresses"
 	typeLocations    = "locations"
 	armNameTag       = "cloudemu:azureNetName"
@@ -57,7 +60,16 @@ const (
 	// armSubnetNSGTag stores the full ARM resource id of the network security
 	// group a subnet is associated with (set via the subnet's own
 	// networkSecurityGroup property), mirroring armSubnetNATTag.
-	armSubnetNSGTag     = "cloudemu:azureSubnetNSG"
+	armSubnetNSGTag = "cloudemu:azureSubnetNSG"
+	// armSubnetRouteTableTag stores the full ARM resource id of the route table a
+	// subnet is associated with (set via the subnet's own routeTable property),
+	// mirroring armSubnetNSGTag.
+	armSubnetRouteTableTag = "cloudemu:azureSubnetRouteTable"
+	// armRouteTableTag / armRouteTableRGTag record a route table's ARM name and
+	// resource group on its driver anchor so it is addressable by (rg, name), the
+	// same way armNSGTag / armNSGRGTag scope network security groups.
+	armRouteTableTag    = "cloudemu:azureRouteTableName"
+	armRouteTableRGTag  = "cloudemu:azureRouteTableResourceGroup"
 	defaultLoc          = "eastus"
 	subResSubnets       = "subnets"
 	subResSecurityRules = "securityRules"
@@ -89,7 +101,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typePublicIP, typeNIC, typeNATGateway, typeLocations:
+	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typeNIC, typeNATGateway, typeLocations:
 		return true
 	}
 
@@ -118,6 +130,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeVNet(w, r, rp)
 	case typeNSG:
 		h.routeNSG(w, r, rp)
+	case typeRouteTable:
+		h.routeRouteTable(w, r, rp)
 	case typePublicIP:
 		h.routePublicIP(w, r, rp)
 	case typeNIC:
@@ -420,8 +434,9 @@ func (h *Handler) updateInlineSubnet(
 
 	natID := inlineRefID(sub.Properties.NatGateway)
 	nsgID := inlineRefID(sub.Properties.NetworkSecurityGroup)
+	routeTableID := inlineRefID(sub.Properties.RouteTable)
 
-	_, err := h.updateExistingSubnet(ctx, existing, cidr, natID, nsgID)
+	_, err := h.updateExistingSubnet(ctx, existing, cidr, natID, nsgID, routeTableID)
 
 	return err
 }
@@ -447,6 +462,10 @@ func inlineSubnetTags(sub *subnetRequest) map[string]string {
 
 	if sub.Properties.NetworkSecurityGroup != nil {
 		tags = mergeTags(tags, armSubnetNSGTag, sub.Properties.NetworkSecurityGroup.ID)
+	}
+
+	if sub.Properties.RouteTable != nil {
+		tags = mergeTags(tags, armSubnetRouteTableTag, sub.Properties.RouteTable.ID)
 	}
 
 	return tags
@@ -580,6 +599,7 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	recordErr(h.purgePublicIPs(ctx, resourceGroup))
 	recordErr(h.purgeVNets(ctx, resourceGroup))
 	recordErr(h.purgeNSGs(ctx, resourceGroup))
+	recordErr(h.purgeRouteTables(ctx, resourceGroup))
 
 	return firstErr
 }
@@ -790,12 +810,18 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
+	routeTableID, ok := h.resolveSubnetRouteTable(w, r, req.Properties.RouteTable)
+	if !ok {
+		return
+	}
+
 	if verr := h.validateSubnetCIDR(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix); verr != nil {
 		writeSubnetValidationError(w, verr)
 		return
 	}
 
-	info, err := h.upsertSubnet(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix, natGatewayID, nsgID)
+	info, err := h.upsertSubnet(r.Context(), vnet.ID, rp.SubResourceName,
+		req.Properties.AddressPrefix, natGatewayID, nsgID, routeTableID)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -827,6 +853,19 @@ func (h *Handler) resolveSubnetNSG(w http.ResponseWriter, r *http.Request, ref *
 	return h.resolveSubnetRef(w, r, ref, typeNSG, "networkSecurityGroup",
 		func(ctx context.Context, rg, name string) error {
 			_, err := findNSGInGroup(ctx, h.net, rg, name)
+			return err
+		})
+}
+
+// resolveSubnetRouteTable validates and resolves an optional routeTable
+// reference on a subnet PUT body, writing the appropriate error response
+// itself. ok is false when a response was already written and the caller must
+// stop. The reference is resolved within its own resource group so a subnet
+// cannot associate a route table that only exists in a different group.
+func (h *Handler) resolveSubnetRouteTable(w http.ResponseWriter, r *http.Request, ref *armIDRef) (id string, ok bool) {
+	return h.resolveSubnetRef(w, r, ref, typeRouteTable, "routeTable",
+		func(ctx context.Context, rg, name string) error {
+			_, err := h.findRouteTableInGroup(ctx, rg, name)
 			return err
 		})
 }
@@ -865,9 +904,11 @@ func (*Handler) resolveSubnetRef(
 // from the request body so an omitted reference (empty id) CLEARS the existing
 // association. Both associations live on the subnet's own natGateway /
 // networkSecurityGroup properties.
-func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewayID, nsgID string) (*netdriver.SubnetInfo, error) {
+func (h *Handler) upsertSubnet(
+	ctx context.Context, vpcID, name, cidr, natGatewayID, nsgID, routeTableID string,
+) (*netdriver.SubnetInfo, error) {
 	if existing, err := findSubnetInVNet(ctx, h.net, vpcID, name); err == nil {
-		return h.updateExistingSubnet(ctx, existing, cidr, natGatewayID, nsgID)
+		return h.updateExistingSubnet(ctx, existing, cidr, natGatewayID, nsgID, routeTableID)
 	}
 
 	tags := mergeTags(nil, armSubnetTag, name)
@@ -877,6 +918,10 @@ func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewa
 
 	if nsgID != "" {
 		tags = mergeTags(tags, armSubnetNSGTag, nsgID)
+	}
+
+	if routeTableID != "" {
+		tags = mergeTags(tags, armSubnetRouteTableTag, routeTableID)
 	}
 
 	return h.net.CreateSubnet(ctx, netdriver.SubnetConfig{
@@ -891,7 +936,7 @@ func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewa
 // gateway associations from the request body (an omitted reference — empty id —
 // clears that association, matching ARM's full-replacement semantics).
 func (h *Handler) updateExistingSubnet(
-	ctx context.Context, existing *netdriver.SubnetInfo, cidr, natGatewayID, nsgID string,
+	ctx context.Context, existing *netdriver.SubnetInfo, cidr, natGatewayID, nsgID, routeTableID string,
 ) (*netdriver.SubnetInfo, error) {
 	if cidr != "" && cidr != existing.CIDRBlock {
 		if u, ok := h.net.(netdriver.SubnetCIDRUpdater); ok {
@@ -908,6 +953,10 @@ func (h *Handler) updateExistingSubnet(
 	}
 
 	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetNATTag, natGatewayID); err != nil {
+		return nil, err
+	}
+
+	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetRouteTableTag, routeTableID); err != nil {
 		return nil, err
 	}
 
@@ -1617,6 +1666,10 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 		out.Properties.NetworkSecurityGroup = &armIDRef{ID: nsgID}
 	}
 
+	if rtID := tagOr(info.Tags, armSubnetRouteTableTag, ""); rtID != "" {
+		out.Properties.RouteTable = &armIDRef{ID: rtID}
+	}
+
 	return out
 }
 
@@ -1659,6 +1712,14 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 // reference (armSubnetNSGTag) matching nsgARMID, the read-only back-reference
 // real ARM reports on a networkSecurityGroups GET.
 func (h *Handler) nsgAssociatedSubnets(ctx context.Context, nsgARMID string) []armIDRef {
+	return h.subnetsAssociatedByTag(ctx, armSubnetNSGTag, nsgARMID)
+}
+
+// subnetsAssociatedByTag scans every subnet for an association tag (tagKey)
+// whose value matches armID and returns the subnets' ARM ids — the read-only
+// back-reference an NSG / route table reports once a subnet points at it. armID
+// supplies the subscription/resource-group for the built subnet ids.
+func (h *Handler) subnetsAssociatedByTag(ctx context.Context, tagKey, armID string) []armIDRef {
 	subs, err := h.net.DescribeSubnets(ctx, nil)
 	if err != nil {
 		return nil
@@ -1669,7 +1730,7 @@ func (h *Handler) nsgAssociatedSubnets(ctx context.Context, nsgARMID string) []a
 	var out []armIDRef
 
 	for i := range subs {
-		if !strings.EqualFold(tagOr(subs[i].Tags, armSubnetNSGTag, ""), nsgARMID) {
+		if !strings.EqualFold(tagOr(subs[i].Tags, tagKey, ""), armID) {
 			continue
 		}
 
@@ -1684,7 +1745,7 @@ func (h *Handler) nsgAssociatedSubnets(ctx context.Context, nsgARMID string) []a
 			vnetNames[subs[i].VPCID] = vnetName
 		}
 
-		out = append(out, armIDRef{ID: subnetResourceID(nsgARMID, vnetName, tagOr(subs[i].Tags, armSubnetTag, ""))})
+		out = append(out, armIDRef{ID: subnetResourceID(armID, vnetName, tagOr(subs[i].Tags, armSubnetTag, ""))})
 	}
 
 	return out

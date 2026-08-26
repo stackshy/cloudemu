@@ -6617,6 +6617,10 @@
             "doc": "DeleteAzureNSGRule removes a single custom security rule by name, leaving"
           },
           {
+            "name": "DeleteAzureRouteTableMetadata",
+            "doc": "DeleteAzureRouteTableMetadata drops the stored metadata for id (called when"
+          },
+          {
             "name": "DeleteAzureVNetMetadata"
           },
           {
@@ -6625,6 +6629,10 @@
           },
           {
             "name": "GetAzureNSGMetadata"
+          },
+          {
+            "name": "GetAzureRouteTableMetadata",
+            "doc": "GetAzureRouteTableMetadata returns the stored Azure route-table metadata for"
           },
           {
             "name": "GetAzureVNetMetadata"
@@ -6639,6 +6647,10 @@
           },
           {
             "name": "PutAzureNSGMetadata"
+          },
+          {
+            "name": "PutAzureRouteTableMetadata",
+            "doc": "PutAzureRouteTableMetadata stores the Azure-only route-table fields (region,"
           },
           {
             "name": "PutAzureVNetMetadata"

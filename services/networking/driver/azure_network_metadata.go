@@ -44,6 +44,29 @@ type AzureNSGMetadata struct {
 	SecurityRules []AzureNSGRule
 }
 
+// AzureRoute is one Azure route-table route, with the name / next-hop shape the
+// cross-cloud Route model (DestinationCIDR / TargetID / TargetType) cannot
+// represent. AddressPrefix and NextHopIPAddress are kept verbatim as the ARM
+// strings ("10.0.0.0/24", "10.0.1.4") so a Get round-trips exactly what the
+// caller sent. NextHopType is one of VirtualAppliance / VnetLocal / Internet /
+// VirtualNetworkGateway / None.
+type AzureRoute struct {
+	Name             string
+	AddressPrefix    string
+	NextHopType      string
+	NextHopIPAddress string
+}
+
+// AzureRouteTableMetadata holds the Azure-only route-table fields (region, the
+// caller's routes and user tags). The cross-cloud RouteTable model cannot carry
+// the ARM route shape, so it is stored alongside the driver route table and
+// keyed by that route table's driver id.
+type AzureRouteTableMetadata struct {
+	Location string
+	Routes   []AzureRoute
+	Tags     map[string]string
+}
+
 // Azure virtual-network peering states, matching Microsoft.Network's
 // VirtualNetworkPeeringState. A peering reports Initiated until its
 // reciprocal peering (a peering on the remote VNet pointing back at this
@@ -126,6 +149,18 @@ type AzureNetworkMetadata interface {
 	// duplicate. Its allocation id, address and any association are preserved.
 	// Returns NotFound when no public IP has that allocation id.
 	UpdateAzurePublicIP(ctx context.Context, allocationID string, cfg ElasticIPConfig) error
+
+	// PutAzureRouteTableMetadata stores the Azure-only route-table fields (region,
+	// routes and user tags) for the route table with the given driver id,
+	// replacing any previously stored metadata (a repeat ARM CreateOrUpdate PUT is
+	// a full replacement).
+	PutAzureRouteTableMetadata(ctx context.Context, id string, meta AzureRouteTableMetadata) error
+	// GetAzureRouteTableMetadata returns the stored Azure route-table metadata for
+	// id.
+	GetAzureRouteTableMetadata(ctx context.Context, id string) (AzureRouteTableMetadata, bool)
+	// DeleteAzureRouteTableMetadata drops the stored metadata for id (called when
+	// the route table is deleted).
+	DeleteAzureRouteTableMetadata(ctx context.Context, id string)
 
 	// UpdateAzureNATGateway re-applies the mutable fields of an existing NAT
 	// gateway (its bound public-IP allocation and tags), keyed by its id, so a

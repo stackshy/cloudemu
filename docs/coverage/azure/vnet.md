@@ -88,13 +88,16 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | --- | --- |
 | `DeleteAzureNSGMetadata` |  |
 | `DeleteAzureNSGRule` | DeleteAzureNSGRule removes a single custom security rule by name, leaving |
+| `DeleteAzureRouteTableMetadata` | DeleteAzureRouteTableMetadata drops the stored metadata for id (called when |
 | `DeleteAzureVNetMetadata` |  |
 | `DeleteAzureVNetPeering` | DeleteAzureVNetPeering removes a single peering by name, leaving every |
 | `GetAzureNSGMetadata` |  |
+| `GetAzureRouteTableMetadata` | GetAzureRouteTableMetadata returns the stored Azure route-table metadata for |
 | `GetAzureVNetMetadata` |  |
 | `GetAzureVNetPeering` | GetAzureVNetPeering returns one stored peering by name. |
 | `ListAzureVNetPeerings` | ListAzureVNetPeerings returns every peering stored for a VNet, ordered by |
 | `PutAzureNSGMetadata` |  |
+| `PutAzureRouteTableMetadata` | PutAzureRouteTableMetadata stores the Azure-only route-table fields (region, |
 | `PutAzureVNetMetadata` |  |
 | `SetAzureVNetPeeringState` | SetAzureVNetPeeringState atomically updates just the peeringState field of |
 | `UpdateAzureNATGateway` | UpdateAzureNATGateway re-applies the mutable fields of an existing NAT |
