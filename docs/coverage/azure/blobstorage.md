@@ -75,6 +75,7 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 | `DeleteBlobSnapshots` | DeleteBlobSnapshots applies the Azure delete-snapshots directive |
 | `GetBlobSnapshot` | GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…). |
 | `GetBlockList` | GetBlockList returns the blob's committed and uncommitted blocks (Get |
+| `PutBlockBlob` | PutBlockBlob writes a block blob's content together with its system content |
 | `ReleaseLease` | ReleaseLease releases the blob's current lease. |
 | `RenewLease` | RenewLease renews the blob's current lease. |
 | `SetBlobMetadata` | SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata, |

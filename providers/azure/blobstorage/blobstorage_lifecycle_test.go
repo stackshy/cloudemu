@@ -380,11 +380,44 @@ func TestDelimiterRollup(t *testing.T) {
 		assert.Empty(t, res.Objects)
 	})
 
-	t.Run("prefixes not paginated even with MaxKeys 1", func(t *testing.T) {
+	t.Run("prefixes count toward maxresults and paginate with blobs", func(t *testing.T) {
+		// Merged stream sorted by name: "data/", "logs/", "root.txt". At
+		// MaxKeys=1 the first page is just the "data/" prefix, and the rest
+		// arrive over later pages with no dup or skip.
 		res, err := m.ListObjects(ctx, bucket, driver.ListOptions{Delimiter: "/", MaxKeys: 1})
 		require.NoError(t, err)
-		// full prefix set regardless of page size (documented mock behavior)
-		assert.Equal(t, []string{"data/", "logs/"}, res.CommonPrefixes)
+		assert.Equal(t, []string{"data/"}, res.CommonPrefixes)
+		assert.Empty(t, res.Objects)
+		require.True(t, res.IsTruncated)
+		require.NotEmpty(t, res.NextPageToken)
+
+		var (
+			prefixes []string
+			blobs    []string
+		)
+
+		prefixes = append(prefixes, res.CommonPrefixes...)
+
+		token := res.NextPageToken
+		for range 10 {
+			page, perr := m.ListObjects(ctx, bucket, driver.ListOptions{Delimiter: "/", MaxKeys: 1, PageToken: token})
+			require.NoError(t, perr)
+			prefixes = append(prefixes, page.CommonPrefixes...)
+
+			for _, o := range page.Objects {
+				blobs = append(blobs, o.Key)
+			}
+
+			if !page.IsTruncated {
+				assert.Empty(t, page.NextPageToken)
+				break
+			}
+
+			token = page.NextPageToken
+		}
+
+		assert.Equal(t, []string{"data/", "logs/"}, prefixes)
+		assert.Equal(t, []string{"root.txt"}, blobs)
 	})
 }
 

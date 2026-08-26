@@ -539,7 +539,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 
 	metadata := extractMetadata(r.Header)
 
-	if err := h.bucket.PutObject(r.Context(), container, blob, data, contentType, metadata); err != nil {
+	if err := h.storePutBlob(r, container, blob, data, contentType, metadata); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -559,6 +559,49 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 	w.WriteHeader(http.StatusCreated)
 }
 
+// storePutBlob writes a Put Blob's content. When the driver implements the
+// Azure extensions it routes through PutBlockBlob so the request's system
+// content properties (Content-Encoding/Cache-Control/Content-Language/
+// Content-Disposition) are persisted and round-trip on a later read; otherwise
+// it falls back to the plain PutObject path.
+func (h *Handler) storePutBlob(r *http.Request, container, blob string, data []byte, contentType string, metadata map[string]string) error {
+	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok {
+		props := &storagedriver.BlobProperties{ContentType: contentType}
+		if cp := blobContentProps(r); cp != nil {
+			props.ContentEncoding = cp.ContentEncoding
+			props.CacheControl = cp.CacheControl
+			props.ContentLanguage = cp.ContentLanguage
+			props.ContentDisposition = cp.ContentDisposition
+		}
+
+		_, err := ext.PutBlockBlob(r.Context(), container, blob, data, props, metadata)
+
+		return err
+	}
+
+	return h.bucket.PutObject(r.Context(), container, blob, data, contentType, metadata)
+}
+
+// blobContentProps reads the four x-ms-blob-* system content-property headers
+// (Content-Encoding/Cache-Control/Content-Language/Content-Disposition) into a
+// BlobProperties, or returns nil when none are set. ContentType is left to the
+// caller, which has its own x-ms-blob-content-type fallback chain.
+func blobContentProps(r *http.Request) *storagedriver.BlobProperties {
+	enc := r.Header.Get("X-Ms-Blob-Content-Encoding")
+	cache := r.Header.Get("X-Ms-Blob-Cache-Control")
+	lang := r.Header.Get("X-Ms-Blob-Content-Language")
+	disp := r.Header.Get("X-Ms-Blob-Content-Disposition")
+
+	if enc == "" && cache == "" && lang == "" && disp == "" {
+		return nil
+	}
+
+	return &storagedriver.BlobProperties{
+		ContentEncoding: enc, CacheControl: cache,
+		ContentLanguage: lang, ContentDisposition: disp,
+	}
+}
+
 // conditionFailed evaluates the If-None-Match / If-Match conditional write
 // headers against the current blob and, if a condition is not met, writes the
 // Azure error and returns true. Every mutating data-plane op must call this so
@@ -568,22 +611,27 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 // 409 BlobAlreadyExists, every other write returns 412 (per the write-operations
 // response-code table). A mismatched If-Match always yields 412.
 func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, container, blob string, isCreate bool) bool {
-	ifNoneMatch := r.Header.Get("If-None-Match")
-	ifMatch := r.Header.Get("If-Match")
+	c := writeConditions{
+		ifNoneMatch:       r.Header.Get("If-None-Match"),
+		ifMatch:           r.Header.Get("If-Match"),
+		ifUnmodifiedSince: r.Header.Get("If-Unmodified-Since"),
+		ifModifiedSince:   r.Header.Get("If-Modified-Since"),
+	}
 
-	if ifNoneMatch == "" && ifMatch == "" {
+	if c.empty() {
 		return false
 	}
 
-	var curETag string
+	var curETag, lastModified string
 
 	exists := false
 	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
 		exists = true
 		curETag = info.ETag
+		lastModified = info.LastModified
 	}
 
-	status, code := evalWriteConditions(ifNoneMatch, ifMatch, curETag, exists, isCreate)
+	status, code := evalWriteConditions(c, curETag, lastModified, exists, isCreate)
 	if status == 0 {
 		return false
 	}
@@ -593,13 +641,38 @@ func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, contai
 	return true
 }
 
-// evalWriteConditions evaluates the If-None-Match / If-Match write conditions
-// against the current blob state. It returns the HTTP status and Azure error
-// code to fail with, or (0, "") when the write may proceed.
-func evalWriteConditions(ifNoneMatch, ifMatch, curETag string, exists, isCreate bool) (status int, code string) {
+// writeConditions bundles the conditional headers evaluated on a mutating
+// data-plane op: the two ETag conditions plus the two time-based conditions.
+type writeConditions struct {
+	ifNoneMatch       string
+	ifMatch           string
+	ifUnmodifiedSince string
+	ifModifiedSince   string
+}
+
+func (c writeConditions) empty() bool {
+	return c.ifNoneMatch == "" && c.ifMatch == "" && c.ifUnmodifiedSince == "" && c.ifModifiedSince == ""
+}
+
+// evalWriteConditions evaluates the If-None-Match / If-Match / If-Unmodified-
+// Since / If-Modified-Since write conditions against the current blob state. It
+// returns the HTTP status and Azure error code to fail with, or (0, "") when
+// the write may proceed. ETag conditions are evaluated first (they take
+// precedence), then the time-based conditions.
+func evalWriteConditions(c writeConditions, curETag, lastModified string, exists, isCreate bool) (status int, code string) {
+	if status, code := evalWriteETagConditions(c, curETag, exists, isCreate); status != 0 {
+		return status, code
+	}
+
+	return evalWriteTimeConditions(c, lastModified, exists)
+}
+
+// evalWriteETagConditions evaluates the If-None-Match / If-Match write ETag
+// conditions, which take precedence over the time-based ones.
+func evalWriteETagConditions(c writeConditions, curETag string, exists, isCreate bool) (status int, code string) {
 	const conditionNotMet = "ConditionNotMet"
 
-	if ifNoneMatch == "*" && exists {
+	if c.ifNoneMatch == "*" && exists {
 		if isCreate {
 			return http.StatusConflict, "BlobAlreadyExists"
 		}
@@ -607,15 +680,52 @@ func evalWriteConditions(ifNoneMatch, ifMatch, curETag string, exists, isCreate 
 		return http.StatusPreconditionFailed, conditionNotMet
 	}
 
-	if ifMatch != "" && (!exists || !etagMatches(ifMatch, curETag)) {
+	if c.ifMatch != "" && (!exists || !etagMatches(c.ifMatch, curETag)) {
 		return http.StatusPreconditionFailed, conditionNotMet
 	}
 
-	if ifNoneMatch != "" && exists && etagMatches(ifNoneMatch, curETag) {
+	if c.ifNoneMatch != "" && exists && etagMatches(c.ifNoneMatch, curETag) {
 		return http.StatusPreconditionFailed, conditionNotMet
 	}
 
 	return 0, ""
+}
+
+// evalWriteTimeConditions evaluates the If-Unmodified-Since / If-Modified-Since
+// write conditions against the blob's LastModified.
+func evalWriteTimeConditions(c writeConditions, lastModified string, exists bool) (status int, code string) {
+	const conditionNotMet = "ConditionNotMet"
+
+	if !exists {
+		return 0, ""
+	}
+
+	if c.ifUnmodifiedSince != "" && blobModifiedSince(lastModified, c.ifUnmodifiedSince) {
+		return http.StatusPreconditionFailed, conditionNotMet
+	}
+
+	if c.ifModifiedSince != "" && !blobModifiedSince(lastModified, c.ifModifiedSince) {
+		return http.StatusPreconditionFailed, conditionNotMet
+	}
+
+	return 0, ""
+}
+
+// blobModifiedSince reports whether a blob's stored LastModified (RFC3339) is
+// strictly after the HTTP-date value of a conditional header. An unparseable
+// timestamp on either side yields false so the condition does not fire.
+func blobModifiedSince(lastModified, header string) bool {
+	ht, err := http.ParseTime(strings.TrimSpace(header))
+	if err != nil {
+		return false
+	}
+
+	lm, err := time.Parse(time.RFC3339, lastModified)
+	if err != nil {
+		return false
+	}
+
+	return lm.After(ht)
 }
 
 // conditionMessage maps a conditional-failure status to its Azure message.
@@ -649,9 +759,113 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
-	writeBlobHeaders(w, &obj.Info, int64(len(obj.Data)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(obj.Data) //nolint:gosec // raw object bytes
+	serveBlobContent(w, r, &obj.Info, obj.Data)
+}
+
+// serveBlobContent writes a blob's body, honoring an optional byte range
+// (x-ms-range preferred, else the standard Range header). With no range it
+// returns the full body with 200 OK; a satisfiable range returns 206 Partial
+// Content with a Content-Range header and only the requested slice; a
+// syntactically invalid or unsatisfiable range returns 416 with
+// Content-Range: bytes * /total, matching Azure. (x-ms-range-get-content-md5 is
+// not honored — cloudemu does not compute the per-range MD5.)
+func serveBlobContent(w http.ResponseWriter, r *http.Request, info *storagedriver.ObjectInfo, data []byte) {
+	total := int64(len(data))
+
+	rangeHeader := r.Header.Get("X-Ms-Range")
+	if rangeHeader == "" {
+		rangeHeader = r.Header.Get("Range")
+	}
+
+	if rangeHeader == "" {
+		writeBlobHeaders(w, info, total)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data) //nolint:gosec // raw object bytes
+
+		return
+	}
+
+	start, end, ok := parseByteRange(rangeHeader, total)
+	if !ok {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", total))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+			"the range specified is invalid for the current size of the resource")
+
+		return
+	}
+
+	writeBlobHeaders(w, info, end-start+1)
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, total))
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = w.Write(data[start : end+1]) //nolint:gosec // bounded slice of object bytes
+}
+
+// parseByteRange parses a single HTTP/Azure byte-range spec ("bytes=start-end",
+// "bytes=start-", or the suffix form "bytes=-N") against a total size, returning
+// the inclusive [start,end] bounds. ok is false for a malformed, multi-range,
+// or unsatisfiable spec (which the caller turns into a 416).
+func parseByteRange(header string, total int64) (start, end int64, ok bool) {
+	const prefix = "bytes="
+
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, false
+	}
+
+	spec := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if spec == "" || strings.Contains(spec, ",") {
+		return 0, 0, false // multi-range is not supported.
+	}
+
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, false
+	}
+
+	startStr := strings.TrimSpace(spec[:dash])
+	endStr := strings.TrimSpace(spec[dash+1:])
+
+	if startStr == "" {
+		return suffixRange(endStr, total)
+	}
+
+	return boundedRange(startStr, endStr, total)
+}
+
+// suffixRange resolves a "bytes=-N" spec (the final N bytes) against total.
+func suffixRange(nStr string, total int64) (start, end int64, ok bool) {
+	n, err := strconv.ParseInt(nStr, 10, 64)
+	if err != nil || n <= 0 || total == 0 {
+		return 0, 0, false
+	}
+
+	if n > total {
+		n = total
+	}
+
+	return total - n, total - 1, true
+}
+
+// boundedRange resolves a "bytes=start-" or "bytes=start-end" spec against total.
+func boundedRange(startStr, endStr string, total int64) (start, end int64, ok bool) {
+	start, err := strconv.ParseInt(startStr, 10, 64)
+	if err != nil || start < 0 || start >= total {
+		return 0, 0, false
+	}
+
+	if endStr == "" {
+		return start, total - 1, true
+	}
+
+	end, err = strconv.ParseInt(endStr, 10, 64)
+	if err != nil || end < start {
+		return 0, 0, false
+	}
+
+	if end >= total {
+		end = total - 1
+	}
+
+	return start, end, true
 }
 
 // readConditionHandled evaluates the If-Match / If-None-Match read conditional
@@ -661,24 +875,59 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 // matches the current ETag (including the wildcard *) yields 304 Not Modified
 // with no body. Returns false to let the read proceed.
 func readConditionHandled(w http.ResponseWriter, r *http.Request, curETag, lastModified string) bool {
-	ifNoneMatch := r.Header.Get("If-None-Match")
-	ifMatch := r.Header.Get("If-Match")
-
-	if ifNoneMatch == "" && ifMatch == "" {
+	if !hasReadConditions(r) {
 		return false
 	}
 
-	if ifMatch != "" && !etagCondMatches(ifMatch, curETag) {
+	if readPreconditionFailed(r, curETag, lastModified) {
 		writeError(w, http.StatusPreconditionFailed, "ConditionNotMet", conditionMessage(http.StatusPreconditionFailed))
 		return true
 	}
 
-	if ifNoneMatch != "" && etagCondMatches(ifNoneMatch, curETag) {
+	if readNotModified(r, curETag, lastModified) {
 		w.Header().Set("ETag", fmt.Sprintf("%q", curETag))
 		w.Header().Set("Last-Modified", httpDate(lastModified))
 		w.WriteHeader(http.StatusNotModified)
 
 		return true
+	}
+
+	return false
+}
+
+// hasReadConditions reports whether the request carries any read conditional
+// header (the two ETag conditions or the two time-based conditions).
+func hasReadConditions(r *http.Request) bool {
+	return r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Match") != "" ||
+		r.Header.Get("If-Modified-Since") != "" || r.Header.Get("If-Unmodified-Since") != ""
+}
+
+// readPreconditionFailed reports whether a read must fail 412: a mismatched
+// If-Match, or (when no If-Match is set) an If-Unmodified-Since the blob was
+// modified after. If-Match takes precedence over If-Unmodified-Since.
+func readPreconditionFailed(r *http.Request, curETag, lastModified string) bool {
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		return !etagCondMatches(ifMatch, curETag)
+	}
+
+	if unmod := r.Header.Get("If-Unmodified-Since"); unmod != "" {
+		return blobModifiedSince(lastModified, unmod)
+	}
+
+	return false
+}
+
+// readNotModified reports whether a read must short-circuit to 304: an
+// If-None-Match that matches the current ETag, or (when no If-None-Match is set)
+// an If-Modified-Since the blob has not been modified since. If-None-Match takes
+// precedence over If-Modified-Since.
+func readNotModified(r *http.Request, curETag, lastModified string) bool {
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		return etagCondMatches(ifNoneMatch, curETag)
+	}
+
+	if mod := r.Header.Get("If-Modified-Since"); mod != "" {
+		return !blobModifiedSince(lastModified, mod)
 	}
 
 	return false
@@ -710,9 +959,7 @@ func (h *Handler) getBlobSnapshot(w http.ResponseWriter, r *http.Request, contai
 	}
 
 	w.Header().Set("X-Ms-Snapshot", snapshot)
-	writeBlobHeaders(w, &obj.Info, int64(len(obj.Data)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(obj.Data) //nolint:gosec // raw snapshot bytes
+	serveBlobContent(w, r, &obj.Info, obj.Data)
 }
 
 func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
@@ -735,6 +982,7 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 	w.Header().Set("Last-Modified", httpDate(info.LastModified))
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Accept-Ranges", "bytes")
 
 	blobType := info.BlobType
 	if blobType == "" {
@@ -747,8 +995,23 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 		w.Header().Set("X-Ms-Access-Tier", info.AccessTier)
 	}
 
+	// System content properties round-trip on read (Get Blob / Get Blob
+	// Properties) so tools like Terraform's azurerm_storage_blob don't see drift.
+	setIfNonEmpty(w, "Cache-Control", info.CacheControl)
+	setIfNonEmpty(w, "Content-Encoding", info.ContentEncoding)
+	setIfNonEmpty(w, "Content-Language", info.ContentLanguage)
+	setIfNonEmpty(w, "Content-Disposition", info.ContentDisposition)
+
 	for k, v := range info.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
+	}
+}
+
+// setIfNonEmpty sets header key to v only when v is non-empty, so an unset
+// property does not emit a blank header.
+func setIfNonEmpty(w http.ResponseWriter, key, v string) {
+	if v != "" {
+		w.Header().Set(key, v)
 	}
 }
 
