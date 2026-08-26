@@ -45,12 +45,15 @@ const (
 
 // Handler serves dns.googleapis.com v1 requests against a dns driver.
 type Handler struct {
-	dns       dnsdriver.DNS
-	changeSeq atomic.Uint64
+	dns dnsdriver.DNS
+	// opSeq numbers managed-zone Operations (patch/update). It is independent of
+	// per-zone change ids, which are sequential within a zone's change log.
+	opSeq atomic.Uint64
 
 	// changes records applied changes per driver zone id so changes.list/get can
 	// replay them. Cloud DNS keeps this change log itself; the dns driver models
-	// only the end state, so the wire layer owns it. Guarded by mu.
+	// only the end state, so the wire layer owns it. Change ids are the change's
+	// index within this per-zone log. Guarded by mu.
 	mu      sync.Mutex
 	changes map[string][]changeJSON
 }
