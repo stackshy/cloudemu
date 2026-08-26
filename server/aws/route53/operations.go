@@ -203,12 +203,13 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 	// against a missing zone is NoSuchHostedZone (404), not the batch-level
 	// InvalidChangeBatch (400). Only record-level errors from batch validation
 	// map to InvalidChangeBatch.
-	if _, err := h.dns.GetZone(r.Context(), zoneID); err != nil {
+	zone, err := h.dns.GetZone(r.Context(), zoneID)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	if err := h.validateChangeBatch(r, zoneID, req.ChangeBatch.Changes); err != nil {
+	if err := h.validateChangeBatch(r, zone, req.ChangeBatch.Changes); err != nil {
 		writeChangeErr(w, err)
 		return
 	}
@@ -235,10 +236,20 @@ func rrSetKey(name, rtype, setID string) string {
 
 // validateRecordSet checks a single record set's fields are self-consistent,
 // independent of the zone's current state. Real Route 53 rejects these as part
-// of change-batch validation before any change is applied.
-func validateRecordSet(rr *resourceRecordSetXML) error {
+// of change-batch validation before any change is applied. apex is the zone's
+// FQDN, used to reject a CNAME at the zone apex.
+func validateRecordSet(rr *resourceRecordSetXML, apex string) error {
 	if rr.Name == "" || rr.Type == "" {
 		return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+	}
+
+	// A CNAME is not permitted at the zone apex — the apex must carry the SOA and
+	// NS records, so it can only use an A/AAAA or an ALIAS. Real Route 53 rejects
+	// an apex CNAME as an InvalidChangeBatch (FailedPrecondition maps to that).
+	if strings.EqualFold(rr.Type, "CNAME") && sameDNSName(rr.Name, apex) {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"RRSet of type CNAME with DNS name %s is not permitted at apex in zone %s",
+			ensureTrailingDot(rr.Name), ensureTrailingDot(apex))
 	}
 
 	// Weighted routing record sets require a non-empty SetIdentifier that
@@ -253,12 +264,18 @@ func validateRecordSet(rr *resourceRecordSetXML) error {
 	return nil
 }
 
+// sameDNSName reports whether two DNS names are equal, case- and
+// trailing-dot-insensitively.
+func sameDNSName(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
+}
+
 // validateChangeBatch checks every change would apply cleanly before any is
 // applied, so an invalid batch is rejected whole (nothing half-applied). It
 // simulates the batch against the zone's current record sets, folding in each
 // change's effect so ordering within the batch is respected.
-func (h *Handler) validateChangeBatch(r *http.Request, zoneID string, changes []changeItem) error {
-	existing, err := h.dns.ListRecords(r.Context(), zoneID)
+func (h *Handler) validateChangeBatch(r *http.Request, zone *dnsdriver.ZoneInfo, changes []changeItem) error {
+	existing, err := h.dns.ListRecords(r.Context(), zone.ID)
 	if err != nil {
 		return err
 	}
@@ -271,7 +288,7 @@ func (h *Handler) validateChangeBatch(r *http.Request, zoneID string, changes []
 	for i := range changes {
 		rr := &changes[i].ResourceRecordSet
 
-		if err := validateRecordSet(rr); err != nil {
+		if err := validateRecordSet(rr, zone.Name); err != nil {
 			return err
 		}
 
