@@ -270,15 +270,20 @@ type Mock struct {
 	// placementGroups holds EC2 placement groups keyed by group name. Placement
 	// groups are AWS-specific, so this store backs the PlacementGroups capability.
 	placementGroups *memstore.Store[*driver.PlacementGroup]
-	pgCounter       atomic.Int64
-	sm              *statemachine.Machine
-	opts            *config.Options
-	ipCounter       atomic.Int64
-	volCounter      atomic.Int64
-	snapCounter     atomic.Int64
-	amiCounter      atomic.Int64
-	keyCounter      atomic.Int64
-	monitoring      mondriver.Monitoring
+	// iamProfileAssociations holds IAM instance-profile associations keyed by
+	// association id (iip-assoc-...). Each launched-with-a-profile or post-launch
+	// AssociateIamInstanceProfile call records one here, backing the
+	// IamInstanceProfileAssociator capability. AWS-specific.
+	iamProfileAssociations *memstore.Store[*iamProfileAssociation]
+	pgCounter              atomic.Int64
+	sm                     *statemachine.Machine
+	opts                   *config.Options
+	ipCounter              atomic.Int64
+	volCounter             atomic.Int64
+	snapCounter            atomic.Int64
+	amiCounter             atomic.Int64
+	keyCounter             atomic.Int64
+	monitoring             mondriver.Monitoring
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
@@ -381,19 +386,20 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, valu
 // New creates a new EC2 mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances:        memstore.New[*instanceData](),
-		asgs:             memstore.New[*asgData](),
-		spotRequests:     memstore.New[*driver.SpotInstanceRequest](),
-		templates:        memstore.New[*driver.LaunchTemplate](),
-		templateVersions: memstore.New[*driver.LaunchTemplateVersion](),
-		volumes:          memstore.New[*driver.VolumeInfo](),
-		volSettle:        memstore.New[settle.Window](),
-		snapshots:        memstore.New[*driver.SnapshotInfo](),
-		images:           memstore.New[*driver.ImageInfo](),
-		keyPairs:         memstore.New[*driver.KeyPairInfo](),
-		placementGroups:  memstore.New[*driver.PlacementGroup](),
-		sm:               statemachine.New(compute.VMTransitions()),
-		opts:             opts,
+		instances:              memstore.New[*instanceData](),
+		asgs:                   memstore.New[*asgData](),
+		spotRequests:           memstore.New[*driver.SpotInstanceRequest](),
+		templates:              memstore.New[*driver.LaunchTemplate](),
+		templateVersions:       memstore.New[*driver.LaunchTemplateVersion](),
+		volumes:                memstore.New[*driver.VolumeInfo](),
+		volSettle:              memstore.New[settle.Window](),
+		snapshots:              memstore.New[*driver.SnapshotInfo](),
+		images:                 memstore.New[*driver.ImageInfo](),
+		keyPairs:               memstore.New[*driver.KeyPairInfo](),
+		placementGroups:        memstore.New[*driver.PlacementGroup](),
+		iamProfileAssociations: memstore.New[*iamProfileAssociation](),
+		sm:                     statemachine.New(compute.VMTransitions()),
+		opts:                   opts,
 
 		managedResourceVisibility: visibilityVisible,
 		clientTokens:              make(map[string][]string),
@@ -682,6 +688,13 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		results = append(results, toInstance(inst, hidden, m.opts.Clock.Now()))
 		created = append(created, inst)
 
+		// Record a backing profile association so DescribeIamInstanceProfileAssociations
+		// lists a launched-with-a-profile instance, matching real EC2 (each instance
+		// gets its own association id).
+		if iamProfile != nil {
+			m.recordProfileAssociation(id, iamProfile)
+		}
+
 		// Managed (service-owned) instances are hidden from Describe, so
 		// emitting instance-dimensioned CloudWatch metrics for them would leak
 		// their existence. Suppress metrics for managed instances.
@@ -815,6 +828,9 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 		// Drop the primary ENI this instance may have materialized, so a
 		// rolled-back launch leaves no orphaned interface holding its subnet.
 		m.releasePrimaryENI(ctx, inst.ID)
+		// Drop any backing profile association so a rolled-back launch leaves no
+		// orphaned association behind.
+		m.deleteAssociationsForInstance(inst.ID)
 	}
 }
 
@@ -911,6 +927,13 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	// Every attached EBS volume must be released, otherwise it stays in-use
 	// against a dead instance forever and can never be deleted (VolumeInUse).
 	m.detachTerminatedVolumes(instanceIDs)
+
+	// A terminated instance no longer holds its IAM instance profile, so drop any
+	// backing association (real EC2 removes it, and the id stops appearing in
+	// DescribeIamInstanceProfileAssociations).
+	for _, id := range instanceIDs {
+		m.deleteAssociationsForInstance(id)
+	}
 
 	// Release each instance's primary (eth0) ENI, matching real EC2's
 	// delete-on-termination default. Until this happens the interface keeps

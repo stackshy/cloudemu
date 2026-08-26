@@ -35,23 +35,32 @@ func (m *Mock) SetInstanceProfileResolver(r InstanceProfileResolver) {
 // answers InvalidParameterValue rather than launching the instance with a
 // dangling/empty profile association.
 func (m *Mock) resolveInstanceProfile(ctx context.Context, cfg *driver.InstanceConfig) (*driver.IamInstanceProfile, error) {
-	name := cfg.IamInstanceProfileName
-	if name == "" {
-		name = instanceProfileNameFromARN(cfg.IamInstanceProfileARN)
+	return m.resolveProfileRef(ctx, cfg.IamInstanceProfileARN, cfg.IamInstanceProfileName)
+}
+
+// resolveProfileRef turns an IamInstanceProfile reference (arn and/or name) into
+// the resolved association (canonical ARN + ID). It is the shared core of
+// launch-time resolution and the post-launch Associate/Replace actions, so all
+// paths reject an unresolvable reference identically. It returns nil, nil when
+// neither arn nor name is supplied.
+func (m *Mock) resolveProfileRef(ctx context.Context, arn, name string) (*driver.IamInstanceProfile, error) {
+	lookup := name
+	if lookup == "" {
+		lookup = instanceProfileNameFromARN(arn)
 	}
 
-	if name == "" && cfg.IamInstanceProfileARN == "" {
+	if lookup == "" && arn == "" {
 		return nil, nil //nolint:nilnil // no profile referenced is not an error
 	}
 
-	if m.instanceProfileResolver == nil || name == "" {
-		return &driver.IamInstanceProfile{ARN: cfg.IamInstanceProfileARN}, nil
+	if m.instanceProfileResolver == nil || lookup == "" {
+		return &driver.IamInstanceProfile{ARN: arn}, nil
 	}
 
-	info, err := m.instanceProfileResolver.GetInstanceProfile(ctx, name)
+	info, err := m.instanceProfileResolver.GetInstanceProfile(ctx, lookup)
 	if err != nil {
 		if cerrors.IsNotFound(err) {
-			return nil, invalidInstanceProfileError(cfg)
+			return nil, invalidInstanceProfileError(arn, name)
 		}
 
 		return nil, err
@@ -61,21 +70,21 @@ func (m *Mock) resolveInstanceProfile(ctx context.Context, cfg *driver.InstanceC
 }
 
 // invalidInstanceProfileError reproduces the exact wording real EC2 returns
-// for RunInstances when IamInstanceProfile.Name/.Arn does not resolve to an
-// existing instance profile, e.g.:
+// when IamInstanceProfile.Name/.Arn does not resolve to an existing instance
+// profile, e.g.:
 //
 //	Value (my-profile) for parameter iamInstanceProfile.name is invalid.
 //	Invalid IAM Instance Profile name
-func invalidInstanceProfileError(cfg *driver.InstanceConfig) error {
-	if cfg.IamInstanceProfileName != "" {
+func invalidInstanceProfileError(arn, name string) error {
+	if name != "" {
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"Value (%s) for parameter iamInstanceProfile.name is invalid. Invalid IAM Instance Profile name",
-			cfg.IamInstanceProfileName)
+			name)
 	}
 
 	return cerrors.Newf(cerrors.InvalidArgument,
 		"Value (%s) for parameter iamInstanceProfile.arn is invalid. Invalid IAM Instance Profile ARN",
-		cfg.IamInstanceProfileARN)
+		arn)
 }
 
 // instanceProfileNameFromARN extracts the profile name from an instance-profile

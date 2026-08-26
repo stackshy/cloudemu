@@ -94,6 +94,17 @@ ConsoleReader is an optional capability a Compute implementation may provide
 | --- | --- |
 | `GetConsoleOutput` |  |
 
+### IamInstanceProfileAssociator
+
+IamInstanceProfileAssociator is an optional AWS-only capability for attaching
+
+| Operation | Description |
+| --- | --- |
+| `AssociateIamInstanceProfile` |  |
+| `DescribeIamInstanceProfileAssociations` |  |
+| `DisassociateIamInstanceProfile` |  |
+| `ReplaceIamInstanceProfileAssociation` |  |
+
 ### ImageAttributeModifier
 
 ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI

@@ -2082,6 +2082,24 @@
         ]
       },
       {
+        "name": "IamInstanceProfileAssociator",
+        "doc": "IamInstanceProfileAssociator is an optional AWS-only capability for attaching",
+        "operations": [
+          {
+            "name": "AssociateIamInstanceProfile"
+          },
+          {
+            "name": "DescribeIamInstanceProfileAssociations"
+          },
+          {
+            "name": "DisassociateIamInstanceProfile"
+          },
+          {
+            "name": "ReplaceIamInstanceProfileAssociation"
+          }
+        ]
+      },
+      {
         "name": "ImageAttributeModifier",
         "doc": "ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI",
         "operations": [
