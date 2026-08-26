@@ -251,6 +251,10 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
+	// RunInstances materializes the instance's primary (eth0) ENI in the VPC, and
+	// TerminateInstances releases it — so a running instance's interface blocks
+	// DeleteSubnet / DeleteSecurityGroup the way real EC2 does.
+	p.EC2.SetNetworking(p.VPC)
 	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
 	p.ELB.SetSubnetResolver(p.VPC)
 	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
