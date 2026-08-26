@@ -9,6 +9,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
+// defaultVersionUpgradeOption is the Cognitive Services default when a
+// deployment omits versionUpgradeOption.
+const defaultVersionUpgradeOption = "OnceNewDefaultVersionAvailable"
+
 // subResourceID builds the ARM ID for a child resource of an account.
 func (m *Mock) subResourceID(resourceGroup, account, childType, name string) string {
 	return idgen.AzureID(m.opts.AccountID, resourceGroup, csProvider, "accounts", account) +
@@ -51,16 +55,23 @@ func (m *Mock) CreateDeployment(_ context.Context, cfg driver.DeploymentConfig) 
 		skuName = "Standard"
 	}
 
+	upgradeOption := cfg.VersionUpgradeOption
+	if upgradeOption == "" {
+		upgradeOption = defaultVersionUpgradeOption
+	}
+
 	d := &driver.Deployment{
-		ID:                m.subResourceID(cfg.ResourceGroup, cfg.Account, "deployments", cfg.Name),
-		Name:              cfg.Name,
-		ModelName:         cfg.ModelName,
-		ModelVersion:      cfg.ModelVersion,
-		ModelFormat:       cfg.ModelFormat,
-		SKUName:           skuName,
-		SKUCapacity:       cfg.SKUCapacity,
-		ProvisioningState: driver.StateSucceeded,
-		CreatedAt:         m.now(),
+		ID:                   m.subResourceID(cfg.ResourceGroup, cfg.Account, "deployments", cfg.Name),
+		Name:                 cfg.Name,
+		ModelName:            cfg.ModelName,
+		ModelVersion:         cfg.ModelVersion,
+		ModelFormat:          cfg.ModelFormat,
+		SKUName:              skuName,
+		SKUCapacity:          cfg.SKUCapacity,
+		RaiPolicyName:        cfg.RaiPolicyName,
+		VersionUpgradeOption: upgradeOption,
+		ProvisioningState:    driver.StateSucceeded,
+		CreatedAt:            m.now(),
 	}
 	m.deployments.Set(childKey(cfg.ResourceGroup, cfg.Account, "deployments", cfg.Name), d)
 	m.emitMetric("deployment/count", 1, map[string]string{"model": cfg.ModelName})

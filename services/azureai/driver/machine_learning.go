@@ -13,6 +13,14 @@ type MLWorkspaceConfig struct {
 	Tags          map[string]string
 }
 
+// MLWorkspaceUpdate carries the mutable fields of a workspace PATCH. A nil
+// pointer means "field absent from the request body" — leave it unchanged.
+type MLWorkspaceUpdate struct {
+	Tags         *map[string]string // nil = no change; non-nil = merge into existing tags
+	FriendlyName *string            // nil = no change
+	Description  *string            // nil = no change
+}
+
 // MLWorkspace is a Microsoft.MachineLearningServices/workspaces resource.
 type MLWorkspace struct {
 	ID                string
@@ -229,7 +237,7 @@ type MachineLearning interface {
 	CreateMLWorkspace(ctx context.Context, cfg MLWorkspaceConfig) (*MLWorkspace, error)
 	GetMLWorkspace(ctx context.Context, resourceGroup, name string) (*MLWorkspace, error)
 	DeleteMLWorkspace(ctx context.Context, resourceGroup, name string) error
-	UpdateMLWorkspaceTags(ctx context.Context, resourceGroup, name string, tags map[string]string) (*MLWorkspace, error)
+	UpdateMLWorkspace(ctx context.Context, resourceGroup, name string, upd MLWorkspaceUpdate) (*MLWorkspace, error)
 	ListMLWorkspacesByResourceGroup(ctx context.Context, resourceGroup string) ([]MLWorkspace, error)
 	ListMLWorkspaces(ctx context.Context) ([]MLWorkspace, error)
 

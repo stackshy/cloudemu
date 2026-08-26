@@ -19,9 +19,9 @@ func (a *AzureAI) DeleteAccount(ctx context.Context, rg, name string) error {
 	return a.act(ctx, "DeleteAccount", name, func() error { return a.drv.DeleteAccount(ctx, rg, name) })
 }
 
-func (a *AzureAI) UpdateAccountTags(ctx context.Context, rg, name string, tags map[string]string) (*driver.Account, error) {
-	return cast[*driver.Account](a.do(ctx, "UpdateAccountTags", name, func() (any, error) {
-		return a.drv.UpdateAccountTags(ctx, rg, name, tags)
+func (a *AzureAI) UpdateAccount(ctx context.Context, rg, name string, upd driver.AccountUpdate) (*driver.Account, error) {
+	return cast[*driver.Account](a.do(ctx, "UpdateAccount", name, func() (any, error) {
+		return a.drv.UpdateAccount(ctx, rg, name, upd)
 	}))
 }
 

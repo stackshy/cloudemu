@@ -352,10 +352,10 @@
         "name": "StopCompute"
       },
       {
-        "name": "UpdateAccountTags"
+        "name": "UpdateAccount"
       },
       {
-        "name": "UpdateMLWorkspaceTags"
+        "name": "UpdateMLWorkspace"
       }
     ],
     "optionalCapabilities": [
@@ -460,7 +460,7 @@
             "name": "RegenerateAccountKey"
           },
           {
-            "name": "UpdateAccountTags"
+            "name": "UpdateAccount"
           }
         ]
       },
@@ -667,7 +667,7 @@
             "name": "StopCompute"
           },
           {
-            "name": "UpdateMLWorkspaceTags"
+            "name": "UpdateMLWorkspace"
           }
         ]
       }
