@@ -132,7 +132,10 @@ type AlarmHistoryEntry struct {
 	Timestamp time.Time
 	OldState  string
 	NewState  string
-	Reason    string
+	// HistoryItemType classifies the entry (e.g. "StateUpdate",
+	// "ConfigurationUpdate", "Action"); empty is treated as "StateUpdate".
+	HistoryItemType string
+	Reason          string
 }
 
 // Monitoring is the interface that monitoring provider implementations must satisfy.

@@ -43,6 +43,9 @@ const (
 	treatMissingNotBreaching = "notBreaching"
 )
 
+// historyStateUpdate is the HistoryItemType stamped on a recorded state change.
+const historyStateUpdate = "StateUpdate"
+
 // ActionPublisher publishes an alarm-state-change notification to an SNS topic
 // by ARN. It is satisfied by the SNS backend's PublishExternal, mirroring the
 // S3 -> SNS notification wiring, so an alarm transition fans a message out to
@@ -301,11 +304,12 @@ func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.T
 	defer m.mu.Unlock()
 
 	m.history = append(m.history, driver.AlarmHistoryEntry{
-		AlarmName: name,
-		Timestamp: now,
-		OldState:  oldState,
-		NewState:  newState,
-		Reason:    fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
+		AlarmName:       name,
+		Timestamp:       now,
+		OldState:        oldState,
+		NewState:        newState,
+		HistoryItemType: historyStateUpdate,
+		Reason:          fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
 	})
 }
 
@@ -801,21 +805,24 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 	return result, nil
 }
 
-// GetAlarmHistory returns alarm history entries filtered by alarm name, limited by limit.
+// GetAlarmHistory returns an alarm's history entries newest-first (CloudWatch's
+// default TimestampDescending order). When limit > 0 it keeps the newest limit
+// entries. Passing limit <= 0 returns the full history so a caller can apply its
+// own filters before truncating.
 func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var filtered []driver.AlarmHistoryEntry
 
-	for _, entry := range m.history {
-		if entry.AlarmName == alarmName {
-			filtered = append(filtered, entry)
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].AlarmName == alarmName {
+			filtered = append(filtered, m.history[i])
 		}
 	}
 
 	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
+		filtered = filtered[:limit]
 	}
 
 	return filtered, nil
