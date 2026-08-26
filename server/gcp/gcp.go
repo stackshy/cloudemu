@@ -160,7 +160,9 @@ func New(d Drivers) *server.Server {
 	srv.Register(lro.New(opsReg))
 
 	if d.Compute != nil {
-		srv.Register(compute.New(d.Compute))
+		// d.Networking (may be nil) lets insert allocate the instance's private
+		// networkIP from the referenced subnetwork's CIDR.
+		srv.Register(compute.New(d.Compute, d.Networking))
 	}
 
 	if d.Networking != nil {

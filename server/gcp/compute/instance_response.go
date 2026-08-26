@@ -42,7 +42,7 @@ func toInstanceResponse(inst *computedriver.Instance, project, host string) inst
 		},
 		Metadata:               metadataResponse(metaItems),
 		Scheduling:             defaultScheduling(),
-		ServiceAccounts:        defaultServiceAccounts(),
+		ServiceAccounts:        serviceAccountsFor(inst.Tags),
 		ShieldedInstanceConfig: defaultShieldedConfig(),
 	}
 
@@ -213,6 +213,17 @@ func defaultScheduling() *scheduling {
 		Preemptible:       false,
 		ProvisioningModel: "STANDARD",
 	}
+}
+
+// serviceAccountsFor reflects the serviceAccounts[] the client attached at
+// insert time (email + scopes, round-tripped exactly). When the client omitted
+// them, it falls back to the default compute service account real GCP attaches.
+func serviceAccountsFor(tags map[string]string) []serviceAccount {
+	if sas := decodeServiceAccounts(tags); len(sas) > 0 {
+		return sas
+	}
+
+	return defaultServiceAccounts()
 }
 
 func defaultServiceAccounts() []serviceAccount {

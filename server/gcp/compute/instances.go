@@ -56,12 +56,15 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	subnet := firstSubnet(req.NetworkInterfaces)
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:      bootImage(req.Disks),
 		InstanceType: machineTypeShort(req.MachineType),
-		SubnetID:     firstSubnet(req.NetworkInterfaces),
+		SubnetID:     subnet,
 		Tags:         insertTags(&req, rp.ScopeName),
 		UserData:     startupScript(req.Metadata),
+		PrivateIP:    h.privateIPFor(r.Context(), &req, subnet, rp.ScopeName),
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
@@ -337,6 +340,10 @@ func insertTags(req *instanceRequest, zone string) map[string]string {
 
 	if acs := accessConfigsFor(req.NetworkInterfaces, req.Name); len(acs) > 0 {
 		out[keyAccessConfigs] = encodeJSON(acs)
+	}
+
+	if len(req.ServiceAccounts) > 0 {
+		out[keyServiceAccts] = encodeJSON(req.ServiceAccounts)
 	}
 
 	return out

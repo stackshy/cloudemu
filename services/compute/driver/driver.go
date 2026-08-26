@@ -55,6 +55,12 @@ type InstanceConfig struct {
 	// setting the NIC's properties.virtualMachine back-reference. Ignored by
 	// AWS/GCP.
 	NetworkInterfaces []AzureNICRef
+	// PrivateIP is an explicit private IPv4 address to assign to the launched
+	// instance's primary NIC. Empty leaves allocation to the provider. Used by
+	// GCP, where the wire layer either honors the client's networkIP or picks an
+	// address from the referenced subnetwork's CIDR before launch. Ignored by
+	// AWS/Azure.
+	PrivateIP string
 }
 
 // AzureNICRef identifies a Network Interface (Microsoft.Network/networkInterfaces)
