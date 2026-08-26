@@ -2,7 +2,9 @@ package clouddns
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -15,6 +17,10 @@ import (
 func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, rt route) {
 	var req managedZoneJSON
 	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if !validateZoneCreate(w, &req) {
 		return
 	}
 
@@ -52,6 +58,50 @@ func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, rt route) {
 	h.seedApexRecords(r, info)
 
 	gcprest.WriteJSON(w, http.StatusOK, toManagedZoneJSON(info))
+}
+
+// validateZoneCreate enforces Cloud DNS's managed-zone create constraints: the
+// zone name must match [a-z]([-a-z0-9]*[a-z0-9])?, and dnsName must be present
+// and a fully qualified name ending in a trailing dot. On a violation it writes
+// a 400 and returns false so the caller stops.
+func validateZoneCreate(w http.ResponseWriter, req *managedZoneJSON) bool {
+	if !isValidZoneName(req.Name) {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"the managed zone name must match [a-z]([-a-z0-9]*[a-z0-9])?")
+		return false
+	}
+
+	if req.DNSName == "" || !strings.HasSuffix(req.DNSName, ".") {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"dnsName is required and must be a fully qualified name ending with a dot")
+		return false
+	}
+
+	return true
+}
+
+// isValidZoneName reports whether name matches Cloud DNS's managed-zone name
+// grammar [a-z]([-a-z0-9]*[a-z0-9])?: a lowercase-letter start, lowercase
+// alphanumeric or hyphen body, and no trailing hyphen.
+func isValidZoneName(name string) bool {
+	if name == "" || name[0] < 'a' || name[0] > 'z' {
+		return false
+	}
+
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+
+		isLower := c >= 'a' && c <= 'z'
+		isDigit := c >= '0' && c <= '9'
+
+		if !isLower && !isDigit && c != '-' {
+			return false
+		}
+	}
+
+	last := name[len(name)-1]
+
+	return last != '-'
 }
 
 // seedApexRecords creates the SOA and NS record sets Cloud DNS auto-provisions
@@ -340,8 +390,44 @@ func (h *Handler) checkDeletions(w http.ResponseWriter, r *http.Request, id, dns
 			return false
 		}
 
-		if _, gerr := h.dns.GetRecord(r.Context(), id, d.Name, d.Type); gerr != nil {
+		rec, gerr := h.dns.GetRecord(r.Context(), id, d.Name, d.Type)
+		if gerr != nil {
 			gcprest.WriteCErr(w, gerr)
+			return false
+		}
+
+		// Cloud DNS requires a deletion to name the record set exactly as it
+		// currently stands — same TTL and same rrdatas (order-independent). A
+		// mismatch is rejected 412 conditionNotMet and nothing is deleted.
+		if !rrsetDeletionMatches(rec, d) {
+			gcprest.WriteError(w, http.StatusPreconditionFailed, "conditionNotMet",
+				"the deletion for "+d.Name+" ("+d.Type+") does not match the existing record set")
+			return false
+		}
+	}
+
+	return true
+}
+
+// rrsetDeletionMatches reports whether a deletion's TTL and rrdatas match the
+// existing record set exactly, comparing rrdatas order-independently.
+func rrsetDeletionMatches(rec *dnsdriver.RecordInfo, d *resourceRecordSetJSON) bool {
+	if int64(rec.TTL) != d.TTL {
+		return false
+	}
+
+	if len(rec.Values) != len(d.Rrdatas) {
+		return false
+	}
+
+	got := append([]string(nil), rec.Values...)
+	want := append([]string(nil), d.Rrdatas...)
+
+	sort.Strings(got)
+	sort.Strings(want)
+
+	for i := range got {
+		if got[i] != want[i] {
 			return false
 		}
 	}
@@ -362,6 +448,17 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id stri
 
 	for i := range req.Additions {
 		a := &req.Additions[i]
+
+		// Validate every addition's shape before any mutation applies. The driver
+		// has no batch primitive, so a malformed addition caught only at apply
+		// time would land after the deletions — reject it up front so the batch
+		// fails cleanly and the zone is left untouched.
+		if a.Name == "" || a.Type == "" || len(a.Rrdatas) == 0 {
+			gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+				"an addition must have a name, type, and at least one rrdata")
+			return false
+		}
+
 		if deleting[rrsetKey(a.Name, a.Type)] {
 			continue
 		}
