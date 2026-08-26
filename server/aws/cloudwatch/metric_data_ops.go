@@ -57,7 +57,13 @@ type getMetricDataInput struct {
 	MetricDataQueries []metricDataQueryCBR `cbor:"MetricDataQueries"`
 	StartTime         *time.Time           `cbor:"StartTime,omitempty"`
 	EndTime           *time.Time           `cbor:"EndTime,omitempty"`
+	MaxDatapoints     int                  `cbor:"MaxDatapoints,omitempty"`
+	NextToken         string               `cbor:"NextToken,omitempty"`
 }
+
+// defaultMaxDatapoints is the AWS GetMetricData datapoint budget per page when a
+// caller omits MaxDatapoints; results past it spill onto a NextToken page.
+const defaultMaxDatapoints = 100800
 
 type metricDataResultCBR struct {
 	ID         string      `cbor:"Id"`
@@ -69,6 +75,7 @@ type metricDataResultCBR struct {
 
 type getMetricDataOutput struct {
 	MetricDataResults []metricDataResultCBR `cbor:"MetricDataResults"`
+	NextToken         string                `cbor:"NextToken,omitempty"`
 }
 
 // getMetricData implements the modern GetMetricData read API used by SDK v2,
@@ -106,7 +113,47 @@ func (h *Handler) getMetricData(w http.ResponseWriter, r *http.Request, body []b
 		out = append(out, buildMetricDataResult(q, series))
 	}
 
-	writeCBORResponse(w, getMetricDataOutput{MetricDataResults: out})
+	rows, next := pageMetricData(out, &in)
+
+	resp := getMetricDataOutput{MetricDataResults: rows}
+	if next != "" {
+		resp.NextToken = next
+	}
+
+	writeCBORResponse(w, resp)
+}
+
+// pageMetricData returns the leading result rows that fit the MaxDatapoints
+// budget from the NextToken offset, plus the token for the next page (empty on
+// the last row). At least one row is returned so a row larger than the budget
+// still makes progress instead of stalling the paginator.
+func pageMetricData(rows []metricDataResultCBR, in *getMetricDataInput) (page []metricDataResultCBR, next string) {
+	budget := in.MaxDatapoints
+	if budget <= 0 {
+		budget = defaultMaxDatapoints
+	}
+
+	start := decodeOffsetToken(in.NextToken)
+	if start > len(rows) {
+		start = len(rows)
+	}
+
+	used, end := 0, start
+	for end < len(rows) {
+		n := len(rows[end].Values)
+		if end > start && used+n > budget {
+			break
+		}
+
+		used += n
+		end++
+	}
+
+	if end < len(rows) {
+		return rows[start:end], encodeOffsetToken(end)
+	}
+
+	return rows[start:end], ""
 }
 
 func buildMetricDataResult(q metricDataQueryCBR, series mathSeries) metricDataResultCBR {
@@ -210,7 +257,12 @@ type describeAlarmHistoryInput struct {
 	EndDate         *time.Time `cbor:"EndDate,omitempty"`
 	ScanBy          string     `cbor:"ScanBy,omitempty"`
 	MaxRecords      int        `cbor:"MaxRecords,omitempty"`
+	NextToken       string     `cbor:"NextToken,omitempty"`
 }
+
+// alarmHistoryPageSize is the AWS cap on DescribeAlarmHistory MaxRecords, used as
+// the page size when a caller pages but omits MaxRecords.
+const alarmHistoryPageSize = 100
 
 // scanByAscending requests oldest-first ordering; the default (and any other
 // value) is TimestampDescending, newest-first.
@@ -229,6 +281,7 @@ type alarmHistoryItemCBR struct {
 
 type describeAlarmHistoryOutput struct {
 	AlarmHistoryItems []alarmHistoryItemCBR `cbor:"AlarmHistoryItems"`
+	NextToken         string                `cbor:"NextToken,omitempty"`
 }
 
 // describeAlarmHistory surfaces the transition history recorded internally on
@@ -248,13 +301,20 @@ func (h *Handler) describeAlarmHistory(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	writeCBORResponse(w, describeAlarmHistoryOutput{AlarmHistoryItems: filterAlarmHistory(entries, &in)})
+	items, next := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+
+	resp := describeAlarmHistoryOutput{AlarmHistoryItems: items}
+	if next != "" {
+		resp.NextToken = next
+	}
+
+	writeCBORResponse(w, resp)
 }
 
 // filterAlarmHistory applies the DescribeAlarmHistory request filters to the
-// newest-first entries: HistoryItemType, the StartDate/EndDate window, ScanBy
-// ordering, then the MaxRecords cap (kept last so it truncates the far end of the
-// chosen order).
+// newest-first entries — HistoryItemType, the StartDate/EndDate window, then
+// ScanBy ordering — returning every match in wire order. Paging is applied
+// separately by pageAlarmHistory so entries past the first page stay reachable.
 func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarmHistoryInput) []alarmHistoryItemCBR {
 	start := timeOrZero(in.StartDate)
 	end := timeOrZero(in.EndDate)
@@ -271,11 +331,24 @@ func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarm
 		reverseHistory(kept)
 	}
 
-	if in.MaxRecords > 0 && len(kept) > in.MaxRecords {
-		kept = kept[:in.MaxRecords]
+	return historyItemsToCBR(kept)
+}
+
+// pageAlarmHistory returns the requested page of history items and the NextToken
+// for the following page (empty on the last page). Paging by offset keeps every
+// entry retrievable instead of dropping the tail past MaxRecords.
+func pageAlarmHistory(items []alarmHistoryItemCBR, in *describeAlarmHistoryInput) (page []alarmHistoryItemCBR, next string) {
+	size := in.MaxRecords
+	if size <= 0 {
+		size = alarmHistoryPageSize
 	}
 
-	return historyItemsToCBR(kept)
+	from, to, nextOff := pageWindow(len(items), decodeOffsetToken(in.NextToken), size)
+	if nextOff > 0 {
+		return items[from:to], encodeOffsetToken(nextOff)
+	}
+
+	return items[from:to], ""
 }
 
 // historyEntryMatches reports whether an entry passes the HistoryItemType and
