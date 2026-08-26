@@ -94,6 +94,11 @@ type CacheConfig struct {
 	// Both are AWS-only and left zero/empty by other callers.
 	NumCacheNodes   int
 	SubnetGroupName string
+
+	// Port is the requested TCP port the AWS ElastiCache cluster listens on;
+	// zero means unspecified and the backend defaults it per engine (Redis
+	// 6379, Memcached 11211). AWS-only and left zero by other callers.
+	Port int
 }
 
 // Cache is the interface that cache provider implementations must satisfy.

@@ -40,12 +40,19 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	port, err := parseNodeCount("Port", form.Get("Port"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := cachedriver.CacheConfig{
 		Name:            form.Get("CacheClusterId"),
 		NodeType:        form.Get("CacheNodeType"),
 		Engine:          form.Get("Engine"),
 		EngineVersion:   form.Get("EngineVersion"),
 		NumCacheNodes:   nodes,
+		Port:            port,
 		SubnetGroupName: form.Get("CacheSubnetGroupName"),
 		Tags:            parseTags(form),
 	}

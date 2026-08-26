@@ -19,7 +19,32 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-const defaultRedisPort = 6379
+const (
+	defaultRedisPort     = 6379
+	defaultMemcachedPort = 11211
+)
+
+// defaultPort is the TCP port real ElastiCache assigns a cluster of the given
+// engine when the caller omits Port: Memcached listens on 11211, Redis/Valkey
+// on 6379.
+func defaultPort(engine string) int {
+	if engine == engineMemcached {
+		return defaultMemcachedPort
+	}
+
+	return defaultRedisPort
+}
+
+// clusterEndpoint builds the synthetic host:port a client connects to. Memcached
+// exposes a single configuration endpoint whose host carries the ".cfg" segment
+// real AWS uses; Redis/Valkey use a plain per-cluster host.
+func clusterEndpoint(name, region, engine string, port int) string {
+	if engine == engineMemcached {
+		return fmt.Sprintf("%s.cfg.%s.cache.amazonaws.com:%d", name, region, port)
+	}
+
+	return fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", name, region, port)
+}
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -176,7 +201,12 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		return nil, err
 	}
 
-	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
+	port := cfg.Port
+	if port == 0 {
+		port = defaultPort(engine)
+	}
+
+	endpoint := clusterEndpoint(cfg.Name, m.opts.Region, engine, port)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
