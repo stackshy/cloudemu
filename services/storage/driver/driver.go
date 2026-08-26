@@ -322,6 +322,10 @@ type ObjectInfo struct {
 	ContentEncoding    string
 	ContentDisposition string
 	ContentLanguage    string
+	// StorageClass is the GCS object storage class (STANDARD/NEARLINE/COLDLINE/
+	// ARCHIVE), defaulting to the bucket's default class at insert. Empty for
+	// providers that don't model it.
+	StorageClass string
 }
 
 // Object is an object with its data.
@@ -692,6 +696,25 @@ type GCSObjectUpdate struct {
 	Metadata           map[string]*string
 }
 
+// GCSObjectAttrs carries the object system properties settable at INSERT time
+// (Objects: insert), so they persist on the first write rather than only via a
+// later patch. Empty StorageClass means "use the bucket's default class".
+type GCSObjectAttrs struct {
+	CacheControl       string
+	ContentEncoding    string
+	ContentDisposition string
+	ContentLanguage    string
+	StorageClass       string
+}
+
+// GCSComposeSource names one source component of an Objects: compose request.
+// Generation is nil to use the source's live generation, or a specific
+// archived/live generation to pin.
+type GCSComposeSource struct {
+	Key        string
+	Generation *int64
+}
+
 // GCSBucketMeta are the GCS-specific bucket attributes the shared BucketInfo
 // doesn't carry: multi-region/region location, default storage class, and the
 // metageneration/updated pair that back etag/ifMetagenerationMatch concurrency.
@@ -711,17 +734,33 @@ type GCSBucketMeta struct {
 type GCSExtensions interface {
 	// PutObjectGCS writes an object honoring pre (a failed condition returns a
 	// *GCSPreconditionError) and returns the stored object's info with the newly
-	// minted generation.
+	// minted generation. A non-nil attrs persists the insert-time system
+	// properties.
 	PutObjectGCS(
-		ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string, pre GCSPrecondition,
+		ctx context.Context, bucket, key string, data []byte, contentType string,
+		metadata map[string]string, attrs *GCSObjectAttrs, pre GCSPrecondition,
 	) (*ObjectInfo, error)
+	// GetObjectGCS returns an object's bytes+info, selecting a specific
+	// generation when generation is non-nil (else the live object).
+	GetObjectGCS(ctx context.Context, bucket, key string, generation *int64) (*Object, error)
+	// HeadObjectGCS returns an object's info, selecting a specific generation
+	// when generation is non-nil (else the live object).
+	HeadObjectGCS(ctx context.Context, bucket, key string, generation *int64) (*ObjectInfo, error)
+	// DeleteObjectGCS deletes an object honoring pre and optional generation
+	// addressing. On a versioning-enabled bucket a live delete (nil generation)
+	// archives the current generation as noncurrent instead of removing it; a
+	// generation-addressed delete is always permanent.
+	DeleteObjectGCS(ctx context.Context, bucket, key string, generation *int64, pre GCSPrecondition) error
 	// UpdateObjectGCS mutates an existing object's system properties and/or
-	// custom metadata without touching its data, bumping metageneration.
-	UpdateObjectGCS(ctx context.Context, bucket, key string, upd GCSObjectUpdate) (*ObjectInfo, error)
+	// custom metadata without touching its data, bumping metageneration; a failed
+	// pre returns a *GCSPreconditionError.
+	UpdateObjectGCS(ctx context.Context, bucket, key string, upd GCSObjectUpdate, pre GCSPrecondition) (*ObjectInfo, error)
 	// ComposeObjectGCS concatenates the source objects' bytes (in order) into
-	// dstKey, minting a new generation for the destination.
+	// dstKey, minting a new generation for the destination and honoring the
+	// destination pre and each source's pinned generation.
 	ComposeObjectGCS(
-		ctx context.Context, bucket, dstKey string, srcKeys []string, contentType string, metadata map[string]string,
+		ctx context.Context, bucket, dstKey string, srcs []GCSComposeSource,
+		contentType string, metadata map[string]string, pre GCSPrecondition,
 	) (*ObjectInfo, error)
 	// ListObjectGenerations returns every generation (current + archived) of the
 	// objects matching opts, for a versions=true listing.

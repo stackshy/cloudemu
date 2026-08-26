@@ -10751,6 +10751,18 @@
             "doc": "ComposeObjectGCS concatenates the source objects' bytes (in order) into"
           },
           {
+            "name": "DeleteObjectGCS",
+            "doc": "DeleteObjectGCS deletes an object honoring pre and optional generation"
+          },
+          {
+            "name": "GetObjectGCS",
+            "doc": "GetObjectGCS returns an object's bytes+info, selecting a specific"
+          },
+          {
+            "name": "HeadObjectGCS",
+            "doc": "HeadObjectGCS returns an object's info, selecting a specific generation"
+          },
+          {
             "name": "ListObjectGenerations",
             "doc": "ListObjectGenerations returns every generation (current + archived) of the"
           },

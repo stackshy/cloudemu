@@ -614,23 +614,102 @@ func parseInt64Ptr(s string) *int64 {
 	return &n
 }
 
+// readPrecondition extracts the conditional-read preconditions. The Go client
+// sends them on the JSON metadata request as query params but on the media
+// download as x-goog-if-* headers, so both are consulted (query wins).
+func readPrecondition(r *http.Request) storagedriver.GCSPrecondition {
+	q := r.URL.Query()
+	h := r.Header
+
+	return storagedriver.GCSPrecondition{
+		IfGenerationMatch:        firstInt64Ptr(q.Get("ifGenerationMatch"), h.Get("X-Goog-If-Generation-Match")),
+		IfGenerationNotMatch:     firstInt64Ptr(q.Get("ifGenerationNotMatch"), h.Get("X-Goog-If-Generation-Not-Match")),
+		IfMetagenerationMatch:    firstInt64Ptr(q.Get("ifMetagenerationMatch"), h.Get("X-Goog-If-Metageneration-Match")),
+		IfMetagenerationNotMatch: firstInt64Ptr(q.Get("ifMetagenerationNotMatch"), h.Get("X-Goog-If-Metageneration-Not-Match")),
+	}
+}
+
+// firstInt64Ptr returns the first parseable int64 pointer among its args.
+func firstInt64Ptr(vals ...string) *int64 {
+	for _, v := range vals {
+		if p := parseInt64Ptr(v); p != nil {
+			return p
+		}
+	}
+
+	return nil
+}
+
+// parseGeneration extracts the ?generation object-revision selector; nil (and a
+// meaningless generation=0) select the live object.
+func parseGeneration(q url.Values) *int64 {
+	g := parseInt64Ptr(q.Get("generation"))
+	if g != nil && *g == 0 {
+		return nil
+	}
+
+	return g
+}
+
+// evalReadPrecondition evaluates the conditional-read preconditions against the
+// object being returned. It reports the HTTP status the response must be
+// short-circuited with — 412 for a failed Match, 304 for a satisfied NotMatch —
+// and false when the read should proceed. This mirrors real GCS's conditional
+// GET semantics.
+func evalReadPrecondition(pre storagedriver.GCSPrecondition, gen, metagen int64) (int, bool) {
+	if pre.IfGenerationMatch != nil && gen != *pre.IfGenerationMatch {
+		return http.StatusPreconditionFailed, true
+	}
+
+	if pre.IfMetagenerationMatch != nil && metagen != *pre.IfMetagenerationMatch {
+		return http.StatusPreconditionFailed, true
+	}
+
+	if pre.IfGenerationNotMatch != nil && gen == *pre.IfGenerationNotMatch {
+		return http.StatusNotModified, true
+	}
+
+	if pre.IfMetagenerationNotMatch != nil && metagen == *pre.IfMetagenerationNotMatch {
+		return http.StatusNotModified, true
+	}
+
+	return 0, false
+}
+
+// writeConditionalRead writes the short-circuit response for a conditional read:
+// a 304 carries no body, a 412 the conditionNotMet error envelope.
+func writeConditionalRead(w http.ResponseWriter, status int) {
+	if status == http.StatusNotModified {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	writeError(w, http.StatusPreconditionFailed, "conditionNotMet", "conditionNotMet")
+}
+
+// writePreconditionOrErr maps a *GCSPreconditionError to a 412 conditionNotMet
+// response and any other error through writeErr.
+func writePreconditionOrErr(w http.ResponseWriter, err error) {
+	var preErr *storagedriver.GCSPreconditionError
+	if errors.As(err, &preErr) {
+		writeError(w, http.StatusPreconditionFailed, "conditionNotMet", preErr.Error())
+		return
+	}
+
+	writeErr(w, err)
+}
+
 // storeObject writes an object through the preconditioned GCS path when the
 // backing driver supports it (returning a 412 on a failed precondition), else
 // falls back to the plain Bucket.PutObject.
 func (h *Handler) storeObject(
-	w http.ResponseWriter, r *http.Request, bucket, name, contentType string, data []byte, metadata map[string]string,
+	w http.ResponseWriter, r *http.Request, bucket, name, contentType string,
+	data []byte, metadata map[string]string, attrs *storagedriver.GCSObjectAttrs,
 ) {
 	if h.ext != nil {
-		info, err := h.ext.PutObjectGCS(r.Context(), bucket, name, data, contentType, metadata, parsePrecondition(r.URL.Query()))
+		info, err := h.ext.PutObjectGCS(r.Context(), bucket, name, data, contentType, metadata, attrs, parsePrecondition(r.URL.Query()))
 		if err != nil {
-			var preErr *storagedriver.GCSPreconditionError
-			if errors.As(err, &preErr) {
-				writeError(w, http.StatusPreconditionFailed, "conditionNotMet", preErr.Error())
-				return
-			}
-
-			writeErr(w, err)
-
+			writePreconditionOrErr(w, err)
 			return
 		}
 
@@ -672,7 +751,7 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request, bucket, na
 		contentType = contentTypeBinary
 	}
 
-	h.storeObject(w, r, bucket, name, contentType, data, nil)
+	h.storeObject(w, r, bucket, name, contentType, data, nil, nil)
 }
 
 // uploadMultipart parses a multipart/related body where the first part is a
@@ -709,7 +788,13 @@ func (h *Handler) uploadMultipart(w http.ResponseWriter, r *http.Request, bucket
 		payloadCT = contentTypeBinary
 	}
 
-	h.storeObject(w, r, bucket, meta.Name, payloadCT, payload, meta.Metadata)
+	h.storeObject(w, r, bucket, meta.Name, payloadCT, payload, meta.Metadata, &storagedriver.GCSObjectAttrs{
+		CacheControl:       meta.CacheControl,
+		ContentEncoding:    meta.ContentEncoding,
+		ContentDisposition: meta.ContentDisposition,
+		ContentLanguage:    meta.ContentLanguage,
+		StorageClass:       meta.StorageClass,
+	})
 }
 
 func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -818,9 +903,9 @@ func (h *Handler) updateObject(w http.ResponseWriter, r *http.Request, bucket, k
 		ContentDisposition: body.ContentDisposition,
 		ContentLanguage:    body.ContentLanguage,
 		Metadata:           body.Metadata,
-	})
+	}, parsePrecondition(r.URL.Query()))
 	if err != nil {
-		writeErr(w, err)
+		writePreconditionOrErr(w, err)
 		return
 	}
 
@@ -845,9 +930,17 @@ func (h *Handler) composeObject(w http.ResponseWriter, r *http.Request, bucket, 
 		return
 	}
 
-	srcKeys := make([]string, 0, len(body.SourceObjects))
+	srcs := make([]storagedriver.GCSComposeSource, 0, len(body.SourceObjects))
+
 	for _, s := range body.SourceObjects {
-		srcKeys = append(srcKeys, s.Name)
+		var gen *int64
+
+		if s.Generation != 0 {
+			g := s.Generation
+			gen = &g
+		}
+
+		srcs = append(srcs, storagedriver.GCSComposeSource{Key: s.Name, Generation: gen})
 	}
 
 	contentType := ""
@@ -855,9 +948,11 @@ func (h *Handler) composeObject(w http.ResponseWriter, r *http.Request, bucket, 
 		contentType = body.Destination.ContentType
 	}
 
-	info, err := h.ext.ComposeObjectGCS(r.Context(), bucket, dstKey, srcKeys, contentType, destinationMetadata(body.Destination))
+	info, err := h.ext.ComposeObjectGCS(
+		r.Context(), bucket, dstKey, srcs, contentType, destinationMetadata(body.Destination), parsePrecondition(r.URL.Query()),
+	)
 	if err != nil {
-		writeErr(w, err)
+		writePreconditionOrErr(w, err)
 		return
 	}
 
@@ -873,9 +968,16 @@ func destinationMetadata(dst *objectResource) map[string]string {
 }
 
 func (h *Handler) getObjectMetadata(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	info, err := h.bucket.HeadObject(r.Context(), bucket, key)
+	q := r.URL.Query()
+
+	info, err := h.headObject(r, bucket, key, parseGeneration(q))
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	if status, short := evalReadPrecondition(readPrecondition(r), info.Generation, info.Metageneration); short {
+		writeConditionalRead(w, status)
 		return
 	}
 
@@ -883,9 +985,16 @@ func (h *Handler) getObjectMetadata(w http.ResponseWriter, r *http.Request, buck
 }
 
 func (h *Handler) downloadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	obj, err := h.bucket.GetObject(r.Context(), bucket, key)
+	q := r.URL.Query()
+
+	obj, err := h.fetchObject(r, bucket, key, parseGeneration(q))
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	if status, short := evalReadPrecondition(readPrecondition(r), obj.Info.Generation, obj.Info.Metageneration); short {
+		writeConditionalRead(w, status)
 		return
 	}
 
@@ -896,7 +1005,39 @@ func (h *Handler) downloadObject(w http.ResponseWriter, r *http.Request, bucket,
 	_, _ = w.Write(obj.Data) //nolint:gosec // raw object bytes
 }
 
+// headObject fetches an object's metadata, addressing a specific generation
+// through the GCS extension when available.
+func (h *Handler) headObject(r *http.Request, bucket, key string, gen *int64) (*storagedriver.ObjectInfo, error) {
+	if h.ext != nil {
+		return h.ext.HeadObjectGCS(r.Context(), bucket, key, gen)
+	}
+
+	return h.bucket.HeadObject(r.Context(), bucket, key)
+}
+
+// fetchObject fetches an object's bytes+metadata, addressing a specific
+// generation through the GCS extension when available.
+func (h *Handler) fetchObject(r *http.Request, bucket, key string, gen *int64) (*storagedriver.Object, error) {
+	if h.ext != nil {
+		return h.ext.GetObjectGCS(r.Context(), bucket, key, gen)
+	}
+
+	return h.bucket.GetObject(r.Context(), bucket, key)
+}
+
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if h.ext != nil {
+		q := r.URL.Query()
+		if err := h.ext.DeleteObjectGCS(r.Context(), bucket, key, parseGeneration(q), parsePrecondition(q)); err != nil {
+			writePreconditionOrErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	if err := h.bucket.DeleteObject(r.Context(), bucket, key); err != nil {
 		writeErr(w, err)
 		return
@@ -990,6 +1131,11 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 
 	genStr := strconv.FormatInt(generation, 10)
 
+	storageClass := info.StorageClass
+	if storageClass == "" {
+		storageClass = defaultStorageClass
+	}
+
 	return objectResource{
 		Kind:               "storage#object",
 		ID:                 bucket + "/" + info.Key + "/" + genStr,
@@ -1002,7 +1148,7 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 		MD5Hash:            info.MD5,
 		CRC32C:             info.CRC32C,
 		ETag:               info.ETag,
-		StorageClass:       "STANDARD",
+		StorageClass:       storageClass,
 		CacheControl:       info.CacheControl,
 		ContentEncoding:    info.ContentEncoding,
 		ContentDisposition: info.ContentDisposition,
@@ -1091,9 +1237,14 @@ func extractBoundary(ct string) string {
 
 // uploadMetadata is the JSON metadata part of a multipart upload.
 type uploadMetadata struct {
-	Name        string            `json:"name"`
-	ContentType string            `json:"contentType,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Name               string            `json:"name"`
+	ContentType        string            `json:"contentType,omitempty"`
+	CacheControl       string            `json:"cacheControl,omitempty"`
+	ContentEncoding    string            `json:"contentEncoding,omitempty"`
+	ContentDisposition string            `json:"contentDisposition,omitempty"`
+	ContentLanguage    string            `json:"contentLanguage,omitempty"`
+	StorageClass       string            `json:"storageClass,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
 }
 
 // parseMultipart extracts metadata, payload, and payload content-type from a
