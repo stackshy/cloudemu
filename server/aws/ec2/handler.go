@@ -113,6 +113,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeTags,
 		h.routeMetadata,
 		h.routeInstanceStatus,
+		h.routeIamInstanceProfileAssociations,
 	}
 	for _, route := range routes {
 		if route(w, r, action) {

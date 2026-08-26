@@ -625,6 +625,48 @@ type InstanceMetadataModifier interface {
 	ModifyInstanceMetadataOptions(ctx context.Context, instanceID string, update MetadataOptions) (*MetadataOptions, error)
 }
 
+// IamInstanceProfileAssociation is one association of an IAM instance profile
+// with a running/stopped instance, as reported by the EC2
+// Associate/Describe/Replace/DisassociateIamInstanceProfile actions. State is
+// one of "associating", "associated", "disassociating", "disassociated".
+type IamInstanceProfileAssociation struct {
+	AssociationID string
+	InstanceID    string
+	Profile       *IamInstanceProfile
+	State         string
+}
+
+// DescribeIamInstanceProfileAssociationsInput filters a
+// DescribeIamInstanceProfileAssociations call. Empty slices mean "no filter on
+// this field"; an association matches when it satisfies every populated field.
+type DescribeIamInstanceProfileAssociationsInput struct {
+	AssociationIDs []string
+	InstanceIDs    []string
+	States         []string
+}
+
+// IamInstanceProfileAssociator is an optional AWS-only capability for attaching
+// an IAM instance profile to an already-running instance
+// (ec2:AssociateIamInstanceProfile and its Describe/Replace/Disassociate
+// counterparts), the post-launch equivalent of RunInstances{IamInstanceProfile}.
+// Discovered by type assertion. profileARN / profileName carry the
+// IamInstanceProfile reference; the implementation resolves it to the profile's
+// canonical ARN and ID exactly as launch-time does.
+type IamInstanceProfileAssociator interface {
+	AssociateIamInstanceProfile(
+		ctx context.Context, instanceID, profileARN, profileName string,
+	) (*IamInstanceProfileAssociation, error)
+	DescribeIamInstanceProfileAssociations(
+		ctx context.Context, input DescribeIamInstanceProfileAssociationsInput,
+	) ([]IamInstanceProfileAssociation, error)
+	ReplaceIamInstanceProfileAssociation(
+		ctx context.Context, associationID, profileARN, profileName string,
+	) (*IamInstanceProfileAssociation, error)
+	DisassociateIamInstanceProfile(
+		ctx context.Context, associationID string,
+	) (*IamInstanceProfileAssociation, error)
+}
+
 // AzureVMController is an optional Azure-only capability supporting the ARM
 // virtualMachines operations that have no AWS/GCP equivalent: the PowerOff vs
 // Deallocate distinction (PowerOff stops the guest but keeps the VM allocated;

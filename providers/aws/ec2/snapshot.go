@@ -28,6 +28,7 @@ type ec2Snapshot struct {
 	Templates         json.RawMessage              `json:"templates,omitempty"`
 	TemplateVersions  json.RawMessage              `json:"templateVersions,omitempty"`
 	PlacementGroups   json.RawMessage              `json:"placementGroups,omitempty"`
+	ProfileAssocs     json.RawMessage              `json:"iamProfileAssociations,omitempty"`
 	ASGs              map[string]*asgSnapshot      `json:"asgs,omitempty"`
 	ManagedVisibility string                       `json:"managedVisibility,omitempty"`
 	ClientTokens      map[string][]string          `json:"clientTokens,omitempty"`
@@ -144,6 +145,7 @@ func (m *Mock) snapshotStores(snap *ec2Snapshot) error {
 		{&snap.Templates, m.templates.Snapshot},
 		{&snap.TemplateVersions, m.templateVersions.Snapshot},
 		{&snap.PlacementGroups, m.placementGroups.Snapshot},
+		{&snap.ProfileAssocs, m.iamProfileAssociations.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -262,6 +264,7 @@ func (m *Mock) restoreStores(snap *ec2Snapshot) error {
 		{snap.Templates, m.templates.LoadSnapshot},
 		{snap.TemplateVersions, m.templateVersions.LoadSnapshot},
 		{snap.PlacementGroups, m.placementGroups.LoadSnapshot},
+		{snap.ProfileAssocs, m.iamProfileAssociations.LoadSnapshot},
 	}
 
 	for _, l := range loads {
