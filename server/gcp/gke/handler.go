@@ -100,10 +100,15 @@ func (h *Handler) Matches(r *http.Request) bool {
 	case resourceClusters, resourceServerConfig:
 		return true
 	case resourceOperations:
-		if p.name != "" && p.action == "" {
+		// A named operation — a GET poll or a :cancel — is claimed only when
+		// this GKE mock actually recorded it, so a foreign-service operation
+		// (artifactregistry, eventarc, memorystore, …) falls through to the
+		// shared LRO handler instead of being falsely 404'd or canceled here.
+		if p.name != "" {
 			return h.gke.HasOperation(p.name)
 		}
 
+		// Unnamed collection GET (operations.list) stays with GKE.
 		return true
 	default:
 		return false

@@ -8,6 +8,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 )
 
+func int64Ptr(v int64) *int64 { return &v }
+
 func newTestMock() *Mock {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(
@@ -38,7 +40,7 @@ func TestCreateCluster(t *testing.T) {
 				Name:     "with-np",
 				Location: "us-central1",
 				NodePools: []NodePoolSpec{
-					{Name: "primary", InitialNodeCount: 3, MachineType: "e2-standard-4"},
+					{Name: "primary", InitialNodeCount: int64Ptr(3), MachineType: "e2-standard-4"},
 				},
 			},
 		},
@@ -152,7 +154,7 @@ func TestClusterSetters(t *testing.T) {
 		t.Fatalf("SetMaintenancePolicy: %v", err)
 	}
 
-	if _, err := m.SetResourceLabels(ctx, loc, name, map[string]string{"team": "core"}); err != nil {
+	if _, err := m.SetResourceLabels(ctx, loc, name, map[string]string{"team": "core"}, ""); err != nil {
 		t.Fatalf("SetResourceLabels: %v", err)
 	}
 
@@ -186,7 +188,7 @@ func TestNodePoolLifecycle(t *testing.T) {
 
 	_, _, err = m.CreateNodePool(ctx, loc, cName, &NodePoolSpec{
 		Name:             "extra",
-		InitialNodeCount: 2,
+		InitialNodeCount: int64Ptr(2),
 		MachineType:      "e2-standard-4",
 	})
 	requireNoError(t, err)
@@ -322,6 +324,102 @@ func TestCascadingDelete(t *testing.T) {
 	if _, err := m.GetNodePool(ctx, loc, cName, "extra"); err == nil {
 		t.Fatal("expected node pools to be deleted along with cluster")
 	}
+}
+
+func TestInitialNodeCountZeroHonoredAndNilDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	loc, cName := "us-central1", "host"
+
+	_, _, err := m.CreateCluster(ctx, &CreateClusterInput{Name: cName, Location: loc})
+	requireNoError(t, err)
+
+	// Explicit 0 survives (autoscale-from-zero).
+	_, _, err = m.CreateNodePool(ctx, loc, cName, &NodePoolSpec{Name: "zero", InitialNodeCount: int64Ptr(0)})
+	requireNoError(t, err)
+
+	zero, err := m.GetNodePool(ctx, loc, cName, "zero")
+	requireNoError(t, err)
+	assertEqual(t, int64(0), zero.NodeCount)
+
+	// A nil (absent) count defaults to the GKE default.
+	_, _, err = m.CreateNodePool(ctx, loc, cName, &NodePoolSpec{Name: "unset"})
+	requireNoError(t, err)
+
+	unset, err := m.GetNodePool(ctx, loc, cName, "unset")
+	requireNoError(t, err)
+	assertEqual(t, int64(defaultNodeCount), unset.NodeCount)
+}
+
+func TestSetResourceLabelsFingerprintEnforcement(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	loc, cName := "us-central1", "host"
+
+	_, _, err := m.CreateCluster(ctx, &CreateClusterInput{
+		Name: cName, Location: loc, ResourceLabels: map[string]string{"env": "prod"},
+	})
+	requireNoError(t, err)
+
+	got, err := m.GetCluster(ctx, loc, cName)
+	requireNoError(t, err)
+
+	if got.LabelFingerprint == "" {
+		t.Fatal("expected non-empty labelFingerprint on GetCluster")
+	}
+
+	// Stale fingerprint is rejected.
+	_, err = m.SetResourceLabels(ctx, loc, cName, map[string]string{"env": "dev"}, "stale")
+	assertError(t, err, true)
+
+	// Empty fingerprint skips the check.
+	_, err = m.SetResourceLabels(ctx, loc, cName, map[string]string{"env": "dev"}, "")
+	requireNoError(t, err)
+
+	// Current fingerprint is accepted and the fingerprint changes with labels.
+	cur, err := m.GetCluster(ctx, loc, cName)
+	requireNoError(t, err)
+
+	if cur.LabelFingerprint == got.LabelFingerprint {
+		t.Fatal("fingerprint should change when labels change")
+	}
+
+	_, err = m.SetResourceLabels(ctx, loc, cName, map[string]string{"env": "qa"}, cur.LabelFingerprint)
+	requireNoError(t, err)
+}
+
+func TestUpdateClusterNodeVersionPropagatesToPools(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	loc, cName := "us-central1", "host"
+
+	_, _, err := m.CreateCluster(ctx, &CreateClusterInput{Name: cName, Location: loc})
+	requireNoError(t, err)
+
+	_, _, err = m.CreateNodePool(ctx, loc, cName, &NodePoolSpec{Name: "extra"})
+	requireNoError(t, err)
+
+	// No NodePoolID rolls every pool.
+	_, err = m.UpdateCluster(ctx, loc, cName, UpdateClusterInput{NodeVersion: "1.29.0-gke.0"})
+	requireNoError(t, err)
+
+	for _, name := range []string{"default-pool", "extra"} {
+		np, gerr := m.GetNodePool(ctx, loc, cName, name)
+		requireNoError(t, gerr)
+		assertEqual(t, "1.29.0-gke.0", np.Version)
+	}
+
+	// A NodePoolID scopes the roll to one pool.
+	_, err = m.UpdateCluster(ctx, loc, cName, UpdateClusterInput{NodeVersion: "1.28.0-gke.0", NodePoolID: "extra"})
+	requireNoError(t, err)
+
+	extra, err := m.GetNodePool(ctx, loc, cName, "extra")
+	requireNoError(t, err)
+	assertEqual(t, "1.28.0-gke.0", extra.Version)
+
+	def, err := m.GetNodePool(ctx, loc, cName, "default-pool")
+	requireNoError(t, err)
+	assertEqual(t, "1.29.0-gke.0", def.Version)
 }
 
 // Hand-rolled helpers per CLAUDE.md (provider tests don't use testify).

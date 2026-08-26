@@ -21,8 +21,9 @@ func TestResourceDiscoverySurfacesGKE(t *testing.T) {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
+	npCount := int64(1)
 	if _, _, err := p.GKE.CreateNodePool(ctx, "us-central1", "prod", &gke.NodePoolSpec{
-		Name: "np-1", InitialNodeCount: 1,
+		Name: "np-1", InitialNodeCount: &npCount,
 	}); err != nil {
 		t.Fatalf("CreateNodePool: %v", err)
 	}
