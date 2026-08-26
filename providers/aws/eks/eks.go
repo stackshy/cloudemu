@@ -36,6 +36,11 @@ const (
 	defaultPlatformVersion   = "eks.1"
 	defaultKubernetesVersion = "1.29"
 	namespaceEKS             = "AWS/EKS"
+
+	// Managed-nodegroup defaults real EKS applies when the caller omits them.
+	defaultNodegroupInstanceType = "t3.medium"
+	defaultNodegroupAmiType      = "AL2_x86_64"
+	defaultNodegroupDiskSize     = 20
 )
 
 // CloudWatch-style metric values emitted on cluster create. The numbers are
@@ -61,8 +66,9 @@ type Mock struct {
 	addons          *memstore.Store[eksdriver.Addon]
 	updates         *memstore.Store[eksdriver.ClusterUpdate]
 
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	opts           *config.Options
+	monitoring     mondriver.Monitoring
+	subnetResolver SubnetResolver
 
 	// k8sAPI is the shared in-memory Kubernetes data-plane server. When set,
 	// CreateCluster registers a fresh ClusterState with it and DescribeCluster
@@ -183,6 +189,16 @@ func (m *Mock) oidcIssuer(name string) string {
 	return fmt.Sprintf("https://oidc.eks.%s.amazonaws.com/id/%s", m.opts.Region, id)
 }
 
+// clusterSecurityGroupID synthesizes the deterministic cluster security group
+// id real EKS creates for a cluster ("sg-<hash>"). It is stable across
+// DescribeCluster calls so downstream references (worker attach, SG rules) stay
+// fixed.
+func (m *Mock) clusterSecurityGroupID(name string) string {
+	sum := sha256.Sum256([]byte("eks-cluster-sg/" + m.opts.AccountID + "/" + name))
+
+	return "sg-" + hex.EncodeToString(sum[:8])
+}
+
 func (m *Mock) nodegroupARN(clusterName, nodegroupName string) string {
 	return idgen.AWSARN("eks", m.opts.Region, m.opts.AccountID,
 		"nodegroup/"+clusterName+"/"+nodegroupName)
@@ -222,6 +238,112 @@ func copyStrings(src []string) []string {
 	return out
 }
 
+func copyTaints(src []eksdriver.Taint) []eksdriver.Taint {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make([]eksdriver.Taint, len(src))
+	copy(out, src)
+
+	return out
+}
+
+// taintKey identifies a taint for merge/remove; real EKS treats Key+Effect as
+// the identity, so add/update replaces a matching pair and remove deletes it.
+func taintKey(t eksdriver.Taint) string {
+	return t.Key + "\x00" + t.Effect
+}
+
+// applyTaints overlays add/update taints onto cur and removes any matching the
+// remove set, preserving order. A nil result is returned when nothing remains.
+func applyTaints(cur, addOrUpdate, remove []eksdriver.Taint) []eksdriver.Taint {
+	byKey := make(map[string]eksdriver.Taint, len(cur)+len(addOrUpdate))
+	order := make([]string, 0, len(cur)+len(addOrUpdate))
+
+	upsert := func(t eksdriver.Taint) {
+		k := taintKey(t)
+		if _, ok := byKey[k]; !ok {
+			order = append(order, k)
+		}
+
+		byKey[k] = t
+	}
+
+	for _, t := range cur {
+		upsert(t)
+	}
+
+	for _, t := range addOrUpdate {
+		upsert(t)
+	}
+
+	for _, t := range remove {
+		delete(byKey, taintKey(t))
+	}
+
+	out := make([]eksdriver.Taint, 0, len(byKey))
+
+	for _, k := range order {
+		if t, ok := byKey[k]; ok {
+			out = append(out, t)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// mergeLabels overlays addOrUpdate onto cur and deletes the remove keys,
+// returning a fresh map (nil when empty). This is the merge semantics real EKS
+// applies, unlike a wholesale replace.
+func mergeLabels(cur, addOrUpdate map[string]string, remove []string) map[string]string {
+	if len(cur) == 0 && len(addOrUpdate) == 0 {
+		return cur
+	}
+
+	out := copyTags(cur)
+	if out == nil {
+		out = make(map[string]string, len(addOrUpdate))
+	}
+
+	for k, v := range addOrUpdate {
+		out[k] = v
+	}
+
+	for _, k := range remove {
+		delete(out, k)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// validateScaling rejects an inconsistent scaling config the way real EKS does
+// (InvalidParameterException): minSize must not exceed maxSize and desiredSize
+// must fall within [minSize, maxSize]. An all-zero config (scaling omitted) is
+// valid and left to defaults.
+func validateScaling(s eksdriver.NodegroupScalingConfig) error {
+	if s.MinSize > s.MaxSize {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"minSize (%d) must not be greater than maxSize (%d)", s.MinSize, s.MaxSize)
+	}
+
+	if s.DesiredSize < s.MinSize || s.DesiredSize > s.MaxSize {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"desiredSize (%d) must be between minSize (%d) and maxSize (%d)",
+			s.DesiredSize, s.MinSize, s.MaxSize)
+	}
+
+	return nil
+}
+
 func (m *Mock) emitClusterMetrics(name string) {
 	if m.monitoring == nil {
 		return
@@ -257,7 +379,7 @@ func (m *Mock) emitClusterMetrics(name string) {
 // CreateCluster creates a new cluster.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
-func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*eksdriver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (*eksdriver.Cluster, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "cluster name is required")
 	}
@@ -287,11 +409,13 @@ func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*e
 		Status:               eksdriver.ClusterStatusActive,
 		OIDCIssuer:           m.oidcIssuer(cfg.Name),
 		VPCConfig: eksdriver.VPCConfig{
-			SubnetIDs:             copyStrings(cfg.VPCConfig.SubnetIDs),
-			SecurityGroupIDs:      copyStrings(cfg.VPCConfig.SecurityGroupIDs),
-			EndpointPublicAccess:  cfg.VPCConfig.EndpointPublicAccess,
-			EndpointPrivateAccess: cfg.VPCConfig.EndpointPrivateAccess,
-			PublicAccessCidrs:     copyStrings(cfg.VPCConfig.PublicAccessCidrs),
+			SubnetIDs:              copyStrings(cfg.VPCConfig.SubnetIDs),
+			SecurityGroupIDs:       copyStrings(cfg.VPCConfig.SecurityGroupIDs),
+			EndpointPublicAccess:   cfg.VPCConfig.EndpointPublicAccess,
+			EndpointPrivateAccess:  cfg.VPCConfig.EndpointPrivateAccess,
+			PublicAccessCidrs:      copyStrings(cfg.VPCConfig.PublicAccessCidrs),
+			ClusterSecurityGroupID: m.clusterSecurityGroupID(cfg.Name),
+			VpcID:                  m.resolveVpcID(ctx, cfg.VPCConfig.SubnetIDs),
 		},
 		Tags:      copyTags(cfg.Tags),
 		CreatedAt: m.opts.Clock.Now().UTC(),
@@ -567,23 +691,46 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 			"nodegroup %q already exists in cluster %q", cfg.NodegroupName, cfg.ClusterName)
 	}
 
+	if err := validateScaling(cfg.ScalingConfig); err != nil {
+		return nil, err
+	}
+
+	now := m.opts.Clock.Now().UTC()
+
+	instanceTypes := copyStrings(cfg.InstanceTypes)
+	if len(instanceTypes) == 0 {
+		instanceTypes = []string{defaultNodegroupInstanceType}
+	}
+
+	amiType := cfg.AmiType
+	if amiType == "" {
+		amiType = defaultNodegroupAmiType
+	}
+
+	diskSize := cfg.DiskSize
+	if diskSize == 0 {
+		diskSize = defaultNodegroupDiskSize
+	}
+
 	ng := eksdriver.Nodegroup{
 		ClusterName:    cfg.ClusterName,
 		NodegroupName:  cfg.NodegroupName,
 		ARN:            m.nodegroupARN(cfg.ClusterName, cfg.NodegroupName),
 		NodeRole:       cfg.NodeRole,
 		Subnets:        copyStrings(cfg.Subnets),
-		InstanceTypes:  copyStrings(cfg.InstanceTypes),
-		AmiType:        cfg.AmiType,
+		InstanceTypes:  instanceTypes,
+		AmiType:        amiType,
 		CapacityType:   cfg.CapacityType,
-		DiskSize:       cfg.DiskSize,
+		DiskSize:       diskSize,
 		Version:        cfg.Version,
 		ReleaseVersion: cfg.ReleaseVersion,
 		ScalingConfig:  cfg.ScalingConfig,
 		Status:         eksdriver.NodegroupStatusActive,
 		Labels:         copyTags(cfg.Labels),
+		Taints:         copyTaints(cfg.Taints),
 		Tags:           copyTags(cfg.Tags),
-		CreatedAt:      m.opts.Clock.Now().UTC(),
+		CreatedAt:      now,
+		ModifiedAt:     now,
 	}
 
 	m.nodegroups.Set(key, ng)
@@ -630,10 +777,14 @@ func (m *Mock) ListNodegroups(_ context.Context, clusterName string) ([]string, 
 	return out, nil
 }
 
-// UpdateNodegroupConfig applies scaling and label changes to a nodegroup.
+// UpdateNodegroupConfig applies scaling, label, and taint changes to a
+// nodegroup. Labels and taints are merged as add/update + remove deltas so a
+// change touches only the keys named, matching real EKS.
+//
+//nolint:gocritic // upd matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateNodegroupConfig(
 	_ context.Context, clusterName, nodegroupName string,
-	scaling *eksdriver.NodegroupScalingConfig, labels map[string]string,
+	upd eksdriver.NodegroupConfigUpdate,
 ) (*eksdriver.ClusterUpdate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -646,13 +797,17 @@ func (m *Mock) UpdateNodegroupConfig(
 			"nodegroup %q not found in cluster %q", nodegroupName, clusterName)
 	}
 
-	if scaling != nil {
-		ng.ScalingConfig = *scaling
+	if upd.Scaling != nil {
+		if err := validateScaling(*upd.Scaling); err != nil {
+			return nil, err
+		}
+
+		ng.ScalingConfig = *upd.Scaling
 	}
 
-	if labels != nil {
-		ng.Labels = copyTags(labels)
-	}
+	ng.Labels = mergeLabels(ng.Labels, upd.AddOrUpdateLabels, upd.RemoveLabels)
+	ng.Taints = applyTaints(ng.Taints, upd.AddOrUpdateTaints, upd.RemoveTaints)
+	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
 
@@ -688,6 +843,8 @@ func (m *Mock) UpdateNodegroupVersion(
 	if releaseVersion != "" {
 		ng.ReleaseVersion = releaseVersion
 	}
+
+	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
 

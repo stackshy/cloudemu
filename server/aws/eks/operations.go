@@ -212,6 +212,7 @@ func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, cluste
 		Version:        body.Version,
 		ReleaseVersion: body.ReleaseVersion,
 		Labels:         body.Labels,
+		Taints:         taintsToDriver(body.Taints),
 		Tags:           body.Tags,
 	}
 
@@ -266,10 +267,7 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	var (
-		scaling *eksdriver.NodegroupScalingConfig
-		labels  map[string]string
-	)
+	update := eksdriver.NodegroupConfigUpdate{}
 
 	if body.ScalingConfig != nil {
 		// Real EKS applies only the sizes present in the request; the driver
@@ -284,14 +282,20 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 
 		merged := cur.ScalingConfig
 		mergeScaling(&merged, body.ScalingConfig)
-		scaling = &merged
+		update.Scaling = &merged
 	}
 
 	if body.Labels != nil {
-		labels = body.Labels.AddOrUpdateLabels
+		update.AddOrUpdateLabels = body.Labels.AddOrUpdateLabels
+		update.RemoveLabels = body.Labels.RemoveLabels
 	}
 
-	upd, err := h.eks.UpdateNodegroupConfig(r.Context(), clusterName, ngName, scaling, labels)
+	if body.Taints != nil {
+		update.AddOrUpdateTaints = taintsToDriver(body.Taints.AddOrUpdateTaints)
+		update.RemoveTaints = taintsToDriver(body.Taints.RemoveTaints)
+	}
+
+	upd, err := h.eks.UpdateNodegroupConfig(r.Context(), clusterName, ngName, update)
 	if err != nil {
 		writeErr(w, err)
 
@@ -524,6 +528,34 @@ func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConf
 	}
 }
 
+// taintsToDriver converts wire taints to driver taints.
+func taintsToDriver(in []taintJSON) []eksdriver.Taint {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]eksdriver.Taint, 0, len(in))
+	for _, t := range in {
+		out = append(out, eksdriver.Taint{Key: t.Key, Value: t.Value, Effect: t.Effect})
+	}
+
+	return out
+}
+
+// taintsToJSON converts driver taints to their wire shape.
+func taintsToJSON(in []eksdriver.Taint) []taintJSON {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]taintJSON, 0, len(in))
+	for _, t := range in {
+		out = append(out, taintJSON{Key: t.Key, Value: t.Value, Effect: t.Effect})
+	}
+
+	return out
+}
+
 func scalingFromJSON(s *nodegroupScalingConfigJSON) eksdriver.NodegroupScalingConfig {
 	out := eksdriver.NodegroupScalingConfig{}
 
@@ -554,11 +586,13 @@ func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
 		PlatformVersion: c.PlatformVersion,
 		Tags:            c.Tags,
 		ResourcesVpcConfig: &vpcConfigResponse{
-			SubnetIDs:             c.VPCConfig.SubnetIDs,
-			SecurityGroupIDs:      c.VPCConfig.SecurityGroupIDs,
-			EndpointPublicAccess:  c.VPCConfig.EndpointPublicAccess,
-			EndpointPrivateAccess: c.VPCConfig.EndpointPrivateAccess,
-			PublicAccessCidrs:     c.VPCConfig.PublicAccessCidrs,
+			SubnetIDs:              c.VPCConfig.SubnetIDs,
+			SecurityGroupIDs:       c.VPCConfig.SecurityGroupIDs,
+			ClusterSecurityGroupID: c.VPCConfig.ClusterSecurityGroupID,
+			VpcID:                  c.VPCConfig.VpcID,
+			EndpointPublicAccess:   c.VPCConfig.EndpointPublicAccess,
+			EndpointPrivateAccess:  c.VPCConfig.EndpointPrivateAccess,
+			PublicAccessCidrs:      c.VPCConfig.PublicAccessCidrs,
 		},
 	}
 
@@ -586,7 +620,7 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 		Version:        n.Version,
 		ReleaseVersion: n.ReleaseVersion,
 		CreatedAt:      epochSeconds(n.CreatedAt),
-		ModifiedAt:     epochSeconds(n.CreatedAt),
+		ModifiedAt:     epochSeconds(n.ModifiedAt),
 		Status:         n.Status,
 		CapacityType:   n.CapacityType,
 		ScalingConfig: &nodegroupScalingConfigJSON{
@@ -599,6 +633,7 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 		AmiType:       n.AmiType,
 		NodeRole:      n.NodeRole,
 		Labels:        n.Labels,
+		Taints:        taintsToJSON(n.Taints),
 		Tags:          n.Tags,
 	}
 

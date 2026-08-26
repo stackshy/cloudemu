@@ -270,6 +270,9 @@ func New(opts ...config.Option) *Provider {
 	p.ECS.SetTargetRegistrar(p.ELB)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
+	// An EKS cluster's resourcesVpcConfig.vpcId is derived from its subnets,
+	// matching real EKS (which auto-creates the cluster SG and infers the VPC).
+	p.EKS.SetSubnetResolver(p.VPC)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
 	// CloudWatch alarm -> SNS: an alarm state transition fires its configured
 	// SNS-topic actions, fanning a notification out to the topic's subscribers.
