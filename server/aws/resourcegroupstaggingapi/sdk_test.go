@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -19,14 +20,17 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func TestSDKResourceGroupsTagging(t *testing.T) {
@@ -225,6 +229,180 @@ func TestSDKResourceGroupsTagging(t *testing.T) {
 		fail := out.FailedResourcesMap["arn:aws:kms:us-east-1:123456789012:key/abc"]
 		assert.Equal(t, "InvalidParameterException", string(fail.ErrorCode))
 	})
+}
+
+func TestSDKResourceGroupsTaggingTypeFilterAndPaging(t *testing.T) {
+	ctx := context.Background()
+	cloud := cloudemu.NewAWS()
+
+	// F1/F2 fixtures: one resource of several aggregated-but-previously-unfilterable
+	// services, each carrying a real ARN.
+	_, err := cloud.SecretsManager.CreateSecret(ctx, secretsdriver.SecretConfig{Name: "db-cred"}, []byte("v"))
+	require.NoError(t, err)
+
+	_, err = cloud.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "jobs"})
+	require.NoError(t, err)
+
+	_, err = cloud.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{
+		Name: "cache1", NodeType: "cache.t3.micro", Engine: "redis",
+	})
+	require.NoError(t, err)
+
+	_, err = cloud.RDS.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "orders", Engine: "mysql", InstanceClass: "db.t3.micro",
+	})
+	require.NoError(t, err)
+
+	_, err = cloud.ECR.CreateRepository(ctx, crdriver.RepositoryConfig{Name: "web"})
+	require.NoError(t, err)
+
+	srv := awsserver.New(awsserver.Drivers{
+		ResourceDiscovery: cloud.ResourceDiscovery,
+		AccountID:         "123456789012",
+		Region:            "us-east-1",
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newRGTAClient(t, ts.URL)
+
+	cacheARN := "arn:aws:elasticache:us-east-1:123456789012:cluster:cache1"
+	rdsARN := "arn:aws:rds:us-east-1:123456789012:db:orders"
+	ecrARN := "arn:aws:ecr:us-east-1:123456789012:repository/web"
+
+	t.Run("ResourceTypeFilters select the right service (F1)", func(t *testing.T) {
+		// Each service filter must return exactly its one resource, whose ARN
+		// carries that service token (segment 3). Secrets Manager appends a random
+		// suffix to the secret name, so match on the ARN prefix rather than a
+		// hardcoded id.
+		for _, filter := range []string{"secretsmanager", "sqs", "elasticache", "rds", "ecr"} {
+			out, err := client.GetResources(ctx, &rgta.GetResourcesInput{
+				ResourceTypeFilters: []string{filter},
+			})
+			require.NoError(t, err, filter)
+			arns := arnSet(out.ResourceTagMappingList)
+			require.Len(t, arns, 1, "filter %q should return exactly its one resource", filter)
+			assert.True(t, strings.HasPrefix(arns[0], "arn:aws:"+filter+":"),
+				"filter %q returned %q, want an arn:aws:%s ARN", filter, arns[0], filter)
+		}
+	})
+
+	t.Run("ElastiCache ResourceARN is an ARN, not an endpoint (F2)", func(t *testing.T) {
+		out, err := client.GetResources(ctx, &rgta.GetResourcesInput{
+			ResourceTypeFilters: []string{"elasticache"},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.ResourceTagMappingList, 1)
+		assert.Equal(t, cacheARN, aws.ToString(out.ResourceTagMappingList[0].ResourceARN))
+	})
+
+	t.Run("TagResources round-trips on rds/elasticache/ecr (F3)", func(t *testing.T) {
+		out, err := client.TagResources(ctx, &rgta.TagResourcesInput{
+			ResourceARNList: []string{cacheARN, rdsARN, ecrARN},
+			Tags:            map[string]string{"Owner": "platform"},
+		})
+		require.NoError(t, err)
+		assert.Empty(t, out.FailedResourcesMap, "all three should tag cleanly")
+
+		// Visible on each service's own read.
+		caches, err := cloud.ElastiCache.ListTags(ctx, cacheARN)
+		require.NoError(t, err)
+		assert.Equal(t, "platform", caches["Owner"])
+
+		rdsTags, err := cloud.RDS.ListTagsForResource(ctx, rdsARN)
+		require.NoError(t, err)
+		assert.Equal(t, "platform", rdsTags["Owner"])
+
+		repos, err := cloud.ECR.ListRepositories(ctx)
+		require.NoError(t, err)
+		ecrTags := map[string]string{}
+		for i := range repos {
+			if repos[i].Name == "web" {
+				ecrTags = repos[i].Tags
+			}
+		}
+		assert.Equal(t, "platform", ecrTags["Owner"])
+
+		// And visible on a subsequent GetResources for that ARN.
+		got, err := client.GetResources(ctx, &rgta.GetResourcesInput{
+			ResourceTypeFilters: []string{"rds"},
+		})
+		require.NoError(t, err)
+		require.Len(t, got.ResourceTagMappingList, 1)
+		assert.Equal(t, "platform", tagsToMap(got.ResourceTagMappingList[0].Tags)["Owner"])
+	})
+
+	t.Run("genuinely unsupported service still reports a failure (F3)", func(t *testing.T) {
+		badARN := "arn:aws:cloudwatch:us-east-1:123456789012:alarm:cpu-high"
+		out, err := client.TagResources(ctx, &rgta.TagResourcesInput{
+			ResourceARNList: []string{badARN},
+			Tags:            map[string]string{"k": "v"},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.FailedResourcesMap, 1)
+		assert.Equal(t, "InvalidParameterException", string(out.FailedResourcesMap[badARN].ErrorCode))
+	})
+
+	t.Run("empty ResourceARNList is rejected", func(t *testing.T) {
+		_, err := client.TagResources(ctx, &rgta.TagResourcesInput{
+			ResourceARNList: []string{},
+			Tags:            map[string]string{"k": "v"},
+		})
+		require.Error(t, err)
+	})
+
+	t.Run("ResourcesPerPage + PaginationToken (F4)", func(t *testing.T) {
+		total := len(mustGetAll(ctx, t, client))
+		require.GreaterOrEqual(t, total, 5, "need several resources to page")
+
+		seen := map[string]bool{}
+		token := ""
+		pages := 0
+
+		for {
+			out, err := client.GetResources(ctx, &rgta.GetResourcesInput{
+				ResourcesPerPage: aws.Int32(2),
+				PaginationToken:  aws.String(token),
+			})
+			require.NoError(t, err)
+			assert.LessOrEqual(t, len(out.ResourceTagMappingList), 2, "page must not exceed ResourcesPerPage")
+
+			for _, m := range out.ResourceTagMappingList {
+				arn := aws.ToString(m.ResourceARN)
+				assert.False(t, seen[arn], "resource %q returned twice across pages", arn)
+				seen[arn] = true
+			}
+
+			pages++
+			token = aws.ToString(out.PaginationToken)
+			if token == "" {
+				break
+			}
+
+			require.Less(t, pages, total+2, "pagination did not terminate")
+		}
+
+		assert.Len(t, seen, total, "paging must cover every resource exactly once")
+		assert.Greater(t, pages, 1, "a page size of 2 over 5+ resources must span multiple pages")
+	})
+}
+
+func mustGetAll(ctx context.Context, t *testing.T, client *rgta.Client) []rgtatypes.ResourceTagMapping {
+	t.Helper()
+
+	out, err := client.GetResources(ctx, &rgta.GetResourcesInput{})
+	require.NoError(t, err)
+
+	return out.ResourceTagMappingList
+}
+
+func arnSet(list []rgtatypes.ResourceTagMapping) []string {
+	out := make([]string, 0, len(list))
+	for _, m := range list {
+		out = append(out, aws.ToString(m.ResourceARN))
+	}
+
+	return out
 }
 
 func newRGTAClient(t *testing.T, baseURL string) *rgta.Client {

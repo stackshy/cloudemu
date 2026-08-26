@@ -28,6 +28,10 @@ const (
 // resource-not-found.
 const errInvalidParameter = "InvalidParameterException"
 
+// tagPageSize is the internal page size for GetTagKeys/GetTagValues, which
+// (unlike GetResources) carry no client-supplied page-size parameter.
+const tagPageSize = 100
+
 // Handler serves Resource Groups Tagging API JSON-RPC requests.
 type Handler struct {
 	engine *resourcediscovery.Engine
@@ -73,6 +77,8 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceTypeFilters []string    `json:"ResourceTypeFilters"`
 		TagFilters          []tagFilter `json:"TagFilters"`
+		ResourcesPerPage    int         `json:"ResourcesPerPage"`
+		PaginationToken     string      `json:"PaginationToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -85,18 +91,19 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(all))
+	matched := make([]*resourcediscovery.Resource, 0, len(all))
 
 	for i := range all {
 		res := &all[i]
-		if !matchesTypeFilter(res, req.ResourceTypeFilters) {
-			continue
+		if matchesTypeFilter(res, req.ResourceTypeFilters) && matchesTagFilters(res, req.TagFilters) {
+			matched = append(matched, res)
 		}
+	}
 
-		if !matchesTagFilters(res, req.TagFilters) {
-			continue
-		}
+	from, to, next := page(len(matched), req.PaginationToken, req.ResourcesPerPage)
 
+	out := make([]map[string]any, 0, to-from)
+	for _, res := range matched[from:to] {
 		out = append(out, map[string]any{
 			"ResourceARN": res.ARN,
 			"Tags":        toTagList(res.Tags),
@@ -105,12 +112,15 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request) {
 
 	wire.WriteJSON(w, map[string]any{
 		"ResourceTagMappingList": out,
-		"PaginationToken":        "",
+		"PaginationToken":        next,
 	})
 }
 
 func (h *Handler) getTagKeys(w http.ResponseWriter, r *http.Request) {
-	var req struct{}
+	var req struct {
+		PaginationToken string `json:"PaginationToken"`
+	}
+
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -121,15 +131,18 @@ func (h *Handler) getTagKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from, to, next := page(len(keys), req.PaginationToken, tagPageSize)
+
 	wire.WriteJSON(w, map[string]any{
-		"TagKeys":         keys,
-		"PaginationToken": "",
+		"TagKeys":         keys[from:to],
+		"PaginationToken": next,
 	})
 }
 
 func (h *Handler) getTagValues(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Key string `json:"Key"`
+		Key             string `json:"Key"`
+		PaginationToken string `json:"PaginationToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -147,9 +160,11 @@ func (h *Handler) getTagValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from, to, next := page(len(vals), req.PaginationToken, tagPageSize)
+
 	wire.WriteJSON(w, map[string]any{
-		"TagValues":       vals,
-		"PaginationToken": "",
+		"TagValues":       vals[from:to],
+		"PaginationToken": next,
 	})
 }
 
@@ -163,14 +178,17 @@ func (h *Handler) tagResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.ResourceARNList) == 0 {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			"1 validation error detected: ResourceARNList must have at least 1 element")
+		return
+	}
+
 	failed := map[string]map[string]string{}
 
 	for _, arn := range req.ResourceARNList {
 		if err := h.engine.TagResourceByARN(r.Context(), arn, req.Tags); err != nil {
-			failed[arn] = map[string]string{
-				"ErrorCode":    awsErrorCode(err),
-				"ErrorMessage": err.Error(),
-			}
+			failed[arn] = failedResource(arn, err)
 		}
 	}
 
@@ -189,14 +207,17 @@ func (h *Handler) untagResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.ResourceARNList) == 0 {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			"1 validation error detected: ResourceARNList must have at least 1 element")
+		return
+	}
+
 	failed := map[string]map[string]string{}
 
 	for _, arn := range req.ResourceARNList {
 		if err := h.engine.UntagResourceByARN(r.Context(), arn, req.TagKeys); err != nil {
-			failed[arn] = map[string]string{
-				"ErrorCode":    awsErrorCode(err),
-				"ErrorMessage": err.Error(),
-			}
+			failed[arn] = failedResource(arn, err)
 		}
 	}
 
@@ -210,12 +231,19 @@ func matchesTypeFilter(r *resourcediscovery.Resource, filters []string) bool {
 		return true
 	}
 
+	// The AWS service token is authoritative when read from the resource's own
+	// ARN (segment 3 of arn:aws:<service>:…), which every service populates. Fall
+	// back to the portable→AWS name map only for rows whose identifier is not a
+	// real ARN (e.g. a Route 53 hosted-zone id).
+	awsService := awsServiceFromARN(r.ARN)
+	if awsService == "" {
+		awsService = portableToAWSService(r.Service)
+	}
+
 	// Filter syntax: "service" (e.g., "s3") or "service:type" (e.g., "dynamodb:table").
 	for _, f := range filters {
 		svc, rt, hasType := strings.Cut(f, ":")
-		// Translate portable service to AWS service name for matching.
-		awsService := portableToAWSService(r.Service)
-		if svc != awsService {
+		if !strings.EqualFold(svc, awsService) {
 			continue
 		}
 
@@ -229,6 +257,22 @@ func matchesTypeFilter(r *resourcediscovery.Resource, filters []string) bool {
 	}
 
 	return false
+}
+
+// awsServiceFromARN returns the service token (segment 3) of an arn:aws:<service>:…
+// ARN, or "" when the identifier is not an AWS ARN.
+func awsServiceFromARN(arn string) string {
+	const prefix = "arn:aws:"
+	if !strings.HasPrefix(arn, prefix) {
+		return ""
+	}
+
+	svc, _, ok := strings.Cut(arn[len(prefix):], ":")
+	if !ok {
+		return ""
+	}
+
+	return svc
 }
 
 func portableToAWSService(s string) string {
@@ -281,6 +325,20 @@ func toTagList(tags map[string]string) []map[string]string {
 	}
 
 	return out
+}
+
+// failedResource renders a FailedResourcesMap entry without leaking internal
+// cerrors phrasing — the ErrorMessage is a stable, AWS-plausible string keyed on
+// the surfaced error code.
+func failedResource(arn string, err error) map[string]string {
+	code := awsErrorCode(err)
+
+	msg := "An internal error occurred while processing the resource"
+	if code == errInvalidParameter {
+		msg = "The specified resource ARN is not valid or the resource was not found: " + arn
+	}
+
+	return map[string]string{"ErrorCode": code, "ErrorMessage": msg}
 }
 
 func awsErrorCode(err error) string {
