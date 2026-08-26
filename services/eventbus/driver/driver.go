@@ -132,6 +132,13 @@ type Event struct {
 	// version the publisher declared. Empty for AWS and GCP, and for an Azure
 	// publisher that omitted it (delivery then defaults it to "1.0").
 	DataVersion string
+	// Topic overrides the delivered event's "topic" field (Azure Event Grid's
+	// fully-qualified topic resource id). A system-topic producer (e.g. Blob
+	// Storage) sets it to the source resource id — the storage account's ARM id —
+	// which is the topic real Azure stamps on the event, distinct from the Event
+	// Grid topic resource the subscription hangs off. Empty for AWS and GCP and
+	// for a custom-topic publish, where delivery falls back to the bus's own ARN.
+	Topic string
 }
 
 // PublishResult is the result of publishing events.

@@ -130,9 +130,17 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event 
 	// the re-entrant delivery depth forward onto a background-rooted context.
 	dctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(ctx))
 
+	// A system-topic producer stamps the source resource id on event.Topic (real
+	// Azure delivers the storage account id, not the Event Grid topic resource);
+	// a custom-topic publish leaves it empty and delivery reports the bus's ARN.
+	topic := event.Topic
+	if topic == "" {
+		topic = topicARN
+	}
+
 	payload := deliveryEvent{
 		ID:              event.ID,
-		Topic:           topicARN,
+		Topic:           topic,
 		Subject:         event.Subject,
 		EventType:       event.DetailType,
 		EventTime:       event.Time.UTC().Format(time.RFC3339Nano),
