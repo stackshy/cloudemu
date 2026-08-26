@@ -14,6 +14,28 @@ type VPCAssociation struct {
 	VPCRegion string
 }
 
+// DNSKeySpec is one key specification within a GCP Cloud DNS DNSSEC config.
+// Other providers leave it unused.
+type DNSKeySpec struct {
+	Algorithm string
+	KeyLength int
+	KeyType   string // "keySigning" | "zoneSigning"
+}
+
+// DNSSECConfig is the GCP Cloud DNS DNSSEC configuration of a managed zone.
+// Other providers leave it nil.
+type DNSSECConfig struct {
+	State           string // "off" | "on" | "transfer"
+	NonExistence    string // "nsec" | "nsec3"
+	DefaultKeySpecs []DNSKeySpec
+}
+
+// VisibilityNetwork is a VPC network a GCP Cloud DNS private zone is visible
+// to (privateVisibilityConfig.networks[]). Other providers leave it nil.
+type VisibilityNetwork struct {
+	NetworkURL string
+}
+
 // ZoneConfig describes a DNS zone to create.
 type ZoneConfig struct {
 	Name    string
@@ -33,6 +55,12 @@ type ZoneConfig struct {
 	// Scope records the cloud-side container the zone was created in (Azure
 	// subscription/resource group or GCP project). The zero value is unscoped.
 	Scope scope.Scope
+	// DNSSECConfig is the GCP Cloud DNS DNSSEC configuration to apply. Other
+	// providers leave it nil.
+	DNSSECConfig *DNSSECConfig
+	// VisibilityNetworks are the VPC networks a GCP Cloud DNS private zone is
+	// visible to. Other providers leave it nil.
+	VisibilityNetworks []VisibilityNetwork
 }
 
 // ZoneInfo describes a DNS zone.
@@ -54,6 +82,12 @@ type ZoneInfo struct {
 	// Scope is the container the zone lives in; scoped list endpoints filter
 	// on it. The zero value is unscoped and visible everywhere.
 	Scope scope.Scope
+	// DNSSECConfig is the GCP Cloud DNS DNSSEC configuration as stored on
+	// create/patch. Other providers leave it nil.
+	DNSSECConfig *DNSSECConfig
+	// VisibilityNetworks are the VPC networks a GCP Cloud DNS private zone is
+	// visible to. Other providers leave it nil.
+	VisibilityNetworks []VisibilityNetwork
 }
 
 // AliasTarget describes an AWS Route 53 alias target (an A/AAAA record that

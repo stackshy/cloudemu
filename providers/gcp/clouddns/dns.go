@@ -46,6 +46,51 @@ func recordKey(zoneID, name, recordType, setID string) string {
 	return key
 }
 
+// cloneDNSSEC deep-copies a DNSSEC config so the stored zone does not alias the
+// caller's value. Returns nil for a nil input.
+func cloneDNSSEC(in *driver.DNSSECConfig) *driver.DNSSECConfig {
+	if in == nil {
+		return nil
+	}
+
+	out := &driver.DNSSECConfig{State: in.State, NonExistence: in.NonExistence}
+	if in.DefaultKeySpecs != nil {
+		out.DefaultKeySpecs = append([]driver.DNSKeySpec(nil), in.DefaultKeySpecs...)
+	}
+
+	return out
+}
+
+// cloneNetworks copies a visibility-network slice so the stored zone does not
+// alias the caller's slice. Returns nil for a nil input.
+func cloneNetworks(in []driver.VisibilityNetwork) []driver.VisibilityNetwork {
+	if in == nil {
+		return nil
+	}
+
+	return append([]driver.VisibilityNetwork(nil), in...)
+}
+
+// mergeDNSSEC returns the incoming DNSSEC config (cloned) when a patch carries
+// one, else preserves the existing value — so a patch that omits it is a no-op.
+func mergeDNSSEC(existing, incoming *driver.DNSSECConfig) *driver.DNSSECConfig {
+	if incoming == nil {
+		return existing
+	}
+
+	return cloneDNSSEC(incoming)
+}
+
+// mergeNetworks returns the incoming visibility networks (cloned) when a patch
+// carries them, else preserves the existing slice.
+func mergeNetworks(existing, incoming []driver.VisibilityNetwork) []driver.VisibilityNetwork {
+	if incoming == nil {
+		return existing
+	}
+
+	return cloneNetworks(incoming)
+}
+
 // CreateZone creates a new Cloud DNS managed zone.
 func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	if cfg.Name == "" {
@@ -56,8 +101,9 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	// same project (the wire always carries one); the portable API, which
 	// creates with a zero scope, is unaffected.
 	if cfg.Scope.Project != "" {
-		for _, z := range m.zones.SortedValues() {
-			if z.Name == cfg.Name && z.Scope.Project == cfg.Scope.Project {
+		existing := m.zones.SortedValues()
+		for i := range existing {
+			if existing[i].Name == cfg.Name && existing[i].Scope.Project == cfg.Scope.Project {
 				return nil, cerrors.Newf(cerrors.AlreadyExists,
 					"managed zone %q already exists in project %q", cfg.Name, cfg.Scope.Project)
 			}
@@ -72,12 +118,14 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	}
 
 	zone := driver.ZoneInfo{
-		ID:          id,
-		Name:        cfg.Name,
-		Private:     cfg.Private,
-		RecordCount: 0,
-		Tags:        tags,
-		Scope:       cfg.Scope,
+		ID:                 id,
+		Name:               cfg.Name,
+		Private:            cfg.Private,
+		RecordCount:        0,
+		Tags:               tags,
+		Scope:              cfg.Scope,
+		DNSSECConfig:       cloneDNSSEC(cfg.DNSSECConfig),
+		VisibilityNetworks: cloneNetworks(cfg.VisibilityNetworks),
 	}
 
 	m.zones.Set(id, zone)
@@ -121,11 +169,13 @@ func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneIn
 	all := m.zones.SortedValues()
 
 	zones := make([]driver.ZoneInfo, 0, len(all))
-	for _, z := range all {
-		if !z.Scope.Matches(filter) {
+
+	for i := range all {
+		if !all[i].Scope.Matches(filter) {
 			continue
 		}
-		zones = append(zones, z)
+
+		zones = append(zones, all[i])
 	}
 
 	return zones, nil
@@ -149,6 +199,11 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		if !cfg.Scope.IsZero() {
 			z.Scope = cfg.Scope
 		}
+
+		// Preserve the GCP-only zone config across a patch that omits it; a patch
+		// that carries it replaces the stored value.
+		z.DNSSECConfig = mergeDNSSEC(z.DNSSECConfig, cfg.DNSSECConfig)
+		z.VisibilityNetworks = mergeNetworks(z.VisibilityNetworks, cfg.VisibilityNetworks)
 
 		m.zones.Set(z.ID, z)
 

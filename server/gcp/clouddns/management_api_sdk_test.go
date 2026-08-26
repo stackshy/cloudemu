@@ -202,12 +202,18 @@ func TestSDKChangesListAndGet(t *testing.T) {
 		t.Fatalf("Changes.List: %v", err)
 	}
 
-	if len(list.Changes) != 1 {
-		t.Fatalf("changes.list = %d, want 1: %+v", len(list.Changes), list.Changes)
+	// A fresh zone already logs the initial apex SOA/NS provisioning change
+	// (id "0"), so after one user change the log holds two entries.
+	if len(list.Changes) != 2 {
+		t.Fatalf("changes.list = %d, want 2 (seed + created): %+v", len(list.Changes), list.Changes)
 	}
 
-	if list.Changes[0].Id != created.Id {
-		t.Errorf("listed change id = %q, want %q", list.Changes[0].Id, created.Id)
+	if list.Changes[0].Id != "0" {
+		t.Errorf("first listed change id = %q, want the seeded \"0\"", list.Changes[0].Id)
+	}
+
+	if list.Changes[1].Id != created.Id {
+		t.Errorf("listed change id = %q, want %q", list.Changes[1].Id, created.Id)
 	}
 
 	got, err := svc.Changes.Get(testProject, "chg-zone", created.Id).Context(ctx).Do()

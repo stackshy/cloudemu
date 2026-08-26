@@ -34,6 +34,10 @@ const (
 	kindChange                 = "dns#change"
 	kindChangesList            = "dns#changesListResponse"
 	kindOperation              = "dns#operation"
+	kindDNSSECConfig           = "dns#managedZoneDnsSecConfig"
+	kindDNSKeySpec             = "dns#dnsKeySpec"
+	kindPrivateVisibility      = "dns#managedZonePrivateVisibilityConfig"
+	kindVisibilityNetwork      = "dns#managedZonePrivateVisibilityConfigNetwork"
 )
 
 // changeStatusDone is the terminal state Cloud DNS reports once a change has
@@ -57,6 +61,106 @@ type managedZoneJSON struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 	CreationTime string            `json:"creationTime,omitempty"`
 	NameServers  []string          `json:"nameServers,omitempty"`
+	// DnssecConfig and PrivateVisibilityConfig round-trip the GCP-only zone
+	// settings the dns driver models as ZoneInfo.DNSSECConfig/VisibilityNetworks.
+	DnssecConfig            *dnssecConfigJSON            `json:"dnssecConfig,omitempty"`
+	PrivateVisibilityConfig *privateVisibilityConfigJSON `json:"privateVisibilityConfig,omitempty"`
+}
+
+// dnssecConfigJSON is the Cloud DNS ManagedZoneDnsSecConfig resource.
+type dnssecConfigJSON struct {
+	Kind            string           `json:"kind,omitempty"`
+	State           string           `json:"state,omitempty"`
+	NonExistence    string           `json:"nonExistence,omitempty"`
+	DefaultKeySpecs []dnsKeySpecJSON `json:"defaultKeySpecs,omitempty"`
+}
+
+// dnsKeySpecJSON is one entry of dnssecConfig.defaultKeySpecs.
+type dnsKeySpecJSON struct {
+	Kind      string `json:"kind,omitempty"`
+	Algorithm string `json:"algorithm,omitempty"`
+	KeyLength int64  `json:"keyLength,omitempty"`
+	KeyType   string `json:"keyType,omitempty"`
+}
+
+// privateVisibilityConfigJSON is the Cloud DNS
+// ManagedZonePrivateVisibilityConfig resource (networks subset).
+type privateVisibilityConfigJSON struct {
+	Kind     string                  `json:"kind,omitempty"`
+	Networks []visibilityNetworkJSON `json:"networks,omitempty"`
+}
+
+// visibilityNetworkJSON is one entry of privateVisibilityConfig.networks.
+type visibilityNetworkJSON struct {
+	Kind       string `json:"kind,omitempty"`
+	NetworkURL string `json:"networkUrl,omitempty"`
+}
+
+// dnssecToJSON converts the driver's DNSSEC config to its wire form.
+func dnssecToJSON(c *dnsdriver.DNSSECConfig) *dnssecConfigJSON {
+	if c == nil {
+		return nil
+	}
+
+	out := &dnssecConfigJSON{Kind: kindDNSSECConfig, State: c.State, NonExistence: c.NonExistence}
+
+	for i := range c.DefaultKeySpecs {
+		k := &c.DefaultKeySpecs[i]
+		out.DefaultKeySpecs = append(out.DefaultKeySpecs, dnsKeySpecJSON{
+			Kind: kindDNSKeySpec, Algorithm: k.Algorithm, KeyLength: int64(k.KeyLength), KeyType: k.KeyType,
+		})
+	}
+
+	return out
+}
+
+// dnssecFromJSON converts a wire DNSSEC config to the driver's form.
+func dnssecFromJSON(j *dnssecConfigJSON) *dnsdriver.DNSSECConfig {
+	if j == nil {
+		return nil
+	}
+
+	out := &dnsdriver.DNSSECConfig{State: j.State, NonExistence: j.NonExistence}
+
+	for i := range j.DefaultKeySpecs {
+		k := &j.DefaultKeySpecs[i]
+		out.DefaultKeySpecs = append(out.DefaultKeySpecs, dnsdriver.DNSKeySpec{
+			Algorithm: k.Algorithm, KeyLength: int(k.KeyLength), KeyType: k.KeyType,
+		})
+	}
+
+	return out
+}
+
+// visibilityToJSON converts the driver's visibility networks to their wire form.
+func visibilityToJSON(nets []dnsdriver.VisibilityNetwork) *privateVisibilityConfigJSON {
+	if len(nets) == 0 {
+		return nil
+	}
+
+	out := &privateVisibilityConfigJSON{Kind: kindPrivateVisibility}
+	for i := range nets {
+		out.Networks = append(out.Networks, visibilityNetworkJSON{
+			Kind: kindVisibilityNetwork, NetworkURL: nets[i].NetworkURL,
+		})
+	}
+
+	return out
+}
+
+// visibilityFromJSON converts a wire privateVisibilityConfig to the driver's
+// visibility-network slice.
+func visibilityFromJSON(j *privateVisibilityConfigJSON) []dnsdriver.VisibilityNetwork {
+	if j == nil || len(j.Networks) == 0 {
+		return nil
+	}
+
+	out := make([]dnsdriver.VisibilityNetwork, 0, len(j.Networks))
+	for i := range j.Networks {
+		out = append(out, dnsdriver.VisibilityNetwork{NetworkURL: j.Networks[i].NetworkURL})
+	}
+
+	return out
 }
 
 type managedZonesListResponse struct {
@@ -152,6 +256,9 @@ func toManagedZoneJSON(info *dnsdriver.ZoneInfo) managedZoneJSON {
 		Description:  info.Tags[descriptionTag],
 		CreationTime: info.Tags[creationTimeTag],
 		NameServers:  nameServersFor(info.ID),
+
+		DnssecConfig:            dnssecToJSON(info.DNSSECConfig),
+		PrivateVisibilityConfig: visibilityToJSON(info.VisibilityNetworks),
 	}
 }
 
