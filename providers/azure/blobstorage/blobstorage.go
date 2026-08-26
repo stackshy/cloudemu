@@ -569,26 +569,53 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	}, nil
 }
 
-// CopyObject copies a blob from one location to another.
+// CopyObject copies a blob from one location to another, inheriting the source
+// blob's metadata (the default Azure Copy Blob behavior when the request carries
+// no x-ms-meta-* headers).
 func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+	_, err := m.copyBlobInternal(ctx, dstBucket, dstKey, src, nil, false)
+
+	return err
+}
+
+// CopyObjectV2 implements the ObjectCopier capability so the Azure Blob wire
+// layer can express Copy Blob's metadata override: when ReplaceMetadata is set
+// the destination takes exactly req.Metadata instead of inheriting the source's.
+// Content properties are always inherited from the source (Azure Copy Blob does
+// not let the caller override them).
+func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
+	info, err := m.copyBlobInternal(ctx, req.DstBucket, req.DstKey, req.Src, req.Metadata, req.ReplaceMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	return &driver.CopyObjectResult{ETag: info.ETag, LastModified: info.LastModified}, nil
+}
+
+// copyBlobInternal is the shared copy path for CopyObject and CopyObjectV2. When
+// replaceMeta is true the destination's metadata is exactly overrideMeta;
+// otherwise it inherits the source blob's metadata.
+func (m *Mock) copyBlobInternal(
+	ctx context.Context, dstBucket, dstKey string, src driver.CopySource, overrideMeta map[string]string, replaceMeta bool,
+) (*driver.ObjectInfo, error) {
 	srcCtr, ok := m.containers.Get(src.Bucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "source container %q not found", src.Bucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "source container %q not found", src.Bucket)
 	}
 
 	srcObj, ok := srcCtr.objects.Get(src.Key)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "source blob %q not found", src.Key)
+		return nil, cerrors.Newf(cerrors.NotFound, "source blob %q not found", src.Key)
 	}
 
 	dstCtr, ok := m.containers.Get(dstBucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
 	}
 
-	meta := make(map[string]string, len(srcObj.Metadata))
-	for k, v := range srcObj.Metadata {
-		meta[k] = v
+	meta := maps.Clone(srcObj.Metadata)
+	if replaceMeta {
+		meta = maps.Clone(overrideMeta)
 	}
 
 	dstObj := &blobObject{
@@ -603,7 +630,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
 			config.StorageRef{Bucket: dstBucket, Key: dstKey},
 			config.StorageRef{Bucket: src.Bucket, Key: src.Key}); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		dataCopy := make([]byte, len(srcObj.Data))
@@ -616,7 +643,9 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
 
-	return nil
+	info := objectInfo(dstObj)
+
+	return &info, nil
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
