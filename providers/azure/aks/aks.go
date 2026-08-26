@@ -37,10 +37,18 @@ const (
 	defaultPoolType      = "VirtualMachineScaleSets"
 	defaultNodeImage     = "AKSUbuntu-2204gen2containerd-202401.09.0"
 	poolPowerRunning     = "Running"
-	emulatorTenantID     = "11111111-1111-1111-1111-111111111111"
-	cpuMetricRunning     = 0.35
-	memMetricRunning     = 0.50
-	podMetricRunning     = 12.0
+	// Network-profile defaults the real AKS service synthesizes when a create
+	// omits properties.networkProfile entirely.
+	defaultNetworkPlugin   = "kubenet"
+	defaultServiceCidr     = "10.0.0.0/16"
+	defaultDNSServiceIP    = "10.0.0.10"
+	defaultPodCidr         = "10.244.0.0/16"
+	defaultLoadBalancerSKU = "standard"
+	defaultOutboundType    = "loadBalancer"
+	emulatorTenantID       = "11111111-1111-1111-1111-111111111111"
+	cpuMetricRunning       = 0.35
+	memMetricRunning       = 0.50
+	podMetricRunning       = 12.0
 )
 
 // ManagedCluster is the in-memory representation of an AKS cluster.
@@ -60,6 +68,11 @@ type ManagedCluster struct {
 	Tags           map[string]string
 	AgentPoolNames []string
 
+	// NetworkProfile echoes properties.networkProfile. When a create omits it,
+	// the mock stores the standard AKS defaults (see defaultNetworkProfile);
+	// otherwise it stores exactly the submitted values so a read round-trips.
+	NetworkProfile NetworkProfile
+
 	// EnableRBAC mirrors properties.enableRBAC; defaults to true, the AKS
 	// default when a create omits it.
 	EnableRBAC bool
@@ -72,6 +85,34 @@ type ManagedCluster struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// NetworkProfile captures the cluster network configuration echoed back on read.
+// A pointer to it on ClusterInput distinguishes "caller omitted networkProfile"
+// (nil → synthesize defaults) from "caller submitted it" (echo verbatim). Only
+// the sub-keys the emulator models live here; any sub-key a caller sets but the
+// emulator does not model still round-trips through the property overlay.
+type NetworkProfile struct {
+	NetworkPlugin   string
+	NetworkPolicy   string
+	ServiceCidr     string
+	DNSServiceIP    string
+	PodCidr         string
+	LoadBalancerSKU string
+	OutboundType    string
+}
+
+// defaultNetworkProfile returns the network-profile values the real AKS service
+// synthesizes when a create omits properties.networkProfile.
+func defaultNetworkProfile() NetworkProfile {
+	return NetworkProfile{
+		NetworkPlugin:   defaultNetworkPlugin,
+		ServiceCidr:     defaultServiceCidr,
+		DNSServiceIP:    defaultDNSServiceIP,
+		PodCidr:         defaultPodCidr,
+		LoadBalancerSKU: defaultLoadBalancerSKU,
+		OutboundType:    defaultOutboundType,
+	}
 }
 
 // AgentPool is a node pool attached to a managed cluster.
@@ -99,6 +140,16 @@ type AgentPool struct {
 	Type             string
 	PowerState       string
 	NodeImageVersion string
+	// Advanced pool fields Terraform's default_node_pool commonly submits. They
+	// are echoed exactly as submitted (nil/empty when omitted) so a read
+	// round-trips; the emulator synthesizes no defaults for them.
+	AvailabilityZones  []string
+	EnableAutoScaling  *bool
+	MinCount           *int32
+	MaxCount           *int32
+	VnetSubnetID       string
+	OSSKU              string
+	EnableNodePublicIP *bool
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -268,6 +319,10 @@ type ClusterInput struct {
 	// EnableRBAC mirrors properties.enableRBAC. Nil means "not submitted", which
 	// the mock resolves to the AKS default (true).
 	EnableRBAC *bool
+	// NetworkProfile mirrors properties.networkProfile. Nil means "not
+	// submitted", which the mock resolves to the AKS defaults; a non-nil value
+	// is echoed verbatim so a read round-trips the submitted configuration.
+	NetworkProfile *NetworkProfile
 	// AgentPools may be nil for an empty cluster; otherwise these are the
 	// pools shipped inline at create time (system pool typically).
 	AgentPools []AgentPoolInput
@@ -288,6 +343,15 @@ type AgentPoolInput struct {
 	// MaxPods is the submitted max-pods-per-node; 0 means "not submitted" and
 	// the mock applies the standard default.
 	MaxPods int32
+	// Advanced pool fields (autoscaler bounds, availability zones, subnet, OS
+	// SKU, public-IP flag) echoed verbatim; nil/empty when omitted.
+	AvailabilityZones  []string
+	EnableAutoScaling  *bool
+	MinCount           *int32
+	MaxCount           *int32
+	VnetSubnetID       string
+	OSSKU              string
+	EnableNodePublicIP *bool
 }
 
 // CreateOrUpdateCluster creates a new managed cluster or updates an existing
@@ -329,6 +393,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	cluster.Tags = copyTags(input.Tags)
 	cluster.EnableRBAC = input.EnableRBAC == nil || *input.EnableRBAC
 	applyClusterIdentity(&cluster, input.IdentityType)
+	applyNetworkProfile(&cluster, input.NetworkProfile)
 	cluster.UpdatedAt = now
 
 	// Inline pools — replace what we have for this cluster.
@@ -371,6 +436,17 @@ func applyClusterIdentity(cluster *ManagedCluster, identityType string) {
 			"principal/cluster/" + cluster.ResourceGroup + "/" + cluster.Name)
 		cluster.TenantID = emulatorTenantID
 	}
+}
+
+// applyNetworkProfile stores the submitted network profile verbatim, or the
+// standard AKS defaults when the caller omitted properties.networkProfile.
+func applyNetworkProfile(cluster *ManagedCluster, np *NetworkProfile) {
+	if np == nil {
+		cluster.NetworkProfile = defaultNetworkProfile()
+		return
+	}
+
+	cluster.NetworkProfile = *np
 }
 
 // replaceInlinePools wipes any pre-existing pools for the cluster and re-adds
@@ -418,27 +494,54 @@ func buildAgentPool(rg, cluster, clusterVersion string, in AgentPoolInput, now t
 	}
 
 	return AgentPool{
-		Name:              in.Name,
-		ClusterName:       cluster,
-		ResourceGroup:     rg,
-		Count:             count,
-		VMSize:            defaultIfEmpty(in.VMSize, defaultVMSize),
-		OSDiskSizeGB:      disk,
-		OSType:            defaultIfEmpty(in.OSType, "Linux"),
-		Mode:              defaultIfEmpty(in.Mode, "User"),
-		OrchestratorVer:   defaultIfEmpty(in.OrchestratorVer, defaultIfEmpty(clusterVersion, defaultK8sVersion)),
-		ProvisioningState: "Succeeded",
-		ScaleSetPriority:  defaultIfEmpty(in.ScaleSetPriority, "Regular"),
-		NodeLabels:        copyLabels(in.NodeLabels),
-		NodeTaints:        copyTaints(in.NodeTaints),
-		MaxPods:           maxPods,
-		OSDiskType:        defaultOSDiskType,
-		Type:              defaultPoolType,
-		PowerState:        poolPowerRunning,
-		NodeImageVersion:  defaultNodeImage,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		Name:               in.Name,
+		ClusterName:        cluster,
+		ResourceGroup:      rg,
+		Count:              count,
+		VMSize:             defaultIfEmpty(in.VMSize, defaultVMSize),
+		OSDiskSizeGB:       disk,
+		OSType:             defaultIfEmpty(in.OSType, "Linux"),
+		Mode:               defaultIfEmpty(in.Mode, "User"),
+		OrchestratorVer:    defaultIfEmpty(in.OrchestratorVer, defaultIfEmpty(clusterVersion, defaultK8sVersion)),
+		ProvisioningState:  "Succeeded",
+		ScaleSetPriority:   defaultIfEmpty(in.ScaleSetPriority, "Regular"),
+		NodeLabels:         copyLabels(in.NodeLabels),
+		NodeTaints:         copyTaints(in.NodeTaints),
+		MaxPods:            maxPods,
+		OSDiskType:         defaultOSDiskType,
+		Type:               defaultPoolType,
+		PowerState:         poolPowerRunning,
+		NodeImageVersion:   defaultNodeImage,
+		AvailabilityZones:  copyTaints(in.AvailabilityZones),
+		EnableAutoScaling:  copyBoolPtr(in.EnableAutoScaling),
+		MinCount:           copyInt32Ptr(in.MinCount),
+		MaxCount:           copyInt32Ptr(in.MaxCount),
+		VnetSubnetID:       in.VnetSubnetID,
+		OSSKU:              in.OSSKU,
+		EnableNodePublicIP: copyBoolPtr(in.EnableNodePublicIP),
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
+}
+
+func copyBoolPtr(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
+}
+
+func copyInt32Ptr(p *int32) *int32 {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
 }
 
 func totalNodeCount(pools []AgentPoolInput) int32 {

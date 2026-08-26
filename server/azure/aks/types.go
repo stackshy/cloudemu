@@ -62,6 +62,7 @@ type armPowerState struct {
 // armcontainerservice.NetworkProfile the emulator synthesizes as defaults.
 type armNetworkProfile struct {
 	NetworkPlugin   string `json:"networkPlugin,omitempty"`
+	NetworkPolicy   string `json:"networkPolicy,omitempty"`
 	LoadBalancerSKU string `json:"loadBalancerSku,omitempty"`
 	ServiceCidr     string `json:"serviceCidr,omitempty"`
 	DNSServiceIP    string `json:"dnsServiceIP,omitempty"`
@@ -86,6 +87,36 @@ type armAgentPoolProfile struct {
 	Type              string             `json:"type,omitempty"`
 	PowerState        *armPowerState     `json:"powerState,omitempty"`
 	NodeImageVersion  string             `json:"nodeImageVersion,omitempty"`
+	armAgentPoolAdvanced
+}
+
+// armAgentPoolAdvanced holds the optional node-pool fields Terraform's
+// default_node_pool commonly submits. Embedded in both the inline profile and
+// the standalone-pool shapes so both wire paths model them identically. Every
+// field is omitempty so a value absent on the request is absent on the
+// response — which keeps any unmodeled sibling sub-key round-tripping through
+// the property overlay.
+type armAgentPoolAdvanced struct {
+	AvailabilityZones  []string `json:"availabilityZones,omitempty"`
+	EnableAutoScaling  *bool    `json:"enableAutoScaling,omitempty"`
+	MinCount           *int32   `json:"minCount,omitempty"`
+	MaxCount           *int32   `json:"maxCount,omitempty"`
+	VnetSubnetID       string   `json:"vnetSubnetID,omitempty"`
+	OSSKU              string   `json:"osSKU,omitempty"`
+	EnableNodePublicIP *bool    `json:"enableNodePublicIP,omitempty"`
+}
+
+// applyTo copies the submitted advanced fields onto a driver AgentPoolInput.
+// Shared by the inline and standalone agent-pool wire paths so both behave
+// identically.
+func (a *armAgentPoolAdvanced) applyTo(in *aks.AgentPoolInput) {
+	in.AvailabilityZones = a.AvailabilityZones
+	in.EnableAutoScaling = a.EnableAutoScaling
+	in.MinCount = a.MinCount
+	in.MaxCount = a.MaxCount
+	in.VnetSubnetID = a.VnetSubnetID
+	in.OSSKU = a.OSSKU
+	in.EnableNodePublicIP = a.EnableNodePublicIP
 }
 
 // armAgentPool is the standalone (sub-resource) shape used by the
@@ -114,6 +145,7 @@ type armAgentPoolProperties struct {
 	Type              string             `json:"type,omitempty"`
 	PowerState        *armPowerState     `json:"powerState,omitempty"`
 	NodeImageVersion  string             `json:"nodeImageVersion,omitempty"`
+	armAgentPoolAdvanced
 }
 
 // armMaintenanceConfig is the wire shape for the maintenanceConfigurations
@@ -169,7 +201,7 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 			AgentPoolProfiles:        toAgentPoolProfiles(pools),
 			PowerState:               &armPowerState{Code: c.PowerState},
 			EnableRBAC:               &enableRBAC,
-			NetworkProfile:           defaultNetworkProfile(),
+			NetworkProfile:           toNetworkProfile(&c.NetworkProfile),
 		},
 	}
 
@@ -184,16 +216,34 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 	return out
 }
 
-// defaultNetworkProfile returns the standard AKS network-profile defaults the
-// real service synthesizes when a create omits networkProfile.
-func defaultNetworkProfile() *armNetworkProfile {
+// toNetworkProfile renders the stored network profile onto the ARM shape. The
+// values are whatever CreateOrUpdateCluster stored — the caller's submitted
+// values, or the AKS defaults when the caller omitted networkProfile. Every
+// field is omitempty, so a sub-key the caller never set is not emitted (and a
+// sub-key the emulator does not model still round-trips via the overlay).
+func toNetworkProfile(np *aks.NetworkProfile) *armNetworkProfile {
 	return &armNetworkProfile{
-		NetworkPlugin:   "kubenet",
-		LoadBalancerSKU: "standard",
-		ServiceCidr:     "10.0.0.0/16",
-		DNSServiceIP:    "10.0.0.10",
-		PodCidr:         "10.244.0.0/16",
-		OutboundType:    "loadBalancer",
+		NetworkPlugin:   np.NetworkPlugin,
+		NetworkPolicy:   np.NetworkPolicy,
+		LoadBalancerSKU: np.LoadBalancerSKU,
+		ServiceCidr:     np.ServiceCidr,
+		DNSServiceIP:    np.DNSServiceIP,
+		PodCidr:         np.PodCidr,
+		OutboundType:    np.OutboundType,
+	}
+}
+
+// toAgentPoolAdvanced renders the optional advanced pool fields onto the shared
+// embedded ARM shape used by both the inline and standalone pool responses.
+func toAgentPoolAdvanced(p *aks.AgentPool) armAgentPoolAdvanced {
+	return armAgentPoolAdvanced{
+		AvailabilityZones:  p.AvailabilityZones,
+		EnableAutoScaling:  p.EnableAutoScaling,
+		MinCount:           p.MinCount,
+		MaxCount:           p.MaxCount,
+		VnetSubnetID:       p.VnetSubnetID,
+		OSSKU:              p.OSSKU,
+		EnableNodePublicIP: p.EnableNodePublicIP,
 	}
 }
 
@@ -205,22 +255,23 @@ func toAgentPoolProfiles(pools []aks.AgentPool) []armAgentPoolProfile {
 	out := make([]armAgentPoolProfile, 0, len(pools))
 	for i := range pools {
 		out = append(out, armAgentPoolProfile{
-			Name:              pools[i].Name,
-			Count:             pools[i].Count,
-			VMSize:            pools[i].VMSize,
-			OSDiskSizeGB:      pools[i].OSDiskSizeGB,
-			OSType:            pools[i].OSType,
-			Mode:              pools[i].Mode,
-			OrchestratorVer:   pools[i].OrchestratorVer,
-			ScaleSetPriority:  pools[i].ScaleSetPriority,
-			NodeLabels:        toPtrTags(pools[i].NodeLabels),
-			NodeTaints:        pools[i].NodeTaints,
-			ProvisioningState: pools[i].ProvisioningState,
-			MaxPods:           pools[i].MaxPods,
-			OSDiskType:        pools[i].OSDiskType,
-			Type:              pools[i].Type,
-			PowerState:        &armPowerState{Code: pools[i].PowerState},
-			NodeImageVersion:  pools[i].NodeImageVersion,
+			Name:                 pools[i].Name,
+			Count:                pools[i].Count,
+			VMSize:               pools[i].VMSize,
+			OSDiskSizeGB:         pools[i].OSDiskSizeGB,
+			OSType:               pools[i].OSType,
+			Mode:                 pools[i].Mode,
+			OrchestratorVer:      pools[i].OrchestratorVer,
+			ScaleSetPriority:     pools[i].ScaleSetPriority,
+			NodeLabels:           toPtrTags(pools[i].NodeLabels),
+			NodeTaints:           pools[i].NodeTaints,
+			ProvisioningState:    pools[i].ProvisioningState,
+			MaxPods:              pools[i].MaxPods,
+			OSDiskType:           pools[i].OSDiskType,
+			Type:                 pools[i].Type,
+			PowerState:           &armPowerState{Code: pools[i].PowerState},
+			NodeImageVersion:     pools[i].NodeImageVersion,
+			armAgentPoolAdvanced: toAgentPoolAdvanced(&pools[i]),
 		})
 	}
 
@@ -235,21 +286,22 @@ func toARMAgentPool(p *aks.AgentPool, subscription string) armAgentPool {
 		Name: p.Name,
 		Type: resourceTypeAgentPool,
 		Properties: &armAgentPoolProperties{
-			Count:             p.Count,
-			VMSize:            p.VMSize,
-			OSDiskSizeGB:      p.OSDiskSizeGB,
-			OSType:            p.OSType,
-			Mode:              p.Mode,
-			OrchestratorVer:   p.OrchestratorVer,
-			ScaleSetPriority:  p.ScaleSetPriority,
-			NodeLabels:        toPtrTags(p.NodeLabels),
-			NodeTaints:        p.NodeTaints,
-			ProvisioningState: p.ProvisioningState,
-			MaxPods:           p.MaxPods,
-			OSDiskType:        p.OSDiskType,
-			Type:              p.Type,
-			PowerState:        &armPowerState{Code: p.PowerState},
-			NodeImageVersion:  p.NodeImageVersion,
+			Count:                p.Count,
+			VMSize:               p.VMSize,
+			OSDiskSizeGB:         p.OSDiskSizeGB,
+			OSType:               p.OSType,
+			Mode:                 p.Mode,
+			OrchestratorVer:      p.OrchestratorVer,
+			ScaleSetPriority:     p.ScaleSetPriority,
+			NodeLabels:           toPtrTags(p.NodeLabels),
+			NodeTaints:           p.NodeTaints,
+			ProvisioningState:    p.ProvisioningState,
+			MaxPods:              p.MaxPods,
+			OSDiskType:           p.OSDiskType,
+			Type:                 p.Type,
+			PowerState:           &armPowerState{Code: p.PowerState},
+			NodeImageVersion:     p.NodeImageVersion,
+			armAgentPoolAdvanced: toAgentPoolAdvanced(p),
 		},
 	}
 }

@@ -49,26 +49,63 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 		in.DNSPrefix = body.Properties.DNSPrefix
 		in.NodeResourceGroup = body.Properties.NodeResourceGroup
 		in.EnableRBAC = body.Properties.EnableRBAC
-
-		for i := range body.Properties.AgentPoolProfiles {
-			p := &body.Properties.AgentPoolProfiles[i]
-			in.AgentPools = append(in.AgentPools, aks.AgentPoolInput{
-				Name:             p.Name,
-				Count:            p.Count,
-				VMSize:           p.VMSize,
-				OSDiskSizeGB:     p.OSDiskSizeGB,
-				OSType:           p.OSType,
-				Mode:             p.Mode,
-				OrchestratorVer:  p.OrchestratorVer,
-				ScaleSetPriority: p.ScaleSetPriority,
-				NodeLabels:       fromPtrTags(p.NodeLabels),
-				NodeTaints:       p.NodeTaints,
-				MaxPods:          p.MaxPods,
-			})
-		}
+		in.NetworkProfile = networkProfileInput(body.Properties.NetworkProfile)
+		in.AgentPools = inlineAgentPoolInputs(body.Properties.AgentPoolProfiles)
 	}
 
 	return in
+}
+
+// networkProfileInput maps the submitted ARM networkProfile onto the driver
+// input, or nil when the caller omitted it (so the backend synthesizes the AKS
+// defaults). Only the modeled sub-keys are carried; an unmodeled sub-key the
+// caller set still round-trips through the property overlay.
+func networkProfileInput(np *armNetworkProfile) *aks.NetworkProfile {
+	if np == nil {
+		return nil
+	}
+
+	return &aks.NetworkProfile{
+		NetworkPlugin:   np.NetworkPlugin,
+		NetworkPolicy:   np.NetworkPolicy,
+		ServiceCidr:     np.ServiceCidr,
+		DNSServiceIP:    np.DNSServiceIP,
+		PodCidr:         np.PodCidr,
+		LoadBalancerSKU: np.LoadBalancerSKU,
+		OutboundType:    np.OutboundType,
+	}
+}
+
+// inlineAgentPoolInputs maps the inline agentPoolProfiles submitted in a cluster
+// PUT onto driver inputs. It shares the advanced-field mapping with the
+// standalone agentPools path so both wire paths round-trip identically.
+func inlineAgentPoolInputs(profiles []armAgentPoolProfile) []aks.AgentPoolInput {
+	if len(profiles) == 0 {
+		return nil
+	}
+
+	out := make([]aks.AgentPoolInput, 0, len(profiles))
+
+	for i := range profiles {
+		p := &profiles[i]
+		in := aks.AgentPoolInput{
+			Name:             p.Name,
+			Count:            p.Count,
+			VMSize:           p.VMSize,
+			OSDiskSizeGB:     p.OSDiskSizeGB,
+			OSType:           p.OSType,
+			Mode:             p.Mode,
+			OrchestratorVer:  p.OrchestratorVer,
+			ScaleSetPriority: p.ScaleSetPriority,
+			NodeLabels:       fromPtrTags(p.NodeLabels),
+			NodeTaints:       p.NodeTaints,
+			MaxPods:          p.MaxPods,
+		}
+		p.armAgentPoolAdvanced.applyTo(&in)
+		out = append(out, in)
+	}
+
+	return out
 }
 
 func (h *Handler) getCluster(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -164,6 +201,7 @@ func (h *Handler) createOrUpdateAgentPool(w http.ResponseWriter, r *http.Request
 		in.NodeLabels = fromPtrTags(body.Properties.NodeLabels)
 		in.NodeTaints = body.Properties.NodeTaints
 		in.MaxPods = body.Properties.MaxPods
+		body.Properties.armAgentPoolAdvanced.applyTo(&in)
 	}
 
 	pool, err := h.be.CreateOrUpdateAgentPool(r.Context(), rp.ResourceGroup, rp.ResourceName, in)
