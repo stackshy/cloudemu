@@ -148,22 +148,50 @@ type deleteTargetGroupResponse struct {
 
 // --- listener / actions ---
 
+type redirectConfigXML struct {
+	Protocol   string `xml:"Protocol,omitempty"`
+	Port       string `xml:"Port,omitempty"`
+	Host       string `xml:"Host,omitempty"`
+	Path       string `xml:"Path,omitempty"`
+	Query      string `xml:"Query,omitempty"`
+	StatusCode string `xml:"StatusCode,omitempty"`
+}
+
+type fixedResponseConfigXML struct {
+	StatusCode  string `xml:"StatusCode,omitempty"`
+	ContentType string `xml:"ContentType,omitempty"`
+	MessageBody string `xml:"MessageBody,omitempty"`
+}
+
 type actionXML struct {
-	Type           string `xml:"Type"`
-	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
-	Order          int    `xml:"Order,omitempty"`
+	Type                string                  `xml:"Type"`
+	TargetGroupArn      string                  `xml:"TargetGroupArn,omitempty"`
+	Order               int                     `xml:"Order,omitempty"`
+	RedirectConfig      *redirectConfigXML      `xml:"RedirectConfig,omitempty"`
+	FixedResponseConfig *fixedResponseConfigXML `xml:"FixedResponseConfig,omitempty"`
 }
 
 type actionsXML struct {
 	Member []actionXML `xml:"member,omitempty"`
 }
 
+type certificateXML struct {
+	CertificateArn string `xml:"CertificateArn,omitempty"`
+	IsDefault      bool   `xml:"IsDefault,omitempty"`
+}
+
+type certificatesXML struct {
+	Member []certificateXML `xml:"member,omitempty"`
+}
+
 type listenerXML struct {
-	ListenerArn     string      `xml:"ListenerArn"`
-	LoadBalancerArn string      `xml:"LoadBalancerArn,omitempty"`
-	Protocol        string      `xml:"Protocol,omitempty"`
-	Port            int         `xml:"Port,omitempty"`
-	DefaultActions  *actionsXML `xml:"DefaultActions,omitempty"`
+	ListenerArn     string           `xml:"ListenerArn"`
+	LoadBalancerArn string           `xml:"LoadBalancerArn,omitempty"`
+	Protocol        string           `xml:"Protocol,omitempty"`
+	Port            int              `xml:"Port,omitempty"`
+	SslPolicy       string           `xml:"SslPolicy,omitempty"`
+	Certificates    *certificatesXML `xml:"Certificates,omitempty"`
+	DefaultActions  *actionsXML      `xml:"DefaultActions,omitempty"`
 }
 
 type listenersXML struct {
@@ -197,9 +225,39 @@ type deleteListenerResponse struct {
 
 // --- rules ---
 
-type ruleConditionXML struct {
-	Field  string         `xml:"Field,omitempty"`
+// valuesConfigXML is the shared shape of the condition configs that carry only
+// a Values list (host-header, path-pattern, source-ip, http-request-method).
+type valuesConfigXML struct {
 	Values *stringListXML `xml:"Values,omitempty"`
+}
+
+type httpHeaderConfigXML struct {
+	HTTPHeaderName string         `xml:"HttpHeaderName,omitempty"`
+	Values         *stringListXML `xml:"Values,omitempty"`
+}
+
+type queryStringKVXML struct {
+	Key   string `xml:"Key,omitempty"`
+	Value string `xml:"Value,omitempty"`
+}
+
+type queryStringValuesXML struct {
+	Member []queryStringKVXML `xml:"member,omitempty"`
+}
+
+type queryStringConfigXML struct {
+	Values *queryStringValuesXML `xml:"Values,omitempty"`
+}
+
+type ruleConditionXML struct {
+	Field                   string                `xml:"Field,omitempty"`
+	Values                  *stringListXML        `xml:"Values,omitempty"`
+	HostHeaderConfig        *valuesConfigXML      `xml:"HostHeaderConfig,omitempty"`
+	PathPatternConfig       *valuesConfigXML      `xml:"PathPatternConfig,omitempty"`
+	HTTPHeaderConfig        *httpHeaderConfigXML  `xml:"HttpHeaderConfig,omitempty"`
+	QueryStringConfig       *queryStringConfigXML `xml:"QueryStringConfig,omitempty"`
+	SourceIPConfig          *valuesConfigXML      `xml:"SourceIpConfig,omitempty"`
+	HTTPRequestMethodConfig *valuesConfigXML      `xml:"HttpRequestMethodConfig,omitempty"`
 }
 
 type ruleConditionsXML struct {
@@ -369,24 +427,80 @@ func toTargetGroupXML(tg *lbdriver.TargetGroupInfo) targetGroupXML {
 	return out
 }
 
-// toListenerXML converts a driver ListenerInfo to its XML representation. The
-// forward-to-target-group default action is reconstructed from the stored
-// TargetGroupARN.
+// toListenerXML converts a driver ListenerInfo to its XML representation,
+// echoing every stored default action (forward, redirect, fixed-response) so a
+// listener round-trips exactly what it was created with.
 func toListenerXML(li *lbdriver.ListenerInfo) listenerXML {
-	out := listenerXML{
+	return listenerXML{
 		ListenerArn:     li.ARN,
 		LoadBalancerArn: li.LBARN,
 		Protocol:        li.Protocol,
 		Port:            li.Port,
+		SslPolicy:       li.SslPolicy,
+		Certificates:    toCertificatesXML(li.Certificates),
+		DefaultActions:  toActionsXML(li.DefaultActions),
+	}
+}
+
+// toCertificatesXML renders a listener's certificate list, or nil when empty.
+func toCertificatesXML(certs []lbdriver.Certificate) *certificatesXML {
+	if len(certs) == 0 {
+		return nil
 	}
 
-	if li.TargetGroupARN != "" {
-		out.DefaultActions = &actionsXML{Member: []actionXML{{
-			Type:           "forward",
-			TargetGroupArn: li.TargetGroupARN,
-			Order:          1,
-		}}}
+	out := &certificatesXML{Member: make([]certificateXML, 0, len(certs))}
+	for _, c := range certs {
+		out.Member = append(out.Member, certificateXML{
+			CertificateArn: c.CertificateArn,
+			IsDefault:      c.IsDefault,
+		})
 	}
 
 	return out
+}
+
+// toActionsXML renders a driver action slice as ELBv2 action members, or nil
+// when there are none. Shared by listener default actions and rule actions.
+func toActionsXML(actions []lbdriver.RuleAction) *actionsXML {
+	if len(actions) == 0 {
+		return nil
+	}
+
+	out := &actionsXML{Member: make([]actionXML, 0, len(actions))}
+	for i := range actions {
+		out.Member = append(out.Member, toActionXML(actions[i]))
+	}
+
+	return out
+}
+
+// toActionXML renders a single driver action, preserving redirect and
+// fixed-response configuration.
+func toActionXML(a lbdriver.RuleAction) actionXML {
+	x := actionXML{
+		Type:           a.Type,
+		TargetGroupArn: a.TargetGroupARN,
+		Order:          a.Order,
+	}
+
+	if rc := a.RedirectConfig; rc != nil {
+		x.RedirectConfig = &redirectConfigXML{
+			Protocol:   rc.Protocol,
+			Port:       rc.Port,
+			Host:       rc.Host,
+			Path:       rc.Path,
+			Query:      rc.Query,
+			StatusCode: rc.StatusCode,
+		}
+	}
+
+	if fr := a.FixedResponseConfig; fr != nil {
+		x.FixedResponseConfig = &fixedResponseConfigXML{
+			StatusCode:  fr.StatusCode,
+			ContentType: fr.ContentType,
+			MessageBody: fr.MessageBody,
+		}
+	}
+
+	return x
 }

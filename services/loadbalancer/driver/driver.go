@@ -110,32 +110,125 @@ type RulePriorityPair struct {
 }
 
 // ListenerConfig describes a listener to create.
+//
+// DefaultActions carries the full ELBv2 default-action list (forward, redirect,
+// fixed-response), which AWS round-trips verbatim. TargetGroupARN is the simple
+// single-forward shortcut the Azure/GCP providers use; AWS ignores it in favor
+// of DefaultActions.
 type ListenerConfig struct {
 	LBARN          string
 	Protocol       string
 	Port           int
 	TargetGroupARN string
+	DefaultActions []RuleAction
+	// SslPolicy and Certificates apply to TLS-terminating (HTTPS/TLS) listeners.
+	SslPolicy    string
+	Certificates []Certificate
 }
 
-// ListenerInfo describes a listener.
+// ListenerInfo describes a listener. See ListenerConfig for the relationship
+// between TargetGroupARN and DefaultActions.
 type ListenerInfo struct {
 	ARN            string
 	LBARN          string
 	Protocol       string
 	Port           int
 	TargetGroupARN string
+	DefaultActions []RuleAction
+	SslPolicy      string
+	Certificates   []Certificate
 }
 
-// RuleCondition describes a condition for a listener rule (e.g., path-pattern or host-header).
+// Certificate is a server certificate bound to an HTTPS/TLS listener. The
+// listener's default certificate has IsDefault set.
+type Certificate struct {
+	CertificateArn string
+	IsDefault      bool
+}
+
+// RuleCondition describes a condition for a listener rule. Field names the
+// condition type; Values carries the deprecated flat value list AWS still
+// echoes for path-pattern/host-header, while the typed *Config pointers carry
+// the full shape of each condition (host-header, path-pattern, http-header,
+// query-string, source-ip, http-request-method) so they round-trip on Describe.
 type RuleCondition struct {
-	Field  string // "path-pattern" or "host-header"
+	Field                   string
+	Values                  []string
+	HostHeaderConfig        *HostHeaderConditionConfig
+	PathPatternConfig       *PathPatternConditionConfig
+	HTTPHeaderConfig        *HTTPHeaderConditionConfig
+	QueryStringConfig       *QueryStringConditionConfig
+	SourceIPConfig          *SourceIPConditionConfig
+	HTTPRequestMethodConfig *HTTPRequestMethodConditionConfig
+}
+
+// HostHeaderConditionConfig matches the request Host header against patterns.
+type HostHeaderConditionConfig struct {
 	Values []string
 }
 
-// RuleAction describes an action for a listener rule (e.g., forward to a target group).
+// PathPatternConditionConfig matches the request path against patterns.
+type PathPatternConditionConfig struct {
+	Values []string
+}
+
+// HTTPHeaderConditionConfig matches a named HTTP header against patterns.
+type HTTPHeaderConditionConfig struct {
+	HTTPHeaderName string
+	Values         []string
+}
+
+// QueryStringConditionConfig matches query-string key/value pairs.
+type QueryStringConditionConfig struct {
+	Values []QueryStringKeyValue
+}
+
+// QueryStringKeyValue is one query-string key/value pattern.
+type QueryStringKeyValue struct {
+	Key   string
+	Value string
+}
+
+// SourceIPConditionConfig matches the source IP against CIDRs.
+type SourceIPConditionConfig struct {
+	Values []string
+}
+
+// HTTPRequestMethodConditionConfig matches the HTTP request method.
+type HTTPRequestMethodConditionConfig struct {
+	Values []string
+}
+
+// RuleAction describes an action for a listener default action or a listener
+// rule. AWS supports several action types; the emulator round-trips the two
+// terminating non-forward actions (redirect, fixed-response) in full alongside
+// forward, so the common HTTP->HTTPS redirect and custom fixed-response
+// patterns survive a create/describe cycle instead of being silently dropped.
 type RuleAction struct {
-	Type           string // "forward"
-	TargetGroupARN string
+	Type                string // "forward", "redirect", "fixed-response", "authenticate-cognito", "authenticate-oidc"
+	TargetGroupARN      string
+	Order               int
+	RedirectConfig      *RedirectActionConfig
+	FixedResponseConfig *FixedResponseActionConfig
+}
+
+// RedirectActionConfig is the configuration of a "redirect" action. AWS requires
+// StatusCode (HTTP_301 or HTTP_302); the remaining fields default to the
+// "#{...}" pass-through tokens when unset.
+type RedirectActionConfig struct {
+	Protocol   string
+	Port       string
+	Host       string
+	Path       string
+	Query      string
+	StatusCode string
+}
+
+// FixedResponseActionConfig is the configuration of a "fixed-response" action.
+type FixedResponseActionConfig struct {
+	StatusCode  string
+	ContentType string
+	MessageBody string
 }
 
 // RuleConfig describes a listener rule to create.
@@ -156,12 +249,15 @@ type RuleInfo struct {
 	IsDefault   bool
 }
 
-// ModifyListenerInput describes modifications to apply to a listener.
+// ModifyListenerInput describes modifications to apply to a listener. A
+// zero/empty field means "leave unchanged".
 type ModifyListenerInput struct {
 	ListenerARN    string
 	Port           int
 	Protocol       string
 	DefaultActions []RuleAction
+	SslPolicy      string
+	Certificates   []Certificate
 }
 
 // LBAttributes describes configurable attributes of a load balancer.

@@ -29,6 +29,8 @@ func (h *Handler) modifyListener(w http.ResponseWriter, r *http.Request) {
 		Port:           formInt(form.Get("Port")),
 		Protocol:       form.Get("Protocol"),
 		DefaultActions: parseActions(form, "DefaultActions.member"),
+		SslPolicy:      form.Get("SslPolicy"),
+		Certificates:   parseCertificates(form, "Certificates.member"),
 	}
 
 	if err := h.lb.ModifyListener(r.Context(), input); err != nil {

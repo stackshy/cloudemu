@@ -242,7 +242,9 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 		LBARN:          form.Get("LoadBalancerArn"),
 		Protocol:       form.Get("Protocol"),
 		Port:           formInt(form.Get("Port")),
-		TargetGroupARN: firstForwardTargetGroup(form, "DefaultActions.member"),
+		DefaultActions: parseActions(form, "DefaultActions.member"),
+		SslPolicy:      form.Get("SslPolicy"),
+		Certificates:   parseCertificates(form, "Certificates.member"),
 	}
 
 	li, err := h.lb.CreateListener(r.Context(), cfg)
@@ -473,22 +475,9 @@ func parseTags(form url.Values) map[string]string {
 	return out
 }
 
-// firstForwardTargetGroup returns the TargetGroupArn of the first forward
-// action in the given action-list prefix, checking both the flat form
-// (member.N.TargetGroupArn) and the ForwardConfig shape.
-func firstForwardTargetGroup(form url.Values, prefix string) string {
-	for _, a := range parseActions(form, prefix) {
-		if a.TargetGroupARN != "" {
-			return a.TargetGroupARN
-		}
-	}
-
-	return ""
-}
-
 // parseActions parses an Actions/DefaultActions member list into driver
-// RuleActions. Both the flat TargetGroupArn field and the
-// ForwardConfig.TargetGroups.member.N.TargetGroupArn nesting are accepted.
+// RuleActions, preserving the full shape of forward, redirect and
+// fixed-response actions so they round-trip on Describe.
 func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
@@ -496,25 +485,91 @@ func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 	}
 
 	out := make([]lbdriver.RuleAction, 0, len(indices))
-
 	for _, n := range indices {
-		base := prefix + "." + strconv.Itoa(n)
-
-		tgARN := form.Get(base + ".TargetGroupArn")
-		if tgARN == "" {
-			tgARN = form.Get(base + ".ForwardConfig.TargetGroups.member.1.TargetGroupArn")
-		}
-
-		out = append(out, lbdriver.RuleAction{
-			Type:           typeOr(form.Get(base+".Type"), "forward"),
-			TargetGroupARN: tgARN,
-		})
+		out = append(out, parseAction(form, prefix+"."+strconv.Itoa(n)))
 	}
 
 	return out
 }
 
-// parseConditions parses a Conditions member list into driver RuleConditions.
+// parseAction parses a single action at the given form prefix. Both the flat
+// TargetGroupArn field and the ForwardConfig.TargetGroups.member.N nesting are
+// accepted for forward actions.
+func parseAction(form url.Values, base string) lbdriver.RuleAction {
+	tgARN := form.Get(base + ".TargetGroupArn")
+	if tgARN == "" {
+		tgARN = form.Get(base + ".ForwardConfig.TargetGroups.member.1.TargetGroupArn")
+	}
+
+	return lbdriver.RuleAction{
+		Type:                typeOr(form.Get(base+".Type"), "forward"),
+		TargetGroupARN:      tgARN,
+		Order:               formInt(form.Get(base + ".Order")),
+		RedirectConfig:      parseRedirectConfig(form, base+".RedirectConfig"),
+		FixedResponseConfig: parseFixedResponseConfig(form, base+".FixedResponseConfig"),
+	}
+}
+
+// parseRedirectConfig parses a RedirectConfig sub-structure, returning nil when
+// none of its fields are present.
+func parseRedirectConfig(form url.Values, base string) *lbdriver.RedirectActionConfig {
+	rc := lbdriver.RedirectActionConfig{
+		Protocol:   form.Get(base + ".Protocol"),
+		Port:       form.Get(base + ".Port"),
+		Host:       form.Get(base + ".Host"),
+		Path:       form.Get(base + ".Path"),
+		Query:      form.Get(base + ".Query"),
+		StatusCode: form.Get(base + ".StatusCode"),
+	}
+
+	if rc == (lbdriver.RedirectActionConfig{}) {
+		return nil
+	}
+
+	return &rc
+}
+
+// parseFixedResponseConfig parses a FixedResponseConfig sub-structure, returning
+// nil when none of its fields are present.
+func parseFixedResponseConfig(form url.Values, base string) *lbdriver.FixedResponseActionConfig {
+	fr := lbdriver.FixedResponseActionConfig{
+		StatusCode:  form.Get(base + ".StatusCode"),
+		ContentType: form.Get(base + ".ContentType"),
+		MessageBody: form.Get(base + ".MessageBody"),
+	}
+
+	if fr == (lbdriver.FixedResponseActionConfig{}) {
+		return nil
+	}
+
+	return &fr
+}
+
+// parseCertificates parses a listener Certificates member list. The listener's
+// create certificate is its default, so the first entry is marked IsDefault —
+// matching what real ELBv2 reports on DescribeListeners.
+func parseCertificates(form url.Values, prefix string) []lbdriver.Certificate {
+	indices := awsquery.CollectIndices(form, prefix)
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]lbdriver.Certificate, 0, len(indices))
+
+	for i, n := range indices {
+		arn := form.Get(prefix + "." + strconv.Itoa(n) + ".CertificateArn")
+		if arn == "" {
+			continue
+		}
+
+		out = append(out, lbdriver.Certificate{CertificateArn: arn, IsDefault: i == 0})
+	}
+
+	return out
+}
+
+// parseConditions parses a Conditions member list into driver RuleConditions,
+// preserving each condition's typed config so it round-trips on DescribeRules.
 func parseConditions(form url.Values, prefix string) []lbdriver.RuleCondition {
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
@@ -522,26 +577,85 @@ func parseConditions(form url.Values, prefix string) []lbdriver.RuleCondition {
 	}
 
 	out := make([]lbdriver.RuleCondition, 0, len(indices))
-
 	for _, n := range indices {
-		base := prefix + "." + strconv.Itoa(n)
-
-		field := form.Get(base + ".Field")
-
-		values := awsquery.ListStrings(form, base+".Values.member")
-		if len(values) == 0 {
-			// Some SDKs nest values under the typed config
-			// (PathPatternConfig / HostHeaderConfig).
-			values = append(values,
-				awsquery.ListStrings(form, base+".PathPatternConfig.Values.member")...)
-			values = append(values,
-				awsquery.ListStrings(form, base+".HostHeaderConfig.Values.member")...)
-		}
-
-		out = append(out, lbdriver.RuleCondition{Field: field, Values: values})
+		out = append(out, parseCondition(form, prefix+"."+strconv.Itoa(n)))
 	}
 
 	return out
+}
+
+// parseCondition parses a single rule condition at the given form prefix.
+func parseCondition(form url.Values, base string) lbdriver.RuleCondition {
+	c := lbdriver.RuleCondition{
+		Field:  form.Get(base + ".Field"),
+		Values: awsquery.ListStrings(form, base+".Values.member"),
+	}
+
+	if v := awsquery.ListStrings(form, base+".HostHeaderConfig.Values.member"); len(v) > 0 {
+		c.HostHeaderConfig = &lbdriver.HostHeaderConditionConfig{Values: v}
+	}
+
+	if v := awsquery.ListStrings(form, base+".PathPatternConfig.Values.member"); len(v) > 0 {
+		c.PathPatternConfig = &lbdriver.PathPatternConditionConfig{Values: v}
+	}
+
+	c.HTTPHeaderConfig = parseHTTPHeaderConfig(form, base+".HttpHeaderConfig")
+	c.QueryStringConfig = parseQueryStringConfig(form, base+".QueryStringConfig")
+
+	if v := awsquery.ListStrings(form, base+".SourceIpConfig.Values.member"); len(v) > 0 {
+		c.SourceIPConfig = &lbdriver.SourceIPConditionConfig{Values: v}
+	}
+
+	if v := awsquery.ListStrings(form, base+".HttpRequestMethodConfig.Values.member"); len(v) > 0 {
+		c.HTTPRequestMethodConfig = &lbdriver.HTTPRequestMethodConditionConfig{Values: v}
+	}
+
+	// AWS still echoes the deprecated flat Values for path-pattern/host-header,
+	// so backfill it from the typed config when the caller only sent the config.
+	if len(c.Values) == 0 {
+		switch {
+		case c.PathPatternConfig != nil:
+			c.Values = c.PathPatternConfig.Values
+		case c.HostHeaderConfig != nil:
+			c.Values = c.HostHeaderConfig.Values
+		}
+	}
+
+	return c
+}
+
+// parseHTTPHeaderConfig parses an HttpHeaderConfig sub-structure, returning nil
+// when absent.
+func parseHTTPHeaderConfig(form url.Values, base string) *lbdriver.HTTPHeaderConditionConfig {
+	name := form.Get(base + ".HttpHeaderName")
+	values := awsquery.ListStrings(form, base+".Values.member")
+
+	if name == "" && len(values) == 0 {
+		return nil
+	}
+
+	return &lbdriver.HTTPHeaderConditionConfig{HTTPHeaderName: name, Values: values}
+}
+
+// parseQueryStringConfig parses a QueryStringConfig sub-structure (a list of
+// key/value pairs), returning nil when absent.
+func parseQueryStringConfig(form url.Values, base string) *lbdriver.QueryStringConditionConfig {
+	indices := awsquery.CollectIndices(form, base+".Values.member")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	pairs := make([]lbdriver.QueryStringKeyValue, 0, len(indices))
+
+	for _, n := range indices {
+		p := base + ".Values.member." + strconv.Itoa(n)
+		pairs = append(pairs, lbdriver.QueryStringKeyValue{
+			Key:   form.Get(p + ".Key"),
+			Value: form.Get(p + ".Value"),
+		})
+	}
+
+	return &lbdriver.QueryStringConditionConfig{Values: pairs}
 }
 
 // parseTargets parses a Targets member list into driver Targets.
@@ -634,26 +748,64 @@ func toRuleXML(rule *lbdriver.RuleInfo) ruleXML {
 
 	if len(rule.Conditions) > 0 {
 		conds := &ruleConditionsXML{}
-		for _, c := range rule.Conditions {
-			conds.Member = append(conds.Member, ruleConditionXML{
-				Field:  c.Field,
-				Values: &stringListXML{Member: c.Values},
-			})
+		for i := range rule.Conditions {
+			conds.Member = append(conds.Member, toConditionXML(rule.Conditions[i]))
 		}
 
 		out.Conditions = conds
 	}
 
-	if len(rule.Actions) > 0 {
-		acts := &actionsXML{}
-		for _, a := range rule.Actions {
-			acts.Member = append(acts.Member, actionXML{
-				Type:           a.Type,
-				TargetGroupArn: a.TargetGroupARN,
-			})
-		}
+	out.Actions = toActionsXML(rule.Actions)
 
-		out.Actions = acts
+	return out
+}
+
+// toConditionXML renders a driver rule condition, echoing both the deprecated
+// flat Values and whichever typed config the condition carries.
+//
+//nolint:gocritic // hugeParam: value receiver keeps the call site simple; copy cost is negligible.
+func toConditionXML(c lbdriver.RuleCondition) ruleConditionXML {
+	x := ruleConditionXML{Field: c.Field}
+
+	if len(c.Values) > 0 {
+		x.Values = &stringListXML{Member: c.Values}
+	}
+
+	if c.HostHeaderConfig != nil {
+		x.HostHeaderConfig = &valuesConfigXML{Values: &stringListXML{Member: c.HostHeaderConfig.Values}}
+	}
+
+	if c.PathPatternConfig != nil {
+		x.PathPatternConfig = &valuesConfigXML{Values: &stringListXML{Member: c.PathPatternConfig.Values}}
+	}
+
+	if c.SourceIPConfig != nil {
+		x.SourceIPConfig = &valuesConfigXML{Values: &stringListXML{Member: c.SourceIPConfig.Values}}
+	}
+
+	if c.HTTPRequestMethodConfig != nil {
+		x.HTTPRequestMethodConfig = &valuesConfigXML{Values: &stringListXML{Member: c.HTTPRequestMethodConfig.Values}}
+	}
+
+	if hc := c.HTTPHeaderConfig; hc != nil {
+		x.HTTPHeaderConfig = &httpHeaderConfigXML{
+			HTTPHeaderName: hc.HTTPHeaderName,
+			Values:         &stringListXML{Member: hc.Values},
+		}
+	}
+
+	if qc := c.QueryStringConfig; qc != nil {
+		x.QueryStringConfig = toQueryStringConfigXML(qc)
+	}
+
+	return x
+}
+
+// toQueryStringConfigXML renders a query-string condition's key/value pairs.
+func toQueryStringConfigXML(qc *lbdriver.QueryStringConditionConfig) *queryStringConfigXML {
+	out := &queryStringConfigXML{Values: &queryStringValuesXML{}}
+	for _, kv := range qc.Values {
+		out.Values.Member = append(out.Values.Member, queryStringKVXML{Key: kv.Key, Value: kv.Value})
 	}
 
 	return out

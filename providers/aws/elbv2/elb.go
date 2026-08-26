@@ -59,6 +59,11 @@ type Mock struct {
 
 	tgAttrsMu sync.RWMutex
 	tgAttrs   map[string]map[string]string // tgARN -> attribute overrides
+
+	// subnetResolver derives a load balancer's VpcId from its subnets. Real
+	// ELBv2 infers VpcId rather than taking it as input; without the resolver
+	// wired in the field is simply left empty.
+	subnetResolver SubnetResolver
 }
 
 // New creates a new ELB mock with the given configuration options.
@@ -78,7 +83,7 @@ func New(opts *config.Options) *Mock {
 // CreateLoadBalancer creates a new load balancer.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
+func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "load balancer name is required")
 	}
@@ -124,6 +129,7 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 		SecurityGroups:        sgs,
 		IPAddressType:         ipType,
 		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
+		VPCID:                 m.resolveVPCID(ctx, cfg.Subnets),
 		CreatedTime:           m.opts.Clock.Now().UTC(),
 		Tags:                  tags,
 	}
@@ -169,16 +175,53 @@ func canonicalHostedZoneID(region string) string {
 // balancer does not exist or has already been deleted, the call succeeds." So a
 // second delete (or a delete of an ARN that never existed) returns no error,
 // which keeps idempotent teardown flows (terraform destroy retries) working.
+//
+// A load balancer with deletion_protection.enabled=true cannot be deleted: real
+// ELBv2 rejects the call with OperationNotPermitted. This is the exact scenario
+// deletion protection exists to prevent, so honoring it stops an errant delete
+// (or a terraform destroy) from wiping a load balancer the user protected.
 func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
-	m.lbs.Delete(arn)
+	// Only an existing load balancer can be protected; a missing ARN stays
+	// idempotent (no error), matching the API reference.
+	if _, ok := m.lbs.Get(arn); ok {
+		m.attrsMu.RLock()
+		protected := m.attrs[arn].DeletionProtection
+		m.attrsMu.RUnlock()
 
-	// Delete all listeners associated with this load balancer.
-	all := m.listeners.All()
-	for key, li := range all {
-		if li.LBARN == arn {
-			m.listeners.Delete(key)
+		if protected {
+			return errors.Newf(errors.FailedPrecondition,
+				"load balancer %q cannot be deleted because deletion protection is enabled", arn)
 		}
 	}
+
+	m.lbs.Delete(arn)
+
+	// Delete listeners for this load balancer and, with them, the rules under
+	// those listeners. Leaving the rules behind would leak them for the life of
+	// the process (their parent listener is gone, so nothing ever reaches them).
+	// Range over keys and index the map for field access so the large
+	// ListenerInfo value is never copied per iteration.
+	listeners := m.listeners.All()
+	for key := range listeners {
+		if listeners[key].LBARN != arn {
+			continue
+		}
+
+		listenerARN := listeners[key].ARN
+		for rkey, r := range m.rules.All() {
+			if r.ListenerARN == listenerARN {
+				m.rules.Delete(rkey)
+			}
+		}
+
+		m.listeners.Delete(key)
+	}
+
+	// Drop the stored load-balancer attributes so a recreated ARN does not
+	// inherit a prior deletion-protection flag.
+	m.attrsMu.Lock()
+	delete(m.attrs, arn)
+	m.attrsMu.Unlock()
 
 	return nil
 }
@@ -357,10 +400,15 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 // target group is still referenced by a listener default action or a rule
 // action, so a delete cannot silently orphan a forward target.
 func (m *Mock) checkTargetGroupNotInUse(arn string) error {
-	for _, li := range m.listeners.All() {
-		if li.TargetGroupARN == arn {
-			return errors.Newf(errors.FailedPrecondition,
-				"target group %q is currently in use by a listener", arn)
+	// Range over keys and index the map so the large ListenerInfo value is not
+	// copied per iteration.
+	listeners := m.listeners.All()
+	for key := range listeners {
+		for _, a := range listeners[key].DefaultActions {
+			if a.TargetGroupARN == arn {
+				return errors.Newf(errors.FailedPrecondition,
+					"target group %q is currently in use by a listener", arn)
+			}
 		}
 	}
 
@@ -434,16 +482,18 @@ func filterToSlice[T any](store *memstore.Store[T], pred func(string, T) bool) [
 }
 
 // CreateListener creates a new listener on a load balancer.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
 	lb, ok := m.lbs.Get(cfg.LBARN)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
-	// A default action that forwards to a target group must reference one that
-	// exists; real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
-	if cfg.TargetGroupARN != "" && !m.tgs.Has(cfg.TargetGroupARN) {
-		return nil, errors.Newf(errors.NotFound, "target group %q not found", cfg.TargetGroupARN)
+	// Any forward default action must reference a target group that exists;
+	// real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
+	if err := m.validateForwardActions(cfg.DefaultActions); err != nil {
+		return nil, err
 	}
 
 	// A listener ARN embeds the load balancer's resource path plus a unique
@@ -458,7 +508,9 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		LBARN:          cfg.LBARN,
 		Protocol:       cfg.Protocol,
 		Port:           cfg.Port,
-		TargetGroupARN: cfg.TargetGroupARN,
+		DefaultActions: cloneActions(cfg.DefaultActions),
+		SslPolicy:      cfg.SslPolicy,
+		Certificates:   cloneCertificates(cfg.Certificates),
 	}
 
 	m.listeners.Set(arn, li)
@@ -466,6 +518,37 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 	result := li
 
 	return &result, nil
+}
+
+// cloneCertificates returns an independent copy of a certificate slice.
+func cloneCertificates(certs []driver.Certificate) []driver.Certificate {
+	if len(certs) == 0 {
+		return nil
+	}
+
+	return append([]driver.Certificate(nil), certs...)
+}
+
+// validateForwardActions reports TargetGroupNotFound when any forward action
+// references a target group that does not exist.
+func (m *Mock) validateForwardActions(actions []driver.RuleAction) error {
+	for _, a := range actions {
+		if a.TargetGroupARN != "" && !m.tgs.Has(a.TargetGroupARN) {
+			return errors.Newf(errors.NotFound, "target group %q not found", a.TargetGroupARN)
+		}
+	}
+
+	return nil
+}
+
+// cloneActions returns an independent copy of an action slice so stored state
+// never aliases the caller's input.
+func cloneActions(actions []driver.RuleAction) []driver.RuleAction {
+	if len(actions) == 0 {
+		return nil
+	}
+
+	return append([]driver.RuleAction(nil), actions...)
 }
 
 // DeleteListener deletes a listener by ARN.
@@ -586,10 +669,16 @@ func (m *Mock) DescribeRules(_ context.Context, listenerARN string) ([]driver.Ru
 }
 
 // ModifyListener modifies an existing listener's port, protocol, or default actions.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInput) error {
 	li, ok := m.listeners.Get(input.ListenerARN)
 	if !ok {
 		return errors.Newf(errors.NotFound, "listener %q not found", input.ListenerARN)
+	}
+
+	if err := m.validateForwardActions(input.DefaultActions); err != nil {
+		return err
 	}
 
 	if input.Port != 0 {
@@ -601,7 +690,15 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 	}
 
 	if len(input.DefaultActions) > 0 {
-		li.TargetGroupARN = input.DefaultActions[0].TargetGroupARN
+		li.DefaultActions = cloneActions(input.DefaultActions)
+	}
+
+	if input.SslPolicy != "" {
+		li.SslPolicy = input.SslPolicy
+	}
+
+	if len(input.Certificates) > 0 {
+		li.Certificates = cloneCertificates(input.Certificates)
 	}
 
 	m.listeners.Set(input.ListenerARN, li)
@@ -695,10 +792,16 @@ func (m *Mock) ModifyRule(_ context.Context, input driver.ModifyRuleInput) (*dri
 
 // SetRulePriorities reassigns the priorities of the named rules and returns the
 // updated rules.
+//
+// A listener can't have two rules with the same priority, and the reorder path
+// must enforce that just as the create path does: real ELBv2 rejects a target
+// priority already held by another rule on the same listener with PriorityInUse.
+// Every rule is resolved and validated before any write, so a conflict leaves
+// the existing priorities untouched rather than half-applied.
 func (m *Mock) SetRulePriorities(
 	_ context.Context, pairs []driver.RulePriorityPair,
 ) ([]driver.RuleInfo, error) {
-	out := make([]driver.RuleInfo, 0, len(pairs))
+	moving := make(map[string]driver.RuleInfo, len(pairs))
 
 	for _, p := range pairs {
 		rule, ok := m.rules.Get(p.RuleARN)
@@ -706,12 +809,73 @@ func (m *Mock) SetRulePriorities(
 			return nil, errors.Newf(errors.NotFound, "rule %q not found", p.RuleARN)
 		}
 
+		moving[p.RuleARN] = rule
+	}
+
+	if err := m.checkPriorityConflicts(pairs, moving); err != nil {
+		return nil, err
+	}
+
+	out := make([]driver.RuleInfo, 0, len(pairs))
+
+	for _, p := range pairs {
+		rule := moving[p.RuleARN]
 		rule.Priority = p.Priority
 		m.rules.Set(p.RuleARN, rule)
 		out = append(out, rule)
 	}
 
 	return out, nil
+}
+
+// prioritySlot identifies a priority within one listener.
+type prioritySlot struct {
+	listener string
+	priority int
+}
+
+// checkPriorityConflicts reports FailedPrecondition (mapped to PriorityInUse)
+// when a requested priority collides with another rule on the same listener —
+// either a rule outside the batch or a second rule inside it.
+func (m *Mock) checkPriorityConflicts(
+	pairs []driver.RulePriorityPair, moving map[string]driver.RuleInfo,
+) error {
+	claimed := make(map[prioritySlot]struct{}, len(pairs))
+
+	for _, p := range pairs {
+		rule := moving[p.RuleARN]
+		slot := prioritySlot{listener: rule.ListenerARN, priority: p.Priority}
+
+		if _, dup := claimed[slot]; dup {
+			return errors.Newf(errors.FailedPrecondition, "priority %d is currently in use", p.Priority)
+		}
+
+		claimed[slot] = struct{}{}
+
+		if m.priorityHeldByOther(slot, moving) {
+			return errors.Newf(errors.FailedPrecondition, "priority %d is currently in use", p.Priority)
+		}
+	}
+
+	return nil
+}
+
+// priorityHeldByOther reports whether a rule not in the batch already holds the
+// given priority on the same listener. Default rules (priority 0) are ignored.
+func (m *Mock) priorityHeldByOther(slot prioritySlot, moving map[string]driver.RuleInfo) bool {
+	for _, other := range m.rules.All() {
+		if other.IsDefault || other.ListenerARN != slot.listener || other.Priority != slot.priority {
+			continue
+		}
+
+		if _, isMoving := moving[other.ARN]; isMoving {
+			continue
+		}
+
+		return true
+	}
+
+	return false
 }
 
 // SetSecurityGroups replaces the security groups attached to a load balancer.
