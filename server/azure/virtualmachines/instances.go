@@ -570,7 +570,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	out := make([]vmResponse, 0, len(instances))
 
 	for i := range instances {
-		if rp.ResourceGroup != "" && instances[i].ResourceGroup != rp.ResourceGroup {
+		if rp.ResourceGroup != "" && !strings.EqualFold(instances[i].ResourceGroup, rp.ResourceGroup) {
 			continue
 		}
 
@@ -989,11 +989,13 @@ func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, nam
 	}
 
 	for i := range instances {
-		if tagOr(instances[i].Tags, armNameTag, "") != name {
+		// ARM resource names and resource-group names are case-insensitive, so a
+		// GET/LIST with differently-cased segments must still resolve the VM.
+		if !strings.EqualFold(tagOr(instances[i].Tags, armNameTag, ""), name) {
 			continue
 		}
 
-		if resourceGroup != "" && instances[i].ResourceGroup != resourceGroup {
+		if resourceGroup != "" && !strings.EqualFold(instances[i].ResourceGroup, resourceGroup) {
 			continue
 		}
 
