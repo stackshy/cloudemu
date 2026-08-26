@@ -17,6 +17,8 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	reqVersion := stringFrom(body.Properties, func(p *armServerProps) string { return p.Version })
+
 	cfg := rdsdriver.ClusterConfig{
 		ID:             rp.ResourceName,
 		Engine:         "SQLServer",
@@ -25,8 +27,13 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		MasterUserPassword: stringFrom(body.Properties, func(p *armServerProps) string {
 			return p.AdministratorLoginPassword
 		}),
-		EngineVersion: stringFrom(body.Properties, func(p *armServerProps) string { return p.Version }),
+		EngineVersion: reqVersion,
 		Tags:          body.Tags,
+	}
+
+	// Azure SQL synthesizes version "12.0" when a server create omits it.
+	if cfg.EngineVersion == "" {
+		cfg.EngineVersion = defaultServerVersion
 	}
 
 	cluster, err := h.db.CreateCluster(r.Context(), cfg)
@@ -37,9 +44,11 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		}
 
 		// Upsert: PUT on an existing server applies the body (admin/version/tags)
-		// rather than returning the stale record.
+		// rather than returning the stale record. Use the raw request version so
+		// a PUT that omits version preserves the existing one (ModifyCluster
+		// guards empty), not the create-time "12.0" default.
 		cluster, err = h.db.ModifyCluster(r.Context(), rp.ResourceName, rdsdriver.ModifyInstanceInput{
-			EngineVersion: cfg.EngineVersion,
+			EngineVersion: reqVersion,
 			Tags:          body.Tags,
 		})
 		if err != nil {

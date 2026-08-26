@@ -274,6 +274,7 @@ func (m *Mock) CreateElasticPool(_ context.Context, cfg rdsdriver.ElasticPoolCon
 		Location:     location,
 		SKUName:      cfg.SKUName,
 		SKUTier:      cfg.SKUTier,
+		SKUCapacity:  cfg.SKUCapacity,
 		MaxSizeBytes: cfg.MaxSizeBytes,
 		MinCapacity:  cfg.MinCapacity,
 		MaxCapacity:  cfg.MaxCapacity,
@@ -425,6 +426,10 @@ func (m *Mock) UpdateElasticPool(_ context.Context, cfg rdsdriver.ElasticPoolCon
 
 	if cfg.SKUTier != "" {
 		pool.SKUTier = cfg.SKUTier
+	}
+
+	if cfg.SKUCapacity != 0 {
+		pool.SKUCapacity = cfg.SKUCapacity
 	}
 
 	if cfg.MaxSizeBytes != 0 {
