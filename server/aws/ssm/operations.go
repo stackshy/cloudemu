@@ -14,6 +14,14 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var tags map[string]string
+	if len(req.Tags) > 0 {
+		tags = make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			tags[t.Key] = t.Value
+		}
+	}
+
 	version, tier, err := h.store.PutParameter(r.Context(), ssmdriver.PutConfig{
 		Name:        req.Name,
 		Value:       req.Value,
@@ -22,6 +30,7 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		Overwrite:   req.Overwrite,
 		Tier:        req.Tier,
 		DataType:    req.DataType,
+		Tags:        tags,
 	})
 	if err != nil {
 		// Changing a parameter's type on an Overwrite update is rejected by
@@ -29,6 +38,13 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		// generic ValidationException.
 		if errors.Is(err, ssmdriver.ErrTypeMismatch) {
 			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyTypeMismatchException", err.Error())
+			return
+		}
+
+		// An unrecognized Type is UnsupportedParameterType, not the generic
+		// ValidationException that InvalidArgument maps to.
+		if errors.Is(err, ssmdriver.ErrUnsupportedType) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedParameterType", err.Error())
 			return
 		}
 
@@ -87,11 +103,24 @@ func (h *Handler) getParametersByPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	found, err := h.store.GetParametersByPath(r.Context(), ssmdriver.GetByPathInput{
-		Path:           req.Path,
-		Recursive:      req.Recursive,
-		WithDecryption: req.WithDecryption,
+		Path:             req.Path,
+		Recursive:        req.Recursive,
+		WithDecryption:   req.WithDecryption,
+		ParameterFilters: toDriverFilters(req.ParameterFilters),
 	})
 	if err != nil {
+		// GetParametersByPath rejects an unsupported filter key/option with the
+		// distinct InvalidFilterKey/InvalidFilterOption, not ValidationException.
+		if errors.Is(err, ssmdriver.ErrInvalidFilterKey) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterKey", err.Error())
+			return
+		}
+
+		if errors.Is(err, ssmdriver.ErrInvalidFilterOption) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterOption", err.Error())
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

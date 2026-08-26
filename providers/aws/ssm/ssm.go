@@ -86,13 +86,25 @@ func ensureLeadingSlash(name string) string {
 	return "/" + name
 }
 
-func defaultType(t string) string {
+// validType reports whether t is one of the parameter types AWS accepts.
+func validType(t string) bool {
 	switch t {
 	case driver.TypeString, driver.TypeStringList, driver.TypeSecureString:
-		return t
+		return true
 	default:
-		return driver.TypeString
+		return false
 	}
+}
+
+// defaultType returns t when it is a recognized type, and String otherwise —
+// used only for an omitted (empty) type, which defaults to String. An
+// explicitly invalid type is rejected earlier by PutParameter.
+func defaultType(t string) string {
+	if validType(t) {
+		return t
+	}
+
+	return driver.TypeString
 }
 
 // resolveOverwriteType decides the type of a new version appended to an existing
@@ -119,9 +131,23 @@ func resolveOverwriteType(existing *paramData, requested string) (string, error)
 
 // PutParameter creates a new parameter or, when Overwrite is set, appends a new
 // version to an existing one.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	if cfg.Name == "" {
 		return 0, "", errors.New(errors.InvalidArgument, "parameter name is required")
+	}
+
+	if cfg.Overwrite && len(cfg.Tags) > 0 {
+		return 0, "", driver.ErrTagsWithOverwrite
+	}
+
+	// An explicitly set Type must be one AWS recognizes; an unrecognized value
+	// is rejected (UnsupportedParameterType) rather than coerced to String. An
+	// omitted Type is allowed here: it defaults to String on create and retains
+	// the existing type on Overwrite.
+	if cfg.Type != "" && !validType(cfg.Type) {
+		return 0, "", driver.ErrUnsupportedType
 	}
 
 	tier := cfg.Tier
@@ -137,34 +163,50 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	now := m.now()
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		existing.mu.Lock()
-		defer existing.mu.Unlock()
-
-		if !cfg.Overwrite {
-			return 0, "", errors.Newf(errors.AlreadyExists,
-				"parameter %q already exists; set Overwrite to update it", cfg.Name)
-		}
-
-		newType, err := resolveOverwriteType(existing, cfg.Type)
-		if err != nil {
-			return 0, "", err
-		}
-
-		next := existing.latest + 1
-		existing.versions = append(existing.versions, &version{
-			value:        cfg.Value,
-			typ:          newType,
-			dataType:     dataType,
-			version:      next,
-			lastModified: now,
-		})
-		existing.latest = next
-		existing.description = cfg.Description
-		existing.tier = tier
-
-		return next, tier, nil
+		return overwriteParameter(existing, &cfg, tier, dataType, now)
 	}
 
+	return m.createParameter(ctx, &cfg, tier, dataType, now)
+}
+
+// overwriteParameter appends a new version to an existing parameter (the
+// Overwrite path). Overwrite without the flag is rejected, and changing the
+// type is rejected via resolveOverwriteType.
+func overwriteParameter(
+	existing *paramData, cfg *driver.PutConfig, tier, dataType, now string,
+) (ver int64, assignedTier string, err error) {
+	existing.mu.Lock()
+	defer existing.mu.Unlock()
+
+	if !cfg.Overwrite {
+		return 0, "", errors.Newf(errors.AlreadyExists,
+			"parameter %q already exists; set Overwrite to update it", cfg.Name)
+	}
+
+	newType, err := resolveOverwriteType(existing, cfg.Type)
+	if err != nil {
+		return 0, "", err
+	}
+
+	next := existing.latest + 1
+	existing.versions = append(existing.versions, &version{
+		value:        cfg.Value,
+		typ:          newType,
+		dataType:     dataType,
+		version:      next,
+		lastModified: now,
+	})
+	existing.latest = next
+	existing.description = cfg.Description
+	existing.tier = tier
+
+	return next, tier, nil
+}
+
+// createParameter stores a brand-new parameter (version 1) with its tags.
+func (m *Mock) createParameter(
+	ctx context.Context, cfg *driver.PutConfig, tier, dataType, now string,
+) (ver int64, assignedTier string, err error) {
 	pd := &paramData{
 		name:        cfg.Name,
 		description: cfg.Description,
@@ -177,6 +219,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 			version:      1,
 			lastModified: now,
 		}},
+		tags: copyTags(cfg.Tags),
 	}
 
 	// SetIfAbsent guards against a concurrent create racing between Get and Set.
@@ -189,7 +232,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 
 		cfg.Overwrite = true
 
-		return m.PutParameter(ctx, cfg)
+		return m.PutParameter(ctx, *cfg)
 	}
 
 	return 1, tier, nil
@@ -344,6 +387,10 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 		return nil, errors.New(errors.InvalidArgument, "path must begin with '/'")
 	}
 
+	if err := validateByPathFilters(in.ParameterFilters); err != nil {
+		return nil, err
+	}
+
 	prefix := path
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -364,7 +411,7 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 		}
 
 		pd.mu.RLock()
-		if v, ok := pd.versionByNumber(pd.latest); ok {
+		if v, ok := pd.versionByNumber(pd.latest); ok && matchesByPathFilters(v, in.ParameterFilters) {
 			out = append(out, m.toParameter(pd, v, ""))
 		}
 		pd.mu.RUnlock()

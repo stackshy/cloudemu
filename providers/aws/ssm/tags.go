@@ -46,6 +46,20 @@ func (m *Mock) UntagParameter(_ context.Context, name string, keys []string) err
 	return nil
 }
 
+// copyTags returns a defensive copy of the given tag map, or nil when empty.
+func copyTags(tags map[string]string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		out[k] = v
+	}
+
+	return out
+}
+
 // ListParameterTags returns a parameter's tags (SSM ListTagsForResource).
 func (m *Mock) ListParameterTags(_ context.Context, name string) (map[string]string, error) {
 	pd, ok := m.params.Get(name)

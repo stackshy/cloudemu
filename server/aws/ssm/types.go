@@ -35,13 +35,14 @@ type parameterMetadataJSON struct {
 // --- request envelopes ---
 
 type putParameterRequest struct {
-	Name        string `json:"Name"`
-	Value       string `json:"Value"`
-	Type        string `json:"Type"`
-	Description string `json:"Description"`
-	Overwrite   bool   `json:"Overwrite"`
-	Tier        string `json:"Tier"`
-	DataType    string `json:"DataType"`
+	Name        string   `json:"Name"`
+	Value       string   `json:"Value"`
+	Type        string   `json:"Type"`
+	Description string   `json:"Description"`
+	Overwrite   bool     `json:"Overwrite"`
+	Tier        string   `json:"Tier"`
+	DataType    string   `json:"DataType"`
+	Tags        []ssmTag `json:"Tags"`
 }
 
 type getParameterRequest struct {
@@ -55,11 +56,12 @@ type getParametersRequest struct {
 }
 
 type getParametersByPathRequest struct {
-	Path           string `json:"Path"`
-	Recursive      bool   `json:"Recursive"`
-	WithDecryption bool   `json:"WithDecryption"`
-	MaxResults     int32  `json:"MaxResults"`
-	NextToken      string `json:"NextToken"`
+	Path             string                  `json:"Path"`
+	Recursive        bool                    `json:"Recursive"`
+	WithDecryption   bool                    `json:"WithDecryption"`
+	MaxResults       int32                   `json:"MaxResults"`
+	NextToken        string                  `json:"NextToken"`
+	ParameterFilters []parameterStringFilter `json:"ParameterFilters"`
 }
 
 // parameterStringFilter is the modern DescribeParameters ParameterFilters shape
@@ -168,6 +170,24 @@ func epochSeconds(iso string) float64 {
 	}
 
 	return float64(t.Unix())
+}
+
+// toDriverFilters converts wire ParameterFilters to the driver shape.
+func toDriverFilters(filters []parameterStringFilter) []ssmdriver.ParameterStringFilter {
+	if len(filters) == 0 {
+		return nil
+	}
+
+	out := make([]ssmdriver.ParameterStringFilter, 0, len(filters))
+	for _, f := range filters {
+		out = append(out, ssmdriver.ParameterStringFilter{
+			Key:    f.Key,
+			Option: f.Option,
+			Values: f.Values,
+		})
+	}
+
+	return out
 }
 
 func toParameterJSON(p ssmdriver.Parameter) parameterJSON {

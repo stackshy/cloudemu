@@ -99,6 +99,8 @@ func (p *ParameterStore) rec(op string, input, output any, err error, dur time.D
 }
 
 // PutParameter creates or updates a parameter, returning the new version and tier.
+//
+//nolint:gocritic // hugeParam: PutConfig mirrors the driver interface signature.
 func (p *ParameterStore) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	type result struct {
 		version int64
