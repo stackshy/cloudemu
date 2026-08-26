@@ -349,13 +349,37 @@ func captureUnmodeled(
 //     handler's osProfile shape carries no password field, so it is dropped.
 //   - initialCassandraAdminPassword: the seed admin password for managed
 //     Cassandra clusters (server/azure/managedcassandra). toARMCluster omits it.
+//   - password: a Cosmos DB for PostgreSQL role password (toARMRole,
+//     server/azure/cosmospostgresql, drops it) and a Container Instances
+//     imageRegistryCredentials[].password (server/azure/containerinstances does
+//     not model the array at all, so it is captured verbatim — inside an array,
+//     hence the []any recursion in sanitizeUnmodeled). Real Azure never returns
+//     either. The one place a `password` is legitimately returned is the
+//     Container Instances exec action response, but that is a bare
+//     {webSocketUri, password} object with no id/properties, so the overlay
+//     (which only rewrites ARM resources and only ever touches keys inside a
+//     properties map) never sees it — verified no toARM*/response struct emits a
+//     `password` under properties.
+//   - secret: the AKS servicePrincipalProfile.secret (server/azure/aks
+//     armManagedClusterProperties omits the whole block). No handler returns a
+//     property named exactly `secret` on read (verified: no json:"secret" in any
+//     response struct).
+//   - gcmCredential / apnsCredential / wnsCredential / admCredential /
+//     baiduCredential / mpnsCredential: Notification Hubs PNS credential objects.
+//     toHubJSON (server/azure/notificationhubs) models only name/registrationTtl
+//     and drops these entirely; real Azure serves them only via GetPnsCredentials,
+//     never the generic hub GET. Each is an object, so denylisting the key skips
+//     the whole credential subtree.
 //
 // The list is deliberately conservative: a key belongs here only when real
 // Azure genuinely omits it on read AND a handler relies on that omission, so it
 // never suppresses a field a handler legitimately returns.
 func writeOnlyProperty(key string) bool {
 	switch strings.ToLower(key) {
-	case "administratorloginpassword", "adminpassword", "initialcassandraadminpassword":
+	case "administratorloginpassword", "adminpassword", "initialcassandraadminpassword",
+		"password", "secret",
+		"gcmcredential", "apnscredential", "wnscredential",
+		"admcredential", "baiducredential", "mpnscredential":
 		return true
 	default:
 		return false
@@ -364,26 +388,36 @@ func writeOnlyProperty(key string) bool {
 
 // sanitizeUnmodeled deep-copies a captured request value with every write-only
 // secret key (writeOnlyProperty) removed at every depth. It guards the wholesale
-// capture path in missingProperties: when the handler drops an entire object,
-// that object is preserved as-is, so a secret nested inside it would otherwise
-// slip past the per-key denylist. A non-map value passes through unchanged.
+// capture path in missingProperties: when the handler drops an entire object or
+// array, it is preserved as-is, so a secret nested inside it would otherwise
+// slip past the per-key denylist. Both objects (map[string]any) and arrays
+// ([]any, e.g. imageRegistryCredentials[].password) are recursed and deep-copied
+// so no request-owned map or slice is aliased into the overlay store; any other
+// value passes through unchanged.
 func sanitizeUnmodeled(v any) any {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return v
-	}
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
 
-	out := make(map[string]any, len(m))
+		for k, val := range t {
+			if writeOnlyProperty(k) {
+				continue
+			}
 
-	for k, val := range m {
-		if writeOnlyProperty(k) {
-			continue
+			out[k] = sanitizeUnmodeled(val)
 		}
 
-		out[k] = sanitizeUnmodeled(val)
-	}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, el := range t {
+			out[i] = sanitizeUnmodeled(el)
+		}
 
-	return out
+		return out
+	default:
+		return v
+	}
 }
 
 // missingProperties returns the entries of req that resp does not already carry,

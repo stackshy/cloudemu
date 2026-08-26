@@ -410,6 +410,175 @@ func TestEchoDoesNotLeakCassandraAdminPassword(t *testing.T) {
 	}
 }
 
+// TestEchoDoesNotLeakCosmosPGRolePassword confirms a Cosmos DB for PostgreSQL
+// role password (toARMRole drops it) is not reflected, while the modeled
+// provisioningState still returns.
+func TestEchoDoesNotLeakCosmosPGRolePassword(t *testing.T) {
+	ts, c := echoTestServer(t)
+	base := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.DBforPostgreSQL/serverGroupsv2/pgc1"
+
+	putJSON(t, c, base+"?api-version=2023-03-02-preview", map[string]any{"location": "eastus"})
+
+	roleURL := base + "/roles/role1?api-version=2023-03-02-preview"
+
+	created := putJSON(t, c, roleURL, map[string]any{
+		"properties": map[string]any{"password": "R0le-S3cret!"},
+	})
+
+	if _, leaked := props(t, created)["password"]; leaked {
+		t.Fatal("create response leaked write-only role password")
+	}
+
+	if _, leaked := props(t, getJSON(t, c, roleURL))["password"]; leaked {
+		t.Fatal("GET leaked write-only role password")
+	}
+}
+
+// TestEchoDoesNotLeakAKSServicePrincipalSecret confirms the nested-object case:
+// servicePrincipalProfile is unmodeled by the AKS handler, so it is captured
+// wholesale — its secret must be stripped while the non-secret clientId leaf
+// still round-trips.
+func TestEchoDoesNotLeakAKSServicePrincipalSecret(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.ContainerService/managedClusters/aks1?api-version=2024-02-01"
+
+	putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"kubernetesVersion": "1.28.0",
+			"servicePrincipalProfile": map[string]any{
+				"clientId": "abc-123",
+				"secret":   "SP-S3cret!",
+			},
+		},
+	})
+
+	spp, ok := props(t, getJSON(t, c, url))["servicePrincipalProfile"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET dropped the whole unmodeled servicePrincipalProfile: %v", props(t, getJSON(t, c, url)))
+	}
+
+	if _, leaked := spp["secret"]; leaked {
+		t.Fatal("GET leaked write-only servicePrincipalProfile.secret")
+	}
+
+	if spp["clientId"] != "abc-123" {
+		t.Errorf("overlay dropped non-secret servicePrincipalProfile.clientId: %v", spp["clientId"])
+	}
+}
+
+// TestEchoDoesNotLeakContainerRegistryPassword is the ARRAY-recursion regression:
+// imageRegistryCredentials is an unmodeled array of objects, each carrying a
+// write-only password. The array must round-trip (server/username preserved)
+// with every element's password stripped.
+func TestEchoDoesNotLeakContainerRegistryPassword(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.ContainerInstance/containerGroups/cg1?api-version=2023-05-01"
+
+	putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"osType": "Linux",
+			"imageRegistryCredentials": []any{
+				map[string]any{"server": "reg.azurecr.io", "username": "u1", "password": "Reg-S3cret!"},
+			},
+		},
+	})
+
+	creds, ok := props(t, getJSON(t, c, url))["imageRegistryCredentials"].([]any)
+	if !ok || len(creds) != 1 {
+		t.Fatalf("GET dropped the unmodeled imageRegistryCredentials array: %v", props(t, getJSON(t, c, url))["imageRegistryCredentials"])
+	}
+
+	cred, ok := creds[0].(map[string]any)
+	if !ok {
+		t.Fatalf("imageRegistryCredentials element is not an object: %v", creds[0])
+	}
+
+	if _, leaked := cred["password"]; leaked {
+		t.Fatal("GET leaked write-only password inside imageRegistryCredentials array element")
+	}
+
+	if cred["server"] != "reg.azurecr.io" || cred["username"] != "u1" {
+		t.Errorf("array recursion dropped non-secret siblings: %v", cred)
+	}
+}
+
+// TestEchoDoesNotLeakNotificationHubCredentials confirms the Notification Hubs
+// PNS credential objects (dropped by toHubJSON, served only via
+// GetPnsCredentials) are not reflected on the generic hub GET, while the modeled
+// registrationTtl still returns.
+func TestEchoDoesNotLeakNotificationHubCredentials(t *testing.T) {
+	ts, c := echoTestServer(t)
+	nsURL := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.NotificationHubs/namespaces/ns1"
+
+	putJSON(t, c, nsURL+"?api-version=2023-09-01", map[string]any{"location": "eastus"})
+
+	hubURL := nsURL + "/notificationHubs/hub1?api-version=2023-09-01"
+
+	putJSON(t, c, hubURL, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"registrationTtl": "P1D",
+			"gcmCredential":   map[string]any{"properties": map[string]any{"googleApiKey": "GKEY"}},
+			"apnsCredential":  map[string]any{"properties": map[string]any{"token": "APNS-TOKEN"}},
+		},
+	})
+
+	got := props(t, getJSON(t, c, hubURL))
+	for _, k := range []string{"gcmCredential", "apnsCredential"} {
+		if _, leaked := got[k]; leaked {
+			t.Fatalf("GET leaked write-only Notification Hubs %s", k)
+		}
+	}
+
+	if got["registrationTtl"] != "P1D" {
+		t.Errorf("overlay dropped modeled registrationTtl: %v", got["registrationTtl"])
+	}
+}
+
+// TestEchoStripsSecretNestedDeepInArray confirms sanitizeUnmodeled removes a
+// secret buried two levels inside an array-of-objects (array -> object ->
+// object.password) while leaving the non-secret siblings intact — the deep
+// array-recursion guarantee.
+func TestEchoStripsSecretNestedDeepInArray(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/deepvm?api-version=2023-07-01"
+
+	putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			// wholly unmodeled array of objects, each with a nested auth object
+			// carrying a secret.
+			"customConfigs": []any{
+				map[string]any{
+					"name": "a",
+					"auth": map[string]any{"user": "x", "password": "Deep-S3cret!"},
+				},
+			},
+		},
+	})
+
+	cfgs, ok := props(t, getJSON(t, c, url))["customConfigs"].([]any)
+	if !ok || len(cfgs) != 1 {
+		t.Fatalf("GET dropped the unmodeled customConfigs array: %v", props(t, getJSON(t, c, url))["customConfigs"])
+	}
+
+	entry, _ := cfgs[0].(map[string]any)
+	auth, ok := entry["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("customConfigs entry lost its nested auth object: %v", entry)
+	}
+
+	if _, leaked := auth["password"]; leaked {
+		t.Fatal("secret buried in an array-of-objects survived sanitizeUnmodeled")
+	}
+
+	if entry["name"] != "a" || auth["user"] != "x" {
+		t.Errorf("deep array recursion dropped non-secret siblings: %v", entry)
+	}
+}
+
 // TestEchoStillReflectsNonSecretProperty is the REGRESSION guard: the secret
 // denylist must not disturb the overlay's legitimate job — a non-secret
 // unmodeled property (a SQL database's maxSizeBytes, which only round-trips via
