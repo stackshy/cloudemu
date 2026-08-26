@@ -743,18 +743,47 @@ func filterListeners(lis []lbdriver.ListenerInfo, wanted []string) []lbdriver.Li
 	return out
 }
 
-// filterHealth keeps only the health entries whose target ID appears in wanted.
+// healthKey identifies a registered target by (ID, Port). AWS lets the same
+// instance ID be registered on multiple ports, so a bare ID is not unique.
+type healthKey struct {
+	id   string
+	port int
+}
+
+// filterHealth resolves the health for the explicitly requested targets. Real
+// ELBv2 does not silently drop a requested target that isn't registered: it
+// returns a TargetHealthDescription with State=unused and
+// Reason=Target.NotRegistered. Registered targets keep their real health. A
+// requested target with no port matches every registration of that instance ID.
 func filterHealth(health []lbdriver.TargetHealth, wanted []lbdriver.Target) []lbdriver.TargetHealth {
-	set := make(map[string]struct{}, len(wanted))
-	for _, t := range wanted {
-		set[t.ID] = struct{}{}
+	byKey := make(map[healthKey]lbdriver.TargetHealth, len(health))
+	byID := make(map[string][]lbdriver.TargetHealth, len(health))
+
+	for i := range health {
+		t := health[i].Target
+		byKey[healthKey{t.ID, t.Port}] = health[i]
+		byID[t.ID] = append(byID[t.ID], health[i])
 	}
 
-	out := health[:0]
-	for i := range health {
-		if _, ok := set[health[i].Target.ID]; ok {
-			out = append(out, health[i])
+	out := make([]lbdriver.TargetHealth, 0, len(wanted))
+
+	for _, w := range wanted {
+		if w.Port != 0 {
+			if h, ok := byKey[healthKey{w.ID, w.Port}]; ok {
+				out = append(out, h)
+				continue
+			}
+		} else if hs, ok := byID[w.ID]; ok {
+			out = append(out, hs...)
+			continue
 		}
+
+		out = append(out, lbdriver.TargetHealth{
+			Target:      w,
+			State:       "unused",
+			Reason:      "Target.NotRegistered",
+			Description: "Target is not registered to the target group",
+		})
 	}
 
 	return out

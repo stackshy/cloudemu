@@ -27,6 +27,7 @@ const (
 	DefaultDBRebootSettle    = 1 * time.Second // RDS available->rebooting->available
 	DefaultCertificateSettle = 2 * time.Second // ACM PENDING_VALIDATION->ISSUED
 	DefaultExecutionSettle   = 1 * time.Second // SFN RUNNING->SUCCEEDED
+	DefaultLBSettle          = 2 * time.Second // ELBv2 provisioning->active
 )
 
 // Window is a read-time overlay describing a resource still settling into its

@@ -64,6 +64,8 @@ func TestCreateLoadBalancer(t *testing.T) {
 			assertNotEmpty(t, info.ARN)
 			assertNotEmpty(t, info.DNSName)
 			assertEqual(t, "my-lb", info.Name)
+			// Async settling is opt-in; with the default options a new load
+			// balancer reports its terminal state immediately.
 			assertEqual(t, "active", info.State)
 		})
 	}
@@ -380,6 +382,33 @@ func TestDescribeTargetHealth(t *testing.T) {
 		_, err := m.DescribeTargetHealth(ctx, "arn:nope")
 		assertError(t, err, true)
 	})
+}
+
+// TestCreateLoadBalancerSettlesProvisioningToActive verifies the AWS-realistic
+// provisioning->active transition when async settling is enabled: a new load
+// balancer is observed as "provisioning" until the settle window elapses, then
+// "active". The transition is driven purely by the clock — no wall-clock sleep.
+func TestCreateLoadBalancerSettlesProvisioningToActive(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithAsyncSettle(),
+		config.WithRegion("us-east-1"), config.WithAccountID("123456789012"))
+	m := New(opts)
+	ctx := context.Background()
+
+	lb, err := m.CreateLoadBalancer(ctx, driver.LBConfig{Name: "my-lb", Type: "application"})
+	requireNoError(t, err)
+	assertEqual(t, "provisioning", lb.State)
+
+	// Still provisioning before the window elapses.
+	got, err := m.DescribeLoadBalancers(ctx, []string{lb.ARN})
+	requireNoError(t, err)
+	assertEqual(t, "provisioning", got[0].State)
+
+	// Advancing the clock past the settle window transitions it to active.
+	fc.Advance(5 * time.Second)
+	got, err = m.DescribeLoadBalancers(ctx, []string{lb.ARN})
+	requireNoError(t, err)
+	assertEqual(t, "active", got[0].State)
 }
 
 func TestSetTargetHealth(t *testing.T) {

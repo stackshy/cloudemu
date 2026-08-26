@@ -477,6 +477,94 @@ func TestSDKTargetHealthAdvances(t *testing.T) {
 	}
 }
 
+// TestSDKDescribeTargetHealthUnregisteredTarget proves DescribeTargetHealth
+// with an explicit target that is not registered returns a description with
+// State=unused and Reason=Target.NotRegistered (rather than silently dropping
+// it), while a registered target in the same call keeps its real health. With
+// no explicit Targets, only registered targets come back.
+func TestSDKDescribeTargetHealthUnregisteredTarget(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	tgOut, err := client.CreateTargetGroup(ctx, &elb.CreateTargetGroupInput{
+		Name:     aws.String("nr-tg"),
+		Protocol: elbtypes.ProtocolEnumHttp,
+		Port:     aws.Int32(80),
+		VpcId:    aws.String("vpc-1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateTargetGroup: %v", err)
+	}
+
+	tgARN := aws.ToString(tgOut.TargetGroups[0].TargetGroupArn)
+
+	if _, err := client.RegisterTargets(ctx, &elb.RegisterTargetsInput{
+		TargetGroupArn: aws.String(tgARN),
+		Targets:        []elbtypes.TargetDescription{{Id: aws.String("i-1"), Port: aws.Int32(80)}},
+	}); err != nil {
+		t.Fatalf("RegisterTargets: %v", err)
+	}
+
+	// Explicit query mixing a registered and an unregistered target.
+	out, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
+		TargetGroupArn: aws.String(tgARN),
+		Targets: []elbtypes.TargetDescription{
+			{Id: aws.String("i-1"), Port: aws.Int32(80)},
+			{Id: aws.String("i-missing"), Port: aws.Int32(80)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DescribeTargetHealth: %v", err)
+	}
+
+	if len(out.TargetHealthDescriptions) != 2 {
+		t.Fatalf("descriptions = %d, want 2", len(out.TargetHealthDescriptions))
+	}
+
+	byID := map[string]elbtypes.TargetHealthDescription{}
+	for _, d := range out.TargetHealthDescriptions {
+		byID[aws.ToString(d.Target.Id)] = d
+	}
+
+	reg, ok := byID["i-1"]
+	if !ok {
+		t.Fatal("registered target i-1 missing from response")
+	}
+
+	if reg.TargetHealth.State != elbtypes.TargetHealthStateEnumInitial {
+		t.Errorf("registered state = %q, want initial", reg.TargetHealth.State)
+	}
+
+	nr, ok := byID["i-missing"]
+	if !ok {
+		t.Fatal("unregistered target i-missing missing from response")
+	}
+
+	if nr.TargetHealth.State != elbtypes.TargetHealthStateEnumUnused {
+		t.Errorf("unregistered state = %q, want unused", nr.TargetHealth.State)
+	}
+
+	if nr.TargetHealth.Reason != elbtypes.TargetHealthReasonEnumNotRegistered {
+		t.Errorf("unregistered reason = %q, want Target.NotRegistered", nr.TargetHealth.Reason)
+	}
+
+	// With no explicit Targets, only the registered target is returned.
+	all, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
+		TargetGroupArn: aws.String(tgARN),
+	})
+	if err != nil {
+		t.Fatalf("DescribeTargetHealth (all): %v", err)
+	}
+
+	if len(all.TargetHealthDescriptions) != 1 {
+		t.Fatalf("no-filter descriptions = %d, want 1", len(all.TargetHealthDescriptions))
+	}
+
+	if got := aws.ToString(all.TargetHealthDescriptions[0].Target.Id); got != "i-1" {
+		t.Errorf("no-filter target = %q, want i-1", got)
+	}
+}
+
 // TestSDKTargetGroupAttributes proves DescribeTargetGroupAttributes and
 // ModifyTargetGroupAttributes dispatch (instead of returning InvalidAction) and
 // that a modified attribute merges over the ELBv2 defaults and round-trips.
