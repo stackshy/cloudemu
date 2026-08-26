@@ -347,6 +347,7 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		NodeType:                    cfg.NodeType,
 		NumberOfNodes:               numberOfNodes,
 		Encrypted:                   cfg.Encrypted,
+		KmsKeyID:                    cfg.KmsKeyID,
 		PubliclyAccessible:          cfg.PubliclyAccessible,
 		AvailabilityZone:            cfg.AvailabilityZone,
 		CreatedAt:                   m.opts.Clock.Now().UTC(),

@@ -37,6 +37,7 @@ func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
 		NodeType:                    form.Get("NodeType"),
 		NumberOfNodes:               formInt(form.Get("NumberOfNodes")),
 		Encrypted:                   formBool(form.Get("Encrypted")),
+		KmsKeyID:                    form.Get("KmsKeyId"),
 		PubliclyAccessible:          formBool(form.Get("PubliclyAccessible")),
 		AvailabilityZone:            form.Get("AvailabilityZone"),
 		Tags:                        parseRedshiftTags(form),

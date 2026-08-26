@@ -54,6 +54,7 @@ type clusterXML struct {
 	NodeType               string                     `xml:"NodeType,omitempty"`
 	NumberOfNodes          int                        `xml:"NumberOfNodes,omitempty"`
 	Encrypted              bool                       `xml:"Encrypted"`
+	KmsKeyID               string                     `xml:"KmsKeyId,omitempty"`
 	PubliclyAccessible     bool                       `xml:"PubliclyAccessible"`
 	AvailabilityZone       string                     `xml:"AvailabilityZone,omitempty"`
 	VpcID                  string                     `xml:"VpcId,omitempty"`
@@ -228,6 +229,7 @@ func toClusterXML(cluster *rdbdriver.Cluster) clusterXML {
 		NodeType:               cluster.NodeType,
 		NumberOfNodes:          cluster.NumberOfNodes,
 		Encrypted:              cluster.Encrypted,
+		KmsKeyID:               cluster.KmsKeyID,
 		PubliclyAccessible:     cluster.PubliclyAccessible,
 		AvailabilityZone:       cluster.AvailabilityZone,
 		VpcID:                  cluster.VpcID,
