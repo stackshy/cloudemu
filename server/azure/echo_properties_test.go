@@ -252,6 +252,192 @@ func TestEchoPartialPatchKeepsPreservedProps(t *testing.T) {
 	}
 }
 
+// TestEchoDoesNotLeakSQLServerPassword is the SECURITY regression: a write-only
+// secret (administratorLoginPassword) sent on a Microsoft.Sql/servers PUT must
+// never be reflected on the create response or a later GET — real Azure omits
+// it. The non-secret modeled fields (administratorLogin, version) must still be
+// returned, and a PATCH must not reintroduce the password.
+func TestEchoDoesNotLeakSQLServerPassword(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Sql/servers/pwsrv1?api-version=2021-11-01"
+
+	created := putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"administratorLogin":         "adminuser",
+			"administratorLoginPassword": "S3cret-P@ssw0rd!",
+			"version":                    "12.0",
+		},
+	})
+
+	if _, leaked := props(t, created)["administratorLoginPassword"]; leaked {
+		t.Fatal("create response leaked write-only administratorLoginPassword")
+	}
+
+	if props(t, created)["administratorLogin"] != "adminuser" {
+		t.Errorf("create response dropped modeled administratorLogin: %v", props(t, created)["administratorLogin"])
+	}
+
+	got := props(t, getJSON(t, c, url))
+	if _, leaked := got["administratorLoginPassword"]; leaked {
+		t.Fatal("GET leaked write-only administratorLoginPassword")
+	}
+
+	if got["administratorLogin"] != "adminuser" {
+		t.Errorf("GET dropped modeled administratorLogin: %v", got["administratorLogin"])
+	}
+
+	// A PATCH that resends the password must still not reintroduce it on read.
+	patch, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, url,
+		bytesReader(t, map[string]any{"properties": map[string]any{"administratorLoginPassword": "Another-P@ss1!"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patch.Header.Set("Content-Type", "application/json")
+	doJSON(t, c, patch)
+
+	if _, leaked := props(t, getJSON(t, c, url))["administratorLoginPassword"]; leaked {
+		t.Fatal("GET after PATCH reintroduced write-only administratorLoginPassword")
+	}
+}
+
+// TestEchoDoesNotLeakFlexServerPassword confirms the same secret suppression on
+// the MySQL and PostgreSQL flexible-server handlers, whose armServerProps also
+// omit administratorLoginPassword. A non-secret unmodeled field (version) still
+// round-trips through the handler.
+func TestEchoDoesNotLeakFlexServerPassword(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"mysql", "/providers/Microsoft.DBforMySQL/flexibleServers/pwflex1"},
+		{"postgres", "/providers/Microsoft.DBforPostgreSQL/flexibleServers/pwflex1"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, c := echoTestServer(t)
+			url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1" + tc.path + "?api-version=2023-12-30"
+
+			created := putJSON(t, c, url, map[string]any{
+				"location": "eastus",
+				"properties": map[string]any{
+					"administratorLogin":         "adm",
+					"administratorLoginPassword": "Fl3x-P@ssw0rd!",
+					"version":                    "8.0.21",
+				},
+			})
+
+			if _, leaked := props(t, created)["administratorLoginPassword"]; leaked {
+				t.Fatal("create response leaked flexible-server administratorLoginPassword")
+			}
+
+			got := props(t, getJSON(t, c, url))
+			if _, leaked := got["administratorLoginPassword"]; leaked {
+				t.Fatal("GET leaked flexible-server administratorLoginPassword")
+			}
+
+			if got["administratorLogin"] != "adm" {
+				t.Errorf("GET dropped modeled administratorLogin: %v", got["administratorLogin"])
+			}
+		})
+	}
+}
+
+// TestEchoDoesNotLeakVMAdminPassword confirms the nested-secret case: a VM
+// osProfile.adminPassword (write-only, dropped by the handler) must not be
+// reflected, while the sibling non-secret unmodeled leaf under osProfile still
+// round-trips through the overlay.
+func TestEchoDoesNotLeakVMAdminPassword(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/pwvm1?api-version=2023-07-01"
+
+	putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"hardwareProfile": map[string]any{"vmSize": "Standard_D2s_v5"},
+			"osProfile": map[string]any{
+				"computerName":  "host1",
+				"adminUsername": "azureuser",
+				"adminPassword": "VM-S3cret-P@ss!",
+				"unmodeledLeaf": "keepme",
+			},
+		},
+	})
+
+	osp, ok := props(t, getJSON(t, c, url))["osProfile"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET has no osProfile: %v", props(t, getJSON(t, c, url)))
+	}
+
+	if _, leaked := osp["adminPassword"]; leaked {
+		t.Fatal("GET leaked nested write-only osProfile.adminPassword")
+	}
+
+	if osp["unmodeledLeaf"] != "keepme" {
+		t.Errorf("overlay dropped a non-secret nested unmodeled leaf: %v", osp["unmodeledLeaf"])
+	}
+}
+
+// TestEchoDoesNotLeakCassandraAdminPassword confirms the managed-Cassandra
+// write-only secret (initialCassandraAdminPassword, dropped by toARMCluster) is
+// not reflected, while a non-secret modeled field (cassandraVersion) still
+// returns.
+func TestEchoDoesNotLeakCassandraAdminPassword(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.DocumentDB/cassandraClusters/pwcc1?api-version=2024-11-15"
+
+	created := putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"cassandraVersion":              "4.0",
+			"initialCassandraAdminPassword": "C@ssandra-S3cret!",
+		},
+	})
+
+	if _, leaked := props(t, created)["initialCassandraAdminPassword"]; leaked {
+		t.Fatal("create response leaked write-only initialCassandraAdminPassword")
+	}
+
+	got := props(t, getJSON(t, c, url))
+	if _, leaked := got["initialCassandraAdminPassword"]; leaked {
+		t.Fatal("GET leaked write-only initialCassandraAdminPassword")
+	}
+
+	if got["cassandraVersion"] != "4.0" {
+		t.Errorf("GET dropped modeled cassandraVersion: %v", got["cassandraVersion"])
+	}
+}
+
+// TestEchoStillReflectsNonSecretProperty is the REGRESSION guard: the secret
+// denylist must not disturb the overlay's legitimate job — a non-secret
+// unmodeled property (a SQL database's maxSizeBytes, which only round-trips via
+// the overlay) must still be echoed on create and GET.
+func TestEchoStillReflectsNonSecretProperty(t *testing.T) {
+	ts, c := echoTestServer(t)
+	base := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Sql/servers/regsrv1"
+
+	putJSON(t, c, base+"?api-version=2021-11-01", map[string]any{"location": "eastus"})
+
+	dbURL := base + "/databases/regdb1?api-version=2021-11-01"
+
+	created := putJSON(t, c, dbURL, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"maxSizeBytes": float64(268435456000),
+		},
+	})
+
+	if props(t, created)["maxSizeBytes"] != float64(268435456000) {
+		t.Fatalf("create response dropped non-secret maxSizeBytes: %v", props(t, created)["maxSizeBytes"])
+	}
+
+	if props(t, getJSON(t, c, dbURL))["maxSizeBytes"] != float64(268435456000) {
+		t.Fatalf("GET dropped non-secret maxSizeBytes: %v", props(t, getJSON(t, c, dbURL))["maxSizeBytes"])
+	}
+}
+
 func bytesReader(t *testing.T, v map[string]any) *bytes.Reader {
 	t.Helper()
 

@@ -327,10 +327,70 @@ func captureUnmodeled(
 	return fresh
 }
 
+// writeOnlyProperty reports whether an ARM request-body property key is a
+// write-only secret that real Azure accepts on write but never returns on a
+// read. Such a key must never be captured by the overlay or echoed back:
+// because the owning handler deliberately omits it from its response (mirroring
+// Azure), the generic overlay would otherwise treat it as an unmodeled property
+// and reflect the caller's secret on the create response and on every later GET
+// — a credential leak. Matched case-insensitively at any nesting depth, since
+// missingProperties descends into nested objects.
+//
+// Every entry is a value some Azure handler in this server accepts on write and
+// drops from its to-ARM output, verified against how that handler models the
+// key:
+//   - administratorLoginPassword: the admin password for Microsoft.Sql/servers
+//     (server/azure/sql), Microsoft.DBforMySQL/flexibleServers
+//     (server/azure/mysqlflex), Microsoft.DBforPostgreSQL/flexibleServers
+//     (server/azure/postgresflex) and Cosmos DB for PostgreSQL clusters
+//     (server/azure/cosmospostgresql). Each handler's toARM* omits it.
+//   - adminPassword: the VM local-admin password under osProfile for
+//     Microsoft.Compute/virtualMachines (server/azure/virtualmachines). The
+//     handler's osProfile shape carries no password field, so it is dropped.
+//   - initialCassandraAdminPassword: the seed admin password for managed
+//     Cassandra clusters (server/azure/managedcassandra). toARMCluster omits it.
+//
+// The list is deliberately conservative: a key belongs here only when real
+// Azure genuinely omits it on read AND a handler relies on that omission, so it
+// never suppresses a field a handler legitimately returns.
+func writeOnlyProperty(key string) bool {
+	switch strings.ToLower(key) {
+	case "administratorloginpassword", "adminpassword", "initialcassandraadminpassword":
+		return true
+	default:
+		return false
+	}
+}
+
+// sanitizeUnmodeled deep-copies a captured request value with every write-only
+// secret key (writeOnlyProperty) removed at every depth. It guards the wholesale
+// capture path in missingProperties: when the handler drops an entire object,
+// that object is preserved as-is, so a secret nested inside it would otherwise
+// slip past the per-key denylist. A non-map value passes through unchanged.
+func sanitizeUnmodeled(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+
+	out := make(map[string]any, len(m))
+
+	for k, val := range m {
+		if writeOnlyProperty(k) {
+			continue
+		}
+
+		out[k] = sanitizeUnmodeled(val)
+	}
+
+	return out
+}
+
 // missingProperties returns the entries of req that resp does not already carry,
 // descending into nested objects so an unmodeled leaf under a modeled parent is
 // still captured. A key present in both as scalars is considered modeled (the
-// handler owns it) and is omitted.
+// handler owns it) and is omitted. Write-only secret keys (writeOnlyProperty)
+// are skipped at every level so they are never captured, persisted, or echoed.
 func missingProperties(req, resp map[string]any) map[string]any {
 	if len(req) == 0 {
 		return nil
@@ -339,9 +399,18 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	out := map[string]any{}
 
 	for k, reqVal := range req {
+		if writeOnlyProperty(k) {
+			continue
+		}
+
 		respVal, present := resp[k]
 		if !present {
-			out[k] = reqVal
+			// A wholly-unmodeled object is captured verbatim, so strip any
+			// write-only secret nested inside it — the per-key skip above only
+			// covers keys the loop visits directly, not those buried in a
+			// subtree the handler dropped entirely (e.g. a VM osProfile the
+			// response omits, carrying adminPassword).
+			out[k] = sanitizeUnmodeled(reqVal)
 			continue
 		}
 
