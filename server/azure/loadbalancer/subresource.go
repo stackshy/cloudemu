@@ -2,6 +2,7 @@ package loadbalancer
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -311,7 +312,7 @@ func findChild(
 
 func findFrontend(lbID string, in []lbdriver.AzureLBFrontend, name string) (any, bool) {
 	for i := range in {
-		if in[i].Name == name {
+		if strings.EqualFold(in[i].Name, name) {
 			return frontendsJSON(lbID, []lbdriver.AzureLBFrontend{in[i]})[0], true
 		}
 	}
@@ -321,7 +322,7 @@ func findFrontend(lbID string, in []lbdriver.AzureLBFrontend, name string) (any,
 
 func findPool(lbID string, in []string, name string, members map[string][]string) (any, bool) {
 	for _, p := range in {
-		if p == name {
+		if strings.EqualFold(p, name) {
 			return poolsJSON(lbID, []string{p}, members)[0], true
 		}
 	}
@@ -331,7 +332,7 @@ func findPool(lbID string, in []string, name string, members map[string][]string
 
 func findRule(lbID string, in []lbdriver.AzureLBRule, name string) (any, bool) {
 	for i := range in {
-		if in[i].Name == name {
+		if strings.EqualFold(in[i].Name, name) {
 			return rulesJSON(lbID, []lbdriver.AzureLBRule{in[i]})[0], true
 		}
 	}
@@ -341,7 +342,7 @@ func findRule(lbID string, in []lbdriver.AzureLBRule, name string) (any, bool) {
 
 func findProbe(lbID string, in []lbdriver.AzureLBProbe, name string) (any, bool) {
 	for i := range in {
-		if in[i].Name == name {
+		if strings.EqualFold(in[i].Name, name) {
 			return probesJSON(lbID, []lbdriver.AzureLBProbe{in[i]})[0], true
 		}
 	}
@@ -351,7 +352,7 @@ func findProbe(lbID string, in []lbdriver.AzureLBProbe, name string) (any, bool)
 
 func findNatRule(lbID string, in []lbdriver.AzureLBNatRule, name string) (any, bool) {
 	for i := range in {
-		if in[i].Name == name {
+		if strings.EqualFold(in[i].Name, name) {
 			return natRulesJSON(lbID, []lbdriver.AzureLBNatRule{in[i]})[0], true
 		}
 	}
@@ -361,7 +362,7 @@ func findNatRule(lbID string, in []lbdriver.AzureLBNatRule, name string) (any, b
 
 func findOutboundRule(lbID string, in []lbdriver.AzureLBOutboundRule, name string) (any, bool) {
 	for i := range in {
-		if in[i].Name == name {
+		if strings.EqualFold(in[i].Name, name) {
 			return outboundRulesJSON(lbID, []lbdriver.AzureLBOutboundRule{in[i]})[0], true
 		}
 	}

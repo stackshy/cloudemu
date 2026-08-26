@@ -186,6 +186,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createOrUpdateLoadBalancer(w, r, &rp)
 	case http.MethodGet:
 		h.getLoadBalancer(w, r, &rp)
+	case http.MethodPatch:
+		h.updateLoadBalancerTags(w, r, &rp)
 	case http.MethodDelete:
 		h.deleteLoadBalancer(w, r, &rp)
 	default:

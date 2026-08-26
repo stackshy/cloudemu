@@ -12,9 +12,13 @@ import (
 var _ driver.AzureLoadBalancers = (*Mock)(nil)
 
 // azureLBKey keys the native store by (resourceGroup, name), matching ARM's
-// addressing.
+// addressing. ARM resource-group and resource names are case-insensitive, so
+// the key is lower-cased to resolve differently-cased GET/DELETE/sub-resource
+// requests to the same load balancer and keep re-PUT an in-place update rather
+// than a duplicate. Only the internal map key is normalized; the stored body's
+// id/name casing is preserved verbatim.
 func azureLBKey(rg, name string) string {
-	return rg + "/" + name
+	return strings.ToLower(rg) + "/" + strings.ToLower(name)
 }
 
 // CreateOrUpdateAzureLoadBalancer stores the ARM load balancer as a full
@@ -191,7 +195,7 @@ func (m *Mock) UpsertAzureLBNatRule(
 		replaced := false
 
 		for i := range rules {
-			if rules[i].Name == natRuleName {
+			if strings.EqualFold(rules[i].Name, natRuleName) {
 				rules[i] = rule
 				replaced = true
 
@@ -230,7 +234,7 @@ func (m *Mock) DeleteAzureLBNatRule(_ context.Context, rg, name, natRuleName str
 		idx := -1
 
 		for i := range lb.NatRules {
-			if lb.NatRules[i].Name == natRuleName {
+			if strings.EqualFold(lb.NatRules[i].Name, natRuleName) {
 				idx = i
 				break
 			}
@@ -273,10 +277,11 @@ func containsString(in []string, s string) bool {
 	return indexOfString(in, s) != -1
 }
 
-// indexOfString returns the index of s in in, or -1 if absent.
+// indexOfString returns the index of s in in, or -1 if absent. Matching is
+// case-insensitive because ARM child names are case-insensitive.
 func indexOfString(in []string, s string) int {
 	for i, v := range in {
-		if v == s {
+		if strings.EqualFold(v, s) {
 			return i
 		}
 	}
