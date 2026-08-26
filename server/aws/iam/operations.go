@@ -705,12 +705,15 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	members, marker, truncated := h.groupMembersXML(r.Context(), g.Name, r.Form)
+
 	awsquery.WriteXMLResponse(w, getGroupResponse{
 		Xmlns: Namespace,
 		Result: getGroupResult{
 			Group:       toGroupXML(g),
-			Users:       h.groupMembersXML(r.Context(), g.Name),
-			IsTruncated: false,
+			Users:       members,
+			IsTruncated: truncated,
+			Marker:      marker,
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
@@ -722,27 +725,34 @@ type groupMemberLister interface {
 	ListGroupMembers(ctx context.Context, groupName string) ([]iamdriver.UserInfo, error)
 }
 
-// groupMembersXML returns the users in a group as the wire shape GetGroup
-// expects, or an empty list when the driver does not track membership.
-func (h *Handler) groupMembersXML(ctx context.Context, groupName string) usersListXML {
+// groupMembersXML returns a page of the users in a group as the wire shape
+// GetGroup expects, along with the next Marker and truncation flag. It returns
+// an empty list when the driver does not track membership. Real IAM paginates a
+// group's members via Marker/MaxItems.
+func (h *Handler) groupMembersXML(
+	ctx context.Context, groupName string, form url.Values,
+) (users usersListXML, nextMarker string, truncated bool) {
 	lister, ok := h.iam.(groupMemberLister)
 	if !ok {
-		return usersListXML{}
+		return usersListXML{}, "", false
 	}
 
-	users, err := lister.ListGroupMembers(ctx, groupName)
+	members, err := lister.ListGroupMembers(ctx, groupName)
 	if err != nil {
-		return usersListXML{}
+		return usersListXML{}, "", false
 	}
 
-	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
+	sort.Slice(members, func(i, j int) bool { return members[i].Name < members[j].Name })
 
-	out := usersListXML{Member: make([]userXML, 0, len(users))}
-	for i := range users {
-		out.Member = append(out.Member, toUserXML(&users[i]))
+	start, end, marker, isTruncated := pageWindow(len(members), form)
+	page := members[start:end]
+
+	out := usersListXML{Member: make([]userXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toUserXML(&page[i]))
 	}
 
-	return out
+	return out, marker, isTruncated
 }
 
 //nolint:dupl // list handlers share shape but operate on different driver types and response envelopes.
@@ -928,14 +938,19 @@ func (h *Handler) listInstanceProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := instanceProfilesListXML{Member: make([]instanceProfileXML, 0, len(profiles))}
-	for i := range profiles {
-		out.Member = append(out.Member, toInstanceProfileXML(&profiles[i], h.lookupRole(r, profiles[i].RoleName)))
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(profiles), r.Form)
+	page := profiles[start:end]
+
+	out := instanceProfilesListXML{Member: make([]instanceProfileXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toInstanceProfileXML(&page[i], h.lookupRole(r, page[i].RoleName)))
 	}
 
 	awsquery.WriteXMLResponse(w, listInstanceProfilesResponse{
 		Xmlns:    Namespace,
-		Result:   listInstanceProfilesResult{InstanceProfiles: out, IsTruncated: false},
+		Result:   listInstanceProfilesResult{InstanceProfiles: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
