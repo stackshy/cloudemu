@@ -475,6 +475,8 @@ func filterToSlice[T any](store *memstore.Store[T], pred func(string, T) bool) [
 }
 
 // CreateListener creates a new listener on a load balancer.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
 	lb, ok := m.lbs.Get(cfg.LBARN)
 	if !ok {
@@ -660,6 +662,8 @@ func (m *Mock) DescribeRules(_ context.Context, listenerARN string) ([]driver.Ru
 }
 
 // ModifyListener modifies an existing listener's port, protocol, or default actions.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInput) error {
 	li, ok := m.listeners.Get(input.ListenerARN)
 	if !ok {

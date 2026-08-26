@@ -646,6 +646,7 @@ func parseQueryStringConfig(form url.Values, base string) *lbdriver.QueryStringC
 	}
 
 	pairs := make([]lbdriver.QueryStringKeyValue, 0, len(indices))
+
 	for _, n := range indices {
 		p := base + ".Values.member." + strconv.Itoa(n)
 		pairs = append(pairs, lbdriver.QueryStringKeyValue{

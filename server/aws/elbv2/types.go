@@ -476,8 +476,6 @@ func toActionsXML(actions []lbdriver.RuleAction) *actionsXML {
 
 // toActionXML renders a single driver action, preserving redirect and
 // fixed-response configuration.
-//
-//nolint:gocritic // hugeParam: value receiver keeps the call site simple; copy cost is negligible.
 func toActionXML(a lbdriver.RuleAction) actionXML {
 	x := actionXML{
 		Type:           a.Type,
