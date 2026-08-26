@@ -3,10 +3,13 @@ package redshift
 import (
 	"encoding/xml"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	redshiftprovider "github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 type clusterParameterGroupXML struct {
@@ -77,6 +80,44 @@ type deleteClusterSubnetGroupResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+type redshiftParameterXML struct {
+	ParameterName  string `xml:"ParameterName"`
+	ParameterValue string `xml:"ParameterValue,omitempty"`
+	Description    string `xml:"Description,omitempty"`
+	Source         string `xml:"Source,omitempty"`
+	DataType       string `xml:"DataType,omitempty"`
+	ApplyType      string `xml:"ApplyType,omitempty"`
+	IsModifiable   bool   `xml:"IsModifiable"`
+}
+
+type modifyClusterParameterGroupResponse struct {
+	XMLName              xml.Name         `xml:"ModifyClusterParameterGroupResponse"`
+	Xmlns                string           `xml:"xmlns,attr"`
+	ParameterGroupName   string           `xml:"ModifyClusterParameterGroupResult>ParameterGroupName"`
+	ParameterGroupStatus string           `xml:"ModifyClusterParameterGroupResult>ParameterGroupStatus"`
+	Metadata             responseMetadata `xml:"ResponseMetadata"`
+}
+
+type resetClusterParameterGroupResponse struct {
+	XMLName              xml.Name         `xml:"ResetClusterParameterGroupResponse"`
+	Xmlns                string           `xml:"xmlns,attr"`
+	ParameterGroupName   string           `xml:"ResetClusterParameterGroupResult>ParameterGroupName"`
+	ParameterGroupStatus string           `xml:"ResetClusterParameterGroupResult>ParameterGroupStatus"`
+	Metadata             responseMetadata `xml:"ResponseMetadata"`
+}
+
+type describeClusterParametersResponse struct {
+	XMLName    xml.Name               `xml:"DescribeClusterParametersResponse"`
+	Xmlns      string                 `xml:"xmlns,attr"`
+	Parameters []redshiftParameterXML `xml:"DescribeClusterParametersResult>Parameters>Parameter"`
+	Metadata   responseMetadata       `xml:"ResponseMetadata"`
+}
+
+// paramGroupUpdatedStatus is the human-readable status real Redshift returns
+// from ModifyClusterParameterGroup / ResetClusterParameterGroup.
+const paramGroupUpdatedStatus = "Your parameter group has been updated but changes " +
+	"won't get applied until you reboot the associated clusters."
+
 func (h *Handler) clusterGroups() (clusterGroupManager, bool) {
 	m, ok := h.db.(clusterGroupManager)
 
@@ -106,6 +147,122 @@ func (h *Handler) createClusterParameterGroup(w http.ResponseWriter, r *http.Req
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+func (h *Handler) modifyClusterParameterGroup(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.clusterGroups()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "parameter groups not supported"))
+		return
+	}
+
+	name := r.Form.Get("ParameterGroupName")
+
+	if _, err := mgr.ModifyClusterParameterGroup(r.Context(), name, parseRedshiftParameters(r.Form)); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyClusterParameterGroupResponse{
+		Xmlns:                Namespace,
+		ParameterGroupName:   name,
+		ParameterGroupStatus: paramGroupUpdatedStatus,
+		Metadata:             responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) describeClusterParameters(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.clusterGroups()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "parameter groups not supported"))
+		return
+	}
+
+	params, err := mgr.DescribeClusterParameters(r.Context(), r.Form.Get("ParameterGroupName"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := make([]redshiftParameterXML, 0, len(params))
+	for i := range params {
+		out = append(out, redshiftParameterXML{
+			ParameterName:  params[i].Name,
+			ParameterValue: params[i].Value,
+			Description:    params[i].Description,
+			Source:         params[i].Source,
+			DataType:       params[i].DataType,
+			ApplyType:      params[i].ApplyType,
+			IsModifiable:   true,
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, describeClusterParametersResponse{
+		Xmlns:      Namespace,
+		Parameters: out,
+		Metadata:   responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) resetClusterParameterGroup(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.clusterGroups()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "parameter groups not supported"))
+		return
+	}
+
+	name := r.Form.Get("ParameterGroupName")
+	resetAll := formBool(r.Form.Get("ResetAllParameters"))
+
+	if _, err := mgr.ResetClusterParameterGroup(r.Context(), name, parseRedshiftParameterNames(r.Form), resetAll); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, resetClusterParameterGroupResponse{
+		Xmlns:                Namespace,
+		ParameterGroupName:   name,
+		ParameterGroupStatus: paramGroupUpdatedStatus,
+		Metadata:             responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// parseRedshiftParameters reads Parameters.Parameter.N.{ParameterName,ParameterValue}.
+func parseRedshiftParameters(form url.Values) []rdbdriver.Parameter {
+	indices := awsquery.CollectIndices(form, "Parameters.Parameter")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]rdbdriver.Parameter, 0, len(indices))
+
+	for _, n := range indices {
+		base := "Parameters.Parameter." + strconv.Itoa(n)
+
+		pname := form.Get(base + ".ParameterName")
+		if pname == "" {
+			continue
+		}
+
+		out = append(out, rdbdriver.Parameter{
+			Name:  pname,
+			Value: form.Get(base + ".ParameterValue"),
+		})
+	}
+
+	return out
+}
+
+// parseRedshiftParameterNames reads just the ParameterName entries (used by Reset).
+func parseRedshiftParameterNames(form url.Values) []string {
+	params := parseRedshiftParameters(form)
+
+	names := make([]string, 0, len(params))
+	for i := range params {
+		names = append(names, params[i].Name)
+	}
+
+	return names
 }
 
 func (h *Handler) createClusterSubnetGroup(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ package redshift
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -49,6 +50,10 @@ type ParameterGroup struct {
 	Name        string
 	Family      string
 	Description string
+	// Parameters holds the group's engine parameters keyed by name. A freshly
+	// created group is seeded with the family's engine-default values; a
+	// ModifyClusterParameterGroup override flips a parameter's Source to "user".
+	Parameters map[string]rdbdriver.Parameter
 }
 
 type SubnetGroup struct {
@@ -106,10 +111,128 @@ func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, desc
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "parameter group %q already exists", name)
 	}
 
-	pg := ParameterGroup{Name: name, Family: family, Description: description}
+	pg := ParameterGroup{
+		Name:        name,
+		Family:      family,
+		Description: description,
+		Parameters:  defaultRedshiftParameters(),
+	}
 	m.parameterGroups.Set(name, pg)
 
 	return &pg, nil
+}
+
+// ModifyClusterParameterGroup applies parameter overrides to a group. Each
+// modified parameter's Source becomes "user". An unknown parameter name is an
+// InvalidArgument (mapped to InvalidParameterValue), matching real Redshift's
+// rejection of parameters not in the group's family.
+func (m *Mock) ModifyClusterParameterGroup(
+	_ context.Context, name string, params []rdbdriver.Parameter,
+) (*ParameterGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pg, ok := m.parameterGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	if pg.Parameters == nil {
+		pg.Parameters = defaultRedshiftParameters()
+	}
+
+	// Validate every parameter before applying any, so a bad entry never leaves
+	// earlier ones half-applied.
+	for i := range params {
+		if _, known := pg.Parameters[params[i].Name]; !known {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"could not find parameter with name: %s", params[i].Name)
+		}
+	}
+
+	for i := range params {
+		cur := pg.Parameters[params[i].Name]
+		cur.Value = params[i].Value
+		cur.Source = "user"
+		pg.Parameters[params[i].Name] = cur
+	}
+
+	m.parameterGroups.Set(name, pg)
+
+	out := pg
+
+	return &out, nil
+}
+
+// DescribeClusterParameters returns the parameters of a group, sorted by name.
+func (m *Mock) DescribeClusterParameters(_ context.Context, name string) ([]rdbdriver.Parameter, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	pg, ok := m.parameterGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	params := pg.Parameters
+	if params == nil {
+		params = defaultRedshiftParameters()
+	}
+
+	names := make([]string, 0, len(params))
+	for n := range params {
+		names = append(names, n)
+	}
+
+	sort.Strings(names)
+
+	out := make([]rdbdriver.Parameter, 0, len(names))
+	for _, n := range names {
+		out = append(out, params[n])
+	}
+
+	return out, nil
+}
+
+// ResetClusterParameterGroup restores parameters to their engine defaults —
+// the named ones, or all of them when resetAll is set.
+func (m *Mock) ResetClusterParameterGroup(
+	_ context.Context, name string, paramNames []string, resetAll bool,
+) (*ParameterGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pg, ok := m.parameterGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	defaults := defaultRedshiftParameters()
+
+	if resetAll {
+		pg.Parameters = defaults
+		m.parameterGroups.Set(name, pg)
+
+		out := pg
+
+		return &out, nil
+	}
+
+	if pg.Parameters == nil {
+		pg.Parameters = defaultRedshiftParameters()
+	}
+
+	for _, n := range paramNames {
+		if def, known := defaults[n]; known {
+			pg.Parameters[n] = def
+		}
+	}
+
+	m.parameterGroups.Set(name, pg)
+
+	out := pg
+
+	return &out, nil
 }
 
 // DescribeClusterParameterGroups returns the named parameter groups, or all of
