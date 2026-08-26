@@ -728,27 +728,38 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 
 	matchedObjects, commonPrefixSet := matchListKeys(bkt, allKeys, opts)
 
-	commonPrefixes := make([]string, 0, len(commonPrefixSet))
-	for p := range commonPrefixSet {
-		commonPrefixes = append(commonPrefixes, p)
-	}
-
-	sort.Strings(commonPrefixes)
-
 	maxKeys := opts.MaxKeys
 	if maxKeys <= 0 {
 		maxKeys = s3DefaultMaxKeys
 	}
 
-	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	// Real S3 caps object keys and rolled-up common prefixes JOINTLY by
+	// MaxKeys over a single lexicographically-ordered stream: each prefix is
+	// returned on exactly one page, and truncation carries an offset in the
+	// continuation token. Merge the two into one ordered stream, paginate
+	// that, then split the returned page back into keys and prefixes.
+	entries := mergeListEntries(matchedObjects, commonPrefixSet)
+
+	page, err := pagination.Paginate(entries, opts.PageToken, maxKeys)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
 	}
 
-	// Clone metadata only for the page actually returned — cloning every
-	// match would make a paged scan O(bucket) allocations per request.
+	objects := make([]driver.ObjectInfo, 0, len(page.Items))
+	commonPrefixes := make([]string, 0, len(page.Items))
+
 	for i := range page.Items {
-		page.Items[i].Metadata = maps.Clone(page.Items[i].Metadata)
+		e := &page.Items[i]
+		if e.isPrefix {
+			commonPrefixes = append(commonPrefixes, e.key)
+			continue
+		}
+
+		// Clone metadata only for the page actually returned — cloning every
+		// match would make a paged scan O(bucket) allocations per request.
+		obj := e.obj
+		obj.Metadata = maps.Clone(obj.Metadata)
+		objects = append(objects, obj)
 	}
 
 	dims := map[string]string{"BucketName": bucket}
@@ -756,11 +767,41 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	m.emitMetric("ListRequests", 1, "Count", dims)
 
 	return &driver.ListResult{
-		Objects:        page.Items,
+		Objects:        objects,
 		CommonPrefixes: commonPrefixes,
 		NextPageToken:  page.NextPageToken,
 		IsTruncated:    page.HasMore,
 	}, nil
+}
+
+// listEntry is one item in the combined listing stream: either an object key
+// or a rolled-up common prefix. S3 caps keys and common prefixes jointly by
+// MaxKeys over one lexicographic ordering, so pagination runs against the
+// merged stream rather than over keys alone.
+type listEntry struct {
+	key      string
+	isPrefix bool
+	obj      driver.ObjectInfo
+}
+
+// mergeListEntries builds the single lexicographically-sorted stream of object
+// keys and common prefixes. Keys are unique across the two sets — an object
+// that rolls up into a prefix is excluded from matchedObjects — so the merged
+// ordering is total and stable across paged calls, keeping offset tokens valid.
+func mergeListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{}) []listEntry {
+	entries := make([]listEntry, 0, len(objects)+len(prefixSet))
+
+	for i := range objects {
+		entries = append(entries, listEntry{key: objects[i].Key, obj: objects[i]})
+	}
+
+	for p := range prefixSet {
+		entries = append(entries, listEntry{key: p, isPrefix: true})
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+
+	return entries
 }
 
 // matchListKeys applies the prefix, start-after, and delimiter filters to the
