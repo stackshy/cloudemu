@@ -728,10 +728,16 @@ func (m *Mock) ModifyRule(_ context.Context, input driver.ModifyRuleInput) (*dri
 
 // SetRulePriorities reassigns the priorities of the named rules and returns the
 // updated rules.
+//
+// A listener can't have two rules with the same priority, and the reorder path
+// must enforce that just as the create path does: real ELBv2 rejects a target
+// priority already held by another rule on the same listener with PriorityInUse.
+// Every rule is resolved and validated before any write, so a conflict leaves
+// the existing priorities untouched rather than half-applied.
 func (m *Mock) SetRulePriorities(
 	_ context.Context, pairs []driver.RulePriorityPair,
 ) ([]driver.RuleInfo, error) {
-	out := make([]driver.RuleInfo, 0, len(pairs))
+	moving := make(map[string]driver.RuleInfo, len(pairs))
 
 	for _, p := range pairs {
 		rule, ok := m.rules.Get(p.RuleARN)
@@ -739,12 +745,73 @@ func (m *Mock) SetRulePriorities(
 			return nil, errors.Newf(errors.NotFound, "rule %q not found", p.RuleARN)
 		}
 
+		moving[p.RuleARN] = rule
+	}
+
+	if err := m.checkPriorityConflicts(pairs, moving); err != nil {
+		return nil, err
+	}
+
+	out := make([]driver.RuleInfo, 0, len(pairs))
+
+	for _, p := range pairs {
+		rule := moving[p.RuleARN]
 		rule.Priority = p.Priority
 		m.rules.Set(p.RuleARN, rule)
 		out = append(out, rule)
 	}
 
 	return out, nil
+}
+
+// prioritySlot identifies a priority within one listener.
+type prioritySlot struct {
+	listener string
+	priority int
+}
+
+// checkPriorityConflicts reports FailedPrecondition (mapped to PriorityInUse)
+// when a requested priority collides with another rule on the same listener —
+// either a rule outside the batch or a second rule inside it.
+func (m *Mock) checkPriorityConflicts(
+	pairs []driver.RulePriorityPair, moving map[string]driver.RuleInfo,
+) error {
+	claimed := make(map[prioritySlot]struct{}, len(pairs))
+
+	for _, p := range pairs {
+		rule := moving[p.RuleARN]
+		slot := prioritySlot{listener: rule.ListenerARN, priority: p.Priority}
+
+		if _, dup := claimed[slot]; dup {
+			return errors.Newf(errors.FailedPrecondition, "priority %d is currently in use", p.Priority)
+		}
+
+		claimed[slot] = struct{}{}
+
+		if m.priorityHeldByOther(slot, moving) {
+			return errors.Newf(errors.FailedPrecondition, "priority %d is currently in use", p.Priority)
+		}
+	}
+
+	return nil
+}
+
+// priorityHeldByOther reports whether a rule not in the batch already holds the
+// given priority on the same listener. Default rules (priority 0) are ignored.
+func (m *Mock) priorityHeldByOther(slot prioritySlot, moving map[string]driver.RuleInfo) bool {
+	for _, other := range m.rules.All() {
+		if other.IsDefault || other.ListenerARN != slot.listener || other.Priority != slot.priority {
+			continue
+		}
+
+		if _, isMoving := moving[other.ARN]; isMoving {
+			continue
+		}
+
+		return true
+	}
+
+	return false
 }
 
 // SetSecurityGroups replaces the security groups attached to a load balancer.

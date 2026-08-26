@@ -295,6 +295,82 @@ func TestSDKModifyRuleAndPriorities(t *testing.T) {
 	}
 }
 
+// TestSDKSetRulePrioritiesUniqueness proves SetRulePriorities rejects moving a
+// rule onto a priority another rule on the same listener already holds
+// (PriorityInUse), and leaves the existing priorities untouched.
+func TestSDKSetRulePrioritiesUniqueness(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	lbARN, tgARN := setupLBAndTG(t, client, "prio-alb", "prio-tg")
+
+	liOut, err := client.CreateListener(ctx, &elb.CreateListenerInput{
+		LoadBalancerArn: aws.String(lbARN),
+		Protocol:        elbtypes.ProtocolEnumHttp,
+		Port:            aws.Int32(80),
+		DefaultActions: []elbtypes.Action{{
+			Type:           elbtypes.ActionTypeEnumForward,
+			TargetGroupArn: aws.String(tgARN),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateListener: %v", err)
+	}
+
+	liARN := aws.ToString(liOut.Listeners[0].ListenerArn)
+
+	makeRule := func(priority int32) string {
+		out, err := client.CreateRule(ctx, &elb.CreateRuleInput{
+			ListenerArn: aws.String(liARN),
+			Priority:    aws.Int32(priority),
+			Conditions: []elbtypes.RuleCondition{{
+				Field:  aws.String("path-pattern"),
+				Values: []string{"/p*"},
+			}},
+			Actions: []elbtypes.Action{{
+				Type:           elbtypes.ActionTypeEnumForward,
+				TargetGroupArn: aws.String(tgARN),
+			}},
+		})
+		if err != nil {
+			t.Fatalf("CreateRule(%d): %v", priority, err)
+		}
+
+		return aws.ToString(out.Rules[0].RuleArn)
+	}
+
+	_ = makeRule(10)
+	rule2 := makeRule(20)
+
+	// Moving rule2 onto priority 10 collides with the first rule.
+	_, err = client.SetRulePriorities(ctx, &elb.SetRulePrioritiesInput{
+		RulePriorities: []elbtypes.RulePriorityPair{{
+			RuleArn:  aws.String(rule2),
+			Priority: aws.Int32(10),
+		}},
+	})
+	if err == nil {
+		t.Fatal("SetRulePriorities onto a used priority: want error, got nil")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "PriorityInUse" {
+		t.Fatalf("SetRulePriorities error = %v, want PriorityInUse", err)
+	}
+
+	// The collision left rule2 at its original priority.
+	rules, err := client.DescribeRules(ctx, &elb.DescribeRulesInput{ListenerArn: aws.String(liARN)})
+	if err != nil {
+		t.Fatalf("DescribeRules: %v", err)
+	}
+
+	for _, r := range rules.Rules {
+		if aws.ToString(r.RuleArn) == rule2 && aws.ToString(r.Priority) != "20" {
+			t.Fatalf("rule2 priority = %q, want unchanged 20", aws.ToString(r.Priority))
+		}
+	}
+}
+
 // TestSDKSetSecurityGroupsAndSubnets proves both network-modify ops dispatch.
 func TestSDKSetSecurityGroupsAndSubnets(t *testing.T) {
 	client := newSDKClient(t)

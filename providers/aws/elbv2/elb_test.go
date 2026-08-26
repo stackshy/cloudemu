@@ -523,6 +523,39 @@ func TestDescribeRules(t *testing.T) {
 	})
 }
 
+func TestSetRulePrioritiesUniqueness(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	li, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
+
+	r1, _ := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: li.ARN, Priority: 10})
+	r2, _ := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: li.ARN, Priority: 20})
+
+	// Moving r2 onto r1's priority collides.
+	_, err := m.SetRulePriorities(ctx, []driver.RulePriorityPair{{RuleARN: r2.ARN, Priority: 10}})
+	assertError(t, err, true)
+
+	// The rejected reorder left both priorities intact.
+	rules, _ := m.DescribeRules(ctx, li.ARN)
+	for _, r := range rules {
+		switch r.ARN {
+		case r1.ARN:
+			assertEqual(t, 10, r.Priority)
+		case r2.ARN:
+			assertEqual(t, 20, r.Priority)
+		}
+	}
+
+	// Swapping both at once (10<->20) is allowed: neither target is held by a
+	// rule outside the batch.
+	_, err = m.SetRulePriorities(ctx, []driver.RulePriorityPair{
+		{RuleARN: r1.ARN, Priority: 20},
+		{RuleARN: r2.ARN, Priority: 10},
+	})
+	requireNoError(t, err)
+}
+
 func TestModifyListener(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
