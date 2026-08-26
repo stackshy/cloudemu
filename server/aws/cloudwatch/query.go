@@ -258,8 +258,10 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
+	// AWS tolerates incorrect alarm names: valid ones are still deleted and no
+	// ResourceNotFound is returned.
 	for _, name := range queryStringList(r, "AlarmNames.member.") {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil {
+		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 			writeQueryDriverErr(w, err)
 			return
 		}

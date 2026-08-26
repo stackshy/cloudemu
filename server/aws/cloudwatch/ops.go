@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -774,8 +775,12 @@ func (h *Handler) deleteAlarms(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 
+	// AWS tolerates incorrect alarm names: the correctly named alarms are still
+	// deleted and no ResourceNotFound is returned. Skip not-found names so a
+	// batch that includes an already-gone alarm (e.g. terraform destroy) never
+	// fails spuriously or leaves a half-deleted state.
 	for _, name := range in.AlarmNames {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil {
+		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 			writeDriverErr(w, err)
 			return
 		}
