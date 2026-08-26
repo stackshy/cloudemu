@@ -692,6 +692,8 @@ func (m *Mock) CreateClusterSnapshot(
 		NumberOfNodes:              cluster.NumberOfNodes,
 		Encrypted:                  cluster.Encrypted,
 		TotalBackupSizeInMegaBytes: snapshotBackupSizeMB,
+		MasterUsername:             cluster.MasterUsername,
+		DatabaseName:               cluster.DatabaseName,
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(cfg.Tags),
 	}
@@ -767,16 +769,26 @@ func (m *Mock) RestoreClusterFromSnapshot(
 
 	now := m.opts.Clock.Now().UTC()
 
+	numberOfNodes := snap.NumberOfNodes
+	if numberOfNodes == 0 {
+		numberOfNodes = singleNodeCount
+	}
+
 	cluster := rdbdriver.Cluster{
-		ID:            input.NewClusterID,
-		ARN:           clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
-		Engine:        snap.Engine,
-		EngineVersion: snap.EngineVersion,
-		Endpoint:      endpointFor(input.NewClusterID),
-		Port:          defaultPort,
-		State:         rdbdriver.StateAvailable,
-		CreatedAt:     now,
-		Tags:          copyTags(input.Tags),
+		ID:             input.NewClusterID,
+		ARN:            clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
+		Engine:         snap.Engine,
+		EngineVersion:  snap.EngineVersion,
+		MasterUsername: snap.MasterUsername,
+		DatabaseName:   snap.DatabaseName,
+		Endpoint:       endpointFor(input.NewClusterID),
+		Port:           defaultPort,
+		State:          rdbdriver.StateAvailable,
+		NodeType:       snap.NodeType,
+		NumberOfNodes:  numberOfNodes,
+		Encrypted:      snap.Encrypted,
+		CreatedAt:      now,
+		Tags:           copyTags(input.Tags),
 	}
 
 	m.clusters.Set(input.NewClusterID, cluster)

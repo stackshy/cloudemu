@@ -359,6 +359,11 @@ type ClusterSnapshot struct {
 	NumberOfNodes              int
 	Encrypted                  bool
 	TotalBackupSizeInMegaBytes float64
+	// MasterUsername / DatabaseName capture the source cluster's admin user and
+	// database at snapshot time so a Redshift restore is a self-contained image
+	// (the restored cluster reads them back). Empty for RDS/Aurora/Azure/GCP.
+	MasterUsername string
+	DatabaseName   string
 	CreatedAt                  time.Time
 	Tags                       map[string]string
 }
