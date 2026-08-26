@@ -157,7 +157,7 @@ func (h *Handler) serveNested(w http.ResponseWriter, r *http.Request, project, b
 func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, project, name, action string) {
 	switch action {
 	case "publish":
-		h.publish(w, r, name)
+		h.publish(w, r, project, name)
 		return
 	case verbGetIamPolicy, verbSetIamPolicy, verbTestIamPermissions:
 		h.serveIam(w, r, resTopics, name, action)
@@ -310,7 +310,7 @@ func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request, project str
 	writeJSON(w, http.StatusOK, listTopicsResponse{Topics: page.Items, NextPageToken: page.NextPageToken})
 }
 
-func (h *Handler) publish(w http.ResponseWriter, r *http.Request, name string) {
+func (h *Handler) publish(w http.ResponseWriter, r *http.Request, project, name string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 		return
@@ -328,16 +328,31 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, name string) {
 
 	publishTime := time.Now().UTC()
 	out := publishResponse{MessageIDs: make([]string, 0, len(req.Messages))}
+	delivery := make([]publishedMessage, 0, len(req.Messages))
+
+	// Store every message on the topic log first, capturing its index (for
+	// push auto-ack) and wire shape (for push / function delivery).
+	h.mu.Lock()
+	ts := h.topicLog(name)
 
 	for i := range req.Messages {
-		id := h.appendMessage(name, &storedMessage{
+		sm := storedMessage{
 			body:        decodeData(req.Messages[i].Data),
 			attributes:  req.Messages[i].Attributes,
 			orderingKey: req.Messages[i].OrderingKey,
 			publishTime: publishTime,
-		})
+		}
+		id := h.appendMessageLocked(name, &sm)
 		out.MessageIDs = append(out.MessageIDs, id)
+		delivery = append(delivery, publishedMessage{idx: len(ts.messages) - 1, msg: buildPubsubMessage(id, &sm)})
 	}
+
+	pushSubs := h.pushSubscribersLocked(name)
+	h.mu.Unlock()
+
+	// Fan out to push endpoints and event-triggered functions outside the lock,
+	// best-effort — a slow or failing target never fails the publish.
+	h.dispatchPublished(r.Context(), project, name, delivery, pushSubs)
 
 	writeJSON(w, http.StatusOK, out)
 }
