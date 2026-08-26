@@ -52,6 +52,13 @@ type SubnetInfo struct {
 	// non-default subnet and lets ModifySubnetAttribute flip it — the only way
 	// to turn a subnet public.
 	MapPublicIPOnLaunch bool
+	// AvailableIPAddressCount is the number of usable IPv4 addresses left in the
+	// subnet: the CIDR's host space minus the five addresses AWS reserves in
+	// every subnet, minus the addresses already consumed by resident network
+	// interfaces (instance primary ENIs, standalone ENIs, NAT gateways, interface
+	// endpoints). Populated by the provider on Create/Describe; DescribeSubnets
+	// returns it as availableIpAddressCount, which IaC tools read for drift.
+	AvailableIPAddressCount int
 }
 
 // SecurityGroupConfig describes a security group to create.
@@ -465,6 +472,10 @@ type VPCEndpoint struct {
 	RouteTableIDs    []string
 	Tags             map[string]string
 	CreatedAt        string
+	// NetworkInterfaceIDs holds the ENIs an Interface-type endpoint provisions,
+	// one per subnet. Gateway-type endpoints hold none. DescribeVpcEndpoints
+	// returns these as networkInterfaceIdSet.
+	NetworkInterfaceIDs []string
 }
 
 // Networking is the interface that networking provider

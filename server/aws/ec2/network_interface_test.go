@@ -16,7 +16,7 @@ func TestNATGatewayHoldsENIUntilDeleted(t *testing.T) {
 	vpcID, subnetID := mkVPCAndSubnet(t, h)
 
 	natResp := do(t, h, http.MethodPost, "/", url.Values{
-		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID},
+		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID}, "ConnectivityType": {"private"},
 	})
 	if natResp.Code != http.StatusOK {
 		t.Fatalf("CreateNatGateway = %d: %s", natResp.Code, natResp.Body.String())
@@ -76,7 +76,7 @@ func TestDescribeNetworkInterfacesHonoursVPCFilter(t *testing.T) {
 
 	for _, sub := range []string{subnetA, subnetB} {
 		resp := do(t, h, http.MethodPost, "/", url.Values{
-			"Action": {"CreateNatGateway"}, "SubnetId": {sub},
+			"Action": {"CreateNatGateway"}, "SubnetId": {sub}, "ConnectivityType": {"private"},
 		})
 		if resp.Code != http.StatusOK {
 			t.Fatalf("CreateNatGateway(%s) = %d: %s", sub, resp.Code, resp.Body.String())
@@ -106,7 +106,7 @@ func TestDetachThenDeleteNetworkInterface(t *testing.T) {
 	vpcID, subnetID := mkVPCAndSubnet(t, h)
 
 	do(t, h, http.MethodPost, "/", url.Values{
-		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID},
+		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID}, "ConnectivityType": {"private"},
 	})
 
 	desc := do(t, h, http.MethodPost, "/", url.Values{
@@ -155,7 +155,7 @@ func TestDescribeNetworkInterfacesRejectsUnknownFilter(t *testing.T) {
 	vpcID, subnetID := mkVPCAndSubnet(t, h)
 
 	do(t, h, http.MethodPost, "/", url.Values{
-		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID},
+		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID}, "ConnectivityType": {"private"},
 	})
 
 	resp := do(t, h, http.MethodPost, "/", url.Values{

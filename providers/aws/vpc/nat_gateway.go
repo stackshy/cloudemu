@@ -15,6 +15,13 @@ const (
 
 	natConnectivityPublic  = "public"
 	natConnectivityPrivate = "private"
+
+	// Error markers so the wire layer can emit the resource-specific EC2 code for
+	// an invalid Elastic IP pairing. A public NAT gateway requires an AllocationId;
+	// a private one must not carry one; a named allocation must exist.
+	natMissingAllocationMsg     = "MissingParameter: a public NAT gateway requires an Elastic IP AllocationId"
+	natUnexpectedAllocationMsg  = "InvalidParameterValue: a private NAT gateway must not have an AllocationId"
+	natAllocationNotFoundErrFmt = "InvalidAllocationID.NotFound: the Elastic IP allocation %q does not exist"
 )
 
 type natGatewayData struct {
@@ -42,21 +49,30 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 		return nil, errors.Newf(errors.NotFound, "subnet %q not found", cfg.SubnetID)
 	}
 
+	connectivity := natConnectivityPublic
+	if cfg.ConnectivityType == natConnectivityPrivate {
+		connectivity = natConnectivityPrivate
+	}
+
+	// A public NAT gateway must be given an allocated Elastic IP; a private one
+	// must not carry one. Validate before creating the ENI so a rejected request
+	// leaves no trace.
+	publicIP, err := m.resolveNATElasticIP(connectivity, cfg.AllocationID)
+	if err != nil {
+		return nil, err
+	}
+
 	id := idgen.GenerateID("nat-")
 
 	// A real NAT gateway occupies an ENI in its subnet for as long as it
 	// lives, and that ENI is what refuses a VPC delete issued too early.
 	eni := m.attachManagedENI(subnet.VPCID, cfg.SubnetID, natENIDescription(id))
 
-	connectivity := natConnectivityPublic
-	if cfg.ConnectivityType == natConnectivityPrivate {
-		connectivity = natConnectivityPrivate
-	}
-
 	nat := &natGatewayData{
 		ID:                 id,
 		SubnetID:           cfg.SubnetID,
 		VPCID:              subnet.VPCID,
+		PublicIP:           publicIP,
 		PrivateIP:          mockPublicIP(id + "-private"),
 		AllocationID:       cfg.AllocationID,
 		NetworkInterfaceID: eni.ID,
@@ -65,16 +81,12 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 		CreatedAt:          m.opts.Clock.Now().Format(timeFormat),
 		Tags:               copyTags(cfg.Tags),
 	}
-	// A private NAT gateway has no public/Elastic IP address.
-	if connectivity == natConnectivityPublic {
-		nat.PublicIP = mockPublicIP(id)
 
-		// The NAT gateway holds the Elastic IP, so real EC2 refuses to release it
-		// until the NAT gateway is deleted (InvalidIPAddress.InUse).
-		if cfg.AllocationID != "" {
-			if eip, ok := m.eips.Get(cfg.AllocationID); ok {
-				eip.AssociationID = idgen.GenerateID("eipassoc-")
-			}
+	// The NAT gateway holds the Elastic IP, so real EC2 refuses to release it
+	// until the NAT gateway is deleted (InvalidIPAddress.InUse).
+	if connectivity == natConnectivityPublic {
+		if eip, ok := m.eips.Get(cfg.AllocationID); ok {
+			eip.AssociationID = idgen.GenerateID("eipassoc-")
 		}
 	}
 
@@ -103,6 +115,31 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 	}
 
 	return nil
+}
+
+// resolveNATElasticIP enforces the Elastic IP rules a NAT gateway's connectivity
+// type imposes and returns the public IP the gateway advertises. A public gateway
+// requires an existing allocation and reflects that EIP's address; a private
+// gateway must not name an allocation and has no public IP.
+func (m *Mock) resolveNATElasticIP(connectivity, allocationID string) (string, error) {
+	if connectivity == natConnectivityPrivate {
+		if allocationID != "" {
+			return "", errors.New(errors.InvalidArgument, natUnexpectedAllocationMsg)
+		}
+
+		return "", nil
+	}
+
+	if allocationID == "" {
+		return "", errors.New(errors.InvalidArgument, natMissingAllocationMsg)
+	}
+
+	eip, ok := m.eips.Get(allocationID)
+	if !ok {
+		return "", errors.Newf(errors.InvalidArgument, natAllocationNotFoundErrFmt, allocationID)
+	}
+
+	return eip.PublicIP, nil
 }
 
 func natENIDescription(natID string) string {

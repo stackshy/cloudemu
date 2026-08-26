@@ -63,6 +63,20 @@ func mkVPCSubnet(t *testing.T, c *ec2.Client) (vpcID, subnetID string) {
 	return vpcID, aws.ToString(sub.Subnet.SubnetId)
 }
 
+// allocEIP allocates an Elastic IP and returns its allocation id. A public NAT
+// gateway requires a real allocation — real EC2 rejects a fabricated one with
+// InvalidAllocationID.NotFound.
+func allocEIP(ctx context.Context, t *testing.T, c *ec2.Client) string {
+	t.Helper()
+
+	out, err := c.AllocateAddress(ctx, &ec2.AllocateAddressInput{})
+	if err != nil {
+		t.Fatalf("AllocateAddress: %v", err)
+	}
+
+	return aws.ToString(out.AllocationId)
+}
+
 // TestNatGatewayAddressSetRoundTrip pins that a public NAT gateway reports its
 // address set (allocationId, networkInterfaceId, privateIp, publicIp) and
 // connectivityType, both on create and describe. Terraform's aws_nat_gateway
@@ -72,17 +86,18 @@ func TestNatGatewayAddressSetRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	c := newRoutingEdgeEC2(t)
 	_, subnetID := mkVPCSubnet(t, c)
+	alloc := allocEIP(ctx, t, c)
 
 	created, err := c.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
 		SubnetId:     aws.String(subnetID),
-		AllocationId: aws.String("eipalloc-12345678"),
+		AllocationId: aws.String(alloc),
 	})
 	if err != nil {
 		t.Fatalf("CreateNatGateway: %v", err)
 	}
 
 	natID := aws.ToString(created.NatGateway.NatGatewayId)
-	assertNatAddresses(t, "create", created.NatGateway)
+	assertNatAddresses(t, "create", created.NatGateway, alloc)
 
 	desc, err := c.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{
 		NatGatewayIds: []string{natID},
@@ -95,10 +110,10 @@ func TestNatGatewayAddressSetRoundTrip(t *testing.T) {
 		t.Fatalf("DescribeNatGateways returned %d, want 1", len(desc.NatGateways))
 	}
 
-	assertNatAddresses(t, "describe", &desc.NatGateways[0])
+	assertNatAddresses(t, "describe", &desc.NatGateways[0], alloc)
 }
 
-func assertNatAddresses(t *testing.T, phase string, n *ec2types.NatGateway) {
+func assertNatAddresses(t *testing.T, phase string, n *ec2types.NatGateway, wantAlloc string) {
 	t.Helper()
 
 	if got := string(n.ConnectivityType); got != "public" {
@@ -110,8 +125,8 @@ func assertNatAddresses(t *testing.T, phase string, n *ec2types.NatGateway) {
 	}
 
 	addr := n.NatGatewayAddresses[0]
-	if aws.ToString(addr.AllocationId) != "eipalloc-12345678" {
-		t.Errorf("%s: allocationId = %q, want eipalloc-12345678", phase, aws.ToString(addr.AllocationId))
+	if aws.ToString(addr.AllocationId) != wantAlloc {
+		t.Errorf("%s: allocationId = %q, want %q", phase, aws.ToString(addr.AllocationId), wantAlloc)
 	}
 
 	if aws.ToString(addr.NetworkInterfaceId) == "" {
@@ -159,13 +174,81 @@ func TestNatGatewayPrivateConnectivity(t *testing.T) {
 	}
 }
 
-// mkNat creates a public NAT gateway in the given subnet and returns its id.
-func mkNat(ctx context.Context, t *testing.T, c *ec2.Client, subnetID, alloc string) string {
+// TestNatGatewayPublicRequiresAllocation pins that a public NAT gateway without an
+// AllocationId is rejected (MissingParameter), an unknown allocation is
+// InvalidAllocationID.NotFound, and a private gateway carrying an AllocationId is
+// rejected — matching real EC2's Elastic IP rules.
+func TestNatGatewayPublicRequiresAllocation(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	_, subnetID := mkVPCSubnet(t, c)
+
+	_, err := c.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{SubnetId: aws.String(subnetID)})
+	if err == nil {
+		t.Fatal("public NAT gateway without an AllocationId succeeded, want an error")
+	}
+	if got := apiCode(t, err); got != "MissingParameter" {
+		t.Errorf("code = %q, want MissingParameter", got)
+	}
+
+	_, err = c.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
+		SubnetId:     aws.String(subnetID),
+		AllocationId: aws.String("eipalloc-doesnotexist"),
+	})
+	if err == nil {
+		t.Fatal("public NAT gateway with an unknown AllocationId succeeded, want an error")
+	}
+	if got := apiCode(t, err); got != "InvalidAllocationID.NotFound" {
+		t.Errorf("code = %q, want InvalidAllocationID.NotFound", got)
+	}
+
+	_, err = c.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
+		SubnetId:         aws.String(subnetID),
+		ConnectivityType: ec2types.ConnectivityTypePrivate,
+		AllocationId:     aws.String(allocEIP(ctx, t, c)),
+	})
+	if err == nil {
+		t.Fatal("private NAT gateway with an AllocationId succeeded, want an error")
+	}
+}
+
+// TestNatGatewayPublicReflectsElasticIP pins that a public NAT gateway advertises
+// its Elastic IP's public address rather than a fabricated one.
+func TestNatGatewayPublicReflectsElasticIP(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	_, subnetID := mkVPCSubnet(t, c)
+
+	alloc := allocEIP(ctx, t, c)
+
+	addrs, err := c.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{AllocationIds: []string{alloc}})
+	if err != nil {
+		t.Fatalf("DescribeAddresses: %v", err)
+	}
+	wantIP := aws.ToString(addrs.Addresses[0].PublicIp)
+
+	created, err := c.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
+		SubnetId:     aws.String(subnetID),
+		AllocationId: aws.String(alloc),
+	})
+	if err != nil {
+		t.Fatalf("CreateNatGateway: %v", err)
+	}
+
+	got := aws.ToString(created.NatGateway.NatGatewayAddresses[0].PublicIp)
+	if got != wantIP {
+		t.Errorf("NAT publicIp = %q, want the Elastic IP's %q", got, wantIP)
+	}
+}
+
+// mkNat creates a public NAT gateway in the given subnet, allocating the Elastic
+// IP it requires, and returns its id.
+func mkNat(ctx context.Context, t *testing.T, c *ec2.Client, subnetID string) string {
 	t.Helper()
 
 	out, err := c.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
 		SubnetId:     aws.String(subnetID),
-		AllocationId: aws.String(alloc),
+		AllocationId: aws.String(allocEIP(ctx, t, c)),
 	})
 	if err != nil {
 		t.Fatalf("CreateNatGateway: %v", err)
@@ -185,8 +268,8 @@ func TestDescribeNatGatewaysFilters(t *testing.T) {
 	vpcA, subnetA := mkVPCSubnet(t, c)
 	_, subnetB := mkVPCSubnet(t, c)
 
-	natA := mkNat(ctx, t, c, subnetA, "eipalloc-aaaa1111")
-	natB := mkNat(ctx, t, c, subnetB, "eipalloc-bbbb2222")
+	natA := mkNat(ctx, t, c, subnetA)
+	natB := mkNat(ctx, t, c, subnetB)
 
 	byVPC, err := c.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{
 		Filter: []ec2types.Filter{{Name: aws.String("vpc-id"), Values: []string{vpcA}}},
@@ -252,7 +335,7 @@ func TestDescribeNatGatewaysPaginates(t *testing.T) {
 
 	for range 3 {
 		_, subnetID := mkVPCSubnet(t, c)
-		want[mkNat(ctx, t, c, subnetID, "eipalloc-page")] = 0
+		want[mkNat(ctx, t, c, subnetID)] = 0
 	}
 
 	first, err := c.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{MaxResults: aws.Int32(1)})

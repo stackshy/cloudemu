@@ -370,18 +370,19 @@ func TestToVpcXMLStateDefaults(t *testing.T) {
 }
 
 func TestToSubnetXMLStateDefaults(t *testing.T) {
-	in := &netdriver.SubnetInfo{ID: "subnet-x", VPCID: "vpc-x"}
+	const usableIPs = 251
+
+	in := &netdriver.SubnetInfo{ID: "subnet-x", VPCID: "vpc-x", AvailableIPAddressCount: usableIPs}
 
 	got := toSubnetXML(in, "us-east-1")
 	if got.State != "available" {
 		t.Errorf("default state: %q", got.State)
 	}
 
-	// No CIDR set falls back to a /24's usable-address count.
-	const fallbackAvailableIPs = 251
-	if got.AvailableIPCount != fallbackAvailableIPs {
-		t.Errorf("AvailableIPCount = %d, want %d",
-			got.AvailableIPCount, fallbackAvailableIPs)
+	// toSubnetXML reflects the provider-computed usable-address count verbatim;
+	// the provider derives it from the CIDR minus reserved and consumed addresses.
+	if got.AvailableIPCount != usableIPs {
+		t.Errorf("AvailableIPCount = %d, want %d", got.AvailableIPCount, usableIPs)
 	}
 }
 

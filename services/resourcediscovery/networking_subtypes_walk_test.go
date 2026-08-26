@@ -25,7 +25,8 @@ func TestWalkNetworkingSubTypes(t *testing.T) {
 		t.Fatalf("create subnet: %v", err)
 	}
 
-	if _, err := n.CreateNATGateway(ctx, netdriver.NATGatewayConfig{SubnetID: sub.ID}); err != nil {
+	if _, err := n.CreateNATGateway(ctx,
+		netdriver.NATGatewayConfig{SubnetID: sub.ID, ConnectivityType: "private"}); err != nil {
 		t.Fatalf("create nat gateway: %v", err)
 	}
 

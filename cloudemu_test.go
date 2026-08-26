@@ -4707,9 +4707,12 @@ func TestNATGateway(t *testing.T) {
 				t.Fatalf("CreateSubnet: %v", err)
 			}
 
+			// A private NAT gateway needs no Elastic IP, so this cross-provider CRUD
+			// check stays uniform: AWS requires an AllocationId only for a public one.
 			nat, err := p.d.CreateNATGateway(ctx, netdriver.NATGatewayConfig{
-				SubnetID: subnet.ID,
-				Tags:     map[string]string{"env": "test"},
+				SubnetID:         subnet.ID,
+				ConnectivityType: "private",
+				Tags:             map[string]string{"env": "test"},
 			})
 			if err != nil {
 				t.Fatalf("CreateNATGateway: %v", err)

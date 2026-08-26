@@ -2,7 +2,6 @@ package ec2
 
 import (
 	"encoding/xml"
-	"net"
 	"net/http"
 	"strings"
 
@@ -11,14 +10,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
-
-// AWS reserves 5 addresses in every subnet CIDR (network, VPC router, DNS,
-// future use, broadcast), so a /24 reports 251 usable addresses.
-const subnetReservedIPs = 5
-
-// ipv4Bits is the address width used to size a subnet's host space from its
-// prefix length.
-const ipv4Bits = 32
 
 type subnetXML struct {
 	SubnetID            string    `xml:"subnetId"`
@@ -167,7 +158,7 @@ func toSubnetXML(s *netdriver.SubnetInfo, region string) subnetXML {
 		State:               state,
 		VpcID:               s.VPCID,
 		CidrBlock:           s.CIDRBlock,
-		AvailableIPCount:    availableIPCount(s.CIDRBlock),
+		AvailableIPCount:    s.AvailableIPAddressCount,
 		AvailabilityZone:    s.AvailabilityZone,
 		AvailabilityZoneID:  zoneIDFor(s.AvailabilityZone),
 		MapPublicIPOnLaunch: s.MapPublicIPOnLaunch,
@@ -180,28 +171,6 @@ func toSubnetXML(s *netdriver.SubnetInfo, region string) subnetXML {
 	}
 
 	return x
-}
-
-// availableIPCount reports the usable-address count AWS advertises for a CIDR:
-// the host space minus the five addresses AWS reserves. A malformed or missing
-// CIDR falls back to a /24's 251 rather than zero.
-func availableIPCount(cidr string) int {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return (1 << (ipv4Bits - 24)) - subnetReservedIPs
-	}
-
-	ones, bits := ipnet.Mask.Size()
-	if bits != ipv4Bits {
-		return 0
-	}
-
-	total := 1 << (ipv4Bits - ones)
-	if total <= subnetReservedIPs {
-		return 0
-	}
-
-	return total - subnetReservedIPs
 }
 
 // zoneIDFor maps an availability-zone name to its zone id (us-east-1a ->

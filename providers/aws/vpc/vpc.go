@@ -19,6 +19,10 @@ const (
 	timeFormat                = time.RFC3339
 	maxOctetValue             = 256
 	defaultFlowLogRecordLimit = 10
+	// subnetReservedIPs is the number of addresses AWS reserves in every subnet
+	// CIDR (network, VPC router, DNS, future use, broadcast). A /24 therefore
+	// advertises 256-5 = 251 usable addresses on a fresh subnet.
+	subnetReservedIPs = 5
 )
 
 // VPC IPv4 CIDR netmask bounds. EC2 requires a VPC block between a /16 and a
@@ -569,8 +573,58 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	m.associateDefaultNetworkACL(cfg.VPCID, id)
 
 	info := toSubnetInfo(s)
+	info.AvailableIPAddressCount = m.subnetAvailableIPCount(s.ID, s.CIDRBlock)
 
 	return &info, nil
+}
+
+// subnetAvailableIPCount reports the usable IPv4 addresses left in the subnet:
+// the CIDR's host space minus AWS's five reserved addresses, minus every network
+// interface resident in the subnet (an instance's primary ENI, standalone ENIs,
+// and the ENIs NAT gateways and interface endpoints occupy). A malformed or
+// non-IPv4 CIDR yields 0. The count re-increments when those interfaces are
+// released — a terminated instance's primary ENI is deleted, freeing its address.
+func (m *Mock) subnetAvailableIPCount(subnetID, cidr string) int {
+	base := baseSubnetIPCount(cidr)
+	if base == 0 {
+		return 0
+	}
+
+	used := 0
+
+	for _, eni := range m.enis.All() {
+		if eni.SubnetID == subnetID {
+			used++
+		}
+	}
+
+	if used >= base {
+		return 0
+	}
+
+	return base - used
+}
+
+// baseSubnetIPCount is a subnet CIDR's usable-address count before any ENI
+// consumption: its host space minus AWS's five reserved addresses. A malformed
+// or non-IPv4 CIDR, or one too small to hold the reserved set, yields 0.
+func baseSubnetIPCount(cidr string) int {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0
+	}
+
+	ones, bits := ipnet.Mask.Size()
+	if bits != net.IPv4len*8 {
+		return 0
+	}
+
+	total := 1 << (net.IPv4len*8 - ones)
+	if total <= subnetReservedIPs {
+		return 0
+	}
+
+	return total - subnetReservedIPs
 }
 
 // DeleteSubnet deletes the subnet with the given ID.
@@ -755,7 +809,12 @@ func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.Subnet
 		}
 	}
 
-	return describeResources(m.subnets, ids, toSubnetInfo), nil
+	out := describeResources(m.subnets, ids, toSubnetInfo)
+	for i := range out {
+		out[i].AvailableIPAddressCount = m.subnetAvailableIPCount(out[i].ID, out[i].CIDRBlock)
+	}
+
+	return out, nil
 }
 
 // CreateSecurityGroup creates a new security group with the given configuration.

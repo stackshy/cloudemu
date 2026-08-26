@@ -34,8 +34,10 @@ func TestWalkNetworkingIncludesAddressesAndInterfaces(t *testing.T) {
 		t.Fatalf("AllocateAddress: %v", err)
 	}
 
-	// A NAT gateway holds an interface for as long as it lives.
-	if _, err := vpcMock.CreateNATGateway(ctx, netdriver.NATGatewayConfig{SubnetID: sub.ID}); err != nil {
+	// A NAT gateway holds an interface for as long as it lives. A private one
+	// needs no Elastic IP, leaving the allocated EIP above standalone for the walk.
+	if _, err := vpcMock.CreateNATGateway(ctx,
+		netdriver.NATGatewayConfig{SubnetID: sub.ID, ConnectivityType: "private"}); err != nil {
 		t.Fatalf("CreateNATGateway: %v", err)
 	}
 
