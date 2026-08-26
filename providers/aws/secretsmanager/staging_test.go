@@ -75,12 +75,12 @@ func TestUpdateSecretVersionStagePromotes(t *testing.T) {
 	_, err = m.UpdateSecretVersionStage(ctx, "s", "AWSCURRENT", oldCurrentID, pending.VersionID)
 	require.NoError(t, err)
 
-	// The promoted version keeps its AWSPENDING label (real rotation's
-	// finishSecret only moves AWSCURRENT; it does not strip AWSPENDING), so it
-	// now carries both, sorted.
+	// Promoting AWSCURRENT onto the pending version auto-removes its AWSPENDING
+	// label (as the real service does at finishSecret), so it carries AWSCURRENT
+	// exactly — AWSPENDING must not ride forward onto the current version.
 	stages, err := m.SecretVersionStages(ctx, "s")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"AWSCURRENT", "AWSPENDING"}, stages[pending.VersionID])
+	assert.Equal(t, []string{"AWSCURRENT"}, stages[pending.VersionID])
 	assert.Equal(t, []string{"AWSPREVIOUS"}, stages[oldCurrentID])
 
 	got, err := m.GetSecretValueStage(ctx, "s", "", "")

@@ -14,6 +14,7 @@ import (
 const (
 	stageCurrent  = "AWSCURRENT"
 	stagePrevious = "AWSPREVIOUS"
+	stagePending  = "AWSPENDING"
 )
 
 // versionByID returns a pointer to the version with the given id (into the
@@ -62,7 +63,10 @@ func (sd *secretData) removeStage(label string) {
 
 // promoteToCurrent moves AWSCURRENT to versionID, demoting the version that
 // previously held AWSCURRENT to AWSPREVIOUS (and evicting the label from the old
-// AWSPREVIOUS holder), mirroring the real service's staging shuffle.
+// AWSPREVIOUS holder), mirroring the real service's staging shuffle. If the
+// promoted version was the AWSPENDING candidate, its AWSPENDING label is
+// automatically removed (as the real service does when rotation finishes), so
+// AWSPENDING never rides forward onto the current version.
 func (sd *secretData) promoteToCurrent(versionID string) {
 	if sd.stages == nil {
 		sd.stages = make(map[string]string)
@@ -70,6 +74,10 @@ func (sd *secretData) promoteToCurrent(versionID string) {
 
 	if prevCurrent, ok := sd.stages[stageCurrent]; ok && prevCurrent != versionID {
 		sd.stages[stagePrevious] = prevCurrent
+	}
+
+	if pending, ok := sd.stages[stagePending]; ok && pending == versionID {
+		delete(sd.stages, stagePending)
 	}
 
 	sd.stages[stageCurrent] = versionID

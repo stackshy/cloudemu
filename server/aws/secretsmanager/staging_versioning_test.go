@@ -230,6 +230,79 @@ func TestSDKUpdateSecretVersionStagePromote(t *testing.T) {
 	}
 }
 
+// TestSDKRotationFinishRemovesPending drives a full rotation cycle and guards
+// that finishSecret (UpdateSecretVersionStage moving AWSCURRENT onto the pending
+// version) auto-removes AWSPENDING from the newly-current version — so it shows
+// exactly [AWSCURRENT], and AWSPENDING never accumulates across rotations.
+func TestSDKRotationFinishRemovesPending(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	// rotate performs one create-candidate + finish cycle, returning the id of
+	// the version that becomes AWSCURRENT.
+	rotate := func(oldCurrentID, value string) string {
+		t.Helper()
+
+		pending, err := client.PutSecretValue(ctx, &awssm.PutSecretValueInput{
+			SecretId: aws.String("rot"), SecretString: aws.String(value),
+			VersionStages: []string{"AWSPENDING"},
+		})
+		if err != nil {
+			t.Fatalf("PutSecretValue(AWSPENDING): %v", err)
+		}
+
+		if _, err := client.UpdateSecretVersionStage(ctx, &awssm.UpdateSecretVersionStageInput{
+			SecretId:            aws.String("rot"),
+			VersionStage:        aws.String("AWSCURRENT"),
+			MoveToVersionId:     pending.VersionId,
+			RemoveFromVersionId: aws.String(oldCurrentID),
+		}); err != nil {
+			t.Fatalf("UpdateSecretVersionStage(finish): %v", err)
+		}
+
+		return aws.ToString(pending.VersionId)
+	}
+
+	created, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("rot"), SecretString: aws.String("v1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	assertPromoted := func(currentID, prevID string) {
+		t.Helper()
+
+		desc, derr := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("rot")})
+		if derr != nil {
+			t.Fatalf("DescribeSecret: %v", derr)
+		}
+
+		if got := desc.VersionIdsToStages[currentID]; len(got) != 1 || got[0] != "AWSCURRENT" {
+			t.Fatalf("current version stages = %v, want exactly [AWSCURRENT] (no AWSPENDING)", got)
+		}
+
+		if got := desc.VersionIdsToStages[prevID]; len(got) != 1 || got[0] != "AWSPREVIOUS" {
+			t.Fatalf("previous version stages = %v, want [AWSPREVIOUS]", got)
+		}
+
+		// No version anywhere should still carry AWSPENDING.
+		for id, stages := range desc.VersionIdsToStages {
+			for _, s := range stages {
+				if s == "AWSPENDING" {
+					t.Fatalf("version %s still carries AWSPENDING: %v", id, stages)
+				}
+			}
+		}
+	}
+
+	first := rotate(aws.ToString(created.VersionId), "v2")
+	assertPromoted(first, aws.ToString(created.VersionId))
+
+	second := rotate(first, "v3")
+	assertPromoted(second, first)
+}
+
 // TestSDKUpdateSecretReturnsVersionId guards F6: UpdateSecret that changes the
 // value returns the new (non-empty) VersionId.
 func TestSDKUpdateSecretReturnsVersionId(t *testing.T) {
