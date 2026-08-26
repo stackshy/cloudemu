@@ -53,7 +53,9 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"CreateCacheParameterGroup":    {},
 	"DescribeCacheParameterGroups": {},
 	"ModifyCacheParameterGroup":    {},
+	"ResetCacheParameterGroup":     {},
 	"DeleteCacheParameterGroup":    {},
+	"DescribeCacheParameters":      {},
 	"DescribeCacheEngineVersions":  {},
 	"CreateReplicationGroup":       {},
 	"DescribeReplicationGroups":    {},
@@ -145,7 +147,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 //
-//nolint:gocyclo // one case per action; the flat dispatch switch grows with the surface and reads clearer than sub-routers.
+//nolint:gocyclo,funlen // one case per action; the flat dispatch switch grows with the surface and reads clearer than sub-routers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Form.Get("Action") {
 	case "CreateCacheSubnetGroup":
@@ -184,6 +186,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeCacheParameterGroups(w, r)
 	case "ModifyCacheParameterGroup":
 		h.modifyCacheParameterGroup(w, r)
+	case "ResetCacheParameterGroup":
+		h.resetCacheParameterGroup(w, r)
+	case "DescribeCacheParameters":
+		h.describeCacheParameters(w, r)
 	case "DeleteCacheParameterGroup":
 		h.deleteCacheParameterGroup(w, r)
 	case "DescribeCacheEngineVersions":

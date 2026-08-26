@@ -160,12 +160,17 @@ type Mock struct {
 }
 
 // ParameterGroup is an ElastiCache cache parameter group — a named, engine-family
-// set of engine parameters. The emulator stores its identity so IaC that creates
-// and references a custom group succeeds.
+// set of engine parameters. The emulator stores its identity plus any user
+// overrides (name→value) applied via ModifyCacheParameterGroup, so IaC that
+// creates a group, sets `parameter { … }` blocks, and reads them back on refresh
+// converges. The engine-family defaults themselves are synthesized on demand
+// (see defaultCacheParameters); Overrides holds only the parameters the user has
+// changed from their default.
 type ParameterGroup struct {
 	Name        string
 	Family      string
 	Description string
+	Overrides   map[string]string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
