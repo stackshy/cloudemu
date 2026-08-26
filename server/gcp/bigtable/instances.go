@@ -91,9 +91,14 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	out := &bt.ListInstancesResponse{}
-	for i := range insts {
-		out.Instances = append(out.Instances, toWireInstance(&insts[i]))
+	page, next, ok := paginate(w, r, insts)
+	if !ok {
+		return
+	}
+
+	out := &bt.ListInstancesResponse{NextPageToken: next}
+	for i := range page {
+		out.Instances = append(out.Instances, toWireInstance(&page[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, out)
@@ -122,9 +127,12 @@ func (h *Handler) partialUpdateInstance(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	inst, op, err := h.db.PartialUpdateInstance(r.Context(), rt.name, btdriver.UpdateInstanceConfig{
-		DisplayName: in.DisplayName, Type: in.Type, Labels: in.Labels,
-	})
+	cfg := btdriver.UpdateInstanceConfig{DisplayName: in.DisplayName, Type: in.Type, Labels: in.Labels}
+	if mask := parseFieldMask(r.URL.Query().Get("updateMask")); mask != nil {
+		cfg.UpdateMask = mask.paths
+	}
+
+	inst, op, err := h.db.PartialUpdateInstance(r.Context(), rt.name, cfg)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return

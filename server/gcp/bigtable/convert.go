@@ -189,6 +189,43 @@ func fromWireAppProfile(parent, id string, a *bt.AppProfile) btdriver.CreateAppP
 	return cfg
 }
 
+// mergeAppProfileConfig overlays the fields named by mask (from body) onto the
+// current app profile, returning an update config in which every unmasked field
+// keeps its current value. Routing is treated as one unit: any routing path in
+// the mask replaces the whole routing policy from the body.
+func mergeAppProfileConfig(
+	parent, id string, cur *btdriver.AppProfile, body *bt.AppProfile, mask *fieldMask,
+) btdriver.CreateAppProfileConfig {
+	cfg := btdriver.CreateAppProfileConfig{
+		Parent:                   parent,
+		AppProfileID:             id,
+		Description:              cur.Description,
+		MultiClusterRoutingAny:   cur.MultiClusterRoutingAny,
+		MultiClusterClusterIDs:   cur.MultiClusterClusterIDs,
+		SingleClusterID:          cur.SingleClusterID,
+		AllowTransactionalWrites: cur.AllowTransactionalWrites,
+		Priority:                 cur.Priority,
+	}
+
+	if mask.has("description") {
+		cfg.Description = body.Description
+	}
+
+	if mask.contains("routing") {
+		b := fromWireAppProfile(parent, id, body)
+		cfg.MultiClusterRoutingAny = b.MultiClusterRoutingAny
+		cfg.MultiClusterClusterIDs = b.MultiClusterClusterIDs
+		cfg.SingleClusterID = b.SingleClusterID
+		cfg.AllowTransactionalWrites = b.AllowTransactionalWrites
+	}
+
+	if mask.contains("priority") || mask.contains("isolation") {
+		cfg.Priority = body.Priority
+	}
+
+	return cfg
+}
+
 func toWireBackup(b *btdriver.Backup) *bt.Backup {
 	out := &bt.Backup{
 		Name: b.Name, SourceTable: b.SourceTable, SourceBackup: b.SourceBackup,

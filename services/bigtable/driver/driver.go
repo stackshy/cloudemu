@@ -143,10 +143,17 @@ type CreateClusterConfig struct {
 }
 
 // UpdateInstanceConfig carries the mutable instance fields.
+//
+// UpdateMask holds the normalized field-mask tokens (lowercased, underscores
+// stripped) naming the fields the caller intends to change. When it is nil the
+// update falls back to presence heuristics (a non-empty value replaces, an
+// empty one is kept) for back-compat; when it is non-nil only the named fields
+// are written — even to an empty/zero value — and every other field is kept.
 type UpdateInstanceConfig struct {
 	DisplayName string
 	Type        string
 	Labels      map[string]string
+	UpdateMask  []string
 }
 
 // CreateTableConfig is the input to CreateTable.
