@@ -43,6 +43,7 @@ type describeNetworkInterfacesResponseXML struct {
 	Xmlns               string                `xml:"xmlns,attr"`
 	RequestID           string                `xml:"requestId"`
 	NetworkInterfaceSet []networkInterfaceXML `xml:"networkInterfaceSet>item"`
+	NextToken           string                `xml:"nextToken,omitempty"`
 }
 
 type createNetworkInterfaceResponseXML struct {
@@ -108,10 +109,13 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 		out = append(out, toNetworkInterfaceXML(&enis[i]))
 	}
 
+	page, next := pageNetworkingXML(out, r, func(e networkInterfaceXML) string { return e.NetworkInterfaceID })
+
 	awsquery.WriteXMLResponse(w, describeNetworkInterfacesResponseXML{
 		Xmlns:               awsquery.Namespace,
 		RequestID:           awsquery.RequestID,
-		NetworkInterfaceSet: out,
+		NetworkInterfaceSet: page,
+		NextToken:           next,
 	})
 }
 

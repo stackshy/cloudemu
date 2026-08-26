@@ -73,6 +73,7 @@ type describeVolumesResponseXML struct {
 	Xmlns     string      `xml:"xmlns,attr"`
 	RequestID string      `xml:"requestId"`
 	VolumeSet []volumeXML `xml:"volumeSet>item"`
+	NextToken string      `xml:"nextToken,omitempty"`
 }
 
 type deleteVolumeResponseXML struct {
@@ -184,10 +185,13 @@ func (h *Handler) describeVolumes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	page, next := pageNetworkingXML(out, r, func(v volumeXML) string { return v.VolumeID })
+
 	awsquery.WriteXMLResponse(w, describeVolumesResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		VolumeSet: out,
+		VolumeSet: page,
+		NextToken: next,
 	})
 }
 

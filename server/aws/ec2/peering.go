@@ -62,6 +62,7 @@ type describePeeringResponseXML struct {
 	Xmlns                string                 `xml:"xmlns,attr"`
 	RequestID            string                 `xml:"requestId"`
 	VpcPeeringConnection []peeringConnectionXML `xml:"vpcPeeringConnectionSet>item"`
+	NextToken            string                 `xml:"nextToken,omitempty"`
 }
 
 //nolint:dupl // per-resource create pattern; mirrors snapshot/flow-log shape
@@ -161,10 +162,13 @@ func (h *Handler) describeVpcPeeringConnections(w http.ResponseWriter, r *http.R
 		out = append(out, h.enrichedPeeringXML(r, &peerings[i]))
 	}
 
+	page, next := pageNetworkingXML(out, r, func(p peeringConnectionXML) string { return p.VpcPeeringConnectionID })
+
 	awsquery.WriteXMLResponse(w, describePeeringResponseXML{
 		Xmlns:                awsquery.Namespace,
 		RequestID:            awsquery.RequestID,
-		VpcPeeringConnection: out,
+		VpcPeeringConnection: page,
+		NextToken:            next,
 	})
 }
 

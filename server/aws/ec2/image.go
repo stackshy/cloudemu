@@ -55,6 +55,7 @@ type describeImagesResponseXML struct {
 	Xmlns     string     `xml:"xmlns,attr"`
 	RequestID string     `xml:"requestId"`
 	ImagesSet []imageXML `xml:"imagesSet>item"`
+	NextToken string     `xml:"nextToken,omitempty"`
 }
 
 type deregisterImageResponseXML struct {
@@ -198,10 +199,13 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	page, next := pageNetworkingXML(out, r, func(im imageXML) string { return im.ImageID })
+
 	awsquery.WriteXMLResponse(w, describeImagesResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		ImagesSet: out,
+		ImagesSet: page,
+		NextToken: next,
 	})
 }
 

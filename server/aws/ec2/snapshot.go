@@ -35,6 +35,7 @@ type describeSnapshotsResponseXML struct {
 	Xmlns       string        `xml:"xmlns,attr"`
 	RequestID   string        `xml:"requestId"`
 	SnapshotSet []snapshotXML `xml:"snapshotSet>item"`
+	NextToken   string        `xml:"nextToken,omitempty"`
 }
 
 type deleteSnapshotResponseXML struct {
@@ -158,10 +159,13 @@ func (h *Handler) describeSnapshots(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	page, next := pageNetworkingXML(out, r, func(s snapshotXML) string { return s.SnapshotID })
+
 	awsquery.WriteXMLResponse(w, describeSnapshotsResponseXML{
 		Xmlns:       awsquery.Namespace,
 		RequestID:   awsquery.RequestID,
-		SnapshotSet: out,
+		SnapshotSet: page,
+		NextToken:   next,
 	})
 }
 

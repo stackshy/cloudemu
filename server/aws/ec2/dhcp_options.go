@@ -96,12 +96,15 @@ func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d ne
 
 	out := filterXML(items, filters, dhcpMatchesFilters, toDHCPOptionsXML)
 
+	page, next := pageNetworkingXML(out, r, func(d dhcpOptionsXML) string { return d.DhcpOptionsID })
+
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name         `xml:"DescribeDhcpOptionsResponse"`
 		Xmlns   string           `xml:"xmlns,attr"`
 		Req     string           `xml:"requestId"`
 		Set     []dhcpOptionsXML `xml:"dhcpOptionsSet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		Next    string           `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: page, Next: next})
 }
 
 func (*Handler) associateDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
