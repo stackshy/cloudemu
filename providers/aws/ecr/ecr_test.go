@@ -2,6 +2,9 @@ package ecr
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,10 +32,13 @@ func createTestRepo(t *testing.T, m *Mock, name string) {
 func pushTestImage(t *testing.T, m *Mock, repo, tag string) *driver.ImageDetail {
 	t.Helper()
 
+	// Distinct tags carry distinct manifest content so they content-address to
+	// distinct digests (distinct images), matching how real images differ.
 	detail, err := m.PutImage(context.Background(), &driver.ImageManifest{
 		Repository: repo,
 		Tag:        tag,
 		SizeBytes:  1024,
+		Manifest:   fmt.Sprintf(`{"repo":%q,"tag":%q}`, repo, tag),
 	})
 	require.NoError(t, err)
 
@@ -825,4 +831,159 @@ func TestRepositoryTagging(t *testing.T) {
 	assert.False(t, has)
 
 	assert.Error(t, m.TagRepository(ctx, "missing", map[string]string{"a": "b"}))
+}
+
+// pushManifest pushes a raw manifest with an optional explicit digest and tag,
+// used by the image/digest-model tests.
+func pushManifest(t *testing.T, m *Mock, repo, tag, digest, manifest string) *driver.ImageDetail {
+	t.Helper()
+
+	detail, err := m.PutImage(context.Background(), &driver.ImageManifest{
+		Repository: repo,
+		Tag:        tag,
+		Digest:     digest,
+		Manifest:   manifest,
+		SizeBytes:  int64(len(manifest)),
+	})
+	require.NoError(t, err)
+
+	return detail
+}
+
+func findByDigest(images []driver.ImageDetail, digest string) *driver.ImageDetail {
+	for i := range images {
+		if images[i].Digest == digest {
+			return &images[i]
+		}
+	}
+
+	return nil
+}
+
+// TestPutImageContentAddressedDigest: an omitted digest is the full sha256 of
+// the manifest bytes, so identical content yields the same 64-hex digest under
+// any tag, and the two pushes collapse into ONE image carrying both tags.
+func TestPutImageContentAddressedDigest(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	body := `{"schemaVersion":2,"layers":[]}`
+	d1 := pushManifest(t, m, "repo", "v1", "", body)
+	d2 := pushManifest(t, m, "repo", "v2", "", body)
+
+	assert.Equal(t, d1.Digest, d2.Digest)
+	assert.True(t, strings.HasPrefix(d1.Digest, "sha256:"))
+	assert.Len(t, strings.TrimPrefix(d1.Digest, "sha256:"), 64)
+
+	// Different manifest content -> a different digest.
+	d3 := pushManifest(t, m, "repo", "v3", "", body+" ")
+	assert.NotEqual(t, d1.Digest, d3.Digest)
+
+	images, err := m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(images)) // (v1,v2) manifest + (v3) manifest
+
+	img := findByDigest(images, d1.Digest)
+	require.NotNil(t, img)
+	assert.ElementsMatch(t, []string{"v1", "v2"}, img.Tags)
+}
+
+// TestPutImageExplicitDigestAccumulatesTags: pushing the same digest under a
+// second tag accumulates the tag onto the one manifest instead of replacing it.
+func TestPutImageExplicitDigestAccumulatesTags(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	const digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	first := pushManifest(t, m, "repo", "v1", digest, `{"a":1}`)
+	assert.ElementsMatch(t, []string{"v1"}, first.Tags)
+
+	second := pushManifest(t, m, "repo", "v2", digest, `{"a":1}`)
+	assert.Equal(t, digest, second.Digest)
+	assert.ElementsMatch(t, []string{"v1", "v2"}, second.Tags)
+
+	images, err := m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(images))
+	assert.ElementsMatch(t, []string{"v1", "v2"}, images[0].Tags)
+}
+
+// TestDeleteImageByTagUntagsOnly: deleting by tag removes only that tag while
+// other tags remain; removing the last tag deletes the manifest.
+func TestDeleteImageByTagUntagsOnly(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	const digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	pushManifest(t, m, "repo", "v1", digest, `{"b":1}`)
+	pushManifest(t, m, "repo", "v2", digest, `{"b":1}`)
+
+	require.NoError(t, m.DeleteImage(ctx, "repo", "v1"))
+
+	images, err := m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(images))
+	assert.ElementsMatch(t, []string{"v2"}, images[0].Tags)
+
+	require.NoError(t, m.DeleteImage(ctx, "repo", "v2"))
+	images, err = m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(images))
+}
+
+// TestDeleteImageByDigestRemovesManifest: deleting by digest removes the image
+// and every one of its tags.
+func TestDeleteImageByDigestRemovesManifest(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "repo")
+
+	const digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	pushManifest(t, m, "repo", "v1", digest, `{"c":1}`)
+	pushManifest(t, m, "repo", "v2", digest, `{"c":1}`)
+
+	require.NoError(t, m.DeleteImage(ctx, "repo", digest))
+
+	images, err := m.ListImages(ctx, "repo")
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(images))
+}
+
+// TestConcurrentPutAndDelete exercises the model under -race: concurrent
+// PutImage/DeleteImage/GetRepository/ListImages on one repository.
+func TestConcurrentPutAndDelete(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestRepo(t, m, "race")
+
+	const workers = 20
+
+	var wg sync.WaitGroup
+
+	for i := range workers {
+		tag := fmt.Sprintf("v%d", i)
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = m.PutImage(ctx, &driver.ImageManifest{
+				Repository: "race", Tag: tag, Manifest: fmt.Sprintf(`{"t":%q}`, tag),
+			})
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_ = m.DeleteImage(ctx, "race", tag)
+			_, _ = m.GetRepository(ctx, "race")
+			_, _ = m.ListImages(ctx, "race")
+		}()
+	}
+
+	wg.Wait()
 }
