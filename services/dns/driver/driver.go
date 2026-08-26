@@ -12,6 +12,13 @@ type ZoneConfig struct {
 	Name    string
 	Private bool
 	Tags    map[string]string
+	// CallerReference is the AWS Route 53 caller-supplied idempotency token,
+	// persisted and returned verbatim on Get/List. Other providers leave it
+	// empty.
+	CallerReference string
+	// Comment is the AWS Route 53 hosted-zone comment, persisted and returned on
+	// Create/Get. Other providers leave it empty.
+	Comment string
 	// Scope records the cloud-side container the zone was created in (Azure
 	// subscription/resource group or GCP project). The zero value is unscoped.
 	Scope scope.Scope
@@ -24,6 +31,12 @@ type ZoneInfo struct {
 	Private     bool
 	RecordCount int
 	Tags        map[string]string
+	// CallerReference is the AWS Route 53 caller-supplied idempotency token as
+	// stored on create. Other providers leave it empty.
+	CallerReference string
+	// Comment is the AWS Route 53 hosted-zone comment as stored on create. Other
+	// providers leave it empty.
+	Comment string
 	// Scope is the container the zone lives in; scoped list endpoints filter
 	// on it. The zero value is unscoped and visible everywhere.
 	Scope scope.Scope

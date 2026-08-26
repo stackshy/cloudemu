@@ -216,16 +216,15 @@ func trimZonePrefix(id string) string {
 // the request URL path with no prefix stripping, so echoing the bare driver id
 // keeps Get/Delete round-trips addressing the same resource.
 //
-// The dns driver does not persist the caller-supplied CallerReference, so on
-// Get/List we surface the zone name (a stable, meaningful value) rather than
-// leaking the internal zone id. CreateHostedZone overrides this with the actual
-// reference the caller sent so a create round-trip is faithful.
+// CallerReference is the caller-supplied idempotency token, persisted on create
+// and returned verbatim here so Get/List round-trip faithfully.
 func toHostedZoneXML(info *dnsdriver.ZoneInfo) hostedZoneXML {
 	return hostedZoneXML{
 		Id:              info.ID,
 		Name:            info.Name,
-		CallerReference: info.Name,
+		CallerReference: info.CallerReference,
 		Config: &hostedZoneConfigXML{
+			Comment:     info.Comment,
 			PrivateZone: info.Private,
 		},
 		ResourceRecordSetCount: int64(info.RecordCount),

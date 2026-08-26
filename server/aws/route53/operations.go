@@ -31,9 +31,13 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := dnsdriver.ZoneConfig{Name: req.Name}
+	cfg := dnsdriver.ZoneConfig{
+		Name:            ensureTrailingDot(req.Name),
+		CallerReference: req.CallerReference,
+	}
 	if req.HostedZoneConfig != nil {
 		cfg.Private = req.HostedZoneConfig.PrivateZone
+		cfg.Comment = req.HostedZoneConfig.Comment
 	}
 
 	info, err := h.dns.CreateZone(r.Context(), cfg)
@@ -53,12 +57,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		info = refreshed
 	}
 
-	// Echo the caller's CallerReference back faithfully (the driver doesn't
-	// persist it, so this is only recoverable on the create response).
 	hz := toHostedZoneXML(info)
-	if req.CallerReference != "" {
-		hz.CallerReference = req.CallerReference
-	}
 
 	// Real Route 53 returns a Location header pointing at the new zone.
 	w.Header().Set("Location", pathPrefix+"/"+info.ID)
@@ -192,7 +191,25 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 
 	zoneID := trimZonePrefix(id)
 
-	if err := h.validateChangeBatch(r, zoneID, req.ChangeBatch.Changes); err != nil {
+	// Route 53 stores and returns record names as FQDNs (with a trailing dot).
+	// Normalize once here so validation, create, delete, and upsert all agree on
+	// the stored name whether the client sent the dot or not.
+	for i := range req.ChangeBatch.Changes {
+		rr := &req.ChangeBatch.Changes[i].ResourceRecordSet
+		rr.Name = ensureTrailingDot(rr.Name)
+	}
+
+	// The hosted zone must exist before the change batch is validated: a change
+	// against a missing zone is NoSuchHostedZone (404), not the batch-level
+	// InvalidChangeBatch (400). Only record-level errors from batch validation
+	// map to InvalidChangeBatch.
+	zone, err := h.dns.GetZone(r.Context(), zoneID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if err := h.validateChangeBatch(r, zone, req.ChangeBatch.Changes); err != nil {
 		writeChangeErr(w, err)
 		return
 	}
@@ -219,10 +236,20 @@ func rrSetKey(name, rtype, setID string) string {
 
 // validateRecordSet checks a single record set's fields are self-consistent,
 // independent of the zone's current state. Real Route 53 rejects these as part
-// of change-batch validation before any change is applied.
-func validateRecordSet(rr *resourceRecordSetXML) error {
+// of change-batch validation before any change is applied. apex is the zone's
+// FQDN, used to reject a CNAME at the zone apex.
+func validateRecordSet(rr *resourceRecordSetXML, apex string) error {
 	if rr.Name == "" || rr.Type == "" {
 		return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+	}
+
+	// A CNAME is not permitted at the zone apex — the apex must carry the SOA and
+	// NS records, so it can only use an A/AAAA or an ALIAS. Real Route 53 rejects
+	// an apex CNAME as an InvalidChangeBatch (FailedPrecondition maps to that).
+	if strings.EqualFold(rr.Type, "CNAME") && sameDNSName(rr.Name, apex) {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"RRSet of type CNAME with DNS name %s is not permitted at apex in zone %s",
+			ensureTrailingDot(rr.Name), ensureTrailingDot(apex))
 	}
 
 	// Weighted routing record sets require a non-empty SetIdentifier that
@@ -237,49 +264,132 @@ func validateRecordSet(rr *resourceRecordSetXML) error {
 	return nil
 }
 
+// sameDNSName reports whether two DNS names are equal, case- and
+// trailing-dot-insensitively.
+func sameDNSName(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
+}
+
+// deleteMatchesRecord reports whether a DELETE request's TTL and values exactly
+// match the stored record set — Route 53's rule that a DELETE must repeat the
+// record's current values. Alias records match on their alias target instead of
+// a TTL and resource records.
+func deleteMatchesRecord(cur *dnsdriver.RecordInfo, rr *resourceRecordSetXML) bool {
+	if cur.AliasTarget != nil || rr.AliasTarget != nil {
+		if cur.AliasTarget == nil || rr.AliasTarget == nil {
+			return false
+		}
+
+		return sameDNSName(cur.AliasTarget.DNSName, rr.AliasTarget.DNSName) &&
+			cur.AliasTarget.HostedZoneID == rr.AliasTarget.HostedZoneId
+	}
+
+	reqTTL := 0
+	if rr.TTL != nil {
+		reqTTL = int(*rr.TTL)
+	}
+
+	if cur.TTL != reqTTL {
+		return false
+	}
+
+	reqValues := make([]string, 0, len(rr.ResourceRecords))
+	for _, v := range rr.ResourceRecords {
+		reqValues = append(reqValues, v.Value)
+	}
+
+	return sameValueSet(cur.Values, reqValues)
+}
+
+// sameValueSet reports whether two resource-record value lists are equal as
+// sets (order-independent), matching how Route 53 compares a DELETE's values.
+func sameValueSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	as := append([]string(nil), a...)
+	sort.Strings(as)
+
+	bs := append([]string(nil), b...)
+	sort.Strings(bs)
+
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // validateChangeBatch checks every change would apply cleanly before any is
 // applied, so an invalid batch is rejected whole (nothing half-applied). It
 // simulates the batch against the zone's current record sets, folding in each
 // change's effect so ordering within the batch is respected.
-func (h *Handler) validateChangeBatch(r *http.Request, zoneID string, changes []changeItem) error {
-	existing, err := h.dns.ListRecords(r.Context(), zoneID)
+func (h *Handler) validateChangeBatch(r *http.Request, zone *dnsdriver.ZoneInfo, changes []changeItem) error {
+	existing, err := h.dns.ListRecords(r.Context(), zone.ID)
 	if err != nil {
 		return err
 	}
 
 	present := make(map[string]bool, len(existing))
+	byKey := make(map[string]*dnsdriver.RecordInfo, len(existing))
 	for i := range existing {
-		present[rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)] = true
+		key := rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)
+		present[key] = true
+		byKey[key] = &existing[i]
 	}
 
 	for i := range changes {
-		rr := &changes[i].ResourceRecordSet
-
-		if err := validateRecordSet(rr); err != nil {
+		if err := validateChange(&changes[i], zone.Name, present, byKey); err != nil {
 			return err
 		}
+	}
 
-		key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
+	return nil
+}
 
-		switch changes[i].Action {
-		case actionCreate:
-			if present[key] {
-				return cerrors.Newf(cerrors.AlreadyExists,
-					"record set %q %s already exists", rr.Name, rr.Type)
-			}
-			present[key] = true
-		case actionDelete:
-			if !present[key] {
-				return cerrors.Newf(cerrors.NotFound,
-					"record set %q %s not found", rr.Name, rr.Type)
-			}
-			present[key] = false
-		case actionUpsert:
-			present[key] = true
-		default:
-			return cerrors.Newf(cerrors.InvalidArgument,
-				"unsupported change action %q", changes[i].Action)
+// validateChange checks one change against the batch's simulated presence set
+// (present) and the zone's pre-batch record sets (byKey), folding the change's
+// effect back into present so later changes in the batch see it.
+func validateChange(
+	ch *changeItem, apex string, present map[string]bool, byKey map[string]*dnsdriver.RecordInfo,
+) error {
+	rr := &ch.ResourceRecordSet
+
+	if err := validateRecordSet(rr, apex); err != nil {
+		return err
+	}
+
+	key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
+
+	switch ch.Action {
+	case actionCreate:
+		if present[key] {
+			return cerrors.Newf(cerrors.AlreadyExists, "record set %q %s already exists", rr.Name, rr.Type)
 		}
+
+		present[key] = true
+	case actionDelete:
+		if !present[key] {
+			return cerrors.Newf(cerrors.NotFound, "record set %q %s not found", rr.Name, rr.Type)
+		}
+		// Route 53 requires a DELETE to specify the exact TTL and values of the
+		// existing record set. Enforce it only against a record that was already
+		// present before this batch (byKey); one created earlier in the same
+		// batch has no pre-existing values to match against.
+		if cur, ok := byKey[key]; ok && !deleteMatchesRecord(cur, rr) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"Tried to delete resource record set [name=%s, type=%s] but the values provided do not match the current values",
+				ensureTrailingDot(rr.Name), rr.Type)
+		}
+
+		present[key] = false
+	case actionUpsert:
+		present[key] = true
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "unsupported change action %q", ch.Action)
 	}
 
 	return nil
@@ -346,21 +456,21 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Real Route 53 returns record sets in DNS name order. Sort by name
-	// (case-insensitive) then type so the sequence is deterministic and honors
-	// StartRecordName paging below.
+	// Real Route 53 returns record sets in DNS name order — sorted first by DNS
+	// name with the labels reversed (so the zone apex sorts before its
+	// subdomains: com.order. < com.order.a.), then by record type. This ordering
+	// is what NextRecordName/StartRecordName pagination walks.
 	sort.Slice(records, func(i, j int) bool {
-		ni, nj := strings.ToLower(records[i].Name), strings.ToLower(records[j].Name)
-		if ni != nj {
-			return ni < nj
+		if c := compareDNSName(records[i].Name, records[j].Name); c != 0 {
+			return c < 0
 		}
 
 		return records[i].Type < records[j].Type
 	})
 
 	// StartRecordName (and optional StartRecordType) skip forward to the first
-	// record at or after the requested position.
-	start := strings.ToLower(r.URL.Query().Get("name"))
+	// record at or after the requested position, in the same reversed-label order.
+	start := r.URL.Query().Get("name")
 	startType := r.URL.Query().Get("type")
 	records = recordsFrom(records, start, startType)
 
@@ -388,20 +498,51 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 }
 
 // recordsFrom returns the slice starting at the first record whose (name, type)
-// is at or after (start, startType). An empty start returns all records.
+// is at or after (start, startType) in reversed-label DNS order. An empty start
+// returns all records.
 func recordsFrom(records []dnsdriver.RecordInfo, start, startType string) []dnsdriver.RecordInfo {
 	if start == "" {
 		return records
 	}
 
 	for i := range records {
-		name := strings.ToLower(records[i].Name)
-		if name > start || (name == start && (startType == "" || records[i].Type >= startType)) {
+		c := compareDNSName(records[i].Name, start)
+		if c > 0 || (c == 0 && (startType == "" || records[i].Type >= startType)) {
 			return records[i:]
 		}
 	}
 
 	return nil
+}
+
+// compareDNSName orders two DNS names the way Route 53's ListResourceRecordSets
+// does: by the name with its labels reversed (TLD first), compared as a flat
+// ASCII string with the dots — including the trailing dot — kept in place. The
+// trailing dot matters: a character whose ASCII value is below '.' (0x2e), such
+// as '-' (0x2d) or the wildcard '*' (0x2a), sorts a longer label before the
+// terminator, so "com.order.api-v2." < "com.order.api." (api-v2 sorts first).
+// A per-label compare would wrongly treat "api" as the prefix that wins.
+// Comparison is case-insensitive (DNS names are); it returns -1, 0, or 1.
+func compareDNSName(a, b string) int {
+	return strings.Compare(reversedDotted(a), reversedDotted(b))
+}
+
+// reversedDotted lower-cases a DNS name, drops the trailing dot, reverses the
+// LABEL order, and rejoins with dots plus a trailing dot — the flat key Route 53
+// sorts on: "api-v2.Order.com." → "com.order.api-v2.". Comparing these keys as
+// plain strings (dots included) reproduces Route 53's ordering exactly.
+func reversedDotted(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	if name == "" {
+		return "."
+	}
+
+	labels := strings.Split(name, ".")
+	for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
+		labels[i], labels[j] = labels[j], labels[i]
+	}
+
+	return strings.Join(labels, ".") + "."
 }
 
 // parseMaxItems reads the maxitems query param, clamping to the fixed page size
@@ -417,6 +558,17 @@ func parseMaxItems(v string) int {
 	}
 
 	return n
+}
+
+// ensureTrailingDot returns name as an FQDN (with a trailing dot), the form
+// Route 53 stores and returns zone and record names in. An empty name is left
+// as-is, and a name that already ends in a dot is unchanged.
+func ensureTrailingDot(name string) string {
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+
+	return name + "."
 }
 
 // recordConfig builds a driver RecordConfig from a parsed record set element.
