@@ -197,13 +197,14 @@ func engineContainers(in []driver.Container, taskIndex, taskCount int) []config.
 }
 
 // taskEnv copies a container's env and overlays the CLOUD_RUN_TASK_INDEX and
-// CLOUD_RUN_TASK_COUNT variables the real Cloud Run injects for each task.
-func taskEnv(base map[string]string, taskIndex, taskCount int) map[string]string {
+// CLOUD_RUN_TASK_COUNT variables the real Cloud Run injects for each task. The
+// engine consumes env as a map; later entries win on duplicate names.
+func taskEnv(base []driver.EnvVar, taskIndex, taskCount int) map[string]string {
 	const injectedVars = 2 // CLOUD_RUN_TASK_INDEX + CLOUD_RUN_TASK_COUNT
 
 	env := make(map[string]string, len(base)+injectedVars)
-	for k, v := range base {
-		env[k] = v
+	for _, e := range base {
+		env[e.Name] = e.Value
 	}
 
 	env["CLOUD_RUN_TASK_INDEX"] = strconv.Itoa(taskIndex)

@@ -98,9 +98,24 @@ type Container struct {
 	Image     string
 	Command   []string              // entrypoint override
 	Args      []string              // arguments to the entrypoint
-	Env       map[string]string     // environment variables
-	Ports     []int                 // container ports (services)
+	Env       []EnvVar              // environment variables, in declaration order
+	Ports     []ContainerPort       // container ports (services)
 	Resources *ResourceRequirements // cpu/memory limits and CPU behavior
+}
+
+// EnvVar is one container environment variable. Cloud Run env is an ordered
+// list (not a map), so it round-trips in declaration order across GETs.
+type EnvVar struct {
+	Name  string
+	Value string
+}
+
+// ContainerPort is one exposed container port. Name is optional and selects the
+// application protocol (e.g. "h2c" for HTTP/2 cleartext); ContainerPort is the
+// port the container listens on.
+type ContainerPort struct {
+	Name          string
+	ContainerPort int
 }
 
 // ResourceRequirements is a container's compute allocation — the limits map

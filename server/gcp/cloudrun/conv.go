@@ -34,7 +34,7 @@ func toDriverContainers(in []container) []driver.Container {
 			Image:     in[i].Image,
 			Command:   in[i].Command,
 			Args:      in[i].Args,
-			Env:       envToMap(in[i].Env),
+			Env:       toDriverEnv(in[i].Env),
 			Ports:     toDriverPorts(in[i].Ports),
 			Resources: toDriverResources(in[i].Resources),
 		})
@@ -43,53 +43,53 @@ func toDriverContainers(in []container) []driver.Container {
 	return out
 }
 
-func toDriverPorts(in []containerPort) []int {
+func toDriverPorts(in []containerPort) []driver.ContainerPort {
 	if len(in) == 0 {
 		return nil
 	}
 
-	out := make([]int, 0, len(in))
+	out := make([]driver.ContainerPort, 0, len(in))
 	for _, p := range in {
-		out = append(out, p.ContainerPort)
+		out = append(out, driver.ContainerPort{Name: p.Name, ContainerPort: p.ContainerPort})
 	}
 
 	return out
 }
 
-func toWirePorts(in []int) []containerPort {
+func toWirePorts(in []driver.ContainerPort) []containerPort {
 	if len(in) == 0 {
 		return nil
 	}
 
 	out := make([]containerPort, 0, len(in))
 	for _, p := range in {
-		out = append(out, containerPort{ContainerPort: p})
+		out = append(out, containerPort{Name: p.Name, ContainerPort: p.ContainerPort})
 	}
 
 	return out
 }
 
-func envToMap(in []envVar) map[string]string {
+func toDriverEnv(in []envVar) []driver.EnvVar {
 	if len(in) == 0 {
 		return nil
 	}
 
-	out := make(map[string]string, len(in))
+	out := make([]driver.EnvVar, 0, len(in))
 	for _, e := range in {
-		out[e.Name] = e.Value
+		out = append(out, driver.EnvVar{Name: e.Name, Value: e.Value})
 	}
 
 	return out
 }
 
-func envToList(in map[string]string) []envVar {
+func toWireEnv(in []driver.EnvVar) []envVar {
 	if len(in) == 0 {
 		return nil
 	}
 
 	out := make([]envVar, 0, len(in))
-	for k, v := range in {
-		out = append(out, envVar{Name: k, Value: v})
+	for _, e := range in {
+		out = append(out, envVar{Name: e.Name, Value: e.Value})
 	}
 
 	return out
@@ -103,7 +103,7 @@ func toContainers(in []driver.Container) []container {
 			Image:     in[i].Image,
 			Command:   in[i].Command,
 			Args:      in[i].Args,
-			Env:       envToList(in[i].Env),
+			Env:       toWireEnv(in[i].Env),
 			Ports:     toWirePorts(in[i].Ports),
 			Resources: toWireResources(in[i].Resources),
 		})

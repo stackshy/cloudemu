@@ -220,6 +220,69 @@ func TestSDKServiceRevisions(t *testing.T) {
 	}
 }
 
+// TestSDKServiceEnvOrderStable covers BUG1: container env is an ordered list, so
+// [A,B,C] round-trips in declaration order — stably across repeated GETs — rather
+// than being re-shuffled through a map (which caused a perpetual Terraform diff).
+func TestSDKServiceEnvOrderStable(t *testing.T) {
+	svc := newRun(t, nil)
+	ctx := context.Background()
+
+	in := sdkService()
+	in.Template.Containers[0].Env = []*run.GoogleCloudRunV2EnvVar{
+		{Name: "A", Value: "1"},
+		{Name: "B", Value: "2"},
+		{Name: "C", Value: "3"},
+	}
+
+	if _, err := svc.Projects.Locations.Services.Create(parent, in).ServiceId("web").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	want := []string{"A", "B", "C"}
+
+	for range 2 {
+		got, err := svc.Projects.Locations.Services.Get(parent + "/services/web").Context(ctx).Do()
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		env := got.Template.Containers[0].Env
+		if len(env) != len(want) {
+			t.Fatalf("env len = %d, want %d: %+v", len(env), len(want), env)
+		}
+
+		for i, name := range want {
+			if env[i].Name != name {
+				t.Fatalf("env[%d].Name = %q, want %q (order not preserved): %+v", i, env[i].Name, name, env)
+			}
+		}
+	}
+}
+
+// TestSDKServiceContainerPortName covers BUG2: a container port's optional name
+// (e.g. "h2c" to enable HTTP/2 cleartext) round-trips instead of being dropped.
+func TestSDKServiceContainerPortName(t *testing.T) {
+	svc := newRun(t, nil)
+	ctx := context.Background()
+
+	in := sdkService()
+	in.Template.Containers[0].Ports = []*run.GoogleCloudRunV2ContainerPort{{Name: "h2c", ContainerPort: 8080}}
+
+	if _, err := svc.Projects.Locations.Services.Create(parent, in).ServiceId("web").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Services.Get(parent + "/services/web").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ports := got.Template.Containers[0].Ports
+	if len(ports) != 1 || ports[0].Name != "h2c" || ports[0].ContainerPort != 8080 {
+		t.Fatalf("port name/number not preserved: %+v", ports)
+	}
+}
+
 // TestSDKServiceIam covers the service IAM surface (getIamPolicy/setIamPolicy).
 func TestSDKServiceIam(t *testing.T) {
 	svc := newRun(t, nil)
