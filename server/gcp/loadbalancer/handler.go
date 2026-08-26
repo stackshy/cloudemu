@@ -127,7 +127,7 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeForwardingRules(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {

@@ -108,3 +108,42 @@ func TestSDKGCPForwardingRuleDuplicate(t *testing.T) {
 		t.Fatal("duplicate forwarding rule insert: want error, got nil")
 	}
 }
+
+// TestSDKGCPForwardingRuleTargetRoundTrip covers the dropped-target defect: a
+// forwarding rule's target (the proxy/service it fronts) was never stored, so on
+// get the load balancer had no entrypoint and Terraform saw perpetual drift.
+func TestSDKGCPForwardingRuleTargetRoundTrip(t *testing.T) {
+	ts := newGCPLBServer(t)
+	ctx := context.Background()
+
+	client := newForwardingRulesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
+
+	target := "projects/" + testProject + "/global/targetHttpProxies/web-proxy"
+
+	op, err := client.Insert(ctx, &computepb.InsertGlobalForwardingRuleRequest{
+		Project: testProject,
+		ForwardingRuleResource: &computepb.ForwardingRule{
+			Name:                ptrStr("proxy-fr"),
+			IPProtocol:          ptrStr("TCP"),
+			PortRange:           ptrStr("80"),
+			Target:              ptrStr(target),
+			LoadBalancingScheme: ptrStr("EXTERNAL_MANAGED"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := op.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetGlobalForwardingRuleRequest{Project: testProject, ForwardingRule: "proxy-fr"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetTarget() != target {
+		t.Errorf("target = %q, want %q (dropped on get)", got.GetTarget(), target)
+	}
+}

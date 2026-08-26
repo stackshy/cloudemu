@@ -31,6 +31,10 @@ type GCPComputeResourceStore interface {
 	ListGCPResources(ctx context.Context, collection, scope string) ([]GCPResource, error)
 	// DeleteGCPResource removes the resource, returning NotFound when absent.
 	DeleteGCPResource(ctx context.Context, collection, scope, name string) error
+	// UpdateGCPResource applies mutate to the stored resource in place under the
+	// store lock (compute *.patch / *.update), returning NotFound when absent.
+	// The handler decides patch-merge vs full-replace by what mutate does to Body.
+	UpdateGCPResource(ctx context.Context, collection, scope, name string, mutate func(*GCPResource)) error
 }
 
 // GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented

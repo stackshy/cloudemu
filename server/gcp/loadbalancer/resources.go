@@ -2,8 +2,10 @@ package loadbalancer
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -49,7 +51,7 @@ func scopeKeyOf(rp gcprest.ResourcePath) string {
 	return rp.ScopeName
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeGCPResource(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
@@ -67,11 +69,65 @@ func (h *Handler) routeGCPResource(w http.ResponseWriter, r *http.Request, rp gc
 	switch r.Method {
 	case http.MethodGet:
 		h.getGCPResource(w, r, rp)
+	case http.MethodPatch:
+		h.mutateGCPResource(w, r, rp, true)
+	case http.MethodPut:
+		h.mutateGCPResource(w, r, rp, false)
 	case http.MethodDelete:
 		h.deleteGCPResource(w, r, rp)
 	default:
 		gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 	}
+}
+
+// mutateGCPResource serves compute *.patch (merge=true) and *.update
+// (merge=false) for the opaque resources. Patch merges the request body's
+// members onto the stored body; update replaces the body wholesale. Both return
+// a DONE Operation, matching real GCP, so Terraform apply-on-change succeeds
+// instead of hitting a 405.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) mutateGCPResource(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, merge bool) {
+	store, ok := h.gcpStore()
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented", "load balancer driver has no GCP resource store")
+		return
+	}
+
+	var body map[string]any
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	err := store.UpdateGCPResource(r.Context(), rp.ResourceType, scopeKeyOf(rp), rp.ResourceName,
+		func(res *lbdriver.GCPResource) { applyBody(res, body, merge) })
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	verb := "update"
+	if merge {
+		verb = "patch"
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, rp.ResourceName, verb)
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// applyBody merges (patch) or replaces (update) a stored resource's body with
+// the request body, always preserving the resource name so a body that omits or
+// changes it can't orphan the record from its store key.
+func applyBody(res *lbdriver.GCPResource, body map[string]any, merge bool) {
+	if !merge || res.Body == nil {
+		res.Body = map[string]any{}
+	}
+
+	for k, v := range body {
+		res.Body[k] = v
+	}
+
+	res.Body["name"] = res.Name
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -142,21 +198,45 @@ func (h *Handler) listGCPResource(w http.ResponseWriter, r *http.Request, rp gcp
 		return
 	}
 
-	host := hostOf(r)
-	out := make([]map[string]any, 0, len(items))
+	filter := r.URL.Query().Get("filter")
+
+	matched := make([]lbdriver.GCPResource, 0, len(items))
 
 	for i := range items {
-		scope := rp
-		scope.ResourceName = items[i].Name
-		out = append(out, gcpResourceJSON(&items[i], scope, host))
+		if gcprest.NameMatches(filter, items[i].Name) {
+			matched = append(matched, items[i])
+		}
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, map[string]any{
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
+
+	page, err := pagination.Paginate(matched, r.URL.Query().Get("pageToken"),
+		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+		return
+	}
+
+	host := hostOf(r)
+	out := make([]map[string]any, 0, len(page.Items))
+
+	for i := range page.Items {
+		scope := rp
+		scope.ResourceName = page.Items[i].Name
+		out = append(out, gcpResourceJSON(&page.Items[i], scope, host))
+	}
+
+	envelope := map[string]any{
 		"kind":     resourceKind[rp.ResourceType] + "List",
 		"id":       "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/" + rp.ResourceType,
 		"items":    out,
 		"selfLink": gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, ""),
-	})
+	}
+	if page.NextPageToken != "" {
+		envelope["nextPageToken"] = page.NextPageToken
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, envelope)
 }
 
 //nolint:gocritic // rp is a request-scoped value

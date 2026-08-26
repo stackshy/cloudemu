@@ -64,6 +64,7 @@ GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented
 | `GetGCPResource` | GetGCPResource returns the stored resource, or NotFound. |
 | `ListGCPResources` | ListGCPResources returns every resource in a (collection, scope) bucket. |
 | `PutGCPResource` | PutGCPResource stores res, returning AlreadyExists when a resource with |
+| `UpdateGCPResource` | UpdateGCPResource applies mutate to the stored resource in place under the |
 
 ### LBAttributeUpdater
 
