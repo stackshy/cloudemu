@@ -23,6 +23,10 @@ const (
 	// reports for routes a caller added afterward.
 	routeOriginCreateRouteTable = "CreateRouteTable"
 	routeOriginCreateRoute      = "CreateRoute"
+
+	// filterAssocMain is the DescribeRouteTables filter selecting the VPC's main
+	// route table (association.main = true/false).
+	filterAssocMain = "association.main"
 )
 
 type routeXML struct {
@@ -335,7 +339,7 @@ func routeTableFilterKnown(name string) bool {
 	switch name {
 	case "route-table-id", "vpc-id",
 		"association.route-table-association-id", "association.route-table-id",
-		"association.subnet-id", "association.main":
+		filterAssocSubnetID, filterAssocMain:
 		return true
 	default:
 		return false
@@ -370,9 +374,9 @@ func routeTableMatchesFilter(rt *netdriver.RouteTable, f awsquery.Filter) bool {
 		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool {
 			return containsString(f.Values, nonEmpty(a.RouteTableID, rt.ID))
 		})
-	case "association.subnet-id":
+	case filterAssocSubnetID:
 		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool { return containsString(f.Values, a.SubnetID) })
-	case "association.main":
+	case filterAssocMain:
 		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool {
 			return containsString(f.Values, boolFilterValue(a.Main))
 		})

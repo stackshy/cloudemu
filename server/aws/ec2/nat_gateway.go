@@ -40,6 +40,7 @@ type describeNatGatewaysResponseXML struct {
 	Xmlns         string          `xml:"xmlns,attr"`
 	RequestID     string          `xml:"requestId"`
 	NatGatewaySet []natGatewayXML `xml:"natGatewaySet>item"`
+	NextToken     string          `xml:"nextToken,omitempty"`
 }
 
 type deleteNatGatewayResponseXML struct {
@@ -83,7 +84,7 @@ func (h *Handler) deleteNatGateway(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // per-resource describe pattern
+//nolint:dupl // per-resource describe+filter pattern, mirrors describeNetworkACLs
 func (h *Handler) describeNatGateways(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "NatGatewayId")
 
@@ -93,16 +94,44 @@ func (h *Handler) describeNatGateways(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]natGatewayXML, 0, len(nats))
-	for i := range nats {
-		out = append(out, toNatGatewayXML(&nats[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, natFilterMatch); err != nil {
+		writeNatErr(w, err)
+		return
 	}
+
+	out := filterXML(nats, filters, natMatchesFilters, toNatGatewayXML)
+	page, next := pageNetworkingXML(out, r, func(n natGatewayXML) string { return n.NatGatewayID })
 
 	awsquery.WriteXMLResponse(w, describeNatGatewaysResponseXML{
 		Xmlns:         awsquery.Namespace,
 		RequestID:     awsquery.RequestID,
-		NatGatewaySet: out,
+		NatGatewaySet: page,
+		NextToken:     next,
 	})
+}
+
+func natMatchesFilters(n *netdriver.NATGateway, filters []awsquery.Filter) bool {
+	return matchNetworkingFilters(n, filters, natFilterMatch)
+}
+
+// natFilterMatch reports whether n satisfies filter f and whether f is a filter
+// DescribeNatGateways recognizes. State falls back to "available", matching how
+// toNatGatewayXML renders an unset state, so a state=available filter finds a
+// freshly created gateway.
+func natFilterMatch(n *netdriver.NATGateway, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "nat-gateway-id":
+		return containsString(f.Values, n.ID), true
+	case filterVPCID:
+		return containsString(f.Values, n.VPCID), true
+	case filterSubnetID:
+		return containsString(f.Values, n.SubnetID), true
+	case filterState:
+		return containsString(f.Values, nonEmpty(n.State, stateAvailable)), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, n.Tags)
+	}
 }
 
 func toNatGatewayXML(n *netdriver.NATGateway) natGatewayXML {

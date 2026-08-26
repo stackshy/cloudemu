@@ -180,6 +180,87 @@ func TestDescribeNetworkAclsPaginatesAllOnce(t *testing.T) {
 	}
 }
 
+// TestDescribeNetworkAclsFilters pins that the vpc-id / network-acl-id filters
+// narrow the result to the matching ACLs instead of returning every ACL in the
+// account, that a non-matching filter yields an empty set, and that an explicit
+// id list still resolves.
+func TestDescribeNetworkAclsFilters(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	vpcA := mkVPC(ctx, t, c, "10.0.0.0/16")
+	vpcB := mkVPC(ctx, t, c, "10.1.0.0/16")
+
+	aclA, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: aws.String(vpcA)})
+	if err != nil {
+		t.Fatalf("CreateNetworkAcl(A): %v", err)
+	}
+
+	aclAID := aws.ToString(aclA.NetworkAcl.NetworkAclId)
+
+	if _, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: aws.String(vpcB)}); err != nil {
+		t.Fatalf("CreateNetworkAcl(B): %v", err)
+	}
+
+	byVPC, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("vpc-id"), Values: []string{vpcA}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls(vpc-id): %v", err)
+	}
+
+	for _, a := range byVPC.NetworkAcls {
+		if aws.ToString(a.VpcId) != vpcA {
+			t.Fatalf("vpc-id filter returned an ACL from %s, want only %s", aws.ToString(a.VpcId), vpcA)
+		}
+	}
+
+	if !hasNetworkACL(byVPC.NetworkAcls, aclAID) {
+		t.Fatalf("vpc-id filter dropped the custom ACL %s", aclAID)
+	}
+
+	byID, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("network-acl-id"), Values: []string{aclAID}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls(network-acl-id): %v", err)
+	}
+
+	if len(byID.NetworkAcls) != 1 || aws.ToString(byID.NetworkAcls[0].NetworkAclId) != aclAID {
+		t.Fatalf("network-acl-id filter = %d ACLs, want only %s", len(byID.NetworkAcls), aclAID)
+	}
+
+	none, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("vpc-id"), Values: []string{"vpc-nope"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls(bogus): %v", err)
+	}
+
+	if len(none.NetworkAcls) != 0 {
+		t.Fatalf("non-matching filter returned %d ACLs, want 0", len(none.NetworkAcls))
+	}
+
+	byList, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{NetworkAclIds: []string{aclAID}})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls(id list): %v", err)
+	}
+
+	if len(byList.NetworkAcls) != 1 || aws.ToString(byList.NetworkAcls[0].NetworkAclId) != aclAID {
+		t.Fatalf("id list = %d ACLs, want only %s", len(byList.NetworkAcls), aclAID)
+	}
+}
+
+func hasNetworkACL(acls []ec2types.NetworkAcl, id string) bool {
+	for _, a := range acls {
+		if aws.ToString(a.NetworkAclId) == id {
+			return true
+		}
+	}
+
+	return false
+}
+
 // mkCustomACL creates a VPC and a custom network ACL in it, returning the ACL id.
 func mkCustomACL(t *testing.T, c *ec2.Client) string {
 	t.Helper()
