@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
@@ -23,7 +25,7 @@ func TestResourceDiscoverySurfacesAKS(t *testing.T) {
 	}
 
 	if _, err := p.AKS.CreateOrUpdateAgentPool(ctx, "rg-1", "prod", aks.AgentPoolInput{
-		Name: "ap-1", Count: 1,
+		Name: "ap-1", Count: to.Ptr[int32](1),
 	}); err != nil {
 		t.Fatalf("CreateOrUpdateAgentPool: %v", err)
 	}

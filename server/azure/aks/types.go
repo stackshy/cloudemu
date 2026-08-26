@@ -29,9 +29,17 @@ type armManagedCluster struct {
 
 // armManagedClusterIdentity mirrors armcontainerservice.ManagedClusterIdentity.
 type armManagedClusterIdentity struct {
-	Type        string `json:"type,omitempty"`
+	Type                   string                           `json:"type,omitempty"`
+	PrincipalID            string                           `json:"principalId,omitempty"`
+	TenantID               string                           `json:"tenantId,omitempty"`
+	UserAssignedIdentities map[string]*armUserAssignedValue `json:"userAssignedIdentities,omitempty"`
+}
+
+// armUserAssignedValue mirrors
+// armcontainerservice.ManagedServiceIdentityUserAssignedIdentitiesValue.
+type armUserAssignedValue struct {
 	PrincipalID string `json:"principalId,omitempty"`
-	TenantID    string `json:"tenantId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
 }
 
 // armManagedClusterSKU mirrors armcontainerservice.ManagedClusterSKU. The tier
@@ -72,7 +80,7 @@ type armNetworkProfile struct {
 
 type armAgentPoolProfile struct {
 	Name              string             `json:"name,omitempty"`
-	Count             int32              `json:"count,omitempty"`
+	Count             *int32             `json:"count,omitempty"`
 	VMSize            string             `json:"vmSize,omitempty"`
 	OSDiskSizeGB      int32              `json:"osDiskSizeGB,omitempty"`
 	OSType            string             `json:"osType,omitempty"`
@@ -104,6 +112,25 @@ type armAgentPoolAdvanced struct {
 	VnetSubnetID       string   `json:"vnetSubnetID,omitempty"`
 	OSSKU              string   `json:"osSKU,omitempty"`
 	EnableNodePublicIP *bool    `json:"enableNodePublicIP,omitempty"`
+	// Further default_node_pool fields modeled so an inline submission
+	// round-trips the same as a standalone pool.
+	UpgradeSettings        *armAgentPoolUpgradeSettings `json:"upgradeSettings,omitempty"`
+	Tags                   map[string]*string           `json:"tags,omitempty"`
+	EnableFIPS             *bool                        `json:"enableFIPS,omitempty"`
+	SpotMaxPrice           *float32                     `json:"spotMaxPrice,omitempty"`
+	ScaleSetEvictionPolicy string                       `json:"scaleSetEvictionPolicy,omitempty"`
+	NodePublicIPPrefixID   string                       `json:"nodePublicIPPrefixID,omitempty"`
+	KubeletDiskType        string                       `json:"kubeletDiskType,omitempty"`
+	KubeletConfig          map[string]any               `json:"kubeletConfig,omitempty"`
+	LinuxOSConfig          map[string]any               `json:"linuxOSConfig,omitempty"`
+}
+
+// armAgentPoolUpgradeSettings mirrors the subset of
+// armcontainerservice.AgentPoolUpgradeSettings the emulator round-trips.
+type armAgentPoolUpgradeSettings struct {
+	MaxSurge                  string `json:"maxSurge,omitempty"`
+	DrainTimeoutInMinutes     *int32 `json:"drainTimeoutInMinutes,omitempty"`
+	NodeSoakDurationInMinutes *int32 `json:"nodeSoakDurationInMinutes,omitempty"`
 }
 
 // applyTo copies the submitted advanced fields onto a driver AgentPoolInput.
@@ -117,6 +144,28 @@ func (a *armAgentPoolAdvanced) applyTo(in *aks.AgentPoolInput) {
 	in.VnetSubnetID = a.VnetSubnetID
 	in.OSSKU = a.OSSKU
 	in.EnableNodePublicIP = a.EnableNodePublicIP
+	in.Tags = fromPtrTags(a.Tags)
+	in.EnableFIPS = a.EnableFIPS
+	in.SpotMaxPrice = a.SpotMaxPrice
+	in.ScaleSetEvictionPolicy = a.ScaleSetEvictionPolicy
+	in.NodePublicIPPrefixID = a.NodePublicIPPrefixID
+	in.KubeletDiskType = a.KubeletDiskType
+	in.KubeletConfig = a.KubeletConfig
+	in.LinuxOSConfig = a.LinuxOSConfig
+	in.UpgradeSettings = a.upgradeSettingsInput()
+}
+
+// upgradeSettingsInput maps the submitted upgradeSettings onto the driver type.
+func (a *armAgentPoolAdvanced) upgradeSettingsInput() *aks.AgentPoolUpgradeSettings {
+	if a.UpgradeSettings == nil {
+		return nil
+	}
+
+	return &aks.AgentPoolUpgradeSettings{
+		MaxSurge:                  a.UpgradeSettings.MaxSurge,
+		DrainTimeoutInMinutes:     a.UpgradeSettings.DrainTimeoutInMinutes,
+		NodeSoakDurationInMinutes: a.UpgradeSettings.NodeSoakDurationInMinutes,
+	}
 }
 
 // armAgentPool is the standalone (sub-resource) shape used by the
@@ -130,7 +179,7 @@ type armAgentPool struct {
 }
 
 type armAgentPoolProperties struct {
-	Count             int32              `json:"count,omitempty"`
+	Count             *int32             `json:"count,omitempty"`
 	VMSize            string             `json:"vmSize,omitempty"`
 	OSDiskSizeGB      int32              `json:"osDiskSizeGB,omitempty"`
 	OSType            string             `json:"osType,omitempty"`
@@ -207,10 +256,26 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 
 	if c.IdentityType != "" && c.IdentityType != "None" {
 		out.Identity = &armManagedClusterIdentity{
-			Type:        c.IdentityType,
-			PrincipalID: c.PrincipalID,
-			TenantID:    c.TenantID,
+			Type:                   c.IdentityType,
+			PrincipalID:            c.PrincipalID,
+			TenantID:               c.TenantID,
+			UserAssignedIdentities: toUserAssignedIdentities(c.UserAssignedIdentities),
 		}
+	}
+
+	return out
+}
+
+// toUserAssignedIdentities renders the stored user-assigned identity map onto
+// the ARM identity shape.
+func toUserAssignedIdentities(in map[string]aks.UserAssignedIdentity) map[string]*armUserAssignedValue {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]*armUserAssignedValue, len(in))
+	for id, v := range in {
+		out[id] = &armUserAssignedValue{PrincipalID: v.PrincipalID, ClientID: v.ClientID}
 	}
 
 	return out
@@ -237,13 +302,35 @@ func toNetworkProfile(np *aks.NetworkProfile) *armNetworkProfile {
 // embedded ARM shape used by both the inline and standalone pool responses.
 func toAgentPoolAdvanced(p *aks.AgentPool) armAgentPoolAdvanced {
 	return armAgentPoolAdvanced{
-		AvailabilityZones:  p.AvailabilityZones,
-		EnableAutoScaling:  p.EnableAutoScaling,
-		MinCount:           p.MinCount,
-		MaxCount:           p.MaxCount,
-		VnetSubnetID:       p.VnetSubnetID,
-		OSSKU:              p.OSSKU,
-		EnableNodePublicIP: p.EnableNodePublicIP,
+		AvailabilityZones:      p.AvailabilityZones,
+		EnableAutoScaling:      p.EnableAutoScaling,
+		MinCount:               p.MinCount,
+		MaxCount:               p.MaxCount,
+		VnetSubnetID:           p.VnetSubnetID,
+		OSSKU:                  p.OSSKU,
+		EnableNodePublicIP:     p.EnableNodePublicIP,
+		Tags:                   toPtrTags(p.Tags),
+		EnableFIPS:             p.EnableFIPS,
+		SpotMaxPrice:           p.SpotMaxPrice,
+		ScaleSetEvictionPolicy: p.ScaleSetEvictionPolicy,
+		NodePublicIPPrefixID:   p.NodePublicIPPrefixID,
+		KubeletDiskType:        p.KubeletDiskType,
+		KubeletConfig:          p.KubeletConfig,
+		LinuxOSConfig:          p.LinuxOSConfig,
+		UpgradeSettings:        toUpgradeSettings(p.UpgradeSettings),
+	}
+}
+
+// toUpgradeSettings renders the stored upgrade settings onto the ARM shape.
+func toUpgradeSettings(s *aks.AgentPoolUpgradeSettings) *armAgentPoolUpgradeSettings {
+	if s == nil {
+		return nil
+	}
+
+	return &armAgentPoolUpgradeSettings{
+		MaxSurge:                  s.MaxSurge,
+		DrainTimeoutInMinutes:     s.DrainTimeoutInMinutes,
+		NodeSoakDurationInMinutes: s.NodeSoakDurationInMinutes,
 	}
 }
 
@@ -256,7 +343,7 @@ func toAgentPoolProfiles(pools []aks.AgentPool) []armAgentPoolProfile {
 	for i := range pools {
 		out = append(out, armAgentPoolProfile{
 			Name:                 pools[i].Name,
-			Count:                pools[i].Count,
+			Count:                ptrInt32(pools[i].Count),
 			VMSize:               pools[i].VMSize,
 			OSDiskSizeGB:         pools[i].OSDiskSizeGB,
 			OSType:               pools[i].OSType,
@@ -286,7 +373,7 @@ func toARMAgentPool(p *aks.AgentPool, subscription string) armAgentPool {
 		Name: p.Name,
 		Type: resourceTypeAgentPool,
 		Properties: &armAgentPoolProperties{
-			Count:                p.Count,
+			Count:                ptrInt32(p.Count),
 			VMSize:               p.VMSize,
 			OSDiskSizeGB:         p.OSDiskSizeGB,
 			OSType:               p.OSType,
@@ -314,6 +401,13 @@ func toARMMaintenance(mc *aks.MaintenanceConfig, subscription string) armMainten
 		Type:       resourceTypeMaintenanceConfig,
 		Properties: mc.Properties,
 	}
+}
+
+// ptrInt32 returns a pointer to v. Agent-pool count is a pointer on the wire so
+// an explicit 0 (scale-to-zero) round-trips; the stored value is always
+// concrete, so the response pointer is always non-nil.
+func ptrInt32(v int32) *int32 {
+	return &v
 }
 
 // toPtrTags converts a flat map[string]string to ARM's map[string]*string.

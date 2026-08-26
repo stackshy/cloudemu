@@ -371,7 +371,7 @@ func TestARGCostFields_AKS(t *testing.T) {
 		AgentPools: []aks.AgentPoolInput{
 			{
 				Name:             "spotpool",
-				Count:            2,
+				Count:            to.Ptr[int32](2),
 				VMSize:           "Standard_DS2_v2",
 				ScaleSetPriority: "Spot",
 			},

@@ -54,7 +54,7 @@ func TestAgentPoolScaleSetPriority(t *testing.T) {
 		pool, err := m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-spot", AgentPoolInput{
 			Name:             "spotpool",
 			VMSize:           "Standard_D2s_v3",
-			Count:            3,
+			Count:            int32Ptr(3),
 			ScaleSetPriority: "Spot",
 		})
 		requireNoError(t, err)
@@ -83,7 +83,7 @@ func TestAgentPoolScaleSetPriority(t *testing.T) {
 		pool, err := m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-reg", AgentPoolInput{
 			Name:   "regpool",
 			VMSize: "Standard_D2s_v3",
-			Count:  2,
+			Count:  int32Ptr(2),
 		})
 		requireNoError(t, err)
 		assertEqual(t, "Regular", pool.ScaleSetPriority)

@@ -41,7 +41,9 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 	}
 
 	if body.Identity != nil {
+		in.IdentityPresent = true
 		in.IdentityType = body.Identity.Type
+		in.UserAssignedIdentityIDs = identityIDs(body.Identity.UserAssignedIdentities)
 	}
 
 	if body.Properties != nil {
@@ -54,6 +56,22 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 	}
 
 	return in
+}
+
+// identityIDs returns the ARM resource IDs (map keys) of the submitted
+// user-assigned identities, so the backend can synthesize a principal/client
+// pair for each. The submitted values are read-only and ignored.
+func identityIDs(in map[string]*armUserAssignedValue) []string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(in))
+	for id := range in {
+		ids = append(ids, id)
+	}
+
+	return ids
 }
 
 // networkProfileInput maps the submitted ARM networkProfile onto the driver
@@ -100,6 +118,8 @@ func inlineAgentPoolInputs(profiles []armAgentPoolProfile) []aks.AgentPoolInput 
 			NodeLabels:       fromPtrTags(p.NodeLabels),
 			NodeTaints:       p.NodeTaints,
 			MaxPods:          p.MaxPods,
+			OSDiskType:       p.OSDiskType,
+			Type:             p.Type,
 		}
 		p.armAgentPoolAdvanced.applyTo(&in)
 		out = append(out, in)
@@ -201,6 +221,8 @@ func (h *Handler) createOrUpdateAgentPool(w http.ResponseWriter, r *http.Request
 		in.NodeLabels = fromPtrTags(body.Properties.NodeLabels)
 		in.NodeTaints = body.Properties.NodeTaints
 		in.MaxPods = body.Properties.MaxPods
+		in.OSDiskType = body.Properties.OSDiskType
+		in.Type = body.Properties.Type
 		body.Properties.armAgentPoolAdvanced.applyTo(&in)
 	}
 

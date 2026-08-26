@@ -205,6 +205,163 @@ func TestSDKAKSServicePrincipalSecretStripped(t *testing.T) {
 	}
 }
 
+// TestSDKAKSInlineOSDiskTypeEphemeralRoundTrips is BUG-2: an inline pool's
+// osDiskType=Ephemeral survives to GET instead of always reading "Managed".
+func TestSDKAKSInlineOSDiskTypeEphemeralRoundTrips(t *testing.T) {
+	clusters, _, _ := newSDKClients(t)
+
+	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{
+		Location: to.Ptr("eastus"),
+		Properties: &armcontainerservice.ManagedClusterProperties{
+			AgentPoolProfiles: []*armcontainerservice.ManagedClusterAgentPoolProfile{
+				{
+					Name:       to.Ptr("system"),
+					Count:      to.Ptr[int32](1),
+					VMSize:     to.Ptr("Standard_DS2_v2"),
+					Mode:       to.Ptr(armcontainerservice.AgentPoolModeSystem),
+					OSDiskType: to.Ptr(armcontainerservice.OSDiskTypeEphemeral),
+				},
+			},
+		},
+	})
+
+	pools := getClusterProps(t, clusters).AgentPoolProfiles
+	if len(pools) != 1 || pools[0].OSDiskType == nil ||
+		*pools[0].OSDiskType != armcontainerservice.OSDiskTypeEphemeral {
+		t.Fatalf("inline osDiskType not preserved: %+v", pools)
+	}
+}
+
+// TestSDKAKSStandaloneOSDiskTypeEphemeralRoundTrips is BUG-2 on the standalone
+// path: osDiskType=Ephemeral survives PUT→GET.
+func TestSDKAKSStandaloneOSDiskTypeEphemeralRoundTrips(t *testing.T) {
+	clusters, poolsClient, _ := newSDKClients(t)
+	ctx := context.Background()
+
+	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{Location: to.Ptr("eastus")})
+
+	poller, err := poolsClient.BeginCreateOrUpdate(ctx, "rg-1", "k8s-1", "ephem", armcontainerservice.AgentPool{
+		Properties: &armcontainerservice.ManagedClusterAgentPoolProfileProperties{
+			Count:      to.Ptr[int32](1),
+			VMSize:     to.Ptr("Standard_DS2_v2"),
+			Mode:       to.Ptr(armcontainerservice.AgentPoolModeUser),
+			OSDiskType: to.Ptr(armcontainerservice.OSDiskTypeEphemeral),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("pool BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool PollUntilDone: %v", err)
+	}
+
+	got, err := poolsClient.Get(ctx, "rg-1", "k8s-1", "ephem", nil)
+	if err != nil {
+		t.Fatalf("pool Get: %v", err)
+	}
+
+	if got.Properties.OSDiskType == nil || *got.Properties.OSDiskType != armcontainerservice.OSDiskTypeEphemeral {
+		t.Fatalf("standalone osDiskType not preserved: %v", got.Properties.OSDiskType)
+	}
+}
+
+// TestSDKAKSOSDiskTypeDefaultsManaged asserts the default is still "Managed"
+// when a pool omits osDiskType.
+func TestSDKAKSOSDiskTypeDefaultsManaged(t *testing.T) {
+	clusters, _, _ := newSDKClients(t)
+
+	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{
+		Location: to.Ptr("eastus"),
+		Properties: &armcontainerservice.ManagedClusterProperties{
+			AgentPoolProfiles: []*armcontainerservice.ManagedClusterAgentPoolProfile{
+				{Name: to.Ptr("system"), Count: to.Ptr[int32](1), Mode: to.Ptr(armcontainerservice.AgentPoolModeSystem)},
+			},
+		},
+	})
+
+	pools := getClusterProps(t, clusters).AgentPoolProfiles
+	if len(pools) != 1 || pools[0].OSDiskType == nil ||
+		*pools[0].OSDiskType != armcontainerservice.OSDiskTypeManaged {
+		t.Fatalf("default osDiskType: got %+v, want Managed", pools)
+	}
+}
+
+// TestSDKAKSAgentPoolScaleToZero is BUG-3: an explicit count of 0 on a user
+// pool round-trips instead of being forced back to the default node count.
+func TestSDKAKSAgentPoolScaleToZero(t *testing.T) {
+	clusters, poolsClient, _ := newSDKClients(t)
+	ctx := context.Background()
+
+	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{Location: to.Ptr("eastus")})
+
+	poller, err := poolsClient.BeginCreateOrUpdate(ctx, "rg-1", "k8s-1", "zero", armcontainerservice.AgentPool{
+		Properties: &armcontainerservice.ManagedClusterAgentPoolProfileProperties{
+			Count:  to.Ptr[int32](0),
+			VMSize: to.Ptr("Standard_DS2_v2"),
+			Mode:   to.Ptr(armcontainerservice.AgentPoolModeUser),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("pool BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool PollUntilDone: %v", err)
+	}
+
+	got, err := poolsClient.Get(ctx, "rg-1", "k8s-1", "zero", nil)
+	if err != nil {
+		t.Fatalf("pool Get: %v", err)
+	}
+
+	if got.Properties.Count == nil || *got.Properties.Count != 0 {
+		t.Fatalf("count: got %v, want 0 (scale-to-zero)", got.Properties.Count)
+	}
+}
+
+// TestSDKAKSInlineUpgradeSettingsAndTagsRoundTrip is BUG-5: default_node_pool
+// fields submitted inline (upgradeSettings.maxSurge, pool tags, enableFIPS)
+// survive to GET the same as on a standalone pool.
+func TestSDKAKSInlineUpgradeSettingsAndTagsRoundTrip(t *testing.T) {
+	clusters, _, _ := newSDKClients(t)
+
+	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{
+		Location: to.Ptr("eastus"),
+		Properties: &armcontainerservice.ManagedClusterProperties{
+			AgentPoolProfiles: []*armcontainerservice.ManagedClusterAgentPoolProfile{
+				{
+					Name:            to.Ptr("system"),
+					Count:           to.Ptr[int32](1),
+					VMSize:          to.Ptr("Standard_DS2_v2"),
+					Mode:            to.Ptr(armcontainerservice.AgentPoolModeSystem),
+					UpgradeSettings: &armcontainerservice.AgentPoolUpgradeSettings{MaxSurge: to.Ptr("33%")},
+					Tags:            map[string]*string{"pool": to.Ptr("system")},
+					EnableFIPS:      to.Ptr(true),
+				},
+			},
+		},
+	})
+
+	pools := getClusterProps(t, clusters).AgentPoolProfiles
+	if len(pools) != 1 {
+		t.Fatalf("got %d pools, want 1", len(pools))
+	}
+
+	p := pools[0]
+	if p.UpgradeSettings == nil || p.UpgradeSettings.MaxSurge == nil || *p.UpgradeSettings.MaxSurge != "33%" {
+		t.Fatalf("upgradeSettings.maxSurge not preserved: %+v", p.UpgradeSettings)
+	}
+
+	if v := p.Tags["pool"]; v == nil || *v != "system" {
+		t.Fatalf("pool tags not preserved: %+v", p.Tags)
+	}
+
+	if p.EnableFIPS == nil || !*p.EnableFIPS {
+		t.Fatalf("enableFIPS not preserved: %v", p.EnableFIPS)
+	}
+}
+
 // assertAdvancedProfile checks the inline-profile advanced fields.
 func assertAdvancedProfile(t *testing.T, p *armcontainerservice.ManagedClusterAgentPoolProfile) {
 	t.Helper()
