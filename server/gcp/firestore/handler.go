@@ -58,10 +58,16 @@ const (
 // Reserved item keys the handler stores alongside user fields. The document id
 // is the driver partition key; createTime/updateTime carry stable commit
 // timestamps. None are surfaced as document fields.
+//
+// Each key is prefixed with a NUL byte so it cannot collide with a real
+// Firestore field name (field names are UTF-8 text and never contain NUL).
+// This lets a user field literally named "id" — or "__createTime__" /
+// "__updateTime__" — round-trip through storage instead of being clobbered by
+// the handler's bookkeeping.
 const (
-	fieldID         = "id"
-	fieldCreateTime = "__createTime__"
-	fieldUpdateTime = "__updateTime__"
+	fieldID         = "\x00id"
+	fieldCreateTime = "\x00createTime"
+	fieldUpdateTime = "\x00updateTime"
 )
 
 // isReservedKey reports whether k is a handler-internal item key that must not
@@ -253,10 +259,28 @@ type writeResult struct {
 	TransformResults []value `json:"transformResults,omitempty"`
 }
 
-// commit handles POST .../documents:commit — the batch-write endpoint the
-// REST SDK uses for Set / Update / Delete. A `transaction` field, when present,
-// is accepted and applied directly: the in-memory store has no isolation
-// levels, so the writes commit exactly as a non-transactional batch would.
+// stagedWrite is one document write held in the commit's working set before it
+// is persisted: a put carries the computed item; a delete carries only its
+// target. table is the full parent-path namespace.
+type stagedWrite struct {
+	table    string
+	id       string
+	item     map[string]any // the item to put; nil when isDelete
+	isDelete bool
+}
+
+// stageKey uniquely names a document across collections for the commit overlay.
+func stageKey(table, id string) string { return table + "\x00" + id }
+
+// commit handles POST .../documents:commit — the batch-write endpoint the REST
+// SDK uses for Set / Update / Delete. A `transaction` field, when present, is
+// accepted and applied directly: the in-memory store has no isolation levels.
+//
+// The batch is applied atomically. Phase 1 validates every write's precondition
+// against a working snapshot (an overlay reflecting earlier writes in the same
+// batch) and computes each resulting item WITHOUT persisting anything; phase 2
+// applies the staged writes. So a precondition failure on write N aborts the
+// whole commit with writes 1..N-1 left unpersisted, matching real Firestore.
 func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	var req commitRequest
 
@@ -268,56 +292,108 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	nowStr := now.Format(time.RFC3339Nano)
 	out := commitResponse{CommitTime: nowStr}
 
+	overlay := make(map[string]*stagedWrite, len(req.Writes))
+	order := make([]string, 0, len(req.Writes))
+
 	for i := range req.Writes {
 		op := &req.Writes[i]
 
 		switch {
 		case op.Update != nil:
-			transformResults, ok := h.commitUpdate(w, r, op, now)
+			sw, results, ok := h.stageUpdate(w, r, op, now, overlay)
 			if !ok {
 				return
 			}
 
+			order = trackStaged(order, overlay, sw)
 			out.WriteResults = append(out.WriteResults,
-				writeResult{UpdateTime: nowStr, TransformResults: transformResults})
+				writeResult{UpdateTime: nowStr, TransformResults: results})
 		case op.Delete != "":
-			if !h.commitDelete(w, r, op) {
+			sw, ok := h.stageDelete(w, r, op, overlay)
+			if !ok {
 				return
 			}
 
+			order = trackStaged(order, overlay, sw)
 			out.WriteResults = append(out.WriteResults, writeResult{UpdateTime: nowStr})
 		}
+	}
+
+	if err := h.applyStaged(r.Context(), order, overlay); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	writeJSON(w, http.StatusOK, out)
 }
 
-// commitUpdate applies one Update write. It returns the transform results and a
-// false ok when it has already written an error response and the caller must
-// stop.
+// trackStaged records sw in the overlay under its document key, appending the
+// key to order the first time it is seen so a later write to the same document
+// replaces the earlier one while preserving apply order.
+func trackStaged(order []string, overlay map[string]*stagedWrite, sw *stagedWrite) []string {
+	k := stageKey(sw.table, sw.id)
+	if _, seen := overlay[k]; !seen {
+		order = append(order, k)
+	}
+
+	overlay[k] = sw
+
+	return order
+}
+
+// stagedExisting resolves the current document state for a (table, id) as seen
+// within the batch: an earlier staged write in the overlay takes precedence
+// over the persisted store. A missing document (or collection) reports exists
+// false without error.
+func (h *Handler) stagedExisting(
+	ctx context.Context, overlay map[string]*stagedWrite, table, id string,
+) (item map[string]any, exists bool, err error) {
+	if sw, ok := overlay[stageKey(table, id)]; ok {
+		if sw.isDelete {
+			return nil, false, nil
+		}
+
+		return sw.item, true, nil
+	}
+
+	existing, gerr := h.db.GetItem(ctx, table, map[string]any{fieldID: id})
+	if gerr != nil {
+		if cerrors.IsNotFound(gerr) {
+			return nil, false, nil
+		}
+
+		return nil, false, gerr
+	}
+
+	return existing, true, nil
+}
+
+// stageUpdate validates and computes one Update write, returning the staged
+// write plus its transform results, or a false ok when it has already written
+// an error response and the caller must stop.
 //
 // A write that carries field transforms is always treated as a MERGE against the
 // stored document: a transform-only write (empty update.fields, empty mask) must
 // increment/append/stamp its target fields WITHOUT wiping the rest of the
 // document. Only a plain Set (no mask, no transforms) replaces wholesale.
-func (h *Handler) commitUpdate(w http.ResponseWriter, r *http.Request, op *writeOp, now time.Time) ([]value, bool) {
+func (h *Handler) stageUpdate(
+	w http.ResponseWriter, r *http.Request, op *writeOp, now time.Time, overlay map[string]*stagedWrite,
+) (*stagedWrite, []value, bool) {
 	p, id, err := splitDocumentName(op.Update.Name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
-		return nil, false
+		return nil, nil, false
 	}
 
-	existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: id})
-	if gerr != nil && !cerrors.IsNotFound(gerr) {
+	existing, exists, gerr := h.stagedExisting(r.Context(), overlay, p.collection, id)
+	if gerr != nil {
 		writeErr(w, gerr)
-		return nil, false
+		return nil, nil, false
 	}
-
-	exists := gerr == nil
 
 	updateTime := existingUpdateTime(existing)
 	if !checkPrecondition(w, op.CurrentDocument, exists, updateTime, op.Update.Name) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	body := fieldsToMap(op.Update.Fields)
@@ -332,14 +408,45 @@ func (h *Handler) commitUpdate(w http.ResponseWriter, r *http.Request, op *write
 
 	stampTimes(item, existing, now)
 
-	h.ensureCollection(r.Context(), p.collection)
+	return &stagedWrite{table: p.collection, id: id, item: item}, results, true
+}
 
-	if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
-		writeErr(w, perr)
-		return nil, false
+// applyStaged persists the staged writes, grouped by collection so each
+// collection's puts and deletes land through the atomic TransactWriteItems.
+// Preconditions were already checked against the snapshot in phase 1, so the
+// apply cannot fail on a precondition.
+func (h *Handler) applyStaged(ctx context.Context, order []string, overlay map[string]*stagedWrite) error {
+	putsByTable := map[string][]map[string]any{}
+	delsByTable := map[string][]map[string]any{}
+
+	var tables []string
+
+	seen := map[string]bool{}
+
+	for _, k := range order {
+		sw := overlay[k]
+		if !seen[sw.table] {
+			seen[sw.table] = true
+
+			tables = append(tables, sw.table)
+		}
+
+		if sw.isDelete {
+			delsByTable[sw.table] = append(delsByTable[sw.table], map[string]any{fieldID: sw.id})
+		} else {
+			putsByTable[sw.table] = append(putsByTable[sw.table], sw.item)
+		}
 	}
 
-	return results, true
+	for _, table := range tables {
+		h.ensureCollection(ctx, table)
+
+		if err := h.db.TransactWriteItems(ctx, table, putsByTable[table], delsByTable[table]); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // mergeUpdateBase produces the item to write before transforms are applied.
@@ -358,36 +465,31 @@ func mergeUpdateBase(existing, body map[string]any, id string, op *writeOp) map[
 	}
 }
 
-// commitDelete applies one Delete write, returning false when an error
-// response has already been written. A currentDocument precondition is enforced
-// (a Delete guarded by exists=true on a missing document → NOT_FOUND, an
-// updateTime guard on a stale document → FAILED_PRECONDITION).
-func (h *Handler) commitDelete(w http.ResponseWriter, r *http.Request, op *writeOp) bool {
+// stageDelete validates one Delete write and stages it, returning false when an
+// error response has already been written. A currentDocument precondition is
+// enforced (a Delete guarded by exists=true on a missing document → NOT_FOUND,
+// an updateTime guard on a stale document → FAILED_PRECONDITION).
+func (h *Handler) stageDelete(
+	w http.ResponseWriter, r *http.Request, op *writeOp, overlay map[string]*stagedWrite,
+) (*stagedWrite, bool) {
 	p, id, err := splitDocumentName(op.Delete)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
-		return false
+		return nil, false
 	}
 
-	existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: id})
-	if gerr != nil && !cerrors.IsNotFound(gerr) {
+	existing, exists, gerr := h.stagedExisting(r.Context(), overlay, p.collection, id)
+	if gerr != nil {
 		writeErr(w, gerr)
-		return false
+		return nil, false
 	}
-
-	exists := gerr == nil
 
 	updateTime := existingUpdateTime(existing)
 	if !checkPrecondition(w, op.CurrentDocument, exists, updateTime, op.Delete) {
-		return false
+		return nil, false
 	}
 
-	if derr := h.db.DeleteItem(r.Context(), p.collection, map[string]any{fieldID: id}); derr != nil {
-		writeErr(w, derr)
-		return false
-	}
-
-	return true
+	return &stagedWrite{table: p.collection, id: id, isDelete: true}, true
 }
 
 // existingUpdateTime reads the stored commit timestamp of a document, returning
@@ -830,11 +932,19 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 		return
 	}
 
-	collection := req.StructuredQuery.From[0].CollectionID
+	// runQuery's base path is the PARENT resource (the documents root or a
+	// specific document). The queried collection lives directly under it, so
+	// the driver table is the parent path joined with the from collection id —
+	// this scopes a subcollection query to its own namespace instead of the
+	// trailing collection id alone.
+	p, perr := parseFirestorePath(base)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", perr.Error())
+		return
+	}
 
-	// Project + database from the base path.
-	p, _ := parseFirestorePath(base)
-	p.collection = collection
+	p.collection = joinPath(p.parentPath(), req.StructuredQuery.From[0].CollectionID)
+	p.documentID = ""
 
 	node, ferr := buildFilterNode(req.StructuredQuery.Where)
 	if ferr != nil {
@@ -843,9 +953,16 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 	}
 
 	// Fetch the full collection and evaluate the where clause here with full
-	// grammar fidelity (type-aware, AND/OR/NOT, IN/array-contains, unary).
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: collection, Limit: allResults})
+	// grammar fidelity (type-aware, AND/OR/NOT, IN/array-contains, unary). A
+	// never-written collection has no driver table; real Firestore returns an
+	// empty result set rather than an error, so treat NotFound as empty.
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.collection, Limit: allResults})
 	if err != nil {
+		if cerrors.IsNotFound(err) {
+			streamQueryResults(w, nil, p)
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -906,16 +1023,18 @@ func streamQueryResults(w http.ResponseWriter, items []map[string]any, p firesto
 	w.Write([]byte("]")) //nolint:errcheck // best-effort
 }
 
-// splitDocumentName parses "projects/{p}/databases/{db}/documents/{coll}/{id}"
-// into a firestorePath plus the document id.
+// splitDocumentName parses a fully-qualified document resource name
+// "projects/{p}/databases/{db}/documents/{coll...}/{id}" into a firestorePath
+// (whose collection is the full parent path, so subcollections keep their own
+// namespace) plus the document id. The segments after "documents" must form a
+// complete collection/document sequence (an even count ending at a document).
 func splitDocumentName(name string) (firestorePath, string, error) {
 	parts := strings.Split(name, "/")
 
 	const (
 		minParts                = 6
 		idxProject, idxDatabase = 1, 3
-		idxCollection           = 5
-		idxID                   = 6
+		idxFirstSeg             = 5
 	)
 
 	if len(parts) < minParts ||
@@ -925,17 +1044,18 @@ func splitDocumentName(name string) (firestorePath, string, error) {
 		return firestorePath{}, "", fmt.Errorf("%w: %s", errInvalidDocName, name)
 	}
 
+	segs := trimEmpty(parts[idxFirstSeg:])
+	if len(segs) == 0 || len(segs)%2 != 0 {
+		return firestorePath{}, "", fmt.Errorf("%w: %s", errMissingDocID, name)
+	}
+
 	p := firestorePath{
 		project:    parts[idxProject],
 		database:   parts[idxDatabase],
-		collection: parts[idxCollection],
+		collection: strings.Join(segs[:len(segs)-1], "/"),
 	}
 
-	if len(parts) <= idxID {
-		return p, "", fmt.Errorf("%w: %s", errMissingDocID, name)
-	}
-
-	return p, strings.Join(parts[idxID:], "/"), nil
+	return p, segs[len(segs)-1], nil
 }
 
 // firestorePath holds the components extracted from a Firestore URL.
@@ -946,23 +1066,49 @@ type firestorePath struct {
 	documentID string
 }
 
-// parseFirestorePath extracts the project, database, collection, and
-// optional document id from a Firestore REST path.
+// parentPath returns the resource path this location represents relative to the
+// documents root: the collection path, extended with the document id when the
+// path addresses a specific document. It is the prefix a child collection is
+// nested under.
+func (p firestorePath) parentPath() string {
+	return joinPath(p.collection, p.documentID)
+}
+
+// joinPath joins two path segments with "/", tolerating either being empty.
+func joinPath(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + "/" + b
+	}
+}
+
+// parseFirestorePath extracts the project, database, collection path, and
+// optional document id from a Firestore REST path. Everything after
+// "documents" is an alternating collection/document sequence, so a
+// subcollection is modeled as part of the collection key:
 //
-// /v1/projects/{p}/databases/{db}/documents/{collection}
-// /v1/projects/{p}/databases/{db}/documents/{collection}/{id}.
+//	.../documents                              → collection "",             doc ""
+//	.../documents/cities                       → collection "cities",       doc ""
+//	.../documents/cities/SF                     → collection "cities",       doc "SF"
+//	.../documents/cities/SF/landmarks           → collection "cities/SF/landmarks", doc ""
+//	.../documents/cities/SF/landmarks/gg        → collection "cities/SF/landmarks", doc "gg"
+//
+// The full parent path becomes the driver "table", so a subcollection lives in
+// its own namespace and never contaminates the parent collection.
 func parseFirestorePath(path string) (firestorePath, error) {
 	rest := strings.TrimPrefix(path, "/v1/")
 
 	parts := strings.Split(rest, "/")
 
 	const (
-		minParts      = 6 // projects/{p}/databases/{db}/documents/{collection}
-		fullDocParts  = 7 // ... + /{id}
-		idxProject    = 1
-		idxDatabase   = 3
-		idxCollection = 5
-		idxDocument   = 6
+		minParts    = 5 // projects/{p}/databases/{db}/documents
+		idxProject  = 1
+		idxDatabase = 3
+		idxFirstSeg = 5 // first collection segment
 	)
 
 	if len(parts) < minParts ||
@@ -973,16 +1119,39 @@ func parseFirestorePath(path string) (firestorePath, error) {
 	}
 
 	out := firestorePath{
-		project:    parts[idxProject],
-		database:   parts[idxDatabase],
-		collection: parts[idxCollection],
+		project:  parts[idxProject],
+		database: parts[idxDatabase],
 	}
 
-	if len(parts) >= fullDocParts {
-		out.documentID = strings.Join(parts[idxDocument:], "/")
-	}
+	segs := trimEmpty(parts[idxFirstSeg:])
+	out.collection, out.documentID = splitCollectionSegments(segs)
 
 	return out, nil
+}
+
+// splitCollectionSegments splits the alternating collection/document segments
+// after "documents" into the collection (parent) path and, when the path ends
+// at a document, its id. An odd count ends at a collection (no doc id); an even
+// count ends at a document whose id is the last segment.
+func splitCollectionSegments(segs []string) (collection, documentID string) {
+	if len(segs) == 0 {
+		return "", ""
+	}
+
+	if len(segs)%2 == 1 {
+		return strings.Join(segs, "/"), ""
+	}
+
+	return strings.Join(segs[:len(segs)-1], "/"), segs[len(segs)-1]
+}
+
+// trimEmpty drops a trailing empty segment produced by a trailing slash.
+func trimEmpty(segs []string) []string {
+	for len(segs) > 0 && segs[len(segs)-1] == "" {
+		segs = segs[:len(segs)-1]
+	}
+
+	return segs
 }
 
 func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
@@ -1029,10 +1198,10 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 }
 
 // ensureCollection lazily creates a Firestore collection (driver table keyed on
-// the document "id") so a first write doesn't fail with "collection not found".
-// An already-exists result is benign.
+// the reserved document-id field) so a first write doesn't fail with "collection
+// not found". An already-exists result is benign.
 func (h *Handler) ensureCollection(ctx context.Context, collection string) {
-	_ = h.db.CreateTable(ctx, dbdriver.TableConfig{Name: collection, PartitionKey: "id"})
+	_ = h.db.CreateTable(ctx, dbdriver.TableConfig{Name: collection, PartitionKey: fieldID})
 }
 
 func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
@@ -1054,6 +1223,13 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, p firest
 	// stays correct across page boundaries.
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.collection, Limit: allResults})
 	if err != nil {
+		// A never-written (sub)collection has no driver table; real Firestore
+		// lists it as empty rather than erroring.
+		if cerrors.IsNotFound(err) {
+			writeJSON(w, http.StatusOK, listDocumentsResponse{})
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
