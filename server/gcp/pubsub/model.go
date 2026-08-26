@@ -45,6 +45,14 @@ type topicState struct {
 	// "no override, fall back to the driver's tags".
 	labels    map[string]string
 	labelsSet bool
+
+	// Extended topic config the SQS-style driver cannot express, persisted here so
+	// create/patch round-trip on subsequent Get/List.
+	msgRetentionDuration string
+	schemaSettings       json.RawMessage
+	kmsKeyName           string
+	messageStoragePolicy json.RawMessage
+	satisfiesPzs         bool
 }
 
 // lease is an outstanding (delivered, not-yet-acked) message on a subscription.

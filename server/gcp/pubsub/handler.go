@@ -195,12 +195,14 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, project, n
 	ts := h.topicLog(name)
 	ts.labels = copyLabels(info.Tags)
 	ts.labelsSet = true
+	ts.msgRetentionDuration = body.MessageRetentionDuration
+	ts.schemaSettings = body.SchemaSettings
+	ts.kmsKeyName = body.KmsKeyName
+	ts.messageStoragePolicy = body.MessageStoragePolicy
+	ts.satisfiesPzs = body.SatisfiesPzs
 	h.mu.Unlock()
 
-	writeJSON(w, http.StatusOK, topic{
-		Name:   topicName(project, info.Name),
-		Labels: info.Tags,
-	})
+	writeJSON(w, http.StatusOK, h.topicView(project, name, info.Tags))
 }
 
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, project, name string) {
@@ -210,10 +212,7 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, project, name
 		return
 	}
 
-	writeJSON(w, http.StatusOK, topic{
-		Name:   topicName(project, q.Name),
-		Labels: h.topicLabels(name, q.Tags),
-	})
+	writeJSON(w, http.StatusOK, h.topicView(project, q.Name, q.Tags))
 }
 
 // patchTopic applies topics.patch: only the fields named by updateMask are
@@ -245,15 +244,22 @@ func (h *Handler) patchTopic(w http.ResponseWriter, r *http.Request, project, na
 	}
 
 	for _, m := range masks {
-		if m == "labels" {
+		switch m {
+		case "labels":
 			ts.labels = copyLabels(req.Topic.Labels)
+		case "messageRetentionDuration":
+			ts.msgRetentionDuration = req.Topic.MessageRetentionDuration
+		case "schemaSettings":
+			ts.schemaSettings = req.Topic.SchemaSettings
+		case "kmsKeyName":
+			ts.kmsKeyName = req.Topic.KmsKeyName
+		case "messageStoragePolicy":
+			ts.messageStoragePolicy = req.Topic.MessageStoragePolicy
 		}
 	}
-
-	labels := ts.labels
 	h.mu.Unlock()
 
-	writeJSON(w, http.StatusOK, topic{Name: topicName(project, name), Labels: labels})
+	writeJSON(w, http.StatusOK, h.topicView(project, name, q.Tags))
 }
 
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, name string) {
@@ -291,10 +297,7 @@ func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request, project str
 
 	items := make([]topic, 0, len(queues))
 	for i := range queues {
-		items = append(items, topic{
-			Name:   topicName(project, queues[i].Name),
-			Labels: h.topicLabels(queues[i].Name, queues[i].Tags),
-		})
+		items = append(items, h.topicView(project, queues[i].Name, queues[i].Tags))
 	}
 
 	page, err := pagination.PaginateSorted(items, func(a, b topic) bool { return a.Name < b.Name },
@@ -371,17 +374,31 @@ func snapshotName(project, name string) string {
 	return "projects/" + project + "/snapshots/" + name
 }
 
-// topicLabels returns a topic's effective labels: the handler-side override
-// (set on create/patch) when present, otherwise the messagequeue driver's tags.
-func (h *Handler) topicLabels(name string, fallback map[string]string) map[string]string {
+// topicView builds a topic response: name plus the effective labels (the
+// handler-side override set on create/patch when present, otherwise the
+// messagequeue driver's tags) and the extended fields persisted on create/patch.
+func (h *Handler) topicView(project, name string, fallbackTags map[string]string) topic {
+	t := topic{Name: topicName(project, name), Labels: fallbackTags}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if ts, ok := h.topics[name]; ok && ts.labelsSet {
-		return ts.labels
+	ts, ok := h.topics[name]
+	if !ok {
+		return t
 	}
 
-	return fallback
+	if ts.labelsSet {
+		t.Labels = ts.labels
+	}
+
+	t.MessageRetentionDuration = ts.msgRetentionDuration
+	t.SchemaSettings = ts.schemaSettings
+	t.KmsKeyName = ts.kmsKeyName
+	t.MessageStoragePolicy = ts.messageStoragePolicy
+	t.SatisfiesPzs = ts.satisfiesPzs
+
+	return t
 }
 
 // parseMask splits a comma-separated updateMask into trimmed, non-empty paths.

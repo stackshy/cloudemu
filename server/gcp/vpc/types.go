@@ -57,6 +57,9 @@ type subnetworkRequest struct {
 	StackType             string           `json:"stackType,omitempty"`
 	PrivateIPGoogleAccess *bool            `json:"privateIpGoogleAccess,omitempty"`
 	SecondaryIPRanges     []secondaryRange `json:"secondaryIpRanges,omitempty"`
+	// Fingerprint is the concurrency token a caller echoes back on patch; GCP
+	// rejects a patch whose fingerprint no longer matches the live resource.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 type subnetworkResponse struct {
@@ -128,15 +131,21 @@ type subnetworkListResponse struct {
 }
 
 type firewallRequest struct {
-	Name         string         `json:"name"`
-	Network      string         `json:"network,omitempty"`
-	Description  string         `json:"description,omitempty"`
-	Priority     int            `json:"priority,omitempty"`
-	Direction    string         `json:"direction,omitempty"`
-	Allowed      []firewallRule `json:"allowed,omitempty"`
-	Denied       []firewallRule `json:"denied,omitempty"`
-	SourceRanges []string       `json:"sourceRanges,omitempty"`
-	TargetTags   []string       `json:"targetTags,omitempty"`
+	Name                  string             `json:"name"`
+	Network               string             `json:"network,omitempty"`
+	Description           string             `json:"description,omitempty"`
+	Priority              int                `json:"priority,omitempty"`
+	Direction             string             `json:"direction,omitempty"`
+	Allowed               []firewallRule     `json:"allowed,omitempty"`
+	Denied                []firewallRule     `json:"denied,omitempty"`
+	SourceRanges          []string           `json:"sourceRanges,omitempty"`
+	DestinationRanges     []string           `json:"destinationRanges,omitempty"`
+	SourceTags            []string           `json:"sourceTags,omitempty"`
+	TargetTags            []string           `json:"targetTags,omitempty"`
+	SourceServiceAccounts []string           `json:"sourceServiceAccounts,omitempty"`
+	TargetServiceAccounts []string           `json:"targetServiceAccounts,omitempty"`
+	LogConfig             *firewallLogConfig `json:"logConfig,omitempty"`
+	Disabled              *bool              `json:"disabled,omitempty"`
 }
 
 type firewallRule struct {
@@ -144,20 +153,32 @@ type firewallRule struct {
 	Ports      []string `json:"ports,omitempty"`
 }
 
+// firewallLogConfig mirrors GCP's firewall logConfig block.
+type firewallLogConfig struct {
+	Enable   bool   `json:"enable"`
+	Metadata string `json:"metadata,omitempty"`
+}
+
 type firewallResponse struct {
-	Kind              string         `json:"kind"`
-	ID                string         `json:"id"`
-	Name              string         `json:"name"`
-	Network           string         `json:"network,omitempty"`
-	Description       string         `json:"description,omitempty"`
-	Priority          int            `json:"priority,omitempty"`
-	Direction         string         `json:"direction,omitempty"`
-	Allowed           []firewallRule `json:"allowed,omitempty"`
-	Denied            []firewallRule `json:"denied,omitempty"`
-	SourceRanges      []string       `json:"sourceRanges,omitempty"`
-	TargetTags        []string       `json:"targetTags,omitempty"`
-	SelfLink          string         `json:"selfLink"`
-	CreationTimestamp string         `json:"creationTimestamp,omitempty"`
+	Kind                  string             `json:"kind"`
+	ID                    string             `json:"id"`
+	Name                  string             `json:"name"`
+	Network               string             `json:"network,omitempty"`
+	Description           string             `json:"description,omitempty"`
+	Priority              int                `json:"priority,omitempty"`
+	Direction             string             `json:"direction,omitempty"`
+	Allowed               []firewallRule     `json:"allowed,omitempty"`
+	Denied                []firewallRule     `json:"denied,omitempty"`
+	SourceRanges          []string           `json:"sourceRanges,omitempty"`
+	DestinationRanges     []string           `json:"destinationRanges,omitempty"`
+	SourceTags            []string           `json:"sourceTags,omitempty"`
+	TargetTags            []string           `json:"targetTags,omitempty"`
+	SourceServiceAccounts []string           `json:"sourceServiceAccounts,omitempty"`
+	TargetServiceAccounts []string           `json:"targetServiceAccounts,omitempty"`
+	LogConfig             *firewallLogConfig `json:"logConfig,omitempty"`
+	Disabled              *bool              `json:"disabled,omitempty"`
+	SelfLink              string             `json:"selfLink"`
+	CreationTimestamp     string             `json:"creationTimestamp,omitempty"`
 }
 
 type firewallListResponse struct {

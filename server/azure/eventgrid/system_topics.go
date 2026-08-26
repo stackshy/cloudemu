@@ -106,6 +106,8 @@ func (h *Handler) serveSystemTopicResource(w http.ResponseWriter, r *http.Reques
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateSystemTopic(w, r, rp)
+	case http.MethodPatch:
+		h.updateSystemTopic(w, r, rp)
 	case http.MethodGet:
 		h.getSystemTopic(w, rp)
 	case http.MethodDelete:
@@ -154,6 +156,46 @@ func (h *Handler) createOrUpdateSystemTopic(w http.ResponseWriter, r *http.Reque
 
 	// 201 with a terminal provisioningState completes the SDK's LRO poller on
 	// the first response.
+	azurearm.WriteJSON(w, http.StatusCreated, out)
+}
+
+// systemTopicUpdateJSON is the SystemTopics.Update (PATCH) request body: mutable
+// tags. Identity and source are not changed here.
+type systemTopicUpdateJSON struct {
+	Tags map[string]*string `json:"tags,omitempty"`
+}
+
+// updateSystemTopic maps SystemTopics.Update (PATCH) onto the wire-owned record:
+// it merges the supplied tags onto the existing tags, preserving any the caller
+// omitted, and returns the updated system topic (200). 404 when the system topic
+// does not exist, before any write.
+func (h *Handler) updateSystemTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body systemTopicUpdateJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	key := storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+
+	h.mu.Lock()
+
+	rec := h.systemTopics[key]
+	if rec == nil {
+		h.mu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "system topic not found")
+
+		return
+	}
+
+	if body.Tags != nil {
+		rec.tags = mergeTags(rec.tags, tagsFromPtr(body.Tags))
+	}
+
+	out := rec.toJSON(rp)
+	h.mu.Unlock()
+
+	// 201 with a terminal provisioningState completes the SDK's Update LRO
+	// poller on the first response (the poller accepts 200 or 201).
 	azurearm.WriteJSON(w, http.StatusCreated, out)
 }
 
