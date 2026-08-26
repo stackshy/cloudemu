@@ -320,7 +320,8 @@ func TestKeyNamesSlashesUnicode(t *testing.T) {
 }
 
 // TestPaginationTokens pages through a large listing with opaque
-// continuation tokens and checks CommonPrefixes are NOT paginated.
+// continuation tokens and checks common prefixes fold into the same paginated
+// stream as objects (each surfaced once, counted toward MaxKeys).
 func TestPaginationTokens(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newMock(t)
@@ -373,17 +374,54 @@ func TestPaginationTokens(t *testing.T) {
 	assert.Len(t, res.Objects, total)
 	assert.False(t, res.IsTruncated)
 
-	// CommonPrefixes are returned in full even when object pages truncate.
+	// With a delimiter, common prefixes fold into the same paginated stream as
+	// objects: each prefix counts toward MaxKeys and is returned on exactly one
+	// page (no duplication across pages).
 	for i := 0; i < 5; i++ {
 		require.NoError(t, m.PutObject(ctx, bucket,
 			fmt.Sprintf("dir%d/file", i), []byte("x"), "text/plain", nil))
 	}
 
-	res, err = m.ListObjects(ctx, bucket, driver.ListOptions{Delimiter: "/", MaxKeys: 3})
-	require.NoError(t, err)
-	assert.True(t, res.IsTruncated)
-	assert.Len(t, res.Objects, 3)
-	assert.Len(t, res.CommonPrefixes, 5, "common prefixes are never paginated")
+	prefixSeen := map[string]int{}
+	objSeen := map[string]int{}
+	token = ""
+	pages = 0
+
+	for {
+		page, err := m.ListObjects(ctx, bucket, driver.ListOptions{Delimiter: "/", MaxKeys: 3, PageToken: token})
+		require.NoError(t, err)
+
+		pages++
+		require.LessOrEqual(t, len(page.Objects)+len(page.CommonPrefixes), 3,
+			"a page must not exceed MaxKeys across objects+prefixes")
+
+		for _, p := range page.CommonPrefixes {
+			prefixSeen[p]++
+		}
+
+		for _, o := range page.Objects {
+			objSeen[o.Key]++
+		}
+
+		if !page.IsTruncated {
+			break
+		}
+
+		token = page.NextPageToken
+		require.Less(t, pages, 40, "runaway pagination")
+	}
+
+	assert.Len(t, prefixSeen, 5, "all five dir prefixes surfaced")
+
+	for p, n := range prefixSeen {
+		assert.Equal(t, 1, n, "prefix %q returned exactly once", p)
+	}
+
+	assert.Len(t, objSeen, total, "all top-level objects surfaced")
+
+	for k, n := range objSeen {
+		assert.Equal(t, 1, n, "object %q returned exactly once", k)
+	}
 }
 
 // TestMultipartLifecycle drives create -> upload -> list ->

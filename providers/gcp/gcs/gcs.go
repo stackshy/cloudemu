@@ -50,6 +50,7 @@ type gcsObject struct {
 	ContentType        string
 	ETag               string
 	LastModified       string
+	Created            string
 	Metadata           map[string]string
 	Tags               map[string]string
 	Generation         int64
@@ -191,7 +192,7 @@ func toInfo(o *gcsObject, cloneMeta bool) driver.ObjectInfo {
 
 	return driver.ObjectInfo{
 		Key: o.Key, Size: o.Size, ContentType: o.ContentType, ETag: o.ETag,
-		LastModified: o.LastModified, Metadata: meta,
+		LastModified: o.LastModified, Created: o.Created, Metadata: meta,
 		Generation: o.Generation, Metageneration: o.Metageneration,
 		MD5: o.MD5, CRC32C: o.CRC32C,
 		CacheControl: o.CacheControl, ContentEncoding: o.ContentEncoding,
@@ -206,13 +207,29 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", name)
 	}
 
-	if bkt.objects.Len() > 0 {
+	if bkt.objects.Len() > 0 || bucketHasNoncurrentVersions(bkt) {
 		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q is not empty", name)
 	}
 
 	m.buckets.Delete(name)
 
 	return nil
+}
+
+// bucketHasNoncurrentVersions reports whether any archived (noncurrent) object
+// generation is still retained. Real GCS refuses to delete a bucket that holds
+// noncurrent versions — not just live objects — with a 409 not-empty.
+func bucketHasNoncurrentVersions(bkt *bucketMeta) bool {
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	for _, versions := range bkt.versions {
+		if len(versions) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
@@ -291,13 +308,16 @@ func (m *Mock) putObject(
 
 	md5b64, crc32cb64 := checksums(data)
 
+	now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
 	obj := &gcsObject{
 		Key:                key,
 		Data:               stored,
 		Size:               int64(len(data)),
 		ContentType:        contentType,
 		ETag:               fmt.Sprintf("%x", sha256.Sum256(data)),
-		LastModified:       m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
+		LastModified:       now,
+		Created:            now,
 		Metadata:           metaCopy,
 		Generation:         m.gen.Add(1),
 		Metageneration:     1,
@@ -685,37 +705,76 @@ func (m *Mock) ListObjects(ctx context.Context, bucket string, opts driver.ListO
 		matchedObjects = append(matchedObjects, toInfo(obj, false))
 	}
 
-	commonPrefixes := make([]string, 0, len(commonPrefixSet))
-	for p := range commonPrefixSet {
-		commonPrefixes = append(commonPrefixes, p)
-	}
-
-	sort.Strings(commonPrefixes)
+	entries := foldedListEntries(matchedObjects, commonPrefixSet)
 
 	maxKeys := opts.MaxKeys
 	if maxKeys <= 0 {
 		maxKeys = gcsDefaultMaxKeys
 	}
 
-	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	page, err := pagination.Paginate(entries, opts.PageToken, maxKeys)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
 	}
 
-	// Clone metadata only for the page actually returned — cloning every
-	// match would make a paged scan O(bucket) allocations per request.
-	for i := range page.Items {
-		page.Items[i].Metadata = maps.Clone(page.Items[i].Metadata)
-	}
+	objects, prefixes := splitListPage(page.Items)
 
 	m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
 
 	return &driver.ListResult{
-		Objects:        page.Items,
-		CommonPrefixes: commonPrefixes,
+		Objects:        objects,
+		CommonPrefixes: prefixes,
 		NextPageToken:  page.NextPageToken,
 		IsTruncated:    page.HasMore,
 	}, nil
+}
+
+// gcsListEntry is one item in a folded delimiter listing — either a matched
+// object or a rolled-up common prefix — carrying the lexicographic sort key.
+type gcsListEntry struct {
+	name     string
+	isPrefix bool
+	obj      driver.ObjectInfo
+}
+
+// foldedListEntries merges the matched objects and rolled-up common prefixes
+// into a single lexicographically sorted stream, so a delimiter listing counts
+// each prefix toward maxResults and returns it on exactly one page (the page
+// position is carried in the offset token). Prefixes are already deduped by the
+// set, so each appears once.
+func foldedListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{}) []gcsListEntry {
+	entries := make([]gcsListEntry, 0, len(objects)+len(prefixSet))
+
+	for i := range objects {
+		entries = append(entries, gcsListEntry{name: objects[i].Key, obj: objects[i]})
+	}
+
+	for p := range prefixSet {
+		entries = append(entries, gcsListEntry{name: p, isPrefix: true})
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+
+	return entries
+}
+
+// splitListPage separates a folded page back into object infos and common
+// prefixes (order preserved). Object metadata is cloned only for the page
+// actually returned — cloning every match would make a paged scan O(bucket)
+// allocations per request.
+func splitListPage(items []gcsListEntry) (objects []driver.ObjectInfo, prefixes []string) {
+	for i := range items {
+		if items[i].isPrefix {
+			prefixes = append(prefixes, items[i].name)
+			continue
+		}
+
+		info := items[i].obj
+		info.Metadata = maps.Clone(info.Metadata)
+		objects = append(objects, info)
+	}
+
+	return objects, prefixes
 }
 
 func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
@@ -758,9 +817,11 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	dstCurrent, dstExists := dstBkt.objects.Get(dstKey)
 	archiveVersion(dstBkt, dstKey, dstCurrent, dstExists)
 
+	copyNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
 	dstBkt.objects.Set(dstKey, &gcsObject{
 		Key: dstKey, Data: stored, Size: srcObj.Size, ContentType: srcObj.ContentType,
-		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
+		ETag: srcObj.ETag, LastModified: copyNow, Created: copyNow,
 		Metadata: meta, Generation: m.gen.Add(1), Metageneration: 1,
 		MD5: srcObj.MD5, CRC32C: srcObj.CRC32C,
 		CacheControl: srcObj.CacheControl, ContentEncoding: srcObj.ContentEncoding,
@@ -1019,13 +1080,16 @@ func (m *Mock) CompleteMultipartUpload(
 	current, exists := bkt.objects.Get(key)
 	archiveVersion(bkt, key, current, exists)
 
+	completeNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
 	bkt.objects.Set(key, &gcsObject{
 		Key:            key,
 		Data:           stored,
 		Size:           int64(len(data)),
 		ContentType:    mp.contentType,
 		ETag:           fmt.Sprintf("%x", sha256.Sum256(data)),
-		LastModified:   m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
+		LastModified:   completeNow,
+		Created:        completeNow,
 		Metadata:       make(map[string]string),
 		Generation:     m.gen.Add(1),
 		Metageneration: 1,
@@ -1359,6 +1423,9 @@ func (m *Mock) UpdateObjectGCS(
 
 	next := *cur
 	next.Metageneration = cur.Metageneration + 1
+	// A metadata-only patch advances the update time but leaves the object's
+	// creation time (timeCreated) fixed — real GCS bumps only `updated`.
+	next.LastModified = m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
 	next.Metadata = mergeMetadata(cur.Metadata, upd.Metadata)
 
 	applyStringUpdate(&next.ContentType, upd.ContentType)

@@ -10,9 +10,10 @@
 //	GET    /storage/v1/b/{bucket}                       — get bucket
 //	DELETE /storage/v1/b/{bucket}                       — delete bucket
 //	POST   /upload/storage/v1/b/{bucket}/o?uploadType=media&name={obj}  — upload object
+//	POST   /upload/storage/v1/b/{bucket}/o?uploadType=resumable         — resumable upload
 //	GET    /storage/v1/b/{bucket}/o                     — list objects
 //	GET    /storage/v1/b/{bucket}/o/{obj}               — get object metadata
-//	GET    /storage/v1/b/{bucket}/o/{obj}?alt=media     — download object
+//	GET    /storage/v1/b/{bucket}/o/{obj}?alt=media     — download object (honors Range)
 //	DELETE /storage/v1/b/{bucket}/o/{obj}               — delete object
 //	POST   /storage/v1/b/{bucket}/o/{obj}/rewriteTo/b/{dst}/o/{dstObj}  — copy
 //	POST   /storage/v1/b/{srcBucket}/o/{srcObj}/copyTo/b/{dst}/o/{dstObj}  — legacy copy
@@ -28,9 +29,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -44,6 +47,15 @@ const (
 	uploadTypeMedia = "media"
 	// uploadTypeMultipart is JSON metadata + payload.
 	uploadTypeMultipart = "multipart"
+	// uploadTypeResumable is a session-based chunked upload (Content-Range PUTs).
+	uploadTypeResumable = "resumable"
+
+	// statusResumeIncomplete (308) tells a resumable client the server has the
+	// bytes so far and expects more chunks.
+	statusResumeIncomplete = http.StatusPermanentRedirect
+
+	// rangeTotalUnknown marks a Content-Range whose total ("*") isn't yet known.
+	rangeTotalUnknown = -1
 
 	// maxPutBodyBytes caps single-request uploads. Real GCS supports up to
 	// 5 TiB but we use 5 GiB to mirror our S3 cap.
@@ -73,13 +85,35 @@ type Handler struct {
 	// doesn't implement it), covering preconditions, generation, compose,
 	// object patch, versioned listing, and bucket location/IAM/metageneration.
 	ext storagedriver.GCSExtensions
+
+	// resumable holds in-progress resumable-upload sessions keyed by upload id.
+	// A session buffers the object's bytes as Content-Range chunks arrive over
+	// successive requests, committed through the normal object-write path on the
+	// final chunk.
+	// This is a pure wire-protocol concern (Content-Range chunking, 308 replies,
+	// session URIs) with no analog in the portable driver, so it lives here.
+	resumableMu sync.Mutex
+	resumable   map[string]*resumableSession
+}
+
+// resumableSession is one in-progress resumable upload: the target and the
+// captured insert-time metadata plus the bytes accumulated so far.
+type resumableSession struct {
+	bucket      string
+	name        string
+	contentType string
+	metadata    map[string]string
+	attrs       *storagedriver.GCSObjectAttrs
+
+	mu  sync.Mutex
+	buf []byte
 }
 
 // New returns a GCS handler backed by b.
 func New(b storagedriver.Bucket) *Handler {
 	ext, _ := b.(storagedriver.GCSExtensions)
 
-	return &Handler{bucket: b, ext: ext}
+	return &Handler{bucket: b, ext: ext, resumable: make(map[string]*resumableSession)}
 }
 
 // Matches returns true for /storage/v1/, /upload/storage/v1/, and direct
@@ -562,8 +596,10 @@ func writeRawJSON(w http.ResponseWriter, raw []byte) {
 	_, _ = w.Write(raw) //nolint:gosec // validated JSON policy, served as application/json
 }
 
-// upload handles POST /upload/storage/v1/b/{bucket}/o?uploadType=media&name={obj}.
-// We support uploadType=media (raw body) only.
+// upload handles POST /upload/storage/v1/b/{bucket}/o, dispatching on
+// uploadType: media (raw body), multipart (JSON metadata + payload), and
+// resumable (a session initialised here, then chunked Content-Range uploads
+// that carry the issued upload_id).
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, uploadAPIPrefix)
 	parts := strings.Split(rest, "/")
@@ -576,6 +612,15 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	bucket := parts[1]
 	q := r.URL.Query()
 
+	// A resumable session's chunk uploads come back to this upload URL carrying
+	// the upload_id issued at session init (the SDK sends them as POSTs with a
+	// Content-Range) — route those to the chunk handler before dispatching on
+	// uploadType (which the client echoes as "resumable").
+	if uploadID := q.Get("upload_id"); uploadID != "" {
+		h.uploadResumableChunk(w, r, uploadID)
+		return
+	}
+
 	uploadType := q.Get("uploadType")
 
 	switch uploadType {
@@ -583,10 +628,234 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		h.uploadMedia(w, r, bucket, q.Get("name"))
 	case uploadTypeMultipart:
 		h.uploadMultipart(w, r, bucket)
+	case uploadTypeResumable:
+		h.initResumable(w, r, bucket)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid",
-			"only uploadType=media or multipart supported (got "+uploadType+")")
+			"only uploadType=media, multipart or resumable supported (got "+uploadType+")")
 	}
+}
+
+// initResumable starts a resumable upload session: it captures the object name
+// and insert-time metadata from the POST (JSON body and/or query + upload
+// headers), mints a session id, and returns 200 with a Location header giving
+// the session URI the client PUTs chunks to.
+func (h *Handler) initResumable(w http.ResponseWriter, r *http.Request, bucket string) {
+	meta := h.readResumableInitMetadata(r)
+
+	name := meta.Name
+	if name == "" {
+		name = r.URL.Query().Get("name")
+	}
+
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "name required for resumable upload")
+		return
+	}
+
+	contentType := firstNonEmpty(meta.ContentType, r.Header.Get("X-Upload-Content-Type"), contentTypeBinary)
+
+	sessionID := idgen.GenerateID("resumable-")
+
+	h.resumableMu.Lock()
+	h.resumable[sessionID] = &resumableSession{
+		bucket:      bucket,
+		name:        name,
+		contentType: contentType,
+		metadata:    meta.Metadata,
+		attrs: &storagedriver.GCSObjectAttrs{
+			CacheControl:       meta.CacheControl,
+			ContentEncoding:    meta.ContentEncoding,
+			ContentDisposition: meta.ContentDisposition,
+			ContentLanguage:    meta.ContentLanguage,
+			StorageClass:       meta.StorageClass,
+		},
+	}
+	h.resumableMu.Unlock()
+
+	location := selfLink(r, r.URL.Path) + "?uploadType=resumable&upload_id=" + url.QueryEscape(sessionID)
+	w.Header().Set("Location", location)
+	w.WriteHeader(http.StatusOK)
+}
+
+// readResumableInitMetadata parses the optional JSON object metadata carried in
+// the resumable init POST body. A missing or unparseable body yields a zero
+// value (name/content-type then come from the query and upload headers).
+func (*Handler) readResumableInitMetadata(r *http.Request) uploadMetadata {
+	if r.Body == nil {
+		return uploadMetadata{}
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxPutBodyBytes))
+	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+		return uploadMetadata{}
+	}
+
+	var meta uploadMetadata
+	if uErr := json.Unmarshal(raw, &meta); uErr != nil {
+		return uploadMetadata{}
+	}
+
+	return meta
+}
+
+// uploadResumableChunk appends one Content-Range chunk to its session's buffer.
+// Until the final chunk it replies 308 Resume Incomplete with a Range header; on
+// the final chunk it commits the assembled object through the normal write path
+// and replies 200 with the object resource.
+func (h *Handler) uploadResumableChunk(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "upload_id required")
+		return
+	}
+
+	h.resumableMu.Lock()
+	sess := h.resumable[sessionID]
+	h.resumableMu.Unlock()
+
+	if sess == nil {
+		writeError(w, http.StatusNotFound, "notFound", "resumable upload session not found")
+		return
+	}
+
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPutBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", "could not read chunk body")
+		return
+	}
+
+	start, end, total, ok := parseContentRange(r.Header.Get("Content-Range"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid", "malformed Content-Range")
+		return
+	}
+
+	sess.mu.Lock()
+
+	// Chunks arrive in order; append only when the range begins exactly at the
+	// current buffer length (a status-probe PUT carries no bytes and no-ops).
+	if len(data) > 0 && start == int64(len(sess.buf)) {
+		sess.buf = append(sess.buf, data...)
+	}
+
+	buffered := int64(len(sess.buf))
+	sess.mu.Unlock()
+
+	final := total != rangeTotalUnknown && (end == total-1 || buffered >= total)
+	if !final {
+		writeResumeIncomplete(w, r, buffered)
+		return
+	}
+
+	h.commitResumable(w, r, sessionID, sess)
+}
+
+// writeResumeIncomplete signals the client that the bytes so far are stored and
+// more chunks are expected. The Go SDK sets "X-GUploader-No-308: yes" asking the
+// server to convey this as a 200 carrying an "X-Http-Status-Code-Override: 308"
+// header (some HTTP stacks mishandle a bare 308); otherwise a real 308 is sent.
+func writeResumeIncomplete(w http.ResponseWriter, r *http.Request, buffered int64) {
+	w.Header().Set("Range", "bytes=0-"+strconv.FormatInt(maxInt64(buffered-1, 0), 10))
+
+	if strings.EqualFold(r.Header.Get("X-GUploader-No-308"), "yes") {
+		w.Header().Set("X-Http-Status-Code-Override", "308")
+		w.WriteHeader(http.StatusOK)
+
+		return
+	}
+
+	w.WriteHeader(statusResumeIncomplete)
+}
+
+// commitResumable writes the fully-assembled session buffer through the normal
+// object-write path and drops the session.
+func (h *Handler) commitResumable(w http.ResponseWriter, r *http.Request, sessionID string, sess *resumableSession) {
+	h.resumableMu.Lock()
+	delete(h.resumable, sessionID)
+	h.resumableMu.Unlock()
+
+	sess.mu.Lock()
+	data := sess.buf
+	sess.mu.Unlock()
+
+	h.storeObject(w, r, sess.bucket, sess.name, sess.contentType, data, sess.metadata, sess.attrs)
+}
+
+// parseContentRange parses a resumable-upload Content-Range: "bytes start-end/
+// total", "bytes start-end/*" (total unknown), or "bytes */total" (a size probe
+// with no bytes). total is rangeTotalUnknown for "*"; end is -1 when the range
+// numerator is "*". ok is false on a malformed header.
+func parseContentRange(header string) (start, end, total int64, ok bool) {
+	const prefix = "bytes "
+
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, 0, false
+	}
+
+	spec := strings.TrimPrefix(header, prefix)
+
+	slash := strings.IndexByte(spec, '/')
+	if slash < 0 {
+		return 0, 0, 0, false
+	}
+
+	rangePart, totalPart := spec[:slash], spec[slash+1:]
+
+	total = rangeTotalUnknown
+	if totalPart != "*" {
+		total, ok = parseNonNegInt64(totalPart)
+		if !ok {
+			return 0, 0, 0, false
+		}
+	}
+
+	if rangePart == "*" {
+		return 0, rangeTotalUnknown, total, true
+	}
+
+	dash := strings.IndexByte(rangePart, '-')
+	if dash < 0 {
+		return 0, 0, 0, false
+	}
+
+	start, ok = parseNonNegInt64(rangePart[:dash])
+	if !ok {
+		return 0, 0, 0, false
+	}
+
+	end, ok = parseNonNegInt64(rangePart[dash+1:])
+	if !ok || end < start {
+		return 0, 0, 0, false
+	}
+
+	return start, end, total, true
+}
+
+func parseNonNegInt64(s string) (int64, bool) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+
+	return n, true
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+
+	return b
 }
 
 // parsePrecondition extracts the GCS write preconditions from the request query
@@ -998,11 +1267,131 @@ func (h *Handler) downloadObject(w http.ResponseWriter, r *http.Request, bucket,
 		return
 	}
 
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		h.writeRangedObject(w, obj, rangeHeader)
+		return
+	}
+
 	w.Header().Set("Content-Type", obj.Info.ContentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(obj.Data)), 10))
 	w.Header().Set("ETag", obj.Info.ETag)
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(obj.Data) //nolint:gosec // raw object bytes
+}
+
+// writeRangedObject serves an alt=media download carrying a Range header: 206
+// with a Content-Range slice when satisfiable, 416 when out of bounds, and a
+// full 200 body when the header is unparseable — matching real GCS.
+func (*Handler) writeRangedObject(w http.ResponseWriter, obj *storagedriver.Object, header string) {
+	total := int64(len(obj.Data))
+	start, end, outcome := parseByteRange(header, total)
+
+	switch outcome {
+	case rangeUnsatisfiable:
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(total, 10))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "requestedRangeNotSatisfiable",
+			"the requested range is not satisfiable")
+	case rangeOK:
+		w.Header().Set("Content-Type", obj.Info.ContentType)
+		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+		w.Header().Set("ETag", obj.Info.ETag)
+		w.Header().Set("Content-Range", "bytes "+strconv.FormatInt(start, 10)+"-"+
+			strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(total, 10))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(obj.Data[start : end+1]) //nolint:gosec // bounded slice of object bytes
+	case rangeIgnore:
+		w.Header().Set("Content-Type", obj.Info.ContentType)
+		w.Header().Set("Content-Length", strconv.FormatInt(total, 10))
+		w.Header().Set("ETag", obj.Info.ETag)
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(obj.Data) //nolint:gosec // raw object bytes
+	}
+}
+
+// rangeOutcome classifies a Range header against an object.
+type rangeOutcome int
+
+const (
+	rangeIgnore        rangeOutcome = iota // unparseable header → serve full body (200)
+	rangeUnsatisfiable                     // valid syntax but out of bounds → 416
+	rangeOK                                // satisfiable → 206
+)
+
+// parseByteRange parses a single HTTP byte range ("bytes=0-4", "bytes=5-",
+// "bytes=-5") against an object of size total, returning the inclusive
+// [start,end] offsets and an outcome. Only the first range of a multi-range
+// header is honored (the common single-range download path).
+func parseByteRange(header string, total int64) (start, end int64, outcome rangeOutcome) {
+	const prefix = "bytes="
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, rangeIgnore
+	}
+
+	spec := strings.TrimPrefix(header, prefix)
+	if idx := strings.IndexByte(spec, ','); idx >= 0 {
+		spec = spec[:idx]
+	}
+
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, rangeIgnore
+	}
+
+	startStr, endStr := spec[:dash], spec[dash+1:]
+
+	if startStr == "" {
+		return suffixRange(endStr, total)
+	}
+
+	return boundedRange(startStr, endStr, total)
+}
+
+// suffixRange handles "bytes=-N": the last N bytes of the object.
+func suffixRange(endStr string, total int64) (start, end int64, outcome rangeOutcome) {
+	n, err := strconv.ParseInt(endStr, 10, 64)
+	if err != nil {
+		return 0, 0, rangeIgnore
+	}
+
+	if n <= 0 || total == 0 {
+		return 0, 0, rangeUnsatisfiable
+	}
+
+	if n > total {
+		n = total
+	}
+
+	return total - n, total - 1, rangeOK
+}
+
+// boundedRange handles "bytes=start-" and "bytes=start-end".
+func boundedRange(startStr, endStr string, total int64) (start, end int64, outcome rangeOutcome) {
+	start, err := strconv.ParseInt(startStr, 10, 64)
+	if err != nil {
+		return 0, 0, rangeIgnore
+	}
+
+	if start >= total {
+		return 0, 0, rangeUnsatisfiable
+	}
+
+	end = total - 1
+
+	if endStr != "" {
+		end, err = strconv.ParseInt(endStr, 10, 64)
+		if err != nil || start > end {
+			return 0, 0, rangeIgnore
+		}
+
+		if end >= total {
+			end = total - 1
+		}
+	}
+
+	return start, end, rangeOK
 }
 
 // headObject fetches an object's metadata, addressing a specific generation
@@ -1136,6 +1525,14 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 		storageClass = defaultStorageClass
 	}
 
+	// timeCreated is fixed at first write; updated advances on overwrite or a
+	// metadata patch. Providers that don't track a distinct creation time leave
+	// Created empty, so fall back to LastModified.
+	created := info.Created
+	if created == "" {
+		created = info.LastModified
+	}
+
 	return objectResource{
 		Kind:               "storage#object",
 		ID:                 bucket + "/" + info.Key + "/" + genStr,
@@ -1153,7 +1550,7 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 		ContentEncoding:    info.ContentEncoding,
 		ContentDisposition: info.ContentDisposition,
 		ContentLanguage:    info.ContentLanguage,
-		TimeCreated:        info.LastModified,
+		TimeCreated:        created,
 		Updated:            info.LastModified,
 		Metadata:           info.Metadata,
 		SelfLink:           selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
