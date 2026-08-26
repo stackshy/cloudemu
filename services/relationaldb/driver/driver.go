@@ -182,6 +182,10 @@ type Instance struct {
 	// replica identifiers reading from this instance.
 	ReadReplicaSource  string
 	ReadReplicaTargets []string
+	// PendingModifiedValues holds the deferrable ModifyDBInstance changes that
+	// have been requested with ApplyImmediately=false but not yet applied. It is
+	// nil when nothing is pending (AWS RDS DBInstance.PendingModifiedValues).
+	PendingModifiedValues *PendingModifiedValues
 	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig echo the Cloud SQL
 	// settings sub-objects (databaseFlags, backupConfiguration, ipConfiguration)
 	// as opaque JSON so they round-trip on read. Empty for AWS RDS / Redshift,
@@ -238,6 +242,43 @@ type ModifyInstanceInput struct {
 	GCPBackupConfig  string
 	GCPIPConfig      string
 	Tags             map[string]string
+	// ApplyImmediately controls when the deferrable changes above take effect
+	// (AWS RDS ModifyDBInstance ApplyImmediately, default false). When true the
+	// target fields are updated on the instance now and PendingModifiedValues is
+	// cleared; when false the requested-but-not-yet-applied deferrable changes
+	// are recorded in Instance.PendingModifiedValues and the current values stay
+	// unchanged until the next maintenance window. Non-AWS engines ignore it.
+	ApplyImmediately bool
+}
+
+// MaskedPassword is the placeholder RDS echoes for a pending master-password
+// change; the real password is never surfaced on a read.
+const MaskedPassword = "****"
+
+// PendingModifiedValues records the deferrable ModifyDBInstance changes that are
+// scheduled but not yet applied (ApplyImmediately=false). Each field is set only
+// when the requested value actually differs from the instance's current value,
+// mirroring real AWS which omits no-op changes. It is an AWS RDS concept; other
+// engines leave it nil.
+type PendingModifiedValues struct {
+	InstanceClass    string
+	AllocatedStorage int
+	EngineVersion    string
+	// MasterUserPassword is always MaskedPassword ("****") when a password
+	// change is pending — the plaintext is never echoed.
+	MasterUserPassword    string
+	BackupRetentionPeriod int
+	MultiAZ               *bool
+	Iops                  int
+	StorageType           string
+}
+
+// IsEmpty reports whether no deferrable change is pending, so callers can store
+// a nil PendingModifiedValues (which reads as absent) instead of an empty one.
+func (p *PendingModifiedValues) IsEmpty() bool {
+	return p.InstanceClass == "" && p.AllocatedStorage == 0 && p.EngineVersion == "" &&
+		p.MasterUserPassword == "" && p.BackupRetentionPeriod == 0 && p.MultiAZ == nil &&
+		p.Iops == 0 && p.StorageType == ""
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by

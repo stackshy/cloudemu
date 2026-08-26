@@ -83,7 +83,8 @@ func TestModifyInstanceAcceptsValidAndEmptyClass(t *testing.T) {
 	}
 
 	out, err := m.ModifyInstance(context.Background(), "db1", rdsdriver.ModifyInstanceInput{
-		InstanceClass: "db.r5.large",
+		InstanceClass:    "db.r5.large",
+		ApplyImmediately: true,
 	})
 	if err != nil {
 		t.Fatalf("valid class modify should succeed: %v", err)

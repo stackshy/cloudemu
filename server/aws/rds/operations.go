@@ -231,6 +231,7 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
 		StorageType:                form.Get("StorageType"),
 		Iops:                       formInt(form.Get("Iops")),
+		ApplyImmediately:           formBool(form.Get("ApplyImmediately")),
 		Tags:                       parseRDSTags(form),
 	}
 

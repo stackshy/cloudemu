@@ -357,7 +357,9 @@ func TestModifyInstanceRotatesPassword(t *testing.T) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
-	if _, err := m.ModifyInstance(ctx, "pg", rdsdriver.ModifyInstanceInput{MasterUserPassword: "new"}); err != nil {
+	if _, err := m.ModifyInstance(ctx, "pg", rdsdriver.ModifyInstanceInput{
+		MasterUserPassword: "new", ApplyImmediately: true,
+	}); err != nil {
 		t.Fatalf("ModifyInstance: %v", err)
 	}
 

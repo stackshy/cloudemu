@@ -124,6 +124,7 @@ func TestSDKRDSModifyInstanceValidClass(t *testing.T) {
 	out, err := client.ModifyDBInstance(ctx, &awsrds.ModifyDBInstanceInput{
 		DBInstanceIdentifier: aws.String("mod-good-class"),
 		DBInstanceClass:      aws.String("db.r5.large"),
+		ApplyImmediately:     aws.Bool(true),
 	})
 	if err != nil {
 		t.Fatalf("ModifyDBInstance with a valid instance class should succeed: %v", err)
