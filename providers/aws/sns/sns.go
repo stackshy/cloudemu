@@ -32,7 +32,14 @@ const (
 	messageStructureJSON  = "json"
 	defaultProtocolKey    = "default"
 	protocolSQS           = "sqs"
+	protocolLambda        = "lambda"
 	messageAttrTypeString = "String"
+)
+
+// SNS delivery-outcome metric names.
+const (
+	metricNotificationsDelivered = "NumberOfNotificationsDelivered"
+	metricNotificationsFailed    = "NumberOfNotificationsFailed"
 )
 
 type publishedMessage struct {
@@ -95,12 +102,19 @@ type SQSDeliverer interface {
 	DeliverExternalFIFO(ctx context.Context, queueARN, body, groupID, dedupID string) error
 }
 
+// LambdaInvoker asynchronously invokes a Lambda function by ARN with an SNS event
+// payload. The Lambda mock satisfies this, enabling real SNS -> Lambda fan-out.
+type LambdaInvoker interface {
+	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+}
+
 // Mock is an in-memory mock implementation of the AWS SNS service.
 type Mock struct {
 	topics     *memstore.Store[*topicData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	sqs        SQSDeliverer
+	lambda     LambdaInvoker
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -111,6 +125,12 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 // SetSQSDeliverer wires the SQS backend so publishes fan out to SQS subscriptions.
 func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
 	m.sqs = d
+}
+
+// SetLambdaInvoker wires the Lambda backend so publishes fan out to
+// lambda-protocol subscriptions.
+func (m *Mock) SetLambdaInvoker(l LambdaInvoker) {
+	m.lambda = l
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
@@ -391,6 +411,7 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 	td.mu.Unlock()
 
 	m.fanOutToSQS(ctx, td, msgID, &input)
+	m.fanOutToLambda(ctx, td, msgID, &input)
 
 	dims := map[string]string{"TopicName": input.TopicID}
 	m.emitMetric("NumberOfMessagesPublished", 1, "Count", dims)
@@ -520,6 +541,60 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 	}
 }
 
+// fanOutToLambda invokes every lambda-protocol subscription on the topic,
+// wrapping the published message in the SNS -> Lambda Records event real AWS
+// delivers. A nil invoker skips delivery gracefully.
+func (m *Mock) fanOutToLambda(ctx context.Context, td *topicData, msgID string, input *driver.PublishInput) {
+	if m.lambda == nil {
+		return
+	}
+
+	message := resolveProtocolMessage(input, protocolLambda)
+
+	for _, sub := range td.subscriptions.All() {
+		if sub.Protocol != protocolLambda || sub.Endpoint == "" {
+			continue
+		}
+
+		// A filter policy gates delivery exactly as on the SQS path.
+		if !subscriptionAccepts(&sub, input) {
+			continue
+		}
+
+		event := map[string]any{
+			"Records": []any{
+				map[string]any{
+					"EventSource":          "aws:sns",
+					"EventVersion":         "1.0",
+					"EventSubscriptionArn": sub.ID,
+					"Sns":                  m.notificationEnvelopeMap(td, msgID, input, message, sub.ID),
+				},
+			},
+		}
+
+		payload, err := json.Marshal(event)
+		if err != nil {
+			continue
+		}
+
+		m.deliverToLambda(ctx, sub.Endpoint, payload, input)
+	}
+}
+
+// deliverToLambda invokes one lambda-protocol subscription, recording an SNS
+// delivery/failure metric so a broken target is observable rather than a silent
+// drop (mirrors deliverToSQS).
+func (m *Mock) deliverToLambda(ctx context.Context, functionARN string, payload []byte, input *driver.PublishInput) {
+	err := m.lambda.InvokeExternal(ctx, functionARN, payload)
+
+	metric := metricNotificationsDelivered
+	if err != nil {
+		metric = metricNotificationsFailed
+	}
+
+	m.emitMetric(metric, 1, "Count", map[string]string{"TopicName": input.TopicID})
+}
+
 // deliverToSQS fans one message out to a single SQS subscription, carrying the
 // publish's FIFO group/dedup ids so a FIFO queue accepts it. A delivery failure
 // is recorded as an SNS metric rather than swallowed, so a real misconfiguration
@@ -527,9 +602,9 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 func (m *Mock) deliverToSQS(ctx context.Context, queueARN, body string, input *driver.PublishInput) {
 	err := m.sqs.DeliverExternalFIFO(ctx, queueARN, body, input.MessageGroupID, input.MessageDeduplicationID)
 
-	metric := "NumberOfNotificationsDelivered"
+	metric := metricNotificationsDelivered
 	if err != nil {
-		metric = "NumberOfNotificationsFailed"
+		metric = metricNotificationsFailed
 	}
 
 	m.emitMetric(metric, 1, "Count", map[string]string{"TopicName": input.TopicID})
@@ -540,6 +615,20 @@ func (m *Mock) deliverToSQS(ctx context.Context, queueARN, body string, input *d
 func (m *Mock) notificationEnvelope(
 	td *topicData, msgID string, input *driver.PublishInput, message, subARN string,
 ) (string, error) {
+	body, err := json.Marshal(m.notificationEnvelopeMap(td, msgID, input, message, subARN))
+	if err != nil {
+		return "", err
+	}
+
+	return string(body), nil
+}
+
+// notificationEnvelopeMap builds the SNS Notification object (Type=Notification,
+// MessageId, TopicArn, Message, Timestamp, optional Subject/MessageAttributes)
+// shared by the SQS envelope and the Sns field of the Lambda Records event.
+func (m *Mock) notificationEnvelopeMap(
+	td *topicData, msgID string, input *driver.PublishInput, message, subARN string,
+) map[string]any {
 	env := map[string]any{
 		"Type":             "Notification",
 		"MessageId":        msgID,
@@ -566,12 +655,7 @@ func (m *Mock) notificationEnvelope(
 		env["MessageAttributes"] = envelopeAttributes(input)
 	}
 
-	body, err := json.Marshal(env)
-	if err != nil {
-		return "", err
-	}
-
-	return string(body), nil
+	return env
 }
 
 // envelopeAttributes renders the publish's message attributes into the
