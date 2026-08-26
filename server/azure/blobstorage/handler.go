@@ -513,7 +513,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
-	if h.conditionFailed(w, r, container, blob) {
+	if h.conditionFailed(w, r, container, blob, true) {
 		return
 	}
 
@@ -561,10 +561,13 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 
 // conditionFailed evaluates the If-None-Match / If-Match conditional write
 // headers against the current blob and, if a condition is not met, writes the
-// Azure error and returns true. Real Azure Put Blob returns 409 when
-// If-None-Match:* hits an existing blob (create-if-absent conflict) and 412
-// when If-Match does not match the current ETag.
-func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, container, blob string) bool {
+// Azure error and returns true. Every mutating data-plane op must call this so
+// optimistic-concurrency writes on a stale ETag are rejected rather than
+// silently losing the update. isCreate selects create semantics for a
+// If-None-Match:* conflict: a create (Put Blob / create Append Blob) returns
+// 409 BlobAlreadyExists, every other write returns 412 (per the write-operations
+// response-code table). A mismatched If-Match always yields 412.
+func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, container, blob string, isCreate bool) bool {
 	ifNoneMatch := r.Header.Get("If-None-Match")
 	ifMatch := r.Header.Get("If-Match")
 
@@ -580,7 +583,7 @@ func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, contai
 		curETag = info.ETag
 	}
 
-	status, code := evalWriteConditions(ifNoneMatch, ifMatch, curETag, exists)
+	status, code := evalWriteConditions(ifNoneMatch, ifMatch, curETag, exists, isCreate)
 	if status == 0 {
 		return false
 	}
@@ -593,11 +596,15 @@ func (h *Handler) conditionFailed(w http.ResponseWriter, r *http.Request, contai
 // evalWriteConditions evaluates the If-None-Match / If-Match write conditions
 // against the current blob state. It returns the HTTP status and Azure error
 // code to fail with, or (0, "") when the write may proceed.
-func evalWriteConditions(ifNoneMatch, ifMatch, curETag string, exists bool) (status int, code string) {
+func evalWriteConditions(ifNoneMatch, ifMatch, curETag string, exists, isCreate bool) (status int, code string) {
 	const conditionNotMet = "ConditionNotMet"
 
 	if ifNoneMatch == "*" && exists {
-		return http.StatusConflict, "BlobAlreadyExists"
+		if isCreate {
+			return http.StatusConflict, "BlobAlreadyExists"
+		}
+
+		return http.StatusPreconditionFailed, conditionNotMet
 	}
 
 	if ifMatch != "" && (!exists || !etagMatches(ifMatch, curETag)) {
@@ -638,9 +645,53 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
+	if readConditionHandled(w, r, obj.Info.ETag, obj.Info.LastModified) {
+		return
+	}
+
 	writeBlobHeaders(w, &obj.Info, int64(len(obj.Data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(obj.Data) //nolint:gosec // raw object bytes
+}
+
+// readConditionHandled evaluates the If-Match / If-None-Match read conditional
+// headers against the current blob ETag before any body is written. It returns
+// true, having written the response, when the read must short-circuit: a
+// mismatched If-Match yields 412 Precondition Failed, and an If-None-Match that
+// matches the current ETag (including the wildcard *) yields 304 Not Modified
+// with no body. Returns false to let the read proceed.
+func readConditionHandled(w http.ResponseWriter, r *http.Request, curETag, lastModified string) bool {
+	ifNoneMatch := r.Header.Get("If-None-Match")
+	ifMatch := r.Header.Get("If-Match")
+
+	if ifNoneMatch == "" && ifMatch == "" {
+		return false
+	}
+
+	if ifMatch != "" && !etagCondMatches(ifMatch, curETag) {
+		writeError(w, http.StatusPreconditionFailed, "ConditionNotMet", conditionMessage(http.StatusPreconditionFailed))
+		return true
+	}
+
+	if ifNoneMatch != "" && etagCondMatches(ifNoneMatch, curETag) {
+		w.Header().Set("ETag", fmt.Sprintf("%q", curETag))
+		w.Header().Set("Last-Modified", httpDate(lastModified))
+		w.WriteHeader(http.StatusNotModified)
+
+		return true
+	}
+
+	return false
+}
+
+// etagCondMatches reports whether a conditional-header ETag matches the stored
+// ETag. The wildcard "*" matches any existing resource.
+func etagCondMatches(header, stored string) bool {
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+
+	return etagMatches(header, stored)
 }
 
 // getBlobSnapshot serves GET /{container}/{blob}?snapshot=… reading an
@@ -668,6 +719,10 @@ func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, bl
 	info, err := h.bucket.HeadObject(r.Context(), container, blob)
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	if readConditionHandled(w, r, info.ETag, info.LastModified) {
 		return
 	}
 
@@ -702,6 +757,10 @@ func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, 
 		return
 	}
 
+	if h.conditionFailed(w, r, container, blob, false) {
+		return
+	}
+
 	deleteBase := true
 
 	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok {
@@ -731,6 +790,12 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 		return
 	}
 
+	// The bare If-*/If-None-Match conditional headers apply to the destination
+	// blob (source conditions use the x-ms-source-if-* headers, unsupported here).
+	if h.conditionFailed(w, r, container, blob, false) {
+		return
+	}
+
 	src := r.Header.Get("X-Ms-Copy-Source")
 	srcBucket, srcKey := extractCopySource(src)
 
@@ -739,7 +804,7 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 		return
 	}
 
-	if err := h.bucket.CopyObject(r.Context(), container, blob, storagedriver.CopySource{
+	if err := h.performCopy(r, container, blob, storagedriver.CopySource{
 		Bucket: srcBucket, Key: srcKey,
 	}); err != nil {
 		writeErr(w, err)
@@ -753,6 +818,28 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 		w.Header().Set("Last-Modified", httpDate(info.LastModified))
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// performCopy runs the server-side copy, honoring Azure Copy Blob metadata
+// semantics: when the request supplies any x-ms-meta-* header the destination
+// takes EXACTLY that metadata (full replace, nothing inherited); with none, the
+// destination inherits the source's metadata. The override path routes through
+// the ObjectCopier capability; the inherit path uses the basic CopyObject.
+func (h *Handler) performCopy(r *http.Request, container, blob string, src storagedriver.CopySource) error {
+	override := extractMetadata(r.Header)
+
+	if override != nil {
+		if copier, ok := h.bucket.(storagedriver.ObjectCopier); ok {
+			_, err := copier.CopyObjectV2(r.Context(), &storagedriver.CopyObjectRequest{
+				DstBucket: container, DstKey: blob, Src: src,
+				ReplaceMetadata: true, Metadata: override,
+			})
+
+			return err
+		}
+	}
+
+	return h.bucket.CopyObject(r.Context(), container, blob, src)
 }
 
 // extractCopySource parses x-ms-copy-source which is a full URL like

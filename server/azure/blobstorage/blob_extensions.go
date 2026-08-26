@@ -48,6 +48,10 @@ func (h *Handler) commitBlockList(w http.ResponseWriter, r *http.Request, ext bl
 		return
 	}
 
+	if h.conditionFailed(w, r, container, blob, false) {
+		return
+	}
+
 	body, ok := readLimitedBody(w, r)
 	if !ok {
 		return
@@ -74,6 +78,10 @@ func (h *Handler) setBlobMetadata(w http.ResponseWriter, r *http.Request, ext bl
 		return
 	}
 
+	if h.conditionFailed(w, r, container, blob, false) {
+		return
+	}
+
 	info, err := ext.SetBlobMetadata(r.Context(), container, blob, extractMetadata(r.Header))
 	if err != nil {
 		writeErr(w, err)
@@ -86,6 +94,10 @@ func (h *Handler) setBlobMetadata(w http.ResponseWriter, r *http.Request, ext bl
 // setBlobProperties handles PUT /{container}/{blob}?comp=properties.
 func (h *Handler) setBlobProperties(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
 	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
+	if h.conditionFailed(w, r, container, blob, false) {
 		return
 	}
 
@@ -107,10 +119,14 @@ func (h *Handler) setBlobProperties(w http.ResponseWriter, r *http.Request, ext 
 }
 
 // setBlobTier handles PUT /{container}/{blob}?comp=tier.
-func (*Handler) setBlobTier(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) setBlobTier(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
 	tier := r.Header.Get("x-ms-access-tier")
 	if tier == "" {
 		writeError(w, http.StatusBadRequest, "MissingRequiredHeader", "x-ms-access-tier is required")
+		return
+	}
+
+	if h.conditionFailed(w, r, container, blob, false) {
 		return
 	}
 
@@ -124,7 +140,11 @@ func (*Handler) setBlobTier(w http.ResponseWriter, r *http.Request, ext blobExt,
 }
 
 // snapshotBlob handles PUT /{container}/{blob}?comp=snapshot.
-func (*Handler) snapshotBlob(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+func (h *Handler) snapshotBlob(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
+	if h.conditionFailed(w, r, container, blob, false) {
+		return
+	}
+
 	snapshot, info, err := ext.CreateBlobSnapshot(r.Context(), container, blob)
 	if err != nil {
 		writeErr(w, err)
@@ -141,6 +161,10 @@ func (h *Handler) createAppendBlob(w http.ResponseWriter, r *http.Request, ext b
 		return
 	}
 
+	if h.conditionFailed(w, r, container, blob, true) {
+		return
+	}
+
 	info, err := ext.CreateAppendBlob(r.Context(), container, blob, blobContentType(r), extractMetadata(r.Header))
 	if err != nil {
 		writeErr(w, err)
@@ -154,6 +178,10 @@ func (h *Handler) createAppendBlob(w http.ResponseWriter, r *http.Request, ext b
 // appendBlock handles PUT /{container}/{blob}?comp=appendblock.
 func (h *Handler) appendBlock(w http.ResponseWriter, r *http.Request, ext blobExt, container, blob string) {
 	if h.checkLease(w, r, container, blob) {
+		return
+	}
+
+	if h.conditionFailed(w, r, container, blob, false) {
 		return
 	}
 
