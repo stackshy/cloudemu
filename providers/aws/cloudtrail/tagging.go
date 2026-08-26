@@ -115,8 +115,17 @@ func (m *Mock) RemoveTags(_ context.Context, resourceID string, tagKeys []string
 	return nil
 }
 
-// ListTags returns a copy of the tags for each requested resource ID.
+// ListTags returns a copy of the tags for each requested resource ID. Each ARN
+// is validated like AddTags/RemoveTags: a malformed ARN yields
+// CloudTrailARNInvalidException and a well-formed-but-absent ARN yields
+// ResourceNotFoundException.
 func (m *Mock) ListTags(_ context.Context, resourceIDs []string) (map[string]map[string]string, error) {
+	for _, id := range resourceIDs {
+		if err := m.resourceARNExists(id); err != nil {
+			return nil, err
+		}
+	}
+
 	m.tagsMu.RLock()
 	defer m.tagsMu.RUnlock()
 
