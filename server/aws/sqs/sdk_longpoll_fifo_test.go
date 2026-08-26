@@ -2,7 +2,6 @@ package sqs_test
 
 import (
 	"context"
-	"sort"
 	"testing"
 	"time"
 
@@ -45,35 +44,28 @@ func sendFIFO(t *testing.T, client *awssqs.Client, queueURL, body, group, dedup 
 	}
 }
 
-// receiveBodies receives up to 10 messages and returns a body->receiptHandle map.
-func receiveBodies(t *testing.T, client *awssqs.Client, queueURL string) map[string]string {
+// receiveOrdered receives up to max messages and returns bodies and matching
+// receipt handles in the order the server returned them (FIFO delivery order).
+func receiveOrdered(t *testing.T, client *awssqs.Client, queueURL string, max int32) ([]string, []string) {
 	t.Helper()
 
 	out, err := client.ReceiveMessage(context.Background(), &awssqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(queueURL),
-		MaxNumberOfMessages: maxReceiveMessagesTest,
+		MaxNumberOfMessages: max,
 	})
 	if err != nil {
 		t.Fatalf("ReceiveMessage: %v", err)
 	}
 
-	handles := make(map[string]string, len(out.Messages))
+	bodies := make([]string, 0, len(out.Messages))
+	handles := make([]string, 0, len(out.Messages))
+
 	for i := range out.Messages {
-		handles[aws.ToString(out.Messages[i].Body)] = aws.ToString(out.Messages[i].ReceiptHandle)
+		bodies = append(bodies, aws.ToString(out.Messages[i].Body))
+		handles = append(handles, aws.ToString(out.Messages[i].ReceiptHandle))
 	}
 
-	return handles
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	return keys
+	return bodies, handles
 }
 
 func deleteHandle(t *testing.T, client *awssqs.Client, queueURL, handle string) {
@@ -87,30 +79,89 @@ func deleteHandle(t *testing.T, client *awssqs.Client, queueURL, handle string) 
 	}
 }
 
-// TestSDKFIFOInFlightGroupBlocking verifies that a FIFO group with an in-flight
-// message does not deliver its next message until the in-flight one is deleted,
-// while a different group is delivered in parallel.
-func TestSDKFIFOInFlightGroupBlocking(t *testing.T) {
+func equalSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// TestSDKFIFOBatchReturnsConsecutiveSameGroup verifies that a single
+// ReceiveMessage(Max=10) over one FIFO group returns ALL its messages, in send
+// order — multiple messages from the same group in one call is correct SQS.
+func TestSDKFIFOBatchReturnsConsecutiveSameGroup(t *testing.T) {
 	client, _ := newSDKClient(t)
-	queueURL := createFIFOQueueSDK(t, client, "orders.fifo")
+	queueURL := createFIFOQueueSDK(t, client, "batch.fifo")
+
+	want := []string{"m1", "m2", "m3", "m4", "m5"}
+	for _, body := range want {
+		sendFIFO(t, client, queueURL, body, "g1", "d-"+body)
+	}
+
+	got, _ := receiveOrdered(t, client, queueURL, maxReceiveMessagesTest)
+	if !equalSlices(got, want) {
+		t.Fatalf("batch receive = %v, want all 5 in order %v", got, want)
+	}
+}
+
+// TestSDKFIFOInFlightGroupBlockedAcrossCalls verifies the across-call rule: once
+// a message of a group is in-flight, a later receive returns nothing from that
+// group until the in-flight message is deleted (then delivery advances in order).
+func TestSDKFIFOInFlightGroupBlockedAcrossCalls(t *testing.T) {
+	client, _ := newSDKClient(t)
+	queueURL := createFIFOQueueSDK(t, client, "serial.fifo")
+
+	for _, body := range []string{"a", "b", "c"} {
+		sendFIFO(t, client, queueURL, body, "g1", "d-"+body)
+	}
+
+	first, handles := receiveOrdered(t, client, queueURL, 1)
+	if !equalSlices(first, []string{"a"}) {
+		t.Fatalf("call#1 = %v, want [a]", first)
+	}
+
+	// a is in-flight and not deleted: the group is blocked, so call#2 gets nothing.
+	blockedRcv, _ := receiveOrdered(t, client, queueURL, 1)
+	if len(blockedRcv) != 0 {
+		t.Fatalf("call#2 = %v, want [] while a is in-flight", blockedRcv)
+	}
+
+	// Deleting a advances the group to its next message.
+	deleteHandle(t, client, queueURL, handles[0])
+
+	next, _ := receiveOrdered(t, client, queueURL, 1)
+	if !equalSlices(next, []string{"b"}) {
+		t.Fatalf("after deleting a, receive = %v, want [b]", next)
+	}
+}
+
+// TestSDKFIFOTwoGroupsParallel verifies that an in-flight message in one group
+// does not block a different group: the two groups make progress independently.
+func TestSDKFIFOTwoGroupsParallel(t *testing.T) {
+	client, _ := newSDKClient(t)
+	queueURL := createFIFOQueueSDK(t, client, "parallel.fifo")
 
 	sendFIFO(t, client, queueURL, "a", "G1", "d-a")
 	sendFIFO(t, client, queueURL, "b", "G1", "d-b")
 	sendFIFO(t, client, queueURL, "x", "G2", "d-x")
 
-	// First receive: head of each group (a, x) delivered in parallel, never b
-	// while a of the same group is still in-flight.
-	first := receiveBodies(t, client, queueURL)
-	if got := sortedKeys(first); len(got) != 2 || got[0] != "a" || got[1] != "x" {
-		t.Fatalf("first receive = %v, want [a x] (b must stay blocked behind a)", got)
+	// call#1 (Max=1) takes G1's head; G1 is now in-flight/blocked.
+	first, _ := receiveOrdered(t, client, queueURL, 1)
+	if !equalSlices(first, []string{"a"}) {
+		t.Fatalf("call#1 = %v, want [a]", first)
 	}
 
-	// Deleting a (the in-flight head of G1) must unblock b.
-	deleteHandle(t, client, queueURL, first["a"])
-
-	next := receiveBodies(t, client, queueURL)
-	if got := sortedKeys(next); len(got) != 1 || got[0] != "b" {
-		t.Fatalf("after deleting a, receive = %v, want [b]", got)
+	// call#2 must still deliver G2's head even though G1 is blocked.
+	second, _ := receiveOrdered(t, client, queueURL, 1)
+	if !equalSlices(second, []string{"x"}) {
+		t.Fatalf("call#2 = %v, want [x] (G2 unaffected by blocked G1)", second)
 	}
 }
 

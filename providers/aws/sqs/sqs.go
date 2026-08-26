@@ -857,23 +857,23 @@ func (m *Mock) collectVisibleMessages(
 
 	var toRemove []int
 
-	isFIFO := qd.info.FIFO
-	blocked := make(map[string]bool)
+	// FIFO: any group that already has an in-flight message (received in a prior
+	// call, visibility not yet expired) is skipped entirely this call, so a
+	// group's messages are delivered strictly in order across consumers. Within
+	// a single call a non-blocked group still yields its consecutive messages
+	// (up to MaxNumberOfMessages), matching real SQS FIFO batch receives.
+	blocked := fifoInFlightGroups(qd, now)
 
 	for i, msg := range qd.messages {
 		if len(results) >= maxMessages {
 			break
 		}
 
-		// FIFO: a group with an earlier in-flight/undelivered message is blocked
-		// until that message is deleted or its visibility timeout expires.
-		if fifoGroupBlocked(isFIFO, msg.GroupID, blocked) {
+		if blocked[msg.GroupID] {
 			continue
 		}
 
 		if msg.VisibleAt.After(now) {
-			markFIFOGroup(isFIFO, msg.GroupID, blocked)
-
 			continue
 		}
 
@@ -889,25 +889,29 @@ func (m *Mock) collectVisibleMessages(
 		}
 
 		results = append(results, buildReceivedMessage(msg, visibilityTimeout, now))
-		markFIFOGroup(isFIFO, msg.GroupID, blocked)
 	}
 
 	return results, toRemove
 }
 
-// fifoGroupBlocked reports whether a FIFO message group already has its single
-// deliverable (or in-flight) message accounted for this receive, so later
-// messages of the group must wait. Non-FIFO queues never block.
-func fifoGroupBlocked(isFIFO bool, groupID string, blocked map[string]bool) bool {
-	return isFIFO && groupID != "" && blocked[groupID]
-}
-
-// markFIFOGroup records that a FIFO message group's head message has been
-// delivered or found in-flight, blocking the rest of the group.
-func markFIFOGroup(isFIFO bool, groupID string, blocked map[string]bool) {
-	if isFIFO && groupID != "" {
-		blocked[groupID] = true
+// fifoInFlightGroups returns the set of FIFO message groups that have at least
+// one in-flight message (VisibleAt in the future) as of now, computed before the
+// receive marks anything. Such groups are skipped for this call so their next
+// message is not delivered until the in-flight one is deleted or its visibility
+// expires. Returns an empty (never nil) set for non-FIFO queues.
+func fifoInFlightGroups(qd *queueData, now time.Time) map[string]bool {
+	blocked := make(map[string]bool)
+	if !qd.info.FIFO {
+		return blocked
 	}
+
+	for _, msg := range qd.messages {
+		if msg.GroupID != "" && msg.VisibleAt.After(now) {
+			blocked[msg.GroupID] = true
+		}
+	}
+
+	return blocked
 }
 
 func buildReceivedMessage(msg *sqsMessage, visibilityTimeout int, now time.Time) driver.Message {
