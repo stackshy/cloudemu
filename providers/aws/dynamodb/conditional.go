@@ -2,13 +2,30 @@ package dynamodb
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"maps"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
+
+// transactIdempotencyWindow is how long a TransactWriteItems ClientRequestToken
+// is remembered so a retry with the same token is treated as a replay rather
+// than a second application (real DynamoDB uses ~10 minutes).
+const transactIdempotencyWindow = 10 * time.Minute
+
+// txIdempotencyRecord is a remembered ClientRequestToken: the fingerprint of the
+// request it first committed and when, so a replay with a matching body is a
+// no-op while a different body with the same token is a parameter mismatch.
+type txIdempotencyRecord struct {
+	fingerprint string
+	storedAt    time.Time
+}
 
 // This file holds the ATOMIC conditional-write and transaction primitives. The
 // wire handler must NOT evaluate a ConditionExpression with a standalone GetItem
@@ -244,12 +261,16 @@ func updateBaseImage(item map[string]any, present bool, key map[string]any) (bas
 // a single hold of m.mu, so the transaction is all-or-nothing and isolated from
 // concurrent single-item writes. On any failed condition it returns a
 // *driver.TransactionCanceled naming the failed operations and writes nothing.
-func (m *Mock) TransactWrite(ctx context.Context, ops []driver.TransactOp) error {
+func (m *Mock) TransactWrite(ctx context.Context, ops []driver.TransactOp, clientRequestToken string) error {
 	m.mu.Lock()
 	// flush registers before the unlock defer so it runs after the lock is
 	// released (defers are LIFO), delivering stream records outside m.mu.
 	defer func() { m.flushStreamDeliveries(ctx) }()
 	defer m.mu.Unlock()
+
+	if done, err := m.checkTransactToken(clientRequestToken, ops); done {
+		return err
+	}
 
 	tds, err := m.resolveTransactTables(ops)
 	if err != nil {
@@ -271,8 +292,74 @@ func (m *Mock) TransactWrite(ctx context.Context, ops []driver.TransactOp) error
 	}
 
 	m.commitTransactMutations(plans)
+	m.rememberTransactToken(clientRequestToken, ops)
 
 	return nil
+}
+
+// checkTransactToken applies TransactWriteItems idempotency. A replay carrying a
+// ClientRequestToken still inside the window short-circuits: done=true with a
+// nil error returns the cached success without re-applying when the request body
+// matches, or an *IdempotentParameterMismatch when the same token carries a
+// different body. done=false means apply the transaction normally. Caller holds
+// m.mu.
+func (m *Mock) checkTransactToken(token string, ops []driver.TransactOp) (done bool, err error) {
+	if token == "" {
+		return false, nil
+	}
+
+	m.pruneTransactTokens()
+
+	rec, ok := m.txIdempotency[token]
+	if !ok {
+		return false, nil
+	}
+
+	if rec.fingerprint != transactFingerprint(ops) {
+		return true, &driver.IdempotentParameterMismatch{}
+	}
+
+	return true, nil
+}
+
+// rememberTransactToken records a committed transaction's token and fingerprint
+// so a later retry is recognized as a replay. A no-op for an empty token. Caller
+// holds m.mu.
+func (m *Mock) rememberTransactToken(token string, ops []driver.TransactOp) {
+	if token == "" {
+		return
+	}
+
+	m.txIdempotency[token] = txIdempotencyRecord{
+		fingerprint: transactFingerprint(ops),
+		storedAt:    m.opts.Clock.Now(),
+	}
+}
+
+// pruneTransactTokens drops tokens older than the idempotency window so the map
+// does not grow without bound. Caller holds m.mu.
+func (m *Mock) pruneTransactTokens() {
+	now := m.opts.Clock.Now()
+	for tok, rec := range m.txIdempotency {
+		if now.Sub(rec.storedAt) > transactIdempotencyWindow {
+			delete(m.txIdempotency, tok)
+		}
+	}
+}
+
+// transactFingerprint is a stable digest of a transaction's operations, letting
+// a ClientRequestToken replay tell an identical request (idempotent no-op) from
+// a different one (parameter mismatch). json.Marshal sorts map keys, so the
+// digest is deterministic across replays.
+func transactFingerprint(ops []driver.TransactOp) string {
+	b, err := json.Marshal(ops)
+	if err != nil {
+		return ""
+	}
+
+	sum := sha256.Sum256(b)
+
+	return hex.EncodeToString(sum[:])
 }
 
 // resolveTransactTables resolves and structurally validates every operation's

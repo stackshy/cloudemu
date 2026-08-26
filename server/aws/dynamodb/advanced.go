@@ -18,6 +18,7 @@ import (
 const (
 	maxBatchWriteItems = 25  // BatchWriteItem: total put/delete requests per call
 	maxBatchGetItems   = 100 // BatchGetItem: total keys per call
+	maxTransactItems   = 100 // TransactWriteItems / TransactGetItems: operations per call
 )
 
 // updateItem handles UpdateItem. Supports the common cases:
@@ -153,9 +154,17 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		Limit                     int               `json:"Limit"`
 		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
+		Select                    string            `json:"Select"`
+		Segment                   *int32            `json:"Segment"`
+		TotalSegments             *int32            `json:"TotalSegments"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if serr := validateSelect(req.Select, req.ProjectionExpression, req.IndexName); serr != nil {
+		writeErr(w, serr)
 		return
 	}
 
@@ -172,6 +181,8 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		Limit:               req.Limit,
 		ExclusiveStartKey:   fromWireItem(req.ExclusiveStartKey),
 		ProjectionRequested: req.ProjectionExpression != "",
+		Segment:             req.Segment,
+		TotalSegments:       req.TotalSegments,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -190,7 +201,7 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"Items":        items,
+		"Items":        selectItems(req.Select, items),
 		"Count":        len(items),
 		"ScannedCount": result.ScannedCount,
 	}
@@ -290,9 +301,9 @@ func batchRequestKeySource(req *batchWriteRequest) map[string]any {
 // keyIdentity builds a stable identity string from an item's primary-key
 // attributes, used to detect two operations targeting the same item.
 func keyIdentity(cfg *dbdriver.TableConfig, item map[string]any) string {
-	id := fmt.Sprintf("%v", item[cfg.PartitionKey])
+	id := expr.CanonicalKey(item[cfg.PartitionKey])
 	if cfg.SortKey != "" {
-		id += "\x00" + fmt.Sprintf("%v", item[cfg.SortKey])
+		id += "\x00" + expr.CanonicalKey(item[cfg.SortKey])
 	}
 
 	return id
@@ -405,6 +416,11 @@ func (h *Handler) transactGetItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.TransactItems) > maxTransactItems {
+		writeTransactItemsTooLong(w)
+		return
+	}
+
 	responses := make([]map[string]any, 0, len(req.TransactItems))
 
 	for _, t := range req.TransactItems {
@@ -497,10 +513,16 @@ type txOp struct {
 // and writes nothing).
 func (h *Handler) transactWriteItems(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TransactItems []transactWriteJSON `json:"TransactItems"`
+		TransactItems      []transactWriteJSON `json:"TransactItems"`
+		ClientRequestToken string              `json:"ClientRequestToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if len(req.TransactItems) > maxTransactItems {
+		writeTransactItemsTooLong(w)
 		return
 	}
 
@@ -517,8 +539,15 @@ func (h *Handler) transactWriteItems(w http.ResponseWriter, r *http.Request) {
 	// (all-or-nothing) and isolated from concurrent single-item writes. This
 	// replaces the former handler-level evaluate-then-apply, which dropped the
 	// lock between the check and the write (a TOCTOU that let two conflicting
-	// transactions both commit).
-	err := h.writer().TransactWrite(ctx, toDriverTransactOps(ops))
+	// transactions both commit). ClientRequestToken makes a retried call
+	// idempotent: a replay short-circuits instead of applying the writes again.
+	err := h.writer().TransactWrite(ctx, toDriverTransactOps(ops), req.ClientRequestToken)
+
+	var mismatch *dbdriver.IdempotentParameterMismatch
+	if errors.As(err, &mismatch) {
+		wire.WriteJSONError(w, http.StatusBadRequest, "IdempotentParameterMismatchException", mismatch.Error())
+		return
+	}
 
 	var canceled *dbdriver.TransactionCanceled
 	if errors.As(err, &canceled) {
@@ -532,6 +561,14 @@ func (h *Handler) transactWriteItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{})
+}
+
+// writeTransactItemsTooLong rejects a transaction whose TransactItems array
+// exceeds the 100-operation limit, matching real DynamoDB's ValidationException.
+func writeTransactItemsTooLong(w http.ResponseWriter) {
+	wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+		"1 validation error detected: Value at 'transactItems' failed to satisfy constraint: "+
+			"Member must have length less than or equal to 100")
 }
 
 // toDriverTransactOps maps the decoded wire operations onto the provider's

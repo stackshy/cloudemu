@@ -2,6 +2,7 @@ package expr
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
@@ -68,6 +69,30 @@ func (n Number) Float() (float64, bool) {
 func (n Number) rat() (*big.Rat, bool) {
 	r, ok := new(big.Rat).SetString(strings.TrimPrefix(string(n), "+"))
 	return r, ok
+}
+
+// Canonical returns a stable representation of n's numeric value, collapsing
+// distinct decimal spellings of the same number ("100", "100.0", "1e2") to one
+// string via the exact rational form. A malformed number falls back to its raw
+// text so it stays distinct and type-segregated.
+func (n Number) Canonical() string {
+	if r, ok := n.rat(); ok {
+		return r.RatString()
+	}
+
+	return string(n)
+}
+
+// CanonicalKey renders a primary-key attribute value into a stable identity
+// component. A Number collapses to its canonical numeric form so "100" and
+// "100.0" resolve to one item key; every other type formats by value exactly as
+// before, leaving String/Binary keys byte-for-byte unaffected.
+func CanonicalKey(v any) string {
+	if n, ok := v.(Number); ok {
+		return n.Canonical()
+	}
+
+	return fmt.Sprintf("%v", v)
 }
 
 // numberEqual reports whether a and b denote the same number. Equality is

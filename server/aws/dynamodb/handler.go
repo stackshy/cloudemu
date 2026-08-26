@@ -34,6 +34,60 @@ const (
 	billingProvisioned = "PROVISIONED"
 )
 
+// Query/Scan Select modes controlling which attributes (or only the counts) the
+// result carries.
+const (
+	selectAllAttributes      = "ALL_ATTRIBUTES"
+	selectAllProjected       = "ALL_PROJECTED_ATTRIBUTES"
+	selectSpecificAttributes = "SPECIFIC_ATTRIBUTES"
+	selectCount              = "COUNT"
+)
+
+// validateSelect enforces the DynamoDB rules relating a Query/Scan Select mode
+// to ProjectionExpression and index use. An empty Select is always valid.
+//   - SPECIFIC_ATTRIBUTES requires a ProjectionExpression.
+//   - ALL_PROJECTED_ATTRIBUTES is only valid on an index query/scan.
+//   - A ProjectionExpression may only accompany SPECIFIC_ATTRIBUTES (so
+//     ALL_ATTRIBUTES/COUNT/ALL_PROJECTED_ATTRIBUTES with one is invalid).
+func validateSelect(sel, projectionExpr, indexName string) error {
+	up := strings.ToUpper(sel)
+	hasProj := projectionExpr != ""
+
+	switch up {
+	case "", selectCount, selectAllAttributes, selectSpecificAttributes, selectAllProjected:
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "Unknown value for Select: %s", sel)
+	}
+
+	if up == selectSpecificAttributes && !hasProj {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Select type SPECIFIC_ATTRIBUTES requires a ProjectionExpression to be specified")
+	}
+
+	if up == selectAllProjected && indexName == "" {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Select type ALL_PROJECTED_ATTRIBUTES is only valid when querying or scanning an index")
+	}
+
+	if hasProj && up != "" && up != selectSpecificAttributes {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Cannot specify both ProjectionExpression and Select, unless Select is SPECIFIC_ATTRIBUTES")
+	}
+
+	return nil
+}
+
+// selectItems resolves the Items array a Query/Scan response carries for the
+// given Select mode: Select=COUNT returns only the counts, so the Items array is
+// emptied; every other mode returns the projected items unchanged.
+func selectItems(sel string, items []map[string]any) []map[string]any {
+	if strings.EqualFold(sel, selectCount) {
+		return []map[string]any{}
+	}
+
+	return items
+}
+
 // projectionBlock builds the Projection wire block echoed by a describe. An
 // INCLUDE projection also carries the NonKeyAttributes it copied so the
 // declared index round-trips exactly.
@@ -65,7 +119,7 @@ type conditionalWriter interface {
 	UpdateItemConditional(
 		ctx context.Context, input dbdriver.UpdateItemInput, cond dbdriver.Condition,
 	) (updated, old map[string]any, err error)
-	TransactWrite(ctx context.Context, ops []dbdriver.TransactOp) error
+	TransactWrite(ctx context.Context, ops []dbdriver.TransactOp, clientRequestToken string) error
 }
 
 // Handler serves DynamoDB JSON-RPC requests against a database.Database driver.
@@ -833,9 +887,15 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		IndexName                 string            `json:"IndexName"`
 		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
+		Select                    string            `json:"Select"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if serr := validateSelect(req.Select, req.ProjectionExpression, req.IndexName); serr != nil {
+		writeErr(w, serr)
 		return
 	}
 
@@ -884,7 +944,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"Items":        items,
+		"Items":        selectItems(req.Select, items),
 		"Count":        len(items),
 		"ScannedCount": result.ScannedCount,
 	}

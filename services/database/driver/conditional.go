@@ -76,3 +76,15 @@ type TransactionCanceled struct {
 func (*TransactionCanceled) Error() string {
 	return "transaction canceled: one or more condition checks failed"
 }
+
+// IdempotentParameterMismatch is returned by an atomic transaction replayed with
+// a ClientRequestToken that was already used within the idempotency window for a
+// DIFFERENT request body. Real DynamoDB rejects this with an
+// IdempotentParameterMismatchException; the wire layer maps this type onto it.
+type IdempotentParameterMismatch struct{}
+
+// Error reports the DynamoDB message an IdempotentParameterMismatchException
+// carries.
+func (*IdempotentParameterMismatch) Error() string {
+	return "Request parameters do not match the parameters of a previous call with the same client request token"
+}
