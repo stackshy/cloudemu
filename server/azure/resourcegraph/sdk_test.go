@@ -376,7 +376,7 @@ func TestSDKResourceGraph_KubernetesIndexing(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = cloudP.AKS.CreateOrUpdateAgentPool(ctx, "rg-1", "prod", aks.AgentPoolInput{
-		Name: "ap-1", Count: 1,
+		Name: "ap-1", Count: to.Ptr[int32](1),
 	})
 	require.NoError(t, err)
 

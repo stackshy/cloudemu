@@ -30,7 +30,7 @@ func TestClusterLifecycle(t *testing.T) {
 		Location:          "eastus",
 		KubernetesVersion: "1.29.5",
 		AgentPools: []AgentPoolInput{
-			{Name: "system", Count: 2, VMSize: "Standard_D2s_v3", Mode: "System"},
+			{Name: "system", Count: int32Ptr(2), VMSize: "Standard_D2s_v3", Mode: "System"},
 		},
 	})
 	requireNoError(t, err)
@@ -91,7 +91,7 @@ func TestAgentPoolLifecycle(t *testing.T) {
 
 	pool, err := m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-1", AgentPoolInput{
 		Name:   "userpool",
-		Count:  4,
+		Count:  int32Ptr(4),
 		VMSize: "Standard_D4s_v3",
 		Mode:   "User",
 	})
@@ -102,7 +102,7 @@ func TestAgentPoolLifecycle(t *testing.T) {
 	// Update pool — count change.
 	pool, err = m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-1", AgentPoolInput{
 		Name:  "userpool",
-		Count: 6,
+		Count: int32Ptr(6),
 	})
 	requireNoError(t, err)
 	assertEqual(t, int32(6), pool.Count)
@@ -171,7 +171,7 @@ func TestDeleteClusterCascades(t *testing.T) {
 		ResourceGroup: "rg-1",
 		Name:          "k8s-1",
 		AgentPools: []AgentPoolInput{
-			{Name: "system", Count: 2},
+			{Name: "system", Count: int32Ptr(2)},
 		},
 	})
 	requireNoError(t, err)
@@ -260,4 +260,8 @@ func assertNotEmpty(t *testing.T, s string) {
 	if s == "" {
 		t.Error("expected non-empty string")
 	}
+}
+
+func int32Ptr(v int32) *int32 {
+	return &v
 }
