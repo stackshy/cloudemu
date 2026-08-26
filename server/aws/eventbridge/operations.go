@@ -59,6 +59,7 @@ func (h *Handler) describeEventBus(w http.ResponseWriter, r *http.Request) {
 		Arn:          info.ARN,
 		Name:         info.Name,
 		CreationTime: epochSeconds(info.CreatedAt),
+		Policy:       info.Policy,
 	})
 }
 

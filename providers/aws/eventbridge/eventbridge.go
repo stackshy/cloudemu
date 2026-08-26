@@ -42,6 +42,9 @@ type busData struct {
 	rules  *memstore.Store[*ruleData]
 	mu     sync.RWMutex
 	events []driver.Event
+	// policyStmts holds the event bus's resource-policy statements in insertion
+	// order, keyed for removal by each statement's "Sid". Guarded by mu.
+	policyStmts []map[string]any
 }
 
 // SQSDeliverer delivers an event to an SQS queue identified by its ARN.
@@ -209,7 +212,11 @@ func (m *Mock) GetEventBus(_ context.Context, name string) (*driver.EventBusInfo
 		return nil, errors.Newf(errors.NotFound, "event bus %q not found", name)
 	}
 
+	bd.mu.RLock()
+	defer bd.mu.RUnlock()
+
 	result := bd.info
+	result.Policy = renderPolicy(bd.policyStmts)
 
 	return &result, nil
 }

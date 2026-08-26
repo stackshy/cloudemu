@@ -70,6 +70,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.removeTargets(w, r)
 	case "ListTargetsByRule":
 		h.listTargetsByRule(w, r)
+	case "ListRuleNamesByTarget":
+		h.listRuleNamesByTarget(w, r)
+	case "PutPermission":
+		h.putPermission(w, r)
+	case "RemovePermission":
+		h.removePermission(w, r)
 	case "PutEvents":
 		h.putEvents(w, r)
 	case "TestEventPattern":

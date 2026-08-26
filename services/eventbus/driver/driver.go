@@ -27,6 +27,32 @@ type EventBusInfo struct {
 	// public network (Azure Event Grid: "Enabled", "Disabled"). Empty for AWS
 	// and GCP.
 	PublicNetworkAccess string
+	// Policy is the resource-based (IAM) policy document attached to the event
+	// bus, as a JSON string. Managed by EventBridge PutPermission/RemovePermission
+	// and surfaced on DescribeEventBus. Empty when the bus has no policy, and for
+	// Azure and GCP.
+	Policy string
+}
+
+// PermissionCondition is an optional condition on an EventBridge event-bus
+// resource-policy statement, e.g. StringEquals on aws:PrincipalOrgID.
+type PermissionCondition struct {
+	Type  string // condition operator, e.g. "StringEquals"
+	Key   string // condition key, e.g. "aws:PrincipalOrgID"
+	Value string // condition value, e.g. "o-1234567890"
+}
+
+// PermissionInput carries the parameters of an EventBridge PutPermission call.
+// It is either the legacy Action/Principal/StatementID trio (optionally with a
+// Condition) or a full Policy JSON document — the two forms are mutually
+// exclusive. Resource-based policies are an AWS-EventBridge concept, so this is
+// consumed through an AWS-specific optional interface, not the portable driver.
+type PermissionInput struct {
+	StatementID string
+	Action      string
+	Principal   string
+	Policy      string
+	Condition   *PermissionCondition
 }
 
 // EventBusConfig configures a new event bus.
