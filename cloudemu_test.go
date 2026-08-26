@@ -1170,9 +1170,21 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
 	p := NewAWS(config.WithClock(clock))
 
-	// Create alarm: CPU > 0 (any CPU should trigger since auto-metrics emit 25.0)
+	// Launch the instance first so we know its id; EC2 auto-metrics are dimensioned
+	// by InstanceId, and CloudWatch matches an alarm to a metric series by its exact
+	// dimension set — so a real user alarms on that instance's InstanceId.
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := instances[0].ID
+
+	// Create alarm: CPU > 0 on that instance (auto-metrics emit 25.0).
 	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
 		Name: "any-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		Dimensions:         map[string]string{"InstanceId": id},
 		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
 		Period: 600, EvaluationPeriods: 1, Stat: "Average",
 	}); err != nil {
@@ -1185,11 +1197,9 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 		t.Errorf("expected INSUFFICIENT_DATA, got %s", alarms[0].State)
 	}
 
-	// Launch instance — auto-metrics should trigger alarm evaluation
-	_, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
-		ImageID: "ami-test", InstanceType: "t2.micro",
-	}, 1)
-	if err != nil {
+	// A lifecycle op re-emits the instance's running auto-metrics (CPU=25),
+	// triggering alarm evaluation the way the next datapoint would in real AWS.
+	if err := p.EC2.RebootInstances(ctx, []string{id}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1205,16 +1215,8 @@ func TestLifecycleStopEmitsZeroMetrics(t *testing.T) {
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
 	p := NewAWS(config.WithClock(clock))
 
-	// Create alarm: CPU < 1 (LessThanThreshold)
-	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
-		Name: "low-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
-		ComparisonOperator: "LessThanThreshold", Threshold: 1,
-		Period: 300, EvaluationPeriods: 1, Stat: "Average",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// RunInstances → CPU=25 → alarm stays OK (25 is not < 1)
+	// Launch first to learn the instance id; the alarm carries that InstanceId
+	// dimension so exact-match evaluation reads this instance's metric series.
 	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID: "ami-test", InstanceType: "t2.micro",
 	}, 1)
@@ -1223,9 +1225,24 @@ func TestLifecycleStopEmitsZeroMetrics(t *testing.T) {
 	}
 	id := instances[0].ID
 
+	// Create alarm: CPU < 1 (LessThanThreshold) on that instance.
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "low-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		Dimensions:         map[string]string{"InstanceId": id},
+		ComparisonOperator: "LessThanThreshold", Threshold: 1,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reboot re-emits running auto-metrics (CPU=25) → alarm evaluates to OK (not < 1).
+	if err := p.EC2.RebootInstances(ctx, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+
 	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"low-cpu"})
 	if alarms[0].State != "OK" {
-		t.Errorf("expected OK after RunInstances (CPU=25, not < 1), got %s", alarms[0].State)
+		t.Errorf("expected OK after running metrics (CPU=25, not < 1), got %s", alarms[0].State)
 	}
 
 	// Advance clock past evaluation window so old datapoints fall out
@@ -1247,16 +1264,8 @@ func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
 	p := NewAWS(config.WithClock(clock))
 
-	// Create alarm: CPU > 0
-	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
-		Name: "any-cpu-start", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
-		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
-		Period: 300, EvaluationPeriods: 1, Stat: "Average",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// RunInstances → stop → advance clock → start
+	// RunInstances first to learn the id → create the dimensioned alarm → stop →
+	// advance clock → start.
 	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID: "ami-test", InstanceType: "t2.micro",
 	}, 1)
@@ -1264,6 +1273,16 @@ func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := instances[0].ID
+
+	// Create alarm: CPU > 0 on that instance.
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "any-cpu-start", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		Dimensions:         map[string]string{"InstanceId": id},
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := p.EC2.StopInstances(ctx, []string{id}); err != nil {
 		t.Fatal(err)
@@ -8950,17 +8969,18 @@ func testAlarmActions(
 		t.Fatalf("[%s] GetAlarmHistory: %v", label, err)
 	}
 
-	// Two transitions: INSUFFICIENT_DATA->OK, OK->ALARM.
+	// Two transitions, returned newest-first (CloudWatch's default
+	// TimestampDescending order): OK->ALARM then INSUFFICIENT_DATA->OK.
 	if len(history) != 2 {
 		t.Fatalf("[%s] expected 2 history entries, got %d", label, len(history))
 	}
 
-	if history[0].OldState != "INSUFFICIENT_DATA" || history[0].NewState != "OK" {
-		t.Errorf("[%s] history[0]: expected INSUFFICIENT_DATA->OK, got %s->%s", label, history[0].OldState, history[0].NewState)
+	if history[0].OldState != "OK" || history[0].NewState != "ALARM" {
+		t.Errorf("[%s] history[0]: expected OK->ALARM (newest), got %s->%s", label, history[0].OldState, history[0].NewState)
 	}
 
-	if history[1].OldState != "OK" || history[1].NewState != "ALARM" {
-		t.Errorf("[%s] history[1]: expected OK->ALARM, got %s->%s", label, history[1].OldState, history[1].NewState)
+	if history[1].OldState != "INSUFFICIENT_DATA" || history[1].NewState != "OK" {
+		t.Errorf("[%s] history[1]: expected INSUFFICIENT_DATA->OK, got %s->%s", label, history[1].OldState, history[1].NewState)
 	}
 
 	// 9. Verify history limit works.
