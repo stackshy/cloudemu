@@ -134,6 +134,7 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		Tags:            tags,
 		CallerReference: cfg.CallerReference,
 		Comment:         cfg.Comment,
+		VPCs:            copyVPCs(cfg.VPCs),
 		Scope:           cfg.Scope,
 	}
 
@@ -170,6 +171,7 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	}
 
 	result := zone
+	result.VPCs = copyVPCs(zone.VPCs)
 
 	return &result, nil
 }
@@ -227,6 +229,78 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	result := updated
 
 	return &result, nil
+}
+
+// AssociateVPC adds an Amazon VPC to a private hosted zone's association list.
+// It is idempotent: associating an already-associated VPC is a no-op. Caller
+// validation (the zone must be private) is done at the wire layer, which has
+// the zone's Private flag from GetZone. This is the AWS-only private-hosted-zone
+// VPC-association extension; other DNS providers don't implement it.
+func (m *Mock) AssociateVPC(_ context.Context, zoneID string, vpc driver.VPCAssociation) error {
+	if _, ok := m.zones.Get(zoneID); !ok {
+		return errors.Newf(errors.NotFound, "zone %q not found", zoneID)
+	}
+
+	m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
+		if containsVPCAssoc(z.VPCs, vpc) {
+			return z
+		}
+
+		z.VPCs = append(copyVPCs(z.VPCs), vpc)
+
+		return z
+	})
+
+	return nil
+}
+
+// containsVPCAssoc reports whether a VPC-association list already holds vpc.
+func containsVPCAssoc(vpcs []driver.VPCAssociation, vpc driver.VPCAssociation) bool {
+	for _, v := range vpcs {
+		if v == vpc {
+			return true
+		}
+	}
+
+	return false
+}
+
+// DisassociateVPC removes an Amazon VPC from a private hosted zone's association
+// list. Caller validation (the VPC must be associated and must not be the last
+// one) is done at the wire layer from the zone's VPCs returned by GetZone.
+func (m *Mock) DisassociateVPC(_ context.Context, zoneID string, vpc driver.VPCAssociation) error {
+	if _, ok := m.zones.Get(zoneID); !ok {
+		return errors.Newf(errors.NotFound, "zone %q not found", zoneID)
+	}
+
+	m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
+		kept := make([]driver.VPCAssociation, 0, len(z.VPCs))
+
+		for _, v := range z.VPCs {
+			if v != vpc {
+				kept = append(kept, v)
+			}
+		}
+
+		z.VPCs = kept
+
+		return z
+	})
+
+	return nil
+}
+
+// copyVPCs returns a detached copy of a VPC-association slice so a stored zone
+// never aliases caller memory (and vice versa).
+func copyVPCs(vpcs []driver.VPCAssociation) []driver.VPCAssociation {
+	if len(vpcs) == 0 {
+		return nil
+	}
+
+	out := make([]driver.VPCAssociation, len(vpcs))
+	copy(out, vpcs)
+
+	return out
 }
 
 // CreateRecord creates a new DNS record in the specified zone.

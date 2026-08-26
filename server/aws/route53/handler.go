@@ -33,11 +33,18 @@ const tagsPrefix = "/2013-04-01/tags/"
 
 const rrsetSeg = "rrset"
 
+// Sub-resource path segments under /hostedzone/{id}.
+const (
+	associateVPCSeg    = "associatevpc"
+	disassociateVPCSeg = "disassociatevpc"
+)
+
 // Additional Route 53 REST roots handled by this dispatcher.
 const (
 	changePrefix          = "/2013-04-01/change/"
 	hostedZoneCountPath   = "/2013-04-01/hostedzonecount"
 	hostedZonesByNamePath = "/2013-04-01/hostedzonesbyname"
+	hostedZonesByVPCPath  = "/2013-04-01/hostedzonesbyvpc"
 	testDNSAnswerPath     = "/2013-04-01/testdnsanswer"
 )
 
@@ -63,6 +70,7 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, changePrefix) ||
 		r.URL.Path == hostedZoneCountPath ||
 		r.URL.Path == hostedZonesByNamePath ||
+		r.URL.Path == hostedZonesByVPCPath ||
 		r.URL.Path == testDNSAnswerPath
 }
 
@@ -90,31 +98,62 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case hostedZonesByNamePath:
 		h.listHostedZonesByName(w, r)
 		return
+	case hostedZonesByVPCPath:
+		h.listHostedZonesByVPC(w, r)
+		return
 	case testDNSAnswerPath:
 		h.testDNSAnswer(w, r)
 		return
 	}
 
+	h.serveHostedZonePath(w, r)
+}
+
+// serveHostedZonePath dispatches the /hostedzone[/{id}[/sub]] path space:
+// the collection, a single zone, and the rrset / associatevpc / disassociatevpc
+// sub-resources.
+func (h *Handler) serveHostedZonePath(w http.ResponseWriter, r *http.Request) {
 	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
 	if tail == "" {
 		h.serveZoneCollection(w, r)
 		return
 	}
 
-	// tail is "{id}" or "{id}/rrset".
+	// tail is "{id}" or "{id}/{sub}".
 	id, sub, _ := strings.Cut(tail, "/")
 
-	if sub == rrsetSeg {
+	switch sub {
+	case "":
+		h.serveZone(w, r, id)
+	case rrsetSeg:
 		h.serveRRSet(w, r, id)
-		return
-	}
-
-	if sub != "" {
+	case associateVPCSeg:
+		h.serveAssociateVPC(w, r, id)
+	case disassociateVPCSeg:
+		h.serveDisassociateVPC(w, r, id)
+	default:
 		writeError(w, http.StatusNotFound, "NoSuchHostedZone", "unrecognized Route 53 path")
+	}
+}
+
+// serveAssociateVPC dispatches POST /hostedzone/{id}/associatevpc.
+func (h *Handler) serveAssociateVPC(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
 		return
 	}
 
-	h.serveZone(w, r, id)
+	h.associateVPCWithHostedZone(w, r, id)
+}
+
+// serveDisassociateVPC dispatches POST /hostedzone/{id}/disassociatevpc.
+func (h *Handler) serveDisassociateVPC(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	h.disassociateVPCFromHostedZone(w, r, id)
 }
 
 // serveZoneCollection dispatches /hostedzone collection requests.
