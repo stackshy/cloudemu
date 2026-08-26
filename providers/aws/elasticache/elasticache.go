@@ -201,6 +201,14 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		return nil, err
 	}
 
+	// A named subnet group must already exist — real ElastiCache rejects a
+	// missing one with CacheSubnetGroupNotFoundFault rather than silently
+	// accepting a typo (mirrors RDS CreateDBInstance's DBSubnetGroup check).
+	if cfg.SubnetGroupName != "" && !m.subnetGroups.Has(cfg.SubnetGroupName) {
+		return nil, errors.Newf(errors.NotFound,
+			"CacheSubnetGroupNotFoundFault: cache subnet group %q not found", cfg.SubnetGroupName)
+	}
+
 	port := cfg.Port
 	if port == 0 {
 		port = defaultPort(engine)
