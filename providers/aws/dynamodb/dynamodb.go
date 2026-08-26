@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"hash/fnv"
 	"maps"
 	"strconv"
 	"strings"
@@ -74,6 +75,10 @@ type Mock struct {
 	// runs after the lock is released (a mapped Lambda may write back into
 	// DynamoDB); guarded by m.mu.
 	pendingStream []pendingStreamEvent
+	// txIdempotency records recently used TransactWriteItems ClientRequestTokens
+	// (token -> request fingerprint + time) so a replay short-circuits instead of
+	// re-applying; guarded by m.mu. Mirrors the SQS FIFO deduplicationIndex.
+	txIdempotency map[string]txIdempotencyRecord
 }
 
 // StreamEventInvoker delivers a DynamoDB Streams event batch to whatever Lambda
@@ -117,7 +122,11 @@ func (m *Mock) emitMetric(metricName string, value float64, dims map[string]stri
 
 // New creates a new DynamoDB mock.
 func New(opts *config.Options) *Mock {
-	return &Mock{tables: make(map[string]*tableData), opts: opts}
+	return &Mock{
+		tables:        make(map[string]*tableData),
+		opts:          opts,
+		txIdempotency: make(map[string]txIdempotencyRecord),
+	}
 }
 
 // maxItemSizeBytes is the 400 KB ceiling DynamoDB enforces on a single item
@@ -305,9 +314,9 @@ func validateKeyType(cfg driver.TableConfig, keyName string, val any) error {
 }
 
 func itemKey(cfg driver.TableConfig, item map[string]any) string {
-	pk := fmt.Sprintf("%v", item[cfg.PartitionKey])
+	pk := expr.CanonicalKey(item[cfg.PartitionKey])
 	if cfg.SortKey != "" {
-		return pk + ":" + fmt.Sprintf("%v", item[cfg.SortKey])
+		return pk + ":" + expr.CanonicalKey(item[cfg.SortKey])
 	}
 
 	return pk
@@ -748,11 +757,12 @@ func passesFilter(node expr.Node, legacy []driver.ScanFilter, item map[string]an
 }
 
 // scanCandidates walks the table's items, skipping expired ones and (for an
-// index scan) those lacking the index partition key. The FilterExpression is
-// applied after paging (AWS reads up to Limit items, then filters), so it is
-// not applied here.
+// index scan) those lacking the index partition key. For a parallel scan
+// (total != nil) only items whose stable primary-key hash falls in segment are
+// kept. The FilterExpression is applied after paging (AWS reads up to Limit
+// items, then filters), so it is not applied here.
 func (m *Mock) scanCandidates(
-	td *tableData, idxPK string,
+	td *tableData, idxPK string, segment, total *int32,
 ) []map[string]any {
 	var matched []map[string]any
 
@@ -767,10 +777,74 @@ func (m *Mock) scanCandidates(
 			}
 		}
 
+		if !itemInSegment(itemKey(td.config, item), segment, total) {
+			continue
+		}
+
 		matched = append(matched, item)
 	}
 
 	return matched
+}
+
+// maxParallelScanSegments is the DynamoDB ceiling on a parallel scan's
+// TotalSegments.
+const maxParallelScanSegments = 1000000
+
+// validateScanSegments enforces the DynamoDB parallel-scan rules: Segment and
+// TotalSegments are given together, TotalSegments is 1..1000000, and Segment is
+// in [0,TotalSegments). Both nil is an ordinary full scan.
+func validateScanSegments(segment, total *int32) error {
+	if segment == nil && total == nil {
+		return nil
+	}
+
+	if segment == nil || total == nil {
+		return cerrors.New(cerrors.InvalidArgument,
+			"The request must contain both Segment and TotalSegments, or neither")
+	}
+
+	if *total < 1 || *total > maxParallelScanSegments {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"The TotalSegments parameter must be between 1 and %d", maxParallelScanSegments)
+	}
+
+	if *segment < 0 || *segment >= *total {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"The Segment parameter must be between 0 and TotalSegments-1 (%d)", *total-1)
+	}
+
+	return nil
+}
+
+// resolveScanIndexPK returns the partition-key attribute of the secondary index
+// a scan targets, or "" for a base-table scan. It also validates that a named
+// index exists.
+func resolveScanIndexPK(td *tableData, indexName string) (string, error) {
+	if indexName == "" {
+		return "", nil
+	}
+
+	pk, _, err := resolveKeyFields(td, indexName)
+
+	return pk, err
+}
+
+// itemInSegment reports whether an item belongs to a parallel scan's Segment,
+// hashing its primary key stably (FNV-1a) so every item maps to exactly one of
+// the TotalSegments shards — making the union of all shards cover the table
+// exactly once. A nil total (ordinary scan) always matches.
+func itemInSegment(key string, segment, total *int32) bool {
+	if total == nil {
+		return true
+	}
+
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+
+	// Compute the shard in int64 so there is no narrowing conversion: the FNV
+	// sum widens losslessly, and validateScanSegments guarantees total>=1.
+	return int64(h.Sum32())%int64(*total) == int64(*segment)
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
@@ -788,18 +862,19 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		return nil, err
 	}
 
+	if err = validateScanSegments(input.Segment, input.TotalSegments); err != nil {
+		return nil, err
+	}
+
 	// A scan on a secondary index only visits items carrying that index's
 	// partition key (a sparse index), so resolve it up front — this also
 	// validates the index exists.
-	var idxPK string
-
-	if input.IndexName != "" {
-		if idxPK, _, err = resolveKeyFields(td, input.IndexName); err != nil {
-			return nil, err
-		}
+	idxPK, err := resolveScanIndexPK(td, input.IndexName)
+	if err != nil {
+		return nil, err
 	}
 
-	candidates := m.scanCandidates(td, idxPK)
+	candidates := m.scanCandidates(td, idxPK, input.Segment, input.TotalSegments)
 
 	limit := input.Limit
 	if limit <= 0 {

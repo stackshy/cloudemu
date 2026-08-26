@@ -253,6 +253,14 @@ type ScanInput struct {
 	// the driver expose the full base item so non-projected attributes can be
 	// fetched, matching real DynamoDB.
 	ProjectionRequested bool
+
+	// Segment/TotalSegments select one shard of a parallel scan. When
+	// TotalSegments is non-nil the scan returns only the items whose stable
+	// primary-key hash falls in Segment, so the union of all TotalSegments shards
+	// covers every item exactly once (no duplicate, no skip). Both nil is an
+	// ordinary full scan. The AWS wire layer validates the pair before calling.
+	Segment       *int32
+	TotalSegments *int32
 }
 
 // QueryResult is the result of a query or scan.

@@ -163,7 +163,7 @@ func TestTransactWriteAllOrNothing(t *testing.T) {
 		{Kind: driver.TransactPut, Table: "t", Item: map[string]any{"pk": "new2"}},
 	}
 
-	err := m.TransactWrite(ctx, ops)
+	err := m.TransactWrite(ctx, ops, "")
 
 	var canceled *driver.TransactionCanceled
 	if !errors.As(err, &canceled) {
@@ -216,7 +216,7 @@ func TestTransactWriteConcurrentConflict(t *testing.T) {
 					Condition: driver.Condition{Expression: "attribute_not_exists(pk)"},
 				}}
 
-				err := m.TransactWrite(ctx, ops)
+				err := m.TransactWrite(ctx, ops, "")
 				if err == nil {
 					winners.Add(1)
 					return
