@@ -280,3 +280,26 @@ func TestParsePatternRejectsGarbage(t *testing.T) {
 		t.Fatal("expected empty pattern to fail parse")
 	}
 }
+
+// TestValidatePatternEmptyObject asserts that a top-level empty pattern {} (and
+// null) is rejected the way real EventBridge rejects it, while a legitimately
+// empty NESTED object and ordinary valid patterns are still accepted.
+func TestValidatePatternEmptyObject(t *testing.T) {
+	reject := []string{"{}", " {} ", "null"}
+	for _, raw := range reject {
+		if err := eventmatch.ValidatePattern(raw); err == nil {
+			t.Fatalf("ValidatePattern(%q) = nil, want rejection", raw)
+		}
+	}
+
+	accept := []string{
+		`{"source":["aws.ec2"]}`,
+		`{"detail":{}}`,
+		`{"detail":{"state":["running"]}}`,
+	}
+	for _, raw := range accept {
+		if err := eventmatch.ValidatePattern(raw); err != nil {
+			t.Fatalf("ValidatePattern(%q) = %v, want nil", raw, err)
+		}
+	}
+}

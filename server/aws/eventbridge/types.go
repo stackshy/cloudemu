@@ -116,6 +116,7 @@ type describeEventBusResponse struct {
 	Name         string  `json:"Name"`
 	Description  string  `json:"Description,omitempty"`
 	CreationTime float64 `json:"CreationTime,omitempty"`
+	Policy       string  `json:"Policy,omitempty"`
 }
 
 type eventBusEntry struct {

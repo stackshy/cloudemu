@@ -472,6 +472,13 @@ func ValidatePattern(raw string) error {
 		return &PatternError{Reason: "event pattern is not valid JSON"}
 	}
 
+	// A top-level empty object {} (or null) is rejected: real EventBridge refuses
+	// an empty pattern on PutRule. Empty nested objects stay legal — they are
+	// validated recursively by validatePatternObject, not here.
+	if len(p) == 0 {
+		return &PatternError{Reason: "Empty patterns are not allowed"}
+	}
+
 	return validatePatternObject(p)
 }
 
