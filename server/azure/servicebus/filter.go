@@ -475,9 +475,9 @@ func resolveSQLField(field string, p *messageProps) (val string, present, recogn
 	return v, ok, true
 }
 
-// compareSQL evaluates a parsed comparison. Equality falls back to string
-// compare when the operands aren't both numeric; relational operators require
-// numeric operands and otherwise report no match.
+// compareSQL evaluates a parsed comparison. Both equality and relational
+// operators fall back to lexical string compare when the operands aren't both
+// numeric, matching Service Bus SQL semantics for string/date operands.
 func compareSQL(op, got, rawVal string) bool {
 	want := unquoteSQL(rawVal)
 
@@ -502,20 +502,27 @@ func sqlEqual(got, want string) bool {
 }
 
 func sqlRelational(op, got, want string) bool {
-	g, w, ok := twoFloats(got, want)
-	if !ok {
-		return false
+	if g, w, ok := twoFloats(got, want); ok {
+		return applyRelational(op, g, w)
 	}
 
+	// Non-numeric operands (strings/dates) compare lexically, like real
+	// Service Bus, so they deliver instead of being silently dropped.
+	return applyRelational(op, float64(strings.Compare(got, want)), 0)
+}
+
+// applyRelational applies a relational operator to two ordered values, where a
+// negative/zero/positive first argument mirrors strings.Compare's convention.
+func applyRelational(op string, a, b float64) bool {
 	switch op {
 	case opLess:
-		return g < w
+		return a < b
 	case opGreater:
-		return g > w
+		return a > b
 	case opLessEqual:
-		return g <= w
+		return a <= b
 	case opGreaterEqual:
-		return g >= w
+		return a >= b
 	default:
 		return false
 	}
