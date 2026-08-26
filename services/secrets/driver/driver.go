@@ -16,6 +16,26 @@ type SecretConfig struct {
 	// the token as the VersionId, a UUID). Empty means the provider generates
 	// one. Ignored by Azure/GCP.
 	ClientRequestToken string
+	// Replication is the GCP Secret Manager replication policy (automatic or
+	// user-managed). Required by GCP's secrets.create; ignored by AWS/Azure.
+	Replication *GCPReplication
+	// Annotations is GCP Secret Manager custom metadata, distinct from labels.
+	// Ignored by AWS/Azure.
+	Annotations map[string]string
+	// TTL is the input-only GCP Secret Manager time-to-live (a duration such as
+	// "3600s"); the provider derives ExpireTime from it. Ignored by AWS/Azure.
+	TTL string
+	// ExpireTime is an explicit GCP Secret Manager RFC3339 expiry; an alternative
+	// to TTL. Ignored by AWS/Azure.
+	ExpireTime string
+	// Rotation is the GCP Secret Manager rotation policy. Ignored by AWS/Azure.
+	Rotation *GCPRotation
+	// Topics are the GCP Secret Manager Pub/Sub topic names notified on control
+	// plane operations. Ignored by AWS/Azure.
+	Topics []string
+	// VersionAliases maps GCP Secret Manager version aliases to version ids.
+	// Ignored by AWS/Azure.
+	VersionAliases map[string]string
 }
 
 // SecretInfo describes a secret.
@@ -34,6 +54,46 @@ type SecretInfo struct {
 	// Etag is an opaque optimistic-concurrency tag (GCP Secret Manager), echoed
 	// on the secret resource. Empty for providers that don't model it.
 	Etag string
+	// Replication is the GCP Secret Manager replication policy echoed on the
+	// secret resource. Nil for providers that don't model it.
+	Replication *GCPReplication
+	// Annotations is GCP Secret Manager custom metadata echoed on the secret.
+	// Nil for providers that don't model it.
+	Annotations map[string]string
+	// ExpireTime is the GCP Secret Manager RFC3339 expiry, always emitted on
+	// output when set (derived from TTL on input). Empty when unset.
+	ExpireTime string
+	// Rotation is the GCP Secret Manager rotation policy echoed on the secret.
+	// Nil for providers that don't model it.
+	Rotation *GCPRotation
+	// Topics are the GCP Secret Manager Pub/Sub topic names echoed on the secret.
+	// Nil for providers that don't model it.
+	Topics []string
+	// VersionAliases maps GCP Secret Manager version aliases to version ids,
+	// echoed on the secret and honored by GetSecretValue. Nil when unset.
+	VersionAliases map[string]string
+}
+
+// GCPReplica is one location a user-managed GCP secret replicates to, with an
+// optional customer-managed encryption key.
+type GCPReplica struct {
+	Location   string
+	KMSKeyName string
+}
+
+// GCPReplication is a GCP Secret Manager replication policy: automatic (with an
+// optional customer-managed key) or user-managed with an explicit replica list.
+type GCPReplication struct {
+	Automatic           bool
+	AutomaticKMSKeyName string
+	UserManaged         []GCPReplica
+}
+
+// GCPRotation is a GCP Secret Manager rotation policy. RotationPeriod is
+// input-only; NextRotationTime is echoed on output.
+type GCPRotation struct {
+	RotationPeriod   string
+	NextRotationTime string
 }
 
 // SecretVersion represents a specific version of a secret value.
@@ -78,11 +138,30 @@ const (
 )
 
 // GCPSecretPatch is the GCP Secret Manager secrets.patch payload. Only the
-// fields named in the update mask are applied; SetLabels true replaces the
-// label set with Labels (including clearing it when Labels is empty).
+// fields whose Set* flag is true (mapped from the update mask) are applied; a
+// Set* flag with an empty/nil value clears that field.
 type GCPSecretPatch struct {
 	Labels    map[string]string
 	SetLabels bool
+
+	Annotations    map[string]string
+	SetAnnotations bool
+
+	Topics    []string
+	SetTopics bool
+
+	VersionAliases    map[string]string
+	SetVersionAliases bool
+
+	Rotation    *GCPRotation
+	SetRotation bool
+
+	// ExpireTime / TTL carry the new expiry: TTL (a duration such as "3600s") is
+	// resolved against the provider clock, ExpireTime is an explicit RFC3339
+	// stamp. SetExpireTime true with both empty clears the expiry.
+	ExpireTime    string
+	TTL           string
+	SetExpireTime bool
 }
 
 // GCPIAMBinding binds an IAM role to a set of members.
@@ -111,7 +190,8 @@ type GCPSecrets interface {
 	// DestroySecretVersion moves a version to DESTROYED, wipes its payload, and
 	// stamps its destroyTime. It fails on an already-DESTROYED version.
 	DestroySecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
-	// PatchSecret applies a partial update (labels) to a secret's metadata.
+	// PatchSecret applies a partial update (labels, annotations, topics, version
+	// aliases, rotation, expiry) to a secret's metadata, honoring the update mask.
 	PatchSecret(ctx context.Context, name string, patch GCPSecretPatch) (*SecretInfo, error)
 	// GetSecretIAMPolicy returns the secret's stored IAM policy (an empty
 	// versioned policy when none has been set).

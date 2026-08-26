@@ -9752,7 +9752,7 @@
           },
           {
             "name": "PatchSecret",
-            "doc": "PatchSecret applies a partial update (labels) to a secret's metadata."
+            "doc": "PatchSecret applies a partial update (labels, annotations, topics, version"
           },
           {
             "name": "SetSecretIAMPolicy",
