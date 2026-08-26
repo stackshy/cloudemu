@@ -14,6 +14,14 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var tags map[string]string
+	if len(req.Tags) > 0 {
+		tags = make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			tags[t.Key] = t.Value
+		}
+	}
+
 	version, tier, err := h.store.PutParameter(r.Context(), ssmdriver.PutConfig{
 		Name:        req.Name,
 		Value:       req.Value,
@@ -22,6 +30,7 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		Overwrite:   req.Overwrite,
 		Tier:        req.Tier,
 		DataType:    req.DataType,
+		Tags:        tags,
 	})
 	if err != nil {
 		// Changing a parameter's type on an Overwrite update is rejected by

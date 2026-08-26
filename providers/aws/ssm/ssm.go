@@ -119,9 +119,15 @@ func resolveOverwriteType(existing *paramData, requested string) (string, error)
 
 // PutParameter creates a new parameter or, when Overwrite is set, appends a new
 // version to an existing one.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	if cfg.Name == "" {
 		return 0, "", errors.New(errors.InvalidArgument, "parameter name is required")
+	}
+
+	if cfg.Overwrite && len(cfg.Tags) > 0 {
+		return 0, "", driver.ErrTagsWithOverwrite
 	}
 
 	tier := cfg.Tier
@@ -137,34 +143,50 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	now := m.now()
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		existing.mu.Lock()
-		defer existing.mu.Unlock()
-
-		if !cfg.Overwrite {
-			return 0, "", errors.Newf(errors.AlreadyExists,
-				"parameter %q already exists; set Overwrite to update it", cfg.Name)
-		}
-
-		newType, err := resolveOverwriteType(existing, cfg.Type)
-		if err != nil {
-			return 0, "", err
-		}
-
-		next := existing.latest + 1
-		existing.versions = append(existing.versions, &version{
-			value:        cfg.Value,
-			typ:          newType,
-			dataType:     dataType,
-			version:      next,
-			lastModified: now,
-		})
-		existing.latest = next
-		existing.description = cfg.Description
-		existing.tier = tier
-
-		return next, tier, nil
+		return overwriteParameter(existing, &cfg, tier, dataType, now)
 	}
 
+	return m.createParameter(ctx, &cfg, tier, dataType, now)
+}
+
+// overwriteParameter appends a new version to an existing parameter (the
+// Overwrite path). Overwrite without the flag is rejected, and changing the
+// type is rejected via resolveOverwriteType.
+func overwriteParameter(
+	existing *paramData, cfg *driver.PutConfig, tier, dataType, now string,
+) (ver int64, assignedTier string, err error) {
+	existing.mu.Lock()
+	defer existing.mu.Unlock()
+
+	if !cfg.Overwrite {
+		return 0, "", errors.Newf(errors.AlreadyExists,
+			"parameter %q already exists; set Overwrite to update it", cfg.Name)
+	}
+
+	newType, err := resolveOverwriteType(existing, cfg.Type)
+	if err != nil {
+		return 0, "", err
+	}
+
+	next := existing.latest + 1
+	existing.versions = append(existing.versions, &version{
+		value:        cfg.Value,
+		typ:          newType,
+		dataType:     dataType,
+		version:      next,
+		lastModified: now,
+	})
+	existing.latest = next
+	existing.description = cfg.Description
+	existing.tier = tier
+
+	return next, tier, nil
+}
+
+// createParameter stores a brand-new parameter (version 1) with its tags.
+func (m *Mock) createParameter(
+	ctx context.Context, cfg *driver.PutConfig, tier, dataType, now string,
+) (ver int64, assignedTier string, err error) {
 	pd := &paramData{
 		name:        cfg.Name,
 		description: cfg.Description,
@@ -177,6 +199,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 			version:      1,
 			lastModified: now,
 		}},
+		tags: copyTags(cfg.Tags),
 	}
 
 	// SetIfAbsent guards against a concurrent create racing between Get and Set.
@@ -189,7 +212,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 
 		cfg.Overwrite = true
 
-		return m.PutParameter(ctx, cfg)
+		return m.PutParameter(ctx, *cfg)
 	}
 
 	return 1, tier, nil

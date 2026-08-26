@@ -35,13 +35,14 @@ type parameterMetadataJSON struct {
 // --- request envelopes ---
 
 type putParameterRequest struct {
-	Name        string `json:"Name"`
-	Value       string `json:"Value"`
-	Type        string `json:"Type"`
-	Description string `json:"Description"`
-	Overwrite   bool   `json:"Overwrite"`
-	Tier        string `json:"Tier"`
-	DataType    string `json:"DataType"`
+	Name        string   `json:"Name"`
+	Value       string   `json:"Value"`
+	Type        string   `json:"Type"`
+	Description string   `json:"Description"`
+	Overwrite   bool     `json:"Overwrite"`
+	Tier        string   `json:"Tier"`
+	DataType    string   `json:"DataType"`
+	Tags        []ssmTag `json:"Tags"`
 }
 
 type getParameterRequest struct {

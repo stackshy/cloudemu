@@ -116,6 +116,50 @@ func TestPutOverwriteChangingTypeRejected(t *testing.T) {
 	}
 }
 
+func TestPutParameterTagsOnCreate(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/t/p", Value: "v", Type: driver.TypeString,
+		Tags: map[string]string{"Env": "prod"},
+	}); err != nil {
+		t.Fatalf("PutParameter(create with tags): %v", err)
+	}
+
+	tags, err := m.ListParameterTags(ctx, "/t/p")
+	if err != nil {
+		t.Fatalf("ListParameterTags: %v", err)
+	}
+
+	if len(tags) != 1 || tags["Env"] != "prod" {
+		t.Fatalf("tags = %v, want {Env:prod}", tags)
+	}
+}
+
+func TestPutParameterOverwriteWithTagsRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/t/ot", Value: "v1", Type: driver.TypeString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	_, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/t/ot", Value: "v2", Overwrite: true,
+		Tags: map[string]string{"K": "V"},
+	})
+	if err == nil {
+		t.Fatal("PutParameter(overwrite+tags): want error, got nil")
+	}
+
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("want InvalidArgument, got %v", err)
+	}
+}
+
 func TestLabelParameterVersionAndSelector(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()

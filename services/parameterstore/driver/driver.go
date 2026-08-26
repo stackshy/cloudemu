@@ -27,6 +27,15 @@ var ErrTypeMismatch = errors.New(errors.InvalidArgument,
 		"For example, you can't change a parameter from a String type to a SecureString type. "+
 		"You must create a new, unique parameter.")
 
+// ErrTagsWithOverwrite is returned by PutParameter when Tags are supplied
+// together with Overwrite=true. Real Parameter Store rejects that combination —
+// tags can only be set when a parameter is first created (AddTagsToResource
+// changes tags on an existing one). It carries the InvalidArgument code so the
+// SDK-compat layer surfaces it as ValidationException.
+var ErrTagsWithOverwrite = errors.New(errors.InvalidArgument,
+	"The Tags and Overwrite parameters "+
+		"can't be used at the same time.")
+
 // Parameter types, matching AWS SSM Parameter Store.
 const (
 	// TypeString is a plain single-value string parameter.
@@ -47,6 +56,10 @@ type PutConfig struct {
 	Overwrite   bool
 	Tier        string
 	DataType    string
+	// Tags are applied to the parameter at create time. Real Parameter Store
+	// rejects supplying Tags together with Overwrite=true, so Tags are only
+	// meaningful on a create.
+	Tags map[string]string
 }
 
 // Parameter is a single version of a stored parameter.
