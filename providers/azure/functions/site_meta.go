@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"maps"
 	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
@@ -17,6 +19,79 @@ const keyBytes = 32
 // defaultKeyName is the name of the default key Azure provisions for a host and
 // for each function.
 const defaultKeyName = "default"
+
+// emulatorTenantID is the single Azure AD directory all emulated resources
+// report as their tenant, matching the value used by VM/AKS/ACR identity.
+const emulatorTenantID = "11111111-1111-1111-1111-111111111111"
+
+// identityTypeNone is the ARM ResourceIdentityType "None" value: no identity
+// attached.
+const identityTypeNone = "None"
+
+// SiteIdentity is the managed-service-identity attached to a function app
+// (Microsoft.Web/sites identity envelope). For a system-assigned identity the
+// PrincipalID/TenantID are synthesized on store; for each user-assigned
+// identity the per-identity PrincipalID/ClientID are synthesized. On input only
+// Type and the UserAssigned keys (the identities to attach) are meaningful.
+type SiteIdentity struct {
+	Type         string
+	PrincipalID  string
+	TenantID     string
+	UserAssigned map[string]UserAssignedIdentity
+}
+
+// UserAssignedIdentity is one entry of SiteIdentity.UserAssigned: the
+// synthesized principal/client id pair Azure reports for an attached
+// user-assigned identity.
+type UserAssignedIdentity struct {
+	PrincipalID string
+	ClientID    string
+}
+
+// clone returns a deep copy safe to hand outside the store lock.
+func (i *SiteIdentity) clone() *SiteIdentity {
+	out := *i
+	out.UserAssigned = maps.Clone(i.UserAssigned)
+
+	return &out
+}
+
+// identitySeed derives the deterministic system-assigned principal seed for a
+// site from its (resourceGroup, name), so the synthesized principalId is stable
+// across GET/List for the same site.
+func identitySeed(in *SiteMeta) string {
+	return in.ResourceGroup + "/" + in.Name
+}
+
+// resolveSiteIdentity normalizes a submitted managed identity: for a
+// system-assigned identity it synthesizes a deterministic principal/tenant GUID
+// pair, and for each user-assigned identity a deterministic principal/client
+// GUID pair, keyed by seed so the same site always reports the same identity
+// across GET/List. A nil or "None" identity resolves to nil (no identity).
+func resolveSiteIdentity(in *SiteIdentity, seed string) *SiteIdentity {
+	if in == nil || in.Type == "" || strings.EqualFold(in.Type, identityTypeNone) {
+		return nil
+	}
+
+	out := &SiteIdentity{Type: in.Type}
+
+	if strings.Contains(strings.ToLower(in.Type), "systemassigned") {
+		out.PrincipalID = idgen.SyntheticGUID("principal/site/" + seed)
+		out.TenantID = emulatorTenantID
+	}
+
+	if len(in.UserAssigned) > 0 {
+		out.UserAssigned = make(map[string]UserAssignedIdentity, len(in.UserAssigned))
+		for id := range in.UserAssigned {
+			out.UserAssigned[id] = UserAssignedIdentity{
+				PrincipalID: idgen.SyntheticGUID("principal/uai/" + id),
+				ClientID:    idgen.SyntheticGUID("client/uai/" + id),
+			}
+		}
+	}
+
+	return out
+}
 
 // SiteFunction is one function deployed to a function app
 // (Microsoft.Web/sites/functions). Azure discovers these from the deployed
@@ -39,16 +114,20 @@ type SiteMeta struct {
 	Subscription      string
 	ResourceGroup     string
 	Location          string
+	Kind              string
 	ServerFarmID      string
 	HTTPSOnly         bool
 	Reserved          bool
 	LinuxFxVersion    string
 	ProvisioningState string
-	AppSettings       map[string]string
-	MasterKey         string
-	HostFunctionKeys  map[string]string
-	SystemKeys        map[string]string
-	Functions         map[string]*SiteFunction
+	// Identity is the resolved managed-service-identity, nil when the site has
+	// none attached. It is resolved (synthesized) on upsert.
+	Identity         *SiteIdentity
+	AppSettings      map[string]string
+	MasterKey        string
+	HostFunctionKeys map[string]string
+	SystemKeys       map[string]string
+	Functions        map[string]*SiteFunction
 }
 
 // clone returns a deep copy safe to hand outside the store lock.
@@ -57,6 +136,11 @@ func (s *SiteMeta) clone() *SiteMeta {
 	out.AppSettings = maps.Clone(s.AppSettings)
 	out.HostFunctionKeys = maps.Clone(s.HostFunctionKeys)
 	out.SystemKeys = maps.Clone(s.SystemKeys)
+
+	if s.Identity != nil {
+		out.Identity = s.Identity.clone()
+	}
+
 	out.Functions = make(map[string]*SiteFunction, len(s.Functions))
 
 	for name, fn := range s.Functions {
@@ -84,17 +168,26 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 
 	if existing, ok := m.sites.Get(in.Name); ok {
 		existing.Location = in.Location
+		existing.Kind = in.Kind
 		existing.ServerFarmID = in.ServerFarmID
 		existing.HTTPSOnly = in.HTTPSOnly
 		existing.Reserved = in.Reserved
 		existing.LinuxFxVersion = in.LinuxFxVersion
 		existing.AppSettings = maps.Clone(in.AppSettings)
+
+		// A nil in.Identity means the request omitted the identity block, so the
+		// already-attached identity is preserved (real ARM PUT semantics).
+		if in.Identity != nil {
+			existing.Identity = resolveSiteIdentity(in.Identity, identitySeed(&in))
+		}
+
 		m.sites.Set(in.Name, existing)
 
 		return existing.clone(), nil
 	}
 
 	meta := in.clone()
+	meta.Identity = resolveSiteIdentity(in.Identity, identitySeed(&in))
 	meta.ProvisioningState = "Succeeded"
 	meta.MasterKey = generateKey()
 	meta.HostFunctionKeys = map[string]string{defaultKeyName: generateKey()}
