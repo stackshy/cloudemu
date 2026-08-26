@@ -163,7 +163,9 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Networking != nil {
-		srv.Register(vpc.New(d.Networking))
+		// d.Compute (may be nil) lets the subnetwork delete guard reject removing a
+		// subnet that still has instances.
+		srv.Register(vpc.New(d.Networking, d.Compute))
 	}
 
 	// Service Networking has no driver: a private-services connection is a
