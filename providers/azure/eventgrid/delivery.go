@@ -7,20 +7,27 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
-// endpointTypeWebHook is the only ARM EventSubscriptionDestination.endpointType
-// this mock actually delivers to (see deliverToTargets). ServiceBusQueue,
-// ServiceBusTopic, EventHub, AzureFunction, StorageQueue, and HybridConnection
-// destinations are parsed and round-trip on the subscription resource (the raw
-// ARM properties JSON is echoed verbatim regardless of type) but are not
-// delivered to: EventHub has no peer mock in this codebase, and wiring
-// ServiceBus/Functions delivery is left as a follow-up (see PR notes).
-const endpointTypeWebHook = "WebHook"
+// ARM EventSubscriptionDestination.endpointType values this mock delivers to.
+// WebHook POSTs the event envelope over HTTP; ServiceBusQueue/ServiceBusTopic
+// enqueue it into the peer Service Bus queue/topic; AzureFunction invokes the
+// peer Functions app with it. EventHub, StorageQueue, and HybridConnection
+// destinations are still parsed and round-trip on the subscription resource
+// (the raw ARM properties JSON is echoed verbatim regardless of type) but are
+// not delivered to: they have no peer mock in this codebase and are left as a
+// follow-up (see PR notes).
+const (
+	endpointTypeWebHook         = "WebHook"
+	endpointTypeServiceBusQueue = "ServiceBusQueue"
+	endpointTypeServiceBusTopic = "ServiceBusTopic"
+	endpointTypeAzureFunction   = "AzureFunction"
+)
 
 // defaultDataVersion is the dataVersion Event Grid stamps on a delivered event
 // when the publisher omitted one; metadataVersion is the read-only schema
@@ -99,18 +106,21 @@ type deliveryEvent struct {
 	MetadataVersion string          `json:"metadataVersion"`
 }
 
-// deliverToTargets POSTs event to every matched subscription's WebHook
-// destination. Delivery is synchronous (mirroring how AWS EventBridge's
-// deliverToTargets runs in-line in this codebase) but decoupled from the
-// caller's context so a client that cancels its publish request doesn't abort
-// in-flight deliveries. The caller ctx's re-entrant delivery depth is carried
-// forward so a self-referential WebHook chain (a subscription endpointUrl that
-// points back at this emulator's publish endpoint) stays bounded — the cap is
-// enforced in postWebhook, mirroring lambda.InvokeExternal. ServiceBusQueue/
-// Topic, EventHub, and AzureFunction destinations are parsed and round-trip on
-// the subscription resource, but are not delivered to: EventHub has no peer
-// mock in this codebase, and wiring ServiceBus/Functions delivery is left as a
-// follow-up (see PR notes).
+// deliverToTargets delivers event to every matched subscription's destination,
+// dispatched by the destination's endpointType: WebHook (HTTP POST),
+// ServiceBusQueue/ServiceBusTopic (enqueue into the peer Service Bus), and
+// AzureFunction (invoke the peer Functions app). All destinations receive the
+// same rendered EventGridEvent envelope. Delivery is synchronous (mirroring how
+// AWS EventBridge's deliverToTargets runs in-line in this codebase) but
+// decoupled from the caller's context so a client that cancels its publish
+// request doesn't abort in-flight deliveries. The caller ctx's re-entrant
+// delivery depth is carried forward so a self-referential chain (a WebHook that
+// points back at this emulator, or a Function that re-publishes) stays bounded —
+// the cap is enforced in postWebhook / functions.InvokeExternal, mirroring
+// lambda.InvokeExternal. EventHub, StorageQueue, and HybridConnection
+// destinations are parsed and round-trip on the subscription resource but are
+// not delivered to (no peer mock; see PR notes). Filters are already applied by
+// matchedRuleData, so every rd here is a filter-matched subscription.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event *driver.Event, topicARN string) {
 	if len(matched) == 0 {
 		return
@@ -137,12 +147,73 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event 
 	}
 
 	for _, rd := range matched {
-		if rd.dest.EndpointType != endpointTypeWebHook || rd.dest.EndpointURL == "" {
-			continue
+		m.dispatchDestination(dctx, rd.dest, body)
+	}
+}
+
+// dispatchDestination routes one rendered envelope to a single subscription
+// destination by its endpointType. A nil peer (the injector was never wired) or
+// an unresolvable resource id is skipped gracefully — never a panic — matching
+// how EventBridge's dispatchTarget silently ignores an unwired sink.
+func (m *Mock) dispatchDestination(ctx context.Context, dest subscriptionDestination, body []byte) {
+	switch dest.EndpointType {
+	case endpointTypeWebHook:
+		if dest.EndpointURL != "" {
+			m.postWebhook(ctx, dest.EndpointURL, body)
+		}
+	case endpointTypeServiceBusQueue, endpointTypeServiceBusTopic:
+		if m.serviceBus == nil {
+			return
 		}
 
-		m.postWebhook(dctx, rd.dest.EndpointURL, body)
+		if name := resourceLeafName(dest.ResourceID); name != "" {
+			_ = m.serviceBus.DeliverExternal(ctx, name, string(body))
+		}
+	case endpointTypeAzureFunction:
+		if m.functions == nil {
+			return
+		}
+
+		if app := functionAppName(dest.ResourceID); app != "" {
+			_ = m.functions.InvokeExternal(ctx, app, body)
+		}
 	}
+}
+
+// resourceLeafName returns the trailing path segment of an ARM resource id — the
+// Service Bus queue or topic name in a ServiceBusQueue/ServiceBusTopic
+// destination's resourceId (.../namespaces/<ns>/queues/<q> or .../topics/<t>).
+func resourceLeafName(resourceID string) string {
+	trimmed := strings.TrimRight(resourceID, "/")
+	if trimmed == "" {
+		return ""
+	}
+
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		return trimmed[i+1:]
+	}
+
+	return trimmed
+}
+
+// functionAppName returns the function-app (site) name from an AzureFunction
+// destination's resourceId (.../Microsoft.Web/sites/<app>/functions/<fn>). The
+// Functions mock is keyed by the app name (its Microsoft.Web/sites resource), so
+// the app segment — not the trailing <fn> — is what resolves the peer.
+func functionAppName(resourceID string) string {
+	const marker = "/sites/"
+
+	i := strings.Index(resourceID, marker)
+	if i < 0 {
+		return ""
+	}
+
+	rest := resourceID[i+len(marker):]
+	if j := strings.Index(rest, "/"); j >= 0 {
+		return rest[:j]
+	}
+
+	return rest
 }
 
 // postWebhook delivers one rendered batch to a WebHook endpoint, matching the

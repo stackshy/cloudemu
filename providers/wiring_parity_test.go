@@ -38,9 +38,9 @@
 //	Change stream -> function         DynamoDB.SetStreamInvoker (wired)      N/A: cosmosdb records its change feed   N/A: firestore records its change
 //	                                                                         internally but exposes no invoker       stream internally but exposes no
 //	                                                                         injector                                invoker injector
-//	Event bus -> targets              EventBridge.Set{SQSDeliverer,          N/A: eventgrid exposes SetMonitoring    N/A: eventarc exposes SetMonitoring
-//	                                  LambdaInvoker,SNSPublisher,            only, no target-delivery injector       only, no target-delivery injector
-//	                                  StepFunctionsStarter} (wired)
+//	Event bus -> targets              EventBridge.Set{SQSDeliverer,          EventGrid.Set{ServiceBusDeliverer,      N/A: eventarc exposes SetMonitoring
+//	                                  LambdaInvoker,SNSPublisher,            FunctionInvoker} (wired; ServiceBus-    only, no target-delivery injector
+//	                                  StepFunctionsStarter} (wired)          Queue/Topic + AzureFunction targets)
 //	Topic -> queue fan-out            SNS.SetSQSDeliverer (wired)            N/A: servicebus exposes no fan-out      N/A: pubsub exposes no fan-out
 //	                                                                         injector (SetTrigger is a per-queue     injector (SetTrigger is a per-queue
 //	                                                                         callback registration, not a           callback registration, not a

@@ -139,6 +139,31 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 	delete(m.triggers, queueURL)
 }
 
+// DeliverExternal enqueues body into the queue or topic whose name matches the
+// given name. It is used for cross-service delivery such as Event Grid ->
+// ServiceBusQueue/ServiceBusTopic, where the source only knows the destination's
+// ARM leaf name. A topic is modeled as a queue in this mock, so both resolve the
+// same way. Returns NotFound if no queue matches, which callers may ignore for a
+// best-effort sink.
+func (m *Mock) DeliverExternal(ctx context.Context, name, body string) error {
+	var url string
+
+	for _, qd := range m.queues.SortedValues() {
+		if qd.info.Name == name {
+			url = qd.info.URL
+			break
+		}
+	}
+
+	if url == "" {
+		return cerrors.Newf(cerrors.NotFound, "no queue found for name %q", name)
+	}
+
+	_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: body})
+
+	return err
+}
+
 // CreateQueue creates a new Service Bus queue.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
