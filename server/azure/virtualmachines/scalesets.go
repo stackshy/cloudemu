@@ -3,6 +3,7 @@ package virtualmachines
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	providervm "github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
@@ -130,7 +131,9 @@ func getScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePat
 	}
 
 	for i := range sets {
-		if sets[i].Name == rp.ResourceName {
+		// ARM resource names are case-insensitive, so a GET with a
+		// differently-cased scale-set name must still resolve it.
+		if strings.EqualFold(sets[i].Name, rp.ResourceName) {
 			azurearm.WriteJSON(w, http.StatusOK, toVMSSResponse(&sets[i], rp))
 			return
 		}

@@ -33,6 +33,8 @@ func newPropertyOverlay() *propertyOverlay {
 // entry. An empty set clears the entry so a resource that no longer carries
 // unmodeled properties (e.g. re-created without them) does not keep stale ones.
 func (o *propertyOverlay) capture(id string, unmodeled map[string]any) {
+	id = normalizeOverlayKey(id)
+
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -46,10 +48,42 @@ func (o *propertyOverlay) capture(id string, unmodeled map[string]any) {
 
 // lookup returns the unmodeled properties recorded for id, or nil.
 func (o *propertyOverlay) lookup(id string) map[string]any {
+	id = normalizeOverlayKey(id)
+
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
 	return o.store[id]
+}
+
+// normalizeOverlayKey lowercases the resource-group segment of an ARM resource
+// id so overlay entries key case-insensitively on the resource group, matching
+// ARM's case-insensitive resource-group semantics. A resource created under
+// resourceGroups/rg-1 and read back via resourceGroups/RG-1 must resolve the
+// same overlay entry; without this, the differently-cased read would miss and
+// silently drop unmodeled properties. Only the resource-group segment is
+// touched — the rest of the id (including the resource name) is left byte-for-
+// byte, so distinct resources never collide. Applied identically on capture,
+// lookup and evict, so the internal map key is consistent regardless of the
+// casing a request used; the response body's id is never altered.
+func normalizeOverlayKey(id string) string {
+	const marker = "/resourceGroups/"
+
+	i := strings.Index(id, marker)
+	if i < 0 {
+		return id
+	}
+
+	start := i + len(marker)
+
+	end := strings.IndexByte(id[start:], '/')
+	if end < 0 {
+		return id[:start] + strings.ToLower(id[start:])
+	}
+
+	end += start
+
+	return id[:start] + strings.ToLower(id[start:end]) + id[end:]
 }
 
 // evict drops any entry for id — called when a resource is deleted so the
@@ -58,6 +92,8 @@ func (o *propertyOverlay) evict(id string) {
 	if id == "" {
 		return
 	}
+
+	id = normalizeOverlayKey(id)
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
