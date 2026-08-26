@@ -125,15 +125,16 @@ func TestSDKMemorystoreNetworkDefaults(t *testing.T) {
 	}
 }
 
-// TestSDKMemorystoreReadEndpointStandardHA guards that Standard-tier instances
-// expose a read endpoint distinct from the primary host.
+// TestSDKMemorystoreReadEndpointStandardHA guards that instances with read
+// replicas enabled expose a read endpoint distinct from the primary host.
 func TestSDKMemorystoreReadEndpointStandardHA(t *testing.T) {
 	svc := newRedisService(t)
 	ctx := context.Background()
 
 	if _, err := svc.Projects.Locations.Instances.Create(parent(), &redis.Instance{
-		Tier:         "STANDARD_HA",
-		MemorySizeGb: 5,
+		Tier:             "STANDARD_HA",
+		MemorySizeGb:     5,
+		ReadReplicasMode: "READ_REPLICAS_ENABLED",
 	}).InstanceId("ha-cache").Context(ctx).Do(); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

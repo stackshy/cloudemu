@@ -12,10 +12,16 @@ const (
 	defaultRedisPort    = 6379
 	defaultRedisVersion = "REDIS_6_X"
 	defaultTier         = "BASIC"
-	tierStandardHA      = "STANDARD_HA"
 	defaultConnectMode  = "DIRECT_PEERING"
 	defaultNetwork      = "default"
 	defaultZoneSuffix   = "-a"
+	defaultMemorySizeGb = 1
+	// readReplicasEnabled is the readReplicasMode that makes Memorystore expose a
+	// read endpoint (independent of tier).
+	readReplicasEnabled = "READ_REPLICAS_ENABLED"
+	// reservedPrefix marks tag keys that carry cloudemu-internal fields, not user
+	// labels.
+	reservedPrefix = "cloudemu:"
 	// stateReady is Memorystore's terminal instance state; the mock provisions
 	// synchronously so every instance reports READY.
 	stateReady = "READY"
@@ -44,11 +50,17 @@ type instanceJSON struct {
 	ReadEndpoint      string            `json:"readEndpoint,omitempty"`
 	ReadEndpointPort  int64             `json:"readEndpointPort,omitempty"`
 	PersistenceIAMID  string            `json:"persistenceIamIdentity,omitempty"`
+	RedisConfigs      map[string]string `json:"redisConfigs,omitempty"`
+	AuthEnabled       bool              `json:"authEnabled,omitempty"`
+	TransitEncryption string            `json:"transitEncryptionMode,omitempty"`
+	ReplicaCount      int64             `json:"replicaCount,omitempty"`
+	ReadReplicasMode  string            `json:"readReplicasMode,omitempty"`
 }
 
 // listInstancesResponse mirrors redis/v1 ListInstancesResponse.
 type listInstancesResponse struct {
-	Instances []instanceJSON `json:"instances"`
+	Instances     []instanceJSON `json:"instances"`
+	NextPageToken string         `json:"nextPageToken,omitempty"`
 }
 
 // operationJSON mirrors google.longrunning.Operation. Mutating ops complete
@@ -114,24 +126,14 @@ func toInstanceJSON(project, location, instanceID string, info *cachedriver.Cach
 		tier = info.NodeType
 	}
 
-	memSize := int64(1)
-	if v, err := strconv.ParseInt(info.Tags[memorySizeTag], 10, 64); err == nil && v > 0 {
-		memSize = v
-	}
-
-	redisVersion := defaultRedisVersion
-	if v := info.Tags[redisVersionTag]; v != "" {
-		redisVersion = v
-	}
-
 	zone := zoneForLocation(location, info.Tags[locationIDTag])
 
 	inst := instanceJSON{
 		Name:              instanceResourceName(project, location, instanceID),
 		DisplayName:       info.Tags[displayNameTag],
 		Tier:              tier,
-		MemorySizeGb:      memSize,
-		RedisVersion:      redisVersion,
+		MemorySizeGb:      memorySizeFromTags(info.Tags),
+		RedisVersion:      redisVersionFromTags(info.Tags),
 		State:             stateOrReady(info.Status),
 		Host:              host,
 		Port:              port,
@@ -143,16 +145,75 @@ func toInstanceJSON(project, location, instanceID string, info *cachedriver.Cach
 		AuthorizedNetwork: authorizedNetworkOrDefault(project, info.Tags[authorizedNetworkTag]),
 		ConnectMode:       connectModeOrDefault(info.Tags[connectModeTag]),
 		PersistenceIAMID:  persistenceIAMIdentity(project),
+		RedisConfigs:      redisConfigsFromTags(info.Tags),
+		AuthEnabled:       boolFromTag(info.Tags[authEnabledTag]),
+		TransitEncryption: info.Tags[transitEncryptionTag],
+		ReplicaCount:      intFromTag(info.Tags[replicaCountTag]),
+		ReadReplicasMode:  info.Tags[readReplicasModeTag],
 	}
 
-	// The read endpoint is a Standard-tier-only replica endpoint; BASIC
-	// standalone instances leave it unset (matching real Memorystore).
-	if strings.EqualFold(tier, tierStandardHA) {
+	// The read endpoint is provided only when read replicas are enabled (matching
+	// real Memorystore); tier alone does not expose it.
+	if strings.EqualFold(inst.ReadReplicasMode, readReplicasEnabled) {
 		inst.ReadEndpoint = readReplicaHost(host)
 		inst.ReadEndpointPort = port
 	}
 
 	return inst
+}
+
+// memorySizeFromTags reads the round-tripped memorySizeGb, defaulting to the
+// stub the API surface requires when unset.
+func memorySizeFromTags(tags map[string]string) int64 {
+	if v, err := strconv.ParseInt(tags[memorySizeTag], 10, 64); err == nil && v > 0 {
+		return v
+	}
+
+	return defaultMemorySizeGb
+}
+
+// redisVersionFromTags reads the round-tripped redisVersion, defaulting to the
+// stub version when unset.
+func redisVersionFromTags(tags map[string]string) string {
+	if v := tags[redisVersionTag]; v != "" {
+		return v
+	}
+
+	return defaultRedisVersion
+}
+
+// redisConfigsFromTags decodes the JSON-encoded redisConfigs map round-tripped
+// through the reserved tag; a missing or malformed value yields no configs.
+func redisConfigsFromTags(tags map[string]string) map[string]string {
+	raw := tags[redisConfigsTag]
+	if raw == "" {
+		return nil
+	}
+
+	var cfg map[string]string
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil
+	}
+
+	return cfg
+}
+
+// boolFromTag parses a boolean reserved tag, treating any unparseable value as
+// false.
+func boolFromTag(v string) bool {
+	b, _ := strconv.ParseBool(v)
+	return b
+}
+
+// intFromTag parses an integer reserved tag, treating any unparseable value as
+// zero.
+func intFromTag(v string) int64 {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	return n
 }
 
 // zoneForLocation resolves the instance's zone. Real Memorystore reports a zone
@@ -225,50 +286,255 @@ const (
 	authorizedNetworkTag = "cloudemu:gcpAuthorizedNetwork"
 	connectModeTag       = "cloudemu:gcpConnectMode"
 	locationIDTag        = "cloudemu:gcpLocationId"
+	redisConfigsTag      = "cloudemu:gcpRedisConfigs"
+	authEnabledTag       = "cloudemu:gcpAuthEnabled"
+	transitEncryptionTag = "cloudemu:gcpTransitEncryptionMode"
+	replicaCountTag      = "cloudemu:gcpReplicaCount"
+	readReplicasModeTag  = "cloudemu:gcpReadReplicasMode"
+	// tagTrue is the stored value for a set boolean reserved tag.
+	tagTrue = "true"
 )
 
-// instanceTags folds the GCP-specific request fields into the tag map, layered
-// over existing tags so a partial PATCH keeps unspecified values.
-func instanceTags(body *instanceJSON, existing map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(body.Labels))
+// fieldMask is the set of instance fields a PATCH updateMask selects. A nil mask
+// (Create, or a PATCH with no updateMask) applies every field the body provides.
+type fieldMask map[string]bool
+
+// parseFieldMask parses an updateMask query value into a set of field paths. An
+// empty value yields a nil mask, meaning "apply all provided fields".
+func parseFieldMask(raw string) fieldMask {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	m := make(fieldMask)
+
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			m[f] = true
+		}
+	}
+
+	return m
+}
+
+// has reports whether field is selected. A nil mask selects every field.
+func (m fieldMask) has(field string) bool {
+	return m == nil || m[field]
+}
+
+// explicit reports whether field is named in a non-nil mask. Unlike has, a nil
+// mask is NOT treated as selecting the field — used where a nil mask must
+// preserve the existing value (map whole-replace, clearing a scalar to its zero)
+// rather than overwrite it from an omitted body field.
+func (m fieldMask) explicit(field string) bool {
+	return m != nil && m[field]
+}
+
+// mapFieldMode selects how a map-valued field (labels, redisConfigs) folds into
+// the tag set.
+type mapFieldMode int
+
+const (
+	// mapModePreserve leaves the existing value untouched (non-nil mask that omits
+	// the field).
+	mapModePreserve mapFieldMode = iota
+	// mapModeMerge overlays the request value onto the existing one so unspecified
+	// entries survive (nil mask — no updateMask).
+	mapModeMerge
+	// mapModeReplace whole-replaces the field with the request value so a removed
+	// entry is cleared (field explicitly named in the mask).
+	mapModeReplace
+)
+
+// mapMode resolves the fold mode for a map-valued field. A nil mask merges
+// forward (preserving existing entries); an explicit mask whole-replaces; a
+// non-nil mask that omits the field preserves it untouched.
+func (m fieldMask) mapMode(field string) mapFieldMode {
+	switch {
+	case m == nil:
+		return mapModeMerge
+	case m[field]:
+		return mapModeReplace
+	default:
+		return mapModePreserve
+	}
+}
+
+// stringTagField pairs an updateMask field path with the reserved tag key and
+// request value that back it, so simple string fields fold in via one loop.
+type stringTagField struct {
+	field string
+	tag   string
+	value string
+}
+
+// instanceTags folds the GCP-specific request fields into the tag map. A non-nil
+// mask (PATCH updateMask) applies only its named fields, leaving the rest
+// untouched, and whole-replaces the map fields it names so a removed entry
+// disappears. A nil mask (Create, or a PATCH without updateMask) applies every
+// provided field and MERGES the map fields forward, so unspecified labels /
+// redisConfigs survive.
+func instanceTags(body *instanceJSON, existing map[string]string, mask fieldMask) map[string]string {
+	out := carryForwardTags(existing, mask)
+
+	applyLabels(out, body, mask)
+	applyStringTags(out, body, mask)
+	applyScalarTags(out, body, mask)
+	applyRedisConfigs(out, body, mask)
+
+	return out
+}
+
+// carryForwardTags copies existing tags forward, dropping user labels only for an
+// explicit labels whole-replace; a nil mask merges forward, so existing labels
+// must survive. Reserved keys always carry forward.
+func carryForwardTags(existing map[string]string, mask fieldMask) map[string]string {
+	out := make(map[string]string, len(existing)+1)
+	dropLabels := mask.mapMode("labels") == mapModeReplace
 
 	for k, v := range existing {
+		if dropLabels && !strings.HasPrefix(k, reservedPrefix) {
+			continue
+		}
+
 		out[k] = v
+	}
+
+	return out
+}
+
+// applyLabels overlays the request's labels. Merge and replace both overlay;
+// replace additionally dropped the existing labels in carryForwardTags. Preserve
+// applies nothing, leaving the carried-forward labels untouched.
+func applyLabels(out map[string]string, body *instanceJSON, mask fieldMask) {
+	if mask.mapMode("labels") == mapModePreserve {
+		return
 	}
 
 	for k, v := range body.Labels {
 		out[k] = v
 	}
+}
 
-	if body.MemorySizeGb > 0 {
+// applyStringTags folds the simple string fields in, honoring the mask.
+func applyStringTags(out map[string]string, body *instanceJSON, mask fieldMask) {
+	for _, f := range stringTagFields(body) {
+		if mask.has(f.field) && f.value != "" {
+			out[f.tag] = f.value
+		}
+	}
+}
+
+func stringTagFields(body *instanceJSON) []stringTagField {
+	return []stringTagField{
+		{"redisVersion", redisVersionTag, body.RedisVersion},
+		{"displayName", displayNameTag, body.DisplayName},
+		{"reservedIpRange", reservedIPTag, body.ReservedIPRng},
+		{"authorizedNetwork", authorizedNetworkTag, body.AuthorizedNetwork},
+		{"connectMode", connectModeTag, body.ConnectMode},
+		{"locationId", locationIDTag, body.LocationID},
+		{"transitEncryptionMode", transitEncryptionTag, body.TransitEncryption},
+		{"readReplicasMode", readReplicasModeTag, body.ReadReplicasMode},
+	}
+}
+
+// applyScalarTags folds the numeric and boolean fields in, honoring the mask.
+func applyScalarTags(out map[string]string, body *instanceJSON, mask fieldMask) {
+	if mask.has("memorySizeGb") && body.MemorySizeGb > 0 {
 		out[memorySizeTag] = strconv.FormatInt(body.MemorySizeGb, 10)
 	}
 
-	if body.RedisVersion != "" {
-		out[redisVersionTag] = body.RedisVersion
+	applyReplicaCount(out, body, mask)
+	applyAuthEnabled(out, body, mask)
+}
+
+// applyReplicaCount folds replicaCount in. An explicit mask applies the value
+// including 0 (a valid "no replicas" setting, so it can be cleared); a nil mask
+// can't distinguish an omitted 0 from an intentional one, so it applies only a
+// positive value and otherwise preserves the existing count.
+func applyReplicaCount(out map[string]string, body *instanceJSON, mask fieldMask) {
+	if mask.explicit("replicaCount") {
+		out[replicaCountTag] = strconv.FormatInt(body.ReplicaCount, 10)
+
+		return
 	}
 
-	if body.DisplayName != "" {
-		out[displayNameTag] = body.DisplayName
+	if mask == nil && body.ReplicaCount > 0 {
+		out[replicaCountTag] = strconv.FormatInt(body.ReplicaCount, 10)
+	}
+}
+
+// applyAuthEnabled folds authEnabled in. An explicit mask sets or clears it; a
+// nil mask can't distinguish an omitted false from an intentional one, so it sets
+// only a true value and otherwise preserves the existing flag.
+func applyAuthEnabled(out map[string]string, body *instanceJSON, mask fieldMask) {
+	if mask.explicit("authEnabled") {
+		setBoolTag(out, authEnabledTag, body.AuthEnabled)
+
+		return
 	}
 
-	if body.ReservedIPRng != "" {
-		out[reservedIPTag] = body.ReservedIPRng
+	if mask == nil && body.AuthEnabled {
+		out[authEnabledTag] = tagTrue
+	}
+}
+
+// setBoolTag records a true boolean and clears the tag when false.
+func setBoolTag(out map[string]string, key string, val bool) {
+	if val {
+		out[key] = tagTrue
+
+		return
 	}
 
-	if body.AuthorizedNetwork != "" {
-		out[authorizedNetworkTag] = body.AuthorizedNetwork
+	delete(out, key)
+}
+
+// applyRedisConfigs folds the JSON-encoded redisConfigs map in per its mask mode:
+// preserve leaves the stored value untouched, replace whole-replaces it (an empty
+// map clears it), and merge overlays the request onto the existing configs so
+// unspecified entries survive a no-updateMask PATCH.
+func applyRedisConfigs(out map[string]string, body *instanceJSON, mask fieldMask) {
+	switch mask.mapMode("redisConfigs") {
+	case mapModePreserve:
+		return
+	case mapModeReplace:
+		setRedisConfigs(out, body.RedisConfigs)
+	case mapModeMerge:
+		mergeRedisConfigs(out, body.RedisConfigs)
+	}
+}
+
+// setRedisConfigs whole-replaces the redisConfigs tag; an empty map clears it.
+func setRedisConfigs(out, cfg map[string]string) {
+	delete(out, redisConfigsTag)
+
+	if len(cfg) == 0 {
+		return
 	}
 
-	if body.ConnectMode != "" {
-		out[connectModeTag] = body.ConnectMode
+	if raw, err := json.Marshal(cfg); err == nil {
+		out[redisConfigsTag] = string(raw)
+	}
+}
+
+// mergeRedisConfigs overlays the request configs onto the existing ones, leaving
+// the stored value untouched when the request supplies none.
+func mergeRedisConfigs(out, cfg map[string]string) {
+	if len(cfg) == 0 {
+		return
 	}
 
-	if body.LocationID != "" {
-		out[locationIDTag] = body.LocationID
+	merged := redisConfigsFromTags(out)
+	if merged == nil {
+		merged = make(map[string]string, len(cfg))
 	}
 
-	return out
+	for k, v := range cfg {
+		merged[k] = v
+	}
+
+	setRedisConfigs(out, merged)
 }
 
 // stripReservedTags returns user labels without cloudemu-internal keys.
@@ -280,7 +546,7 @@ func stripReservedTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if strings.HasPrefix(k, "cloudemu:") {
+		if strings.HasPrefix(k, reservedPrefix) {
 			continue
 		}
 
