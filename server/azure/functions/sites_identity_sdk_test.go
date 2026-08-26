@@ -68,6 +68,43 @@ func TestSDKSiteKindRoundTrips(t *testing.T) {
 	}
 }
 
+// TestSDKSiteKindPreservedOnUpdateOmit confirms an update PUT that omits kind
+// (e.g. changing only app settings) preserves the existing kind rather than
+// reverting it to the create-time "functionapp" default.
+func TestSDKSiteKindPreservedOnUpdateOmit(t *testing.T) {
+	client, ctx := newFunctionsTestServer(t)
+
+	createSite(t, ctx, client, "sdk-kind-upd", armappservice.Site{
+		Kind:       to.Ptr("app,linux"),
+		Location:   to.Ptr("eastus"),
+		Properties: &armappservice.SiteProperties{SiteConfig: &armappservice.SiteConfig{}},
+	})
+
+	// Update PUT with kind omitted, touching only app settings.
+	updated := createSite(t, ctx, client, "sdk-kind-upd", armappservice.Site{
+		Location: to.Ptr("eastus"),
+		Properties: &armappservice.SiteProperties{
+			SiteConfig: &armappservice.SiteConfig{
+				AppSettings: []*armappservice.NameValuePair{
+					{Name: to.Ptr("FOO"), Value: to.Ptr("bar")},
+				},
+			},
+		},
+	})
+	if updated.Kind == nil || *updated.Kind != "app,linux" {
+		t.Fatalf("updated Kind = %v, want app,linux preserved", updated.Kind)
+	}
+
+	got, err := client.Get(ctx, rgName, "sdk-kind-upd", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.Kind == nil || *got.Kind != "app,linux" {
+		t.Fatalf("got Kind = %v, want app,linux preserved after update", got.Kind)
+	}
+}
+
 // TestSDKSiteKindDefaultsWhenOmitted confirms an omitted kind still reports the
 // "functionapp" default.
 func TestSDKSiteKindDefaultsWhenOmitted(t *testing.T) {

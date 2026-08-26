@@ -168,12 +168,17 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 
 	if existing, ok := m.sites.Get(in.Name); ok {
 		existing.Location = in.Location
-		existing.Kind = in.Kind
 		existing.ServerFarmID = in.ServerFarmID
 		existing.HTTPSOnly = in.HTTPSOnly
 		existing.Reserved = in.Reserved
 		existing.LinuxFxVersion = in.LinuxFxVersion
 		existing.AppSettings = maps.Clone(in.AppSettings)
+
+		// An empty in.Kind means the request omitted kind, so the existing kind
+		// is preserved rather than reverting to the create-time default.
+		if in.Kind != "" {
+			existing.Kind = in.Kind
+		}
 
 		// A nil in.Identity means the request omitted the identity block, so the
 		// already-attached identity is preserved (real ARM PUT semantics).
