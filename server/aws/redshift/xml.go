@@ -104,6 +104,7 @@ type clusterResult struct {
 
 type clustersResult struct {
 	Clusters clustersXML `xml:"Clusters"`
+	Marker   string      `xml:"Marker,omitempty"`
 }
 
 type clustersXML struct {
@@ -116,6 +117,7 @@ type snapshotResult struct {
 
 type snapshotsResult struct {
 	Snapshots snapshotsXML `xml:"Snapshots"`
+	Marker    string       `xml:"Marker,omitempty"`
 }
 
 type snapshotsXML struct {

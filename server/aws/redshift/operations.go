@@ -102,14 +102,21 @@ func (h *Handler) describeClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := clustersXML{Cluster: make([]clusterXML, 0, len(clusters))}
-	for i := range clusters {
-		out.Cluster = append(out.Cluster, toClusterXML(&clusters[i]))
+	page, err := paginateRedshift(clusters, func(c rdbdriver.Cluster) string { return c.ID },
+		r.Form.Get("Marker"), r.Form.Get("MaxRecords"))
+	if err != nil {
+		writeInvalidMarker(w)
+		return
+	}
+
+	out := clustersXML{Cluster: make([]clusterXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.Cluster = append(out.Cluster, toClusterXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeClustersResponse{
 		Xmlns:    Namespace,
-		Result:   clustersResult{Clusters: out},
+		Result:   clustersResult{Clusters: out, Marker: page.NextPageToken},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -231,14 +238,21 @@ func (h *Handler) describeClusterSnapshots(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	out := snapshotsXML{Snapshot: make([]snapshotXML, 0, len(snaps))}
-	for i := range snaps {
-		out.Snapshot = append(out.Snapshot, toSnapshotXML(&snaps[i]))
+	page, err := paginateRedshift(snaps, func(s rdbdriver.ClusterSnapshot) string { return s.ID },
+		form.Get("Marker"), form.Get("MaxRecords"))
+	if err != nil {
+		writeInvalidMarker(w)
+		return
+	}
+
+	out := snapshotsXML{Snapshot: make([]snapshotXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.Snapshot = append(out.Snapshot, toSnapshotXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeClusterSnapshotsResponse{
 		Xmlns:    Namespace,
-		Result:   snapshotsResult{Snapshots: out},
+		Result:   snapshotsResult{Snapshots: out, Marker: page.NextPageToken},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
