@@ -36,9 +36,11 @@ const (
 const (
 	KeyAlgRSA2048 = "RSA_2048"
 	KeyAlgRSA1024 = "RSA_1024"
+	KeyAlgRSA3072 = "RSA_3072"
 	KeyAlgRSA4096 = "RSA_4096"
 	KeyAlgECP256  = "EC_prime256v1"
 	KeyAlgECP384  = "EC_secp384r1"
+	KeyAlgECP521  = "EC_secp521r1"
 )
 
 // Certificate transparency logging preferences.
@@ -117,9 +119,12 @@ type ImportCertificateInput struct {
 	Tags           map[string]string
 }
 
-// ListFilter narrows ListCertificates.
+// ListFilter narrows ListCertificates. An empty KeyTypes applies ACM's default
+// filtering, which returns only RSA_2048 certificates; a non-empty KeyTypes
+// returns only certificates whose key algorithm is in the set.
 type ListFilter struct {
 	Statuses []string
+	KeyTypes []string
 }
 
 // AccountConfiguration is the account-level ACM configuration.

@@ -168,8 +168,23 @@ type certArnRequest struct {
 	CertificateArn string `json:"CertificateArn"`
 }
 
+type listFiltersJSON struct {
+	KeyTypes []string `json:"keyTypes"`
+}
+
 type listCertificatesRequest struct {
-	CertificateStatuses []string `json:"CertificateStatuses"`
+	CertificateStatuses []string         `json:"CertificateStatuses"`
+	Includes            *listFiltersJSON `json:"Includes"`
+	MaxItems            *int32           `json:"MaxItems"`
+	NextToken           string           `json:"NextToken"`
+}
+
+func (r *listCertificatesRequest) keyTypes() []string {
+	if r.Includes == nil {
+		return nil
+	}
+
+	return r.Includes.KeyTypes
 }
 
 type exportCertificateRequest struct {

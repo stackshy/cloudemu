@@ -1,6 +1,7 @@
 package acm
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,31 +19,37 @@ import (
 )
 
 const (
-	rsaKeyBits    = 2048
 	rsaBits1024   = 1024
+	rsaBits2048   = 2048
+	rsaBits3072   = 3072
 	rsaBits4096   = 4096
 	certValidDays = 395 // ACM public certs are valid ~13 months
 	serialBits    = 128
+
+	sigAlgRSASHA256 = "SHA256WITHRSA"
 )
 
 // issuedMaterial is the generated PEM material for a certificate.
 type issuedMaterial struct {
-	certPEM  string
-	keyPEM   string
-	chainPEM string
-	serial   string
-	subject  string
-	issuer   string
-	notAfter time.Time
+	certPEM      string
+	keyPEM       string
+	chainPEM     string
+	serial       string
+	subject      string
+	issuer       string
+	notAfter     time.Time
+	keyAlgorithm string
+	sigAlgorithm string
 }
 
 // generateCertificate issues a real self-signed X.509 certificate for the given
-// domains, valid from now. The single self-signed cert doubles as its own chain
-// root, which is enough for a local emulator (clients that pin a CA can add it).
-func generateCertificate(domain string, sans []string, notBefore time.Time) (*issuedMaterial, error) {
-	key, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+// domains and key algorithm, valid from now. The single self-signed cert doubles
+// as its own chain root, which is enough for a local emulator (clients that pin a
+// CA can add it). An unsupported keyAlg is an InvalidParameterException.
+func generateCertificate(keyAlg, domain string, sans []string, notBefore time.Time) (*issuedMaterial, error) {
+	signer, keyPEM, sigAlg, err := generateKeyMaterial(keyAlg)
 	if err != nil {
-		return nil, errors.Newf(errors.Internal, "generate key: %v", err)
+		return nil, err
 	}
 
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), serialBits))
@@ -65,25 +72,75 @@ func generateCertificate(domain string, sans []string, notBefore time.Time) (*is
 		DNSNames:              dnsNames,
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, signer.Public(), signer)
 	if err != nil {
 		return nil, errors.Newf(errors.Internal, "create certificate: %v", err)
 	}
 
 	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{
-		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key),
-	}))
 
 	return &issuedMaterial{
-		certPEM:  certPEM,
-		keyPEM:   keyPEM,
-		chainPEM: certPEM, // self-signed: the cert is its own chain
-		serial:   formatSerial(serial),
-		subject:  "CN=" + domain,
-		issuer:   "Amazon",
-		notAfter: tmpl.NotAfter,
+		certPEM:      certPEM,
+		keyPEM:       keyPEM,
+		chainPEM:     certPEM, // self-signed: the cert is its own chain
+		serial:       formatSerial(serial),
+		subject:      "CN=" + domain,
+		issuer:       "Amazon",
+		notAfter:     tmpl.NotAfter,
+		keyAlgorithm: keyAlg,
+		sigAlgorithm: sigAlg,
 	}, nil
+}
+
+// generateKeyMaterial produces a private key for the requested ACM KeyAlgorithm,
+// returning the signer, its PEM encoding, and the matching SignatureAlgorithm.
+// It mirrors the RSA/EC algorithms real ACM accepts on RequestCertificate.
+func generateKeyMaterial(keyAlg string) (signer crypto.Signer, keyPEM, sigAlg string, err error) {
+	switch keyAlg {
+	case driver.KeyAlgRSA1024:
+		return rsaKeyMaterial(rsaBits1024)
+	case driver.KeyAlgRSA2048:
+		return rsaKeyMaterial(rsaBits2048)
+	case driver.KeyAlgRSA3072:
+		return rsaKeyMaterial(rsaBits3072)
+	case driver.KeyAlgRSA4096:
+		return rsaKeyMaterial(rsaBits4096)
+	case driver.KeyAlgECP256:
+		return ecKeyMaterial(elliptic.P256(), "ECDSAWITHSHA256")
+	case driver.KeyAlgECP384:
+		return ecKeyMaterial(elliptic.P384(), "ECDSAWITHSHA384")
+	case driver.KeyAlgECP521:
+		return ecKeyMaterial(elliptic.P521(), "ECDSAWITHSHA512")
+	default:
+		return nil, "", "", invalidParameter("KeyAlgorithm %q is not supported", keyAlg)
+	}
+}
+
+func rsaKeyMaterial(bits int) (signer crypto.Signer, keyPEM, sigAlg string, err error) {
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		return nil, "", "", errors.Newf(errors.Internal, "generate key: %v", err)
+	}
+
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+
+	return key, pemStr, sigAlgRSASHA256, nil
+}
+
+func ecKeyMaterial(curve elliptic.Curve, sigAlg string) (signer crypto.Signer, keyPEM, sig string, err error) {
+	key, err := ecdsa.GenerateKey(curve, rand.Reader)
+	if err != nil {
+		return nil, "", "", errors.Newf(errors.Internal, "generate key: %v", err)
+	}
+
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, "", "", errors.Newf(errors.Internal, "marshal EC key: %v", err)
+	}
+
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
+
+	return key, pemStr, sigAlg, nil
 }
 
 // formatSerial renders a serial number as colon-separated hex, matching ACM.
@@ -175,6 +232,6 @@ func signatureAlgorithmOf(leaf *x509.Certificate) string {
 	case x509.ECDSAWithSHA384:
 		return "ECDSAWITHSHA384"
 	default:
-		return "SHA256WITHRSA"
+		return sigAlgRSASHA256
 	}
 }
