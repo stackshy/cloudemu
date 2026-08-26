@@ -63,6 +63,11 @@ func (h *Handler) describeEventBus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
+	var req listEventBusesRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	infos, err := h.bus.ListEventBuses(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
@@ -71,6 +76,10 @@ func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
 
 	entries := make([]eventBusEntry, 0, len(infos))
 	for i := range infos {
+		if req.NamePrefix != "" && !strings.HasPrefix(infos[i].Name, req.NamePrefix) {
+			continue
+		}
+
 		entries = append(entries, eventBusEntry{
 			Arn:          infos[i].ARN,
 			Name:         infos[i].Name,

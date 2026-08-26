@@ -29,6 +29,10 @@ type nameRequest struct {
 	Name string `json:"Name"`
 }
 
+type listEventBusesRequest struct {
+	NamePrefix string `json:"NamePrefix"`
+}
+
 type putRuleRequest struct {
 	Name               string `json:"Name"`
 	EventBusName       string `json:"EventBusName"`
