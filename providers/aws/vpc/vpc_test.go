@@ -70,6 +70,44 @@ func TestCreateVPC(t *testing.T) {
 	}
 }
 
+func TestCreateVPCInstanceTenancy(t *testing.T) {
+	tests := []struct {
+		name      string
+		tenancy   string
+		want      string
+		expectErr bool
+	}{
+		{name: "unset defaults to default", tenancy: "", want: "default"},
+		{name: "explicit default", tenancy: "default", want: "default"},
+		{name: "dedicated round-trips", tenancy: "dedicated", want: "dedicated"},
+		{name: "host rejected on create", tenancy: "host", expectErr: true},
+		{name: "bogus rejected", tenancy: "bogus", expectErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestMock()
+			ctx := context.Background()
+
+			info, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16", InstanceTenancy: tc.tenancy})
+			assertError(t, err, tc.expectErr)
+
+			if tc.expectErr {
+				if !cerrors.IsInvalidArgument(err) {
+					t.Fatalf("error = %v, want InvalidArgument", err)
+				}
+				return
+			}
+
+			assertEqual(t, tc.want, info.InstanceTenancy)
+
+			vpcs, derr := m.DescribeVPCs(ctx, []string{info.ID})
+			requireNoError(t, derr)
+			assertEqual(t, tc.want, vpcs[0].InstanceTenancy)
+		})
+	}
+}
+
 func TestDeleteVPC(t *testing.T) {
 	m := newTestMock()
 	v := createTestVPC(m)

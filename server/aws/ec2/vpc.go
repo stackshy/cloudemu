@@ -23,6 +23,11 @@ const dhcpDefault = "default"
 // association in cidrBlockAssociationSet.
 const cidrAssocIDPrefix = "vpc-cidr-assoc-"
 
+// tenancyDefaultXML is the instanceTenancy value EC2 reports for a VPC created
+// without an explicit tenancy (the provider stores this too, so this only
+// covers records created outside the AWS wire layer).
+const tenancyDefaultXML = "default"
+
 // cidrStateAssociated is the terminal state AWS reports for an in-use VPC CIDR
 // association.
 const cidrStateAssociated = "associated"
@@ -76,8 +81,9 @@ type deleteVpcResponseXML struct {
 
 func (h *Handler) createVpc(w http.ResponseWriter, r *http.Request) {
 	cfg := netdriver.VPCConfig{
-		CIDRBlock: r.Form.Get("CidrBlock"),
-		Tags:      mergeTagSpecs(awsquery.TagSpecs(r.Form), "vpc"),
+		CIDRBlock:       r.Form.Get("CidrBlock"),
+		InstanceTenancy: r.Form.Get("InstanceTenancy"),
+		Tags:            mergeTagSpecs(awsquery.TagSpecs(r.Form), "vpc"),
 	}
 
 	info, err := h.vpc.CreateVPC(r.Context(), cfg)
@@ -145,7 +151,7 @@ func toVpcXML(v *netdriver.VPCInfo) vpcXML {
 		State:                   state,
 		CidrBlock:               v.CIDRBlock,
 		DhcpOptionsID:           nonEmpty(v.DhcpOptionsID, dhcpDefault),
-		InstanceTenancy:         "default",
+		InstanceTenancy:         nonEmpty(v.InstanceTenancy, tenancyDefaultXML),
 		IsDefault:               false,
 		OwnerID:                 ownerID,
 		CidrBlockAssociationSet: vpcCidrAssociationSet(v),
