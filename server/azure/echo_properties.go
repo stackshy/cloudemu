@@ -468,10 +468,12 @@ func sanitizeUnmodeled(v any) any {
 }
 
 // missingProperties returns the entries of req that resp does not already carry,
-// descending into nested objects so an unmodeled leaf under a modeled parent is
-// still captured. A key present in both as scalars is considered modeled (the
-// handler owns it) and is omitted. Write-only secret keys (writeOnlyProperty)
-// are skipped at every level so they are never captured, persisted, or echoed.
+// descending into nested objects — and, element-by-element, into arrays of
+// objects — so an unmodeled leaf under a modeled parent (or under a modeled
+// array element, e.g. a vnet inline subnet or a VM data disk) is still captured.
+// A key present in both as scalars is considered modeled (the handler owns it)
+// and is omitted. Write-only secret keys (writeOnlyProperty) are skipped at
+// every level so they are never captured, persisted, or echoed.
 func missingProperties(req, resp map[string]any) map[string]any {
 	if len(req) == 0 {
 		return nil
@@ -495,12 +497,21 @@ func missingProperties(req, resp map[string]any) map[string]any {
 			continue
 		}
 
-		reqChild, reqIsMap := reqVal.(map[string]any)
-		respChild, respIsMap := respVal.(map[string]any)
+		if reqChild, ok := reqVal.(map[string]any); ok {
+			if respChild, ok := respVal.(map[string]any); ok {
+				if nested := missingProperties(reqChild, respChild); len(nested) > 0 {
+					out[k] = nested
+				}
+			}
 
-		if reqIsMap && respIsMap {
-			if nested := missingProperties(reqChild, respChild); len(nested) > 0 {
-				out[k] = nested
+			continue
+		}
+
+		if reqArr, ok := reqVal.([]any); ok {
+			if respArr, ok := respVal.([]any); ok {
+				if nested := missingArrayElements(reqArr, respArr); nested != nil {
+					out[k] = nested
+				}
 			}
 		}
 	}
@@ -512,9 +523,55 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	return out
 }
 
+// missingArrayElements diffs a request array against the response array that a
+// handler returned for the same key, element by element and aligned by index,
+// so unmodeled sub-fields on an array element (e.g. an inline subnet's or a data
+// disk's un-modeled property) survive round-trip the same way nested-object
+// sub-fields already do. It returns an []any positionally aligned to the request
+// prefix, each entry being that element's own missingProperties diff (or nil
+// when the element carries nothing unmodeled), or nil overall when no element
+// has anything to carry.
+//
+// It never describes more elements than BOTH sides have (n = min): the handler
+// alone decides how many elements the response holds, so a request longer than
+// the response contributes nothing for the surplus (no phantom elements), and a
+// request shorter than the response simply leaves the response tail unenriched.
+// Only object elements paired with object elements are diffed; a scalar element
+// present in both is left to the handler (a wholly-unmodeled scalar array is
+// captured verbatim by the caller's !present branch instead).
+func missingArrayElements(req, resp []any) []any {
+	n := len(resp)
+	if len(req) < n {
+		n = len(req)
+	}
+
+	out := make([]any, n)
+
+	found := false
+
+	for i := 0; i < n; i++ {
+		reqEl, reqOK := req[i].(map[string]any)
+		respEl, respOK := resp[i].(map[string]any)
+
+		if reqOK && respOK {
+			if nested := missingProperties(reqEl, respEl); len(nested) > 0 {
+				out[i] = nested
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return out
+}
+
 // mergeProperties overlays the unmodeled properties onto resp without
 // overwriting any key resp already carries (the handler/driver is authoritative
-// for the properties it models). Nested objects are merged recursively.
+// for the properties it models). Nested objects — and, element by element,
+// arrays of objects — are merged recursively.
 func mergeProperties(resp, unmodeled map[string]any) map[string]any {
 	// Size the map to resp and let it grow for the unmodeled keys — summing the
 	// two lengths as a capacity hint is a pointless overflow risk for no gain.
@@ -530,12 +587,53 @@ func mergeProperties(resp, unmodeled map[string]any) map[string]any {
 			continue
 		}
 
-		existingChild, existingIsMap := existing.(map[string]any)
-		addChild, addIsMap := addVal.(map[string]any)
+		if existingChild, ok := existing.(map[string]any); ok {
+			if addChild, ok := addVal.(map[string]any); ok {
+				out[k] = mergeProperties(existingChild, addChild)
+			}
 
-		if existingIsMap && addIsMap {
-			out[k] = mergeProperties(existingChild, addChild)
+			continue
 		}
+
+		if existingArr, ok := existing.([]any); ok {
+			if addArr, ok := addVal.([]any); ok {
+				out[k] = mergeArrayElements(existingArr, addArr)
+			}
+		}
+	}
+
+	return out
+}
+
+// mergeArrayElements enriches each response array element with the unmodeled
+// sub-fields captured for it, aligned by index — the apply-side mirror of
+// missingArrayElements. It preserves the response array exactly: same length,
+// same order, same elements, only adding back per-element unmodeled sub-fields
+// (via mergeProperties, which never overwrites a modeled field). It never
+// appends elements the response does not have (the handler owns element count)
+// and never indexes past either slice; elements the overlay has nothing for, and
+// any element that is not an object on both sides, pass through unchanged.
+func mergeArrayElements(resp, unmodeled []any) []any {
+	out := make([]any, len(resp))
+	copy(out, resp)
+
+	n := len(unmodeled)
+	if len(resp) < n {
+		n = len(resp)
+	}
+
+	for i := 0; i < n; i++ {
+		add, addOK := unmodeled[i].(map[string]any)
+		if !addOK || len(add) == 0 {
+			continue
+		}
+
+		base, baseOK := out[i].(map[string]any)
+		if !baseOK {
+			continue
+		}
+
+		out[i] = mergeProperties(base, add)
 	}
 
 	return out
