@@ -36,6 +36,10 @@ const (
 	lbStateActive       = "active"
 )
 
+// targetStateInitial is the health state a target holds between registration and
+// its first successful health check.
+const targetStateInitial = "initial"
+
 // targetKey is the identity of a registered target within a target group.
 // AWS lets the same instance ID or IP be registered multiple times with
 // different port overrides (RegisterTargets docs, "Register targets by
@@ -434,24 +438,54 @@ func (m *Mock) checkTargetGroupNotInUse(arn string) error {
 	// copied per iteration.
 	listeners := m.listeners.All()
 	for key := range listeners {
-		for _, a := range listeners[key].DefaultActions {
-			if a.TargetGroupARN == arn {
-				return errors.Newf(errors.FailedPrecondition,
-					"target group %q is currently in use by a listener", arn)
-			}
+		if actionsReferenceTG(listeners[key].DefaultActions, arn) {
+			return errors.Newf(errors.FailedPrecondition,
+				"target group %q is currently in use by a listener", arn)
 		}
 	}
 
 	for _, r := range m.rules.All() {
-		for _, a := range r.Actions {
-			if a.TargetGroupARN == arn {
-				return errors.Newf(errors.FailedPrecondition,
-					"target group %q is currently in use by a rule", arn)
-			}
+		if actionsReferenceTG(r.Actions, arn) {
+			return errors.Newf(errors.FailedPrecondition,
+				"target group %q is currently in use by a rule", arn)
 		}
 	}
 
 	return nil
+}
+
+// actionsReferenceTG reports whether any action forwards to the given target
+// group, checking both the scalar TargetGroupARN and every weighted group in a
+// ForwardConfig so a secondary weighted group is not treated as unreferenced.
+func actionsReferenceTG(actions []driver.RuleAction, arn string) bool {
+	for i := range actions {
+		for _, ref := range actionTargetGroups(&actions[i]) {
+			if ref == arn {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// targetGroupReferenced reports whether any listener default action or rule
+// action across all listeners/rules forwards to the given target group.
+func (m *Mock) targetGroupReferenced(arn string) bool {
+	listeners := m.listeners.All()
+	for key := range listeners {
+		if actionsReferenceTG(listeners[key].DefaultActions, arn) {
+			return true
+		}
+	}
+
+	for _, r := range m.rules.All() {
+		if actionsReferenceTG(r.Actions, arn) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DescribeTargetGroups returns target groups matching the given ARNs.
@@ -559,12 +593,47 @@ func cloneCertificates(certs []driver.Certificate) []driver.Certificate {
 	return append([]driver.Certificate(nil), certs...)
 }
 
+// actionTargetGroups returns every target-group ARN a forward action references:
+// the scalar TargetGroupARN (single-target case) plus each weighted group in a
+// multi-target ForwardConfig. It is the single source of truth for both
+// validation and in-use protection so a weighted secondary group is never missed.
+func actionTargetGroups(a *driver.RuleAction) []string {
+	arns := make([]string, 0, len(a.ForwardConfig)+1)
+	seen := make(map[string]struct{}, len(a.ForwardConfig)+1)
+
+	add := func(arn string) {
+		if arn == "" {
+			return
+		}
+
+		if _, ok := seen[arn]; ok {
+			return
+		}
+
+		seen[arn] = struct{}{}
+
+		arns = append(arns, arn)
+	}
+
+	add(a.TargetGroupARN)
+
+	for i := range a.ForwardConfig {
+		add(a.ForwardConfig[i].TargetGroupARN)
+	}
+
+	return arns
+}
+
 // validateForwardActions reports TargetGroupNotFound when any forward action
-// references a target group that does not exist.
+// references a target group that does not exist. Every group in a weighted
+// ForwardConfig is checked, not just the primary, so a bogus secondary group is
+// rejected the way real ELBv2 rejects it.
 func (m *Mock) validateForwardActions(actions []driver.RuleAction) error {
-	for _, a := range actions {
-		if a.TargetGroupARN != "" && !m.tgs.Has(a.TargetGroupARN) {
-			return errors.Newf(errors.NotFound, "target group %q not found", a.TargetGroupARN)
+	for i := range actions {
+		for _, arn := range actionTargetGroups(&actions[i]) {
+			if !m.tgs.Has(arn) {
+				return errors.Newf(errors.NotFound, "target group %q not found", arn)
+			}
 		}
 	}
 
@@ -619,12 +688,11 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 		return nil, errors.Newf(errors.NotFound, "listener %q not found", cfg.ListenerARN)
 	}
 
-	// A forward action must reference an existing target group; real ELBv2
-	// rejects a bogus TargetGroupArn with TargetGroupNotFound.
-	for _, a := range cfg.Actions {
-		if a.TargetGroupARN != "" && !m.tgs.Has(a.TargetGroupARN) {
-			return nil, errors.Newf(errors.NotFound, "target group %q not found", a.TargetGroupARN)
-		}
+	// A forward action must reference existing target groups; real ELBv2 rejects
+	// a bogus TargetGroupArn (primary or weighted secondary) with
+	// TargetGroupNotFound.
+	if err := m.validateForwardActions(cfg.Actions); err != nil {
+		return nil, err
 	}
 
 	// A listener can't have two rules with the same priority; a reused priority
@@ -1115,7 +1183,7 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 				ID:   t.ID,
 				Port: t.Port,
 			},
-			State:       "initial",
+			State:       targetStateInitial,
 			Reason:      "Elb.RegistrationInProgress",
 			Description: "Target registration is in progress",
 		}
@@ -1206,13 +1274,30 @@ func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([
 		return []driver.TargetHealth{}, nil
 	}
 
+	// A target group not forwarded to by any listener (default action or rule)
+	// on a load balancer reports every target as "unused" / Target.NotInUse and
+	// does not advance — real ELBv2 only begins health checks once a listener
+	// routes to the group. An explicitly set state (e.g. ECS SetTargetHealth) is
+	// left untouched; only the automatic initial->healthy progression is gated.
+	referenced := m.targetGroupReferenced(targetGroupARN)
+
 	results := make([]driver.TargetHealth, 0, len(tgHealth))
 	for _, th := range tgHealth {
+		if !referenced && th.State == targetStateInitial {
+			unused := *th
+			unused.State = "unused"
+			unused.Reason = "Target.NotInUse"
+			unused.Description = "Target group is not configured to receive traffic from the load balancer"
+			results = append(results, unused)
+
+			continue
+		}
+
 		results = append(results, *th)
 
 		// Advance after the state is captured so the caller sees "initial"
 		// once and "healthy" on the next poll.
-		if th.State == "initial" {
+		if th.State == targetStateInitial {
 			th.State = "healthy"
 			th.Reason = ""
 			th.Description = ""

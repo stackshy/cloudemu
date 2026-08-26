@@ -12,6 +12,33 @@ import (
 	"github.com/aws/smithy-go"
 )
 
+// attachListener creates an application load balancer and a listener that
+// forwards to tgARN, so the target group is "in use" and its targets begin
+// advancing past the unused state.
+func attachListener(t *testing.T, client *elb.Client, ctx context.Context, lbName, tgARN string) {
+	t.Helper()
+
+	lbOut, err := client.CreateLoadBalancer(ctx, &elb.CreateLoadBalancerInput{
+		Name:    aws.String(lbName),
+		Subnets: []string{"subnet-a"},
+	})
+	if err != nil {
+		t.Fatalf("CreateLoadBalancer(%s): %v", lbName, err)
+	}
+
+	if _, err := client.CreateListener(ctx, &elb.CreateListenerInput{
+		LoadBalancerArn: lbOut.LoadBalancers[0].LoadBalancerArn,
+		Protocol:        elbtypes.ProtocolEnumHttp,
+		Port:            aws.Int32(80),
+		DefaultActions: []elbtypes.Action{{
+			Type:           elbtypes.ActionTypeEnumForward,
+			TargetGroupArn: aws.String(tgARN),
+		}},
+	}); err != nil {
+		t.Fatalf("CreateListener forwarding to %s: %v", tgARN, err)
+	}
+}
+
 // TestSDKLoadBalancerExtraFields locks in the Route53-alias-critical fields the
 // audit found missing from Create/DescribeLoadBalancers.
 func TestSDKLoadBalancerExtraFields(t *testing.T) {
@@ -441,6 +468,10 @@ func TestSDKTargetHealthAdvances(t *testing.T) {
 
 	tgARN := aws.ToString(tgOut.TargetGroups[0].TargetGroupArn)
 
+	// A target group only begins health checks once a listener forwards to it;
+	// attach one so the initial->healthy progression is exercised.
+	attachListener(t, client, ctx, "th-alb", tgARN)
+
 	if _, err := client.RegisterTargets(ctx, &elb.RegisterTargetsInput{
 		TargetGroupArn: aws.String(tgARN),
 		Targets:        []elbtypes.TargetDescription{{Id: aws.String("i-1"), Port: aws.Int32(80)}},
@@ -497,6 +528,9 @@ func TestSDKDescribeTargetHealthUnregisteredTarget(t *testing.T) {
 	}
 
 	tgARN := aws.ToString(tgOut.TargetGroups[0].TargetGroupArn)
+
+	// Attach a listener so the registered target advances past "unused".
+	attachListener(t, client, ctx, "nr-alb", tgARN)
 
 	if _, err := client.RegisterTargets(ctx, &elb.RegisterTargetsInput{
 		TargetGroupArn: aws.String(tgARN),

@@ -371,11 +371,14 @@ func TestDescribeTargetHealth(t *testing.T) {
 	tg := createTestTG(m)
 	_ = m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}})
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("unused until a listener forwards to the TG", func(t *testing.T) {
+		// The TG here is attached to no load balancer, so real ELBv2 reports
+		// every target as unused / Target.NotInUse rather than advancing.
 		health, err := m.DescribeTargetHealth(ctx, tg.ARN)
 		requireNoError(t, err)
 		assertEqual(t, 1, len(health))
-		assertEqual(t, "initial", health[0].State)
+		assertEqual(t, "unused", health[0].State)
+		assertEqual(t, "Target.NotInUse", health[0].Reason)
 	})
 
 	t.Run("TG not found", func(t *testing.T) {
