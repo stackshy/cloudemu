@@ -67,6 +67,12 @@ func (m *Mock) CreateStateMachine(
 		return "", "", time.Time{}, err
 	}
 
+	// roleArn is required and must be a valid IAM role ARN. An empty or
+	// malformed value is InvalidArn (real SFN validates the role ARN shape).
+	if !validRoleARN(in.RoleArn) {
+		return "", "", time.Time{}, invalidArn("%q is not a valid IAM role ARN", in.RoleArn)
+	}
+
 	smType := in.Type
 	if smType == "" {
 		smType = driver.TypeStandard
@@ -151,6 +157,16 @@ func (m *Mock) DescribeStateMachine(_ context.Context, arn string) (*driver.Stat
 	return &out, nil
 }
 
+// hasUpdatableField reports whether an UpdateStateMachine request supplies at
+// least one field it can mutate. Real SFN rejects an update carrying none of
+// them with MissingRequiredParameter.
+//
+//nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
+func hasUpdatableField(in driver.UpdateStateMachineInput) bool {
+	return in.Definition != "" || in.RoleArn != "" || in.LoggingConfigJSON != "" ||
+		in.TracingConfigJSON != "" || in.EncryptionCfgJSON != ""
+}
+
 //nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
 func (m *Mock) UpdateStateMachine(
 	_ context.Context, in driver.UpdateStateMachineInput,
@@ -158,6 +174,14 @@ func (m *Mock) UpdateStateMachine(
 	sd, err := m.getSM(in.ARN)
 	if err != nil {
 		return nil, err
+	}
+
+	// UpdateStateMachine must change at least one updatable field. Supplying
+	// none is a no-op that real SFN rejects with MissingRequiredParameter (and
+	// it must not bump the revision).
+	if !hasUpdatableField(in) {
+		return nil, missingRequiredParameter(
+			"UpdateStateMachine requires at least one of definition or roleArn")
 	}
 
 	sd.mu.Lock()

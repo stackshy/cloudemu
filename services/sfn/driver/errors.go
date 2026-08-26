@@ -20,6 +20,7 @@ const (
 	ExTooManyTags               = "TooManyTags"
 	ExConflict                  = "ConflictException"
 	ExValidation                = "ValidationException"
+	ExMissingRequiredParameter  = "MissingRequiredParameter"
 )
 
 // APIError tags a canonical cloudemu error with the SFN exception name it

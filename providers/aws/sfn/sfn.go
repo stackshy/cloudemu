@@ -30,6 +30,8 @@ const (
 	arnScheme = "arn"
 	// statesService is the SFN service segment of a states ARN.
 	statesService = "states"
+	// iamService is the IAM service segment of a role ARN.
+	iamService = "iam"
 	// emptyJSON is the default output/input payload when none is supplied.
 	emptyJSON = "{}"
 )
@@ -158,6 +160,20 @@ func validActivityARN(arn string) bool {
 // validMapRunARN reports whether arn has the SFN Map Run ARN shape.
 func validMapRunARN(arn string) bool {
 	return statesResourcePrefix(arn, "mapRun:")
+}
+
+// validRoleARN reports whether arn has the IAM role ARN shape
+// (arn:<partition>:iam::<account>:role/<name>). Step Functions requires a
+// valid IAM role ARN on CreateStateMachine and rejects anything else as
+// InvalidArn.
+func validRoleARN(arn string) bool {
+	seg := strings.SplitN(arn, ":", arnParts)
+	if len(seg) != arnParts {
+		return false
+	}
+
+	return seg[0] == arnScheme && seg[2] == iamService &&
+		strings.HasPrefix(seg[5], "role/") && len(seg[5]) > len("role/")
 }
 
 func copyTags(in map[string]string) map[string]string {
