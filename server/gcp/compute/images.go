@@ -246,8 +246,22 @@ func (h *Handler) imageDiskSizeGb(ctx context.Context, req *imageRequest) string
 		return ""
 	}
 
-	if vol, err := findDiskByName(ctx, h.compute, lastSegment(req.SourceDisk)); err == nil {
+	if vol, err := findDiskByName(ctx, h.compute, lastSegment(req.SourceDisk), zoneFromDiskURL(req.SourceDisk)); err == nil {
 		return strconv.Itoa(vol.Size)
+	}
+
+	return ""
+}
+
+// zoneFromDiskURL extracts the zone from a zonal disk self-link of the form
+// ".../zones/{zone}/disks/{name}". It returns "" when no zone segment is
+// present, which matches a disk in any zone (defensive for bare names).
+func zoneFromDiskURL(url string) string {
+	segs := strings.Split(url, "/")
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "zones" {
+			return segs[i+1]
+		}
 	}
 
 	return ""

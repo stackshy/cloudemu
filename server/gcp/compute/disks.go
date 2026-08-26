@@ -71,7 +71,7 @@ func (h *Handler) insertDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	if _, err := findDiskByName(r.Context(), h.compute, req.Name); conflictIfExists(w, err, "disk "+req.Name+" already exists") {
+	if _, err := findDiskByName(r.Context(), h.compute, req.Name, rp.ScopeName); conflictIfExists(w, err, "disk "+req.Name+" already exists") {
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *Handler) insertDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -121,6 +121,10 @@ func (h *Handler) listDisks(w http.ResponseWriter, r *http.Request, rp gcprest.R
 	out := make([]diskResponse, 0, len(vols))
 
 	for i := range vols {
+		if !diskInZone(&vols[i], rp.ScopeName) {
+			continue
+		}
+
 		scope := rp
 		name := tagOr(vols[i].Tags, gcpDiskNameTag, vols[i].ID)
 		scope.ResourceName = name
@@ -137,7 +141,7 @@ func (h *Handler) listDisks(w http.ResponseWriter, r *http.Request, rp gcprest.R
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -177,7 +181,7 @@ func (h *Handler) resizeDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -254,19 +258,35 @@ func (h *Handler) aggregatedListDisks(w http.ResponseWriter, r *http.Request, rp
 	})
 }
 
-func findDiskByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.VolumeInfo, error) {
+// findDiskByName looks up a disk by GCP name, scoped to zone. GCP disks are
+// zonal and unique per-zone, so the same name in a different zone is a distinct
+// disk. A disk with no recorded zone (created directly through the driver)
+// matches any zone so non-wire callers stay visible.
+func findDiskByName(
+	ctx context.Context, c computedriver.Compute, name, zone string,
+) (*computedriver.VolumeInfo, error) {
 	vols, err := c.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range vols {
-		if tagOr(vols[i].Tags, gcpDiskNameTag, "") == name {
+		if tagOr(vols[i].Tags, gcpDiskNameTag, "") != name {
+			continue
+		}
+
+		if diskInZone(&vols[i], zone) {
 			return &vols[i], nil
 		}
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "disk %s not found", name)
+}
+
+// diskInZone reports whether vol belongs to zone. A disk with no recorded zone
+// matches any zone (defensive for driver-created disks).
+func diskInZone(vol *computedriver.VolumeInfo, zone string) bool {
+	return zone == "" || vol.AvailabilityZone == "" || vol.AvailabilityZone == zone
 }
 
 // diskStatusReady is the only status we report; the underlying driver doesn't
@@ -281,15 +301,23 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp gcprest.ResourcePath, host
 	name := tagOr(vol.Tags, gcpDiskNameTag, rp.ResourceName)
 	sourceImage := vol.Tags[gcpDiskSourceImageTag]
 
+	// A disk is zonal: its identity (zone, selfLink, type link) derives from the
+	// disk's own AvailabilityZone, not the request scope, so a read never
+	// mislabels a disk with the zone it was queried under.
+	zone := vol.AvailabilityZone
+	if zone == "" {
+		zone = rp.ScopeName
+	}
+
 	resp := diskResponse{
 		Kind:              "compute#disk",
 		ID:                numericID(vol.ID),
 		Name:              name,
 		SizeGb:            strconv.Itoa(vol.Size),
-		Type:              gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "diskTypes", defaultDiskType(vol.VolumeType)),
+		Type:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, zone, "diskTypes", defaultDiskType(vol.VolumeType)),
 		Status:            diskStatusReady,
-		Zone:              host + "/compute/v1/projects/" + rp.Project + "/zones/" + rp.ScopeName,
-		SelfLink:          gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "disks", name),
+		Zone:              host + "/compute/v1/projects/" + rp.Project + "/zones/" + zone,
+		SelfLink:          gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, zone, "disks", name),
 		SourceImage:       sourceImage,
 		Users:             users,
 		Labels:            userLabels(vol.Tags),
