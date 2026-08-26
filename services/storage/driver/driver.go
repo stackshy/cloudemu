@@ -318,7 +318,12 @@ type ObjectInfo struct {
 	ContentType  string
 	ETag         string
 	LastModified string
-	Metadata     map[string]string
+	// Created is the object's original creation time (GCS timeCreated), set once
+	// when the generation is first written and preserved across metadata-only
+	// updates while LastModified advances. Empty for providers that don't model a
+	// distinct creation time (callers fall back to LastModified).
+	Created  string
+	Metadata map[string]string
 	// VersionID is the object's version identifier on a versioning-enabled
 	// bucket ("null" on a suspended/unversioned bucket, empty when the bucket
 	// never had versioning). Providers without versioning leave it empty.

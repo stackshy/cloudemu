@@ -119,6 +119,7 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 
 	if body.Update != nil {
 		in.NodeVersion = body.Update.DesiredNodeVersion
+		in.NodePoolID = body.Update.DesiredNodePoolID
 		in.MasterVersion = body.Update.DesiredMasterVersion
 		in.LoggingService = body.Update.DesiredLoggingService
 		in.MonitoringService = body.Update.DesiredMonitoringService
@@ -288,7 +289,7 @@ func (h *Handler) setResourceLabels(w http.ResponseWriter, r *http.Request, p *g
 		return
 	}
 
-	op, err := h.gke.SetResourceLabels(r.Context(), p.location, p.name, body.ResourceLabels)
+	op, err := h.gke.SetResourceLabels(r.Context(), p.location, p.name, body.ResourceLabels, body.LabelFingerprint)
 	if err != nil {
 		writeErr(w, err)
 		return

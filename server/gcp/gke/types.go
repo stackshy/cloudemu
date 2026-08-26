@@ -20,12 +20,13 @@ type gkeCluster struct {
 	Zone              string            `json:"zone,omitempty"`
 	Network           string            `json:"network,omitempty"`
 	Subnetwork        string            `json:"subnetwork,omitempty"`
-	InitialNodeCount  int64             `json:"initialNodeCount,omitempty"`
+	InitialNodeCount  *int64            `json:"initialNodeCount,omitempty"`
 	NodeConfig        *gkeNodeConfig    `json:"nodeConfig,omitempty"`
 	CurrentNodeCount  int64             `json:"currentNodeCount,omitempty"`
 	LoggingService    string            `json:"loggingService,omitempty"`
 	MonitoringService string            `json:"monitoringService,omitempty"`
 	ResourceLabels    map[string]string `json:"resourceLabels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
 	NodePools         []gkeNodePool     `json:"nodePools,omitempty"`
 	NodeIpv4CIDRSize  int64             `json:"nodeIpv4CidrSize,omitempty"`
 	ClusterIpv4Cidr   string            `json:"clusterIpv4Cidr,omitempty"`
@@ -50,7 +51,7 @@ type gkeMasterAuth struct {
 type gkeNodePool struct {
 	Name             string             `json:"name,omitempty"`
 	Version          string             `json:"version,omitempty"`
-	InitialNodeCount int64              `json:"initialNodeCount,omitempty"`
+	InitialNodeCount *int64             `json:"initialNodeCount,omitempty"`
 	Locations        []string           `json:"locations,omitempty"`
 	Config           *gkeNodeConfig     `json:"config,omitempty"`
 	Autoscaling      *gkeAutoscaling    `json:"autoscaling,omitempty"`
@@ -87,6 +88,7 @@ type createClusterReq struct {
 type updateClusterReq struct {
 	Update *struct {
 		DesiredNodeVersion       string            `json:"desiredNodeVersion,omitempty"`
+		DesiredNodePoolID        string            `json:"desiredNodePoolId,omitempty"`
 		DesiredMasterVersion     string            `json:"desiredMasterVersion,omitempty"`
 		DesiredLoggingService    string            `json:"desiredLoggingService,omitempty"`
 		DesiredMonitoringService string            `json:"desiredMonitoringService,omitempty"`
@@ -131,7 +133,8 @@ type setMaintenancePolicyReq struct {
 }
 
 type setLabelsReq struct {
-	ResourceLabels map[string]string `json:"resourceLabels,omitempty"`
+	ResourceLabels   map[string]string `json:"resourceLabels,omitempty"`
+	LabelFingerprint string            `json:"labelFingerprint,omitempty"`
 }
 
 type createNodePoolReq struct {
@@ -193,6 +196,10 @@ type gkeServerConfig struct {
 // every selfLink/targetLink it returns.
 const selfLinkBase = "https://container.googleapis.com/v1/"
 
+// int64Ptr wraps v so the wire shape emits it explicitly — including a genuine
+// 0 node count, which a bare int64 with omitempty would silently drop.
+func int64Ptr(v int64) *int64 { return &v }
+
 // toClusterResource converts a provider Cluster into the wire shape. The
 // endpoint argument is what the Mock reported via Endpoint(location, name) —
 // either the in-memory K8s data-plane URL when a data plane is wired, or the
@@ -211,11 +218,12 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 		Zone:              c.Location,
 		Network:           c.Network,
 		Subnetwork:        c.Subnetwork,
-		InitialNodeCount:  c.InitialNodeCount,
+		InitialNodeCount:  int64Ptr(c.InitialNodeCount),
 		CurrentNodeCount:  currentNodes,
 		LoggingService:    c.LoggingService,
 		MonitoringService: c.MonitoringService,
 		ResourceLabels:    c.ResourceLabels,
+		LabelFingerprint:  c.LabelFingerprint,
 		NodeIpv4CIDRSize:  c.NodeIPv4CIDRSize,
 		ClusterIpv4Cidr:   c.ClusterIPv4CIDR,
 		ServicesIpv4Cidr:  c.ServicesIPv4CIDR,
@@ -255,7 +263,7 @@ func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {
 	out := gkeNodePool{
 		Name:             np.Name,
 		Version:          np.Version,
-		InitialNodeCount: np.NodeCount,
+		InitialNodeCount: int64Ptr(np.NodeCount),
 		Config: &gkeNodeConfig{
 			MachineType: np.MachineType,
 			DiskSizeGb:  np.DiskSizeGB,

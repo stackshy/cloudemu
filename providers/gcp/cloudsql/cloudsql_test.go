@@ -517,8 +517,8 @@ func TestSubResourceCRUDCoverage(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	if got, err := m.GetUser(ctx, "inst", "u1"); err != nil || got.Name != "u1" {
-		t.Fatalf("GetUser: %+v %v", got, err)
+	if got, err := m.GetUser(ctx, "inst", "u1"); err != nil || got.Name != "u1" || got.Password != "p1" {
+		t.Fatalf("GetUser: %+v %v (want password p1)", got, err)
 	}
 
 	if us, err := m.ListUsers(ctx, "inst"); err != nil || len(us) != 1 {
@@ -527,6 +527,12 @@ func TestSubResourceCRUDCoverage(t *testing.T) {
 
 	if _, err := m.UpdateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "u1", Host: "%", Password: "p2"}); err != nil {
 		t.Fatalf("UpdateUser: %v", err)
+	}
+
+	// The password change must actually be applied, not a silent no-op that
+	// returns success while leaving the credential unchanged.
+	if got, err := m.GetUser(ctx, "inst", "u1"); err != nil || got.Password != "p2" {
+		t.Fatalf("after UpdateUser password = %q (%v), want p2", got.Password, err)
 	}
 
 	if _, err := m.UpdateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "ghost", Host: "%"}); err == nil {

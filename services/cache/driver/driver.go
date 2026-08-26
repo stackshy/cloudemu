@@ -68,6 +68,28 @@ type CacheInfo struct {
 	// custom group converges. Empty means the backend reports the engine's
 	// default (default.<family>). AWS-only and left empty by other callers.
 	ParameterGroupName string
+
+	// RedisConfiguration mirrors the Azure Redis `redisConfiguration` map
+	// (maxmemory-policy, maxmemory-reserved, and unmodeled passthrough keys),
+	// echoed back verbatim so azurerm_redis_cache converges. Nil for providers
+	// that do not model it.
+	RedisConfiguration map[string]string
+
+	// EnableNonSSLPort mirrors the Azure Redis `enableNonSslPort` flag. A pointer
+	// so a partial (tags/scale-only) update that omits it leaves the stored value
+	// unchanged. Nil for providers that do not model it.
+	EnableNonSSLPort *bool
+
+	// MinimumTLSVersion / PublicNetworkAccess mirror the Azure Redis
+	// `minimumTlsVersion` ("1.0"/"1.1"/"1.2") and `publicNetworkAccess`
+	// ("Enabled"/"Disabled") fields. Empty for providers that do not model them.
+	MinimumTLSVersion   string
+	PublicNetworkAccess string
+
+	// RedisVersion is the Azure Redis engine version the cache was created with
+	// (`redisVersion`), echoed back instead of a hardcoded default. Empty for
+	// providers that do not model it.
+	RedisVersion string
 }
 
 // CacheConfig describes a cache instance to create.
@@ -110,6 +132,27 @@ type CacheConfig struct {
 	// to attach; empty means the backend reports the engine's default
 	// (default.<family>). AWS-only and left empty by other callers.
 	ParameterGroupName string
+
+	// RedisConfiguration carries the Azure Redis `redisConfiguration` map
+	// (maxmemory-policy, maxmemory-reserved, and unmodeled passthrough keys). On
+	// UpdateCache, nil means "not supplied" and leaves the stored value
+	// unchanged. Nil for non-Azure callers.
+	RedisConfiguration map[string]string
+
+	// EnableNonSSLPort carries the Azure Redis `enableNonSslPort` flag. A pointer
+	// so a partial update that omits it (nil) leaves the stored value unchanged.
+	// Nil for non-Azure callers.
+	EnableNonSSLPort *bool
+
+	// MinimumTLSVersion / PublicNetworkAccess carry the Azure Redis
+	// `minimumTlsVersion` and `publicNetworkAccess` fields. On UpdateCache, empty
+	// leaves the stored value unchanged. Empty for non-Azure callers.
+	MinimumTLSVersion   string
+	PublicNetworkAccess string
+
+	// RedisVersion is the requested Azure Redis engine version (`redisVersion`);
+	// empty defaults to the backend's default. Empty for non-Azure callers.
+	RedisVersion string
 }
 
 // ModifyCacheConfig carries the mutable fields of an AWS ElastiCache

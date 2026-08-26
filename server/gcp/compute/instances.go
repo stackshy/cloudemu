@@ -151,10 +151,15 @@ func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request
 	}
 
 	host := hostFromRequest(r)
+	pred := parseFilter(r.URL.Query().Get("filter"))
 	items := make(map[string]instancesScopedList)
 
 	for i := range instances {
 		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		if !pred(&resp) {
+			continue
+		}
+
 		scope := "zones/" + tagOr(instances[i].Tags, keyZone, "unknown")
 		bucket := items[scope]
 		bucket.Instances = append(bucket.Instances, resp)

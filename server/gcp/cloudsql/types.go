@@ -40,6 +40,13 @@ const (
 	// rfc3339Milli is the millisecond RFC3339 layout Cloud SQL uses for its
 	// timestamp fields (createTime, insertTime, startTime, endTime).
 	rfc3339Milli = "2006-01-02T15:04:05.000Z"
+
+	// defaultTier / defaultStorage / defaultStorageType are the values an omitted
+	// setting reverts to on a PUT (full-resource update). They mirror the provider
+	// backend's insert defaults so a PUT and a fresh insert converge.
+	defaultTier        = "db-f1-micro"
+	defaultStorage     = 10
+	defaultStorageType = "PD_SSD"
 )
 
 // sqlInstance is the JSON shape Cloud SQL expects for DatabaseInstance.
@@ -69,6 +76,10 @@ type sqlSettings struct {
 	DataDiskType     string            `json:"dataDiskType,omitempty"`
 	AvailabilityType string            `json:"availabilityType,omitempty"`
 	UserLabels       map[string]string `json:"userLabels,omitempty"`
+	// DeletionProtectionEnabled guards the instance from deletion while true. A
+	// pointer so an absent field on a Patch means "no change" (merge) rather than
+	// clobbering the current value to false; it is always populated on a Get.
+	DeletionProtectionEnabled *bool `json:"deletionProtectionEnabled,omitempty"`
 	// databaseFlags, backupConfiguration and ipConfiguration are carried as
 	// opaque JSON so they round-trip unchanged on Insert->Get and Patch without
 	// the wire layer modeling every nested field real Cloud SQL exposes.
@@ -178,15 +189,16 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			{IPAddress: inst.Endpoint, Type: "PRIMARY"},
 		},
 		Settings: &sqlSettings{
-			Tier:                inst.InstanceClass,
-			DataDiskSizeGb:      inst.AllocatedStorage,
-			DataDiskType:        inst.StorageType,
-			UserLabels:          inst.Tags,
-			ActivationPolicy:    activationFromState(inst.State),
-			AvailabilityType:    availabilityType(inst.MultiAZ),
-			DatabaseFlags:       rawJSONOrNil(inst.GCPDatabaseFlags),
-			BackupConfiguration: rawJSONOrNil(inst.GCPBackupConfig),
-			IPConfiguration:     rawJSONOrNil(inst.GCPIPConfig),
+			Tier:                      inst.InstanceClass,
+			DataDiskSizeGb:            inst.AllocatedStorage,
+			DataDiskType:              inst.StorageType,
+			UserLabels:                inst.Tags,
+			ActivationPolicy:          activationFromState(inst.State),
+			AvailabilityType:          availabilityType(inst.MultiAZ),
+			DeletionProtectionEnabled: boolPtr(inst.DeletionProtection),
+			DatabaseFlags:             rawJSONOrNil(inst.GCPDatabaseFlags),
+			BackupConfiguration:       rawJSONOrNil(inst.GCPBackupConfig),
+			IPConfiguration:           rawJSONOrNil(inst.GCPIPConfig),
 		},
 		ServerCaCert: serverCaCertFor(inst),
 		CreateTime:   inst.CreatedAt.UTC().Format(rfc3339Milli),
@@ -202,6 +214,12 @@ func availabilityType(multiAZ bool) string {
 	}
 
 	return availabilityZonal
+}
+
+// boolPtr returns a pointer to b, used to always populate deletionProtectionEnabled
+// on a Get (Terraform reads it as a computed attribute).
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // rawJSONOrNil returns the stored opaque JSON as a RawMessage, or nil when empty
@@ -318,7 +336,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusConflict, "FAILED_PRECONDITION", err.Error())
+		// Google's canonical error mapping puts FAILED_PRECONDITION at HTTP 400
+		// (e.g. Cloud SQL's deletion-protection guard), not 409.
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	}

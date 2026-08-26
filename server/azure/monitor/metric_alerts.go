@@ -33,10 +33,50 @@ func (h *Handler) registerAlarm(r *http.Request, name string, props map[string]a
 		Period:             windowSeconds(props),
 		EvaluationPeriods:  1,
 		Stat:               mapAggregation(c.timeAggregation),
+		Dimensions:         alarmDimensions(c.dimensions, props),
 		AlarmActions:       actionGroupIDs(props),
 	}
 
 	return h.mon.CreateAlarm(r.Context(), cfg)
+}
+
+// alarmDimensions maps a metric-alert's evaluation scope onto the driver's
+// dimension filter: the criterion's own dimension filters, plus — when the alert
+// targets exactly one scope — a "resourceId" dimension pinning evaluation to
+// that resource, so the alert does not fire on another resource's datapoints
+// sharing the same namespace/metric. A multi-scope alert leaves resourceId
+// unset (aggregating across its scopes), matching the dimensionless default.
+func alarmDimensions(criteriaDims map[string]string, props map[string]any) map[string]string {
+	out := make(map[string]string, len(criteriaDims)+1)
+	for k, v := range criteriaDims {
+		out[k] = v
+	}
+
+	if scope, ok := singleScope(props); ok {
+		out["resourceId"] = scope
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// singleScope returns properties.scopes[0] when the alert targets exactly one
+// scope, reporting ok=false otherwise (no scopes, or multiple scopes).
+func singleScope(props map[string]any) (string, bool) {
+	scopes, ok := props["scopes"].([]any)
+	if !ok || len(scopes) != 1 {
+		return "", false
+	}
+
+	scope, ok := scopes[0].(string)
+	if !ok || scope == "" {
+		return "", false
+	}
+
+	return scope, true
 }
 
 // actionGroupIDs extracts properties.actions[].actionGroupId — the action
@@ -74,6 +114,7 @@ type criterion struct {
 	operator        string
 	threshold       float64
 	timeAggregation string
+	dimensions      map[string]string
 }
 
 // firstCriterion extracts the first entry of properties.criteria.allOf.
@@ -104,7 +145,63 @@ func firstCriterion(props map[string]any) (criterion, bool) {
 		operator:        stringField(item, "operator"),
 		threshold:       floatField(item["threshold"]),
 		timeAggregation: stringField(item, "timeAggregation"),
+		dimensions:      criterionDimensions(item),
 	}, true
+}
+
+// criterionDimensions maps a criterion's dimension filters onto the driver's
+// single-value equality model: an "Include" filter naming exactly one value
+// becomes name -> value. Multi-value or "Exclude" filters can't be expressed as
+// a single equality and are skipped (the alert still evaluates on the remaining
+// filters), an intentional subset of Azure's dimension operators.
+func criterionDimensions(item map[string]any) map[string]string {
+	raw, ok := item["dimensions"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string)
+
+	for _, entry := range raw {
+		if name, value, ok := singleValueDimension(entry); ok {
+			out[name] = value
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// singleValueDimension reduces one criterion dimension filter to a name/value
+// equality, reporting ok=false for anything the single-value model can't
+// express: a non-object entry, a missing name, an "Exclude" operator, or a
+// filter that doesn't name exactly one value.
+func singleValueDimension(entry any) (name, value string, ok bool) {
+	dim, ok := entry.(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+
+	name = stringField(dim, "name")
+	values, valuesOK := dim["values"].([]any)
+
+	if name == "" || !valuesOK || len(values) != 1 {
+		return "", "", false
+	}
+
+	if op := stringField(dim, "operator"); op != "" && op != "Include" {
+		return "", "", false
+	}
+
+	value, ok = values[0].(string)
+	if !ok || value == "" {
+		return "", "", false
+	}
+
+	return name, value, true
 }
 
 func stringField(m map[string]any, key string) string {
