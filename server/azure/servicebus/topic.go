@@ -192,6 +192,18 @@ func buildTopicProps(in *topicProperties, created, updated time.Time, subCount i
 		out.MaxSizeInMegabytes = defaultMaxSizeMB
 	}
 
+	if out.AutoDeleteOnIdle == "" {
+		out.AutoDeleteOnIdle = maxTimeToLive
+	}
+
+	if out.DuplicateDetectionHistoryTimeWindow == "" {
+		out.DuplicateDetectionHistoryTimeWindow = defaultDupDetectionISO
+	}
+
+	if out.EnableBatchedOperations == nil {
+		out.EnableBatchedOperations = defaultBatchedOps()
+	}
+
 	out.CountDetails = &countDetails{}
 	out.CreatedAt = &created
 	out.UpdatedAt = &updated

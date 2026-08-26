@@ -23,6 +23,9 @@ const (
 	defaultVisibilityTimeout = 30
 	maxReceiveMessages       = 10
 	deduplicationWindow      = 5 * time.Minute
+	// defaultDupDetectionWindow is Service Bus' default duplicate-detection
+	// history window when RequiresDuplicateDetection is set without a window.
+	defaultDupDetectionWindow = 10 * time.Minute
 )
 
 // sbMessage represents an internal message stored in a queue.
@@ -59,7 +62,13 @@ type queueData struct {
 	createdAt          time.Time
 	lastModifiedAt     time.Time
 	deduplicationIndex map[string]time.Time
-	dlqConfig          *driver.DeadLetterConfig
+	// requiresDupDetection enables Azure Service Bus MessageId-based duplicate
+	// detection; dedupByMessageID tracks the last-seen time per MessageId and
+	// dupDetectionWindow is the look-back window.
+	requiresDupDetection bool
+	dupDetectionWindow   time.Duration
+	dedupByMessageID     map[string]time.Time
+	dlqConfig            *driver.DeadLetterConfig
 	// deadLetterOnExpiration routes an expired message to the dead-letter queue
 	// instead of dropping it (Service Bus deadLetteringOnMessageExpiration).
 	deadLetterOnExpiration bool
@@ -175,6 +184,11 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 
 	now := m.opts.Clock.Now()
 
+	dupWindow := cfg.DuplicateDetectionWindow
+	if dupWindow <= 0 {
+		dupWindow = defaultDupDetectionWindow
+	}
+
 	qd := &queueData{
 		info:                   info,
 		messages:               make([]*sbMessage, 0),
@@ -185,6 +199,9 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		createdAt:              now,
 		lastModifiedAt:         now,
 		deduplicationIndex:     make(map[string]time.Time),
+		requiresDupDetection:   cfg.RequiresDuplicateDetection,
+		dupDetectionWindow:     dupWindow,
+		dedupByMessageID:       make(map[string]time.Time),
 		dlqConfig:              cfg.DeadLetterQueue,
 		deadLetterOnExpiration: cfg.DeadLetterOnExpiration,
 		metadata:               metadata,
@@ -271,6 +288,12 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		return &driver.SendMessageOutput{MessageID: existingID}, nil
 	}
 
+	// Service Bus duplicate detection: a repeat MessageId inside the configured
+	// window is silently accepted but not re-enqueued.
+	if existingID, found := findMessageIDDuplicate(qd, &input, now); found {
+		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	}
+
 	msgID := idgen.GenerateID("sb-msg-")
 
 	attrs := make(map[string]string, len(input.Attributes))
@@ -322,6 +345,12 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		qd.deduplicationIndex[input.DeduplicationID] = now
 	}
 
+	if qd.requiresDupDetection {
+		if mid := messageIDOf(&input); mid != "" {
+			qd.dedupByMessageID[mid] = now
+		}
+	}
+
 	// Fire Function trigger if registered.
 	m.mu.RLock()
 	trigger := m.triggers[input.QueueURL]
@@ -363,6 +392,45 @@ func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) err
 	}
 
 	return nil
+}
+
+// messageIDOf returns the Azure Service Bus MessageId a send carried, or "" when
+// none was set (an empty MessageId is never deduplicated, matching real SB).
+func messageIDOf(input *driver.SendMessageInput) string {
+	if input.SystemProperties == nil {
+		return ""
+	}
+
+	return input.SystemProperties["MessageId"]
+}
+
+// findMessageIDDuplicate reports whether a send repeats a MessageId already seen
+// within the duplicate-detection window on a RequiresDuplicateDetection queue,
+// returning the driver id of the surviving message when it is still enqueued.
+func findMessageIDDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
+	if !qd.requiresDupDetection {
+		return "", false
+	}
+
+	mid := messageIDOf(input)
+	if mid == "" {
+		return "", false
+	}
+
+	seenAt, ok := qd.dedupByMessageID[mid]
+	if !ok || now.Sub(seenAt) >= qd.dupDetectionWindow {
+		return "", false
+	}
+
+	for _, existing := range qd.messages {
+		if existing.SystemProps["MessageId"] == mid {
+			return existing.ID, true
+		}
+	}
+
+	// The original was already consumed but the MessageId is still within the
+	// detection window, so the duplicate is still dropped.
+	return mid, true
 }
 
 func findDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {

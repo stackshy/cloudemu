@@ -72,7 +72,13 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 
 	rec, existed := t.Subs[name]
 	if !existed {
-		url, dlqURL, err := h.createSubQueue(r, sp.namespace, topic, name, lockSeconds, &req.Properties)
+		// Duplicate detection is a topic-level property; the subscription backing
+		// store inherits it so a repeated MessageId published to the topic is
+		// deduplicated per subscription (the same observable result as topic-level
+		// detection).
+		dup := topicDupDetection(t)
+
+		url, dlqURL, err := h.createSubQueue(r, sp.namespace, topic, name, lockSeconds, &req.Properties, dup)
 		if err != nil {
 			h.mu.Unlock()
 			azurearm.WriteCErr(w, err)
@@ -146,12 +152,28 @@ func (h *Handler) deleteSubscription(w http.ResponseWriter, sp sbPath, topic, na
 	w.WriteHeader(http.StatusOK)
 }
 
+// dupConfig captures the parent topic's duplicate-detection settings that a
+// subscription backing store inherits.
+type dupConfig struct {
+	enabled bool
+	window  time.Duration
+}
+
+// topicDupDetection resolves a topic's duplicate-detection settings for its
+// subscriptions' backing stores.
+func topicDupDetection(t *topicRecord) dupConfig {
+	return dupConfig{
+		enabled: t.Props.RequiresDuplicateDetection,
+		window:  dupDetectionWindow(t.Props.DuplicateDetectionHistoryTimeWindow),
+	}
+}
+
 // createSubQueue provisions the backing message store for a new subscription
 // plus its paired $DeadLetterQueue, honoring the subscription's LockDuration,
-// MaxDeliveryCount and deadLetteringOnMessageExpiration. It returns the primary
-// and dead-letter store URLs.
+// MaxDeliveryCount and deadLetteringOnMessageExpiration, plus the parent topic's
+// duplicate detection. It returns the primary and dead-letter store URLs.
 func (h *Handler) createSubQueue(
-	r *http.Request, namespace, topic, sub string, lockSeconds int, props *subscriptionProperties,
+	r *http.Request, namespace, topic, sub string, lockSeconds int, props *subscriptionProperties, dup dupConfig,
 ) (url, dlqURL string, err error) {
 	name := namespace + "/" + topic + "/" + segSubs + "/" + sub
 
@@ -167,7 +189,9 @@ func (h *Handler) createSubQueue(
 			TargetQueueURL:  dlqURL,
 			MaxReceiveCount: effectiveSubMaxDeliveryCount(props),
 		},
-		DeadLetterOnExpiration: props.DeadLetteringOnExpiration,
+		DeadLetterOnExpiration:     props.DeadLetteringOnExpiration,
+		RequiresDuplicateDetection: dup.enabled,
+		DuplicateDetectionWindow:   dup.window,
 	})
 	if err != nil && !cerrors.IsAlreadyExists(err) {
 		return "", "", err

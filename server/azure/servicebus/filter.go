@@ -3,6 +3,7 @@ package servicebus
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 // messageProps is the subset of a Service Bus message that subscription rule
@@ -143,16 +144,21 @@ func sqlProp(field string, p *messageProps) (string, bool) {
 // application property; and value is a quoted string or a numeric literal.
 // Boolean literals (1=1, 1=0, true, false) work as-is.
 //
-// The no-drop invariant: anything this evaluator cannot fully parse (an
-// unbalanced paren, an unterminated string, an unsupported operator such as
-// LIKE/IN, other malformed syntax, or an unrecognized sys.* identifier) is
-// treated as satisfied rather than silently dropping a message a real broker
-// would deliver -- it can only ever over-deliver. A well-formed comparison that
-// legitimately fails (or references an absent custom property) still excludes
-// the message.
+// Beyond comparisons the grammar also implements the common Service Bus set
+// predicates: "<field> LIKE '<pattern>'" / "NOT LIKE" (with % matching any run
+// and _ a single character, case-sensitive), "<field> IN (list)" / "NOT IN",
+// "<field> IS NULL" / "IS NOT NULL", and "EXISTS(prop)" / "NOT EXISTS(prop)".
 //
-// DEFER: LIKE, IN, EXISTS, IS NULL and arithmetic are not implemented; a clause
-// using them falls back to the no-drop match=true path.
+// The no-drop invariant: anything this evaluator cannot fully parse (an
+// unbalanced paren, an unterminated string, an unsupported operator, arithmetic,
+// other malformed syntax, or an unrecognized sys.* identifier) is treated as
+// satisfied rather than silently dropping a message a real broker would deliver
+// -- it can only ever over-deliver. A well-formed comparison that legitimately
+// fails (or references an absent custom property) still excludes the message.
+//
+// DEFER: arithmetic and LIKE's ESCAPE clause are not implemented; % and _ are
+// always wildcards (no literal-wildcard matching). A clause using them falls
+// back to the no-drop match=true path.
 func sqlMatches(f *sqlFilter, p *messageProps) bool {
 	if f == nil {
 		return true
@@ -326,8 +332,9 @@ func (sp *sqlParser) parseBinary(kw sqlTokenKind, sub func() (bool, bool), combi
 	return val, true
 }
 
-// parseTerm parses a parenthesized sub-expression or a single comparison clause
-// (a maximal run of atom tokens).
+// parseTerm parses a parenthesized sub-expression or a single clause (a maximal
+// run of atom tokens), including the IN/EXISTS set predicates whose value list
+// follows in parentheses.
 func (sp *sqlParser) parseTerm() (val, ok bool) {
 	if sp.peek() == tokLParen {
 		sp.pos++
@@ -346,13 +353,95 @@ func (sp *sqlParser) parseTerm() (val, ok bool) {
 		return false, false
 	}
 
+	parts := sp.collectAtoms()
+
+	if sp.peek() == tokLParen && expectsParenList(parts) {
+		list, listOK := sp.parseParenList()
+		if !listOK {
+			return false, false
+		}
+
+		return evalParenClause(parts, list, sp.props), true
+	}
+
+	return evalClauseParts(parts, sp.props), true
+}
+
+// collectAtoms consumes a maximal run of atom tokens.
+func (sp *sqlParser) collectAtoms() []string {
 	var parts []string
+
 	for sp.peek() == tokAtom {
 		parts = append(parts, sp.toks[sp.pos].text)
 		sp.pos++
 	}
 
-	return evalSQLClause(strings.Join(parts, " "), sp.props), true
+	return parts
+}
+
+// expectsParenList reports whether an atom run is the head of an IN or EXISTS
+// predicate whose value list is the parenthesized group that follows.
+func expectsParenList(parts []string) bool {
+	if len(parts) == 0 {
+		return false
+	}
+
+	last := parts[len(parts)-1]
+
+	return strings.EqualFold(last, "IN") || strings.EqualFold(last, "EXISTS")
+}
+
+// parseParenList consumes "( a , b , ... )", returning the (comma-separated)
+// atom values inside. A quoted literal stays intact; unquoted atoms are split on
+// commas so "(1,2)" and "(1, 2)" both yield two members.
+func (sp *sqlParser) parseParenList() (list []string, ok bool) {
+	sp.pos++ // consume '('
+
+	for sp.peek() == tokAtom {
+		list = append(list, splitListAtom(sp.toks[sp.pos].text)...)
+		sp.pos++
+	}
+
+	if sp.peek() != tokRParen {
+		return nil, false
+	}
+
+	sp.pos++
+
+	if len(list) == 0 {
+		return nil, false
+	}
+
+	return list, true
+}
+
+// splitListAtom breaks one list atom into its comma-separated members, keeping a
+// quoted literal whole (a comma inside quotes is data, not a separator).
+func splitListAtom(atom string) []string {
+	if isQuotedLiteral(atom) {
+		return []string{atom}
+	}
+
+	var out []string
+
+	for _, piece := range strings.Split(atom, ",") {
+		if piece = strings.TrimSpace(piece); piece != "" {
+			out = append(out, piece)
+		}
+	}
+
+	return out
+}
+
+// isQuotedLiteral reports whether s is wrapped in a matching pair of quotes.
+func isQuotedLiteral(s string) bool {
+	if len(s) < minQuotedLiteralLen {
+		return false
+	}
+
+	q := s[0]
+
+	return (q == '\'' || q == '"') && s[len(s)-1] == q
 }
 
 // SQL comparison operators the filter grammar understands.
@@ -365,6 +454,194 @@ const (
 	opLessEqual    = "<="
 	opGreaterEqual = ">="
 )
+
+// evalClauseParts evaluates a clause given as its atom slice (so quoted values
+// keep their internal spaces). It handles the LIKE and IS NULL predicates, then
+// falls back to the operator-comparison path.
+func evalClauseParts(parts []string, p *messageProps) bool {
+	if v, handled := evalLikeParts(parts, p); handled {
+		return v
+	}
+
+	if v, handled := evalIsNullParts(parts, p); handled {
+		return v
+	}
+
+	return evalSQLClause(strings.Join(parts, " "), p)
+}
+
+// evalLikeParts evaluates "<field> LIKE '<pattern>'" and its NOT form. handled
+// is false when the clause has no LIKE keyword so other paths can try it.
+func evalLikeParts(parts []string, p *messageProps) (val, handled bool) {
+	i := indexFold(parts, "LIKE")
+	if i < 0 {
+		return false, false
+	}
+
+	negate := i >= 1 && strings.EqualFold(parts[i-1], "NOT")
+
+	fieldEnd := i
+	if negate {
+		fieldEnd = i - 1
+	}
+
+	// A well-formed LIKE is "<field> [NOT] LIKE <pattern>" with exactly one
+	// pattern atom; anything else is malformed, so keep the no-drop match.
+	if fieldEnd < 1 || i+2 != len(parts) {
+		return true, true
+	}
+
+	field := strings.Join(parts[:fieldEnd], " ")
+
+	got, present, recognized := resolveSQLField(field, p)
+	if !recognized {
+		return true, true
+	}
+
+	if !present {
+		return negate, true // absent value: LIKE false, NOT LIKE true
+	}
+
+	return sqlLike(got, unquoteSQL(parts[i+1])) != negate, true
+}
+
+// evalIsNullParts evaluates "<field> IS NULL" and "<field> IS NOT NULL".
+func evalIsNullParts(parts []string, p *messageProps) (val, handled bool) {
+	i := indexFold(parts, "IS")
+	if i < 1 {
+		return false, false
+	}
+
+	negate, ok := parseIsNullTail(parts[i+1:])
+	if !ok {
+		return false, false
+	}
+
+	field := strings.Join(parts[:i], " ")
+
+	_, present, recognized := resolveSQLField(field, p)
+	if !recognized {
+		return true, true
+	}
+
+	// IS NULL is true when the property is absent; IS NOT NULL when present.
+	isNull := !present
+
+	return isNull != negate, true
+}
+
+// parseIsNullTail matches the "NULL" / "NOT NULL" tail of an IS predicate,
+// reporting whether it negates (IS NOT NULL) and whether it matched at all.
+func parseIsNullTail(rest []string) (negate, ok bool) {
+	switch {
+	case len(rest) == 1 && strings.EqualFold(rest[0], "NULL"):
+		return false, true
+	case len(rest) == minQuotedLiteralLen && strings.EqualFold(rest[0], "NOT") && strings.EqualFold(rest[1], "NULL"):
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// evalParenClause evaluates an IN or EXISTS predicate whose value list has
+// already been parsed from the following parentheses.
+func evalParenClause(parts, list []string, p *messageProps) bool {
+	if strings.EqualFold(parts[len(parts)-1], "EXISTS") {
+		return evalExists(parts, list, p)
+	}
+
+	return evalIn(parts, list, p)
+}
+
+// evalExists evaluates "EXISTS(prop)" / "NOT EXISTS(prop)": a presence test on
+// the single listed property.
+func evalExists(parts, list []string, p *messageProps) bool {
+	if len(list) != 1 {
+		return true // malformed -> no-drop
+	}
+
+	negate := len(parts) >= minQuotedLiteralLen && strings.EqualFold(parts[len(parts)-2], "NOT")
+
+	_, present, recognized := resolveSQLField(list[0], p)
+	if !recognized {
+		return true
+	}
+
+	return present != negate
+}
+
+// evalIn evaluates "<field> IN (list)" / "NOT IN": a membership test of the
+// field's value against the (numeric-aware) list.
+func evalIn(parts, list []string, p *messageProps) bool {
+	negate := len(parts) >= minQuotedLiteralLen && strings.EqualFold(parts[len(parts)-2], "NOT")
+
+	got, present, recognized := resolveSQLField(parts[0], p)
+	if !recognized {
+		return true
+	}
+
+	member := present && inList(got, list)
+
+	return member != negate
+}
+
+// inList reports whether got equals any list member, comparing numerically when
+// both sides parse as numbers (like the = operator) and lexically otherwise.
+func inList(got string, list []string) bool {
+	for _, item := range list {
+		if sqlEqual(got, unquoteSQL(item)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// indexFold returns the index of the first part equal to word (case-insensitive)
+// or -1.
+func indexFold(parts []string, word string) int {
+	for i, part := range parts {
+		if strings.EqualFold(part, word) {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// sqlLike reports whether value matches a Service Bus LIKE pattern, where %
+// matches any run of characters (including none) and _ matches exactly one.
+// Matching is case-sensitive, per Service Bus.
+func sqlLike(value, pattern string) bool {
+	v := []rune(value)
+	pat := []rune(pattern)
+
+	vi, pi := 0, 0
+	star, mark := -1, 0
+
+	for vi < len(v) {
+		switch {
+		case pi < len(pat) && (pat[pi] == '_' || pat[pi] == v[vi]):
+			vi++
+			pi++
+		case pi < len(pat) && pat[pi] == '%':
+			star, mark = pi, vi
+			pi++
+		case star >= 0:
+			pi = star + 1
+			mark++
+			vi = mark
+		default:
+			return false
+		}
+	}
+
+	for pi < len(pat) && pat[pi] == '%' {
+		pi++
+	}
+
+	return pi == len(pat)
+}
 
 // evalSQLClause evaluates one comparison clause, upholding the no-drop
 // invariant for anything it cannot parse or resolve.
@@ -613,6 +890,26 @@ func lockDurationSeconds(s string) int {
 
 	return total
 }
+
+// dupDetectionWindow converts a duplicateDetectionHistoryTimeWindow ISO-8601
+// duration to a Duration, falling back to Service Bus' 10-minute default for an
+// empty or unparseable value.
+func dupDetectionWindow(s string) time.Duration {
+	if s == "" {
+		return defaultDupDetectionWindowDuration
+	}
+
+	secs := ttlSecondsFromISO(s)
+	if secs <= 0 {
+		return defaultDupDetectionWindowDuration
+	}
+
+	return time.Duration(secs) * time.Second
+}
+
+// defaultDupDetectionWindowDuration mirrors defaultDupDetectionISO ("PT10M") as
+// a Duration for the data-plane dedup window passed to the backing store.
+const defaultDupDetectionWindowDuration = 10 * time.Minute
 
 // secondsPerDay is the whole-seconds length of the ISO-8601 date component "D".
 const secondsPerDay = 86400
