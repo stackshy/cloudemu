@@ -291,6 +291,8 @@ const (
 	transitEncryptionTag = "cloudemu:gcpTransitEncryptionMode"
 	replicaCountTag      = "cloudemu:gcpReplicaCount"
 	readReplicasModeTag  = "cloudemu:gcpReadReplicasMode"
+	// tagTrue is the stored value for a set boolean reserved tag.
+	tagTrue = "true"
 )
 
 // fieldMask is the set of instance fields a PATCH updateMask selects. A nil mask
@@ -320,6 +322,44 @@ func (m fieldMask) has(field string) bool {
 	return m == nil || m[field]
 }
 
+// explicit reports whether field is named in a non-nil mask. Unlike has, a nil
+// mask is NOT treated as selecting the field — used where a nil mask must
+// preserve the existing value (map whole-replace, clearing a scalar to its zero)
+// rather than overwrite it from an omitted body field.
+func (m fieldMask) explicit(field string) bool {
+	return m != nil && m[field]
+}
+
+// mapFieldMode selects how a map-valued field (labels, redisConfigs) folds into
+// the tag set.
+type mapFieldMode int
+
+const (
+	// mapModePreserve leaves the existing value untouched (non-nil mask that omits
+	// the field).
+	mapModePreserve mapFieldMode = iota
+	// mapModeMerge overlays the request value onto the existing one so unspecified
+	// entries survive (nil mask — no updateMask).
+	mapModeMerge
+	// mapModeReplace whole-replaces the field with the request value so a removed
+	// entry is cleared (field explicitly named in the mask).
+	mapModeReplace
+)
+
+// mapMode resolves the fold mode for a map-valued field. A nil mask merges
+// forward (preserving existing entries); an explicit mask whole-replaces; a
+// non-nil mask that omits the field preserves it untouched.
+func (m fieldMask) mapMode(field string) mapFieldMode {
+	switch {
+	case m == nil:
+		return mapModeMerge
+	case m[field]:
+		return mapModeReplace
+	default:
+		return mapModePreserve
+	}
+}
+
 // stringTagField pairs an updateMask field path with the reserved tag key and
 // request value that back it, so simple string fields fold in via one loop.
 type stringTagField struct {
@@ -328,10 +368,12 @@ type stringTagField struct {
 	value string
 }
 
-// instanceTags folds the GCP-specific request fields into the tag map. Only
-// masked fields are applied, so a PATCH leaves fields outside its updateMask
-// untouched; labels and redisConfigs are whole-replaced when masked so a removed
-// entry disappears rather than lingering.
+// instanceTags folds the GCP-specific request fields into the tag map. A non-nil
+// mask (PATCH updateMask) applies only its named fields, leaving the rest
+// untouched, and whole-replaces the map fields it names so a removed entry
+// disappears. A nil mask (Create, or a PATCH without updateMask) applies every
+// provided field and MERGES the map fields forward, so unspecified labels /
+// redisConfigs survive.
 func instanceTags(body *instanceJSON, existing map[string]string, mask fieldMask) map[string]string {
 	out := carryForwardTags(existing, mask)
 
@@ -343,11 +385,12 @@ func instanceTags(body *instanceJSON, existing map[string]string, mask fieldMask
 	return out
 }
 
-// carryForwardTags copies existing tags forward, dropping user labels when the
-// mask replaces the whole label set (reserved keys always carry forward).
+// carryForwardTags copies existing tags forward, dropping user labels only for an
+// explicit labels whole-replace; a nil mask merges forward, so existing labels
+// must survive. Reserved keys always carry forward.
 func carryForwardTags(existing map[string]string, mask fieldMask) map[string]string {
 	out := make(map[string]string, len(existing)+1)
-	dropLabels := mask.has("labels")
+	dropLabels := mask.mapMode("labels") == mapModeReplace
 
 	for k, v := range existing {
 		if dropLabels && !strings.HasPrefix(k, reservedPrefix) {
@@ -360,9 +403,11 @@ func carryForwardTags(existing map[string]string, mask fieldMask) map[string]str
 	return out
 }
 
-// applyLabels writes the request's labels as the whole label set when masked.
+// applyLabels overlays the request's labels. Merge and replace both overlay;
+// replace additionally dropped the existing labels in carryForwardTags. Preserve
+// applies nothing, leaving the carried-forward labels untouched.
 func applyLabels(out map[string]string, body *instanceJSON, mask fieldMask) {
-	if !mask.has("labels") {
+	if mask.mapMode("labels") == mapModePreserve {
 		return
 	}
 
@@ -399,19 +444,45 @@ func applyScalarTags(out map[string]string, body *instanceJSON, mask fieldMask) 
 		out[memorySizeTag] = strconv.FormatInt(body.MemorySizeGb, 10)
 	}
 
-	if mask.has("replicaCount") && body.ReplicaCount > 0 {
+	applyReplicaCount(out, body, mask)
+	applyAuthEnabled(out, body, mask)
+}
+
+// applyReplicaCount folds replicaCount in. An explicit mask applies the value
+// including 0 (a valid "no replicas" setting, so it can be cleared); a nil mask
+// can't distinguish an omitted 0 from an intentional one, so it applies only a
+// positive value and otherwise preserves the existing count.
+func applyReplicaCount(out map[string]string, body *instanceJSON, mask fieldMask) {
+	if mask.explicit("replicaCount") {
 		out[replicaCountTag] = strconv.FormatInt(body.ReplicaCount, 10)
+
+		return
 	}
 
-	if mask.has("authEnabled") {
+	if mask == nil && body.ReplicaCount > 0 {
+		out[replicaCountTag] = strconv.FormatInt(body.ReplicaCount, 10)
+	}
+}
+
+// applyAuthEnabled folds authEnabled in. An explicit mask sets or clears it; a
+// nil mask can't distinguish an omitted false from an intentional one, so it sets
+// only a true value and otherwise preserves the existing flag.
+func applyAuthEnabled(out map[string]string, body *instanceJSON, mask fieldMask) {
+	if mask.explicit("authEnabled") {
 		setBoolTag(out, authEnabledTag, body.AuthEnabled)
+
+		return
+	}
+
+	if mask == nil && body.AuthEnabled {
+		out[authEnabledTag] = tagTrue
 	}
 }
 
 // setBoolTag records a true boolean and clears the tag when false.
 func setBoolTag(out map[string]string, key string, val bool) {
 	if val {
-		out[key] = "true"
+		out[key] = tagTrue
 
 		return
 	}
@@ -419,22 +490,51 @@ func setBoolTag(out map[string]string, key string, val bool) {
 	delete(out, key)
 }
 
-// applyRedisConfigs whole-replaces the JSON-encoded redisConfigs map when masked
-// (an empty map clears it), matching real Memorystore's replace semantics.
+// applyRedisConfigs folds the JSON-encoded redisConfigs map in per its mask mode:
+// preserve leaves the stored value untouched, replace whole-replaces it (an empty
+// map clears it), and merge overlays the request onto the existing configs so
+// unspecified entries survive a no-updateMask PATCH.
 func applyRedisConfigs(out map[string]string, body *instanceJSON, mask fieldMask) {
-	if !mask.has("redisConfigs") {
+	switch mask.mapMode("redisConfigs") {
+	case mapModePreserve:
 		return
+	case mapModeReplace:
+		setRedisConfigs(out, body.RedisConfigs)
+	case mapModeMerge:
+		mergeRedisConfigs(out, body.RedisConfigs)
 	}
+}
 
+// setRedisConfigs whole-replaces the redisConfigs tag; an empty map clears it.
+func setRedisConfigs(out, cfg map[string]string) {
 	delete(out, redisConfigsTag)
 
-	if len(body.RedisConfigs) == 0 {
+	if len(cfg) == 0 {
 		return
 	}
 
-	if raw, err := json.Marshal(body.RedisConfigs); err == nil {
+	if raw, err := json.Marshal(cfg); err == nil {
 		out[redisConfigsTag] = string(raw)
 	}
+}
+
+// mergeRedisConfigs overlays the request configs onto the existing ones, leaving
+// the stored value untouched when the request supplies none.
+func mergeRedisConfigs(out, cfg map[string]string) {
+	if len(cfg) == 0 {
+		return
+	}
+
+	merged := redisConfigsFromTags(out)
+	if merged == nil {
+		merged = make(map[string]string, len(cfg))
+	}
+
+	for k, v := range cfg {
+		merged[k] = v
+	}
+
+	setRedisConfigs(out, merged)
 }
 
 // stripReservedTags returns user labels without cloudemu-internal keys.

@@ -104,6 +104,79 @@ func TestSDKMemorystorePatchLabelsClearable(t *testing.T) {
 	}
 }
 
+// TestSDKMemorystorePatchNoMaskPreservesMapFields guards the regression where a
+// PATCH omitting updateMask entirely silently wiped labels/redisConfigs: with no
+// mask the map fields must MERGE FORWARD (unspecified entries survive).
+func TestSDKMemorystorePatchNoMaskPreservesMapFields(t *testing.T) {
+	svc := newRedisService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Projects.Locations.Instances.Create(parent(), &redis.Instance{
+		Tier:         "BASIC",
+		MemorySizeGb: 1,
+		Labels:       map[string]string{"env": "prod"},
+		RedisConfigs: map[string]string{"maxmemory-policy": "allkeys-lru"},
+	}).InstanceId("nomask").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// PATCH with NO updateMask, changing only displayName. The body carries no
+	// labels/redisConfigs, so they must be preserved (not whole-replaced away).
+	if _, err := svc.Projects.Locations.Instances.Patch(instanceName("nomask"), &redis.Instance{
+		DisplayName: "renamed",
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch (no updateMask): %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Instances.Get(instanceName("nomask")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.DisplayName != "renamed" {
+		t.Errorf("displayName = %q, want renamed", got.DisplayName)
+	}
+
+	if got.Labels["env"] != "prod" {
+		t.Errorf("labels = %v, want env=prod preserved after no-mask patch", got.Labels)
+	}
+
+	if got.RedisConfigs["maxmemory-policy"] != "allkeys-lru" {
+		t.Errorf("redisConfigs = %v, want maxmemory-policy preserved after no-mask patch", got.RedisConfigs)
+	}
+}
+
+// TestSDKMemorystorePatchReplicaCountZero guards that replicaCount=0 under an
+// explicit updateMask=replicaCount is applied (0 is a valid "no replicas"
+// setting), not swallowed as if unset.
+func TestSDKMemorystorePatchReplicaCountZero(t *testing.T) {
+	svc := newRedisService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Projects.Locations.Instances.Create(parent(), &redis.Instance{
+		Tier:         "STANDARD_HA",
+		MemorySizeGb: 5,
+		ReplicaCount: 2,
+	}).InstanceId("rc").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := svc.Projects.Locations.Instances.Patch(instanceName("rc"), &redis.Instance{
+		ReplicaCount: 0,
+	}).UpdateMask("replicaCount").Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Instances.Get(instanceName("rc")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.ReplicaCount != 0 {
+		t.Errorf("replicaCount = %d, want 0 applied under explicit updateMask", got.ReplicaCount)
+	}
+}
+
 // TestSDKMemorystoreSecurityFieldsRoundTrip (B4) guards that authEnabled,
 // transitEncryptionMode and replicaCount round-trip on create and get.
 func TestSDKMemorystoreSecurityFieldsRoundTrip(t *testing.T) {
