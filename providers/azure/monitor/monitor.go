@@ -55,21 +55,25 @@ type alarmData struct {
 
 // Mock is an in-memory mock implementation of the Azure Monitor service.
 type Mock struct {
-	mu       sync.RWMutex
-	metrics  map[metricKey][]driver.MetricDatum
-	alarms   *memstore.Store[*alarmData]
-	channels *memstore.Store[*driver.NotificationChannelInfo]
-	history  []driver.AlarmHistoryEntry
-	opts     *config.Options
+	mu               sync.RWMutex
+	metrics          map[metricKey][]driver.MetricDatum
+	alarms           *memstore.Store[*alarmData]
+	channels         *memstore.Store[*driver.NotificationChannelInfo]
+	actionGroups     *memstore.Store[*actionGroupData]
+	deliveries       []ActionGroupDelivery
+	webhookDeliverer WebhookDeliverer
+	history          []driver.AlarmHistoryEntry
+	opts             *config.Options
 }
 
 // New creates a new Azure Monitor mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:  make(map[metricKey][]driver.MetricDatum),
-		alarms:   memstore.New[*alarmData](),
-		channels: memstore.New[*driver.NotificationChannelInfo](),
-		opts:     opts,
+		metrics:      make(map[metricKey][]driver.MetricDatum),
+		alarms:       memstore.New[*alarmData](),
+		channels:     memstore.New[*driver.NotificationChannelInfo](),
+		actionGroups: memstore.New[*actionGroupData](),
+		opts:         opts,
 	}
 }
 
@@ -149,8 +153,9 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 // transitionAlarm sets an alert rule's state and, only on a state change, records
 // a history entry — mirroring CloudWatch, where the history entry happens on a
 // state change whether it came from metric evaluation or a manual SetAlarmState.
-// Azure Monitor action groups aren't delivered by the emulator (no publisher is
-// wired), so the state's actions are a no-op beyond the recorded transition.
+// On a transition into ALARM it also fires the alert's action groups, resolving
+// each AlarmActions id against the registered action groups and delivering to
+// their receivers (mirroring the AWS alarm -> SNS action wiring).
 func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
 	oldState := alarm.State
 
@@ -161,6 +166,10 @@ func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now ti
 
 	alarm.State = newState
 	alarm.StateReason = reason
+
+	if oldState != newState && newState == alarmeval.StateAlarm {
+		m.fireActionGroups(alarm, newState, now)
+	}
 }
 
 // appendHistory records one alert rule state transition in the history log.
