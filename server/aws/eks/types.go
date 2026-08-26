@@ -43,20 +43,64 @@ type oidcJSON struct {
 	Issuer string `json:"issuer"`
 }
 
+// loggingJSON is the EKS cluster logging shape, used on both CreateCluster
+// (request) and DescribeCluster (response).
+type loggingJSON struct {
+	ClusterLogging []logSetupJSON `json:"clusterLogging"`
+}
+
+// logSetupJSON is one control-plane log-type group and whether it is enabled.
+type logSetupJSON struct {
+	Types   []string `json:"types"`
+	Enabled bool     `json:"enabled"`
+}
+
+// kubernetesNetworkConfigRequest is the CreateCluster request shape for cluster
+// networking: the caller may set serviceIpv4Cidr and ipFamily.
+type kubernetesNetworkConfigRequest struct {
+	ServiceIPv4CIDR string `json:"serviceIpv4Cidr,omitempty"`
+	IPFamily        string `json:"ipFamily,omitempty"`
+}
+
+// kubernetesNetworkConfigResponse is the DescribeCluster response shape; EKS
+// echoes the service CIDR for the chosen family plus the ipFamily.
+type kubernetesNetworkConfigResponse struct {
+	ServiceIPv4CIDR string `json:"serviceIpv4Cidr,omitempty"`
+	ServiceIPv6CIDR string `json:"serviceIpv6Cidr,omitempty"`
+	IPFamily        string `json:"ipFamily,omitempty"`
+}
+
+// accessConfigRequest is the CreateCluster request shape for cluster access
+// management. bootstrapClusterCreatorAdminPermissions is a pointer so an
+// omitted value is distinguishable from an explicit false.
+type accessConfigRequest struct {
+	AuthenticationMode                      string `json:"authenticationMode,omitempty"`
+	BootstrapClusterCreatorAdminPermissions *bool  `json:"bootstrapClusterCreatorAdminPermissions,omitempty"`
+}
+
+// accessConfigResponse is the DescribeCluster response shape for access config.
+type accessConfigResponse struct {
+	AuthenticationMode                      string `json:"authenticationMode,omitempty"`
+	BootstrapClusterCreatorAdminPermissions bool   `json:"bootstrapClusterCreatorAdminPermissions"`
+}
+
 // clusterJSON is the EKS cluster resource shape.
 type clusterJSON struct {
-	Name                 string             `json:"name"`
-	Arn                  string             `json:"arn"`
-	CreatedAt            float64            `json:"createdAt"`
-	Version              string             `json:"version,omitempty"`
-	Endpoint             string             `json:"endpoint,omitempty"`
-	RoleArn              string             `json:"roleArn,omitempty"`
-	ResourcesVpcConfig   *vpcConfigResponse `json:"resourcesVpcConfig,omitempty"`
-	Status               string             `json:"status"`
-	CertificateAuthority *certificate       `json:"certificateAuthority,omitempty"`
-	Identity             *identityJSON      `json:"identity,omitempty"`
-	PlatformVersion      string             `json:"platformVersion,omitempty"`
-	Tags                 map[string]string  `json:"tags,omitempty"`
+	Name                    string                           `json:"name"`
+	Arn                     string                           `json:"arn"`
+	CreatedAt               float64                          `json:"createdAt"`
+	Version                 string                           `json:"version,omitempty"`
+	Endpoint                string                           `json:"endpoint,omitempty"`
+	RoleArn                 string                           `json:"roleArn,omitempty"`
+	ResourcesVpcConfig      *vpcConfigResponse               `json:"resourcesVpcConfig,omitempty"`
+	KubernetesNetworkConfig *kubernetesNetworkConfigResponse `json:"kubernetesNetworkConfig,omitempty"`
+	Logging                 *loggingJSON                     `json:"logging,omitempty"`
+	AccessConfig            *accessConfigResponse            `json:"accessConfig,omitempty"`
+	Status                  string                           `json:"status"`
+	CertificateAuthority    *certificate                     `json:"certificateAuthority,omitempty"`
+	Identity                *identityJSON                    `json:"identity,omitempty"`
+	PlatformVersion         string                           `json:"platformVersion,omitempty"`
+	Tags                    map[string]string                `json:"tags,omitempty"`
 }
 
 // nodegroupScalingConfigJSON mirrors the SDK shape for nodegroup scaling.
@@ -167,11 +211,14 @@ type updateJSON struct {
 // Request bodies decoded from POST/PUT JSON.
 
 type createClusterRequest struct {
-	Name               string            `json:"name"`
-	Version            string            `json:"version,omitempty"`
-	RoleArn            string            `json:"roleArn,omitempty"`
-	ResourcesVpcConfig *vpcConfigRequest `json:"resourcesVpcConfig,omitempty"`
-	Tags               map[string]string `json:"tags,omitempty"`
+	Name                    string                          `json:"name"`
+	Version                 string                          `json:"version,omitempty"`
+	RoleArn                 string                          `json:"roleArn,omitempty"`
+	ResourcesVpcConfig      *vpcConfigRequest               `json:"resourcesVpcConfig,omitempty"`
+	KubernetesNetworkConfig *kubernetesNetworkConfigRequest `json:"kubernetesNetworkConfig,omitempty"`
+	Logging                 *loggingJSON                    `json:"logging,omitempty"`
+	AccessConfig            *accessConfigRequest            `json:"accessConfig,omitempty"`
+	Tags                    map[string]string               `json:"tags,omitempty"`
 }
 
 type updateClusterConfigRequest struct {

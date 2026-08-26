@@ -41,6 +41,16 @@ const (
 	defaultNodegroupInstanceType = "t3.medium"
 	defaultNodegroupAmiType      = "AL2_x86_64"
 	defaultNodegroupDiskSize     = 20
+
+	// Cluster networking and access-config defaults real EKS applies when the
+	// caller omits them. authenticationMode defaults to CONFIG_MAP on the
+	// EKS API / SDK / CloudFormation path (only the AWS console defaults to
+	// API_AND_CONFIG_MAP); Terraform's aws_eks_cluster uses the SDK path.
+	defaultServiceIPv4CIDR    = "10.100.0.0/16"
+	defaultServiceIPv6CIDR    = "fd00::/108"
+	ipFamilyIPv4              = "ipv4"
+	ipFamilyIPv6              = "ipv6"
+	defaultAuthenticationMode = "CONFIG_MAP"
 )
 
 // CloudWatch-style metric values emitted on cluster create. The numbers are
@@ -238,6 +248,70 @@ func copyStrings(src []string) []string {
 	return out
 }
 
+// allClusterLogTypes is the full EKS control-plane log-type set, in the order
+// AWS reports them.
+func allClusterLogTypes() []string {
+	return []string{"api", "audit", "authenticator", "controllerManager", "scheduler"}
+}
+
+// resolveClusterLogging echoes the caller's cluster logging, or applies the AWS
+// default when it is omitted: all control-plane log types present but disabled.
+func resolveClusterLogging(in []eksdriver.ClusterLogging) []eksdriver.ClusterLogging {
+	if len(in) == 0 {
+		return []eksdriver.ClusterLogging{{Types: allClusterLogTypes(), Enabled: false}}
+	}
+
+	out := make([]eksdriver.ClusterLogging, 0, len(in))
+	for _, l := range in {
+		out = append(out, eksdriver.ClusterLogging{Types: copyStrings(l.Types), Enabled: l.Enabled})
+	}
+
+	return out
+}
+
+// resolveNetworkConfig fills in the EKS networking defaults: ipFamily "ipv4",
+// and a service CIDR for the chosen family when the caller omits it (real EKS
+// auto-assigns one so DescribeCluster is always populated).
+func resolveNetworkConfig(in eksdriver.NetworkConfig) eksdriver.NetworkConfig {
+	out := in
+	if out.IPFamily == "" {
+		out.IPFamily = ipFamilyIPv4
+	}
+
+	switch out.IPFamily {
+	case ipFamilyIPv6:
+		if out.ServiceIPv6CIDR == "" {
+			out.ServiceIPv6CIDR = defaultServiceIPv6CIDR
+		}
+	default:
+		if out.ServiceIPv4CIDR == "" {
+			out.ServiceIPv4CIDR = defaultServiceIPv4CIDR
+		}
+	}
+
+	return out
+}
+
+// resolveAccessConfig fills in the EKS access-config defaults: authentication
+// mode CONFIG_MAP and bootstrapClusterCreatorAdminPermissions true when the
+// caller omits them.
+func resolveAccessConfig(in eksdriver.AccessConfigRequest) eksdriver.AccessConfig {
+	mode := in.AuthenticationMode
+	if mode == "" {
+		mode = defaultAuthenticationMode
+	}
+
+	bootstrap := true
+	if in.BootstrapClusterCreatorAdminPermissions != nil {
+		bootstrap = *in.BootstrapClusterCreatorAdminPermissions
+	}
+
+	return eksdriver.AccessConfig{
+		AuthenticationMode:                      mode,
+		BootstrapClusterCreatorAdminPermissions: bootstrap,
+	}
+}
+
 func copyTaints(src []eksdriver.Taint) []eksdriver.Taint {
 	if len(src) == 0 {
 		return nil
@@ -417,8 +491,11 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 			ClusterSecurityGroupID: m.clusterSecurityGroupID(cfg.Name),
 			VpcID:                  m.resolveVpcID(ctx, cfg.VPCConfig.SubnetIDs),
 		},
-		Tags:      copyTags(cfg.Tags),
-		CreatedAt: m.opts.Clock.Now().UTC(),
+		Logging:       resolveClusterLogging(cfg.Logging),
+		NetworkConfig: resolveNetworkConfig(cfg.NetworkConfig),
+		AccessConfig:  resolveAccessConfig(cfg.AccessConfig),
+		Tags:          copyTags(cfg.Tags),
+		CreatedAt:     m.opts.Clock.Now().UTC(),
 	}
 
 	// Wave 2: if a Kubernetes data-plane server is wired, register a fresh
