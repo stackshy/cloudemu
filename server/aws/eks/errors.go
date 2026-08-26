@@ -44,17 +44,19 @@ func writeErr(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// wireMessage strips the internal "<Code>: " prefix so the surfaced message
+	// reads like real AWS (the X-Amzn-ErrorType header already carries the code).
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", wireMessage(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ResourceInUseException", err.Error())
+		writeError(w, http.StatusConflict, "ResourceInUseException", wireMessage(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidParameterException", wireMessage(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "InvalidRequestException", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidRequestException", wireMessage(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "ServerException", err.Error())
+		writeError(w, http.StatusInternalServerError, "ServerException", wireMessage(err))
 	}
 }
 
