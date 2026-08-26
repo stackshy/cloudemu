@@ -53,6 +53,14 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 	now := m.opts.Clock.Now().UTC()
 	name := in.Tags[nameTag]
 
+	// Automatic backups default to DISABLED, honoring the Backup flag. One Zone
+	// file systems (AvailabilityZoneName set) default to ENABLED per real EFS; a
+	// later PutBackupPolicy still overrides.
+	backup := driver.BackupDisabled
+	if in.Backup || in.AvailabilityZoneName != "" {
+		backup = driver.BackupEnabled
+	}
+
 	// An encrypted file system with no explicit key uses the account's
 	// AWS-managed aws/elasticfilesystem CMK.
 	kmsKeyID := in.KMSKeyID
@@ -84,7 +92,7 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 		fs:        fs,
 		mountTgts: map[string]*driver.MountTarget{},
 		accessPts: map[string]*driver.AccessPoint{},
-		backup:    driver.BackupDisabled,
+		backup:    backup,
 	})
 
 	out := fs
