@@ -62,7 +62,9 @@ type listSecretVersionIDsRequest struct {
 	SecretID string `json:"SecretId"`
 	// IncludeDeprecated, when true, also returns versions that carry no staging
 	// labels (deprecated versions). By default AWS omits them.
-	IncludeDeprecated bool `json:"IncludeDeprecated"`
+	IncludeDeprecated bool   `json:"IncludeDeprecated"`
+	MaxResults        int32  `json:"MaxResults"`
+	NextToken         string `json:"NextToken"`
 }
 
 type deleteSecretRequest struct {
@@ -199,9 +201,10 @@ type putSecretValueResponse struct {
 }
 
 type listSecretVersionIDsResponse struct {
-	ARN      string        `json:"ARN"`
-	Name     string        `json:"Name"`
-	Versions []versionJSON `json:"Versions"`
+	ARN       string        `json:"ARN"`
+	Name      string        `json:"Name"`
+	Versions  []versionJSON `json:"Versions"`
+	NextToken string        `json:"NextToken,omitempty"`
 }
 
 type putResourcePolicyRequest struct {

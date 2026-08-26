@@ -521,6 +521,7 @@ type getGroupResult struct {
 	Group       groupXML     `xml:"Group"`
 	Users       usersListXML `xml:"Users"`
 	IsTruncated bool         `xml:"IsTruncated"`
+	Marker      string       `xml:"Marker,omitempty"`
 }
 
 type listGroupsResponse struct {
@@ -628,6 +629,7 @@ type listInstanceProfilesResponse struct {
 type listInstanceProfilesResult struct {
 	InstanceProfiles instanceProfilesListXML `xml:"InstanceProfiles"`
 	IsTruncated      bool                    `xml:"IsTruncated"`
+	Marker           string                  `xml:"Marker,omitempty"`
 }
 
 type addRoleToInstanceProfileResponse struct {

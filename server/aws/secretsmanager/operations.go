@@ -394,7 +394,7 @@ func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
 	// staging labels) and are omitted unless IncludeDeprecated is set.
 	stageMap := h.versionStages(r, name)
 
-	out := make([]versionJSON, 0, len(versions))
+	all := make([]versionJSON, 0, len(versions))
 
 	for _, v := range versions {
 		stages := stagesForVersion(stageMap, &v)
@@ -402,14 +402,32 @@ func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		out = append(out, versionJSON{
+		all = append(all, versionJSON{
 			VersionID:     v.VersionID,
 			VersionStages: stages,
 			CreatedDate:   epochSeconds(v.CreatedAt),
 		})
 	}
 
-	wire.WriteJSON(w, listSecretVersionIDsResponse{ARN: info.ResourceID, Name: info.Name, Versions: out})
+	// Newest first, VersionId as the tiebreaker so the offset NextToken stays
+	// stable across pages when two versions share a CreatedDate.
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedDate != all[j].CreatedDate {
+			return all[i].CreatedDate > all[j].CreatedDate
+		}
+
+		return all[i].VersionID < all[j].VersionID
+	})
+
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, len(all))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, listSecretVersionIDsResponse{
+		ARN: info.ResourceID, Name: info.Name, Versions: all[start:end], NextToken: next,
+	})
 }
 
 func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request) {
