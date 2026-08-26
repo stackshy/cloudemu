@@ -80,6 +80,17 @@ func TestCreateRoute_ConcurrentCreatesAllLand(t *testing.T) {
 		t.Fatalf("CreateRouteTable: %v", err)
 	}
 
+	// CreateRoute validates its target exists, so attach a real gateway to point
+	// the concurrent routes at.
+	igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	if err != nil {
+		t.Fatalf("CreateInternetGateway: %v", err)
+	}
+
+	if err := m.AttachInternetGateway(ctx, igw.ID, vpcID); err != nil {
+		t.Fatalf("AttachInternetGateway: %v", err)
+	}
+
 	var wg sync.WaitGroup
 
 	for i := range raceGoroutines {
@@ -89,7 +100,7 @@ func TestCreateRoute_ConcurrentCreatesAllLand(t *testing.T) {
 			defer wg.Done()
 
 			cidr := "10." + strconv.Itoa(i+1) + ".0.0/16"
-			if err := m.CreateRoute(ctx, rt.ID, cidr, "igw-test", "gateway"); err != nil {
+			if err := m.CreateRoute(ctx, rt.ID, cidr, igw.ID, "gateway"); err != nil {
 				t.Errorf("CreateRoute: %v", err)
 			}
 		}()

@@ -3,7 +3,9 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -55,7 +57,7 @@ func (h *Handler) createNatGateway(w http.ResponseWriter, r *http.Request) {
 		Tags:             mergeTagSpecs(awsquery.TagSpecs(r.Form), "natgateway"),
 	})
 	if err != nil {
-		writeNatErr(w, err)
+		writeCreateNatErr(w, err)
 		return
 	}
 
@@ -128,4 +130,16 @@ func toNatGatewayXML(n *netdriver.NATGateway) natGatewayXML {
 
 func writeNatErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "NatGatewayNotFound", "DependencyViolation")
+}
+
+// writeCreateNatErr maps CreateNatGateway's not-found: the NAT does not exist yet,
+// so a not-found on create is the target subnet — InvalidSubnetID.NotFound, not
+// the NatGatewayNotFound the generic mapper would emit.
+func writeCreateNatErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "subnet") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnetID.NotFound", cerrors.Message(err))
+		return
+	}
+
+	writeNatErr(w, err)
 }

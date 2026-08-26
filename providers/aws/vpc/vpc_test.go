@@ -24,6 +24,19 @@ func createTestVPC(m *Mock) *driver.VPCInfo {
 	return info
 }
 
+// attachTestIGW creates an internet gateway attached to vpcID and returns its id,
+// for tests that need a real route target (CreateRoute validates target existence).
+func attachTestIGW(t *testing.T, m *Mock, vpcID string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	requireNoError(t, err)
+	requireNoError(t, m.AttachInternetGateway(ctx, igw.ID, vpcID))
+
+	return igw.ID
+}
+
 func TestCreateVPC(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -869,9 +882,10 @@ func TestCreateRoute(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	rt, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+	igwID := attachTestIGW(t, m, v.ID)
 
 	t.Run("add route", func(t *testing.T) {
-		err := m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+		err := m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igwID, "gateway")
 		requireNoError(t, err)
 
 		rts, _ := m.DescribeRouteTables(ctx, []string{rt.ID})
@@ -894,7 +908,8 @@ func TestDeleteRoute(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	rt, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
-	_ = m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+	igwID := attachTestIGW(t, m, v.ID)
+	requireNoError(t, m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igwID, "gateway"))
 
 	t.Run("delete existing route", func(t *testing.T) {
 		err := m.DeleteRoute(ctx, rt.ID, "0.0.0.0/0")

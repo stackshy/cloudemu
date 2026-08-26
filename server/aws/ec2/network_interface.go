@@ -24,8 +24,18 @@ type networkInterfaceXML struct {
 	SubnetID           string            `xml:"subnetId,omitempty"`
 	Status             string            `xml:"status"`
 	Description        string            `xml:"description,omitempty"`
+	PrivateIPAddress   string            `xml:"privateIpAddress,omitempty"`
+	MacAddress         string            `xml:"macAddress,omitempty"`
+	SourceDestCheck    bool              `xml:"sourceDestCheck"`
 	Attachment         *eniAttachmentXML `xml:"attachment,omitempty"`
 	Tags               []tagItem         `xml:"tagSet>item,omitempty"`
+}
+
+type modifyNetworkInterfaceAttributeResponseXML struct {
+	XMLName   xml.Name `xml:"ModifyNetworkInterfaceAttributeResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
 }
 
 type describeNetworkInterfacesResponseXML struct {
@@ -281,7 +291,7 @@ func (h *Handler) deleteNetworkInterface(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := store.DeleteNetworkInterface(r.Context(), r.Form.Get("NetworkInterfaceId")); err != nil {
-		writeENIErr(w, err)
+		writeENIDeleteErr(w, err)
 		return
 	}
 
@@ -292,6 +302,56 @@ func (h *Handler) deleteNetworkInterface(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// modifyNetworkInterfaceAttribute changes an ENI's SourceDestCheck, Description,
+// or security groups (ec2:ModifyNetworkInterfaceAttribute). Disabling
+// SourceDestCheck is the required step for a NAT-instance / firewall / router VM.
+func (h *Handler) modifyNetworkInterfaceAttribute(w http.ResponseWriter, r *http.Request) {
+	modifier, ok := h.vpc.(netdriver.NetworkInterfaceModifier)
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	var update netdriver.NetworkInterfaceAttributeUpdate
+
+	if v := r.Form.Get("SourceDestCheck.Value"); v != "" {
+		b := v == formTrue
+		update.SourceDestCheck = &b
+	}
+
+	if _, present := r.Form["Description.Value"]; present {
+		d := r.Form.Get("Description.Value")
+		update.Description = &d
+	}
+
+	if groups := awsquery.ListStrings(r.Form, "SecurityGroupId"); len(groups) > 0 {
+		update.Groups = groups
+	}
+
+	if err := modifier.ModifyNetworkInterfaceAttribute(r.Context(), r.Form.Get("NetworkInterfaceId"), update); err != nil {
+		writeENIErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyNetworkInterfaceAttributeResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+// writeENIDeleteErr maps a delete-while-attached interface to
+// InvalidNetworkInterface.InUse (real EC2's code), falling back to the shared ENI
+// error mapping otherwise.
+func writeENIDeleteErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "InvalidNetworkInterface.InUse:") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterface.InUse", err.Error())
+		return
+	}
+
+	writeENIErr(w, err)
+}
+
 func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 	x := networkInterfaceXML{
 		NetworkInterfaceID: e.ID,
@@ -299,6 +359,9 @@ func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 		SubnetID:           e.SubnetID,
 		Status:             nonEmpty(e.Status, "available"),
 		Description:        e.Description,
+		PrivateIPAddress:   e.PrivateIP,
+		MacAddress:         e.MacAddress,
+		SourceDestCheck:    e.SourceDestCheck,
 		Tags:               toTagItems(e.Tags),
 	}
 

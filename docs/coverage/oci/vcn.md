@@ -317,6 +317,14 @@ NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept
 | --- | --- |
 | `CreateNetworkInterface` |  |
 
+### NetworkInterfaceModifier
+
+NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface
+
+| Operation | Description |
+| --- | --- |
+| `ModifyNetworkInterfaceAttribute` |  |
+
 ### NetworkInterfaces
 
 NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.

@@ -89,13 +89,10 @@ func (h *Handler) releaseAddress(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.vpc.ReleaseAddress(r.Context(), id); err != nil {
 		// An Elastic IP still associated (e.g. held by a NAT gateway) can't be
-		// released; real EC2 answers InvalidIPAddress.InUse.
-		if cerrors.IsFailedPrecondition(err) {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidIPAddress.InUse", err.Error())
-			return
-		}
-
-		writeVPCErr(w, err)
+		// released; real EC2 answers InvalidIPAddress.InUse. An unknown allocation
+		// id is InvalidAllocationID.NotFound — not the VPC code the generic mapper
+		// would emit.
+		writeErrWithNotFound(w, err, "InvalidAllocationID.NotFound", "InvalidIPAddress.InUse")
 
 		return
 	}

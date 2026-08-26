@@ -360,6 +360,14 @@ type NetworkInterface struct {
 	// for an available interface.
 	InstanceID  string
 	DeviceIndex int
+	// PrivateIP is the primary private IPv4 address the interface holds inside
+	// its subnet, MacAddress its hardware address, and SourceDestCheck the
+	// source/destination check flag. Real EC2 auto-assigns a private IP and MAC
+	// on create and defaults SourceDestCheck to true — the flag a NAT-instance /
+	// firewall / router VM disables via ModifyNetworkInterfaceAttribute.
+	PrivateIP       string
+	MacAddress      string
+	SourceDestCheck bool
 }
 
 // Azure network interface (Microsoft.Network/networkInterfaces) is an
@@ -599,6 +607,23 @@ type NetworkInterfaces interface {
 // (e.g. resourcediscovery's read-only walker, which only needs Describe).
 type NetworkInterfaceCreator interface {
 	CreateNetworkInterface(ctx context.Context, subnetID, description string, groups []string, tags map[string]string) (*NetworkInterface, error)
+}
+
+// NetworkInterfaceAttributeUpdate carries the ENI attributes a caller wants
+// changed via ec2:ModifyNetworkInterfaceAttribute. A nil pointer (or nil Groups)
+// leaves that attribute untouched, matching an API that accepts one attribute
+// per call.
+type NetworkInterfaceAttributeUpdate struct {
+	SourceDestCheck *bool
+	Description     *string
+	Groups          []string
+}
+
+// NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface
+// (ec2:ModifyNetworkInterfaceAttribute). It is kept out of NetworkInterfaces so
+// adding it doesn't break subset assertions, mirroring NetworkInterfaceCreator.
+type NetworkInterfaceModifier interface {
+	ModifyNetworkInterfaceAttribute(ctx context.Context, id string, update NetworkInterfaceAttributeUpdate) error
 }
 
 // NetworkInterfaceAttacher is the AWS-specific ENI attach surface
