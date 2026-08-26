@@ -114,8 +114,11 @@ func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id strin
 	})
 }
 
+// listHostedZones answers ListHostedZones. Hosted zones are account-global, so
+// they list unscoped; they are returned in a stable id order and paginated
+// Route 53 Marker-style: maxitems bounds the page and NextMarker (echoed back as
+// the next marker) resumes listing at the following zone id.
 func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
-	// Route 53 hosted zones are account-global, so list them unscoped.
 	infos, err := h.dns.ListZones(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
@@ -127,12 +130,40 @@ func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
 		zones = append(zones, toHostedZoneXML(&infos[i]))
 	}
 
+	marker := r.URL.Query().Get("marker")
+	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
+	page, next := markerPage(zones, marker, maxItems, func(z hostedZoneXML) string { return z.Id })
+
 	wire.WriteXML(w, http.StatusOK, listHostedZonesResponse{
 		Xmlns:       xmlns,
-		HostedZones: zones,
-		IsTruncated: false,
-		MaxItems:    listMaxItems,
+		HostedZones: page,
+		Marker:      marker,
+		IsTruncated: next != "",
+		NextMarker:  next,
+		//nolint:gosec // maxItems is clamped to [1,listMaxItems] by parseMaxItems
+		MaxItems: int32(maxItems),
 	})
+}
+
+// markerPage sorts items by id (stable), resumes at the marker id (inclusive),
+// and returns the page of up to maxItems items plus the next marker — the id the
+// following page resumes from, or "" when this page is the last. It implements
+// Route 53's Marker-style pagination shared by ListHostedZones and
+// ListHealthChecks.
+func markerPage[T any](items []T, marker string, maxItems int, id func(T) string) (page []T, next string) {
+	sort.SliceStable(items, func(i, j int) bool { return id(items[i]) < id(items[j]) })
+
+	if marker != "" {
+		for len(items) > 0 && id(items[0]) < marker {
+			items = items[1:]
+		}
+	}
+
+	if len(items) > maxItems {
+		return items[:maxItems], id(items[maxItems])
+	}
+
+	return items, ""
 }
 
 func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id string) {
@@ -474,21 +505,30 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 
 	// Real Route 53 returns record sets in DNS name order — sorted first by DNS
 	// name with the labels reversed (so the zone apex sorts before its
-	// subdomains: com.order. < com.order.a.), then by record type. This ordering
-	// is what NextRecordName/StartRecordName pagination walks.
+	// subdomains: com.order. < com.order.a.), then by record type, then by
+	// SetIdentifier so weighted/latency/failover/geo siblings at the same name+type
+	// have a stable total order. This ordering is what the
+	// StartRecordName/Type/Identifier continuation walks.
 	sort.Slice(records, func(i, j int) bool {
 		if c := compareDNSName(records[i].Name, records[j].Name); c != 0 {
 			return c < 0
 		}
 
-		return records[i].Type < records[j].Type
+		if records[i].Type != records[j].Type {
+			return records[i].Type < records[j].Type
+		}
+
+		return records[i].SetID < records[j].SetID
 	})
 
-	// StartRecordName (and optional StartRecordType) skip forward to the first
-	// record at or after the requested position, in the same reversed-label order.
+	// StartRecordName (with optional StartRecordType, then StartRecordIdentifier)
+	// skips forward to the first record at or after the requested position in that
+	// same order. The identifier is what keeps a multi-value group that straddles a
+	// page boundary from being re-emitted on the next page.
 	start := r.URL.Query().Get("name")
 	startType := r.URL.Query().Get("type")
-	records = recordsFrom(records, start, startType)
+	startID := r.URL.Query().Get("identifier")
+	records = recordsFrom(records, start, startType, startID)
 
 	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
 
@@ -502,6 +542,7 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 		resp.IsTruncated = true
 		resp.NextRecordName = next.Name
 		resp.NextRecordType = next.Type
+		resp.NextRecordIdentifier = next.SetID
 		records = records[:maxItems]
 	}
 
@@ -513,22 +554,39 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 	wire.WriteXML(w, http.StatusOK, resp)
 }
 
-// recordsFrom returns the slice starting at the first record whose (name, type)
-// is at or after (start, startType) in reversed-label DNS order. An empty start
-// returns all records.
-func recordsFrom(records []dnsdriver.RecordInfo, start, startType string) []dnsdriver.RecordInfo {
+// recordsFrom returns the slice starting at the first record whose
+// (name, type, SetIdentifier) triple is at or after (start, startType, startID)
+// in reversed-label DNS order. An empty start returns all records. Honoring
+// startID is what resumes a same-name+type multi-value group at the exact
+// sibling the previous page stopped before, so none is duplicated or skipped.
+func recordsFrom(records []dnsdriver.RecordInfo, start, startType, startID string) []dnsdriver.RecordInfo {
 	if start == "" {
 		return records
 	}
 
 	for i := range records {
-		c := compareDNSName(records[i].Name, start)
-		if c > 0 || (c == 0 && (startType == "" || records[i].Type >= startType)) {
+		if recordAtOrAfter(&records[i], start, startType, startID) {
 			return records[i:]
 		}
 	}
 
 	return nil
+}
+
+// recordAtOrAfter reports whether rec is at or after the (start, startType,
+// startID) position in ListResourceRecordSets order. An empty startType matches
+// from the whole name; an empty startID matches from the first sibling of the
+// name+type.
+func recordAtOrAfter(rec *dnsdriver.RecordInfo, start, startType, startID string) bool {
+	if c := compareDNSName(rec.Name, start); c != 0 {
+		return c > 0
+	}
+
+	if startType == "" || rec.Type != startType {
+		return rec.Type >= startType
+	}
+
+	return startID == "" || rec.SetID >= startID
 }
 
 // compareDNSName orders two DNS names the way Route 53's ListResourceRecordSets
