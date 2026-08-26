@@ -54,21 +54,27 @@ type alarmData struct {
 
 // Mock is an in-memory mock implementation of the GCP Cloud Monitoring service.
 type Mock struct {
-	mu       sync.RWMutex
-	metrics  map[metricKey][]driver.MetricDatum
-	alarms   *memstore.Store[*alarmData]
-	channels *memstore.Store[*driver.NotificationChannelInfo]
-	history  []driver.AlarmHistoryEntry
-	opts     *config.Options
+	mu               sync.RWMutex
+	metrics          map[metricKey][]driver.MetricDatum
+	alarms           *memstore.Store[*alarmData]
+	channels         *memstore.Store[*driver.NotificationChannelInfo]
+	history          []driver.AlarmHistoryEntry
+	opts             *config.Options
+	webhookDeliverer WebhookDeliverer
+	pubsubPublisher  PubSubPublisher
 }
 
 // New creates a new Cloud Monitoring mock with the given configuration options.
+// It defaults webhookDeliverer to a real-HTTP deliverer so a breach targeting a
+// webhook notification channel POSTs the incident in production without any
+// wiring, mirroring azure/monitor.New.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:  make(map[metricKey][]driver.MetricDatum),
-		alarms:   memstore.New[*alarmData](),
-		channels: memstore.New[*driver.NotificationChannelInfo](),
-		opts:     opts,
+		metrics:          make(map[metricKey][]driver.MetricDatum),
+		alarms:           memstore.New[*alarmData](),
+		channels:         memstore.New[*driver.NotificationChannelInfo](),
+		opts:             opts,
+		webhookDeliverer: newHTTPWebhookDeliverer(),
 	}
 }
 
@@ -148,9 +154,10 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 // transitionAlarm sets an alert policy's state and, only on a state change,
 // records a history entry — mirroring CloudWatch, where the history entry happens
 // on a state change whether it came from metric evaluation or a manual
-// SetAlarmState. Cloud Monitoring notification channels aren't delivered by the
-// emulator (no publisher is wired), so the state's actions are a no-op beyond the
-// recorded transition.
+// SetAlarmState. On an incident open (ALARM) or close (OK) transition it also
+// delivers the incident to the policy's referenced notification channels
+// (webhook POST / Pub/Sub publish; email / SMS / other are record-only),
+// matching real Cloud Monitoring which notifies on both open and close.
 func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
 	oldState := alarm.State
 
@@ -161,6 +168,10 @@ func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now ti
 
 	alarm.State = newState
 	alarm.StateReason = reason
+
+	if oldState != newState {
+		m.fireNotificationChannels(alarm, newState, now)
+	}
 }
 
 // appendHistory records one alert policy state transition in the history log.

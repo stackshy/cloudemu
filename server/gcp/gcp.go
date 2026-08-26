@@ -8,6 +8,7 @@ package gcp
 
 import (
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
@@ -232,6 +233,16 @@ func New(d Drivers) *server.Server {
 		// subscription HTTP delivery is self-contained in the PubSub handler.
 		if cfHandler != nil {
 			pubsubHandler.SetFunctionInvoker(cfHandler)
+		}
+
+		// Monitoring -> PubSub: an alert-policy breach publishes the incident to
+		// each pubsub notification channel's topic. Topic fanout is wire-only, so
+		// the publisher is wired here (not providers/gcp/gcp.go) as an adapter over
+		// the PubSub handler — the same layer #803 wired the function-invoker at.
+		if setter, ok := d.Monitoring.(interface {
+			SetPubSubPublisher(gcpmon.PubSubPublisher)
+		}); ok {
+			setter.SetPubSubPublisher(monitoringPubSubAdapter{h: pubsubHandler})
 		}
 
 		srv.Register(pubsubHandler)

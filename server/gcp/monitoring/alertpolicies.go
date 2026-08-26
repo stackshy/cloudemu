@@ -52,7 +52,9 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 	id := strconv.FormatUint(h.seq.Add(1), 10)
 
 	// The driver alarm is only an existence marker; the full policy shape lives
-	// in the handler registry so conditions/combiner/labels round-trip.
+	// in the handler registry so conditions/combiner/labels round-trip. Its
+	// AlarmActions carry the policy's notificationChannels so a breach delivers
+	// the incident to each channel (webhook POST / Pub/Sub publish).
 	cfg := mondriver.AlarmConfig{
 		Name:               id,
 		Namespace:          "gcp",
@@ -62,6 +64,7 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 		Period:             60,
 		EvaluationPeriods:  1,
 		Stat:               "Average",
+		AlarmActions:       body.NotificationChannels,
 	}
 
 	if err := h.mon.CreateAlarm(r.Context(), cfg); err != nil {

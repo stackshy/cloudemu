@@ -18,6 +18,7 @@
 package pubsub
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -355,6 +356,30 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, project, name 
 	h.dispatchPublished(r.Context(), project, name, delivery, pushSubs)
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// PublishMessage publishes one message to a topic programmatically, mirroring
+// the publish() HTTP path: the message is appended to the topic log (so pull
+// subscriptions receive it) and fanned out to push endpoints and event-
+// triggered functions. It backs cross-service publishers (e.g. a Cloud
+// Monitoring pubsub notification channel) that publish without an HTTP request.
+// Best-effort: it returns the assigned message id and never fails the caller.
+func (h *Handler) PublishMessage(
+	ctx context.Context, project, topic string, data []byte, attributes map[string]string,
+) string {
+	publishTime := time.Now().UTC()
+	sm := storedMessage{body: string(data), attributes: attributes, publishTime: publishTime}
+
+	h.mu.Lock()
+	ts := h.topicLog(topic)
+	id := h.appendMessageLocked(topic, &sm)
+	delivery := []publishedMessage{{idx: len(ts.messages) - 1, msg: buildPubsubMessage(id, &sm)}}
+	pushSubs := h.pushSubscribersLocked(topic)
+	h.mu.Unlock()
+
+	h.dispatchPublished(ctx, project, topic, delivery, pushSubs)
+
+	return id
 }
 
 // ---------- helpers ----------

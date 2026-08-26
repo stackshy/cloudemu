@@ -117,6 +117,31 @@ var azureExemptions = []exemption{
 	},
 }
 
+// gcpExemptions lists GCP's deliberate non-wirings on the monitoring mock: both
+// notification-delivery injectors are defaulted (webhook) or wired at the server
+// layer (pubsub), not by the provider factory.
+var gcpExemptions = []exemption{
+	{
+		field:  "CloudMonitoring",
+		method: "SetWebhookDeliverer",
+		reason: "monitoring.New defaults webhookDeliverer to a real-HTTP deliverer " +
+			"(mirroring azure/monitor.New), so an alert-policy breach that targets " +
+			"a webhook notification channel POSTs the incident in production without " +
+			"any gcp.go wiring. SetWebhookDeliverer is only a test override that " +
+			"swaps in a fake to assert delivery, so New deliberately does not call it.",
+	},
+	{
+		field:  "CloudMonitoring",
+		method: "SetPubSubPublisher",
+		reason: "Pub/Sub topic fanout (topic -> subscriptions) lives in the wire " +
+			"handler, not the SQS-shaped message-queue driver, so a breach that " +
+			"targets a pubsub notification channel can only publish through the " +
+			"server layer. The publisher is wired in server/gcp/gcp.go as an adapter " +
+			"over the Pub/Sub handler (the same layer #803 wired the function-" +
+			"invoker at), so the provider factory deliberately does not call it.",
+	},
+}
+
 // exposedInjectors returns, sorted, the names of v's methods shaped like a
 // cross-service-wiring injector: Set<X> taking exactly one interface-typed
 // parameter. v must be the reflect.Value of an exported *Provider field.
@@ -325,5 +350,5 @@ func TestWiringParity_Azure(t *testing.T) {
 }
 
 func TestWiringParity_GCP(t *testing.T) {
-	checkWiringParity(t, gcp.New(), filepath.Join("gcp", "gcp.go"), nil)
+	checkWiringParity(t, gcp.New(), filepath.Join("gcp", "gcp.go"), gcpExemptions)
 }
