@@ -2,6 +2,7 @@ package sfn_test
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,83 @@ func TestCreateRequiresNameAndDefinition(t *testing.T) {
 	}
 }
 
+// exceptionOf returns the SFN exception name tagged on err, or "" if err is not
+// a driver.APIError.
+func exceptionOf(err error) string {
+	var apiErr *driver.APIError
+	if stderrors.As(err, &apiErr) {
+		return apiErr.Exception
+	}
+
+	return ""
+}
+
+func TestCreateRequiresRoleArn(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	// Missing roleArn is InvalidArn (empty is not a valid IAM role ARN).
+	_, _, _, err := m.CreateStateMachine(ctx, driver.CreateStateMachineInput{
+		Name: "no-role", Definition: definition,
+	})
+	if ex := exceptionOf(err); ex != driver.ExInvalidArn {
+		t.Fatalf("missing roleArn: want InvalidArn, got %q (err=%v)", ex, err)
+	}
+
+	// A malformed roleArn is also InvalidArn.
+	_, _, _, err = m.CreateStateMachine(ctx, driver.CreateStateMachineInput{
+		Name: "bad-role", Definition: definition, RoleArn: "arn:aws:states:::not-a-role",
+	})
+	if ex := exceptionOf(err); ex != driver.ExInvalidArn {
+		t.Fatalf("malformed roleArn: want InvalidArn, got %q (err=%v)", ex, err)
+	}
+
+	// A valid IAM role ARN creates the machine.
+	if _, _, _, err := m.CreateStateMachine(ctx, driver.CreateStateMachineInput{
+		Name: "ok-role", Definition: definition, RoleArn: "arn:aws:iam::000000000000:role/svc",
+	}); err != nil {
+		t.Fatalf("valid roleArn should create, got %v", err)
+	}
+}
+
+func TestUpdateRequiresUpdatableField(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	arn := createSM(t, m, "upd")
+
+	before, err := m.DescribeStateMachine(ctx, arn)
+	if err != nil {
+		t.Fatalf("DescribeStateMachine: %v", err)
+	}
+	rev0 := before.RevisionID
+
+	// An update supplying none of the updatable fields is MissingRequiredParameter.
+	_, err = m.UpdateStateMachine(ctx, driver.UpdateStateMachineInput{ARN: arn})
+	if ex := exceptionOf(err); ex != driver.ExMissingRequiredParameter {
+		t.Fatalf("empty update: want MissingRequiredParameter, got %q (err=%v)", ex, err)
+	}
+
+	// The rejected update must not bump the revision.
+	after, err := m.DescribeStateMachine(ctx, arn)
+	if err != nil {
+		t.Fatalf("DescribeStateMachine: %v", err)
+	}
+	if after.RevisionID != rev0 {
+		t.Fatalf("rejected update bumped revision: %q -> %q", rev0, after.RevisionID)
+	}
+
+	// A valid update (new definition) succeeds and changes the revision.
+	res, err := m.UpdateStateMachine(ctx, driver.UpdateStateMachineInput{
+		ARN: arn, Definition: `{"StartAt":"Done","States":{"Done":{"Type":"Succeed"}}}`,
+	})
+	if err != nil {
+		t.Fatalf("valid update should succeed, got %v", err)
+	}
+	if res.RevisionID == "" || res.RevisionID == rev0 {
+		t.Fatalf("valid update should change revision, got %q (was %q)", res.RevisionID, rev0)
+	}
+}
+
 func TestCreateDescribeStateMachine(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
@@ -80,6 +158,7 @@ func TestCreateDuplicateNameFails(t *testing.T) {
 	// A differing definition on the same name is a genuine collision.
 	_, _, _, err := m.CreateStateMachine(context.Background(), driver.CreateStateMachineInput{
 		Name: "dup", Definition: `{"StartAt":"Done","States":{"Done":{"Type":"Succeed"}}}`,
+		RoleArn: "arn:aws:iam::000000000000:role/r",
 	})
 	if !errors.IsAlreadyExists(err) {
 		t.Fatalf("duplicate name should be AlreadyExists, got %v", err)
