@@ -64,16 +64,25 @@ func (f *repoFormat) UnmarshalJSON(b []byte) error {
 
 // repositoryJSON is the artifactregistry.googleapis.com v1 Repository shape.
 type repositoryJSON struct {
-	Name         string            `json:"name"`
-	Format       repoFormat        `json:"format,omitempty"`
-	Mode         string            `json:"mode,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	KmsKeyName   string            `json:"kmsKeyName,omitempty"`
-	SizeBytes    string            `json:"sizeBytes,omitempty"`
-	SatisfiesPzs bool              `json:"satisfiesPzs,omitempty"`
-	CreateTime   string            `json:"createTime,omitempty"`
-	UpdateTime   string            `json:"updateTime,omitempty"`
+	Name                string                     `json:"name"`
+	Format              repoFormat                 `json:"format,omitempty"`
+	Mode                string                     `json:"mode,omitempty"`
+	Description         string                     `json:"description,omitempty"`
+	Labels              map[string]string          `json:"labels,omitempty"`
+	KmsKeyName          string                     `json:"kmsKeyName,omitempty"`
+	DockerConfig        *dockerConfigJSON          `json:"dockerConfig,omitempty"`
+	CleanupPolicies     map[string]json.RawMessage `json:"cleanupPolicies,omitempty"`
+	CleanupPolicyDryRun bool                       `json:"cleanupPolicyDryRun,omitempty"`
+	SizeBytes           string                     `json:"sizeBytes,omitempty"`
+	SatisfiesPzs        bool                       `json:"satisfiesPzs,omitempty"`
+	CreateTime          string                     `json:"createTime,omitempty"`
+	UpdateTime          string                     `json:"updateTime,omitempty"`
+}
+
+// dockerConfigJSON is the v1 DockerRepositoryConfig shape. immutableTags marks a
+// Docker repository whose tags cannot be reassigned.
+type dockerConfigJSON struct {
+	ImmutableTags bool `json:"immutableTags,omitempty"`
 }
 
 // dockerImageJSON is the v1 DockerImage shape. imageSizeBytes is an int64
@@ -164,7 +173,11 @@ const (
 	descriptionTag    = "cloudemu:gcpArDescription"
 	modeTag           = "cloudemu:gcpArMode"
 	kmsKeyTag         = "cloudemu:gcpArKmsKeyName"
+	immutableTagsTag  = "cloudemu:gcpArImmutableTags"
+	cleanupPolicyTag  = "cloudemu:gcpArCleanupPolicies"
+	cleanupDryRunTag  = "cloudemu:gcpArCleanupPolicyDryRun"
 	reservedTagPrefix = "cloudemu:"
+	trueTag           = "true"
 	packagesSeg       = "packages"
 	versionsSeg       = "versions"
 	tagsSeg           = "tags"
@@ -221,7 +234,29 @@ func toRepositoryJSON(project, location string, r *crdriver.Repository, sizeByte
 		out.SizeBytes = strconv.FormatInt(sizeBytes, 10)
 	}
 
+	out.DockerConfig, out.CleanupPolicies, out.CleanupPolicyDryRun = repoExtrasFromTags(r.Tags)
+
 	return out
+}
+
+// repoExtrasFromTags reconstructs the GCP-only Repository fields (dockerConfig,
+// cleanupPolicies, cleanupPolicyDryRun) that the driver stores as reserved tags
+// so they round-trip on get/list without Terraform drift.
+func repoExtrasFromTags(
+	tags map[string]string,
+) (docker *dockerConfigJSON, policies map[string]json.RawMessage, dryRun bool) {
+	if tags[immutableTagsTag] == trueTag {
+		docker = &dockerConfigJSON{ImmutableTags: true}
+	}
+
+	if raw := tags[cleanupPolicyTag]; raw != "" {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			policies = m
+		}
+	}
+
+	return docker, policies, tags[cleanupDryRunTag] == trueTag
 }
 
 // stripReservedTags returns user labels without cloudemu-internal keys.

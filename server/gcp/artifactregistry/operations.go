@@ -34,11 +34,11 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 }
 
 // reservedTagsFrom folds the GCP-only Repository fields (format, description,
-// mode, kmsKeyName) the driver does not model into reserved tags alongside the
-// user labels, so they round-trip on read.
+// mode, kmsKeyName, dockerConfig, cleanupPolicies) the driver does not model
+// into reserved tags alongside the user labels, so they round-trip on read.
 // reservedFieldCount is the number of GCP-only Repository fields folded into
-// reserved tags (format, description, mode, kmsKeyName).
-const reservedFieldCount = 4
+// reserved tags.
+const reservedFieldCount = 7
 
 func reservedTagsFrom(body *repositoryJSON) map[string]string {
 	tags := make(map[string]string, len(body.Labels)+reservedFieldCount)
@@ -62,7 +62,41 @@ func reservedTagsFrom(body *repositoryJSON) map[string]string {
 		tags[kmsKeyTag] = body.KmsKeyName
 	}
 
+	addExtraTags(tags, body)
+
 	return tags
+}
+
+// addExtraTags folds the dockerConfig / cleanupPolicies / cleanupPolicyDryRun
+// fields into reserved tags. Shared with the patch path via the same setters so
+// create and update stay in lockstep.
+func addExtraTags(tags map[string]string, body *repositoryJSON) {
+	setBoolTag(tags, immutableTagsTag, body.DockerConfig != nil && body.DockerConfig.ImmutableTags)
+	setCleanupPolicies(tags, body.CleanupPolicies)
+	setBoolTag(tags, cleanupDryRunTag, body.CleanupPolicyDryRun)
+}
+
+// setBoolTag stores key="true" when val, else drops it.
+func setBoolTag(tags map[string]string, key string, val bool) {
+	if val {
+		tags[key] = trueTag
+		return
+	}
+
+	delete(tags, key)
+}
+
+// setCleanupPolicies stores the cleanupPolicies map as opaque JSON, or drops the
+// reserved tag when empty.
+func setCleanupPolicies(tags map[string]string, policies map[string]json.RawMessage) {
+	if len(policies) == 0 {
+		delete(tags, cleanupPolicyTag)
+		return
+	}
+
+	if b, err := json.Marshal(policies); err == nil {
+		tags[cleanupPolicyTag] = string(b)
+	}
 }
 
 // repositoryTypeURL is the protobuf Any type URL a GAPIC client expects in a
@@ -106,8 +140,9 @@ func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	page, err := pagination.PaginateSorted(repos,
-		func(a, b crdriver.Repository) bool { return repoName(a.Name) < repoName(b.Name) },
+	repos = filterRepositories(rt, repos, r.URL.Query().Get("filter"))
+
+	page, err := pagination.PaginateSorted(repos, repoLess(rt, r.URL.Query().Get("orderBy")),
 		r.URL.Query().Get("pageToken"), pageSize(r))
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid page token")
@@ -123,6 +158,111 @@ func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request, rt *r
 
 	gcprest.WriteJSON(w, http.StatusOK,
 		listRepositoriesResponse{Repositories: out, NextPageToken: page.NextPageToken})
+}
+
+// filterRepositories honors the v1 List `filter` query param. Only the `name`
+// field is supported (exact, or prefix when the value ends with `*`); any other
+// or malformed expression returns the full set unfiltered, matching the API's
+// lenient behavior rather than erroring.
+func filterRepositories(rt *route, repos []crdriver.Repository, filter string) []crdriver.Repository {
+	want, ok := parseNameFilter(filter)
+	if !ok {
+		return repos
+	}
+
+	out := make([]crdriver.Repository, 0, len(repos))
+
+	for i := range repos {
+		full := repositoryResourceName(rt.project, rt.location, repoName(repos[i].Name))
+		if nameMatches(full, want) {
+			out = append(out, repos[i])
+		}
+	}
+
+	return out
+}
+
+// parseNameFilter extracts the value of a `name = "..."` filter expression.
+func parseNameFilter(filter string) (string, bool) {
+	const nameField = "name"
+
+	filter = strings.TrimSpace(filter)
+	if !strings.HasPrefix(filter, nameField) {
+		return "", false
+	}
+
+	rest := strings.TrimSpace(strings.TrimPrefix(filter, nameField))
+	if !strings.HasPrefix(rest, "=") {
+		return "", false
+	}
+
+	val := strings.Trim(strings.TrimSpace(rest[1:]), `"`)
+	if val == "" {
+		return "", false
+	}
+
+	return val, true
+}
+
+// nameMatches compares a repository's full resource name against a filter value,
+// treating a trailing `*` as a prefix match.
+func nameMatches(full, want string) bool {
+	if strings.HasSuffix(want, "*") {
+		return strings.HasPrefix(full, strings.TrimSuffix(want, "*"))
+	}
+
+	return full == want
+}
+
+// repoLess builds the less func for the v1 List `orderBy` query param. Supported
+// keys are name (default), createTime, updateTime, each with an optional " desc".
+// createTime/updateTime are only second-granular, so equal primary keys fall back
+// to the unique repository name, giving a total order that is stable across calls
+// (m.repos.All() has randomized map iteration order) and safe for offset paging.
+func repoLess(rt *route, orderBy string) func(a, b crdriver.Repository) bool {
+	field, desc := parseOrderBy(orderBy)
+
+	return func(a, b crdriver.Repository) bool {
+		ka, kb := repoSortKey(rt, field, &a), repoSortKey(rt, field, &b)
+		if ka == kb {
+			ka, kb = repoName(a.Name), repoName(b.Name)
+		}
+
+		if desc {
+			return ka > kb
+		}
+
+		return ka < kb
+	}
+}
+
+// parseOrderBy splits an orderBy clause into its field and descending flag.
+func parseOrderBy(orderBy string) (field string, desc bool) {
+	fields := strings.Fields(orderBy)
+	if len(fields) == 0 {
+		return "name", false
+	}
+
+	field = strings.TrimSuffix(fields[0], ",")
+	desc = len(fields) > 1 && strings.EqualFold(fields[1], "desc")
+
+	return field, desc
+}
+
+// repoSortKey returns the comparison key for a repository under the given field.
+func repoSortKey(rt *route, field string, r *crdriver.Repository) string {
+	switch field {
+	case "createTime":
+		return r.CreatedAt
+	case "updateTime":
+		if r.UpdatedAt != "" {
+			return r.UpdatedAt
+		}
+
+		return r.CreatedAt
+	default:
+		return repositoryResourceName(rt.project, rt.location, repoName(r.Name))
+	}
 }
 
 func (h *Handler) patchRepository(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -183,7 +323,25 @@ func applyPatch(current map[string]string, body *repositoryJSON, mask map[string
 		setOrDelete(tags, kmsKeyTag, body.KmsKeyName)
 	}
 
+	applyExtrasPatch(tags, body, mask, all)
+
 	return tags
+}
+
+// applyExtrasPatch merges the dockerConfig / cleanupPolicies / cleanupPolicyDryRun
+// patch fields, honoring the update mask (or all when the mask is empty/"*").
+func applyExtrasPatch(tags map[string]string, body *repositoryJSON, mask map[string]bool, all bool) {
+	if all || mask["dockerConfig"] {
+		setBoolTag(tags, immutableTagsTag, body.DockerConfig != nil && body.DockerConfig.ImmutableTags)
+	}
+
+	if all || mask["cleanupPolicies"] {
+		setCleanupPolicies(tags, body.CleanupPolicies)
+	}
+
+	if all || mask["cleanupPolicyDryRun"] {
+		setBoolTag(tags, cleanupDryRunTag, body.CleanupPolicyDryRun)
+	}
 }
 
 // replaceLabels swaps every non-reserved (user label) key in tags for the ones
