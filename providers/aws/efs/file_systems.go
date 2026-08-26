@@ -84,6 +84,7 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 		ThroughputMode:               tput,
 		ProvisionedThroughputInMibps: in.ProvisionedThroughputInMibps,
 		AvailabilityZoneName:         in.AvailabilityZoneName,
+		AvailabilityZoneID:           azIDFromName(in.AvailabilityZoneName),
 		Tags:                         copyTags(in.Tags),
 		Protection:                   driver.FileSystemProtection{ReplicationOverwriteProtection: "ENABLED"},
 	}

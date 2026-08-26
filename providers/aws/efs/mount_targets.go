@@ -2,6 +2,7 @@ package efs
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -59,12 +60,12 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 	return &out, nil
 }
 
-// azID builds an AWS-style AZ id (e.g. "use1-az1") from a region. AWS's real
-// AZ-id short codes are hand-maintained abbreviations; this approximates them by
-// keeping the first region token whole and abbreviating the rest to their first
-// letter (us-east-1 → use1, eu-west-1 → euw1), which is exact for the common
-// single-word regions.
-func azID(region string) string {
+// regionShortCode builds an AWS-style region short code (e.g. us-east-1 → use1,
+// eu-west-1 → euw1) used as the prefix of an AZ id. AWS's real short codes are
+// hand-maintained abbreviations; this approximates them by keeping the first
+// region token whole and abbreviating the rest to their first letter, which is
+// exact for the common single-word regions.
+func regionShortCode(region string) string {
 	short := ""
 
 	for i, part := range strings.Split(region, "-") {
@@ -80,7 +81,33 @@ func azID(region string) string {
 		}
 	}
 
-	return short + "-az1"
+	return short
+}
+
+// azID builds an AWS-style AZ id (e.g. "use1-az1") from a region, defaulting to
+// the first AZ. Callers that know the AZ name should use azIDFromName instead.
+func azID(region string) string {
+	return regionShortCode(region) + "-az1"
+}
+
+// azIDFromName maps an AZ name (e.g. "us-west-2b") to its consistent AZ id
+// ("usew2-az2") the way real EFS reports it: the region short code, then "-az"
+// plus the zone-letter's ordinal (a→1, b→2, …). A name without a trailing
+// letter falls back to az1.
+func azIDFromName(azName string) string {
+	if azName == "" {
+		return ""
+	}
+
+	last := azName[len(azName)-1]
+	if last < 'a' || last > 'z' {
+		return regionShortCode(azName) + "-az1"
+	}
+
+	region := azName[:len(azName)-1]
+	ordinal := int(last-'a') + 1
+
+	return regionShortCode(region) + "-az" + strconv.Itoa(ordinal)
 }
 
 func ipAddressOrDefault(ip string) string {

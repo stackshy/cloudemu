@@ -435,3 +435,35 @@ func TestSDKDuplicateTokenCarriesFileSystemId(t *testing.T) {
 			aws.ToString(already.FileSystemId), aws.ToString(first.FileSystemId))
 	}
 }
+
+// TestSDKOneZoneAvailabilityZoneId verifies a One Zone file system reports a
+// consistent AvailabilityZoneId derived from the AvailabilityZoneName.
+func TestSDKOneZoneAvailabilityZoneId(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{
+		CreationToken: aws.String("oz-1"), AvailabilityZoneName: aws.String("us-east-1b"),
+	})
+	if err != nil {
+		t.Fatalf("CreateFileSystem(One Zone): %v", err)
+	}
+
+	if aws.ToString(fs.AvailabilityZoneName) != "us-east-1b" {
+		t.Fatalf("AvailabilityZoneName = %q, want us-east-1b", aws.ToString(fs.AvailabilityZoneName))
+	}
+
+	if aws.ToString(fs.AvailabilityZoneId) != "use1-az2" {
+		t.Fatalf("AvailabilityZoneId = %q, want use1-az2", aws.ToString(fs.AvailabilityZoneId))
+	}
+
+	desc, err := c.DescribeFileSystems(ctx, &awsefs.DescribeFileSystemsInput{FileSystemId: fs.FileSystemId})
+	if err != nil || len(desc.FileSystems) != 1 {
+		t.Fatalf("DescribeFileSystems = %d, %v", len(desc.FileSystems), err)
+	}
+
+	if aws.ToString(desc.FileSystems[0].AvailabilityZoneId) != "use1-az2" {
+		t.Fatalf("Describe AvailabilityZoneId = %q, want use1-az2",
+			aws.ToString(desc.FileSystems[0].AvailabilityZoneId))
+	}
+}
