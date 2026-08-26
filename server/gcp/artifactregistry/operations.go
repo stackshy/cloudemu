@@ -216,11 +216,18 @@ func nameMatches(full, want string) bool {
 
 // repoLess builds the less func for the v1 List `orderBy` query param. Supported
 // keys are name (default), createTime, updateTime, each with an optional " desc".
+// createTime/updateTime are only second-granular, so equal primary keys fall back
+// to the unique repository name, giving a total order that is stable across calls
+// (m.repos.All() has randomized map iteration order) and safe for offset paging.
 func repoLess(rt *route, orderBy string) func(a, b crdriver.Repository) bool {
 	field, desc := parseOrderBy(orderBy)
 
 	return func(a, b crdriver.Repository) bool {
 		ka, kb := repoSortKey(rt, field, &a), repoSortKey(rt, field, &b)
+		if ka == kb {
+			ka, kb = repoName(a.Name), repoName(b.Name)
+		}
+
 		if desc {
 			return ka > kb
 		}
