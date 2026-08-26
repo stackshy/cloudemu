@@ -153,14 +153,54 @@ func parseScope(parts []string, providerIdx int) sbPath {
 
 // Matches accepts Service Bus ARM paths plus data-plane URLs ending in
 // /messages or /messages/head.
-func (*Handler) Matches(r *http.Request) bool {
+//
+// The flat "/{entity}/messages" data-plane shape is NOT unique to Service Bus:
+// Azure Queue Storage's azqueue SDK addresses "/{queue}/messages" the same way.
+// Real Azure separates the two by hostname (*.servicebus.windows.net vs
+// *.queue.core.windows.net), which is unavailable behind CloudEmu's shared
+// endpoint. To keep the Queue Storage message plane alive, Service Bus claims a
+// flat "/{entity}/messages" request ONLY when {entity} resolves to a Service
+// Bus queue or topic it actually holds; otherwise it declines so the request
+// falls through to the Queue Storage handler (registered after this one).
+// Subscription-addressed paths ("/{topic}/subscriptions/{sub}/messages") have
+// no Queue Storage counterpart, so they are always Service Bus's to serve.
+func (h *Handler) Matches(r *http.Request) bool {
 	if isDataPlanePath(r.URL.Path) {
-		return true
+		return h.claimsDataPlane(r.URL.Path)
 	}
 
 	_, _, ok := parseSBPath(r.URL.Path)
 
 	return ok
+}
+
+// claimsDataPlane reports whether a data-plane URL addresses a Service Bus
+// entity this handler holds. A subscription path is unambiguously Service Bus.
+// A flat "/{entity}/messages" path (which Queue Storage's azqueue SDK shares)
+// is claimed only when the entity resolves to a known Service Bus queue or
+// topic; an unknown entity is declined so Queue Storage can serve it.
+func (h *Handler) claimsDataPlane(p string) bool {
+	tgt, parsed := parseDataPlanePath(p)
+	if !parsed || tgt.entity == "" {
+		return false
+	}
+
+	if tgt.sub != "" {
+		// A "/{topic}/subscriptions/{sub}/messages" request is Service Bus's to
+		// serve whenever the parent topic exists (Queue Storage has no such
+		// shape). serveSubscriptionData then 404s a missing subscription.
+		_, ok := h.resolveTopicSubURLs(tgt.namespace, tgt.entity)
+
+		return ok
+	}
+
+	if _, ok := h.resolveQueue(tgt.namespace, tgt.entity); ok {
+		return true
+	}
+
+	_, isTopic := h.resolveTopicSubURLs(tgt.namespace, tgt.entity)
+
+	return isTopic
 }
 
 // ServeHTTP routes by URL shape.
