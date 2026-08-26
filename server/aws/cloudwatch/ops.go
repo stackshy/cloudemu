@@ -496,7 +496,11 @@ type putMetricAlarmInput struct {
 	Threshold               float64        `cbor:"Threshold"`
 	Period                  int            `cbor:"Period"`
 	EvaluationPeriods       int            `cbor:"EvaluationPeriods"`
+	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
 	Statistic               string         `cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
+	Unit                    string         `cbor:"Unit,omitempty"`
+	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
 	Dimensions              []dimensionCBR `cbor:"Dimensions,omitempty"`
 	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
 	OKActions               []string       `cbor:"OKActions,omitempty"`
@@ -548,7 +552,11 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		Threshold:               in.Threshold,
 		Period:                  in.Period,
 		EvaluationPeriods:       in.EvaluationPeriods,
+		DatapointsToAlarm:       in.DatapointsToAlarm,
 		Stat:                    in.Statistic,
+		ExtendedStatistic:       in.ExtendedStatistic,
+		Unit:                    in.Unit,
+		TreatMissingData:        in.TreatMissingData,
 		AlarmActions:            in.AlarmActions,
 		OKActions:               in.OKActions,
 		InsufficientDataActions: in.InsufficientDataActions,
@@ -605,7 +613,11 @@ type metricAlarmCBR struct {
 	Threshold               float64        `cbor:"Threshold"`
 	Period                  int            `cbor:"Period,omitempty"`
 	EvaluationPeriods       int            `cbor:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
 	Statistic               string         `cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
+	Unit                    string         `cbor:"Unit,omitempty"`
+	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
 	ActionsEnabled          bool           `cbor:"ActionsEnabled"`
 	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
 	OKActions               []string       `cbor:"OKActions,omitempty"`
@@ -711,7 +723,11 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		Threshold:               a.Threshold,
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
+		DatapointsToAlarm:       a.DatapointsToAlarm,
 		Statistic:               a.Statistic,
+		ExtendedStatistic:       a.ExtendedStatistic,
+		Unit:                    a.Unit,
+		TreatMissingData:        a.TreatMissingData,
 		ActionsEnabled:          a.ActionsEnabled,
 		AlarmActions:            a.AlarmActions,
 		OKActions:               a.OKActions,

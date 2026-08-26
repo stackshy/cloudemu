@@ -73,7 +73,11 @@ type alarmData struct {
 	Threshold               float64
 	Period                  int
 	EvaluationPeriods       int
+	DatapointsToAlarm       int
 	Stat                    string
+	ExtendedStatistic       string
+	Unit                    string
+	TreatMissingData        string
 	State                   string
 	StateReason             string
 	StateUpdatedTimestamp   time.Time
@@ -573,7 +577,11 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		Threshold:               cfg.Threshold,
 		Period:                  cfg.Period,
 		EvaluationPeriods:       cfg.EvaluationPeriods,
+		DatapointsToAlarm:       cfg.DatapointsToAlarm,
 		Stat:                    cfg.Stat,
+		ExtendedStatistic:       cfg.ExtendedStatistic,
+		Unit:                    cfg.Unit,
+		TreatMissingData:        cfg.TreatMissingData,
 		State:                   state,
 		StateReason:             stateReason,
 		StateUpdatedTimestamp:   stateUpdated,
@@ -909,7 +917,11 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
+		DatapointsToAlarm:       a.DatapointsToAlarm,
 		Statistic:               a.Stat,
+		ExtendedStatistic:       a.ExtendedStatistic,
+		Unit:                    a.Unit,
+		TreatMissingData:        a.TreatMissingData,
 		ActionsEnabled:          a.ActionsEnabled,
 		AlarmActions:            append([]string{}, a.AlarmActions...),
 		OKActions:               append([]string{}, a.OKActions...),
