@@ -7131,6 +7131,15 @@
         ]
       },
       {
+        "name": "SubnetCIDRUpdater",
+        "doc": "SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It",
+        "operations": [
+          {
+            "name": "UpdateSubnetCIDR"
+          }
+        ]
+      },
+      {
         "name": "TrafficMirroring",
         "doc": "TrafficMirroring is an OPTIONAL AWS capability (type-asserted).",
         "operations": [

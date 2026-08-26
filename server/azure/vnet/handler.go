@@ -354,7 +354,7 @@ func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []s
 		}
 	}
 
-	wanted, err := h.createMissingSubnets(ctx, vpcID, subs, haveByName)
+	wanted, err := h.upsertWantedSubnets(ctx, vpcID, subs, haveByName)
 	if err != nil {
 		return err
 	}
@@ -362,11 +362,12 @@ func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []s
 	return h.deleteOmittedSubnets(ctx, haveByName, wanted)
 }
 
-// createMissingSubnets creates every named subnet in subs that isn't already
-// in haveByName, validating its CIDR first, and returns the set of names this
-// PUT's body wants — the input deleteOmittedSubnets needs to find what to
-// remove.
-func (h *Handler) createMissingSubnets(
+// upsertWantedSubnets creates every named subnet in subs that isn't already in
+// haveByName and applies an in-place CreateOrUpdate to those that are (changed
+// address prefix, replaced NSG / NAT gateway associations), validating each
+// CIDR first, and returns the set of names this PUT's body wants — the input
+// deleteOmittedSubnets needs to find what to remove.
+func (h *Handler) upsertWantedSubnets(
 	ctx context.Context, vpcID string, subs []subnetRequest, haveByName map[string]netdriver.SubnetInfo,
 ) (map[string]struct{}, error) {
 	wanted := make(map[string]struct{}, len(subs))
@@ -378,7 +379,11 @@ func (h *Handler) createMissingSubnets(
 
 		wanted[subs[i].Name] = struct{}{}
 
-		if _, ok := haveByName[subs[i].Name]; ok {
+		if existing, ok := haveByName[subs[i].Name]; ok {
+			if err := h.updateInlineSubnet(ctx, vpcID, &subs[i], &existing); err != nil {
+				return nil, err
+			}
+
 			continue
 		}
 
@@ -396,6 +401,39 @@ func (h *Handler) createMissingSubnets(
 	}
 
 	return wanted, nil
+}
+
+// updateInlineSubnet applies a whole-VNet PUT's inline subnet body to an
+// existing subnet: it validates and changes the address prefix when it differs
+// and REPLACES the NSG / NAT gateway associations from the body (an omitted
+// reference clears the association), the same full-replacement semantics as the
+// standalone subnet CreateOrUpdate.
+func (h *Handler) updateInlineSubnet(
+	ctx context.Context, vpcID string, sub *subnetRequest, existing *netdriver.SubnetInfo,
+) error {
+	cidr := sub.Properties.AddressPrefix
+	if cidr != "" && cidr != existing.CIDRBlock {
+		if verr := h.validateSubnetCIDR(ctx, vpcID, sub.Name, cidr); verr != nil {
+			return verr
+		}
+	}
+
+	natID := inlineRefID(sub.Properties.NatGateway)
+	nsgID := inlineRefID(sub.Properties.NetworkSecurityGroup)
+
+	_, err := h.updateExistingSubnet(ctx, existing, cidr, natID, nsgID)
+
+	return err
+}
+
+// inlineRefID returns an armIDRef's id, or "" when the reference is nil (the
+// property was omitted from the request body).
+func inlineRefID(ref *armIDRef) string {
+	if ref == nil {
+		return ""
+	}
+
+	return ref.ID
 }
 
 // inlineSubnetTags builds the tag set for a subnet materialized from a
@@ -773,40 +811,46 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 // itself. ok is false when a response was already written and the caller
 // must stop.
 func (h *Handler) resolveSubnetNATGateway(w http.ResponseWriter, r *http.Request, ref *armIDRef) (id string, ok bool) {
-	if ref == nil {
-		return "", true
-	}
-
-	ngRP, parsed := azurearm.ParsePath(ref.ID)
-	if !parsed || ngRP.ResourceType != typeNATGateway {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed natGateway id")
-		return "", false
-	}
-
-	if _, err := findNATGatewayByName(r.Context(), h.net, ngRP.ResourceGroup, ngRP.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
-		return "", false
-	}
-
-	return ref.ID, true
+	return h.resolveSubnetRef(w, r, ref, typeNATGateway, "natGateway",
+		func(ctx context.Context, rg, name string) error {
+			_, err := findNATGatewayByName(ctx, h.net, rg, name)
+			return err
+		})
 }
 
 // resolveSubnetNSG validates and resolves an optional networkSecurityGroup
 // reference on a subnet PUT body, writing the appropriate error response
 // itself. ok is false when a response was already written and the caller
-// must stop.
+// must stop. The reference is resolved within its own resource group so a
+// subnet cannot associate an NSG that only exists in a different group.
 func (h *Handler) resolveSubnetNSG(w http.ResponseWriter, r *http.Request, ref *armIDRef) (id string, ok bool) {
+	return h.resolveSubnetRef(w, r, ref, typeNSG, "networkSecurityGroup",
+		func(ctx context.Context, rg, name string) error {
+			_, err := findNSGInGroup(ctx, h.net, rg, name)
+			return err
+		})
+}
+
+// resolveSubnetRef validates an optional armIDRef on a subnet PUT body: an
+// absent reference is a no-op, a malformed one (unparseable or the wrong
+// resource type) writes a 400, and validate resolves the reference within its
+// own resource group. It returns the reference's own id when valid; ok is false
+// when a response was already written and the caller must stop.
+func (*Handler) resolveSubnetRef(
+	w http.ResponseWriter, r *http.Request, ref *armIDRef, expectType, label string,
+	validate func(ctx context.Context, rg, name string) error,
+) (id string, ok bool) {
 	if ref == nil {
 		return "", true
 	}
 
-	nsgRP, parsed := azurearm.ParsePath(ref.ID)
-	if !parsed || nsgRP.ResourceType != typeNSG {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed networkSecurityGroup id")
+	rp, parsed := azurearm.ParsePath(ref.ID)
+	if !parsed || rp.ResourceType != expectType {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed "+label+" id")
 		return "", false
 	}
 
-	if _, err := findNSGByName(r.Context(), h.net, nsgRP.ResourceName); err != nil {
+	if err := validate(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return "", false
 	}
@@ -814,37 +858,16 @@ func (h *Handler) resolveSubnetNSG(w http.ResponseWriter, r *http.Request, ref *
 	return ref.ID, true
 }
 
-// upsertSubnet creates the named subnet, or — when it already exists — merges
-// in a NAT gateway and/or NSG reference so a subnet can be attached via a
-// second PUT (armnetwork's SubnetsClient.BeginCreateOrUpdate, the real ARM
-// mechanism: both associations live on the subnet's own natGateway /
-// networkSecurityGroup properties). Other subnet properties are not merged on
-// update, matching this handler's existing create-only behavior for subnets.
+// upsertSubnet creates the named subnet, or — when it already exists — applies
+// an in-place update (armnetwork's SubnetsClient.BeginCreateOrUpdate, the real
+// ARM mechanism). CreateOrUpdate is a full replacement: the address prefix is
+// changed when it differs, and the NAT gateway / NSG associations are REPLACED
+// from the request body so an omitted reference (empty id) CLEARS the existing
+// association. Both associations live on the subnet's own natGateway /
+// networkSecurityGroup properties.
 func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewayID, nsgID string) (*netdriver.SubnetInfo, error) {
 	if existing, err := findSubnetInVNet(ctx, h.net, vpcID, name); err == nil {
-		merge := make(map[string]string)
-
-		if natGatewayID != "" {
-			merge[armSubnetNATTag] = natGatewayID
-		}
-
-		if nsgID != "" {
-			merge[armSubnetNSGTag] = nsgID
-		}
-
-		if len(merge) == 0 {
-			return existing, nil
-		}
-
-		if err := h.net.UpdateSubnetTags(ctx, existing.ID, merge); err != nil {
-			return nil, err
-		}
-
-		for k, v := range merge {
-			existing.Tags = mergeTags(existing.Tags, k, v)
-		}
-
-		return existing, nil
+		return h.updateExistingSubnet(ctx, existing, cidr, natGatewayID, nsgID)
 	}
 
 	tags := mergeTags(nil, armSubnetTag, name)
@@ -861,6 +884,75 @@ func (h *Handler) upsertSubnet(ctx context.Context, vpcID, name, cidr, natGatewa
 		CIDRBlock: cidr,
 		Tags:      tags,
 	})
+}
+
+// updateExistingSubnet applies an in-place CreateOrUpdate to an existing subnet:
+// it changes the address prefix when it differs and REPLACES the NSG / NAT
+// gateway associations from the request body (an omitted reference — empty id —
+// clears that association, matching ARM's full-replacement semantics).
+func (h *Handler) updateExistingSubnet(
+	ctx context.Context, existing *netdriver.SubnetInfo, cidr, natGatewayID, nsgID string,
+) (*netdriver.SubnetInfo, error) {
+	if cidr != "" && cidr != existing.CIDRBlock {
+		if u, ok := h.net.(netdriver.SubnetCIDRUpdater); ok {
+			if err := u.UpdateSubnetCIDR(ctx, existing.ID, cidr); err != nil {
+				return nil, err
+			}
+
+			existing.CIDRBlock = cidr
+		}
+	}
+
+	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetNSGTag, nsgID); err != nil {
+		return nil, err
+	}
+
+	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetNATTag, natGatewayID); err != nil {
+		return nil, err
+	}
+
+	return existing, nil
+}
+
+// replaceSubnetAssociation sets the subnet tag identified by tagKey to id, or —
+// when id is empty (the reference was omitted from the request body) — clears
+// it, so a CreateOrUpdate that drops an NSG / NAT gateway reference removes the
+// association. existing.Tags is updated to mirror the store mutation.
+func (h *Handler) replaceSubnetAssociation(ctx context.Context, existing *netdriver.SubnetInfo, tagKey, id string) error {
+	if id != "" {
+		if err := h.net.UpdateSubnetTags(ctx, existing.ID, map[string]string{tagKey: id}); err != nil {
+			return err
+		}
+
+		existing.Tags = mergeTags(existing.Tags, tagKey, id)
+
+		return nil
+	}
+
+	if tagOr(existing.Tags, tagKey, "") == "" {
+		return nil
+	}
+
+	if err := h.net.RemoveSubnetTags(ctx, existing.ID, []string{tagKey}); err != nil {
+		return err
+	}
+
+	existing.Tags = tagsWithout(existing.Tags, tagKey)
+
+	return nil
+}
+
+// tagsWithout returns a copy of in with key removed.
+func tagsWithout(in map[string]string, key string) map[string]string {
+	out := make(map[string]string, len(in))
+
+	for k, v := range in {
+		if k != key {
+			out[k] = v
+		}
+	}
+
+	return out
 }
 
 // findSubnetInVNet resolves a subnet by (vnet, name) — subnet names are only

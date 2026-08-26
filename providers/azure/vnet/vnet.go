@@ -355,6 +355,23 @@ func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error 
 	return nil
 }
 
+// UpdateSubnetCIDR changes a subnet's address prefix in place, implementing the
+// SubnetCIDRUpdater capability (the ARM Subnets.CreateOrUpdate re-PUT path).
+func (m *Mock) UpdateSubnetCIDR(_ context.Context, id, cidr string) error {
+	if cidr == "" {
+		return cerrors.New(cerrors.InvalidArgument, "CIDR block is required")
+	}
+
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.CIDRBlock = cidr
+		return s
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	return nil
+}
+
 // UpdateSubnetTags merges tags into the subnet's tag map.
 func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
 	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
