@@ -2,6 +2,7 @@ package rds_test
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"testing"
 
@@ -102,6 +103,24 @@ func TestSDKRDSDescribeDBClustersPagination(t *testing.T) {
 		Marker: aws.String("not-a-valid-marker"),
 	}); err == nil {
 		t.Fatal("invalid Marker accepted; want an error")
+	}
+}
+
+// TestSDKRDSDescribeNegativeOffsetMarker proves a well-formed Marker (valid
+// base64 + valid JSON) carrying a negative offset is rejected as
+// InvalidParameterValue rather than panicking on an out-of-range slice bound
+// (which surfaced as a connection reset to the SDK).
+func TestSDKRDSDescribeNegativeOffsetMarker(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	// {"offset":-5}: decodes cleanly as base64+JSON, but the offset is invalid.
+	negative := aws.String(base64.StdEncoding.EncodeToString([]byte(`{"offset":-5}`)))
+
+	if _, err := client.DescribeDBInstances(ctx, &awsrds.DescribeDBInstancesInput{
+		Marker: negative,
+	}); err == nil {
+		t.Fatal("DescribeDBInstances with a negative-offset Marker succeeded, want an error")
 	}
 }
 

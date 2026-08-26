@@ -2,6 +2,7 @@ package redshift_test
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"testing"
 
@@ -306,6 +307,23 @@ func TestSDKRedshiftDescribeInvalidMarker(t *testing.T) {
 	if _, err := client.DescribeClusterSubnetGroups(ctx,
 		&awsredshift.DescribeClusterSubnetGroupsInput{Marker: bad}); err == nil {
 		t.Error("DescribeClusterSubnetGroups with an invalid Marker succeeded, want an error")
+	}
+}
+
+// TestSDKRedshiftDescribeNegativeOffsetMarker proves a well-formed Marker (valid
+// base64 + valid JSON) carrying a negative offset is rejected as invalid rather
+// than panicking on an out-of-range slice bound (which surfaced as a connection
+// reset to the SDK).
+func TestSDKRedshiftDescribeNegativeOffsetMarker(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	// {"offset":-5}: decodes cleanly as base64+JSON, but the offset is invalid.
+	negative := aws.String(base64.StdEncoding.EncodeToString([]byte(`{"offset":-5}`)))
+
+	if _, err := client.DescribeClusters(ctx,
+		&awsredshift.DescribeClustersInput{Marker: negative}); err == nil {
+		t.Error("DescribeClusters with a negative-offset Marker succeeded, want an error")
 	}
 }
 

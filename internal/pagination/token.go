@@ -4,7 +4,15 @@ package pagination
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 )
+
+// ErrInvalidToken indicates a page token that decoded successfully as
+// base64+JSON but carries a semantically invalid value (e.g. a negative
+// offset). Callers can map it to their API's invalid-token response
+// (InvalidParameterValue / InvalidNextTokenException / etc.) instead of
+// panicking on an out-of-range slice bound.
+var ErrInvalidToken = errors.New("pagination: invalid page token")
 
 // PageToken holds pagination state.
 type PageToken struct {
@@ -34,6 +42,12 @@ func DecodeToken(token string) (PageToken, error) {
 	var t PageToken
 	if err := json.Unmarshal(data, &t); err != nil {
 		return PageToken{}, err
+	}
+
+	// A negative offset is never a token we produced; treat it as invalid
+	// rather than letting it flow through to a slice bound (which panics).
+	if t.Offset < 0 {
+		return PageToken{}, ErrInvalidToken
 	}
 
 	return t, nil

@@ -1,6 +1,7 @@
 package pagination
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,6 +158,88 @@ func TestPaginate_OffsetBeyondItems(t *testing.T) {
 
 func TestPaginate_InvalidToken(t *testing.T) {
 	_, err := Paginate([]string{"a"}, "bad-token", 10)
+	assert.Error(t, err)
+}
+
+func TestDecodeToken_NegativeOffset(t *testing.T) {
+	// A well-formed token (valid base64 + valid JSON) carrying a negative
+	// offset must be rejected as invalid, not returned for use as a bound.
+	token := EncodeToken(-5)
+
+	_, err := DecodeToken(token)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestPaginate_TokenInputsNeverPanic(t *testing.T) {
+	items := []string{"a", "b", "c", "d", "e"}
+
+	negativeToken := EncodeToken(-5)
+	// Hand-craft a base64+JSON token with an explicit negative offset, not via
+	// EncodeToken, to mirror a crafted/corrupted client token.
+	craftedNegative := base64.StdEncoding.EncodeToString([]byte(`{"offset":-1}`))
+	beyondLenToken := EncodeToken(100)
+	midListToken := EncodeToken(2)
+
+	tests := []struct {
+		name        string
+		token       string
+		wantErr     error
+		wantItems   []string
+		wantHasMore bool
+	}{
+		{
+			name:      "negative offset well-formed token is invalid",
+			token:     negativeToken,
+			wantErr:   ErrInvalidToken,
+			wantItems: nil,
+		},
+		{
+			name:      "crafted negative offset token is invalid",
+			token:     craftedNegative,
+			wantErr:   ErrInvalidToken,
+			wantItems: nil,
+		},
+		{
+			name:      "offset beyond len yields empty page no error",
+			token:     beyondLenToken,
+			wantItems: nil,
+		},
+		{
+			name:        "valid mid-list token returns correct page",
+			token:       midListToken,
+			wantItems:   []string{"c", "d"},
+			wantHasMore: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.NotPanics(t, func() {
+				page, err := Paginate(items, tc.token, 2)
+				if tc.wantErr != nil {
+					require.Error(t, err)
+					assert.ErrorIs(t, err, tc.wantErr)
+
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tc.wantItems, page.Items)
+				assert.Equal(t, tc.wantHasMore, page.HasMore)
+			})
+		})
+	}
+}
+
+func TestPaginate_MalformedTokenBehaviorUnchanged(t *testing.T) {
+	// The established contract for this helper: a non-base64 / non-JSON token
+	// returns an error (not a silent offset-0 restart). Keep it intact.
+	items := []string{"a", "b"}
+
+	_, err := Paginate(items, "!!!not-base64!!!", 10)
+	assert.Error(t, err)
+
+	_, err = Paginate(items, "aGVsbG8=", 10) // valid base64, not JSON
 	assert.Error(t, err)
 }
 
