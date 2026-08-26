@@ -296,6 +296,10 @@ func New(opts ...config.Option) *Provider {
 	// event-source-mapping target(s), deleting the message on success or
 	// leaving it for DLQ redrive on failure (mirrors the DynamoDB Streams wiring).
 	p.SQS.SetEventSourceInvoker(p.Lambda)
+	// CloudWatch Logs subscription filters -> Lambda: log events matching a
+	// subscription filter's pattern are delivered (gzipped awslogs payload) to
+	// the filter's Lambda destination on PutLogEvents.
+	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),

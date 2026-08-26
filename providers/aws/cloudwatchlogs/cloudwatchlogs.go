@@ -34,6 +34,14 @@ type logGroup struct {
 	info          driver.LogGroupInfo
 	streams       *memstore.Store[*logStream]
 	metricFilters *memstore.Store[*driver.MetricFilterInfo]
+	subFilters    *memstore.Store[*driver.SubscriptionFilterInfo]
+}
+
+// LambdaInvoker asynchronously invokes a Lambda function by ARN with a
+// CloudWatch Logs subscription-event payload. The Lambda mock satisfies this,
+// enabling real subscription-filter delivery to Lambda destinations.
+type LambdaInvoker interface {
+	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
 }
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch Logs service.
@@ -41,11 +49,18 @@ type Mock struct {
 	groups     *memstore.Store[*logGroup]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	lambda     LambdaInvoker
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetLambdaInvoker wires the Lambda backend so subscription filters with a
+// Lambda destination invoke the mapped function on matching PutLogEvents.
+func (m *Mock) SetLambdaInvoker(i LambdaInvoker) {
+	m.lambda = i
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
@@ -101,6 +116,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		info:          info,
 		streams:       memstore.New[*logStream](),
 		metricFilters: memstore.New[*driver.MetricFilterInfo](),
+		subFilters:    memstore.New[*driver.SubscriptionFilterInfo](),
 	}
 
 	m.groups.Set(cfg.Name, g)
@@ -213,7 +229,7 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 }
 
 // PutLogEvents writes log events to a stream.
-func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, events []driver.LogEvent) error {
+func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, events []driver.LogEvent) error {
 	g, ok := m.groups.Get(groupName)
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", groupName)
@@ -224,9 +240,6 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 		return errors.Newf(errors.NotFound, "log stream %q not found in group %q", streamName, groupName)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	ingestedAt := m.opts.Clock.Now().UTC()
 
 	copied := make([]driver.LogEvent, len(events))
@@ -234,6 +247,17 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 		copied[i] = events[i]
 		copied[i].IngestionTime = ingestedAt
 	}
+
+	var totalBytes int64
+	for _, e := range events {
+		totalBytes += int64(len(e.Message))
+	}
+
+	// The stream lock only guards the stream's own events/metadata. It is
+	// released before cross-service delivery (metric filters, subscription
+	// filters) so a delivered handler that writes back into CloudWatch Logs —
+	// re-entering PutLogEvents — cannot deadlock on this same lock.
+	s.mu.Lock()
 
 	s.events = append(s.events, copied...)
 
@@ -257,11 +281,7 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 		s.info.LastEvent = events[len(events)-1].Timestamp.UTC().Format(time.RFC3339)
 	}
 
-	// Update stored bytes estimate.
-	var totalBytes int64
-	for _, e := range events {
-		totalBytes += int64(len(e.Message))
-	}
+	s.mu.Unlock()
 
 	m.groups.Update(groupName, func(lg *logGroup) *logGroup {
 		lg.info.StoredBytes += totalBytes
@@ -273,6 +293,7 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 	m.emitMetric("IncomingBytes", float64(totalBytes), "Bytes", dims)
 
 	m.evaluateMetricFilters(g, events)
+	m.deliverToSubscriptions(ctx, g, streamName, copied)
 
 	return nil
 }

@@ -112,6 +112,32 @@ type MetricFilterInfo struct {
 	CreatedAt    time.Time
 }
 
+// SubscriptionFilterConfig describes a subscription filter to create or update.
+// A subscription filter streams matching log events (as they are ingested via
+// PutLogEvents) to a destination — a Lambda function, Kinesis stream, or
+// Firehose delivery stream identified by DestinationARN.
+type SubscriptionFilterConfig struct {
+	Name           string
+	LogGroup       string
+	FilterPattern  string
+	DestinationARN string
+	RoleARN        string
+	// Distribution controls how Kinesis destinations spread data across shards
+	// ("Random" or "ByLogStream"); ignored for other destination types.
+	Distribution string
+}
+
+// SubscriptionFilterInfo describes a subscription filter.
+type SubscriptionFilterInfo struct {
+	Name           string
+	LogGroup       string
+	FilterPattern  string
+	DestinationARN string
+	RoleARN        string
+	Distribution   string
+	CreatedAt      time.Time
+}
+
 // Logging is the interface that logging provider implementations must satisfy.
 type Logging interface {
 	CreateLogGroup(ctx context.Context, config LogGroupConfig) (*LogGroupInfo, error)
@@ -134,4 +160,8 @@ type Logging interface {
 	PutMetricFilter(ctx context.Context, config *MetricFilterConfig) error
 	DeleteMetricFilter(ctx context.Context, logGroup, filterName string) error
 	DescribeMetricFilters(ctx context.Context, logGroup string) ([]MetricFilterInfo, error)
+
+	PutSubscriptionFilter(ctx context.Context, config *SubscriptionFilterConfig) error
+	DeleteSubscriptionFilter(ctx context.Context, logGroup, filterName string) error
+	DescribeSubscriptionFilters(ctx context.Context, logGroup string) ([]SubscriptionFilterInfo, error)
 }
