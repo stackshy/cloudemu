@@ -222,8 +222,10 @@ func New(d Drivers) *server.Server {
 	// PubSub matches /v1/projects/{p}/{topics|subscriptions}/...; register
 	// before Firestore so its more-specific resource-type guard wins over
 	// Firestore's permissive /v1/projects/ prefix.
+	var pubsubHandler *pubsub.Handler
+
 	if d.PubSub != nil {
-		pubsubHandler := pubsub.New(d.PubSub)
+		pubsubHandler = pubsub.New(d.PubSub)
 		// PubSub -> Cloud Functions: a publish invokes every function whose
 		// eventTrigger targets the topic (gen1 resource / gen2 pubsubTopic),
 		// mirroring the AWS S3/DynamoDB -> Lambda event-delivery wiring. Push
@@ -359,7 +361,15 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Storage != nil {
-		srv.Register(gcs.New(d.Storage))
+		gcsHandler := gcs.New(d.Storage)
+		// GCS -> Pub/Sub: an object finalize/delete emits an event to each
+		// matching bucket notificationConfig's topic, completing the
+		// GCS -> Pub/Sub -> Cloud Functions chain.
+		if pubsubHandler != nil {
+			gcsHandler.SetPublisher(pubsubHandler)
+		}
+
+		srv.Register(gcsHandler)
 	}
 
 	return srv

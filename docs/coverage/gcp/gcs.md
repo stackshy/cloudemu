@@ -119,9 +119,13 @@ GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
 | `BucketAttrsGCS` | BucketAttrsGCS returns the bucket's GCS-specific attributes. |
 | `BucketIAMPolicy` |  |
 | `ComposeObjectGCS` | ComposeObjectGCS concatenates the source objects' bytes (in order) into |
+| `CreateNotificationConfig` | CreateNotificationConfig registers a Pub/Sub notification config on a |
+| `DeleteNotificationConfig` | DeleteNotificationConfig removes a bucket's notification config by id |
 | `DeleteObjectGCS` | DeleteObjectGCS deletes an object honoring pre and optional generation |
+| `GetNotificationConfig` | GetNotificationConfig returns a bucket's notification config by id |
 | `GetObjectGCS` | GetObjectGCS returns an object's bytes+info, selecting a specific |
 | `HeadObjectGCS` | HeadObjectGCS returns an object's info, selecting a specific generation |
+| `ListNotificationConfigs` | ListNotificationConfigs returns every notification config on a bucket |
 | `ListObjectGenerations` | ListObjectGenerations returns every generation (current + archived) of the |
 | `PutObjectGCS` | PutObjectGCS writes an object honoring pre (a failed condition returns a |
 | `SetBucketAttrsGCS` | SetBucketAttrsGCS records the bucket's location and default storage class |

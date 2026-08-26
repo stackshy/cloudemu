@@ -10809,8 +10809,20 @@
             "doc": "ComposeObjectGCS concatenates the source objects' bytes (in order) into"
           },
           {
+            "name": "CreateNotificationConfig",
+            "doc": "CreateNotificationConfig registers a Pub/Sub notification config on a"
+          },
+          {
+            "name": "DeleteNotificationConfig",
+            "doc": "DeleteNotificationConfig removes a bucket's notification config by id"
+          },
+          {
             "name": "DeleteObjectGCS",
             "doc": "DeleteObjectGCS deletes an object honoring pre and optional generation"
+          },
+          {
+            "name": "GetNotificationConfig",
+            "doc": "GetNotificationConfig returns a bucket's notification config by id"
           },
           {
             "name": "GetObjectGCS",
@@ -10819,6 +10831,10 @@
           {
             "name": "HeadObjectGCS",
             "doc": "HeadObjectGCS returns an object's info, selecting a specific generation"
+          },
+          {
+            "name": "ListNotificationConfigs",
+            "doc": "ListNotificationConfigs returns every notification config on a bucket"
           },
           {
             "name": "ListObjectGenerations",
