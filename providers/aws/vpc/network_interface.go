@@ -146,19 +146,37 @@ func (m *Mock) CreatePrimaryNetworkInterface(_ context.Context, instanceID, subn
 	return nil
 }
 
-// ReleaseInstanceNetworkInterfaces deletes the delete-on-termination interfaces
-// attached to instanceID — the primary ENIs CreatePrimaryNetworkInterface made.
-// Real EC2 releases these on TerminateInstances, which is what lets a subsequent
-// DeleteSubnet / DeleteSecurityGroup succeed. Standalone or managed interfaces
-// (deleteOnTermination false) are left untouched.
+// ReleaseInstanceNetworkInterfaces reconciles an instance's ENIs on terminate,
+// matching real EC2's delete-on-termination default per interface:
+//
+//   - delete-on-termination interfaces (the primary eth0 that
+//     CreatePrimaryNetworkInterface made) are deleted; releasing them is what
+//     lets a subsequent DeleteSubnet / DeleteSecurityGroup succeed.
+//   - other attached interfaces (secondary ENIs the user attached with
+//     AttachNetworkInterface, deleteOnTermination false) are detached back to
+//     `available` — not deleted — so they survive the instance and can be
+//     reattached, and no longer wedge a DeleteSubnet on a dead instance.
+//
+// Standalone/managed interfaces not attached to this instance are untouched.
 func (m *Mock) ReleaseInstanceNetworkInterfaces(_ context.Context, instanceID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for id, eni := range m.enis.All() {
-		if eni.InstanceID == instanceID && eni.deleteOnTermination {
-			m.enis.Delete(id)
+		if eni.InstanceID != instanceID {
+			continue
 		}
+
+		if eni.deleteOnTermination {
+			m.enis.Delete(id)
+
+			continue
+		}
+
+		eni.AttachmentID = ""
+		eni.InstanceID = ""
+		eni.DeviceIndex = 0
+		eni.Status = ENIStatusAvailable
 	}
 
 	return nil

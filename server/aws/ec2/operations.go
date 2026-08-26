@@ -13,6 +13,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // instanceAttributer is an AWS-specific optional capability for reading and
@@ -676,13 +677,97 @@ func copyTagMap(tags map[string]string) map[string]string {
 }
 
 // toInstanceXMLs converts driver instances to their XML wire form, resolving
-// security-group names once for the whole batch.
+// security-group names once for the whole batch and reading the ENI, volume and
+// elastic-IP stores once so each instance reflects its real attachments (the
+// authoritative attachment state lives in those stores, not on the instance's
+// own scalar fields).
 func (h *Handler) toInstanceXMLs(ctx context.Context, instances []computedriver.Instance) []instanceXML {
 	names := h.securityGroupNames(ctx, collectSecurityGroups(instances))
 
+	enisByInstance := h.enisByInstance(ctx)
+	volsByInstance := h.volumesByInstance(ctx)
+	eipByInstance := h.eipByInstance(ctx)
+
 	out := make([]instanceXML, 0, len(instances))
+
 	for i := range instances {
-		out = append(out, instanceXMLFor(&instances[i], names))
+		inst := &instances[i]
+		out = append(out, instanceXMLFor(inst, names, enisByInstance[inst.ID], volsByInstance[inst.ID], eipByInstance[inst.ID]))
+	}
+
+	return out
+}
+
+// enisByInstance groups every ENI in the networking store by the instance it is
+// attached to, so each instance's networkInterfaceSet reflects the real
+// interfaces (primary eth0 plus any AttachNetworkInterface secondaries). A
+// networking backend that does not model ENIs yields an empty map, and callers
+// fall back to the synthesized primary interface.
+func (h *Handler) enisByInstance(ctx context.Context) map[string][]netdriver.NetworkInterface {
+	store, ok := h.networkInterfaces()
+	if !ok {
+		return nil
+	}
+
+	enis, err := store.DescribeNetworkInterfaces(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string][]netdriver.NetworkInterface)
+
+	for i := range enis {
+		if id := enis[i].InstanceID; id != "" {
+			out[id] = append(out[id], enis[i])
+		}
+	}
+
+	return out
+}
+
+// volumesByInstance groups every attached EBS volume by the instance it is
+// attached to, so each instance's blockDeviceMapping reflects the volumes the
+// volume store says are attached to it.
+func (h *Handler) volumesByInstance(ctx context.Context) map[string][]computedriver.VolumeInfo {
+	if h.compute == nil {
+		return nil
+	}
+
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string][]computedriver.VolumeInfo)
+
+	for i := range vols {
+		if id := vols[i].AttachedTo; id != "" {
+			out[id] = append(out[id], vols[i])
+		}
+	}
+
+	return out
+}
+
+// eipByInstance maps each instance to the elastic IP associated with it, so an
+// instance reports the public IP of its EIP (instances never carry one on their
+// own scalar fields).
+func (h *Handler) eipByInstance(ctx context.Context) map[string]*netdriver.ElasticIP {
+	if h.vpc == nil {
+		return nil
+	}
+
+	eips, err := h.vpc.DescribeAddresses(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string]*netdriver.ElasticIP)
+
+	for i := range eips {
+		if id := eips[i].InstanceID; id != "" {
+			out[id] = &eips[i]
+		}
 	}
 
 	return out
@@ -690,7 +775,18 @@ func (h *Handler) toInstanceXMLs(ctx context.Context, instances []computedriver.
 
 // instanceXMLFor builds the wire shape for one instance, including the static
 // facts and derived placement / DNS / primary-ENI fields real EC2 reports.
-func instanceXMLFor(inst *computedriver.Instance, names map[string]string) instanceXML {
+func instanceXMLFor(
+	inst *computedriver.Instance, names map[string]string,
+	enis []netdriver.NetworkInterface, vols []computedriver.VolumeInfo, eip *netdriver.ElasticIP,
+) instanceXML {
+	// An associated elastic IP is what gives an instance its public address;
+	// instances never carry one on their own scalar fields, so the EIP store is
+	// authoritative for the reported public IP / DNS name.
+	publicIP := inst.PublicIP
+	if eip != nil && eip.PublicIP != "" {
+		publicIP = eip.PublicIP
+	}
+
 	xi := instanceXML{
 		InstanceID:         inst.ID,
 		ImageID:            inst.ImageID,
@@ -700,9 +796,9 @@ func instanceXMLFor(inst *computedriver.Instance, names map[string]string) insta
 		SubnetID:           inst.SubnetID,
 		VPCID:              inst.VPCID,
 		PrivateIP:          inst.PrivateIP,
-		PublicIP:           inst.PublicIP,
+		PublicIP:           publicIP,
 		PrivateDNSName:     privateDNSName(inst.PrivateIP),
-		PublicDNSName:      publicDNSName(inst.PublicIP),
+		PublicDNSName:      publicDNSName(publicIP),
 		KeyName:            inst.KeyName,
 		AmiLaunchIndex:     0,
 		Architecture:       archX86,
@@ -719,9 +815,8 @@ func instanceXMLFor(inst *computedriver.Instance, names map[string]string) insta
 		xi.Groups = append(xi.Groups, groupItem{GroupID: sg, GroupName: names[sg]})
 	}
 
-	if eni := primaryENI(inst, xi.Groups); eni != nil {
-		xi.NetworkInterfaces = []instanceENIXML{*eni}
-	}
+	xi.NetworkInterfaces = instanceENIs(inst, xi.Groups, enis)
+	xi.BlockDeviceMappings = instanceBlockDevices(vols)
 
 	for k, v := range inst.Tags {
 		xi.Tags = append(xi.Tags, tagItem{Key: k, Value: v})
@@ -763,10 +858,63 @@ func metadataOptionsXMLFor(o *computedriver.MetadataOptions) *metadataOptionsXML
 	}
 }
 
-// primaryENI synthesizes the instance's single primary network interface from
-// its subnet/VPC/private-IP/security-groups, or nil when there is nothing to
-// describe (no subnet, VPC, or private IP).
-func primaryENI(inst *computedriver.Instance, groups []groupItem) *instanceENIXML {
+// instanceENIs renders the instance's network interfaces from the ENI store:
+// every interface attached to the instance (its primary eth0 plus any
+// AttachNetworkInterface secondaries), each carrying its real eni- id, MAC,
+// device index, private IP, subnet and attachment id. Interfaces are ordered by
+// device index so eth0 comes first.
+//
+// When the store holds no interface for the instance — a launch with no subnet,
+// or a networking backend that does not model ENIs — it falls back to a single
+// synthesized primary interface from the instance's own subnet/VPC/private-IP so
+// those instances still describe an interface.
+func instanceENIs(inst *computedriver.Instance, groups []groupItem, enis []netdriver.NetworkInterface) []instanceENIXML {
+	if len(enis) == 0 {
+		if eni := synthesizedPrimaryENI(inst, groups); eni != nil {
+			return []instanceENIXML{*eni}
+		}
+
+		return nil
+	}
+
+	sorted := append([]netdriver.NetworkInterface(nil), enis...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].DeviceIndex < sorted[j].DeviceIndex })
+
+	out := make([]instanceENIXML, 0, len(sorted))
+
+	for i := range sorted {
+		eni := &sorted[i]
+		// The primary interface carries the instance's security groups; a secondary
+		// ENI's own groups are not tracked on the attachment, so only eth0 reflects
+		// the instance-level group set here.
+		var itemGroups []groupItem
+		if eni.DeviceIndex == primaryDeviceIndex {
+			itemGroups = groups
+		}
+
+		out = append(out, instanceENIXML{
+			NetworkInterfaceID: eni.ID,
+			SubnetID:           eni.SubnetID,
+			VPCID:              eni.VPCID,
+			MacAddress:         eni.MacAddress,
+			PrivateIP:          eni.PrivateIP,
+			Status:             eni.Status,
+			Groups:             itemGroups,
+			Attachment: instanceENIAttachmentXML{
+				AttachmentID: eni.AttachmentID,
+				DeviceIndex:  eni.DeviceIndex,
+				Status:       eniAttachedStatus,
+			},
+		})
+	}
+
+	return out
+}
+
+// synthesizedPrimaryENI builds a best-effort primary interface from the
+// instance's own subnet/VPC/private-IP/security-groups, for instances the ENI
+// store does not model. Returns nil when there is nothing to describe.
+func synthesizedPrimaryENI(inst *computedriver.Instance, groups []groupItem) *instanceENIXML {
 	if inst.SubnetID == "" && inst.VPCID == "" && inst.PrivateIP == "" {
 		return nil
 	}
@@ -778,6 +926,35 @@ func primaryENI(inst *computedriver.Instance, groups []groupItem) *instanceENIXM
 		Groups:     groups,
 		Attachment: instanceENIAttachmentXML{DeviceIndex: primaryDeviceIndex, Status: eniAttachedStatus},
 	}
+}
+
+// instanceBlockDevices renders the EBS volumes attached to the instance as
+// blockDeviceMapping items. The volume store is authoritative for the linkage
+// (AttachVolume records AttachedTo/Device); the instance side only reflects it.
+func instanceBlockDevices(vols []computedriver.VolumeInfo) []instanceBlockDeviceXML {
+	if len(vols) == 0 {
+		return nil
+	}
+
+	sorted := append([]computedriver.VolumeInfo(nil), vols...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Device < sorted[j].Device })
+
+	out := make([]instanceBlockDeviceXML, 0, len(sorted))
+
+	for i := range sorted {
+		v := &sorted[i]
+		out = append(out, instanceBlockDeviceXML{
+			DeviceName: v.Device,
+			EBS: instanceEBSXML{
+				VolumeID:            v.ID,
+				Status:              eniAttachedStatus,
+				AttachTime:          v.CreatedAt,
+				DeleteOnTermination: false,
+			},
+		})
+	}
+
+	return out
 }
 
 // instanceZone returns the instance's availability zone, defaulting to a stable
