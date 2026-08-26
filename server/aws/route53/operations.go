@@ -40,6 +40,14 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		cfg.Comment = req.HostedZoneConfig.Comment
 	}
 
+	// A VPC in the request associates the new zone with that VPC and makes it a
+	// private hosted zone — the presence of a VPC implies PrivateZone whether or
+	// not HostedZoneConfig said so.
+	if req.VPC != nil {
+		cfg.Private = true
+		cfg.VPCs = []dnsdriver.VPCAssociation{{VPCID: req.VPC.VPCId, VPCRegion: req.VPC.VPCRegion}}
+	}
+
 	info, err := h.dns.CreateZone(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
@@ -62,12 +70,19 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 	// Real Route 53 returns a Location header pointing at the new zone.
 	w.Header().Set("Location", pathPrefix+"/"+info.ID)
 
-	wire.WriteXML(w, http.StatusCreated, createHostedZoneResponse{
+	resp := createHostedZoneResponse{
 		Xmlns:         xmlns,
 		HostedZone:    hz,
 		ChangeInfo:    newChangeInfo(),
 		DelegationSet: delegationSetXML{NameServers: nameServers},
-	})
+	}
+
+	// A private zone created with a VPC echoes that VPC back at the top level.
+	if req.VPC != nil {
+		resp.VPC = &vpcXML{VPCRegion: req.VPC.VPCRegion, VPCId: req.VPC.VPCId}
+	}
+
+	wire.WriteXML(w, http.StatusCreated, resp)
 }
 
 // seedZoneRecords creates the SOA and NS records a new hosted zone is born with.
@@ -95,6 +110,7 @@ func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id strin
 		Xmlns:         xmlns,
 		HostedZone:    toHostedZoneXML(info),
 		DelegationSet: delegationSetXML{NameServers: nameServersFor(info.ID)},
+		VPCs:          toVPCsXML(info.VPCs),
 	})
 }
 

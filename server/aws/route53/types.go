@@ -59,6 +59,13 @@ type resourceRecordSetXML struct {
 	AliasTarget      *aliasTargetXML     `xml:"AliasTarget,omitempty"`
 }
 
+// vpcXML is the Route 53 VPC element identifying an Amazon VPC associated with a
+// private hosted zone.
+type vpcXML struct {
+	VPCRegion string `xml:"VPCRegion"`
+	VPCId     string `xml:"VPCId"`
+}
+
 // --- hosted zone elements ---
 
 type hostedZoneConfigXML struct {
@@ -96,6 +103,21 @@ type createHostedZoneRequest struct {
 	Name             string               `xml:"Name"`
 	CallerReference  string               `xml:"CallerReference"`
 	HostedZoneConfig *hostedZoneConfigXML `xml:"HostedZoneConfig"`
+	VPC              *vpcXML              `xml:"VPC"`
+}
+
+// associateVPCRequest is the AssociateVPCWithHostedZone request body.
+type associateVPCRequest struct {
+	XMLName xml.Name `xml:"AssociateVPCWithHostedZoneRequest"`
+	Comment string   `xml:"Comment"`
+	VPC     vpcXML   `xml:"VPC"`
+}
+
+// disassociateVPCRequest is the DisassociateVPCFromHostedZone request body.
+type disassociateVPCRequest struct {
+	XMLName xml.Name `xml:"DisassociateVPCFromHostedZoneRequest"`
+	Comment string   `xml:"Comment"`
+	VPC     vpcXML   `xml:"VPC"`
 }
 
 type changeResourceRecordSetsRequest struct {
@@ -121,6 +143,8 @@ type createHostedZoneResponse struct {
 	HostedZone    hostedZoneXML    `xml:"HostedZone"`
 	ChangeInfo    changeInfoXML    `xml:"ChangeInfo"`
 	DelegationSet delegationSetXML `xml:"DelegationSet"`
+	// VPC is returned only for a private hosted zone created with a VPC.
+	VPC *vpcXML `xml:"VPC,omitempty"`
 }
 
 type getHostedZoneResponse struct {
@@ -128,6 +152,45 @@ type getHostedZoneResponse struct {
 	Xmlns         string           `xml:"xmlns,attr"`
 	HostedZone    hostedZoneXML    `xml:"HostedZone"`
 	DelegationSet delegationSetXML `xml:"DelegationSet"`
+	// VPCs lists the Amazon VPCs a private hosted zone is associated with; empty
+	// for a public zone.
+	VPCs []vpcXML `xml:"VPCs>VPC,omitempty"`
+}
+
+// associateVPCResponse / disassociateVPCResponse each carry the ChangeInfo the
+// SDK returns from an (Dis)AssociateVPCWithHostedZone call.
+type associateVPCResponse struct {
+	XMLName    xml.Name      `xml:"AssociateVPCWithHostedZoneResponse"`
+	Xmlns      string        `xml:"xmlns,attr"`
+	ChangeInfo changeInfoXML `xml:"ChangeInfo"`
+}
+
+type disassociateVPCResponse struct {
+	XMLName    xml.Name      `xml:"DisassociateVPCFromHostedZoneResponse"`
+	Xmlns      string        `xml:"xmlns,attr"`
+	ChangeInfo changeInfoXML `xml:"ChangeInfo"`
+}
+
+// hostedZoneOwnerXML identifies who owns a hosted zone in a ListHostedZonesByVPC
+// summary. Zones created through this API are owned by the account.
+type hostedZoneOwnerXML struct {
+	OwningAccount string `xml:"OwningAccount,omitempty"`
+	OwningService string `xml:"OwningService,omitempty"`
+}
+
+// hostedZoneSummaryXML is one entry in a ListHostedZonesByVPC response.
+type hostedZoneSummaryXML struct {
+	HostedZoneId string             `xml:"HostedZoneId"`
+	Name         string             `xml:"Name"`
+	Owner        hostedZoneOwnerXML `xml:"Owner"`
+}
+
+type listHostedZonesByVPCResponse struct {
+	XMLName             xml.Name               `xml:"ListHostedZonesByVPCResponse"`
+	Xmlns               string                 `xml:"xmlns,attr"`
+	HostedZoneSummaries []hostedZoneSummaryXML `xml:"HostedZoneSummaries>HostedZoneSummary"`
+	MaxItems            string                 `xml:"MaxItems"`
+	NextToken           string                 `xml:"NextToken,omitempty"`
 }
 
 type getChangeResponse struct {
@@ -229,6 +292,21 @@ func toHostedZoneXML(info *dnsdriver.ZoneInfo) hostedZoneXML {
 		},
 		ResourceRecordSetCount: int64(info.RecordCount),
 	}
+}
+
+// toVPCsXML converts a zone's driver VPC associations into their Route 53 VPC
+// elements, or nil when the zone has none (a public zone).
+func toVPCsXML(vpcs []dnsdriver.VPCAssociation) []vpcXML {
+	if len(vpcs) == 0 {
+		return nil
+	}
+
+	out := make([]vpcXML, 0, len(vpcs))
+	for _, v := range vpcs {
+		out = append(out, vpcXML{VPCRegion: v.VPCRegion, VPCId: v.VPCID})
+	}
+
+	return out
 }
 
 // toRecordSetXML converts a driver record into its Route 53 element. An alias
