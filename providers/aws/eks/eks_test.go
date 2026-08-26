@@ -157,8 +157,9 @@ func TestNodegroupLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 1, len(names))
 
-	upd, err := m.UpdateNodegroupConfig(ctx, "c1", "ng1",
-		&eksdriver.NodegroupScalingConfig{MinSize: 2, MaxSize: 5, DesiredSize: 3}, nil)
+	upd, err := m.UpdateNodegroupConfig(ctx, "c1", "ng1", eksdriver.NodegroupConfigUpdate{
+		Scaling: &eksdriver.NodegroupScalingConfig{MinSize: 2, MaxSize: 5, DesiredSize: 3},
+	})
 	requireNoError(t, err)
 	assertEqual(t, "Successful", upd.Status)
 
@@ -178,6 +179,102 @@ func TestNodegroupLifecycle(t *testing.T) {
 
 	if _, err := m.DescribeNodegroup(ctx, "c1", "ng1"); err == nil {
 		t.Fatal("expected NotFound after delete")
+	}
+}
+
+func TestNodegroupTaintsAndModifiedAt(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m := New(config.NewOptions(
+		config.WithClock(fc),
+		config.WithRegion("us-east-1"),
+		config.WithAccountID("123456789012"),
+	))
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	requireNoError(t, err)
+
+	ng, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
+		ClusterName:   "c1",
+		NodegroupName: "ng1",
+		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
+		Subnets:       []string{"subnet-1"},
+		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		Taints:        []eksdriver.Taint{{Key: "dedicated", Value: "gpu", Effect: "NO_SCHEDULE"}},
+	})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(ng.Taints))
+	assertEqual(t, "dedicated", ng.Taints[0].Key)
+
+	if !ng.ModifiedAt.Equal(ng.CreatedAt) {
+		t.Fatalf("fresh nodegroup modifiedAt %v != createdAt %v", ng.ModifiedAt, ng.CreatedAt)
+	}
+
+	fc.Advance(5 * time.Minute)
+
+	_, err = m.UpdateNodegroupConfig(ctx, "c1", "ng1", eksdriver.NodegroupConfigUpdate{
+		AddOrUpdateTaints: []eksdriver.Taint{{Key: "spot", Value: "true", Effect: "PREFER_NO_SCHEDULE"}},
+		RemoveTaints:      []eksdriver.Taint{{Key: "dedicated", Effect: "NO_SCHEDULE"}},
+	})
+	requireNoError(t, err)
+
+	got, err := m.DescribeNodegroup(ctx, "c1", "ng1")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(got.Taints))
+	assertEqual(t, "spot", got.Taints[0].Key)
+
+	if !got.ModifiedAt.After(got.CreatedAt) {
+		t.Fatalf("modifiedAt %v did not advance past createdAt %v", got.ModifiedAt, got.CreatedAt)
+	}
+}
+
+func TestNodegroupLabelMergeAndRemove(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1"})
+	requireNoError(t, err)
+
+	_, err = m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
+		ClusterName:   "c1",
+		NodegroupName: "ng1",
+		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
+		Subnets:       []string{"subnet-1"},
+		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 1},
+		Labels:        map[string]string{"a": "1", "b": "2"},
+	})
+	requireNoError(t, err)
+
+	_, err = m.UpdateNodegroupConfig(ctx, "c1", "ng1", eksdriver.NodegroupConfigUpdate{
+		AddOrUpdateLabels: map[string]string{"b": "22", "c": "3"},
+		RemoveLabels:      []string{"a"},
+	})
+	requireNoError(t, err)
+
+	got, err := m.DescribeNodegroup(ctx, "c1", "ng1")
+	requireNoError(t, err)
+
+	if got.Labels["a"] != "" || got.Labels["b"] != "22" || got.Labels["c"] != "3" {
+		t.Fatalf("label merge/remove wrong: %v", got.Labels)
+	}
+}
+
+func TestNodegroupScalingValidation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1"})
+	requireNoError(t, err)
+
+	_, err = m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
+		ClusterName:   "c1",
+		NodegroupName: "bad",
+		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
+		Subnets:       []string{"subnet-1"},
+		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 5, MaxSize: 2, DesiredSize: 1},
+	})
+	if err == nil {
+		t.Fatal("expected InvalidArgument for minSize > maxSize")
 	}
 }
 

@@ -107,6 +107,15 @@ type NodegroupScalingConfig struct {
 	DesiredSize int
 }
 
+// Taint is a Kubernetes taint applied to a managed node group's nodes. Effect
+// is one of NO_SCHEDULE, PREFER_NO_SCHEDULE, or NO_EXECUTE. A taint is
+// identified by its Key+Effect pair.
+type Taint struct {
+	Key    string
+	Value  string
+	Effect string
+}
+
 // NodegroupConfig configures a new managed node group.
 type NodegroupConfig struct {
 	ClusterName    string
@@ -121,6 +130,7 @@ type NodegroupConfig struct {
 	ReleaseVersion string
 	ScalingConfig  NodegroupScalingConfig
 	Labels         map[string]string
+	Taints         []Taint
 	Tags           map[string]string
 }
 
@@ -140,8 +150,24 @@ type Nodegroup struct {
 	ScalingConfig  NodegroupScalingConfig
 	Status         string
 	Labels         map[string]string
+	Taints         []Taint
 	Tags           map[string]string
 	CreatedAt      time.Time
+	// ModifiedAt advances on every mutating op (config/version update); on a
+	// freshly created nodegroup it equals CreatedAt.
+	ModifiedAt time.Time
+}
+
+// NodegroupConfigUpdate carries the mutable fields UpdateNodegroupConfig
+// applies. Scaling, when non-nil, is the already-merged target sizing (the
+// caller overlays partial requests). Label and taint changes are expressed as
+// add/update and remove deltas, matching the real EKS request shape.
+type NodegroupConfigUpdate struct {
+	Scaling           *NodegroupScalingConfig
+	AddOrUpdateLabels map[string]string
+	RemoveLabels      []string
+	AddOrUpdateTaints []Taint
+	RemoveTaints      []Taint
 }
 
 // FargateProfileSelector matches Pods to a Fargate profile.
@@ -218,7 +244,7 @@ type EKS interface {
 	ListNodegroups(ctx context.Context, clusterName string) ([]string, error)
 	UpdateNodegroupConfig(
 		ctx context.Context, clusterName, nodegroupName string,
-		scaling *NodegroupScalingConfig, labels map[string]string,
+		upd NodegroupConfigUpdate,
 	) (*ClusterUpdate, error)
 	UpdateNodegroupVersion(
 		ctx context.Context, clusterName, nodegroupName, version, releaseVersion string,

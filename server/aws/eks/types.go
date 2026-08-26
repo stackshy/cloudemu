@@ -66,6 +66,14 @@ type nodegroupScalingConfigJSON struct {
 	DesiredSize *int32 `json:"desiredSize,omitempty"`
 }
 
+// taintJSON mirrors the SDK Taint shape (key, value, effect) used on
+// CreateNodegroup, DescribeNodegroup, and UpdateNodegroupConfig.
+type taintJSON struct {
+	Key    string `json:"key,omitempty"`
+	Value  string `json:"value,omitempty"`
+	Effect string `json:"effect,omitempty"`
+}
+
 // nodegroupJSON is the EKS nodegroup resource shape.
 type nodegroupJSON struct {
 	NodegroupName  string                      `json:"nodegroupName"`
@@ -83,6 +91,7 @@ type nodegroupJSON struct {
 	AmiType        string                      `json:"amiType,omitempty"`
 	NodeRole       string                      `json:"nodeRole,omitempty"`
 	Labels         map[string]string           `json:"labels,omitempty"`
+	Taints         []taintJSON                 `json:"taints,omitempty"`
 	DiskSize       *int32                      `json:"diskSize,omitempty"`
 	Health         *nodegroupHealthJSON        `json:"health,omitempty"`
 	Resources      *nodegroupResourcesJSON     `json:"resources,omitempty"`
@@ -186,20 +195,28 @@ type createNodegroupRequest struct {
 	ReleaseVersion string                      `json:"releaseVersion,omitempty"`
 	ScalingConfig  *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
 	Labels         map[string]string           `json:"labels,omitempty"`
+	Taints         []taintJSON                 `json:"taints,omitempty"`
 	Tags           map[string]string           `json:"tags,omitempty"`
 }
 
 type updateNodegroupConfigRequest struct {
 	ScalingConfig *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
 	Labels        *labelsUpdate               `json:"labels,omitempty"`
+	Taints        *taintsUpdate               `json:"taints,omitempty"`
 }
 
 // labelsUpdate is the request shape for nodegroup label changes; the SDK
-// sends addOrUpdateLabels and removeLabels separately. The mock applies
-// addOrUpdateLabels and ignores removeLabels for Wave 1.
+// sends addOrUpdateLabels and removeLabels separately.
 type labelsUpdate struct {
 	AddOrUpdateLabels map[string]string `json:"addOrUpdateLabels,omitempty"`
 	RemoveLabels      []string          `json:"removeLabels,omitempty"`
+}
+
+// taintsUpdate is the request shape for nodegroup taint changes; the SDK sends
+// addOrUpdateTaints and removeTaints separately.
+type taintsUpdate struct {
+	AddOrUpdateTaints []taintJSON `json:"addOrUpdateTaints,omitempty"`
+	RemoveTaints      []taintJSON `json:"removeTaints,omitempty"`
 }
 
 type updateNodegroupVersionRequest struct {
