@@ -44,21 +44,26 @@ type queueResource struct {
 }
 
 type queueProperties struct {
-	Status                     string        `json:"status,omitempty"`
-	CountDetails               *countDetails `json:"countDetails,omitempty"`
-	MessageCount               int64         `json:"messageCount"`
-	SizeInBytes                int64         `json:"sizeInBytes"`
-	MaxSizeInMegabytes         int32         `json:"maxSizeInMegabytes,omitempty"`
-	MaxDeliveryCount           int32         `json:"maxDeliveryCount,omitempty"`
-	LockDuration               string        `json:"lockDuration,omitempty"`
-	DefaultMessageTimeToLive   string        `json:"defaultMessageTimeToLive,omitempty"`
-	RequiresDuplicateDetection bool          `json:"requiresDuplicateDetection"`
-	RequiresSession            bool          `json:"requiresSession"`
-	DeadLetteringOnExpiration  bool          `json:"deadLetteringOnMessageExpiration"`
-	EnablePartitioning         bool          `json:"enablePartitioning"`
-	CreatedAt                  *time.Time    `json:"createdAt,omitempty"`
-	UpdatedAt                  *time.Time    `json:"updatedAt,omitempty"`
-	AccessedAt                 *time.Time    `json:"accessedAt,omitempty"`
+	Status                              string        `json:"status,omitempty"`
+	CountDetails                        *countDetails `json:"countDetails,omitempty"`
+	MessageCount                        int64         `json:"messageCount"`
+	SizeInBytes                         int64         `json:"sizeInBytes"`
+	MaxSizeInMegabytes                  int32         `json:"maxSizeInMegabytes,omitempty"`
+	MaxDeliveryCount                    int32         `json:"maxDeliveryCount,omitempty"`
+	LockDuration                        string        `json:"lockDuration,omitempty"`
+	DefaultMessageTimeToLive            string        `json:"defaultMessageTimeToLive,omitempty"`
+	AutoDeleteOnIdle                    string        `json:"autoDeleteOnIdle,omitempty"`
+	DuplicateDetectionHistoryTimeWindow string        `json:"duplicateDetectionHistoryTimeWindow,omitempty"`
+	ForwardTo                           string        `json:"forwardTo,omitempty"`
+	RequiresDuplicateDetection          bool          `json:"requiresDuplicateDetection"`
+	RequiresSession                     bool          `json:"requiresSession"`
+	DeadLetteringOnExpiration           bool          `json:"deadLetteringOnMessageExpiration"`
+	EnablePartitioning                  bool          `json:"enablePartitioning"`
+	EnableExpress                       bool          `json:"enableExpress"`
+	EnableBatchedOperations             *bool         `json:"enableBatchedOperations,omitempty"`
+	CreatedAt                           *time.Time    `json:"createdAt,omitempty"`
+	UpdatedAt                           *time.Time    `json:"updatedAt,omitempty"`
+	AccessedAt                          *time.Time    `json:"accessedAt,omitempty"`
 }
 
 type countDetails struct {
@@ -78,19 +83,22 @@ type topicResource struct {
 }
 
 type topicProperties struct {
-	Status                     string        `json:"status,omitempty"`
-	CountDetails               *countDetails `json:"countDetails,omitempty"`
-	SubscriptionCount          int32         `json:"subscriptionCount"`
-	SizeInBytes                int64         `json:"sizeInBytes"`
-	MaxSizeInMegabytes         int32         `json:"maxSizeInMegabytes,omitempty"`
-	DefaultMessageTimeToLive   string        `json:"defaultMessageTimeToLive,omitempty"`
-	RequiresDuplicateDetection bool          `json:"requiresDuplicateDetection"`
-	EnablePartitioning         bool          `json:"enablePartitioning"`
-	EnableExpress              bool          `json:"enableExpress"`
-	SupportOrdering            bool          `json:"supportOrdering"`
-	CreatedAt                  *time.Time    `json:"createdAt,omitempty"`
-	UpdatedAt                  *time.Time    `json:"updatedAt,omitempty"`
-	AccessedAt                 *time.Time    `json:"accessedAt,omitempty"`
+	Status                              string        `json:"status,omitempty"`
+	CountDetails                        *countDetails `json:"countDetails,omitempty"`
+	SubscriptionCount                   int32         `json:"subscriptionCount"`
+	SizeInBytes                         int64         `json:"sizeInBytes"`
+	MaxSizeInMegabytes                  int32         `json:"maxSizeInMegabytes,omitempty"`
+	DefaultMessageTimeToLive            string        `json:"defaultMessageTimeToLive,omitempty"`
+	AutoDeleteOnIdle                    string        `json:"autoDeleteOnIdle,omitempty"`
+	DuplicateDetectionHistoryTimeWindow string        `json:"duplicateDetectionHistoryTimeWindow,omitempty"`
+	RequiresDuplicateDetection          bool          `json:"requiresDuplicateDetection"`
+	EnablePartitioning                  bool          `json:"enablePartitioning"`
+	EnableExpress                       bool          `json:"enableExpress"`
+	EnableBatchedOperations             *bool         `json:"enableBatchedOperations,omitempty"`
+	SupportOrdering                     bool          `json:"supportOrdering"`
+	CreatedAt                           *time.Time    `json:"createdAt,omitempty"`
+	UpdatedAt                           *time.Time    `json:"updatedAt,omitempty"`
+	AccessedAt                          *time.Time    `json:"accessedAt,omitempty"`
 }
 
 // subscriptionResource is the ARM JSON shape for .../topics/subscriptions.

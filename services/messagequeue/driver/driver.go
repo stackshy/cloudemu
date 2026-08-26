@@ -25,6 +25,16 @@ type QueueConfig struct {
 	// ignored by non-Azure providers.
 	DeadLetterOnExpiration bool
 
+	// RequiresDuplicateDetection enables Azure Service Bus duplicate detection: a
+	// send whose MessageId (SystemProperties["MessageId"]) matches one seen within
+	// DuplicateDetectionWindow is silently accepted but not re-enqueued. Distinct
+	// from FIFO/DeduplicationID dedup; ignored by non-Azure providers.
+	RequiresDuplicateDetection bool
+	// DuplicateDetectionWindow is the look-back window for
+	// RequiresDuplicateDetection. Zero falls back to the provider default (Service
+	// Bus: 10 minutes).
+	DuplicateDetectionWindow time.Duration
+
 	// AWS SQS extras (ignored by non-AWS providers).
 	ReceiveMessageWaitTimeSeconds int
 	ContentBasedDeduplication     bool

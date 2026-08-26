@@ -75,7 +75,9 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 				TargetQueueURL:  dlqURL,
 				MaxReceiveCount: effectiveMaxDeliveryCount(&req.Properties),
 			},
-			DeadLetterOnExpiration: req.Properties.DeadLetteringOnExpiration,
+			DeadLetterOnExpiration:     req.Properties.DeadLetteringOnExpiration,
+			RequiresDuplicateDetection: req.Properties.RequiresDuplicateDetection,
+			DuplicateDetectionWindow:   dupDetectionWindow(req.Properties.DuplicateDetectionHistoryTimeWindow),
 		})
 		if err != nil && !cerrors.IsAlreadyExists(err) {
 			h.mu.Unlock()
@@ -229,12 +231,33 @@ func buildQueueProps(in *queueProperties, created, updated time.Time) queuePrope
 		out.MaxSizeInMegabytes = defaultMaxSizeMB
 	}
 
+	if out.AutoDeleteOnIdle == "" {
+		out.AutoDeleteOnIdle = maxTimeToLive
+	}
+
+	if out.DuplicateDetectionHistoryTimeWindow == "" {
+		out.DuplicateDetectionHistoryTimeWindow = defaultDupDetectionISO
+	}
+
+	if out.EnableBatchedOperations == nil {
+		out.EnableBatchedOperations = defaultBatchedOps()
+	}
+
 	out.CountDetails = &countDetails{}
 	out.CreatedAt = &created
 	out.UpdatedAt = &updated
 	out.AccessedAt = &updated
 
 	return out
+}
+
+// defaultBatchedOps returns a pointer to Service Bus' enableBatchedOperations
+// default (true), used when a create request omits the field. A pointer keeps an
+// explicit "false" from being overwritten by the default.
+func defaultBatchedOps() *bool {
+	v := true
+
+	return &v
 }
 
 func (h *Handler) toQueueResource(sp sbPath, rec *queueRecord) queueResource {

@@ -31,6 +31,9 @@ const (
 const (
 	defaultLockDuration = "PT1M"
 	maxTimeToLive       = "P10675199DT2H48M5.4775807S"
+	// defaultDupDetectionISO is Service Bus' default duplicate-detection history
+	// time window (10 minutes) reported for queues/topics that omit it.
+	defaultDupDetectionISO = "PT10M"
 
 	statusActive          = "Active"
 	filterTypeSQL         = "SqlFilter"
