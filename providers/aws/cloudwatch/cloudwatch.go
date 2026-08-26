@@ -789,9 +789,17 @@ func (m *Mock) AlarmTags(_ context.Context, alarmName string) (map[string]string
 	return copyDims(a.Tags), nil
 }
 
-// matchDimensions returns true if the data point dimensions contain all of the
-// requested filter dimensions.
+// matchDimensions reports whether a datum belongs to the metric series a query
+// identifies. CloudWatch treats each unique combination of dimensions as a
+// separate metric, so the datum's dimension set must equal the query's exactly:
+// a query with fewer (or no) dimensions does not match a datum published with a
+// superset, and vice versa. This governs both metric reads and alarm evaluation
+// so an alarm reads only its own dimensioned metric stream.
 func matchDimensions(dataDims, filterDims map[string]string) bool {
+	if len(dataDims) != len(filterDims) {
+		return false
+	}
+
 	for k, v := range filterDims {
 		if dataDims[k] != v {
 			return false
