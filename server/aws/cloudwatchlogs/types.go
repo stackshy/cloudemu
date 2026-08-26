@@ -31,6 +31,8 @@ type createLogStreamRequest struct {
 type describeLogStreamsRequest struct {
 	LogGroupName        string `json:"logGroupName"`
 	LogStreamNamePrefix string `json:"logStreamNamePrefix"`
+	OrderBy             string `json:"orderBy"`
+	Descending          bool   `json:"descending"`
 	Limit               int32  `json:"limit"`
 	NextToken           string `json:"nextToken"`
 }

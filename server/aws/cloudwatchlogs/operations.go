@@ -3,6 +3,7 @@ package cloudwatchlogs
 import (
 	"encoding/base64"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -202,6 +203,10 @@ func (h *Handler) describeLogStreams(w http.ResponseWriter, r *http.Request) {
 		infos = filtered
 	}
 
+	// Order the streams: LogStreamName (the driver's default) or LastEventTime,
+	// each optionally reversed by descending.
+	orderLogStreams(infos, req.OrderBy, req.Descending)
+
 	// The stream ARN is derived from the owning group's ARN, which the driver
 	// carries on the group, not the stream.
 	groupARN := ""
@@ -222,6 +227,28 @@ func (h *Handler) describeLogStreams(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
+}
+
+// orderByLastEventTime is the DescribeLogStreams orderBy value that sorts by
+// each stream's most recent event timestamp instead of its name.
+const orderByLastEventTime = "LastEventTime"
+
+// orderLogStreams sorts streams in place to honor DescribeLogStreams orderBy /
+// descending. The driver already returns streams name-sorted ascending, so the
+// default (LogStreamName, ascending) is a no-op; LastEventTime sorts by each
+// stream's last-event timestamp, and descending reverses whichever key is used.
+func orderLogStreams(infos []logdriver.LogStreamInfo, orderBy string, descending bool) {
+	if orderBy == orderByLastEventTime {
+		sort.SliceStable(infos, func(i, j int) bool {
+			return isoToEpochMillis(infos[i].LastEvent) < isoToEpochMillis(infos[j].LastEvent)
+		})
+	}
+
+	if descending {
+		for i, j := 0, len(infos)-1; i < j; i, j = i+1, j-1 {
+			infos[i], infos[j] = infos[j], infos[i]
+		}
+	}
 }
 
 func (h *Handler) deleteLogStream(w http.ResponseWriter, r *http.Request) {
