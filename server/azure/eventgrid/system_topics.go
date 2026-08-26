@@ -113,7 +113,7 @@ func (h *Handler) serveSystemTopicResource(w http.ResponseWriter, r *http.Reques
 	case http.MethodGet:
 		h.getSystemTopic(w, rp)
 	case http.MethodDelete:
-		h.deleteSystemTopic(w, r, rp)
+		h.deleteSystemTopic(w, rp)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -157,10 +157,10 @@ func (h *Handler) createOrUpdateSystemTopic(w http.ResponseWriter, r *http.Reque
 	source := rec.source
 	h.mu.Unlock()
 
-	// Provision the internal delivery bus keyed by the source now, so the source
+	// Provision the isolated delivery bus keyed by the source now, so the source
 	// producer's PutEvents has a bus to match even before any subscription — and
 	// so a subscription created next registers its rule against it.
-	h.ensureSystemTopicBus(r.Context(), source)
+	h.ensureSystemTopicBus(source)
 
 	// 201 with a terminal provisioningState completes the SDK's LRO poller on
 	// the first response.
@@ -226,7 +226,7 @@ func (h *Handler) getSystemTopic(w http.ResponseWriter, rp *azurearm.ResourcePat
 	azurearm.WriteJSON(w, http.StatusOK, out)
 }
 
-func (h *Handler) deleteSystemTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+func (h *Handler) deleteSystemTopic(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 	key := storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 
 	h.mu.Lock()
@@ -250,7 +250,7 @@ func (h *Handler) deleteSystemTopic(w http.ResponseWriter, r *http.Request, rp *
 	// another system topic on the same source, so drop rules, not the bus).
 	busName := systemTopicBusName(source)
 	for _, name := range subNames {
-		h.unregisterSystemTopicSubscription(r.Context(), busName, name)
+		h.unregisterSystemTopicSubscription(busName, name)
 	}
 
 	if !found {

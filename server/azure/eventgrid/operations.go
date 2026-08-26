@@ -151,13 +151,6 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
-	// An internal system-topic delivery bus is not a custom topic; hide it from
-	// the Microsoft.EventGrid/topics surface even if its name collides.
-	if isSystemTopicBus(info) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "topic not found")
-		return
-	}
-
 	azurearm.WriteJSON(w, http.StatusOK, toTopicJSON(rp, info))
 }
 
@@ -165,13 +158,6 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.
 // polling accepts 202/204; returning 204 with no body completes the poller on
 // the first response.
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	// Never let a custom-topic delete destroy an internal system-topic delivery
-	// bus that happens to share the name; report the idempotent 204 instead.
-	if info, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err == nil && isSystemTopicBus(info) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
 	if err := h.bus.DeleteEventBus(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return

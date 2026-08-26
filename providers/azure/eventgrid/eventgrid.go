@@ -72,12 +72,20 @@ type FunctionInvoker interface {
 
 // Mock is an in-memory mock implementation of Azure Event Grid.
 type Mock struct {
-	buses      *memstore.Store[*busData]
-	opts       *config.Options
-	monitoring mondriver.Monitoring
-	httpClient *http.Client
-	serviceBus ServiceBusDeliverer
-	functions  FunctionInvoker
+	buses *memstore.Store[*busData]
+	// systemBuses backs system-topic delivery. It is a store distinct from
+	// buses (user-facing custom topics) so a system topic's delivery bus and a
+	// custom topic can share a name — e.g. the fixed storage-account name a Blob
+	// Storage system topic keys on — without either clobbering or leaking into
+	// the other. The custom-topic CRUD paths (Create/Update/Delete/ListEventBus,
+	// PutRule) never touch it; it is managed only through the SystemDelivery*
+	// methods and consulted by PutEvents for system-topic-sourced events.
+	systemBuses *memstore.Store[*busData]
+	opts        *config.Options
+	monitoring  mondriver.Monitoring
+	httpClient  *http.Client
+	serviceBus  ServiceBusDeliverer
+	functions   FunctionInvoker
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -122,10 +130,84 @@ func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
 // New creates a new Event Grid mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		buses:      memstore.New[*busData](),
-		opts:       opts,
-		httpClient: &http.Client{Timeout: webhookDeliveryTimeout},
+		buses:       memstore.New[*busData](),
+		systemBuses: memstore.New[*busData](),
+		opts:        opts,
+		httpClient:  &http.Client{Timeout: webhookDeliveryTimeout},
 	}
+}
+
+// EnsureSystemDeliveryBus makes sure an isolated system-topic delivery bus with
+// the given name exists (no-op when it already does, or the name is empty). The
+// wire handler calls this when a system topic is created so the source
+// producer's PutEvents has a bus to match. The bus lives in systemBuses, so it
+// never appears on — nor is clobbered by — the custom-topic surface.
+func (m *Mock) EnsureSystemDeliveryBus(name string) {
+	if name == "" || m.systemBuses.Has(name) {
+		return
+	}
+
+	m.systemBuses.Set(name, &busData{
+		info:   driver.EventBusInfo{Name: name, State: activeTopicState},
+		rules:  memstore.New[*ruleData](),
+		events: []driver.Event{},
+	})
+}
+
+// PutSystemDeliveryRule registers (or replaces) a system-topic subscription as a
+// delivery rule on its isolated bus, carrying the raw ARM EventSubscription
+// properties (destination + filter) verbatim — mirroring PutRule for custom
+// topics, but against systemBuses. Returns NotFound when the delivery bus was
+// never provisioned.
+func (m *Mock) PutSystemDeliveryRule(busName, ruleName, properties string) error {
+	if ruleName == "" {
+		return errors.New(errors.InvalidArgument, "subscription name is required")
+	}
+
+	bd, ok := m.systemBuses.Get(busName)
+	if !ok {
+		return errors.Newf(errors.NotFound, "system delivery bus %q not found", busName)
+	}
+
+	bd.rules.Set(ruleName, &ruleData{
+		rule: driver.Rule{
+			Name:        ruleName,
+			EventBus:    busName,
+			Description: properties,
+			State:       defaultRuleState,
+			Targets:     []driver.Target{},
+			CreatedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		},
+		targets: memstore.New[driver.Target](),
+		filter:  parseSubscriptionFilter(properties),
+		dest:    parseSubscriptionDestination(properties),
+	})
+
+	return nil
+}
+
+// DeleteSystemDeliveryRule removes a system-topic subscription's delivery rule
+// from its isolated bus. Idempotent: a missing bus or rule is not an error, so a
+// deleted subscription (or system topic) stops delivery cleanly.
+func (m *Mock) DeleteSystemDeliveryRule(busName, ruleName string) error {
+	if bd, ok := m.systemBuses.Get(busName); ok {
+		bd.rules.Delete(ruleName)
+	}
+
+	return nil
+}
+
+// lookupBus resolves the bus an event delivers through: a system-topic-sourced
+// event (the producer stamps the source resource id on Topic) resolves against
+// the isolated system delivery store; a custom-topic publish (Topic empty)
+// resolves against the user-facing store. This routing keeps a same-named
+// custom topic and system delivery bus from ever cross-delivering.
+func (m *Mock) lookupBus(event *driver.Event) (*busData, bool) {
+	if event.Topic != "" {
+		return m.systemBuses.Get(event.EventBus)
+	}
+
+	return m.buses.Get(event.EventBus)
 }
 
 // CreateEventBus creates a new Event Grid topic.
@@ -467,7 +549,7 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 			continue
 		}
 
-		bd, ok := m.buses.Get(busName)
+		bd, ok := m.lookupBus(&events[i])
 		if !ok {
 			result.FailCount++
 
@@ -618,7 +700,7 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 // it (exported for testing). Scoped to event.EventBus so a rule on one topic
 // never counts as matched for an event published to a different topic.
 func (m *Mock) MatchedRules(event *driver.Event) []driver.Rule {
-	bd, ok := m.buses.Get(event.EventBus)
+	bd, ok := m.lookupBus(event)
 	if !ok {
 		return nil
 	}

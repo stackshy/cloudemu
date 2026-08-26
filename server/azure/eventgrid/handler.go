@@ -51,6 +51,10 @@ const (
 // codebase — the wire handler owns their state in memory.
 type Handler struct {
 	bus ebdriver.EventBus
+	// sysDelivery is the optional system-topic delivery capability of bus (the
+	// Azure eventgrid.Mock provides it; nil for backends that don't). It isolates
+	// system-topic subscription rules from user-facing custom topics.
+	sysDelivery systemTopicDelivery
 
 	mu           sync.RWMutex
 	systemTopics map[string]*systemTopicRecord
@@ -75,15 +79,23 @@ type topicKeyGens struct {
 	key2Gen int
 }
 
-// New returns an Azure Event Grid handler backed by b.
+// New returns an Azure Event Grid handler backed by b. When b also implements
+// systemTopicDelivery (the Azure eventgrid.Mock does), system-topic
+// subscriptions are bridged to their isolated delivery store.
 func New(b ebdriver.EventBus) *Handler {
-	return &Handler{
+	h := &Handler{
 		bus:          b,
 		systemTopics: make(map[string]*systemTopicRecord),
 		domains:      make(map[string]*domainRecord),
 		scopedSubs:   make(map[string]*scopedSubRecord),
 		topicKeyGens: make(map[string]*topicKeyGens),
 	}
+
+	if sd, ok := b.(systemTopicDelivery); ok {
+		h.sysDelivery = sd
+	}
+
+	return h
 }
 
 // Matches claims ARM URLs targeting Microsoft.EventGrid topics, systemTopics,

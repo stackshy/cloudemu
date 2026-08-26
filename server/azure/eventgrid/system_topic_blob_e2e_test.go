@@ -91,7 +91,10 @@ type blobEGServer struct {
 	serviceBus sbQueueReader
 	systems    *armeventgrid.SystemTopicsClient
 	subs       *armeventgrid.SystemTopicEventSubscriptionsClient
+	topics     *armeventgrid.TopicsClient
+	topicSubs  *armeventgrid.TopicEventSubscriptionsClient
 	blob       *azblob.Client
+	ts         *httptest.Server
 }
 
 // sbQueueReader is the slice of the Service Bus mock the ServiceBus e2e case
@@ -145,7 +148,82 @@ func newBlobEGServer(t *testing.T) *blobEGServer {
 		serviceBus: cloudP.ServiceBus,
 		systems:    cf.NewSystemTopicsClient(),
 		subs:       cf.NewSystemTopicEventSubscriptionsClient(),
+		topics:     cf.NewTopicsClient(),
+		topicSubs:  cf.NewTopicEventSubscriptionsClient(),
 		blob:       blobClient,
+		ts:         ts,
+	}
+}
+
+// createCustomTopic creates a user-facing custom Event Grid topic over the ARM
+// SDK (used to force the "cloudemu" name collision with the system delivery bus).
+func (s *blobEGServer) createCustomTopic(ctx context.Context, t *testing.T, name string) {
+	t.Helper()
+
+	poller, err := s.topics.BeginCreateOrUpdate(ctx, testRG, name,
+		armeventgrid.Topic{Location: to.Ptr("eastus")}, nil)
+	if err != nil {
+		t.Fatalf("custom topic BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("custom topic PollUntilDone: %v", err)
+	}
+}
+
+// createCustomWebhookSub creates a custom-topic event subscription delivering to
+// url over the ARM SDK.
+func (s *blobEGServer) createCustomWebhookSub(ctx context.Context, t *testing.T, topic, name, url string) {
+	t.Helper()
+
+	sub := armeventgrid.EventSubscription{
+		Properties: &armeventgrid.EventSubscriptionProperties{
+			Destination: &armeventgrid.WebHookEventSubscriptionDestination{
+				EndpointType: to.Ptr(armeventgrid.EndpointTypeWebHook),
+				Properties: &armeventgrid.WebHookEventSubscriptionDestinationProperties{
+					EndpointURL: to.Ptr(url),
+				},
+			},
+		},
+	}
+
+	poller, err := s.topicSubs.BeginCreateOrUpdate(ctx, testRG, topic, name, sub, nil)
+	if err != nil {
+		t.Fatalf("custom subscription BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("custom subscription PollUntilDone: %v", err)
+	}
+}
+
+// publishCustomEvent posts one EventGridEvent to a custom topic's data-plane
+// endpoint over HTTP, addressed by Host (matching how a real publisher reaches a
+// topic). Custom-topic events carry no Topic override, so they route to the
+// user-facing bus store — never the system delivery store.
+func (s *blobEGServer) publishCustomEvent(ctx context.Context, t *testing.T, topic string) {
+	t.Helper()
+
+	body := `[{"id":"c1","subject":"orders/1","eventType":"Order.Created",` +
+		`"eventTime":"2024-01-02T03:04:05Z","data":{"total":42},"dataVersion":"1.0"}]`
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.ts.URL+"/api/events", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("publish new request: %v", err)
+	}
+
+	req.Host = topic + ".eastus-1.eventgrid.azure.net"
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("publish custom event: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("publish status = %d, want 200", resp.StatusCode)
 	}
 }
 
@@ -379,4 +457,120 @@ func TestSDKSystemTopicBlobDeleteStopsDelivery(t *testing.T) {
 	if got := eventuallyEvents(rc, 2); len(got) != 1 {
 		t.Fatalf("post-delete delivery = %d, want it to stay at 1", len(got))
 	}
+}
+
+// TestSDKSystemTopicBlobCollisionForward is the forward collision case: a real
+// custom Event Grid topic named "cloudemu" (the same name the Blob system
+// delivery bus keys on) coexists with the system topic without either leaking
+// into the other. Blob events reach only the system subscriber; a custom-topic
+// publish reaches only the custom subscriber; the custom topic stays a normal,
+// independent, listable topic.
+func TestSDKSystemTopicBlobCollisionForward(t *testing.T) {
+	ctx := context.Background()
+	s := newBlobEGServer(t)
+	systemRC := newEGWebhookReceiver(t)
+	customRC := newEGWebhookReceiver(t)
+
+	// A user creates a custom topic that collides with the storage-account name.
+	s.createCustomTopic(ctx, t, "cloudemu")
+	s.createCustomWebhookSub(ctx, t, "cloudemu", "cust-sub", customRC.URL)
+
+	// The Blob system topic + subscription is created alongside it.
+	s.createSystemTopic(ctx, t, "storage-events")
+	s.createWebhookSub(ctx, t, "storage-events", "sys-sub", systemRC.URL,
+		[]string{"Microsoft.Storage.BlobCreated"})
+
+	// The custom topic was neither clobbered nor re-scoped: it is still gettable
+	// and listed exactly once.
+	if _, err := s.topics.Get(ctx, testRG, "cloudemu", nil); err != nil {
+		t.Fatalf("custom topic Get after system topic create: %v", err)
+	}
+
+	if n := s.countCustomTopics(ctx, t); n != 1 {
+		t.Fatalf("custom topic list count = %d, want 1", n)
+	}
+
+	// A blob write reaches the system subscriber only — never the custom one.
+	s.uploadBlob(ctx, t, "images", "cat.png", []byte("hello"))
+
+	sysGot := eventuallyEvents(systemRC, 1)
+	if len(sysGot) != 1 || sysGot[0].EventType != "Microsoft.Storage.BlobCreated" {
+		t.Fatalf("system delivery = %+v, want one BlobCreated", sysGot)
+	}
+
+	if got := eventuallyEvents(customRC, 1); len(got) != 0 {
+		t.Fatalf("blob event leaked to the custom topic subscriber: %+v", got)
+	}
+
+	// A custom-topic publish reaches the custom subscriber only — never the
+	// system one.
+	s.publishCustomEvent(ctx, t, "cloudemu")
+
+	custGot := eventuallyEvents(customRC, 1)
+	if len(custGot) != 1 || custGot[0].EventType != "Order.Created" {
+		t.Fatalf("custom delivery = %+v, want one Order.Created", custGot)
+	}
+
+	if got := eventuallyEvents(systemRC, 2); len(got) != 1 {
+		t.Fatalf("custom event leaked to the system subscriber: %+v", got)
+	}
+}
+
+// TestSDKSystemTopicBlobCollisionReverse is the reverse collision case: the
+// system topic exists first, then a user creates — and deletes — a custom topic
+// named "cloudemu". Neither operation disturbs system-topic Blob delivery.
+func TestSDKSystemTopicBlobCollisionReverse(t *testing.T) {
+	ctx := context.Background()
+	s := newBlobEGServer(t)
+	rc := newEGWebhookReceiver(t)
+
+	s.createSystemTopic(ctx, t, "storage-events")
+	s.createWebhookSub(ctx, t, "storage-events", "sys-sub", rc.URL,
+		[]string{"Microsoft.Storage.BlobCreated"})
+
+	s.uploadBlob(ctx, t, "c", "first", []byte("1"))
+	if got := eventuallyEvents(rc, 1); len(got) != 1 {
+		t.Fatalf("baseline system delivery = %d, want 1", len(got))
+	}
+
+	// A user creates then deletes a colliding custom topic.
+	s.createCustomTopic(ctx, t, "cloudemu")
+
+	delPoller, err := s.topics.BeginDelete(ctx, testRG, "cloudemu", nil)
+	if err != nil {
+		t.Fatalf("custom topic BeginDelete: %v", err)
+	}
+
+	if _, err := delPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("custom topic delete PollUntilDone: %v", err)
+	}
+
+	// System delivery survives the custom topic's create+delete unchanged.
+	if _, err := s.blob.UploadBuffer(ctx, "c", "second", []byte("2"), nil); err != nil {
+		t.Fatalf("second UploadBuffer: %v", err)
+	}
+
+	if got := eventuallyEvents(rc, 2); len(got) != 2 {
+		t.Fatalf("system delivery after custom topic churn = %d, want 2", len(got))
+	}
+}
+
+// countCustomTopics returns how many custom topics the ARM list surface reports
+// in the test resource group.
+func (s *blobEGServer) countCustomTopics(ctx context.Context, t *testing.T) int {
+	t.Helper()
+
+	n := 0
+
+	pager := s.topics.NewListByResourceGroupPager(testRG, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("custom topic list: %v", err)
+		}
+
+		n += len(page.Value)
+	}
+
+	return n
 }
