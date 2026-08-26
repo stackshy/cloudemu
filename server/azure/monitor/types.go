@@ -63,3 +63,60 @@ func withProvisioningState(props map[string]any) map[string]any {
 
 	return props
 }
+
+// mergeResource applies a PATCH body over a stored resource under nil-mask
+// semantics: a top-level field the caller omits (location, tags, properties) is
+// preserved from the stored resource, while a supplied one is merged key-by-key
+// over the stored value. The merge is a fresh resource, so the stored one is not
+// mutated until the caller commits it.
+func mergeResource(existing *armResource, patch *resourceRequest) *armResource {
+	merged := &armResource{
+		Location:   existing.Location,
+		Tags:       mergeStringMap(existing.Tags, patch.Tags),
+		Properties: mergeAnyMap(existing.Properties, patch.Properties),
+	}
+
+	if patch.Location != "" {
+		merged.Location = patch.Location
+	}
+
+	return merged
+}
+
+// mergeStringMap overlays overlay onto a copy of base, preserving base keys the
+// overlay omits. Returns nil only when both are nil.
+func mergeStringMap(base, overlay map[string]string) map[string]string {
+	if base == nil && overlay == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+
+	for k, v := range overlay {
+		out[k] = v
+	}
+
+	return out
+}
+
+// mergeAnyMap overlays overlay onto a copy of base, preserving base keys the
+// overlay omits. Returns nil only when both are nil.
+func mergeAnyMap(base, overlay map[string]any) map[string]any {
+	if base == nil && overlay == nil {
+		return nil
+	}
+
+	out := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+
+	for k, v := range overlay {
+		out[k] = v
+	}
+
+	return out
+}
