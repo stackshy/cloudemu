@@ -29,6 +29,10 @@ type nameRequest struct {
 	Name string `json:"Name"`
 }
 
+type listEventBusesRequest struct {
+	NamePrefix string `json:"NamePrefix"`
+}
+
 type putRuleRequest struct {
 	Name               string `json:"Name"`
 	EventBusName       string `json:"EventBusName"`
@@ -89,6 +93,11 @@ type putEventsEntry struct {
 
 type putEventsRequest struct {
 	Entries []putEventsEntry `json:"Entries"`
+}
+
+type testEventPatternRequest struct {
+	Event        string `json:"Event"`
+	EventPattern string `json:"EventPattern"`
 }
 
 // --- response envelopes ---
@@ -170,6 +179,10 @@ type putEventsResultEntry struct {
 type putEventsResponse struct {
 	FailedEntryCount int                    `json:"FailedEntryCount"`
 	Entries          []putEventsResultEntry `json:"Entries"`
+}
+
+type testEventPatternResponse struct {
+	Result bool `json:"Result"`
 }
 
 // --- helpers ---

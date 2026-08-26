@@ -1,9 +1,11 @@
 package eventbridge
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/eventmatch"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -61,6 +63,11 @@ func (h *Handler) describeEventBus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
+	var req listEventBusesRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	infos, err := h.bus.ListEventBuses(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
@@ -69,6 +76,10 @@ func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
 
 	entries := make([]eventBusEntry, 0, len(infos))
 	for i := range infos {
+		if req.NamePrefix != "" && !strings.HasPrefix(infos[i].Name, req.NamePrefix) {
+			continue
+		}
+
 		entries = append(entries, eventBusEntry{
 			Arn:          infos[i].ARN,
 			Name:         infos[i].Name,
@@ -107,6 +118,15 @@ func (h *Handler) putRule(w http.ResponseWriter, r *http.Request) {
 		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
 			"Parameter(s) EventPattern or ScheduleExpression must be specified.")
 		return
+	}
+
+	// A structurally invalid event pattern is rejected up front with
+	// InvalidEventPatternException, the exact exception real EventBridge returns.
+	if req.EventPattern != "" {
+		if err := eventmatch.ValidatePattern(req.EventPattern); err != nil {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidEventPatternException", err.Error())
+			return
+		}
 	}
 
 	rule, err := h.bus.PutRule(r.Context(), &ebdriver.RuleConfig{
@@ -344,4 +364,33 @@ func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 		FailedEntryCount: failed + res.FailCount,
 		Entries:          results,
 	})
+}
+
+// testEventPattern evaluates a sample event against an event pattern using the
+// same matcher PutEvents delivery uses, so "would this rule fire?" answered here
+// is consistent with what actually gets delivered. Real users / the console call
+// it to debug a pattern before deploying a rule.
+func (*Handler) testEventPattern(w http.ResponseWriter, r *http.Request) {
+	var req testEventPatternRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// The pattern is validated with the same rule PutRule enforces, so a pattern
+	// that would be rejected at deploy time is rejected here too.
+	if err := eventmatch.ValidatePattern(req.EventPattern); err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidEventPatternException", err.Error())
+		return
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal([]byte(req.Event), &event); err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			"Event is not a valid JSON object.")
+		return
+	}
+
+	pattern, _ := eventmatch.ParsePattern(req.EventPattern)
+
+	wire.WriteJSON(w, testEventPatternResponse{Result: eventmatch.MatchEvent(pattern, event)})
 }

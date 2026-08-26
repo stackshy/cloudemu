@@ -446,6 +446,54 @@ func numericValue(value any, coerceNum bool) (float64, bool) {
 	return toFloat(value)
 }
 
+// PatternError describes why an event pattern is structurally invalid. Its
+// message is safe to surface verbatim to a client (no internal code prefix).
+type PatternError struct {
+	Reason string
+}
+
+func (e *PatternError) Error() string {
+	return "Event pattern is not valid. Reason: " + e.Reason
+}
+
+// ValidatePattern reports whether raw is a structurally valid EventBridge event
+// pattern / SNS filter policy. A pattern is a JSON object whose every leaf value
+// is an array (of match values or content-operator objects); a value that is a
+// nested object is validated recursively. A scalar leaf (string/number/bool), a
+// non-object top level, or malformed JSON is invalid — real EventBridge rejects
+// these with InvalidEventPatternException rather than silently matching nothing.
+func ValidatePattern(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return &PatternError{Reason: "event pattern must not be empty"}
+	}
+
+	var p map[string]any
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return &PatternError{Reason: "event pattern is not valid JSON"}
+	}
+
+	return validatePatternObject(p)
+}
+
+// validatePatternObject enforces the array/object leaf rule over every field of
+// a pattern object, recursing into nested objects.
+func validatePatternObject(obj map[string]any) error {
+	for key, val := range obj {
+		switch v := val.(type) {
+		case []any:
+			continue
+		case map[string]any:
+			if err := validatePatternObject(v); err != nil {
+				return err
+			}
+		default:
+			return &PatternError{Reason: "\"" + key + "\" must be an object or an array"}
+		}
+	}
+
+	return nil
+}
+
 // ParsePattern decodes a JSON event pattern / filter policy into the object form
 // MatchEvent and MatchLeaf consume. It returns false when the JSON is not a
 // well-formed object.
