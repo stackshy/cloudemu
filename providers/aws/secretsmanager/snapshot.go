@@ -27,6 +27,9 @@ type secretSnapshot struct {
 	Stages         map[string]string `json:"stages,omitempty"`
 	DeletedAt      time.Time         `json:"deletedAt,omitempty"`
 	RecoveryWindow int               `json:"recoveryWindow,omitempty"`
+	// ResourcePolicy is the JSON resource-based policy attached to the secret,
+	// preserved across snapshot/restore.
+	ResourcePolicy string `json:"resourcePolicy,omitempty"`
 }
 
 // Snapshot captures every secret's full state as JSON. includeAssets is unused —
@@ -43,6 +46,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			Stages:         sd.stages,
 			DeletedAt:      sd.deletedAt,
 			RecoveryWindow: sd.recoveryWindow,
+			ResourcePolicy: sd.resourcePolicy,
 		}
 		sd.mu.RUnlock()
 	}
@@ -65,6 +69,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			stages:         ss.Stages,
 			deletedAt:      ss.DeletedAt,
 			recoveryWindow: ss.RecoveryWindow,
+			resourcePolicy: ss.ResourcePolicy,
 		})
 	}
 

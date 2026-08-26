@@ -1,6 +1,7 @@
 package secretsmanager
 
 import (
+	"context"
 	"net/http"
 	"sort"
 
@@ -136,18 +137,28 @@ func (h *Handler) restoreSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respondSecretRef(w, r, st.RestoreSecret)
+}
+
+// respondSecretRef decodes a SecretId request, runs op against the resolved
+// secret name, and writes the shared {ARN, Name} envelope. It is the common
+// shape of RestoreSecret and DeleteResourcePolicy.
+func respondSecretRef(
+	w http.ResponseWriter, r *http.Request,
+	op func(ctx context.Context, name string) (*secretsdriver.SecretInfo, error),
+) {
 	var req secretIDRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	info, err := st.RestoreSecret(r.Context(), resolveSecretID(req.SecretID))
+	info, err := op(r.Context(), resolveSecretID(req.SecretID))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, restoreSecretResponse{ARN: info.ResourceID, Name: info.Name})
+	wire.WriteJSON(w, secretRefResponse{ARN: info.ResourceID, Name: info.Name})
 }
 
 func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
@@ -192,24 +203,6 @@ func (*Handler) getRandomPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, getRandomPasswordResponse{RandomPassword: pw})
-}
-
-// getResourcePolicy returns the secret's resource policy. None is modeled, so
-// ResourcePolicy is absent — which the aws_secretsmanager_secret resource reads
-// as "no policy". Without the operation the read fails outright.
-func (h *Handler) getResourcePolicy(w http.ResponseWriter, r *http.Request) {
-	var req secretIDRequest
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	info, err := h.secrets.GetSecret(r.Context(), resolveSecretID(req.SecretID))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	wire.WriteJSON(w, map[string]any{"ARN": info.ResourceID, "Name": info.Name})
 }
 
 func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
