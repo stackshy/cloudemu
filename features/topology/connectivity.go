@@ -149,6 +149,11 @@ func (e *Engine) evaluateInstanceSGs(
 	}
 }
 
+// findMatchingSGRule looks for a rule allowing the traffic in the rule
+// collections attached to an instance. An id that is not a security group is
+// tried as a network ACL: OCI attaches its subnet's security lists to an
+// instance alongside the VNIC's network security groups, and traffic is
+// allowed when either collection permits it.
 func (e *Engine) findMatchingSGRule(
 	ctx context.Context,
 	sgIDs []string,
@@ -162,7 +167,11 @@ func (e *Engine) findMatchingSGRule(
 		return nil
 	}
 
+	found := make(map[string]struct{}, len(groups))
+
 	for _, sg := range groups {
+		found[sg.ID] = struct{}{}
+
 		rules := sg.EgressRules
 		if ingress {
 			rules = sg.IngressRules
@@ -174,7 +183,73 @@ func (e *Engine) findMatchingSGRule(
 		}
 	}
 
+	return e.findMatchingACLRule(ctx, unresolved(sgIDs, found), targetIP, port, protocol, ingress)
+}
+
+// findMatchingACLRule looks for an allow rule in the network ACLs attached to
+// an instance. Only allow rules match: a deny rule does not permit traffic,
+// and the security lists this serves carry allow rules exclusively.
+func (e *Engine) findMatchingACLRule(
+	ctx context.Context,
+	aclIDs []string,
+	targetIP string,
+	port int,
+	protocol string,
+	ingress bool,
+) *RuleMatch {
+	if len(aclIDs) == 0 {
+		return nil
+	}
+
+	acls, err := e.networking.DescribeNetworkACLs(ctx, aclIDs)
+	if err != nil {
+		return nil
+	}
+
+	for i := range acls {
+		rules := aclRulesFor(acls[i].Rules, ingress)
+
+		match := matchRules(rules, acls[i].ID, port, protocol, targetIP)
+		if match != nil {
+			return match
+		}
+	}
+
 	return nil
+}
+
+// aclRulesFor projects one direction of an ACL's allow rules onto the shape
+// matchRules evaluates.
+func aclRulesFor(rules []netdriver.NetworkACLRule, ingress bool) []netdriver.SecurityRule {
+	out := make([]netdriver.SecurityRule, 0, len(rules))
+
+	for _, rule := range rules {
+		if rule.Egress == ingress || rule.Action != actionAllow {
+			continue
+		}
+
+		out = append(out, netdriver.SecurityRule{
+			Protocol: rule.Protocol,
+			CIDR:     rule.CIDR,
+			FromPort: rule.FromPort,
+			ToPort:   rule.ToPort,
+		})
+	}
+
+	return out
+}
+
+// unresolved returns the ids the security group lookup did not account for.
+func unresolved(ids []string, found map[string]struct{}) []string {
+	out := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		if _, ok := found[id]; !ok {
+			out = append(out, id)
+		}
+	}
+
+	return out
 }
 
 func buildPath(src, dst *computedriver.Instance) []RouteHop {

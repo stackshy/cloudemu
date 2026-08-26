@@ -2,6 +2,9 @@
 // actual connectivity between cloud resources.
 package topology
 
+// actionAllow is the verdict a permitting rule carries.
+const actionAllow = "allow"
+
 // ConnectivityQuery holds the parameters for a CanConnect evaluation.
 type ConnectivityQuery struct {
 	SrcInstanceID string

@@ -19,7 +19,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
 | `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 16 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
-| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
+| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | [Compute](./oci/compute.md) | 37 |
 | `configservice` | [Config](./aws/config.md) | — | — | — | 102 |
 | `containerinstances` | — | [ContainerInstances](./azure/containerinstances.md) | — | — | 9 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 15 |

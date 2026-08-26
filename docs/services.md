@@ -156,7 +156,10 @@ This document lists every service and operation available in CloudEmu across all
 ## 2. Compute
 
 **Driver interface:** `services/compute/driver/driver.go`
-**AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE
+**AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE | **OCI:** Compute + Block
+Volume (instance pools map to auto-scaling groups; instance configurations to
+launch templates; volume backups to snapshots; preemptible instances to spot —
+OCI has no key pair resource, so those calls report the gap)
 
 ### Instance Operations
 
@@ -269,6 +272,63 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 | `DescribeKeyPairs` | `(ctx, names) ([]KeyPairInfo, error)` |
 
 **Total: 35 operations**
+
+### OCI Compute and Block Volume
+
+**Optional capability:** `server/oci/compute.Extras` — OCI scopes resources to a
+compartment, publishes a shape catalog, and models boot volumes, volume and VNIC
+attachments, volume groups and the OCID-addressed instance configurations and
+pools, none of which the portable interface carries. Its value types live in
+`providers/oci/compute`.
+**Provider:** `providers/oci/compute` | **Wire:** `server/oci/compute`
+
+Networking comes from VCN: launching an instance creates a VNIC in a subnet
+through `providers/oci/vcn`, and the instance records both its VNIC's network
+security groups and its subnet's security lists as the rule collections
+governing it.
+
+| Operation | Route |
+|-----------|-------|
+| `LaunchInstance` | `POST /20160918/instances` |
+| `ListInstances` | `GET /20160918/instances` |
+| `GetInstance` | `GET /20160918/instances/{instanceId}` |
+| `UpdateInstance` | `PUT /20160918/instances/{instanceId}` |
+| `InstanceAction` | `POST /20160918/instances/{instanceId}?action=START\|STOP\|SOFTSTOP\|RESET\|SOFTRESET` |
+| `TerminateInstance` | `DELETE /20160918/instances/{instanceId}` |
+| `ListShapes` | `GET /20160918/shapes` |
+| `CreateImage` / `ListImages` | `POST` / `GET /20160918/images` |
+| `GetImage` / `UpdateImage` / `DeleteImage` | `GET` / `PUT` / `DELETE /20160918/images/{imageId}` |
+| `CreateVolume` / `ListVolumes` | `POST` / `GET /20160918/volumes` |
+| `GetVolume` / `UpdateVolume` / `DeleteVolume` | `GET` / `PUT` / `DELETE /20160918/volumes/{volumeId}` |
+| `AttachVolume` / `ListVolumeAttachments` | `POST` / `GET /20160918/volumeAttachments` |
+| `GetVolumeAttachment` / `DetachVolume` | `GET` / `DELETE /20160918/volumeAttachments/{id}` |
+| `CreateBootVolume` / `ListBootVolumes` | `POST` / `GET /20160918/bootVolumes` |
+| `GetBootVolume` / `UpdateBootVolume` / `DeleteBootVolume` | `GET` / `PUT` / `DELETE /20160918/bootVolumes/{id}` |
+| `AttachBootVolume` / `ListBootVolumeAttachments` | `POST` / `GET /20160918/bootVolumeAttachments` |
+| `GetBootVolumeAttachment` / `DetachBootVolume` | `GET` / `DELETE /20160918/bootVolumeAttachments/{id}` |
+| `CreateVolumeBackup` / `ListVolumeBackups` | `POST` / `GET /20160918/volumeBackups` |
+| `CreateBootVolumeBackup` / `ListBootVolumeBackups` | `POST` / `GET /20160918/bootVolumeBackups` |
+| `CreateVolumeGroup` / `ListVolumeGroups` | `POST` / `GET /20160918/volumeGroups` |
+| `AttachVnic` / `ListVnicAttachments` | `POST` / `GET /20160918/vnicAttachments` |
+| `CreateInstanceConfiguration` / `ListInstanceConfigurations` | `POST` / `GET /20160918/instanceConfigurations` |
+| `LaunchInstanceConfiguration` | `POST /20160918/instanceConfigurations/{id}/actions/launch` |
+| `CreateInstancePool` / `ListInstancePools` | `POST` / `GET /20160918/instancePools` |
+| `InstancePoolAction` | `POST /20160918/instancePools/{id}/actions/{start,stop,reset,softreset}` |
+| `ListInstancePoolInstances` | `GET /20160918/instancePools/{id}/instances` |
+| `ChangeCompartment` | `POST /20160918/{collection}/{id}/actions/changeCompartment` |
+
+Every list route requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. The mutations real OCI runs
+asynchronously — launch, update, the instance and pool actions, terminate, and
+every attach/detach — record a work request and stamp `opc-work-request-id`.
+
+Not emulated: `/volumeBackupPolicies`, `/computeCapacityReservations`,
+`/dedicatedVmHosts` and `/instanceConsoleConnections`, which the compute driver
+has no shape for; the handler claims them so a caller gets a `501` naming the
+gap. Autoscaling policies live in OCI's separate Autoscaling API (`/20181001`),
+which this handler does not claim — the driver stores them so the portable API
+round-trips them. There is no key pair collection: an SSH public key is the
+`ssh_authorized_keys` instance metadata entry.
 
 ---
 
