@@ -288,6 +288,10 @@ type Mock struct {
 	// role->profile->instance chain reads back on DescribeInstances. nil until
 	// wired by the provider.
 	instanceProfileResolver InstanceProfileResolver
+	// networking materializes an instance's primary (eth0) ENI at launch and
+	// releases it on terminate, so the VPC subnet / security-group delete guards
+	// see a running instance's interface. nil until wired by the provider.
+	networking Networking
 	// mu guards managedResourceVisibility, clientTokens and subnetIPCounters,
 	// which are scalar/map shared state that (unlike the memstores) has no
 	// internal locking of their own.
@@ -616,6 +620,14 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		if !isManaged(inst) {
 			m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
 		}
+
+		// Materialize the primary (eth0) ENI real EC2 attaches at launch, so the
+		// VPC subnet / security-group delete guards see this running instance's
+		// interface. vpcID is non-empty only when the subnet resolved, which is
+		// exactly when the networking mock can place the interface.
+		if vpcID != "" {
+			m.materializePrimaryENI(ctx, id, cfg.SubnetID, sg)
+		}
 	}
 
 	m.recordClientToken(cfg.ClientToken, created)
@@ -683,6 +695,29 @@ func (m *Mock) resolveSubnet(ctx context.Context, subnetID string) (vpcID, cidr 
 	return subs[0].VPCID, subs[0].CIDRBlock
 }
 
+// materializePrimaryENI asks the networking mock to create the instance's eth0
+// interface. It is best-effort: the interface is a side effect of the launch,
+// not a precondition, so a networking hiccup must not fail an otherwise-good
+// RunInstances (mirroring the metric emission above). A no-op until wired.
+func (m *Mock) materializePrimaryENI(ctx context.Context, instanceID, subnetID string, groups []string) {
+	if m.networking == nil {
+		return
+	}
+
+	_ = m.networking.CreatePrimaryNetworkInterface(ctx, instanceID, subnetID, groups)
+}
+
+// releasePrimaryENI asks the networking mock to drop the instance's primary
+// ENI, so a terminated instance no longer blocks DeleteSubnet /
+// DeleteSecurityGroup. A no-op until wired.
+func (m *Mock) releasePrimaryENI(ctx context.Context, instanceID string) {
+	if m.networking == nil {
+		return
+	}
+
+	_ = m.networking.ReleaseInstanceNetworkInterfaces(ctx, instanceID)
+}
+
 // allocatePrivateIP hands out the next private IPv4 inside the subnet's CIDR
 // (AWS allocates from the target subnet, e.g. 10.0.1.0/24 -> 10.0.1.x). It falls
 // back to the global 10.0.<n> pool when there is no subnet CIDR to draw from.
@@ -739,6 +774,9 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 
 		m.instances.Delete(inst.ID)
 		m.sm.Remove(inst.ID)
+		// Drop the primary ENI this instance may have materialized, so a
+		// rolled-back launch leaves no orphaned interface holding its subnet.
+		m.releasePrimaryENI(ctx, inst.ID)
 	}
 }
 
@@ -835,6 +873,15 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	// Every attached EBS volume must be released, otherwise it stays in-use
 	// against a dead instance forever and can never be deleted (VolumeInUse).
 	m.detachTerminatedVolumes(instanceIDs)
+
+	// Release each instance's primary (eth0) ENI, matching real EC2's
+	// delete-on-termination default. Until this happens the interface keeps
+	// residing in its subnet and referencing its security groups, which would
+	// (correctly) block a subsequent DeleteSubnet / DeleteSecurityGroup — but a
+	// terminated instance must no longer hold them.
+	for _, id := range instanceIDs {
+		m.releasePrimaryENI(ctx, id)
+	}
 
 	// Tear down the real backing for any engine-backed instances. Every id is now
 	// Terminated (transitionInstances verified they exist), and a Terminated

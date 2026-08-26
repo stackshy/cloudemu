@@ -34,6 +34,14 @@ const (
 	// layer can emit InvalidNetworkInterface.InUse rather than the generic
 	// DependencyViolation.
 	eniInUseErrPrefix = "InvalidNetworkInterface.InUse: "
+
+	// primaryDeviceIndex is the device index EC2 gives an instance's primary
+	// (eth0) network interface — always 0.
+	primaryDeviceIndex = 0
+
+	// primaryENIDescription is the description real EC2 stamps on the eth0 ENI
+	// it auto-creates for a launched instance.
+	primaryENIDescription = "Primary network interface"
 )
 
 type eniData struct {
@@ -50,6 +58,11 @@ type eniData struct {
 	SourceDestCheck bool
 	SecurityGroups  []string
 	Tags            map[string]string
+	// deleteOnTermination marks an ENI EC2 created as an instance's primary
+	// (eth0) interface at launch. Real EC2 deletes exactly these on
+	// TerminateInstances and leaves secondary/standalone ENIs in place, so the
+	// terminate-time release keys on this flag rather than the attachment alone.
+	deleteOnTermination bool
 }
 
 // CreateNetworkInterface creates a standalone, unattached ENI in the given
@@ -88,6 +101,67 @@ func (m *Mock) CreateNetworkInterface(
 	info := toENIInfo(eni)
 
 	return &info, nil
+}
+
+// CreatePrimaryNetworkInterface materializes the eth0 interface real EC2 creates
+// for an instance at launch: an in-use ENI in the instance's subnet, carrying
+// the instance's security groups, at device index 0, attached to the instance
+// and flagged delete-on-termination. Its existence is what makes DeleteSubnet
+// and DeleteSecurityGroup refuse while the instance is running, matching AWS.
+//
+// A launch with no subnet materializes nothing (there is no subnet to place the
+// interface in). An unknown subnet is NotFound, so a bad launch surfaces rather
+// than silently skipping the interface.
+func (m *Mock) CreatePrimaryNetworkInterface(_ context.Context, instanceID, subnetID string, groups []string) error {
+	if subnetID == "" {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sub, ok := m.subnets.Get(subnetID)
+	if !ok {
+		return errors.Newf(errors.NotFound, "InvalidSubnetID.NotFound: subnet %q not found", subnetID)
+	}
+
+	id := idgen.GenerateID("eni-")
+	eni := &eniData{
+		ID:                  id,
+		VPCID:               sub.VPCID,
+		SubnetID:            subnetID,
+		Status:              ENIStatusInUse,
+		AttachmentID:        idgen.GenerateID("eni-attach-"),
+		InstanceID:          instanceID,
+		DeviceIndex:         primaryDeviceIndex,
+		Description:         primaryENIDescription,
+		PrivateIP:           m.allocateENIPrivateIP(subnetID, sub.CIDRBlock),
+		MacAddress:          mockMAC(id),
+		SourceDestCheck:     true,
+		SecurityGroups:      append([]string(nil), groups...),
+		deleteOnTermination: true,
+	}
+	m.enis.Set(id, eni)
+
+	return nil
+}
+
+// ReleaseInstanceNetworkInterfaces deletes the delete-on-termination interfaces
+// attached to instanceID — the primary ENIs CreatePrimaryNetworkInterface made.
+// Real EC2 releases these on TerminateInstances, which is what lets a subsequent
+// DeleteSubnet / DeleteSecurityGroup succeed. Standalone or managed interfaces
+// (deleteOnTermination false) are left untouched.
+func (m *Mock) ReleaseInstanceNetworkInterfaces(_ context.Context, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, eni := range m.enis.All() {
+		if eni.InstanceID == instanceID && eni.deleteOnTermination {
+			m.enis.Delete(id)
+		}
+	}
+
+	return nil
 }
 
 // DescribeNetworkInterfaces returns ENIs matching the given IDs, or all if empty.
