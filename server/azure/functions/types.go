@@ -5,13 +5,43 @@ package functions
 // (id, name, type, kind, location, basic properties) and skip the long tail
 // of feature flags real App Service surfaces.
 type siteResource struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Kind       string            `json:"kind"`
-	Location   string            `json:"location"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Kind     string `json:"kind"`
+	Location string `json:"location"`
+	// Identity is the managed-service-identity envelope, a sibling of properties
+	// at the resource root. Omitted (nil) when the site has no identity attached,
+	// matching real Azure.
+	Identity   *siteIdentity     `json:"identity,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties siteProperties    `json:"properties"`
+}
+
+// siteIdentity is the ARM ManagedServiceIdentity envelope for a function app:
+// system-assigned and/or user-assigned identity configuration.
+type siteIdentity struct {
+	// Type is one of "None", "SystemAssigned", "UserAssigned",
+	// "SystemAssigned,UserAssigned".
+	Type string `json:"type,omitempty"`
+	// PrincipalID/TenantID are read-only: Azure populates them once a
+	// system-assigned identity is attached. A request sends neither; we decode
+	// them so a client that round-trips a GET response back into a PUT still
+	// decodes.
+	PrincipalID string `json:"principalId,omitempty"`
+	TenantID    string `json:"tenantId,omitempty"`
+	// UserAssignedIdentities is keyed by the full ARM resource ID of a
+	// user-assigned identity to attach. A request sends an empty object per key;
+	// principalId/clientId are read-only, populated on the response.
+	UserAssignedIdentities map[string]*siteUserAssignedIdentity `json:"userAssignedIdentities,omitempty"`
+}
+
+// siteUserAssignedIdentity is one entry of siteIdentity.userAssignedIdentities:
+// the read-only principal/client id pair Azure reports for an attached
+// user-assigned identity.
+type siteUserAssignedIdentity struct {
+	PrincipalID string `json:"principalId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
 }
 
 type siteProperties struct {
@@ -52,6 +82,7 @@ type siteListResponse struct {
 type createSiteRequest struct {
 	Kind       string               `json:"kind"`
 	Location   string               `json:"location"`
+	Identity   *siteIdentity        `json:"identity"`
 	Tags       map[string]string    `json:"tags"`
 	Properties createSiteProperties `json:"properties"`
 }

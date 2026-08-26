@@ -272,10 +272,12 @@ func (h *Handler) upsertSiteMeta(
 		Subscription:   rp.Subscription,
 		ResourceGroup:  rp.ResourceGroup,
 		Location:       location,
+		Kind:           req.Kind,
 		ServerFarmID:   req.Properties.ServerFarmID,
 		HTTPSOnly:      req.Properties.HTTPSOnly,
 		Reserved:       req.Properties.Reserved,
 		LinuxFxVersion: req.Properties.SiteConfig.LinuxFxVersion,
+		Identity:       toSiteMetaIdentity(req.Identity),
 		AppSettings:    appSettingsToMap(settings),
 	})
 	if err != nil {
@@ -732,10 +734,13 @@ func upsertFunction(r *http.Request, fn sdrv.Serverless, cfg sdrv.FunctionConfig
 func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azfunctions.SiteMeta) siteResource {
 	location := defaultLocation
 	provisioningState := "Succeeded"
+	kind := functionAppKind
 
 	var serverFarmID string
 
 	var httpsOnly, reserved bool
+
+	var identity *siteIdentity
 
 	if meta != nil {
 		location = meta.Location
@@ -743,6 +748,11 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 		serverFarmID = meta.ServerFarmID
 		httpsOnly = meta.HTTPSOnly
 		reserved = meta.Reserved
+		identity = fromSiteMetaIdentity(meta.Identity)
+
+		if meta.Kind != "" {
+			kind = meta.Kind
+		}
 	}
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
@@ -754,8 +764,9 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 		ID:       id,
 		Name:     info.Name,
 		Type:     providerName + "/" + resourceType,
-		Kind:     functionAppKind,
+		Kind:     kind,
 		Location: location,
+		Identity: identity,
 		Tags:     info.Tags,
 		Properties: siteProperties{
 			State:             "Running",
@@ -797,6 +808,48 @@ func extractHandlerSetting(settings []nameValue) (handler string, remaining []na
 	}
 
 	return handler, remaining
+}
+
+// toSiteMetaIdentity maps an inbound ARM identity block onto the provider shape.
+// Only Type and the UserAssignedIdentities keys (the identity resource IDs to
+// attach) are meaningful on input; principalId/tenantId/clientId are read-only
+// and discarded. Returns nil when the request omitted the identity block.
+func toSiteMetaIdentity(in *siteIdentity) *azfunctions.SiteIdentity {
+	if in == nil {
+		return nil
+	}
+
+	out := &azfunctions.SiteIdentity{Type: in.Type}
+
+	if len(in.UserAssignedIdentities) > 0 {
+		out.UserAssigned = make(map[string]azfunctions.UserAssignedIdentity, len(in.UserAssignedIdentities))
+		for id := range in.UserAssignedIdentities {
+			out.UserAssigned[id] = azfunctions.UserAssignedIdentity{}
+		}
+	}
+
+	return out
+}
+
+// fromSiteMetaIdentity builds the ARM identity response block from the resolved
+// provider shape, echoing each user-assigned identity's synthesized
+// principalId/clientId. Returns nil when the site has no identity attached, so
+// the response omits the field entirely (matching real Azure).
+func fromSiteMetaIdentity(in *azfunctions.SiteIdentity) *siteIdentity {
+	if in == nil {
+		return nil
+	}
+
+	out := &siteIdentity{Type: in.Type, PrincipalID: in.PrincipalID, TenantID: in.TenantID}
+
+	if len(in.UserAssigned) > 0 {
+		out.UserAssignedIdentities = make(map[string]*siteUserAssignedIdentity, len(in.UserAssigned))
+		for id, u := range in.UserAssigned {
+			out.UserAssignedIdentities[id] = &siteUserAssignedIdentity{PrincipalID: u.PrincipalID, ClientID: u.ClientID}
+		}
+	}
+
+	return out
 }
 
 func appSettingsToMap(settings []nameValue) map[string]string {
