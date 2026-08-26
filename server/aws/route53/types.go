@@ -224,6 +224,7 @@ func toHostedZoneXML(info *dnsdriver.ZoneInfo) hostedZoneXML {
 		Name:            info.Name,
 		CallerReference: info.CallerReference,
 		Config: &hostedZoneConfigXML{
+			Comment:     info.Comment,
 			PrivateZone: info.Private,
 		},
 		ResourceRecordSetCount: int64(info.RecordCount),

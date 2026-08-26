@@ -37,6 +37,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.HostedZoneConfig != nil {
 		cfg.Private = req.HostedZoneConfig.PrivateZone
+		cfg.Comment = req.HostedZoneConfig.Comment
 	}
 
 	info, err := h.dns.CreateZone(r.Context(), cfg)

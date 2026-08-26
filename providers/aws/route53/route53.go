@@ -133,6 +133,7 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		RecordCount:     0,
 		Tags:            tags,
 		CallerReference: cfg.CallerReference,
+		Comment:         cfg.Comment,
 		Scope:           cfg.Scope,
 	}
 
