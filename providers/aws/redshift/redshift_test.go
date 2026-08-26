@@ -175,6 +175,122 @@ func TestClusterSnapshotAndRestore(t *testing.T) {
 	requireNoError(t, m.DeleteClusterSnapshot(ctx, "snap-1"))
 }
 
+func TestClusterSnapshotPreservesKmsKeyID(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{
+		ID:        "enc-warehouse",
+		Encrypted: true,
+		KmsKeyID:  "arn:aws:kms:us-east-1:123456789012:key/abc-123",
+	})
+	requireNoError(t, err)
+
+	snap, err := m.CreateClusterSnapshot(ctx, rdbdriver.ClusterSnapshotConfig{
+		ID:        "enc-snap",
+		ClusterID: "enc-warehouse",
+	})
+	requireNoError(t, err)
+
+	// CreateClusterSnapshot captures the source cluster's encryption key.
+	assertEqual(t, true, snap.Encrypted)
+	assertEqual(t, "arn:aws:kms:us-east-1:123456789012:key/abc-123", snap.KmsKeyID)
+
+	// DescribeClusterSnapshots reflects it.
+	snaps, err := m.DescribeClusterSnapshots(ctx, []string{"enc-snap"}, "")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(snaps))
+	assertEqual(t, true, snaps[0].Encrypted)
+	assertEqual(t, "arn:aws:kms:us-east-1:123456789012:key/abc-123", snaps[0].KmsKeyID)
+
+	// Restore inherits the snapshot's key.
+	restored, err := m.RestoreClusterFromSnapshot(ctx, rdbdriver.RestoreClusterInput{
+		NewClusterID: "restored-enc",
+		SnapshotID:   "enc-snap",
+	})
+	requireNoError(t, err)
+	assertEqual(t, true, restored.Encrypted)
+	assertEqual(t, "arn:aws:kms:us-east-1:123456789012:key/abc-123", restored.KmsKeyID)
+
+	// DescribeClusters reflects the preserved key on the restored cluster.
+	clusters, err := m.DescribeClusters(ctx, []string{"restored-enc"})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(clusters))
+	assertEqual(t, "arn:aws:kms:us-east-1:123456789012:key/abc-123", clusters[0].KmsKeyID)
+}
+
+func TestRestoreClusterKmsKeyIDOverride(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{
+		ID:        "enc-warehouse",
+		Encrypted: true,
+		KmsKeyID:  "key/original",
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateClusterSnapshot(ctx, rdbdriver.ClusterSnapshotConfig{
+		ID:        "enc-snap",
+		ClusterID: "enc-warehouse",
+	})
+	requireNoError(t, err)
+
+	restored, err := m.RestoreClusterFromSnapshot(ctx, rdbdriver.RestoreClusterInput{
+		NewClusterID: "restored-override",
+		SnapshotID:   "enc-snap",
+		KmsKeyID:     "key/override",
+	})
+	requireNoError(t, err)
+	assertEqual(t, true, restored.Encrypted)
+	assertEqual(t, "key/override", restored.KmsKeyID)
+}
+
+func TestEncryptedClusterWithoutKeyGetsDefault(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cluster, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{
+		ID:        "enc-default",
+		Encrypted: true,
+	})
+	requireNoError(t, err)
+	assertEqual(t, "alias/aws/redshift", cluster.KmsKeyID)
+
+	snap, err := m.CreateClusterSnapshot(ctx, rdbdriver.ClusterSnapshotConfig{
+		ID:        "enc-default-snap",
+		ClusterID: "enc-default",
+	})
+	requireNoError(t, err)
+	assertEqual(t, "alias/aws/redshift", snap.KmsKeyID)
+}
+
+func TestUnencryptedClusterSnapshotHasNoKmsKey(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cluster, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{ID: "plain-warehouse"})
+	requireNoError(t, err)
+	assertEqual(t, false, cluster.Encrypted)
+	assertEqual(t, "", cluster.KmsKeyID)
+
+	snap, err := m.CreateClusterSnapshot(ctx, rdbdriver.ClusterSnapshotConfig{
+		ID:        "plain-snap",
+		ClusterID: "plain-warehouse",
+	})
+	requireNoError(t, err)
+	assertEqual(t, false, snap.Encrypted)
+	assertEqual(t, "", snap.KmsKeyID)
+
+	restored, err := m.RestoreClusterFromSnapshot(ctx, rdbdriver.RestoreClusterInput{
+		NewClusterID: "restored-plain",
+		SnapshotID:   "plain-snap",
+	})
+	requireNoError(t, err)
+	assertEqual(t, false, restored.Encrypted)
+	assertEqual(t, "", restored.KmsKeyID)
+}
+
 func TestInstanceOpsRejected(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

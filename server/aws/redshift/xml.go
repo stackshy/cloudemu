@@ -92,6 +92,7 @@ type snapshotXML struct {
 	NodeType                   string   `xml:"NodeType,omitempty"`
 	NumberOfNodes              int      `xml:"NumberOfNodes,omitempty"`
 	Encrypted                  bool     `xml:"Encrypted"`
+	KmsKeyID                   string   `xml:"KmsKeyId,omitempty"`
 	TotalBackupSizeInMegaBytes float64  `xml:"TotalBackupSizeInMegaBytes,omitempty"`
 	Tags                       *tagsXML `xml:"Tags,omitempty"`
 }
@@ -296,6 +297,7 @@ func toSnapshotXML(snap *rdbdriver.ClusterSnapshot) snapshotXML {
 		NodeType:                   snap.NodeType,
 		NumberOfNodes:              snap.NumberOfNodes,
 		Encrypted:                  snap.Encrypted,
+		KmsKeyID:                   snap.KmsKeyID,
 		TotalBackupSizeInMegaBytes: snap.TotalBackupSizeInMegaBytes,
 		Tags:                       toTagsXML(snap.Tags),
 	}
