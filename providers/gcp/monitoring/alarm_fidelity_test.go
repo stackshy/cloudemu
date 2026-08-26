@@ -40,6 +40,32 @@ func TestExactDimensionMatching(t *testing.T) {
 	assert.Equal(t, 42.0, exact.Values[0])
 }
 
+// TestDimensionlessAlarmAggregatesLabeledMetric covers GCP alerting's aggregate
+// semantics: an alert policy with no dimension filter evaluates across ALL
+// timeseries of the metric, so a metric published with a resource label (as VM
+// auto-metrics are) still drives a label-less alarm to ALARM.
+func TestDimensionlessAlarmAggregatesLabeledMetric(t *testing.T) {
+	ctx := context.Background()
+	m, clk := newTestMock()
+
+	require.NoError(t, m.CreateAlarm(ctx, driver.AlarmConfig{
+		Name: "cpu-hot", Namespace: "compute.googleapis.com", MetricName: "instance/cpu/utilization",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 20,
+		Period: 60, EvaluationPeriods: 1, Stat: "Average",
+	}))
+
+	require.NoError(t, m.PutMetricData(ctx, []driver.MetricDatum{{
+		Namespace: "compute.googleapis.com", MetricName: "instance/cpu/utilization",
+		Value: 25, Timestamp: clk.Now(),
+		Dimensions: map[string]string{"instance_id": "i-1"},
+	}}))
+
+	alarms, err := m.DescribeAlarms(ctx, []string{"cpu-hot"})
+	require.NoError(t, err)
+	require.Len(t, alarms, 1)
+	assert.Equal(t, "ALARM", alarms[0].State, "label-less alarm must fire from a labeled metric")
+}
+
 // TestAlarmMOfNAndRecovery covers the per-period M-of-N parity fix: 3 of 3
 // periods must breach for ALARM (not the window average), with recovery to OK.
 func TestAlarmMOfNAndRecovery(t *testing.T) {

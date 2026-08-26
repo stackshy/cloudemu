@@ -195,7 +195,7 @@ func (m *Mock) collectFilteredDatums(
 			continue
 		}
 
-		if !matchDimensions(d.Dimensions, dims) {
+		if !matchAlarmDimensions(d.Dimensions, dims) {
 			continue
 		}
 
@@ -489,22 +489,44 @@ func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) (
 	return filtered, nil
 }
 
-// matchDimensions returns true if the data point dimensions contain all of the
-// requested filter dimensions. The "resourceId" dimension is compared with
+// matchDimensions reports whether a datum belongs to the exact metric series a
+// Metrics-List read query identifies. Reading a specific timeseries treats each
+// unique dimension combination as a distinct series, so the sets must match
+// exactly: a query with fewer (or no) dimensions does not match a datum
+// published with a superset. The "resourceId" dimension is compared with
 // resourceIDMatch rather than exact equality: cloudemu does not enforce a
 // single subscription across a deployment (the wire layer accepts requests
 // under any subscription id), so the subscription segment of an ARM resource
 // id can legitimately differ between how a resource was minted and how a
 // caller's request path addresses it.
 func matchDimensions(dataDims, filterDims map[string]string) bool {
-	// Azure Monitor, like CloudWatch, treats each unique dimension combination as
-	// a separate metric, so the sets must match exactly (a query with fewer/no
-	// dimensions does not match a datum published with a superset). The resourceId
-	// dimension is still compared subscription-agnostically per resourceIDMatch.
 	if len(dataDims) != len(filterDims) {
 		return false
 	}
 
+	return dimensionsContain(dataDims, filterDims)
+}
+
+// matchAlarmDimensions reports whether a datum contributes to a metric alert's
+// evaluation. Azure Monitor metric-alert semantics differ from a raw metric read
+// (and from CloudWatch's exact-series alarms): a criterion with no dimension
+// filter aggregates across ALL timeseries of the metric/namespace, so a
+// dimensionless alert matches every datum (including ones published with a
+// resourceId or other dimensions). When dimension filters are present, a datum
+// matches if its dimensions CONTAIN all of the filters (a superset is allowed);
+// only a missing or mismatched filter dimension rejects it.
+func matchAlarmDimensions(dataDims, filterDims map[string]string) bool {
+	if len(filterDims) == 0 {
+		return true
+	}
+
+	return dimensionsContain(dataDims, filterDims)
+}
+
+// dimensionsContain reports whether dataDims satisfies every (k,v) in filterDims,
+// comparing the "resourceId" dimension subscription-agnostically per
+// resourceIDMatch and all others by exact equality.
+func dimensionsContain(dataDims, filterDims map[string]string) bool {
 	for k, v := range filterDims {
 		if k == "resourceId" {
 			if !resourceIDMatch(dataDims[k], v) {
