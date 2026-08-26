@@ -134,6 +134,7 @@ type DomainConfig struct {
 	AdvancedOptions map[string]string
 	IPAddressType   string
 	RawOptions      map[string]json.RawMessage
+	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
 

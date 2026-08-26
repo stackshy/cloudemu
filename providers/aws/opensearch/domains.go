@@ -3,6 +3,8 @@ package opensearch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 
@@ -61,6 +63,20 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 
 	now := m.now()
 	cfg := copyClusterConfig(in.ClusterConfig)
+	raw := copyRaw(in.RawOptions)
+
+	// A VPC-access domain (created with VPCOptions carrying subnets) has no
+	// public Endpoint; instead it exposes Endpoints["vpc"], and AWS enriches the
+	// returned VPCOptions with a derived VPCId and AvailabilityZones.
+	endpoint := m.endpointFor(in.DomainName)
+
+	var endpoints map[string]string
+
+	if vpcEndpoints, enriched, ok := m.deriveVPC(raw, in.DomainName); ok {
+		endpoint = ""
+		endpoints = vpcEndpoints
+		raw["VPCOptions"] = enriched
+	}
 
 	status := driver.DomainStatus{
 		DomainID:               m.opts.AccountID + "/" + in.DomainName,
@@ -70,14 +86,15 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 		Deleted:                false,
 		Processing:             false,
 		EngineVersion:          engine,
-		Endpoint:               m.endpointFor(in.DomainName),
+		Endpoint:               endpoint,
+		Endpoints:              endpoints,
 		DomainProcessingStatus: driver.ProcessingActive,
 		ClusterConfig:          cfg,
 		AccessPolicies:         in.AccessPolicies,
 		AdvancedOptions:        copyTags(in.AdvancedOptions),
 		IPAddressType:          in.IPAddressType,
 		EngineMode:             in.EngineMode,
-		RawOptions:             copyRaw(in.RawOptions),
+		RawOptions:             copyRaw(raw),
 		CreatedAt:              now,
 	}
 
@@ -89,7 +106,8 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 			AccessPolicies:  in.AccessPolicies,
 			AdvancedOptions: copyTags(in.AdvancedOptions),
 			IPAddressType:   in.IPAddressType,
-			RawOptions:      copyRaw(in.RawOptions),
+			RawOptions:      copyRaw(raw),
+			CreatedAt:       now,
 			UpdatedAt:       now,
 		},
 		tags:     copyTags(in.Tags),
@@ -104,6 +122,95 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 	out := snapshotStatus(status)
 
 	return &out, nil
+}
+
+// vpcInput is the subset of a request's VPCOptions the emulator reads to derive
+// AWS-computed VPC placement.
+type vpcInput struct {
+	SubnetIDs []string `json:"SubnetIds"`
+}
+
+// deriveVPC inspects the caller-supplied VPCOptions block. When it carries
+// subnets, the domain is VPC-access: deriveVPC returns the Endpoints map
+// (a single "vpc" host), the VPCOptions block enriched with a derived VPCId and
+// AvailabilityZones (as real AWS returns in VPCDerivedInfo), and ok=true. It
+// returns ok=false for a public domain (no VPCOptions, or none with subnets).
+func (m *Mock) deriveVPC(
+	raw map[string]json.RawMessage, domainName string,
+) (endpoints map[string]string, enriched json.RawMessage, ok bool) {
+	rawVPC, present := raw["VPCOptions"]
+	if !present {
+		return nil, nil, false
+	}
+
+	var block map[string]json.RawMessage
+	if err := json.Unmarshal(rawVPC, &block); err != nil {
+		return nil, nil, false
+	}
+
+	var in vpcInput
+	if err := json.Unmarshal(rawVPC, &in); err != nil || len(in.SubnetIDs) == 0 {
+		return nil, nil, false
+	}
+
+	block["VPCId"] = marshalJSON(deterministicVPCID(in.SubnetIDs))
+	block["AvailabilityZones"] = marshalJSON(azsForSubnets(m.opts.Region, in.SubnetIDs))
+
+	enriched, err := json.Marshal(block)
+	if err != nil {
+		return nil, nil, false
+	}
+
+	return map[string]string{"vpc": m.vpcEndpointHost(domainName)}, enriched, true
+}
+
+// vpcEndpointHost builds the private VPC endpoint host for a VPC-access domain.
+func (m *Mock) vpcEndpointHost(name string) string {
+	return "vpc-" + name + "-" + idgen.GenerateID("") + "." + m.opts.Region + ".es.amazonaws.com"
+}
+
+// deterministicVPCID synthesizes a stable vpc-xxxx id from the domain's subnets,
+// since the emulator has no EC2 backend to resolve the real owning VPC.
+func deterministicVPCID(subnets []string) string {
+	sorted := append([]string(nil), subnets...)
+	sort.Strings(sorted)
+
+	h := fnv.New32a()
+	for _, s := range sorted {
+		_, _ = h.Write([]byte(s))
+	}
+
+	return fmt.Sprintf("vpc-%08x", h.Sum32())
+}
+
+// azsForSubnets derives the distinct availability zones the subnets span,
+// cycling deterministically through the region's a/b/c zones.
+func azsForSubnets(region string, subnets []string) []string {
+	zones := []string{"a", "b", "c"}
+	seen := map[string]bool{}
+
+	out := make([]string, 0, len(subnets))
+
+	for i := range subnets {
+		az := region + zones[i%len(zones)]
+		if !seen[az] {
+			seen[az] = true
+
+			out = append(out, az)
+		}
+	}
+
+	return out
+}
+
+// marshalJSON marshals v to a json.RawMessage, falling back to null on error.
+func marshalJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+
+	return b
 }
 
 // DescribeDomain returns a deep copy of the stored domain status.
