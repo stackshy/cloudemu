@@ -771,21 +771,30 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	return &result, nil
 }
 
-// MatchedRules returns all rules that match the given event (exported for testing).
+// MatchedRules returns the rules on the event's own bus that match it (exported
+// for testing). Matching is scoped to event.EventBus (empty resolves to the
+// default bus) so a rule on one bus never fires for an event published to a
+// different bus — real EventBridge isolates buses from each other.
 func (m *Mock) MatchedRules(event *driver.Event) []driver.Rule {
+	busName := event.EventBus
+	if busName == "" {
+		busName = defaultBusName
+	}
+
+	bd, ok := m.buses.Get(busName)
+	if !ok {
+		return nil
+	}
+
 	var matched []driver.Rule
 
-	all := m.buses.All()
-	for _, bd := range all {
-		rules := bd.rules.All()
-		for _, rd := range rules {
-			if rd.rule.State != defaultRuleState {
-				continue
-			}
+	for _, rd := range bd.rules.All() {
+		if rd.rule.State != defaultRuleState {
+			continue
+		}
 
-			if matchesPattern(event, rd.rule.EventPattern) {
-				matched = append(matched, rd.rule)
-			}
+		if matchesPattern(event, rd.rule.EventPattern) {
+			matched = append(matched, rd.rule)
 		}
 	}
 
