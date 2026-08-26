@@ -54,11 +54,25 @@ type diskInitializeParams struct {
 }
 
 type networkInterface struct {
-	Name       string `json:"name,omitempty"`
-	Network    string `json:"network,omitempty"`
-	Subnetwork string `json:"subnetwork,omitempty"`
-	NetworkIP  string `json:"networkIP,omitempty"`
-	StackType  string `json:"stackType,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	Network       string         `json:"network,omitempty"`
+	Subnetwork    string         `json:"subnetwork,omitempty"`
+	NetworkIP     string         `json:"networkIP,omitempty"`
+	StackType     string         `json:"stackType,omitempty"`
+	AccessConfigs []accessConfig `json:"accessConfigs,omitempty"`
+}
+
+// accessConfig models compute#accessConfig — the external-IP mapping on a
+// network interface. A ONE_TO_ONE_NAT config carries the instance's public IP:
+// when natIP names a reserved compute#address that address flips RESERVED->IN_USE
+// while the instance holds it; when natIP is omitted GCP assigns an ephemeral
+// external IP, which CloudEmu synthesizes at insert time so a GET reflects one.
+type accessConfig struct {
+	Kind        string `json:"kind,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Name        string `json:"name,omitempty"`
+	NatIP       string `json:"natIP,omitempty"`
+	NetworkTier string `json:"networkTier,omitempty"`
 }
 
 type tagsBlock struct {

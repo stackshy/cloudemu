@@ -1,6 +1,7 @@
 package vpc
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"net"
@@ -249,6 +250,8 @@ func (h *Handler) getAddress(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
+	body = reflectAddressUsage(body, h.addressUsersByIP(r.Context(), hostOf(r), rp.Project))
+
 	gcprest.WriteJSON(w, http.StatusOK, body)
 }
 
@@ -256,12 +259,13 @@ func (h *Handler) getAddress(w http.ResponseWriter, r *http.Request, rp gcprest.
 func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	all := h.addresses.list(rp.Project, scopeOf(rp))
 	filter := r.URL.Query().Get("filter")
+	usersByIP := h.addressUsersByIP(r.Context(), hostOf(r), rp.Project)
 
 	items := make([]json.RawMessage, 0, len(all))
 
 	for _, body := range all {
 		if nameMatches(filter, rawName(body)) {
-			items = append(items, body)
+			items = append(items, reflectAddressUsage(body, usersByIP))
 		}
 	}
 
@@ -291,6 +295,7 @@ func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request
 	byScope := h.addresses.allByScope(rp.Project)
 	filter := r.URL.Query().Get("filter")
 	host := hostOf(r)
+	usersByIP := h.addressUsersByIP(r.Context(), host, rp.Project)
 	items := map[string]addressesScopedList{}
 
 	for scope, bodies := range byScope {
@@ -303,7 +308,7 @@ func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request
 
 		for _, b := range bodies {
 			if nameMatches(filter, rawName(b)) {
-				list = append(list, b)
+				list = append(list, reflectAddressUsage(b, usersByIP))
 			}
 		}
 
@@ -341,6 +346,30 @@ func rawName(body json.RawMessage) string {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	host := hostOf(r)
+
+	// Real GCP refuses to delete a reserved address an instance still holds via
+	// an accessConfig natIP, returning 400 resourceInUseByAnotherResource (the
+	// same in-use guard the disk/subnetwork deletes carry). The address deletes
+	// cleanly once the instance releasing it is gone.
+	body, ok := h.addresses.get(rp.Project, scopeOf(rp), rp.ResourceName)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound",
+			"address "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	if ip := addressIP(body); ip != "" {
+		if users := h.addressUsersByIP(r.Context(), host, rp.Project)[ip]; len(users) > 0 {
+			addrLink := gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceAddresses, rp.ResourceName)
+			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
+				"The address resource '"+addrLink+"' is already being used by '"+users[0]+"'")
+
+			return
+		}
+	}
+
 	if !h.addresses.delete(rp.Project, scopeOf(rp), rp.ResourceName) {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"address "+rp.ResourceName+" not found")
@@ -348,6 +377,112 @@ func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, gcprest.NewDoneOperation(hostOf(r), rp.Project,
+	gcprest.WriteJSON(w, http.StatusOK, gcprest.NewDoneOperation(host, rp.Project,
 		rp.Scope, rp.ScopeName, resourceAddresses, rp.ResourceName, "delete"))
+}
+
+// instAccessConfigsTag mirrors the compute wire handler's internal tag key
+// (server/gcp/compute) that round-trips an instance's external-IP accessConfigs,
+// so this handler can tell whether an instance is holding a reserved address
+// without importing the compute server package.
+const instAccessConfigsTag = "cloudemu:gcp:accessconfigs"
+
+// addressUsersByIP scans instances and maps each external IP an instance holds
+// through its accessConfigs[].natIP to the self-links of the instances using it.
+// A reserved address whose IP appears here reads back IN_USE with users[]
+// pointing at that instance (mirrors the compute-side disk users[] scan). A nil
+// compute driver (compute not wired) reports no users.
+func (h *Handler) addressUsersByIP(ctx context.Context, host, project string) map[string][]string {
+	if h.compute == nil {
+		return nil
+	}
+
+	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string][]string)
+
+	for i := range instances {
+		name := tagOr(instances[i].Tags, instNameTag, instances[i].ID)
+		zone := tagOr(instances[i].Tags, instZoneTag, "")
+		link := gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", name)
+
+		for _, ip := range natIPsOf(instances[i].Tags) {
+			if ip != "" {
+				out[ip] = append(out[ip], link)
+			}
+		}
+	}
+
+	return out
+}
+
+// natIPsOf decodes the external IPs an instance's accessConfigs reference from
+// its round-trip tag entry.
+func natIPsOf(tags map[string]string) []string {
+	raw := tags[instAccessConfigsTag]
+	if raw == "" {
+		return nil
+	}
+
+	var acs []struct {
+		NatIP string `json:"natIP"`
+	}
+
+	if err := json.Unmarshal([]byte(raw), &acs); err != nil {
+		return nil
+	}
+
+	out := make([]string, 0, len(acs))
+	for _, ac := range acs {
+		out = append(out, ac.NatIP)
+	}
+
+	return out
+}
+
+// reflectAddressUsage overlays the live IN_USE status and users[] onto a stored
+// address body when an instance holds its IP. Real GCP flips a reserved address
+// RESERVED->IN_USE while an instance's accessConfig references it, then back to
+// RESERVED once the instance is gone; deriving it from the instance scan keeps
+// the two consistent without cross-handler mutation.
+func reflectAddressUsage(body json.RawMessage, usersByIP map[string][]string) json.RawMessage {
+	if len(usersByIP) == 0 {
+		return body
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil || m == nil {
+		return body
+	}
+
+	ip, _ := m["address"].(string)
+
+	users := usersByIP[ip]
+	if len(users) == 0 {
+		return body
+	}
+
+	m["status"] = "IN_USE"
+	m["users"] = users
+
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+
+	return out
+}
+
+// addressIP extracts the allocated IP from a stored address body.
+func addressIP(body json.RawMessage) string {
+	var a struct {
+		Address string `json:"address"`
+	}
+
+	_ = json.Unmarshal(body, &a)
+
+	return a.Address
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"hash/fnv"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -15,11 +17,12 @@ import (
 // entries of the instance's tag map, keyed with the "cloudemu:gcp" prefix.
 // These keys are stripped from the emitted labels.
 const (
-	keyDisks    = "cloudemu:gcp:disks"
-	keyNetTags  = "cloudemu:gcp:nettags"
-	keyMetadata = "cloudemu:gcp:metadata"
-	keyNetwork  = "cloudemu:gcp:network"
-	keyZone     = "cloudemu:gcp:zone"
+	keyDisks         = "cloudemu:gcp:disks"
+	keyNetTags       = "cloudemu:gcp:nettags"
+	keyMetadata      = "cloudemu:gcp:metadata"
+	keyNetwork       = "cloudemu:gcp:network"
+	keyZone          = "cloudemu:gcp:zone"
+	keyAccessConfigs = "cloudemu:gcp:accessconfigs"
 )
 
 // internalTagPrefix marks tag keys that carry CloudEmu-internal GCP state
@@ -31,7 +34,7 @@ const kvStride = 2
 
 // internalTagCap is the number of internal keys insertTags may add, used only
 // as a map preallocation hint.
-const internalTagCap = 6
+const internalTagCap = 7
 
 func isInternalTag(key string) bool {
 	return strings.HasPrefix(key, internalTagPrefix)
@@ -58,6 +61,41 @@ func decodeDisks(tags map[string]string) []attachedDisk {
 	}
 
 	return disks
+}
+
+func decodeAccessConfigs(tags map[string]string) []accessConfig {
+	raw := tags[keyAccessConfigs]
+	if raw == "" {
+		return nil
+	}
+
+	var acs []accessConfig
+	if err := json.Unmarshal([]byte(raw), &acs); err != nil {
+		return nil
+	}
+
+	return acs
+}
+
+// ephemeralIPPrefix is the leading octet of GCP's public 34.0.0.0/8 range,
+// which CloudEmu maps synthesized ephemeral external IPs into.
+const ephemeralIPPrefix = 34
+
+// ephemeralExternalIP synthesizes a deterministic external IP in GCP's public
+// 34.x range for an accessConfig the caller left without a natIP (real GCP
+// auto-assigns an ephemeral one). Deterministic in the instance name + index so
+// repeated GETs report a stable address.
+func ephemeralExternalIP(seed string, index int) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	_, _ = h.Write([]byte(strconv.Itoa(index)))
+
+	var buf [net.IPv4len]byte
+
+	binary.BigEndian.PutUint32(buf[:], h.Sum32())
+	buf[0] = ephemeralIPPrefix
+
+	return net.IP(buf[:]).String()
 }
 
 func decodeNetTags(tags map[string]string) []string {

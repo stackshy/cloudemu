@@ -335,7 +335,60 @@ func insertTags(req *instanceRequest, zone string) map[string]string {
 		out[keyNetwork] = net
 	}
 
+	if acs := accessConfigsFor(req.NetworkInterfaces, req.Name); len(acs) > 0 {
+		out[keyAccessConfigs] = encodeJSON(acs)
+	}
+
 	return out
+}
+
+// accessConfig field defaults GCP stamps on an external-IP mapping.
+const (
+	accessConfigOneToOneNAT = "ONE_TO_ONE_NAT"
+	accessConfigDefaultName = "External NAT"
+	accessConfigNetworkTier = "PREMIUM"
+)
+
+// accessConfigsFor extracts the external-IP accessConfigs off the instance's
+// network interfaces (CloudEmu models a single nic0, so the first NIC that
+// carries them), filling GCP's server-side defaults. An accessConfig with no
+// natIP is given a synthesized ephemeral external IP (mirroring GCP assigning
+// one); an explicit natIP — a reserved google_compute_address — is preserved so
+// that address reads back IN_USE while this instance holds it.
+func accessConfigsFor(nics []networkInterface, instanceName string) []accessConfig {
+	for i := range nics {
+		if len(nics[i].AccessConfigs) == 0 {
+			continue
+		}
+
+		out := make([]accessConfig, 0, len(nics[i].AccessConfigs))
+
+		for j := range nics[i].AccessConfigs {
+			ac := nics[i].AccessConfigs[j]
+
+			if ac.Type == "" {
+				ac.Type = accessConfigOneToOneNAT
+			}
+
+			if ac.Name == "" {
+				ac.Name = accessConfigDefaultName
+			}
+
+			if ac.NetworkTier == "" {
+				ac.NetworkTier = accessConfigNetworkTier
+			}
+
+			if ac.NatIP == "" {
+				ac.NatIP = ephemeralExternalIP(instanceName, j)
+			}
+
+			out = append(out, ac)
+		}
+
+		return out
+	}
+
+	return nil
 }
 
 // findInZone looks up an instance by GCP name, scoped to zone. An instance with
