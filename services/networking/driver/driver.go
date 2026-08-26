@@ -7,6 +7,10 @@ import "context"
 type VPCConfig struct {
 	CIDRBlock string
 	Tags      map[string]string
+	// InstanceTenancy is the default tenancy of instances launched into the VPC
+	// ("default" or "dedicated"). An AWS concept; empty means "default". Azure and
+	// GCP do not model per-network tenancy and leave it unset.
+	InstanceTenancy string
 }
 
 // VPCInfo describes a VPC.
@@ -22,6 +26,9 @@ type VPCInfo struct {
 	// DhcpOptionsID is the DHCP option set associated with the VPC. Empty means
 	// the Amazon-provided default set; AssociateDhcpOptions changes it.
 	DhcpOptionsID string
+	// InstanceTenancy is the default tenancy of instances launched into the VPC
+	// ("default" or "dedicated"). An AWS concept; Azure and GCP leave it empty.
+	InstanceTenancy string
 }
 
 // SubnetConfig describes a subnet to create.

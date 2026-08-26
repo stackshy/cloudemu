@@ -43,6 +43,14 @@ const (
 	defaultSGDescription = "default VPC security group"
 )
 
+// VPC instance tenancy. Real EC2 CreateVpc accepts only "default" and
+// "dedicated"; "host" is a valid instance placement tenancy but is rejected by
+// CreateVpc, and any other value is an InvalidParameterValue.
+const (
+	tenancyDefault   = "default"
+	tenancyDedicated = "dedicated"
+)
+
 // Compile-time checks. The optional capabilities are asserted too: without
 // this a signature drifting out of shape would silently stop satisfying the
 // interface and every call would answer InvalidAction at runtime instead of
@@ -176,6 +184,7 @@ type vpcData struct {
 	EnableDNSSupport   bool
 	EnableDNSHostnames bool
 	DhcpOptionsID      string
+	InstanceTenancy    string
 }
 
 type subnetData struct {
@@ -279,6 +288,11 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 		return nil, err
 	}
 
+	tenancy, err := validateInstanceTenancy(cfg.InstanceTenancy)
+	if err != nil {
+		return nil, err
+	}
+
 	id := idgen.GenerateID("vpc-")
 	tags := copyTags(cfg.Tags)
 
@@ -289,6 +303,7 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 		Tags:      tags,
 		// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
 		EnableDNSSupport: true,
+		InstanceTenancy:  tenancy,
 	}
 	m.vpcs.Set(id, v)
 
@@ -619,6 +634,22 @@ func validateVPCCIDR(cidr string) error {
 	}
 
 	return nil
+}
+
+// validateInstanceTenancy normalizes and checks a VPC's requested instance
+// tenancy. An empty value defaults to "default". Real EC2 CreateVpc accepts only
+// "default" and "dedicated" — "host" and every other value are rejected with
+// InvalidParameterValue (the wire layer maps this InvalidArgument to that code).
+func validateInstanceTenancy(tenancy string) (string, error) {
+	switch tenancy {
+	case "":
+		return tenancyDefault, nil
+	case tenancyDefault, tenancyDedicated:
+		return tenancy, nil
+	default:
+		return "", errors.Newf(errors.InvalidArgument,
+			"invalid value %q for InstanceTenancy", tenancy)
+	}
 }
 
 // cidrWithinVPC reports whether the subnet CIDR sits entirely inside the VPC's
@@ -1097,6 +1128,7 @@ func toVPCInfo(v *vpcData) driver.VPCInfo {
 		EnableDNSSupport:   v.EnableDNSSupport,
 		EnableDNSHostnames: v.EnableDNSHostnames,
 		DhcpOptionsID:      v.DhcpOptionsID,
+		InstanceTenancy:    v.InstanceTenancy,
 	}
 }
 
