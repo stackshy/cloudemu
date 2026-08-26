@@ -33,7 +33,6 @@ func buildFilterNode(f *queryFilter) (expr.Node, error) {
 //nolint:gochecknoglobals // static lookup table
 var firestoreCompareOps = map[fieldOp]string{
 	"EQUAL":                 "=",
-	"NOT_EQUAL":             "<>",
 	"LESS_THAN":             "<",
 	"LESS_THAN_OR_EQUAL":    "<=",
 	"GREATER_THAN":          ">",
@@ -42,6 +41,10 @@ var firestoreCompareOps = map[fieldOp]string{
 
 func fieldFilterNode(ff *fieldFilter) (expr.Node, error) {
 	path := fieldPathToOperand(ff.Field.FieldPath)
+
+	if ff.Op == "NOT_EQUAL" {
+		return notEqualNode(path, valueOperand(ff.Value)), nil
+	}
 
 	if op, ok := firestoreCompareOps[ff.Op]; ok {
 		return &expr.Comparison{Op: op, Left: path, Right: valueOperand(ff.Value)}, nil
@@ -52,6 +55,16 @@ func fieldFilterNode(ff *fieldFilter) (expr.Node, error) {
 	}
 
 	return listFilterNode(ff)
+}
+
+// notEqualNode matches documents whose field is present, non-null, and not
+// equal to the value — Firestore excludes absent and null fields from a !=
+// filter (a bare negation would wrongly include them), mirroring notInNode.
+func notEqualNode(path *expr.PathOperand, val *expr.ValueOperand) expr.Node {
+	presentAndNotNull := &expr.Comparison{Op: "<>", Left: path, Right: &expr.ValueOperand{Value: nil}}
+	notEqual := &expr.Comparison{Op: "<>", Left: path, Right: val}
+
+	return &expr.And{Left: presentAndNotNull, Right: notEqual}
 }
 
 // listFilterNode handles the array-operand operators IN, NOT_IN and
