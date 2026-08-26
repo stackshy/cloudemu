@@ -60,6 +60,33 @@ var ErrInvalidFilterOption = errors.New(errors.InvalidArgument,
 	"The specified filter option isn't valid. "+
 		"Valid options are Equals and BeginsWith.")
 
+// ErrKeyIDOnNonSecure is returned by PutParameter when a KeyId is supplied for a
+// String or StringList parameter. Real Parameter Store only honors KeyId for
+// SecureString parameters and rejects it otherwise with ValidationException. It
+// carries InvalidArgument so the SDK-compat layer surfaces ValidationException.
+var ErrKeyIDOnNonSecure = errors.New(errors.InvalidArgument,
+	"The parameter type isn't supported for the specified KeyId. "+
+		"KeyId is only supported for SecureString parameters.")
+
+// ErrInvalidAllowedPattern is returned by PutParameter when AllowedPattern is
+// not a valid regular expression. It carries InvalidArgument so the SDK-compat
+// layer surfaces ValidationException.
+var ErrInvalidAllowedPattern = errors.New(errors.InvalidArgument,
+	"The following parameter values are not valid: AllowedPattern. "+
+		"The allowed pattern isn't a valid regular expression.")
+
+// ErrValuePatternMismatch is returned by PutParameter when the Value does not
+// match the parameter's AllowedPattern. It carries InvalidArgument so the
+// SDK-compat layer surfaces ValidationException.
+var ErrValuePatternMismatch = errors.New(errors.InvalidArgument,
+	"Parameter value "+
+		"doesn't match the allowed pattern.")
+
+// DefaultSecureStringKeyID is the KMS key Parameter Store assigns to a
+// SecureString parameter when PutParameter omits KeyId — the AWS-managed
+// default key alias.
+const DefaultSecureStringKeyID = "alias/aws/ssm"
+
 // Parameter types, matching AWS SSM Parameter Store.
 const (
 	// TypeString is a plain single-value string parameter.
@@ -80,6 +107,15 @@ type PutConfig struct {
 	Overwrite   bool
 	Tier        string
 	DataType    string
+	// KeyID is the KMS key (id or alias) used to encrypt a SecureString value.
+	// It is only valid for SecureString parameters; supplying it for a
+	// String/StringList is rejected. When omitted for a SecureString it defaults
+	// to DefaultSecureStringKeyID (alias/aws/ssm).
+	KeyID string
+	// AllowedPattern is an optional regular expression the Value must match.
+	// A non-empty pattern that is not a valid regexp, or a Value that fails to
+	// match it, is rejected.
+	AllowedPattern string
 	// Tags are applied to the parameter at create time. Real Parameter Store
 	// rejects supplying Tags together with Overwrite=true, so Tags are only
 	// meaningful on a create.
@@ -98,13 +134,17 @@ type Parameter struct {
 	// Selector records how this value was addressed (e.g. ":3" for a version
 	// or ":prod" for a label), for the SDK's Selector response field.
 	Selector string
-	// Labels, Description, Tier, and LastModifiedUser are populated by
-	// GetParameterHistory so labelled/tiered versions round-trip. They are left
-	// empty by the value-read paths (GetParameter et al.), matching real SSM.
+	// Labels, Description, Tier, LastModifiedUser, KeyID, and AllowedPattern are
+	// populated by GetParameterHistory so labeled/tiered versions round-trip.
+	// They are left empty by the value-read paths (GetParameter et al.) —
+	// matching real SSM, whose Parameter shape has no KeyId or AllowedPattern
+	// even though its ParameterHistory entry does.
 	Labels           []string
 	Description      string
 	Tier             string
 	LastModifiedUser string
+	KeyID            string
+	AllowedPattern   string
 }
 
 // ParameterMetadata describes a parameter without its value.
@@ -118,6 +158,11 @@ type ParameterMetadata struct {
 	DataType         string
 	LastModified     string
 	LastModifiedUser string
+	// KeyID is the KMS key of a SecureString parameter (empty otherwise), and
+	// AllowedPattern is the parameter's value-validation regex. Real
+	// DescribeParameters reflects both in ParameterMetadata.
+	KeyID          string
+	AllowedPattern string
 }
 
 // ParameterStringFilter is a GetParametersByPath filter: a Key, an Option

@@ -78,6 +78,8 @@ func parameterFilterField(md *ssmdriver.ParameterMetadata, key string) (string, 
 		return md.Tier, true
 	case "DataType":
 		return md.DataType, true
+	case "KeyId":
+		return md.KeyID, true
 	default:
 		return "", false
 	}

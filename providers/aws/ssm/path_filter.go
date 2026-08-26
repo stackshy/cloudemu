@@ -57,9 +57,10 @@ func matchByPathFilter(v *version, f *driver.ParameterStringFilter) bool {
 	case byPathKeyLabel:
 		return labelsMatchFilter(v.labels, f.Option, f.Values)
 	default:
-		// KeyId is a valid key but cloudemu doesn't model a per-parameter KMS
-		// KeyId (SecureString isn't encrypted), so it can't constrain results.
-		return true
+		// KeyId: a SecureString records its KMS KeyId (defaulting to
+		// alias/aws/ssm); String/StringList have none, so this narrows to
+		// SecureString parameters with a matching key.
+		return fieldMatchesFilter(v.keyID, f.Option, f.Values)
 	}
 }
 

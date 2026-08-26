@@ -21,9 +21,11 @@ type parameterJSON struct {
 
 // parameterMetadataJSON is the wire shape for ParameterMetadata (DescribeParameters).
 type parameterMetadataJSON struct {
+	AllowedPattern   string  `json:"AllowedPattern,omitempty"`
 	ARN              string  `json:"ARN,omitempty"`
 	DataType         string  `json:"DataType,omitempty"`
 	Description      string  `json:"Description,omitempty"`
+	KeyID            string  `json:"KeyId,omitempty"`
 	LastModifiedDate float64 `json:"LastModifiedDate,omitempty"`
 	LastModifiedUser string  `json:"LastModifiedUser,omitempty"`
 	Name             string  `json:"Name"`
@@ -35,14 +37,16 @@ type parameterMetadataJSON struct {
 // --- request envelopes ---
 
 type putParameterRequest struct {
-	Name        string   `json:"Name"`
-	Value       string   `json:"Value"`
-	Type        string   `json:"Type"`
-	Description string   `json:"Description"`
-	Overwrite   bool     `json:"Overwrite"`
-	Tier        string   `json:"Tier"`
-	DataType    string   `json:"DataType"`
-	Tags        []ssmTag `json:"Tags"`
+	Name           string   `json:"Name"`
+	Value          string   `json:"Value"`
+	Type           string   `json:"Type"`
+	Description    string   `json:"Description"`
+	Overwrite      bool     `json:"Overwrite"`
+	Tier           string   `json:"Tier"`
+	DataType       string   `json:"DataType"`
+	KeyID          string   `json:"KeyId"`
+	AllowedPattern string   `json:"AllowedPattern"`
+	Tags           []ssmTag `json:"Tags"`
 }
 
 type getParameterRequest struct {
@@ -148,9 +152,11 @@ type getParameterHistoryResponse struct {
 
 // parameterHistoryJSON is the wire shape for a ParameterHistory entry.
 type parameterHistoryJSON struct {
+	AllowedPattern   string   `json:"AllowedPattern,omitempty"`
 	ARN              string   `json:"ARN,omitempty"`
 	DataType         string   `json:"DataType,omitempty"`
 	Description      string   `json:"Description,omitempty"`
+	KeyID            string   `json:"KeyId,omitempty"`
 	Labels           []string `json:"Labels,omitempty"`
 	LastModifiedDate float64  `json:"LastModifiedDate,omitempty"`
 	LastModifiedUser string   `json:"LastModifiedUser,omitempty"`
