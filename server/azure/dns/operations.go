@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -209,13 +210,24 @@ func (h *Handler) getRecordSet(w http.ResponseWriter, r *http.Request, rp *azure
 }
 
 func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	recordType := recordTypeSegment(rp.SubResource)
+
+	// Azure auto-creates the apex SOA and NS record sets with the zone and
+	// forbids deleting them; the zone must own an SOA and its apex NS for its
+	// lifetime. Reject the delete rather than orphaning the zone.
+	if isApexProtectedRecord(rp.SubResourceName, recordType) {
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest",
+			"the record set of type "+recordType+" at the zone apex cannot be deleted")
+		return
+	}
+
 	zoneID, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	derr := h.dns.DeleteRecord(r.Context(), zoneID, rp.SubResourceName, recordTypeSegment(rp.SubResource))
+	derr := h.dns.DeleteRecord(r.Context(), zoneID, rp.SubResourceName, recordType)
 	if derr != nil && !cerrors.IsNotFound(derr) {
 		azurearm.WriteCErr(w, derr)
 		return
@@ -231,7 +243,22 @@ func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *az
 	w.WriteHeader(http.StatusOK)
 }
 
+// listRecordSets backs RecordSets.ListByDnsZone / ListAllByDnsZone: every
+// record set in the zone, unfiltered.
 func (h *Handler) listRecordSets(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	h.writeRecordSetList(w, r, rp, "")
+}
+
+// listRecordSetsByType backs RecordSets.ListByType: the zone's record sets of
+// the single type named in the URL (…/dnsZones/{zone}/{type}).
+func (h *Handler) listRecordSetsByType(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	h.writeRecordSetList(w, r, rp, recordTypeSegment(rp.SubResource))
+}
+
+// writeRecordSetList lists a zone's record sets, optionally filtered to a
+// single record type. An empty filterType returns every record set.
+func (h *Handler) writeRecordSetList(w http.ResponseWriter, r *http.Request,
+	rp *azurearm.ResourcePath, filterType string) {
 	zoneID, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -245,7 +272,12 @@ func (h *Handler) listRecordSets(w http.ResponseWriter, r *http.Request, rp *azu
 	}
 
 	out := make([]recordSetJSON, 0, len(records))
+
 	for i := range records {
+		if filterType != "" && !strings.EqualFold(records[i].Type, filterType) {
+			continue
+		}
+
 		out = append(out, toRecordSetJSON(rp, rp.ResourceName, &records[i]))
 	}
 

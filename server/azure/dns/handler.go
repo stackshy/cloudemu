@@ -135,6 +135,14 @@ func (h *Handler) serveRecordSetCollection(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) serveRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// A type-only path (…/dnsZones/{zone}/{type} with no record name) is
+	// RecordSets.ListByType — a type-filtered list of the zone's record sets,
+	// not a single-record Get.
+	if rp.SubResourceName == "" && r.Method == http.MethodGet {
+		h.listRecordSetsByType(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateRecordSet(w, r, rp)

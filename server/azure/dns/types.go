@@ -29,8 +29,8 @@ const (
 	recTypeSOA   = "SOA"
 
 	// maxNumberOfRecordSets is the fixed per-zone record-set cap Azure DNS
-	// reports (a read-only property).
-	maxNumberOfRecordSets = 5000
+	// reports for a public zone (a read-only property).
+	maxNumberOfRecordSets = 10000
 	// maxNumberOfRecordsPerRecordSet is the fixed per-record-set record cap
 	// Azure DNS reports (read-only).
 	maxNumberOfRecordsPerRecordSet = 20
@@ -391,6 +391,18 @@ func ttlOrDefault(props *recordSetProperties) int {
 // upper-case type the driver stores.
 func recordTypeSegment(s string) string {
 	return strings.ToUpper(s)
+}
+
+// isApexProtectedRecord reports whether the record set is the apex SOA or NS
+// that Azure DNS auto-provisions with every zone and forbids deleting. name is
+// the relative record name from the URL ("@" for the apex); recordType is the
+// canonical upper-case type.
+func isApexProtectedRecord(name, recordType string) bool {
+	if name != apexRecordName {
+		return false
+	}
+
+	return recordType == recTypeSOA || recordType == recTypeNS
 }
 
 // resolveZoneID maps the SDK-facing zone name to the driver's internal zone id
