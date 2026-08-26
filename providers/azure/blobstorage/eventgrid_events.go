@@ -17,6 +17,11 @@ const (
 	eventTypeBlobDeleted = "Microsoft.Storage.BlobDeleted"
 	blobEventAPICreate   = "PutBlob"
 	blobEventAPIDelete   = "DeleteBlob"
+	// blobEventAPIPutBlockList / blobEventAPICopyBlob are the api operation names
+	// real Azure stamps on the BlobCreated event when a blob is written via
+	// Commit Block List (large / SDK-chunked uploads) or a blob copy.
+	blobEventAPIPutBlockList = "PutBlockList"
+	blobEventAPICopyBlob     = "CopyBlob"
 	// blobEventDataVersion is the schema version real Azure Blob Storage stamps
 	// on its BlobCreated/BlobDeleted event data.
 	blobEventDataVersion = "2"
@@ -66,9 +71,17 @@ func (m *Mock) storageAccountID() string {
 	return idgen.AzureID(m.opts.AccountID, rg, storageProvider, storageResourceType, AccountName)
 }
 
-// emitBlobCreated fires a Microsoft.Storage.BlobCreated event for a written blob.
+// emitBlobCreated fires a Microsoft.Storage.BlobCreated event for a blob written
+// via the Put Blob path (api=PutBlob).
 func (m *Mock) emitBlobCreated(ctx context.Context, obj *blobObject, container string) {
-	m.emitBlobEvent(ctx, eventTypeBlobCreated, blobEventAPICreate, &blobEventFacts{
+	m.emitBlobCreatedAPI(ctx, obj, container, blobEventAPICreate)
+}
+
+// emitBlobCreatedAPI fires a Microsoft.Storage.BlobCreated event for a written
+// blob, stamping the given api operation name (PutBlob / PutBlockList / CopyBlob)
+// so consumers see which write path produced the blob, as real Azure does.
+func (m *Mock) emitBlobCreatedAPI(ctx context.Context, obj *blobObject, container, api string) {
+	m.emitBlobEvent(ctx, eventTypeBlobCreated, api, &blobEventFacts{
 		container: container, key: obj.Key, eTag: obj.ETag,
 		contentType: obj.ContentType, contentLength: obj.Size, blobType: obj.BlobType,
 	})

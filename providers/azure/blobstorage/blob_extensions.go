@@ -123,6 +123,7 @@ func (m *Mock) CommitBlockList(
 	ctr.staging.Delete(blob)
 
 	m.emitMetric(container, map[string]float64{"Transactions": 1, "Ingress": float64(len(data))})
+	m.emitBlobCreatedAPI(ctx, obj, container, blobEventAPIPutBlockList)
 
 	info := objectInfo(obj)
 

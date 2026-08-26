@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -145,6 +146,95 @@ func TestBlobCreatedEmitsToSubscriber(t *testing.T) {
 	// topic is the storage account's ARM id (the source resource), not the Event
 	// Grid topic the subscription hangs off.
 	assert.Contains(t, got[0].Topic, "/providers/Microsoft.Storage/storageAccounts/cloudemu")
+}
+
+// TestBlobCreatedEmitsOnCommitBlockList covers the block-list upload path (the
+// standard SDK path for large blobs): StageBlock + CommitBlockList delivers a
+// Microsoft.Storage.BlobCreated event stamped api=PutBlockList.
+func TestBlobCreatedEmitsOnCommitBlockList(t *testing.T) {
+	receiver := newBlobWebhookReceiver(t)
+	bm, eg := newWiredMocks(t)
+	ctx := context.Background()
+
+	subscribe(t, eg, "sub1", receiver.URL, map[string]any{
+		"includedEventTypes": []string{eventTypeBlobCreated},
+	})
+
+	require.NoError(t, bm.CreateBucket(ctx, "big"))
+	require.NoError(t, bm.StageBlock(ctx, "big", "large.bin", "b1", []byte("foo")))
+	require.NoError(t, bm.StageBlock(ctx, "big", "large.bin", "b2", []byte("bar")))
+	_, err := bm.CommitBlockList(ctx, "big", "large.bin",
+		[]driver.BlockListEntry{
+			{ID: "b1", List: driver.BlockListLatest},
+			{ID: "b2", List: driver.BlockListLatest},
+		}, "application/octet-stream", nil, nil)
+	require.NoError(t, err)
+
+	got := receiver.events()
+	require.Len(t, got, 1)
+	assert.Equal(t, eventTypeBlobCreated, got[0].EventType)
+	assert.Equal(t, "/blobServices/default/containers/big/blobs/large.bin", got[0].Subject)
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(got[0].Data, &data))
+	assert.Equal(t, blobEventAPIPutBlockList, data["api"])
+	assert.EqualValues(t, 6, data["contentLength"])
+	assert.NotEmpty(t, data["eTag"])
+	assert.Equal(t, "https://cloudemu.blob.core.windows.net/big/large.bin", data["url"])
+}
+
+// TestBlobCreatedEmitsOnCopyBlob covers the copy path: CopyObject delivers a
+// Microsoft.Storage.BlobCreated event stamped api=CopyBlob on completion (the
+// destination blob exists), with the destination subject.
+func TestBlobCreatedEmitsOnCopyBlob(t *testing.T) {
+	receiver := newBlobWebhookReceiver(t)
+	bm, eg := newWiredMocks(t)
+	ctx := context.Background()
+
+	subscribe(t, eg, "sub1", receiver.URL, map[string]any{
+		"includedEventTypes": []string{eventTypeBlobCreated},
+	})
+
+	require.NoError(t, bm.CreateBucket(ctx, "src"))
+	require.NoError(t, bm.CreateBucket(ctx, "dst"))
+	require.NoError(t, bm.PutObject(ctx, "src", "orig.txt", []byte("hello"), "text/plain", nil))
+
+	require.NoError(t, bm.CopyObject(ctx, "dst", "copy.txt", driver.CopySource{Bucket: "src", Key: "orig.txt"}))
+
+	got := receiver.events()
+	// Two BlobCreated events: the source PutObject (PutBlob) and the copy (CopyBlob).
+	require.Len(t, got, 2)
+
+	var copyData map[string]any
+	require.NoError(t, json.Unmarshal(got[1].Data, &copyData))
+	assert.Equal(t, eventTypeBlobCreated, got[1].EventType)
+	assert.Equal(t, "/blobServices/default/containers/dst/blobs/copy.txt", got[1].Subject)
+	assert.Equal(t, blobEventAPICopyBlob, copyData["api"])
+	assert.EqualValues(t, 5, copyData["contentLength"])
+	assert.Equal(t, "https://cloudemu.blob.core.windows.net/dst/copy.txt", copyData["url"])
+}
+
+// TestBlockListAndCopySucceedWithoutPublisher covers the nil-publisher safety of
+// both new emit paths: with no Event Grid publisher wired, CommitBlockList and
+// CopyObject still succeed (no panic).
+func TestBlockListAndCopySucceedWithoutPublisher(t *testing.T) {
+	bm := newTestMock() // no SetEventGridPublisher
+	ctx := context.Background()
+
+	require.NoError(t, bm.CreateBucket(ctx, "src"))
+	require.NoError(t, bm.CreateBucket(ctx, "dst"))
+
+	require.NoError(t, bm.StageBlock(ctx, "src", "k", "b1", []byte("foo")))
+	_, err := bm.CommitBlockList(ctx, "src", "k",
+		[]driver.BlockListEntry{{ID: "b1", List: driver.BlockListLatest}},
+		"text/plain", nil, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, bm.CopyObject(ctx, "dst", "k", driver.CopySource{Bucket: "src", Key: "k"}))
+
+	obj, err := bm.GetObject(ctx, "dst", "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("foo"), obj.Data)
 }
 
 // TestBlobDeletedEmitsToSubscriber covers case (b): a DELETE delivers a
