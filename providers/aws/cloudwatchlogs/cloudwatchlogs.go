@@ -456,9 +456,20 @@ func (m *Mock) FilterLogEvents(
 		results = m.filterStreamEvents(g, input.LogStream, input)
 	} else {
 		for name, s := range g.streams.All() {
-			events := m.matchEvents(s, name, input)
-			results = append(results, events...)
+			results = append(results, m.matchEvents(s, name, input)...)
 		}
+
+		// CloudWatch Logs interleaves matches across streams in ascending
+		// timestamp order; sort by (timestamp, stream) so the result is both
+		// time-ordered and deterministic run-to-run regardless of the random
+		// map-iteration order above. Ties break on stream name.
+		sort.SliceStable(results, func(i, j int) bool {
+			if !results[i].Timestamp.Equal(results[j].Timestamp) {
+				return results[i].Timestamp.Before(results[j].Timestamp)
+			}
+
+			return results[i].LogStream < results[j].LogStream
+		})
 	}
 
 	// A negative limit means "no cap" — the wire handler fetches the full
