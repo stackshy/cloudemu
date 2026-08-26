@@ -2,29 +2,37 @@ package pubsub
 
 import "encoding/json"
 
-// topic is the GCP Pub/Sub Topic resource shape.
+// topic is the GCP Pub/Sub Topic resource shape. Extended fields
+// (schemaSettings/messageStoragePolicy) are kept as raw JSON so they round-trip
+// verbatim without modeling every nested member.
 type topic struct {
-	Name   string            `json:"name"`
-	Labels map[string]string `json:"labels,omitempty"`
+	Name                     string            `json:"name"`
+	Labels                   map[string]string `json:"labels,omitempty"`
+	MessageRetentionDuration string            `json:"messageRetentionDuration,omitempty"`
+	SchemaSettings           json.RawMessage   `json:"schemaSettings,omitempty"`
+	KmsKeyName               string            `json:"kmsKeyName,omitempty"`
+	MessageStoragePolicy     json.RawMessage   `json:"messageStoragePolicy,omitempty"`
+	SatisfiesPzs             bool              `json:"satisfiesPzs,omitempty"`
 }
 
 // subscription is the GCP Pub/Sub Subscription resource shape. Extended fields
 // (pushConfig/retryPolicy/deadLetterPolicy/expirationPolicy) are kept as raw
 // JSON so they round-trip verbatim without modeling every nested member.
 type subscription struct {
-	Name                     string            `json:"name"`
-	Topic                    string            `json:"topic"`
-	PushConfig               json.RawMessage   `json:"pushConfig,omitempty"`
-	AckDeadlineSeconds       int               `json:"ackDeadlineSeconds,omitempty"`
-	RetainAckedMessages      bool              `json:"retainAckedMessages,omitempty"`
-	MessageRetentionDuration string            `json:"messageRetentionDuration,omitempty"`
-	Labels                   map[string]string `json:"labels,omitempty"`
-	EnableMessageOrdering    bool              `json:"enableMessageOrdering,omitempty"`
-	ExpirationPolicy         json.RawMessage   `json:"expirationPolicy,omitempty"`
-	Filter                   string            `json:"filter,omitempty"`
-	DeadLetterPolicy         json.RawMessage   `json:"deadLetterPolicy,omitempty"`
-	RetryPolicy              json.RawMessage   `json:"retryPolicy,omitempty"`
-	Detached                 bool              `json:"detached,omitempty"`
+	Name                      string            `json:"name"`
+	Topic                     string            `json:"topic"`
+	PushConfig                json.RawMessage   `json:"pushConfig,omitempty"`
+	AckDeadlineSeconds        int               `json:"ackDeadlineSeconds,omitempty"`
+	RetainAckedMessages       bool              `json:"retainAckedMessages,omitempty"`
+	MessageRetentionDuration  string            `json:"messageRetentionDuration,omitempty"`
+	Labels                    map[string]string `json:"labels,omitempty"`
+	EnableMessageOrdering     bool              `json:"enableMessageOrdering,omitempty"`
+	ExpirationPolicy          json.RawMessage   `json:"expirationPolicy,omitempty"`
+	Filter                    string            `json:"filter,omitempty"`
+	DeadLetterPolicy          json.RawMessage   `json:"deadLetterPolicy,omitempty"`
+	RetryPolicy               json.RawMessage   `json:"retryPolicy,omitempty"`
+	Detached                  bool              `json:"detached,omitempty"`
+	EnableExactlyOnceDelivery bool              `json:"enableExactlyOnceDelivery,omitempty"`
 }
 
 // updateTopicRequest is PATCH topics/{name} (topics.patch): the topic fields to

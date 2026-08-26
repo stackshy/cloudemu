@@ -286,6 +286,12 @@ func (m *Mock) RegenerateRegistryCredential(
 		return nil, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", name, rg)
 	}
 
+	if !rd.reg.AdminUserEnabled {
+		return nil, errors.Newf(
+			errors.FailedPrecondition, "admin user is not enabled for registry %q", name,
+		)
+	}
+
 	seed := fmt.Sprintf("%s/%s/%d", rg, name, m.opts.Clock.Now().UnixNano())
 
 	switch passwordName {

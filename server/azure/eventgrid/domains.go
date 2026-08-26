@@ -172,6 +172,8 @@ func (h *Handler) serveDomainResource(w http.ResponseWriter, r *http.Request, rp
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateDomain(w, r, rp)
+	case http.MethodPatch:
+		h.updateDomain(w, r, rp)
 	case http.MethodGet:
 		h.getDomain(w, rp)
 	case http.MethodDelete:
@@ -223,6 +225,54 @@ func (h *Handler) createOrUpdateDomain(w http.ResponseWriter, r *http.Request, r
 
 	// Domains.CreateOrUpdate accepts only 201; the terminal provisioningState
 	// completes the SDK's LRO poller on the first response.
+	azurearm.WriteJSON(w, http.StatusCreated, out)
+}
+
+// domainUpdateJSON is the Domains.Update (PATCH) request body: mutable tags plus
+// mutable properties (publicNetworkAccess). Input schema is immutable, matching
+// real Event Grid.
+type domainUpdateJSON struct {
+	Tags       map[string]*string `json:"tags,omitempty"`
+	Properties *struct {
+		PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
+	} `json:"properties,omitempty"`
+}
+
+// updateDomain maps Domains.Update (PATCH) onto the wire-owned record: it merges
+// the supplied tags onto the existing tags and applies the mutable
+// publicNetworkAccess, preserving anything the caller omitted, and returns the
+// updated domain (200). 404 when the domain does not exist, before any write.
+func (h *Handler) updateDomain(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body domainUpdateJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	key := storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+
+	h.mu.Lock()
+
+	rec := h.domains[key]
+	if rec == nil {
+		h.mu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "domain not found")
+
+		return
+	}
+
+	if body.Tags != nil {
+		rec.tags = mergeTags(rec.tags, tagsFromPtr(body.Tags))
+	}
+
+	if body.Properties != nil && body.Properties.PublicNetworkAccess != "" {
+		rec.publicNetworkAccess = body.Properties.PublicNetworkAccess
+	}
+
+	out := rec.toJSON(rp)
+	h.mu.Unlock()
+
+	// 201 with a terminal provisioningState completes the SDK's Update LRO
+	// poller on the first response (the poller accepts 200 or 201).
 	azurearm.WriteJSON(w, http.StatusCreated, out)
 }
 
