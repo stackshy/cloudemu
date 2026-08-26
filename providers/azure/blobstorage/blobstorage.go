@@ -731,6 +731,7 @@ func (m *Mock) copyBlobInternal(
 	dstCtr.objects.Set(dstKey, dstObj)
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
+	m.emitBlobCreatedAPI(ctx, dstObj, dstBucket, blobEventAPICopyBlob)
 
 	info := objectInfo(dstObj)
 
