@@ -52,12 +52,20 @@ const (
 	autoSubnetTag       = "cloudemu:gcpAutoSubnet"
 	legacyNetTag        = "cloudemu:gcpLegacyNet"
 	createdAtTag        = "cloudemu:gcpCreatedAt"
+	netDescTag          = "cloudemu:gcpNetDesc"
+	netRoutingModeTag   = "cloudemu:gcpNetRoutingMode"
+	netMtuTag           = "cloudemu:gcpNetMtu"
 	subnetPurposeTag    = "cloudemu:gcpSubnetPurpose"
 	subnetStackTag      = "cloudemu:gcpSubnetStack"
 	subnetPGATag        = "cloudemu:gcpSubnetPGA"
+	subnetDescTag       = "cloudemu:gcpSubnetDesc"
+	subnetSecondaryTag  = "cloudemu:gcpSubnetSecondary"
 	firewallNameTag     = "cloudemu:gcpFwName"
 	firewallSpecTag     = "cloudemu:gcpFwSpec"
 	trueValue           = "true"
+
+	expandAction       = "expandIpCidrRange"
+	noResultsOnPageStr = "NO_RESULTS_ON_PAGE"
 
 	defaultSubnetPurpose = "PRIVATE"
 	defaultStackType     = "IPV4_ONLY"
@@ -140,16 +148,16 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	// Aggregated-scope requests (aggregatedList) are not implemented for these
-	// networking resources; leave them unmatched so the dispatcher's default
-	// applies rather than mis-serving them as a scoped list.
-	if rp.Scope == gcprest.ScopeAggregated {
-		return false
-	}
-
 	switch rp.ResourceType {
 	case resourceNetworks, resourceSubnetworks, resourceFirewalls,
 		resourceRouters, resourceAddresses, resourceRoutes:
+		// aggregatedList is a real endpoint only for subnetworks and addresses;
+		// the other collections here are global (or list-only) and have no
+		// aggregated form, so leave those unmatched for the dispatcher default.
+		if rp.Scope == gcprest.ScopeAggregated {
+			return rp.ResourceType == resourceSubnetworks || rp.ResourceType == resourceAddresses
+		}
+
 		return true
 	}
 
@@ -207,8 +215,18 @@ func (h *Handler) routeNetworks(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeSubnetworks(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if rp.Scope == gcprest.ScopeAggregated {
+		if r.Method == http.MethodGet {
+			h.aggregatedListSubnetworks(w, r, rp)
+		} else {
+			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		}
+
+		return
+	}
+
 	if rp.ResourceName == "" {
 		switch r.Method {
 		case http.MethodPost:
@@ -216,6 +234,17 @@ func (h *Handler) routeSubnetworks(w http.ResponseWriter, r *http.Request, rp gc
 		case http.MethodGet:
 			h.listSubnetworks(w, r, rp)
 		default:
+			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		}
+
+		return
+	}
+
+	// POST .../subnetworks/{name}/expandIpCidrRange widens the primary range.
+	if rp.Action == expandAction {
+		if r.Method == http.MethodPost {
+			h.expandSubnetIPCIDR(w, r, rp)
+		} else {
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
 
@@ -284,21 +313,7 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	// A network with an explicit IPv4Range is a (deprecated) legacy network;
-	// only those carry an IPv4Range on the wire. Auto/custom-mode networks must
-	// NOT report one — the driver still needs a non-empty CIDR internally, so a
-	// placeholder is stored but hidden from the response unless legacy.
-	cidr := internalNetCIDR
-	tags := map[string]string{netNameTag: req.Name, createdAtTag: nowRFC3339()}
-
-	if req.IPv4Range != "" {
-		cidr = req.IPv4Range
-		tags[legacyNetTag] = trueValue
-	}
-
-	if req.AutoCreateSubnetworks != nil && *req.AutoCreateSubnetworks {
-		tags[autoSubnetTag] = trueValue
-	}
+	cidr, tags := networkStorage(&req)
 
 	cfg := netdriver.VPCConfig{
 		CIDRBlock: cidr,
@@ -314,6 +329,41 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		"networks", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// networkStorage derives the internal CIDR and the tag set persisted for a
+// network insert. A network with an explicit IPv4Range is a (deprecated) legacy
+// network; only those carry an IPv4Range on the wire. Auto/custom-mode networks
+// must NOT report one — the driver still needs a non-empty CIDR internally, so a
+// placeholder is stored but hidden from the response unless legacy.
+// description/routingMode/mtu have no first-class VPC slots, so they ride in
+// tags and are reconstructed on read (else Terraform shows a perpetual diff).
+func networkStorage(req *networkRequest) (cidr string, tags map[string]string) {
+	cidr = internalNetCIDR
+	tags = map[string]string{netNameTag: req.Name, createdAtTag: nowRFC3339()}
+
+	if req.IPv4Range != "" {
+		cidr = req.IPv4Range
+		tags[legacyNetTag] = trueValue
+	}
+
+	if req.AutoCreateSubnetworks != nil && *req.AutoCreateSubnetworks {
+		tags[autoSubnetTag] = trueValue
+	}
+
+	if req.Description != "" {
+		tags[netDescTag] = req.Description
+	}
+
+	if req.RoutingConfig != nil && req.RoutingConfig.RoutingMode != "" {
+		tags[netRoutingModeTag] = req.RoutingConfig.RoutingMode
+	}
+
+	if req.Mtu > 0 {
+		tags[netMtuTag] = strconv.Itoa(int(req.Mtu))
+	}
+
+	return cidr, tags
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -426,11 +476,36 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
+	cfg := netdriver.SubnetConfig{
+		VPCID:            vpcID,
+		CIDRBlock:        req.IPCIDRRange,
+		AvailabilityZone: rp.ScopeName,
+		Tags:             subnetTags(&req),
+	}
+
+	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+		"subnetworks", req.Name, "insert")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// subnetTags builds the tag set persisted for a subnetwork insert. purpose/
+// stackType/privateIpGoogleAccess/description have no first-class driver slots,
+// and secondaryIpRanges (GKE VPC-native / Terraform secondary_ip_range) is
+// stored verbatim as JSON — mirroring the firewall spec — so alias ranges
+// survive the round-trip.
+func subnetTags(req *subnetworkRequest) map[string]string {
 	tags := map[string]string{
 		subnetNameTag:    req.Name,
 		subnetNetworkTag: lastSegment(req.Network),
 		createdAtTag:     nowRFC3339(),
 	}
+
 	if req.Purpose != "" {
 		tags[subnetPurposeTag] = req.Purpose
 	}
@@ -443,22 +518,17 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		tags[subnetPGATag] = trueValue
 	}
 
-	cfg := netdriver.SubnetConfig{
-		VPCID:            vpcID,
-		CIDRBlock:        req.IPCIDRRange,
-		AvailabilityZone: rp.ScopeName,
-		Tags:             tags,
+	if req.Description != "" {
+		tags[subnetDescTag] = req.Description
 	}
 
-	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
-		gcprest.WriteCErr(w, err)
-		return
+	if len(req.SecondaryIPRanges) > 0 {
+		if b, err := json.Marshal(req.SecondaryIPRanges); err == nil {
+			tags[subnetSecondaryTag] = string(b)
+		}
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
-		"subnetworks", req.Name, "insert")
-
-	gcprest.WriteJSON(w, http.StatusOK, op)
+	return tags
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -536,6 +606,130 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// subnetCIDRExpander is the optional provider capability for widening a
+// subnetwork's primary IP range. Discovered by type assertion (mirroring
+// VPCAttributes/SubnetAttributes); GCP's expandIpCidrRange has no cross-cloud
+// analog, so it stays out of the portable Networking interface.
+type subnetCIDRExpander interface {
+	ExpandSubnetCIDR(ctx context.Context, id, cidr string) error
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) expandSubnetIPCIDR(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	s, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var req expandIPCIDRRequest
+
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.IPCIDRRange == "" {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "ipCidrRange required")
+		return
+	}
+
+	// expandIpCidrRange only grows the range: the new range must strictly
+	// contain the current one. A subset (or equal) range is rejected.
+	if err := validateSuperset(s.CIDRBlock, req.IPCIDRRange); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	expander, ok := h.net.(subnetCIDRExpander)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented",
+			"subnetwork range expansion not supported")
+
+		return
+	}
+
+	if err := expander.ExpandSubnetCIDR(r.Context(), s.ID, req.IPCIDRRange); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+		"subnetworks", rp.ResourceName, expandAction)
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// validateSuperset reports whether expanded strictly contains current — the
+// same-base, broader-prefix relationship GCP requires of expandIpCidrRange.
+func validateSuperset(current, expanded string) error {
+	_, curNet, err := net.ParseCIDR(current)
+	if err != nil {
+		return cerrors.Newf(cerrors.InvalidArgument, "current range %q is not a valid CIDR", current)
+	}
+
+	_, newNet, err := net.ParseCIDR(expanded)
+	if err != nil {
+		return cerrors.Newf(cerrors.InvalidArgument, "range %q is not a valid CIDR", expanded)
+	}
+
+	curOnes, _ := curNet.Mask.Size()
+	newOnes, _ := newNet.Mask.Size()
+
+	if newOnes >= curOnes || !newNet.Contains(curNet.IP) {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"range %q must be a superset of the current range %q", expanded, current)
+	}
+
+	return nil
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	infos, err := h.net.DescribeSubnets(r.Context(), nil)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	host := hostOf(r)
+	filter := r.URL.Query().Get("filter")
+	items := map[string]subnetworksScopedList{}
+
+	for i := range infos {
+		region := infos[i].AvailabilityZone
+
+		scope := rp
+		scope.Scope = gcprest.ScopeRegions
+		scope.ScopeName = region
+		scope.ResourceName = tagOr(infos[i].Tags, subnetNameTag, infos[i].ID)
+
+		resp := toSubnetworkResponse(&infos[i], scope, host)
+		if !nameMatches(filter, resp.Name) {
+			continue
+		}
+
+		key := "regions/" + region
+		bucket := items[key]
+		bucket.Subnetworks = append(bucket.Subnetworks, resp)
+		items[key] = bucket
+	}
+
+	// Real GCP always includes a global bucket; subnetworks are regional, so it
+	// carries a NO_RESULTS_ON_PAGE warning rather than any items.
+	if _, ok := items[gcprest.ScopeGlobal]; !ok {
+		items[gcprest.ScopeGlobal] = subnetworksScopedList{
+			Warning: &scopedWarning{Code: noResultsOnPageStr, Message: "There are no results for scope 'global' on this page."},
+		}
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, subnetworkAggregatedListResponse{
+		Kind:     "compute#subnetworkAggregatedList",
+		ID:       "projects/" + rp.Project + "/aggregated/subnetworks",
+		Items:    items,
+		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/subnetworks",
+	})
+}
+
 // Firewall operations.
 
 //nolint:gocritic // rp is a request-scoped value
@@ -557,10 +751,18 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
-	vpcID, _ := resolveNetwork(r.Context(), h.net, req.Network)
+	// A supplied network MUST exist — real GCP rejects a firewall insert that
+	// references an unknown network. Propagate the resolve error (404) rather
+	// than fabricating a phantom VPC that would then leak into networks.list.
+	vpcID, err := resolveNetwork(r.Context(), h.net, req.Network)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
 
 	if vpcID == "" {
-		// No network supplied — use any existing or create a synthetic.
+		// No network supplied — GCP defaults to the project's network; use any
+		// existing one or create the default.
 		vpcs, _ := h.net.DescribeVPCs(r.Context(), nil)
 		if len(vpcs) > 0 {
 			vpcID = vpcs[0].ID
@@ -790,9 +992,20 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 		Kind:                  "compute#network",
 		ID:                    numericID(info.ID),
 		Name:                  name,
+		Description:           info.Tags[netDescTag],
 		AutoCreateSubnetworks: info.Tags[autoSubnetTag] == trueValue,
 		CreationTimestamp:     info.Tags[createdAtTag],
 		SelfLink:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
+	}
+
+	if rm := info.Tags[netRoutingModeTag]; rm != "" {
+		resp.RoutingConfig = &networkRoutingConfig{RoutingMode: rm}
+	}
+
+	if m := info.Tags[netMtuTag]; m != "" {
+		if v, err := strconv.ParseInt(m, 10, 32); err == nil {
+			resp.Mtu = int32(v)
+		}
 	}
 
 	// IPv4Range belongs only to a legacy network; a modern auto/custom network
@@ -835,8 +1048,16 @@ func toSubnetworkResponse(info *netdriver.SubnetInfo, rp gcprest.ResourcePath, h
 		Purpose:               tagOr(info.Tags, subnetPurposeTag, defaultSubnetPurpose),
 		StackType:             tagOr(info.Tags, subnetStackTag, defaultStackType),
 		PrivateIPGoogleAccess: info.Tags[subnetPGATag] == trueValue,
+		Description:           info.Tags[subnetDescTag],
 		Fingerprint:           fingerprintOf(name, info.CIDRBlock),
 		CreationTimestamp:     info.Tags[createdAtTag],
+	}
+
+	if s := info.Tags[subnetSecondaryTag]; s != "" {
+		var ranges []secondaryRange
+		if err := json.Unmarshal([]byte(s), &ranges); err == nil {
+			resp.SecondaryIPRanges = ranges
+		}
 	}
 
 	// Echo the parent network self-link so clients can discover a subnet's

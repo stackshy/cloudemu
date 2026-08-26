@@ -166,6 +166,21 @@ func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.Subnet
 	return describeResources(m.subnets, ids, toSubnetInfo), nil
 }
 
+// ExpandSubnetCIDR widens a subnetwork's primary IP range, backing GCP's
+// subnetworks.expandIpCidrRange. The wire layer validates that cidr is a
+// superset of the current range before calling; here it just replaces the
+// stored block under the store lock.
+func (m *Mock) ExpandSubnetCIDR(_ context.Context, id, cidr string) error {
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.CIDRBlock = cidr
+		return s
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	return nil
+}
+
 // CreateSecurityGroup creates a new firewall rule group.
 func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	if cfg.Name == "" {
