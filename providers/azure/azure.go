@@ -211,6 +211,8 @@ func New(opts ...config.Option) *Provider {
 	p.NotificationHubs.SetMonitoring(p.Monitor)
 	p.ACR.SetMonitoring(p.Monitor)
 	p.EventGrid.SetMonitoring(p.Monitor)
+	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
+	p.EventGrid.SetFunctionInvoker(p.Functions)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)

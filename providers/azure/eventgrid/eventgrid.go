@@ -55,17 +55,46 @@ type busData struct {
 	events []driver.Event
 }
 
+// ServiceBusDeliverer enqueues an Event Grid event envelope into a Service Bus
+// queue or topic identified by name (the leaf of the destination's ARM
+// resourceId). The servicebus.Mock satisfies this via DeliverExternal, enabling
+// EventGrid -> ServiceBusQueue/ServiceBusTopic delivery.
+type ServiceBusDeliverer interface {
+	DeliverExternal(ctx context.Context, name, body string) error
+}
+
+// FunctionInvoker asynchronously invokes an Azure Function app by name with the
+// event envelope. The functions.Mock satisfies this via InvokeExternal, enabling
+// EventGrid -> AzureFunction delivery.
+type FunctionInvoker interface {
+	InvokeExternal(ctx context.Context, name string, payload []byte) error
+}
+
 // Mock is an in-memory mock implementation of Azure Event Grid.
 type Mock struct {
 	buses      *memstore.Store[*busData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	httpClient *http.Client
+	serviceBus ServiceBusDeliverer
+	functions  FunctionInvoker
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetServiceBusDeliverer wires the Service Bus backend so PutEvents delivers to
+// ServiceBusQueue/ServiceBusTopic subscription destinations.
+func (m *Mock) SetServiceBusDeliverer(d ServiceBusDeliverer) {
+	m.serviceBus = d
+}
+
+// SetFunctionInvoker wires the Functions backend so PutEvents invokes
+// AzureFunction subscription destinations.
+func (m *Mock) SetFunctionInvoker(i FunctionInvoker) {
+	m.functions = i
 }
 
 func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
