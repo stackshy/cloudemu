@@ -13,28 +13,34 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // gcsSnapshot is the full serialized state of the GCS mock: every bucket keyed
-// by name with its metadata, configuration sub-resources, and current objects.
-// In-progress multipart uploads are transient and intentionally not captured.
+// by name with its metadata, configuration sub-resources, and current objects,
+// plus the mock-level object-generation and notification-id counters so a
+// restore keeps minting past the restored maxima. In-progress multipart uploads
+// are transient and intentionally not captured.
 type gcsSnapshot struct {
-	Buckets map[string]*bucketSnapshot `json:"buckets,omitempty"`
+	Buckets  map[string]*bucketSnapshot `json:"buckets,omitempty"`
+	Gen      int64                      `json:"gen,omitempty"`
+	NotifGen int64                      `json:"notifGen,omitempty"`
 }
 
 type bucketSnapshot struct {
-	Name           string                     `json:"name"`
-	Region         string                     `json:"region,omitempty"`
-	CreatedAt      string                     `json:"createdAt,omitempty"`
-	Versioning     bool                       `json:"versioning,omitempty"`
-	Lifecycle      *driver.LifecycleConfig    `json:"lifecycle,omitempty"`
-	Policy         *driver.BucketPolicy       `json:"policy,omitempty"`
-	CORS           *driver.CORSConfig         `json:"cors,omitempty"`
-	Encryption     *driver.EncryptionConfig   `json:"encryption,omitempty"`
-	Tags           map[string]string          `json:"tags,omitempty"`
-	Location       string                     `json:"location,omitempty"`
-	StorageClass   string                     `json:"storageClass,omitempty"`
-	Metageneration int64                      `json:"metageneration,omitempty"`
-	Updated        string                     `json:"updated,omitempty"`
-	IAMPolicy      []byte                     `json:"iamPolicy,omitempty"`
-	Objects        map[string]*objectSnapshot `json:"objects,omitempty"`
+	Name           string                                  `json:"name"`
+	Region         string                                  `json:"region,omitempty"`
+	CreatedAt      string                                  `json:"createdAt,omitempty"`
+	Versioning     bool                                    `json:"versioning,omitempty"`
+	Lifecycle      *driver.LifecycleConfig                 `json:"lifecycle,omitempty"`
+	Policy         *driver.BucketPolicy                    `json:"policy,omitempty"`
+	CORS           *driver.CORSConfig                      `json:"cors,omitempty"`
+	Encryption     *driver.EncryptionConfig                `json:"encryption,omitempty"`
+	Tags           map[string]string                       `json:"tags,omitempty"`
+	Location       string                                  `json:"location,omitempty"`
+	StorageClass   string                                  `json:"storageClass,omitempty"`
+	Metageneration int64                                   `json:"metageneration,omitempty"`
+	Updated        string                                  `json:"updated,omitempty"`
+	IAMPolicy      []byte                                  `json:"iamPolicy,omitempty"`
+	Objects        map[string]*objectSnapshot              `json:"objects,omitempty"`
+	Versions       map[string][]*objectSnapshot            `json:"versions,omitempty"`
+	Notifications  map[string]driver.GCSNotificationConfig `json:"notifications,omitempty"`
 }
 
 // objectSnapshot mirrors gcsObject (all exported already), but Data is dropped
@@ -47,6 +53,7 @@ type objectSnapshot struct {
 	ContentType        string            `json:"contentType,omitempty"`
 	ETag               string            `json:"etag,omitempty"`
 	LastModified       string            `json:"lastModified,omitempty"`
+	Created            string            `json:"created,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
 	Tags               map[string]string `json:"tags,omitempty"`
 	Generation         int64             `json:"generation,omitempty"`
@@ -63,7 +70,11 @@ type objectSnapshot struct {
 // Snapshot captures every bucket's state as JSON. When includeAssets is false
 // the object bytes are omitted (metadata-only).
 func (m *Mock) Snapshot(_ context.Context, includeAssets bool) (json.RawMessage, error) {
-	snap := gcsSnapshot{Buckets: make(map[string]*bucketSnapshot, m.buckets.Len())}
+	snap := gcsSnapshot{
+		Buckets:  make(map[string]*bucketSnapshot, m.buckets.Len()),
+		Gen:      m.gen.Load(),
+		NotifGen: m.notifGen.Load(),
+	}
 
 	for name, bkt := range m.buckets.All() {
 		snap.Buckets[name] = snapshotBucket(bkt, includeAssets)
@@ -83,18 +94,55 @@ func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 	}
 
 	for key, obj := range bkt.objects.All() {
-		bs.Objects[key] = &objectSnapshot{
-			Key: obj.Key, Data: assetBytes(obj.Data, includeAssets), Size: obj.Size,
-			ContentType: obj.ContentType, ETag: obj.ETag, LastModified: obj.LastModified,
-			Metadata: obj.Metadata, Tags: obj.Tags,
-			Generation: obj.Generation, Metageneration: obj.Metageneration,
-			MD5: obj.MD5, CRC32C: obj.CRC32C, CacheControl: obj.CacheControl,
-			ContentEncoding: obj.ContentEncoding, ContentDisposition: obj.ContentDisposition,
-			ContentLanguage: obj.ContentLanguage, StorageClass: obj.StorageClass,
+		bs.Objects[key] = objectToSnapshot(obj, includeAssets)
+	}
+
+	snapshotBucketVersionsAndNotifications(bkt, bs, includeAssets)
+
+	return bs
+}
+
+// snapshotBucketVersionsAndNotifications captures the archived (noncurrent)
+// object generations and the bucket's Pub/Sub notification configs, both guarded
+// by bkt.mu.
+func snapshotBucketVersionsAndNotifications(bkt *bucketMeta, bs *bucketSnapshot, includeAssets bool) {
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	if len(bkt.versions) > 0 {
+		bs.Versions = make(map[string][]*objectSnapshot, len(bkt.versions))
+
+		for key, chain := range bkt.versions {
+			out := make([]*objectSnapshot, 0, len(chain))
+			for _, v := range chain {
+				out = append(out, objectToSnapshot(v, includeAssets))
+			}
+
+			bs.Versions[key] = out
 		}
 	}
 
-	return bs
+	if len(bkt.notifications) > 0 {
+		bs.Notifications = make(map[string]driver.GCSNotificationConfig, len(bkt.notifications))
+		for id, cfg := range bkt.notifications {
+			bs.Notifications[id] = cfg
+		}
+	}
+}
+
+// objectToSnapshot projects a stored gcsObject into its serializable form,
+// dropping the bytes for a metadata-only snapshot. Shared by the current-object
+// and archived-version paths so both carry identical fields.
+func objectToSnapshot(obj *gcsObject, includeAssets bool) *objectSnapshot {
+	return &objectSnapshot{
+		Key: obj.Key, Data: assetBytes(obj.Data, includeAssets), Size: obj.Size,
+		ContentType: obj.ContentType, ETag: obj.ETag, LastModified: obj.LastModified,
+		Created: obj.Created, Metadata: obj.Metadata, Tags: obj.Tags,
+		Generation: obj.Generation, Metageneration: obj.Metageneration,
+		MD5: obj.MD5, CRC32C: obj.CRC32C, CacheControl: obj.CacheControl,
+		ContentEncoding: obj.ContentEncoding, ContentDisposition: obj.ContentDisposition,
+		ContentLanguage: obj.ContentLanguage, StorageClass: obj.StorageClass,
+	}
 }
 
 // assetBytes returns data only when assets are included, so metadata-only
@@ -114,6 +162,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fmt.Errorf("gcs: parse snapshot: %w", err)
 	}
+
+	m.gen.Store(snap.Gen)
+	m.notifGen.Store(snap.NotifGen)
 
 	for name, bs := range snap.Buckets {
 		m.buckets.Set(name, restoreBucket(bs))
@@ -137,19 +188,44 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 		encryption: bs.Encryption, tags: bs.Tags,
 		location: bs.Location, storageClass: bs.StorageClass,
 		metageneration: metagen, updated: bs.Updated, iamPolicy: bs.IAMPolicy,
-		versions: make(map[string][]*gcsObject),
+		versions:      restoreVersions(bs.Versions),
+		notifications: bs.Notifications,
 	}
 
 	for key, os := range bs.Objects {
-		bkt.objects.Set(key, &gcsObject{
-			Key: os.Key, Data: os.Data, Size: os.Size, ContentType: os.ContentType,
-			ETag: os.ETag, LastModified: os.LastModified, Metadata: os.Metadata, Tags: os.Tags,
-			Generation: os.Generation, Metageneration: os.Metageneration,
-			MD5: os.MD5, CRC32C: os.CRC32C, CacheControl: os.CacheControl,
-			ContentEncoding: os.ContentEncoding, ContentDisposition: os.ContentDisposition,
-			ContentLanguage: os.ContentLanguage, StorageClass: os.StorageClass,
-		})
+		bkt.objects.Set(key, snapshotToObject(os))
 	}
 
 	return bkt
+}
+
+// restoreVersions rebuilds the archived (noncurrent) generation chains,
+// preserving order. An empty history yields a fresh, non-nil map so the write
+// path can append without a nil check.
+func restoreVersions(snap map[string][]*objectSnapshot) map[string][]*gcsObject {
+	versions := make(map[string][]*gcsObject, len(snap))
+
+	for key, chain := range snap {
+		out := make([]*gcsObject, 0, len(chain))
+		for _, os := range chain {
+			out = append(out, snapshotToObject(os))
+		}
+
+		versions[key] = out
+	}
+
+	return versions
+}
+
+// snapshotToObject reconstructs a stored gcsObject from its serialized form.
+func snapshotToObject(os *objectSnapshot) *gcsObject {
+	return &gcsObject{
+		Key: os.Key, Data: os.Data, Size: os.Size, ContentType: os.ContentType,
+		ETag: os.ETag, LastModified: os.LastModified, Created: os.Created,
+		Metadata: os.Metadata, Tags: os.Tags,
+		Generation: os.Generation, Metageneration: os.Metageneration,
+		MD5: os.MD5, CRC32C: os.CRC32C, CacheControl: os.CacheControl,
+		ContentEncoding: os.ContentEncoding, ContentDisposition: os.ContentDisposition,
+		ContentLanguage: os.ContentLanguage, StorageClass: os.StorageClass,
+	}
 }
