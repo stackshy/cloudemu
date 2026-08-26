@@ -92,9 +92,14 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 		rec = &queueRecord{Name: name, DriverURL: url, DLQURL: dlqURL, CreatedAt: now}
 		ns.Queues[name] = rec
 	} else if rec.DriverURL != "" {
-		// PUT is create-or-update: honor a LockDuration change on an existing
-		// queue's peek-lock visibility window too.
-		_ = h.mq.SetQueueAttributes(r.Context(), rec.DriverURL, map[string]int{"VisibilityTimeout": lockSeconds})
+		// PUT is create-or-update: propagate a LockDuration, MaxDeliveryCount or
+		// deadLetteringOnMessageExpiration change onto the backing store so, e.g.,
+		// lowering maxDeliveryCount dead-letters at the new threshold.
+		_ = h.mq.SetQueueAttributes(r.Context(), rec.DriverURL, map[string]int{
+			"VisibilityTimeout":      lockSeconds,
+			"MaxDeliveryCount":       effectiveMaxDeliveryCount(&req.Properties),
+			"DeadLetterOnExpiration": boolToInt(req.Properties.DeadLetteringOnExpiration),
+		})
 	}
 
 	rec.Props = buildQueueProps(&req.Properties, rec.CreatedAt, now)

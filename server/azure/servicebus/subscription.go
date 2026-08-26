@@ -1,6 +1,7 @@
 package servicebus
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -29,7 +30,7 @@ func (h *Handler) serveSubCollection(w http.ResponseWriter, r *http.Request, sp 
 
 	resources := make([]any, 0, len(t.Subs))
 	for _, n := range sortedKeys(t.Subs) {
-		resources = append(resources, toSubResource(sp, topic, t.Subs[n]))
+		resources = append(resources, h.toSubResource(sp, topic, t.Subs[n]))
 	}
 
 	h.mu.RUnlock()
@@ -83,15 +84,20 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, sp 
 		rec.Rules[defaultRuleName] = defaultRule()
 		t.Subs[name] = rec
 	} else if rec.DriverURL != "" {
-		// PUT is create-or-update: honor a LockDuration change on an existing
-		// subscription's peek-lock visibility window too.
-		_ = h.mq.SetQueueAttributes(r.Context(), rec.DriverURL, map[string]int{"VisibilityTimeout": lockSeconds})
+		// PUT is create-or-update: propagate a LockDuration, MaxDeliveryCount or
+		// deadLetteringOnMessageExpiration change onto the backing store so, e.g.,
+		// lowering maxDeliveryCount dead-letters at the new threshold.
+		_ = h.mq.SetQueueAttributes(r.Context(), rec.DriverURL, map[string]int{
+			"VisibilityTimeout":      lockSeconds,
+			"MaxDeliveryCount":       effectiveSubMaxDeliveryCount(&req.Properties),
+			"DeadLetterOnExpiration": boolToInt(req.Properties.DeadLetteringOnExpiration),
+		})
 	}
 
 	rec.Props = buildSubProps(&req.Properties, rec.CreatedAt, now)
 	rec.UpdatedAt = now
 
-	resource := toSubResource(sp, topic, rec)
+	resource := h.toSubResource(sp, topic, rec)
 	h.mu.Unlock()
 
 	azurearm.WriteJSON(w, http.StatusOK, resource)
@@ -107,7 +113,7 @@ func (h *Handler) getSubscription(w http.ResponseWriter, sp sbPath, topic, name 
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toSubResource(sp, topic, rec))
+	azurearm.WriteJSON(w, http.StatusOK, h.toSubResource(sp, topic, rec))
 }
 
 func (h *Handler) deleteSubscription(w http.ResponseWriter, sp sbPath, topic, name string) {
@@ -232,14 +238,49 @@ func buildSubProps(in *subscriptionProperties, created, updated time.Time) subsc
 	return out
 }
 
-func toSubResource(sp sbPath, topic string, rec *subscriptionRecord) subscriptionResource {
+// toSubResource renders a subscription's ARM shape, refreshing its live message
+// counts from the backing stores (mirroring toQueueResource): activeMessageCount
+// from the subscription store and deadLetterMessageCount from its paired
+// $DeadLetterQueue, with messageCount as their sum.
+func (h *Handler) toSubResource(sp sbPath, topic string, rec *subscriptionRecord) subscriptionResource {
+	props := rec.Props
+
+	active := h.approxCount(rec.DriverURL)
+	dead := h.approxCount(rec.DLQURL)
+
+	props.MessageCount = active + dead
+	props.CountDetails = &countDetails{ActiveMessageCount: active, DeadLetterMessageCount: dead}
+
 	return subscriptionResource{
 		ID: azurearm.BuildResourceID(sp.sub, sp.rg, providerName, resourceType, sp.namespace) +
 			"/topics/" + topic + "/subscriptions/" + rec.Name,
 		Name:       rec.Name,
 		Type:       providerName + "/Namespaces/Topics/Subscriptions",
-		Properties: rec.Props,
+		Properties: props,
 	}
+}
+
+// approxCount reports the approximate visible-message count of a backing store,
+// or 0 when the URL is empty or the store is unavailable.
+func (h *Handler) approxCount(url string) int64 {
+	if url == "" {
+		return 0
+	}
+
+	if info, err := h.mq.GetQueueInfo(context.Background(), url); err == nil && info != nil {
+		return int64(info.ApproxMessageCount)
+	}
+
+	return 0
+}
+
+// boolToInt encodes a bool as 0/1 for the int-only SetQueueAttributes map.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+
+	return 0
 }
 
 func writeTopicNotFound(w http.ResponseWriter, name string) {

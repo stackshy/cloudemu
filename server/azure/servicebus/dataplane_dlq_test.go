@@ -145,6 +145,55 @@ func TestDataPlaneSubscriptionDeadLetter(t *testing.T) {
 	}
 }
 
+// TestDataPlaneLowerMaxDeliveryCountViaPut is the regression for an update PUT
+// not propagating maxDeliveryCount to the backing store: lowering it from 10 to
+// 1 must take effect, dead-lettering at the new threshold.
+func TestDataPlaneLowerMaxDeliveryCountViaPut(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+
+	// Created with the default maxDeliveryCount (10).
+	if r := doRequest(t, srv, http.MethodPut, queueURL("relax")+apiVer, `{"properties":{}}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("create queue = %d", r.StatusCode)
+	}
+
+	// Update PUT lowers maxDeliveryCount to 1.
+	if r := doRequest(t, srv, http.MethodPut, queueURL("relax")+apiVer,
+		`{"properties":{"maxDeliveryCount":1}}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("update queue = %d", r.StatusCode)
+	}
+
+	if r := doRequest(t, srv, http.MethodPost, "/"+nsName+"/relax/messages", "boom"); r.StatusCode != http.StatusCreated {
+		t.Fatalf("send = %d", r.StatusCode)
+	}
+
+	// maxDeliveryCount=1: one delivery, then dead-lettered on the 2nd attempt.
+	lock := doRequest(t, srv, http.MethodPost, "/"+nsName+"/relax/messages/head", "")
+	if lock.StatusCode != http.StatusCreated {
+		t.Fatalf("peek-lock = %d, want 201", lock.StatusCode)
+	}
+
+	_ = readBody(t, lock)
+
+	if r := doRequest(t, srv, http.MethodPut, lock.Header.Get("Location"), ""); r.StatusCode != http.StatusOK {
+		t.Fatalf("abandon = %d", r.StatusCode)
+	}
+
+	second := doRequest(t, srv, http.MethodPost, "/"+nsName+"/relax/messages/head", "")
+	if second.StatusCode != http.StatusNoContent {
+		t.Fatalf("2nd receive = %d, want 204 (dead-lettered at lowered threshold)", second.StatusCode)
+	}
+
+	dlq := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/relax/$DeadLetterQueue/messages/head", "")
+	if dlq.StatusCode != http.StatusOK {
+		t.Fatalf("DLQ receive = %d, want 200", dlq.StatusCode)
+	}
+
+	if got := readBody(t, dlq); got != "boom" {
+		t.Fatalf("DLQ body = %q, want boom", got)
+	}
+}
+
 // TestDataPlaneRenewLock is the regression for the unimplemented renew-lock
 // verb: a POST on a locked message must extend its lock (200), not return 405.
 func TestDataPlaneRenewLock(t *testing.T) {

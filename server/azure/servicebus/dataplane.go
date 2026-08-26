@@ -436,12 +436,9 @@ func (h *Handler) dataPlaneSend(w http.ResponseWriter, r *http.Request, url stri
 // real Service Bus). A topic with no subscriptions, or with none whose rules
 // match, still returns 201 (the message is accepted and dropped), matching
 // Azure. Each matching subscription persists the sender's system properties and
-// applies its own default message TTL.
-//
-// DEFER: only the well-known system properties are evaluated in filters;
-// arbitrary custom application-property headers are not parsed, so a SqlFilter
-// or CorrelationFilter predicate over a user-defined property cannot disqualify
-// a subscription yet.
+// applies its own default message TTL. Both the well-known system properties
+// and the sender's custom application-property headers are evaluated in
+// filters.
 func (h *Handler) dataPlaneTopicSend(w http.ResponseWriter, r *http.Request, targets []topicSubTarget) {
 	if r.Method != http.MethodPost {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "send requires POST")
@@ -449,7 +446,7 @@ func (h *Handler) dataPlaneTopicSend(w http.ResponseWriter, r *http.Request, tar
 	}
 
 	bp := parseWireBrokerProps(r)
-	filter := bp.filterProps()
+	filter := bp.filterProps(customHeaderProps(r))
 
 	body, ok := readSendBody(w, r)
 	if !ok {
@@ -499,9 +496,9 @@ func parseWireBrokerProps(r *http.Request) wireBrokerProps {
 	return bp
 }
 
-// filterProps projects the well-known system properties a subscription rule
-// filter evaluates against.
-func (b *wireBrokerProps) filterProps() messageProps {
+// filterProps projects the well-known system properties, plus the supplied
+// custom application properties, a subscription rule filter evaluates against.
+func (b *wireBrokerProps) filterProps(custom map[string]string) messageProps {
 	return messageProps{
 		MessageID:        b.MessageID,
 		CorrelationID:    b.CorrelationID,
@@ -511,6 +508,52 @@ func (b *wireBrokerProps) filterProps() messageProps {
 		SessionID:        b.SessionID,
 		ReplyToSessionID: b.ReplyToSessionID,
 		ContentType:      b.ContentType,
+		Custom:           custom,
+	}
+}
+
+// customHeaderProps extracts the sender's custom application properties from a
+// data-plane send request. Per the Service Bus REST protocol, user properties
+// travel as individual HTTP headers alongside the system-property
+// BrokerProperties header; reserved protocol headers and the literal value
+// "null" are dropped. https://learn.microsoft.com/rest/api/servicebus/send-message-to-queue
+func customHeaderProps(r *http.Request) map[string]string {
+	out := map[string]string{}
+
+	for name, vals := range r.Header {
+		if len(vals) == 0 || isReservedHeader(name) {
+			continue
+		}
+
+		v := vals[0]
+		if v == "" || strings.EqualFold(v, "null") {
+			continue
+		}
+
+		out[name] = v
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// isReservedHeader reports whether a header name is a Service Bus protocol
+// header or a standard HTTP header that must not be surfaced as a custom
+// application property. Matched case-insensitively.
+func isReservedHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "authorization", "content-type", "content-length", "content-encoding",
+		"content-md5", "brokerproperties", "x-ms-retrypolicy", "host", "user-agent",
+		"accept", "accept-encoding", "accept-charset", "accept-language", "connection",
+		"date", "expect", "transfer-encoding", "cookie", "cache-control", "pragma",
+		"referer", "origin", "range", "te", "trailer", "upgrade", "via", "warning",
+		"keep-alive", "server", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto":
+		return true
+	default:
+		return false
 	}
 }
 
