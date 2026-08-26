@@ -71,6 +71,14 @@ type KeyMetadata struct {
 	// ValidTo is the expiry of imported key material (zero when not set).
 	ValidTo time.Time
 
+	// Algorithm lists advertised for the key, populated from KeySpec+KeyUsage.
+	// Only the one matching the usage is set: EncryptionAlgorithms for
+	// ENCRYPT_DECRYPT, SigningAlgorithms for SIGN_VERIFY, MacAlgorithms for
+	// GENERATE_VERIFY_MAC.
+	EncryptionAlgorithms []string
+	SigningAlgorithms    []string
+	MacAlgorithms        []string
+
 	// Multi-region configuration (populated only when MultiRegion is true).
 	// MultiRegionKeyType is "PRIMARY" or "REPLICA".
 	MultiRegionKeyType string

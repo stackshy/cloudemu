@@ -246,28 +246,73 @@ func rsaAlgOrDefault(alg string) string {
 	return driver.EncRSAOAEPSHA256
 }
 
-// Decrypt decrypts a ciphertext blob. The blob is self-describing, so KeyID is
-// optional for symmetric keys but validated when supplied.
+// Decrypt decrypts a ciphertext blob. A self-describing wrapped blob (the
+// emulator's own symmetric AES-GCM or RSA output) names its own key and
+// decrypts without a KeyId. Raw RSA-OAEP ciphertext produced offline from a
+// downloaded public key (see GetPublicKey) carries no envelope, so it is
+// decrypted via the asymmetric fallback using the explicit KeyId — matching
+// real KMS, where asymmetric Decrypt requires the key identifier.
 func (m *Mock) Decrypt(_ context.Context, in driver.DecryptInput) (*driver.DecryptOutput, error) {
-	magic, keyID, body, err := decodeBlob(in.CiphertextBlob)
-	if err != nil {
-		return nil, err
+	if out, matched, err := m.decryptWrapped(in); matched {
+		return out, err
+	}
+
+	return m.decryptRawAsymmetric(in)
+}
+
+// decryptWrapped handles the self-describing blob format. matched is true when
+// the blob is one of the emulator's recognized wrapped blobs for a known key,
+// in which case the returned error (if any) is authoritative; matched is false
+// when the input is not such a blob, so the caller can try the raw-asymmetric
+// path instead.
+func (m *Mock) decryptWrapped(in driver.DecryptInput) (out *driver.DecryptOutput, matched bool, err error) {
+	magic, keyID, body, derr := decodeBlob(in.CiphertextBlob)
+	if derr != nil || (magic != blobMagicGCM && magic != blobMagicRSAOAEP) {
+		return nil, false, nil
+	}
+
+	kd, ok := m.keys.Get(keyID)
+	if !ok {
+		return nil, false, nil
 	}
 
 	if in.KeyID != "" {
 		resolved, rerr := m.resolveKeyID(in.KeyID)
 		if rerr != nil {
-			return nil, rerr
+			return nil, true, rerr
 		}
 
 		if resolved != keyID {
-			return nil, driver.ErrIncorrectKey
+			return nil, true, driver.ErrIncorrectKey
 		}
 	}
 
-	kd, ok := m.keys.Get(keyID)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "key %q not found", keyID)
+	kd.mu.RLock()
+	defer kd.mu.RUnlock()
+
+	if uerr := requireUsable(kd); uerr != nil {
+		return nil, true, uerr
+	}
+
+	pt, alg, err := decryptBody(kd, magic, body, in.EncryptionContext)
+	if err != nil {
+		return nil, true, err
+	}
+
+	return &driver.DecryptOutput{KeyID: kd.meta.KeyID, Plaintext: pt, EncryptionAlgorithm: alg}, true, nil
+}
+
+// decryptRawAsymmetric decrypts raw RSA-OAEP ciphertext (no envelope) under the
+// asymmetric key named by KeyId. A missing/symmetric/non-RSA key yields the same
+// InvalidCiphertext/InvalidKeyUsage errors real KMS returns.
+func (m *Mock) decryptRawAsymmetric(in driver.DecryptInput) (*driver.DecryptOutput, error) {
+	if in.KeyID == "" {
+		return nil, driver.ErrInvalidCiphertext
+	}
+
+	kd, err := m.getKey(in.KeyID)
+	if err != nil {
+		return nil, err
 	}
 
 	kd.mu.RLock()
@@ -277,7 +322,15 @@ func (m *Mock) Decrypt(_ context.Context, in driver.DecryptInput) (*driver.Decry
 		return nil, uerr
 	}
 
-	pt, alg, err := decryptBody(kd, magic, body, in.EncryptionContext)
+	if _, ok := kd.privKey.(*rsa.PrivateKey); !ok {
+		return nil, driver.ErrInvalidCiphertext
+	}
+
+	if kd.meta.KeyUsage != driver.UsageEncryptDecrypt {
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	pt, alg, err := decryptRSA(kd, in.CiphertextBlob)
 	if err != nil {
 		return nil, err
 	}

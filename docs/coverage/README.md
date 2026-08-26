@@ -36,7 +36,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `kafka` | [Kafka](./aws/kafka.md) | — | — | — | 59 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
-| `kms` | [KMS](./aws/kms.md) | — | — | — | 45 |
+| `kms` | [KMS](./aws/kms.md) | — | — | — | 46 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
 | `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 14 |
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |

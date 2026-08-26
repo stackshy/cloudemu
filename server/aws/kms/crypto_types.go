@@ -82,6 +82,20 @@ type generateRandomResponse struct {
 	Plaintext []byte `json:"Plaintext"`
 }
 
+type getPublicKeyRequest struct {
+	KeyID string `json:"KeyId"`
+}
+
+type getPublicKeyResponse struct {
+	KeyID                 string   `json:"KeyId"`
+	PublicKey             []byte   `json:"PublicKey"`
+	KeySpec               string   `json:"KeySpec"`
+	CustomerMasterKeySpec string   `json:"CustomerMasterKeySpec"`
+	KeyUsage              string   `json:"KeyUsage"`
+	EncryptionAlgorithms  []string `json:"EncryptionAlgorithms,omitempty"`
+	SigningAlgorithms     []string `json:"SigningAlgorithms,omitempty"`
+}
+
 type signRequest struct {
 	KeyID            string `json:"KeyId"`
 	Message          []byte `json:"Message"`
