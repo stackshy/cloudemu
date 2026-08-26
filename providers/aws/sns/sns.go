@@ -79,8 +79,12 @@ func isValidProtocol(protocol string) bool {
 
 // SQSDeliverer delivers an SNS notification into an SQS queue identified by
 // its ARN. The SQS mock satisfies this, enabling real SNS -> SQS fan-out.
+// DeliverExternalFIFO carries the FIFO MessageGroupId / MessageDeduplicationId so
+// a FIFO topic fanning out to a FIFO SQS queue (which requires a group id) is not
+// silently rejected; group/dedup are empty for standard delivery.
 type SQSDeliverer interface {
 	DeliverExternal(ctx context.Context, queueARN, body string) error
+	DeliverExternalFIFO(ctx context.Context, queueARN, body, groupID, dedupID string) error
 }
 
 // Mock is an in-memory mock implementation of the AWS SNS service.
@@ -340,6 +344,8 @@ func (m *Mock) ListSubscriptions(_ context.Context, topicID string) ([]driver.Su
 }
 
 // Publish publishes a message to an SNS topic.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
 	td, ok := m.topics.Get(input.TopicID)
 	if !ok {
@@ -367,7 +373,7 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 	})
 	td.mu.Unlock()
 
-	m.fanOutToSQS(ctx, td, msgID, input)
+	m.fanOutToSQS(ctx, td, msgID, &input)
 
 	dims := map[string]string{"TopicName": input.TopicID}
 	m.emitMetric("NumberOfMessagesPublished", 1, "Count", dims)
@@ -403,7 +409,7 @@ func arnResource(arn string) string {
 
 // fanOutToSQS delivers a published message to every SQS-protocol subscription
 // on the topic, wrapping it in the SNS notification envelope real SNS uses.
-func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, input driver.PublishInput) {
+func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, input *driver.PublishInput) {
 	if m.sqs == nil {
 		return
 	}
@@ -415,30 +421,45 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 
 		// A filter policy gates delivery: the message reaches the subscriber
 		// only when its attributes (or body) satisfy the policy.
-		if !subscriptionAccepts(&sub, &input) {
+		if !subscriptionAccepts(&sub, input) {
 			continue
 		}
 
 		// With raw message delivery enabled, SNS strips its metadata and sends
 		// the published message body as-is instead of the Notification envelope.
-		if rawDeliveryEnabled(&sub) {
-			_ = m.sqs.DeliverExternal(ctx, sub.Endpoint, input.Message)
+		body := input.Message
 
-			continue
+		if !rawDeliveryEnabled(&sub) {
+			envelope, err := m.notificationEnvelope(td, msgID, input, sub.ID)
+			if err != nil {
+				continue
+			}
+
+			body = envelope
 		}
 
-		envelope, err := m.notificationEnvelope(td, msgID, input, sub.ID)
-		if err != nil {
-			continue
-		}
-
-		_ = m.sqs.DeliverExternal(ctx, sub.Endpoint, envelope)
+		m.deliverToSQS(ctx, sub.Endpoint, body, input)
 	}
+}
+
+// deliverToSQS fans one message out to a single SQS subscription, carrying the
+// publish's FIFO group/dedup ids so a FIFO queue accepts it. A delivery failure
+// is recorded as an SNS metric rather than swallowed, so a real misconfiguration
+// (e.g. a FIFO target without a group id) is observable instead of a silent drop.
+func (m *Mock) deliverToSQS(ctx context.Context, queueARN, body string, input *driver.PublishInput) {
+	err := m.sqs.DeliverExternalFIFO(ctx, queueARN, body, input.MessageGroupID, input.MessageDeduplicationID)
+
+	metric := "NumberOfNotificationsDelivered"
+	if err != nil {
+		metric = "NumberOfNotificationsFailed"
+	}
+
+	m.emitMetric(metric, 1, "Count", map[string]string{"TopicName": input.TopicID})
 }
 
 // notificationEnvelope builds the SNS Notification JSON that wraps a published
 // message for a non-raw SQS subscription.
-func (m *Mock) notificationEnvelope(td *topicData, msgID string, input driver.PublishInput, subARN string) (string, error) {
+func (m *Mock) notificationEnvelope(td *topicData, msgID string, input *driver.PublishInput, subARN string) (string, error) {
 	env := map[string]any{
 		"Type":             "Notification",
 		"MessageId":        msgID,

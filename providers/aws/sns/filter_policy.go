@@ -57,7 +57,7 @@ func matchesMessageAttributes(policy map[string]any, attrs map[string]string) bo
 		}
 
 		value, present := attrs[key]
-		if !eventmatch.MatchLeaf(allowed, value, present) {
+		if !eventmatch.MatchLeafAttr(allowed, value, present) {
 			return false
 		}
 	}

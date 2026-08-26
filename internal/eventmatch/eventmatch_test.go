@@ -236,6 +236,41 @@ func TestMatchEventArrayValueIntersection(t *testing.T) {
 	}
 }
 
+// TestMatchLeafAttrNumericStrings asserts the SNS message-attribute rule: a
+// numeric operator matches a numeric STRING (attribute values arrive as strings)
+// under MatchLeafAttr, while MatchLeaf keeps the stricter body/EventBridge rule
+// that a string never satisfies a numeric operator. Non-numeric strings match
+// neither.
+func TestMatchLeafAttrNumericStrings(t *testing.T) {
+	cases := []struct {
+		name     string
+		pattern  string
+		value    any
+		attrWant bool
+		leafWant bool
+	}{
+		{"numeric string above", `{"price":[{"numeric":[">",100]}]}`, "150", true, false},
+		{"numeric string below", `{"price":[{"numeric":[">",100]}]}`, "50", false, false},
+		{"numeric float above", `{"price":[{"numeric":[">",100]}]}`, float64(150), true, true},
+		{"non-numeric string", `{"price":[{"numeric":[">",100]}]}`, "cheap", false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustPattern(t, tc.pattern)
+			allowed, _ := p["price"].([]any)
+
+			if got := eventmatch.MatchLeafAttr(allowed, tc.value, true); got != tc.attrWant {
+				t.Fatalf("MatchLeafAttr = %v, want %v", got, tc.attrWant)
+			}
+
+			if got := eventmatch.MatchLeaf(allowed, tc.value, true); got != tc.leafWant {
+				t.Fatalf("MatchLeaf = %v, want %v", got, tc.leafWant)
+			}
+		})
+	}
+}
+
 func TestParsePatternRejectsGarbage(t *testing.T) {
 	if _, ok := eventmatch.ParsePattern("not json"); ok {
 		t.Fatal("expected garbage pattern to fail parse")

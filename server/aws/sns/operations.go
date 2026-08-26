@@ -423,10 +423,12 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.notif.Publish(r.Context(), notifdriver.PublishInput{
-		TopicID:    topicNameFromARN(arn),
-		Subject:    r.Form.Get("Subject"),
-		Message:    r.Form.Get("Message"),
-		Attributes: parseMessageAttributes(r.Form),
+		TopicID:                topicNameFromARN(arn),
+		Subject:                r.Form.Get("Subject"),
+		Message:                r.Form.Get("Message"),
+		Attributes:             parseMessageAttributes(r.Form),
+		MessageGroupID:         r.Form.Get("MessageGroupId"),
+		MessageDeduplicationID: r.Form.Get("MessageDeduplicationId"),
 	})
 	if err != nil {
 		writeErr(w, err)

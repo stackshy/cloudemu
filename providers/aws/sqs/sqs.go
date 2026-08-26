@@ -140,6 +140,14 @@ func (m *Mock) SetEventSourceInvoker(i EventSourceInvoker) {
 // the source only knows the target queue's ARN. Returns NotFound if no queue
 // matches the ARN.
 func (m *Mock) DeliverExternal(ctx context.Context, queueARN, body string) error {
+	return m.DeliverExternalFIFO(ctx, queueARN, body, "", "")
+}
+
+// DeliverExternalFIFO is DeliverExternal carrying the FIFO MessageGroupId /
+// MessageDeduplicationId. A FIFO queue rejects a send without a MessageGroupId,
+// so an SNS FIFO topic fanning out to a FIFO SQS queue must pass the group id
+// through; groupID/dedupID are empty for standard delivery.
+func (m *Mock) DeliverExternalFIFO(ctx context.Context, queueARN, body, groupID, dedupID string) error {
 	var url string
 
 	for _, qd := range m.queues.SortedValues() {
@@ -153,7 +161,12 @@ func (m *Mock) DeliverExternal(ctx context.Context, queueARN, body string) error
 		return errors.Newf(errors.NotFound, "no queue found for arn %q", queueARN)
 	}
 
-	_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: body})
+	_, err := m.SendMessage(ctx, driver.SendMessageInput{
+		QueueURL:        url,
+		Body:            body,
+		GroupID:         groupID,
+		DeduplicationID: dedupID,
+	})
 
 	return err
 }
@@ -897,6 +910,13 @@ func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) 
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}
 
+	if !isWellFormedReceiptHandle(receiptHandle) {
+		// AWS rejects a syntactically-invalid receipt handle with
+		// ReceiptHandleIsInvalid (FailedPrecondition maps to that wire code),
+		// distinct from the idempotent no-op for a stale but well-formed handle.
+		return errors.Newf(errors.FailedPrecondition, "receipt handle %q is invalid", receiptHandle)
+	}
+
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
@@ -912,6 +932,28 @@ func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) 
 	// DeleteMessage is idempotent: an old/stale (but well-formed) receipt handle
 	// against an existing queue succeeds without deleting anything.
 	return nil
+}
+
+// isWellFormedReceiptHandle reports whether a receipt handle is syntactically
+// valid: non-empty and built only from the characters a real SQS receipt handle
+// (a base64url token) and this emulator's own handles use. A stale handle from a
+// prior receive still passes, so DeleteMessage stays idempotent for it; a
+// syntactically-invalid handle (e.g. "!!!not-a-handle!!!") is rejected.
+func isWellFormedReceiptHandle(handle string) bool {
+	if handle == "" {
+		return false
+	}
+
+	for _, r := range handle {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '+', r == '/', r == '=', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 // ChangeVisibility changes the visibility timeout of a message in the specified queue.
