@@ -318,10 +318,20 @@ func TestModifyInstance(t *testing.T) {
 
 func TestMatchesFilters(t *testing.T) {
 	inst := &instanceData{
-		ID:           "i-123",
-		InstanceType: "t2.micro",
-		State:        "running",
-		Tags:         map[string]string{"env": "prod"},
+		ID:            "i-123",
+		InstanceType:  "t2.micro",
+		State:         "running",
+		ImageID:       "ami-abc",
+		VPCID:         "vpc-1",
+		SubnetID:      "subnet-1",
+		PrivateIP:     "10.0.0.5",
+		keyName:       "my-key",
+		reservationID: "r-1",
+		Tags:          map[string]string{"env": "prod"},
+	}
+
+	f := func(name string, values ...string) []driver.DescribeFilter {
+		return []driver.DescribeFilter{{Name: name, Values: values}}
 	}
 
 	tests := []struct {
@@ -330,11 +340,26 @@ func TestMatchesFilters(t *testing.T) {
 		expect  bool
 	}{
 		{name: "no filters", filters: nil, expect: true},
-		{name: "match instance-id", filters: []driver.DescribeFilter{{Name: "instance-id", Values: []string{"i-123"}}}, expect: true},
-		{name: "no match instance-id", filters: []driver.DescribeFilter{{Name: "instance-id", Values: []string{"i-999"}}}, expect: false},
-		{name: "match tag", filters: []driver.DescribeFilter{{Name: "tag:env", Values: []string{"prod"}}}, expect: true},
-		{name: "no match tag", filters: []driver.DescribeFilter{{Name: "tag:env", Values: []string{"dev"}}}, expect: false},
-		{name: "unknown filter passes", filters: []driver.DescribeFilter{{Name: "unknown", Values: []string{"x"}}}, expect: true},
+		{name: "match instance-id", filters: f("instance-id", "i-123"), expect: true},
+		{name: "no match instance-id", filters: f("instance-id", "i-999"), expect: false},
+		{name: "match tag", filters: f("tag:env", "prod"), expect: true},
+		{name: "no match tag", filters: f("tag:env", "dev"), expect: false},
+		{name: "match tag-key", filters: f("tag-key", "env"), expect: true},
+		{name: "no match tag-key", filters: f("tag-key", "team"), expect: false},
+		{name: "match vpc-id", filters: f("vpc-id", "vpc-1"), expect: true},
+		{name: "no match vpc-id", filters: f("vpc-id", "vpc-9"), expect: false},
+		{name: "match subnet-id", filters: f("subnet-id", "subnet-1"), expect: true},
+		{name: "no match subnet-id", filters: f("subnet-id", "subnet-9"), expect: false},
+		{name: "match image-id", filters: f("image-id", "ami-abc"), expect: true},
+		{name: "match private-ip-address", filters: f("private-ip-address", "10.0.0.5"), expect: true},
+		{name: "match private-dns-name", filters: f("private-dns-name", "ip-10-0-0-5.ec2.internal"), expect: true},
+		{name: "match key-name", filters: f("key-name", "my-key"), expect: true},
+		{name: "match reservation-id", filters: f("reservation-id", "r-1"), expect: true},
+		{name: "match availability-zone", filters: f("availability-zone", instanceZone), expect: true},
+		{name: "match architecture", filters: f("architecture", instanceArchitecture), expect: true},
+		{name: "no match instance-lifecycle spot", filters: f("instance-lifecycle", "spot"), expect: false},
+		// An unknown filter never matches (DescribeInstances rejects it up front).
+		{name: "unknown filter does not match", filters: f("unknown", "x"), expect: false},
 	}
 
 	for _, tc := range tests {

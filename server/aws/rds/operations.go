@@ -110,13 +110,21 @@ func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 		ids = []string{id}
 	}
 
+	filters := parseInstanceFilters(r.Form)
+	if name, ok := unknownInstanceFilter(filters); !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue",
+			"Unrecognized RDS filter: "+name)
+
+		return
+	}
+
 	insts, err := h.db.DescribeInstances(r.Context(), ids)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	insts = filterInstances(insts, parseInstanceFilters(r.Form))
+	insts = filterInstances(insts, filters)
 
 	page, ok := paginateRDS(w, r, insts, func(i *rdsdriver.Instance) string { return i.ID })
 	if !ok {
@@ -137,8 +145,9 @@ func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseInstanceFilters reads the Filters.Filter.N.{Name,Values.Value.M} entries
-// into a name→values map. Only the DescribeDBInstances-supported filter names
-// are meaningful; unknown names are kept and simply match nothing.
+// into a name→values map. The handler validates the names via
+// unknownInstanceFilter before filtering, so an unrecognized name is rejected
+// with InvalidParameterValue rather than silently matching nothing.
 func parseInstanceFilters(form url.Values) map[string][]string {
 	indices := awsquery.CollectIndices(form, "Filters.Filter")
 	if len(indices) == 0 {
@@ -182,17 +191,11 @@ func filterInstances(insts []rdsdriver.Instance, filters map[string][]string) []
 
 func instanceMatchesFilters(inst *rdsdriver.Instance, filters map[string][]string) bool {
 	for name, values := range filters {
-		var field string
-
-		switch name {
-		case "db-instance-id":
-			field = inst.ID
-		case "engine":
-			field = inst.Engine
-		case "db-cluster-id":
-			field = inst.ClusterID
-		default:
-			return false
+		field, known := instanceFilterField(inst, name)
+		if !known {
+			// Unknown names are rejected up front by unknownInstanceFilter, so a
+			// filter reaching here is always modeled.
+			continue
 		}
 
 		if !containsString(values, field) {
@@ -201,6 +204,37 @@ func instanceMatchesFilters(inst *rdsdriver.Instance, filters map[string][]strin
 	}
 
 	return true
+}
+
+// instanceFilterField returns the instance field a DescribeDBInstances filter
+// name selects, and whether the name is one RDS models. Real RDS errors on any
+// other name rather than silently matching nothing.
+func instanceFilterField(inst *rdsdriver.Instance, name string) (field string, known bool) {
+	switch name {
+	case "db-instance-id":
+		return inst.ID, true
+	case "engine":
+		return inst.Engine, true
+	case "db-cluster-id":
+		return inst.ClusterID, true
+	default:
+		return "", false
+	}
+}
+
+// unknownInstanceFilter reports the first filter name DescribeDBInstances does
+// not recognize (ok=false), so the handler can answer InvalidParameterValue the
+// way real RDS does instead of returning an empty result set.
+func unknownInstanceFilter(filters map[string][]string) (name string, ok bool) {
+	var probe rdsdriver.Instance
+
+	for n := range filters {
+		if _, known := instanceFilterField(&probe, n); !known {
+			return n, false
+		}
+	}
+
+	return "", true
 }
 
 func containsString(values []string, want string) bool {

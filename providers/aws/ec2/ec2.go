@@ -292,9 +292,9 @@ type Mock struct {
 	// releases it on terminate, so the VPC subnet / security-group delete guards
 	// see a running instance's interface. nil until wired by the provider.
 	networking Networking
-	// mu guards managedResourceVisibility, clientTokens and subnetIPCounters,
-	// which are scalar/map shared state that (unlike the memstores) has no
-	// internal locking of their own.
+	// mu guards managedResourceVisibility, clientTokens, clientTokenInflight and
+	// subnetIPCounters, which are scalar/map shared state that (unlike the
+	// memstores) has no internal locking of their own.
 	mu sync.RWMutex
 	// managedResourceVisibility is "visible" or "hidden". When "hidden",
 	// service-provider-managed instances are omitted from DescribeInstances
@@ -305,6 +305,11 @@ type Mock struct {
 	// of double-provisioning (AWS idempotency). Permanent — an emulator needs no
 	// expiry window.
 	clientTokens map[string][]string
+	// clientTokenInflight tracks ClientTokens whose launch is still provisioning,
+	// so two concurrent RunInstances carrying the same token cannot both provision
+	// (one reserves the token and launches; the others wait on its result). An
+	// entry is removed once the launch completes and its ids move to clientTokens.
+	clientTokenInflight map[string]*clientTokenLaunch
 	// subnetIPCounters is the per-subnet host counter used to allocate private
 	// IPv4 addresses from the subnet's CIDR range.
 	subnetIPCounters map[string]int
@@ -392,6 +397,7 @@ func New(opts *config.Options) *Mock {
 
 		managedResourceVisibility: visibilityVisible,
 		clientTokens:              make(map[string][]string),
+		clientTokenInflight:       make(map[string]*clientTokenLaunch),
 		subnetIPCounters:          make(map[string]int),
 	}
 }
@@ -518,13 +524,75 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "count %d exceeds the maximum of %d per call", count, maxRunInstances)
 	}
 
-	// Idempotency: a retry carrying a ClientToken we've already served returns the
-	// same instances rather than launching new ones (real EC2 RunInstances).
-	if dup, ok := m.instancesForClientToken(cfg.ClientToken); ok {
-		return dup, nil
+	// Idempotency: a ClientToken serializes same-token launches so a retry (or a
+	// concurrent duplicate) returns the same instances rather than provisioning a
+	// second set. The empty token opts out.
+	if cfg.ClientToken == "" {
+		return m.launchInstances(ctx, cfg, count)
 	}
 
-	return m.launchInstances(ctx, cfg, count)
+	return m.runInstancesIdempotent(ctx, cfg, count)
+}
+
+// clientTokenLaunch is the shared result of an in-flight tokened RunInstances:
+// waiters block on done, then read ids/err (written before done is closed).
+type clientTokenLaunch struct {
+	done chan struct{}
+	ids  []string
+	err  error
+}
+
+// runInstancesIdempotent provisions at most one instance set per ClientToken.
+// The first caller reserves the token under m.mu and launches; concurrent
+// callers with the same token find the reservation and wait on its result, and
+// a later retry finds the recorded ids — so a token never provisions twice.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) runInstancesIdempotent(ctx context.Context, cfg driver.InstanceConfig, count int) ([]driver.Instance, error) {
+	token := cfg.ClientToken
+
+	m.mu.Lock()
+	if ids, ok := m.clientTokens[token]; ok {
+		m.mu.Unlock()
+
+		return m.renderInstancesByID(ids), nil
+	}
+
+	if inflight, ok := m.clientTokenInflight[token]; ok {
+		m.mu.Unlock()
+		<-inflight.done
+
+		if inflight.err != nil {
+			return nil, inflight.err
+		}
+
+		return m.renderInstancesByID(inflight.ids), nil
+	}
+
+	launch := &clientTokenLaunch{done: make(chan struct{})}
+	m.clientTokenInflight[token] = launch
+	m.mu.Unlock()
+
+	results, err := m.launchInstances(ctx, cfg, count)
+
+	m.mu.Lock()
+	delete(m.clientTokenInflight, token)
+
+	if err == nil {
+		ids := make([]string, len(results))
+		for i := range results {
+			ids[i] = results[i].ID
+		}
+
+		m.clientTokens[token] = ids
+		launch.ids = ids
+	} else {
+		launch.err = err
+	}
+	m.mu.Unlock()
+	close(launch.done)
+
+	return results, err
 }
 
 // launchInstances does the actual provisioning for RunInstances once count and
@@ -630,26 +698,13 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		}
 	}
 
-	m.recordClientToken(cfg.ClientToken, created)
-
 	return results, nil
 }
 
-// instancesForClientToken returns the instances previously launched under token
-// (rendered fresh from the store) when token is non-empty and already recorded.
-func (m *Mock) instancesForClientToken(token string) ([]driver.Instance, bool) {
-	if token == "" {
-		return nil, false
-	}
-
-	m.mu.RLock()
-	ids, ok := m.clientTokens[token]
-	m.mu.RUnlock()
-
-	if !ok {
-		return nil, false
-	}
-
+// renderInstancesByID renders the current state of the given instance ids fresh
+// from the store, skipping any that no longer exist. It backs the idempotent
+// ClientToken paths so a retry reflects the instances' latest state.
+func (m *Mock) renderInstancesByID(ids []string) []driver.Instance {
 	hidden := m.visibility() == visibilityHidden
 	out := make([]driver.Instance, 0, len(ids))
 
@@ -659,24 +714,7 @@ func (m *Mock) instancesForClientToken(token string) ([]driver.Instance, bool) {
 		}
 	}
 
-	return out, true
-}
-
-// recordClientToken remembers which instances a ClientToken launched so a retry
-// is served idempotently. A no-op for the empty token.
-func (m *Mock) recordClientToken(token string, created []*instanceData) {
-	if token == "" {
-		return
-	}
-
-	ids := make([]string, 0, len(created))
-	for _, inst := range created {
-		ids = append(ids, inst.ID)
-	}
-
-	m.mu.Lock()
-	m.clientTokens[token] = ids
-	m.mu.Unlock()
+	return out
 }
 
 // resolveSubnet returns the VPC that owns subnetID and the subnet's CIDR block
@@ -934,6 +972,10 @@ func (m *Mock) GetConsoleOutput(ctx context.Context, instanceID string) ([]byte,
 func (m *Mock) DescribeInstances(
 	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, opts ...driver.DescribeInstancesOptions,
 ) ([]driver.Instance, error) {
+	if err := validateInstanceFilters(filters); err != nil {
+		return nil, err
+	}
+
 	var includeManaged bool
 	if len(opts) > 0 {
 		includeManaged = opts[0].IncludeManagedResources
@@ -1023,7 +1065,7 @@ func matchesFilters(inst *instanceData, filters []driver.DescribeFilter, now tim
 	defer inst.mu.Unlock()
 
 	for _, f := range filters {
-		if !matchesSingleFilter(inst, f, now) {
+		if matched, _ := instanceFilterMatch(inst, f, now); !matched {
 			return false
 		}
 	}
@@ -1031,32 +1073,105 @@ func matchesFilters(inst *instanceData, filters []driver.DescribeFilter, now tim
 	return true
 }
 
-func matchesSingleFilter(inst *instanceData, f driver.DescribeFilter, now time.Time) bool {
-	switch f.Name {
-	case "instance-id":
-		return containsValue(f.Values, inst.ID)
-	case "instance-type":
-		return containsValue(f.Values, inst.InstanceType)
-	case "instance-state-name":
-		// Filter on the observed state so it agrees with the state Describe
-		// renders (both go through the settle overlay under AsyncSettle).
-		return containsValue(f.Values, inst.settle.Observe(now, inst.State))
+// validateInstanceFilters rejects filter names DescribeInstances does not model,
+// so an unknown filter errors (surfaced as InvalidParameterValue) instead of
+// silently matching every instance. It probes a zero instance for each name and
+// consults only the "known" result, so the accepted set can never drift from
+// what instanceFilterMatch actually honors (mirrors the VPC-family handlers).
+func validateInstanceFilters(filters []driver.DescribeFilter) error {
+	var probe instanceData
+
+	for _, f := range filters {
+		if _, known := instanceFilterMatch(&probe, f, time.Time{}); !known {
+			return cerrors.Newf(cerrors.InvalidArgument, "The filter '%s' is invalid", f.Name)
+		}
+	}
+
+	return nil
+}
+
+// instanceFilterMatch reports whether inst satisfies filter f (values within one
+// filter are OR-ed) and whether f is a filter DescribeInstances recognizes.
+// Scalar filters resolve to a single instance field; tag filters are matched
+// separately.
+func instanceFilterMatch(inst *instanceData, f driver.DescribeFilter, now time.Time) (matched, known bool) {
+	if field, ok := instanceFilterField(inst, f.Name, now); ok {
+		return containsValue(f.Values, field), true
+	}
+
+	return matchesTagFilter(inst, f)
+}
+
+// instanceFilterField maps a scalar DescribeInstances filter name to the
+// instance value it selects, and reports whether the name is one the emulator
+// models. The derived private-dns-name/availability-zone/architecture values
+// mirror what the wire layer renders so a filter agrees with the described
+// instance; instance-lifecycle is empty because the emulator launches only
+// on-demand instances (so spot/scheduled never match).
+func instanceFilterField(inst *instanceData, name string, now time.Time) (field string, known bool) {
+	// Filter on the observed state so instance-state-name agrees with the state
+	// Describe renders (both go through the settle overlay under AsyncSettle).
+	byName := map[string]string{
+		"instance-id":         inst.ID,
+		"instance-type":       inst.InstanceType,
+		"instance-state-name": inst.settle.Observe(now, inst.State),
+		"vpc-id":              inst.VPCID,
+		"subnet-id":           inst.SubnetID,
+		"image-id":            inst.ImageID,
+		"private-ip-address":  inst.PrivateIP,
+		"private-dns-name":    privateDNSNameFor(inst.PrivateIP),
+		"key-name":            inst.keyName,
+		"reservation-id":      inst.reservationID,
+		"availability-zone":   instanceZone,
+		"architecture":        instanceArchitecture,
+		"instance-lifecycle":  "",
+	}
+
+	v, ok := byName[name]
+
+	return v, ok
+}
+
+// instanceZone and instanceArchitecture are the fixed placement zone and CPU
+// architecture the emulator reports for every EC2 instance; they mirror the
+// values the wire layer renders (defaultZone / archX86) so a filter on them
+// agrees with DescribeInstances output.
+const (
+	instanceZone         = "us-east-1a"
+	instanceArchitecture = "x86_64"
+)
+
+// privateDNSNameFor derives the internal DNS name from a private IPv4
+// (10.0.0.5 -> ip-10-0-0-5.ec2.internal), mirroring the wire layer's render so a
+// private-dns-name filter matches the described instance. Empty for no IP.
+func privateDNSNameFor(ip string) string {
+	if ip == "" {
+		return ""
+	}
+
+	return "ip-" + strings.ReplaceAll(ip, ".", "-") + ".ec2.internal"
+}
+
+// matchesTagFilter evaluates "tag:<key>" and "tag-key" filters, returning
+// whether inst matches and whether f was a tag filter at all (so a non-tag name
+// is reported unknown to validateInstanceFilters).
+func matchesTagFilter(inst *instanceData, f driver.DescribeFilter) (matched, known bool) {
+	switch {
+	case len(f.Name) > 4 && f.Name[:4] == "tag:":
+		tagVal, ok := inst.Tags[f.Name[4:]]
+
+		return ok && containsValue(f.Values, tagVal), true
+	case f.Name == "tag-key":
+		for k := range inst.Tags {
+			if containsValue(f.Values, k) {
+				return true, true
+			}
+		}
+
+		return false, true
 	default:
-		return matchesTagFilter(inst, f)
+		return false, false
 	}
-}
-
-func matchesTagFilter(inst *instanceData, f driver.DescribeFilter) bool {
-	if len(f.Name) > 4 && f.Name[:4] == "tag:" {
-		tagKey := f.Name[4:]
-
-		tagVal, ok := inst.Tags[tagKey]
-		if !ok || !containsValue(f.Values, tagVal) {
-			return false
-		}
-	}
-
-	return true
 }
 
 func containsValue(values []string, target string) bool {
