@@ -73,6 +73,8 @@ type keyMetadataJSON struct {
 	DeletionDate             *float64               `json:"DeletionDate,omitempty"`
 	ValidTo                  *float64               `json:"ValidTo,omitempty"`
 	EncryptionAlgorithms     []string               `json:"EncryptionAlgorithms,omitempty"`
+	SigningAlgorithms        []string               `json:"SigningAlgorithms,omitempty"`
+	MacAlgorithms            []string               `json:"MacAlgorithms,omitempty"`
 	MultiRegionConfiguration *multiRegionConfigJSON `json:"MultiRegionConfiguration,omitempty"`
 }
 
@@ -95,11 +97,14 @@ func metadataJSON(md *kmsdriver.KeyMetadata) keyMetadataJSON {
 		ValidTo:               epochOrNil(md.ValidTo),
 	}
 
-	// A symmetric ENCRYPT_DECRYPT key advertises the single SYMMETRIC_DEFAULT
-	// encryption algorithm, matching real KMS KeyMetadata.
-	if md.KeySpec == kmsdriver.SpecSymmetricDefault && md.KeyUsage == kmsdriver.UsageEncryptDecrypt {
-		out.EncryptionAlgorithms = []string{kmsdriver.SpecSymmetricDefault}
-	}
+	// KMS KeyMetadata advertises the algorithm list matching the key's usage:
+	// EncryptionAlgorithms for ENCRYPT_DECRYPT (SYMMETRIC_DEFAULT for a symmetric
+	// key, RSAES_OAEP_* for RSA), SigningAlgorithms for SIGN_VERIFY, and
+	// MacAlgorithms for HMAC keys. These are populated on the driver metadata at
+	// CreateKey from KeySpec+KeyUsage.
+	out.EncryptionAlgorithms = md.EncryptionAlgorithms
+	out.SigningAlgorithms = md.SigningAlgorithms
+	out.MacAlgorithms = md.MacAlgorithms
 
 	if md.MultiRegion {
 		cfg := &multiRegionConfigJSON{MultiRegionKeyType: md.MultiRegionKeyType}

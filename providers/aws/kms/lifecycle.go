@@ -61,6 +61,10 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 		policies: map[string]string{driver.DefaultPolicyName: defaultKeyPolicy(in.Policy, m.opts.AccountID)},
 	}
 
+	kd.meta.EncryptionAlgorithms = driver.EncryptionAlgorithmsFor(spec, usage)
+	kd.meta.SigningAlgorithms = driver.SigningAlgorithmsFor(spec, usage)
+	kd.meta.MacAlgorithms = driver.MacAlgorithmsFor(spec, usage)
+
 	if in.MultiRegion {
 		kd.meta.MultiRegionKeyType = "PRIMARY"
 		kd.meta.PrimaryRegion = m.opts.Region

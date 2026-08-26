@@ -5450,6 +5450,9 @@
         "name": "GetParametersForImport"
       },
       {
+        "name": "GetPublicKey"
+      },
+      {
         "name": "ImportKeyMaterial"
       },
       {
@@ -5548,6 +5551,9 @@
           },
           {
             "name": "GenerateRandom"
+          },
+          {
+            "name": "GetPublicKey"
           },
           {
             "name": "ReEncrypt"

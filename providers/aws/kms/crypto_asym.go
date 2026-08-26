@@ -84,6 +84,44 @@ func (m *Mock) GenerateDataKeyPairWithoutPlaintext(
 	return out, nil
 }
 
+// GetPublicKey returns the DER-encoded (SPKI, RFC 5280) public key of an
+// asymmetric key, along with its spec/usage and the algorithms it supports so a
+// caller can encrypt or verify offline. Symmetric (and other keys with no
+// public half) are rejected with UnsupportedOperationException, matching real
+// KMS.
+func (m *Mock) GetPublicKey(_ context.Context, in driver.GetPublicKeyInput) (*driver.GetPublicKeyOutput, error) {
+	kd, err := m.getKey(in.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
+	kd.mu.RLock()
+	defer kd.mu.RUnlock()
+
+	if uerr := requireUsable(kd); uerr != nil {
+		return nil, uerr
+	}
+
+	pub := publicKeyOf(kd.privKey)
+	if pub == nil {
+		return nil, driver.ErrUnsupportedOperation
+	}
+
+	pubDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, errors.Newf(errors.Internal, "marshal public key: %v", err)
+	}
+
+	return &driver.GetPublicKeyOutput{
+		KeyID:                kd.meta.KeyID,
+		PublicKey:            pubDER,
+		KeySpec:              kd.meta.KeySpec,
+		KeyUsage:             kd.meta.KeyUsage,
+		EncryptionAlgorithms: driver.EncryptionAlgorithmsFor(kd.meta.KeySpec, kd.meta.KeyUsage),
+		SigningAlgorithms:    driver.SigningAlgorithmsFor(kd.meta.KeySpec, kd.meta.KeyUsage),
+	}, nil
+}
+
 func publicKeyOf(priv crypto.PrivateKey) crypto.PublicKey {
 	switch k := priv.(type) {
 	case *rsa.PrivateKey:

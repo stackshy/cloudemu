@@ -27,6 +27,9 @@ var (
 	// ErrInvalidKeyUsage — the key's usage/spec doesn't support the requested
 	// operation or algorithm (→ InvalidKeyUsageException).
 	ErrInvalidKeyUsage = errors.New(errors.InvalidArgument, "key usage does not permit this operation")
+	// ErrUnsupportedOperation — the operation is not valid for this key's spec,
+	// e.g. GetPublicKey on a symmetric key (→ UnsupportedOperationException).
+	ErrUnsupportedOperation = errors.New(errors.InvalidArgument, "operation not supported for this key spec")
 )
 
 // Encryption algorithms.
@@ -51,10 +54,74 @@ const (
 
 // MAC algorithms.
 const (
+	MacHMACSHA224 = "HMAC_SHA_224"
 	MacHMACSHA256 = "HMAC_SHA_256"
 	MacHMACSHA384 = "HMAC_SHA_384"
 	MacHMACSHA512 = "HMAC_SHA_512"
 )
+
+// SigningAlgorithmsFor returns the signing algorithms KMS advertises for a
+// SIGN_VERIFY key of the given spec (empty for any other usage/spec). This is
+// the single source of truth reused by KeyMetadata and GetPublicKey.
+func SigningAlgorithmsFor(spec, usage string) []string {
+	if usage != UsageSignVerify {
+		return nil
+	}
+
+	switch spec {
+	case SpecRSA2048, SpecRSA3072, SpecRSA4096:
+		return []string{
+			SignRSASSAPSSSHA256, SignRSASSAPSSSHA384, SignRSASSAPSSSHA512,
+			SignRSASSAPKCS1SHA256, SignRSASSAPKCS1SHA384, SignRSASSAPKCS1SHA512,
+		}
+	case SpecECCNISTP256:
+		return []string{SignECDSASHA256}
+	case SpecECCNISTP384:
+		return []string{SignECDSASHA384}
+	case SpecECCNISTP521:
+		return []string{SignECDSASHA512}
+	default:
+		return nil
+	}
+}
+
+// EncryptionAlgorithmsFor returns the encryption algorithms KMS advertises for
+// an ENCRYPT_DECRYPT key of the given spec (empty for any other usage/spec).
+func EncryptionAlgorithmsFor(spec, usage string) []string {
+	if usage != UsageEncryptDecrypt {
+		return nil
+	}
+
+	switch spec {
+	case SpecSymmetricDefault:
+		return []string{EncSymmetricDefault}
+	case SpecRSA2048, SpecRSA3072, SpecRSA4096:
+		return []string{EncRSAOAEPSHA1, EncRSAOAEPSHA256}
+	default:
+		return nil
+	}
+}
+
+// MacAlgorithmsFor returns the MAC algorithms KMS advertises for a
+// GENERATE_VERIFY_MAC key of the given spec (empty for any other usage/spec).
+func MacAlgorithmsFor(spec, usage string) []string {
+	if usage != UsageGenerateVerifyMac {
+		return nil
+	}
+
+	switch spec {
+	case SpecHMAC224:
+		return []string{MacHMACSHA224}
+	case SpecHMAC256:
+		return []string{MacHMACSHA256}
+	case SpecHMAC384:
+		return []string{MacHMACSHA384}
+	case SpecHMAC512:
+		return []string{MacHMACSHA512}
+	default:
+		return nil
+	}
+}
 
 // Message types for Sign/Verify.
 const (
@@ -222,6 +289,22 @@ type VerifyMacOutput struct {
 	MacAlgorithm string
 }
 
+// GetPublicKeyInput describes a GetPublicKey request.
+type GetPublicKeyInput struct {
+	KeyID string
+}
+
+// GetPublicKeyOutput carries the DER-encoded (SPKI, RFC 5280) public key of an
+// asymmetric key plus the spec/usage and the algorithms the key supports.
+type GetPublicKeyOutput struct {
+	KeyID                string
+	PublicKey            []byte
+	KeySpec              string
+	KeyUsage             string
+	EncryptionAlgorithms []string
+	SigningAlgorithms    []string
+}
+
 // Crypto is the cryptographic surface of KMS. It is embedded in the KMS
 // interface; kept separate here to group the operations.
 type Crypto interface {
@@ -233,6 +316,7 @@ type Crypto interface {
 	GenerateDataKeyPair(ctx context.Context, in GenerateDataKeyPairInput) (*GenerateDataKeyPairOutput, error)
 	GenerateDataKeyPairWithoutPlaintext(ctx context.Context, in GenerateDataKeyPairInput) (*GenerateDataKeyPairOutput, error)
 	GenerateRandom(ctx context.Context, numberOfBytes int32) ([]byte, error)
+	GetPublicKey(ctx context.Context, in GetPublicKeyInput) (*GetPublicKeyOutput, error)
 	Sign(ctx context.Context, in SignInput) (*SignOutput, error)
 	Verify(ctx context.Context, in VerifyInput) (*VerifyOutput, error)
 	GenerateMac(ctx context.Context, in GenerateMacInput) (*GenerateMacOutput, error)

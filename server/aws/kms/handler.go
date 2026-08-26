@@ -54,6 +54,7 @@ func New(k kmsdriver.KMS) *Handler {
 		"GenerateDataKeyPair":                 h.generateDataKeyPair,
 		"GenerateDataKeyPairWithoutPlaintext": h.generateDataKeyPairWithoutPlaintext,
 		"GenerateRandom":                      h.generateRandom,
+		"GetPublicKey":                        h.getPublicKey,
 		"Sign":                                h.sign,
 		"Verify":                              h.verify,
 		"GenerateMac":                         h.generateMac,
@@ -144,6 +145,8 @@ func sentinelException(err error) string {
 		return "KMSInvalidStateException"
 	case errors.Is(err, kmsdriver.ErrInvalidKeyUsage):
 		return "InvalidKeyUsageException"
+	case errors.Is(err, kmsdriver.ErrUnsupportedOperation):
+		return "UnsupportedOperationException"
 	default:
 		return ""
 	}
