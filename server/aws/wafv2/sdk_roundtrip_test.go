@@ -3,7 +3,9 @@ package wafv2_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -391,5 +393,172 @@ func TestSDKSynthesizedReadOnlyOps(t *testing.T) {
 	var ne *waftypes.WAFNonexistentItemException
 	if !errors.As(err, &ne) {
 		t.Fatalf("GetManagedRuleSet: want WAFNonexistentItemException, got %v", err)
+	}
+}
+
+// parseWAFARN splits a WAFv2 ARN into its six colon-delimited segments and
+// verifies the fixed prefix, returning region and the trailing resource path.
+func parseWAFARN(t *testing.T, arn string) (region, resourcePath string) {
+	t.Helper()
+
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) != 6 || parts[0] != "arn" || parts[1] != "aws" || parts[2] != "wafv2" {
+		t.Fatalf("malformed WAFv2 ARN: %q", arn)
+	}
+
+	return parts[3], parts[5]
+}
+
+func TestSDKWebACLARNShape(t *testing.T) {
+	ctx := context.Background()
+	c := newWAFClient(t)
+
+	reg, err := c.CreateWebACL(ctx, &awswaf.CreateWebACLInput{
+		Name: aws.String("r1"), Scope: waftypes.ScopeRegional,
+		DefaultAction: &waftypes.DefaultAction{Allow: &waftypes.AllowAction{}}, VisibilityConfig: visConfig("r1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateWebACL regional: %v", err)
+	}
+
+	region, path := parseWAFARN(t, aws.ToString(reg.Summary.ARN))
+	if region != "us-east-1" {
+		t.Fatalf("regional ARN region = %q, want us-east-1", region)
+	}
+
+	if want := "regional/webacl/r1/" + aws.ToString(reg.Summary.Id); path != want {
+		t.Fatalf("regional ARN path = %q, want %q", path, want)
+	}
+
+	cf, err := c.CreateWebACL(ctx, &awswaf.CreateWebACLInput{
+		Name: aws.String("c1"), Scope: waftypes.ScopeCloudfront,
+		DefaultAction: &waftypes.DefaultAction{Allow: &waftypes.AllowAction{}}, VisibilityConfig: visConfig("c1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateWebACL cloudfront: %v", err)
+	}
+
+	region, path = parseWAFARN(t, aws.ToString(cf.Summary.ARN))
+	// CloudFront-scope ARNs are anchored in us-east-1 with a lowercase "global"
+	// resource-path segment (never "global" in the region slot, never uppercase).
+	if region != "us-east-1" {
+		t.Fatalf("cloudfront ARN region = %q, want us-east-1", region)
+	}
+
+	if want := "global/webacl/c1/" + aws.ToString(cf.Summary.Id); path != want {
+		t.Fatalf("cloudfront ARN path = %q, want %q", path, want)
+	}
+}
+
+func TestSDKDeleteWebACLBlockedWhileAssociated(t *testing.T) {
+	ctx := context.Background()
+	c := newWAFClient(t)
+
+	created, err := c.CreateWebACL(ctx, &awswaf.CreateWebACLInput{
+		Name: aws.String("assoc"), Scope: waftypes.ScopeRegional,
+		DefaultAction: &waftypes.DefaultAction{Allow: &waftypes.AllowAction{}}, VisibilityConfig: visConfig("assoc"),
+	})
+	if err != nil {
+		t.Fatalf("CreateWebACL: %v", err)
+	}
+
+	aclARN := aws.ToString(created.Summary.ARN)
+	resARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/x/abc"
+
+	if _, err := c.AssociateWebACL(ctx, &awswaf.AssociateWebACLInput{
+		WebACLArn: aws.String(aclARN), ResourceArn: aws.String(resARN),
+	}); err != nil {
+		t.Fatalf("AssociateWebACL: %v", err)
+	}
+
+	got, err := c.GetWebACL(ctx, &awswaf.GetWebACLInput{
+		Name: aws.String("assoc"), Scope: waftypes.ScopeRegional, Id: created.Summary.Id,
+	})
+	if err != nil {
+		t.Fatalf("GetWebACL: %v", err)
+	}
+
+	_, err = c.DeleteWebACL(ctx, &awswaf.DeleteWebACLInput{
+		Name: aws.String("assoc"), Scope: waftypes.ScopeRegional, Id: created.Summary.Id,
+		LockToken: got.LockToken,
+	})
+	var assoc *waftypes.WAFAssociatedItemException
+	if !errors.As(err, &assoc) {
+		t.Fatalf("delete while associated: want WAFAssociatedItemException, got %v", err)
+	}
+
+	if _, err := c.DisassociateWebACL(ctx, &awswaf.DisassociateWebACLInput{
+		ResourceArn: aws.String(resARN),
+	}); err != nil {
+		t.Fatalf("DisassociateWebACL: %v", err)
+	}
+
+	if _, err := c.DeleteWebACL(ctx, &awswaf.DeleteWebACLInput{
+		Name: aws.String("assoc"), Scope: waftypes.ScopeRegional, Id: created.Summary.Id,
+		LockToken: got.LockToken,
+	}); err != nil {
+		t.Fatalf("delete after disassociate: %v", err)
+	}
+}
+
+func TestSDKListWebACLsPagination(t *testing.T) {
+	ctx := context.Background()
+	c := newWAFClient(t)
+
+	const total = 5
+	for i := range total {
+		name := fmt.Sprintf("acl-%02d", i)
+		if _, err := c.CreateWebACL(ctx, &awswaf.CreateWebACLInput{
+			Name: aws.String(name), Scope: waftypes.ScopeRegional,
+			DefaultAction: &waftypes.DefaultAction{Allow: &waftypes.AllowAction{}}, VisibilityConfig: visConfig(name),
+		}); err != nil {
+			t.Fatalf("CreateWebACL %s: %v", name, err)
+		}
+	}
+
+	seen := map[string]bool{}
+	var marker *string
+	pages := 0
+
+	for {
+		out, err := c.ListWebACLs(ctx, &awswaf.ListWebACLsInput{
+			Scope: waftypes.ScopeRegional, Limit: aws.Int32(2), NextMarker: marker,
+		})
+		if err != nil {
+			t.Fatalf("ListWebACLs: %v", err)
+		}
+
+		pages++
+
+		if len(out.WebACLs) > 2 {
+			t.Fatalf("page %d exceeded Limit: got %d web ACLs", pages, len(out.WebACLs))
+		}
+
+		for _, s := range out.WebACLs {
+			name := aws.ToString(s.Name)
+			if seen[name] {
+				t.Fatalf("duplicate web ACL across pages: %s", name)
+			}
+
+			seen[name] = true
+		}
+
+		if aws.ToString(out.NextMarker) == "" {
+			break
+		}
+
+		marker = out.NextMarker
+
+		if pages > total+2 {
+			t.Fatalf("pagination did not terminate")
+		}
+	}
+
+	if len(seen) != total {
+		t.Fatalf("paged web ACL count = %d, want %d (seen=%v)", len(seen), total, seen)
+	}
+
+	if pages < 2 {
+		t.Fatalf("expected multiple pages for Limit=2 over %d items, got %d", total, pages)
 	}
 }

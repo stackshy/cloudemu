@@ -48,8 +48,8 @@ func (h *Handler) deleteWebACL(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listWebACLs(w http.ResponseWriter, r *http.Request) {
-	listOp(h, w, r, h.waf.ListWebACLs, webACLSummary, func(s []summaryJSON) listWebACLsResponse {
-		return listWebACLsResponse{WebACLs: s}
+	listOp(h, w, r, h.waf.ListWebACLs, webACLSummary, func(s []summaryJSON, marker string) listWebACLsResponse {
+		return listWebACLsResponse{WebACLs: s, NextMarker: marker}
 	})
 }
 
@@ -88,7 +88,7 @@ func (h *Handler) deleteIPSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listIPSets(w http.ResponseWriter, r *http.Request) {
-	listOp(h, w, r, h.waf.ListIPSets, ipSetSummary, func(s []summaryJSON) listIPSetsResponse {
-		return listIPSetsResponse{IPSets: s}
+	listOp(h, w, r, h.waf.ListIPSets, ipSetSummary, func(s []summaryJSON, marker string) listIPSetsResponse {
+		return listIPSetsResponse{IPSets: s, NextMarker: marker}
 	})
 }

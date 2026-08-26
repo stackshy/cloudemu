@@ -4,18 +4,21 @@ import (
 	"context"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	wafdriver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
 
-// listOp collapses the identical decode/list/summarize/respond shape every
-// List* operation shares. lister returns the driver resources for a scope,
-// toSummary projects each to its wire summary, and resp wraps the summaries in
-// the operation's response envelope.
+// listOp collapses the identical decode/list/paginate/respond shape every List*
+// operation shares. lister returns the driver resources for a scope, toSummary
+// projects each to its wire summary, and resp wraps a page of summaries plus the
+// continuation marker in the operation's response envelope. Results are ordered
+// by Name so Limit/NextMarker paging is stable across calls.
 func listOp[T any, R any](
 	h *Handler, w http.ResponseWriter, r *http.Request,
 	lister func(context.Context, string) ([]T, error),
 	toSummary func(*T) summaryJSON,
-	resp func([]summaryJSON) R,
+	resp func(items []summaryJSON, nextMarker string) R,
 ) {
 	dispatch(h, w, r, func(_ *Handler, ctx context.Context, req *listRequest) (any, error) {
 		items, err := lister(ctx, req.Scope)
@@ -23,12 +26,22 @@ func listOp[T any, R any](
 			return nil, err
 		}
 
-		out := make([]summaryJSON, 0, len(items))
+		summaries := make([]summaryJSON, 0, len(items))
 		for i := range items {
-			out = append(out, toSummary(&items[i]))
+			summaries = append(summaries, toSummary(&items[i]))
 		}
 
-		return resp(out), nil
+		page, err := pagination.PaginateSorted(summaries,
+			func(a, b summaryJSON) bool { return a.Name < b.Name },
+			req.NextMarker, req.Limit)
+		if err != nil {
+			return nil, &wafdriver.APIError{
+				Exception: wafdriver.ExInvalidParameter,
+				Err:       cerrors.Newf(cerrors.InvalidArgument, "invalid NextMarker: %v", err),
+			}
+		}
+
+		return resp(page.Items, page.NextPageToken), nil
 	})
 }
 

@@ -9,6 +9,7 @@ const (
 	ExOptimisticLock    = "WAFOptimisticLockException"
 	ExInvalidParameter  = "WAFInvalidParameterException"
 	ExUnavailableEntity = "WAFUnavailableEntityException"
+	ExAssociatedItem    = "WAFAssociatedItemException"
 )
 
 // APIError tags a canonical cloudemu error with the WAFv2 exception name it

@@ -146,16 +146,9 @@ func (m *Mock) DeleteWebACL(_ context.Context, ref driver.Ref, lockToken string)
 		return err
 	}
 
-	wd.mu.Lock()
-	defer wd.mu.Unlock()
-
-	if wd.acl.LockToken != lockToken {
-		return staleLock("stale lock token for web ACL %q", ref.ID)
-	}
-
-	m.webACLs.Delete(key(ref.Scope, ref.ID))
-
-	return nil
+	return deleteGuarded(&wd.mu, ref.ID, "web ACL", lockToken,
+		&wd.acl.LockToken, wd.acl.ARN, m.webACLAssociated,
+		func() { m.webACLs.Delete(key(ref.Scope, ref.ID)) })
 }
 
 // ListWebACLs returns all web ACLs in a scope.

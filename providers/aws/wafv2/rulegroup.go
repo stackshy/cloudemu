@@ -129,16 +129,9 @@ func (m *Mock) DeleteRuleGroup(_ context.Context, ref driver.Ref, lockToken stri
 		return err
 	}
 
-	gd.mu.Lock()
-	defer gd.mu.Unlock()
-
-	if gd.grp.LockToken != lockToken {
-		return staleLock("stale lock token for rule group %q", ref.ID)
-	}
-
-	m.ruleGrps.Delete(key(ref.Scope, ref.ID))
-
-	return nil
+	return deleteGuarded(&gd.mu, ref.ID, "rule group", lockToken,
+		&gd.grp.LockToken, gd.grp.ARN, m.itemReferencedByWebACL,
+		func() { m.ruleGrps.Delete(key(ref.Scope, ref.ID)) })
 }
 
 // ListRuleGroups returns all rule groups in a scope.

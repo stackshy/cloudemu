@@ -24,3 +24,9 @@ func staleLock(format string, args ...any) error {
 func invalidParameter(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExInvalidParameter, Err: errors.Newf(errors.InvalidArgument, format, args...)}
 }
+
+// associated builds a WAFAssociatedItemException-tagged error, returned when a
+// resource is deleted while still associated with or referenced by another.
+func associated(format string, args ...any) error {
+	return &driver.APIError{Exception: driver.ExAssociatedItem, Err: errors.Newf(errors.FailedPrecondition, format, args...)}
+}

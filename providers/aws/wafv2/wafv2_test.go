@@ -375,3 +375,97 @@ func isOptimisticLock(err error) bool {
 
 	return stderrors.As(err, &apiErr) && apiErr.Exception == driver.ExOptimisticLock
 }
+
+func isAssociatedItem(err error) bool {
+	var apiErr *driver.APIError
+
+	return stderrors.As(err, &apiErr) && apiErr.Exception == driver.ExAssociatedItem
+}
+
+func TestARNShape(t *testing.T) {
+	m := New(config.NewOptions(config.WithRegion("eu-west-1")))
+	ctx := context.Background()
+
+	reg, _ := m.CreateWebACL(ctx, driver.CreateWebACLInput{Name: "r1", Scope: driver.ScopeRegional})
+	// REGIONAL: lowercase "regional" scope-path segment + the configured region.
+	wantReg := "arn:aws:wafv2:eu-west-1:" + m.opts.AccountID + ":regional/webacl/r1/" + reg.ID
+	if reg.ARN != wantReg {
+		t.Fatalf("regional ARN = %q, want %q", reg.ARN, wantReg)
+	}
+
+	cf, _ := m.CreateWebACL(ctx, driver.CreateWebACLInput{Name: "c1", Scope: driver.ScopeCloudFront})
+	// CLOUDFRONT: lowercase "global" scope-path segment + region us-east-1 (never
+	// the configured region, never the literal word "global" in the region slot).
+	wantCF := "arn:aws:wafv2:us-east-1:" + m.opts.AccountID + ":global/webacl/c1/" + cf.ID
+	if cf.ARN != wantCF {
+		t.Fatalf("cloudfront ARN = %q, want %q", cf.ARN, wantCF)
+	}
+
+	// The other resource kinds follow the same shape.
+	ips, _ := m.CreateIPSet(ctx, driver.CreateIPSetInput{Name: "i1", Scope: driver.ScopeRegional, IPAddressVersion: "IPV4"})
+	if want := "arn:aws:wafv2:eu-west-1:" + m.opts.AccountID + ":regional/ipset/i1/" + ips.ID; ips.ARN != want {
+		t.Fatalf("ipset ARN = %q, want %q", ips.ARN, want)
+	}
+
+	grp, _ := m.CreateRuleGroup(ctx, driver.CreateRuleGroupInput{Name: "g1", Scope: driver.ScopeCloudFront, Capacity: 1})
+	if want := "arn:aws:wafv2:us-east-1:" + m.opts.AccountID + ":global/rulegroup/g1/" + grp.ID; grp.ARN != want {
+		t.Fatalf("rulegroup ARN = %q, want %q", grp.ARN, want)
+	}
+
+	rx, _ := m.CreateRegexPatternSet(ctx, driver.CreateRegexPatternSetInput{Name: "x1", Scope: driver.ScopeRegional})
+	if want := "arn:aws:wafv2:eu-west-1:" + m.opts.AccountID + ":regional/regexpatternset/x1/" + rx.ID; rx.ARN != want {
+		t.Fatalf("regexset ARN = %q, want %q", rx.ARN, want)
+	}
+}
+
+func TestDeleteWebACLBlockedWhileAssociated(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	acl, _ := m.CreateWebACL(ctx, driver.CreateWebACLInput{Name: "assoc", Scope: driver.ScopeRegional})
+	resARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/x/abc"
+
+	if err := m.AssociateWebACL(ctx, acl.ARN, resARN); err != nil {
+		t.Fatalf("AssociateWebACL: %v", err)
+	}
+
+	// Delete with the correct lock token still fails while associated.
+	if err := m.DeleteWebACL(ctx, driver.Ref{Scope: driver.ScopeRegional, ID: acl.ID}, acl.LockToken); !isAssociatedItem(err) {
+		t.Fatalf("delete while associated: want WAFAssociatedItemException, got %v", err)
+	}
+
+	// After disassociation the delete succeeds.
+	if err := m.DisassociateWebACL(ctx, resARN); err != nil {
+		t.Fatalf("DisassociateWebACL: %v", err)
+	}
+
+	if err := m.DeleteWebACL(ctx, driver.Ref{Scope: driver.ScopeRegional, ID: acl.ID}, acl.LockToken); err != nil {
+		t.Fatalf("delete after disassociate: %v", err)
+	}
+}
+
+func TestDeleteReferencedItemBlocked(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	ips, _ := m.CreateIPSet(ctx, driver.CreateIPSetInput{
+		Name: "refips", Scope: driver.ScopeRegional, IPAddressVersion: "IPV4",
+	})
+
+	// A web ACL whose rule references the IP set by ARN.
+	rules := json.RawMessage(`[{"Name":"r","Statement":{"IPSetReferenceStatement":{"ARN":"` + ips.ARN + `"}}}]`)
+	acl, _ := m.CreateWebACL(ctx, driver.CreateWebACLInput{Name: "refacl", Scope: driver.ScopeRegional, Rules: rules})
+
+	if err := m.DeleteIPSet(ctx, driver.Ref{Scope: driver.ScopeRegional, ID: ips.ID}, ips.LockToken); !isAssociatedItem(err) {
+		t.Fatalf("delete referenced IP set: want WAFAssociatedItemException, got %v", err)
+	}
+
+	// Removing the reference (delete the web ACL) frees the IP set for deletion.
+	if err := m.DeleteWebACL(ctx, driver.Ref{Scope: driver.ScopeRegional, ID: acl.ID}, acl.LockToken); err != nil {
+		t.Fatalf("DeleteWebACL: %v", err)
+	}
+
+	if err := m.DeleteIPSet(ctx, driver.Ref{Scope: driver.ScopeRegional, ID: ips.ID}, ips.LockToken); err != nil {
+		t.Fatalf("delete IP set after reference removed: %v", err)
+	}
+}
