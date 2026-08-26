@@ -172,17 +172,17 @@ func (h *Handler) listHostedZonesByVPC(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	maxItems := listMaxItems
-
-	if v := q.Get("maxitems"); v != "" {
-		if n, cerr := strconv.Atoi(v); cerr == nil && n > 0 {
-			maxItems = n
-		}
-	}
+	// ListHostedZonesByVPC paginates NextToken-style: maxitems bounds the page and
+	// NextToken (echoed back as nexttoken) resumes at the following zone id. Reuse
+	// the shared marker paginator keyed by the unique HostedZoneId so tokens never
+	// duplicate or skip a summary.
+	maxItems := parseMaxItems(q.Get("maxitems"))
+	page, next := markerPage(summaries, q.Get("nexttoken"), maxItems, func(s hostedZoneSummaryXML) string { return s.HostedZoneId })
 
 	wire.WriteXML(w, http.StatusOK, listHostedZonesByVPCResponse{
 		Xmlns:               xmlns,
-		HostedZoneSummaries: summaries,
+		HostedZoneSummaries: page,
 		MaxItems:            strconv.Itoa(maxItems),
+		NextToken:           next,
 	})
 }
