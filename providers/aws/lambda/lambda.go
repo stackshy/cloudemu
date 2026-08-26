@@ -542,6 +542,32 @@ func cloneTracingConfig(t *driver.TracingConfig) *driver.TracingConfig {
 	return &out
 }
 
+func cloneArchitectures(a []string) []string {
+	if a == nil {
+		return nil
+	}
+
+	return append([]string(nil), a...)
+}
+
+func cloneEphemeralStorage(e *driver.EphemeralStorage) *driver.EphemeralStorage {
+	if e == nil {
+		return nil
+	}
+
+	out := *e
+
+	return &out
+}
+
+func cloneLayers(l []driver.FunctionLayer) []driver.FunctionLayer {
+	if l == nil {
+		return nil
+	}
+
+	return append([]driver.FunctionLayer(nil), l...)
+}
+
 // tracingConfigOrDefault returns a copy of t, or the AWS default
 // {Mode: "PassThrough"} when the client supplied no tracing configuration.
 func tracingConfigOrDefault(t *driver.TracingConfig) *driver.TracingConfig {

@@ -97,6 +97,26 @@ const (
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
 )
 
+// AWS Lambda configuration defaults the handler emits when the client omitted
+// the field on create: Architectures defaults to ["x86_64"] and EphemeralStorage
+// (the /tmp size) to 512 MB.
+const (
+	archX8664                 = "x86_64"
+	defaultEphemeralStorageMB = 512
+)
+
+// EphemeralStorage accepted range: real Lambda rejects a size outside 512–10240
+// with InvalidParameterValueException.
+const (
+	minEphemeralStorageMB = 512
+	maxEphemeralStorageMB = 10240
+)
+
+// defaultLayerCodeSize is the CodeSize reported for an imported layer whose
+// content was not published to this emulator (e.g. an S3-sourced layer we did
+// not fetch), so the Layers list still carries a non-zero size.
+const defaultLayerCodeSize int64 = 1024
+
 // policyManager is the AWS-specific resource-policy surface (AddPermission /
 // GetPolicy / RemovePermission). It's not part of the portable Serverless
 // driver — resource policies are a Lambda concept — so the handler type-asserts
@@ -501,9 +521,30 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	awsCfg := h.applyAWSConfig(r.Context(), name, req.VpcConfig, req.DeadLetterConfig, req.TracingConfig, false)
+	awsCfg := h.applyAWSConfig(r.Context(), name, sdrv.AWSFunctionConfig{
+		VPCConfig:        toDriverVPCConfig(req.VpcConfig),
+		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
+		TracingConfig:    toDriverTracing(req.TracingConfig),
+		Layers:           h.resolveLayers(req.Layers),
+	}, false)
 
 	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
+}
+
+// writePublished publishes a new version of name and writes that version's
+// configuration with the given status, or the underlying error. It is the shared
+// tail of the Publish=true UpdateFunctionCode/UpdateFunctionConfiguration paths.
+func (h *Handler) writePublished(
+	ctx context.Context, w http.ResponseWriter, status int,
+	name string, info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig,
+) {
+	cfg, err := h.publishConfiguration(ctx, name, "", info, awsCfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, status, cfg)
 }
 
 // serveCode handles PUT .../{name}/code (UpdateFunctionCode). It resolves the
@@ -549,7 +590,14 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toConfiguration(info, h.awsFnConfig(r.Context(), name)))
+	awsCfg := h.awsFnConfig(r.Context(), name)
+
+	if req.Publish {
+		h.writePublished(r.Context(), w, http.StatusOK, name, info, awsCfg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
 }
 
 // serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
@@ -767,22 +815,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For a .zip file archive package (the default when PackageType is omitted or
-	// "Zip"), AWS requires both Runtime and Handler and rejects a create that omits
-	// either with InvalidParameterValueException. Image packages carry the runtime
-	// in the container, so they don't.
-	if req.PackageType == "" || req.PackageType == packageTypeZip {
-		if req.Runtime == "" {
-			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
-				"Runtime is required if the deployment package is a .zip file archive.")
-			return
-		}
-
-		if req.Handler == "" {
-			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
-				"Handler is required if the deployment package is a .zip file archive.")
-			return
-		}
+	if err := validateCreateRequest(&req); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	cfg := sdrv.FunctionConfig{
@@ -819,9 +854,110 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	awsCfg := h.applyAWSConfig(r.Context(), req.FunctionName, req.VpcConfig, req.DeadLetterConfig, req.TracingConfig, true)
+	awsCfg := h.applyAWSConfig(r.Context(), req.FunctionName, h.createAWSConfig(&req), true)
+
+	// Publish=true cuts version 1 from the just-created function and returns that
+	// published version's configuration (Version "1", :1-qualified ARN), matching
+	// AWS and Terraform's aws_lambda_function{publish=true}.
+	if req.Publish {
+		cfg, perr := h.publishConfiguration(r.Context(), req.FunctionName, req.Description, info, awsCfg)
+		if perr != nil {
+			writeErr(w, perr)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, cfg)
+
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, toConfiguration(info, awsCfg))
+}
+
+// validateCreateRequest enforces the CreateFunction input rules the emulator
+// checks up front: a .zip package requires Runtime and Handler, and an
+// EphemeralStorage size must be within the accepted range. Each violation is an
+// InvalidArgument error the wire layer maps to InvalidParameterValueException.
+func validateCreateRequest(req *createFunctionRequest) error {
+	if req.PackageType == "" || req.PackageType == packageTypeZip {
+		if req.Runtime == "" {
+			return cerrors.New(cerrors.InvalidArgument,
+				"Runtime is required if the deployment package is a .zip file archive.")
+		}
+
+		if req.Handler == "" {
+			return cerrors.New(cerrors.InvalidArgument,
+				"Handler is required if the deployment package is a .zip file archive.")
+		}
+	}
+
+	return validateEphemeralStorage(req.EphemeralStorage)
+}
+
+// validateEphemeralStorage rejects a /tmp size outside the AWS 512–10240 MB range.
+func validateEphemeralStorage(e *ephemeralStorageEnvelope) error {
+	if e == nil {
+		return nil
+	}
+
+	if e.Size < minEphemeralStorageMB || e.Size > maxEphemeralStorageMB {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"'ephemeralStorage.size' value %d must be >= %d and <= %d",
+			e.Size, minEphemeralStorageMB, maxEphemeralStorageMB)
+	}
+
+	return nil
+}
+
+// createAWSConfig assembles the AWS-only settings supplied on a CreateFunction
+// request (VpcConfig/DeadLetterConfig/TracingConfig plus Architectures,
+// EphemeralStorage and the imported Layers) for applyAWSConfig to store.
+func (h *Handler) createAWSConfig(req *createFunctionRequest) sdrv.AWSFunctionConfig {
+	return sdrv.AWSFunctionConfig{
+		VPCConfig:        toDriverVPCConfig(req.VpcConfig),
+		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
+		TracingConfig:    toDriverTracing(req.TracingConfig),
+		Architectures:    req.Architectures,
+		EphemeralStorage: toDriverEphemeral(req.EphemeralStorage),
+		Layers:           h.resolveLayers(req.Layers),
+	}
+}
+
+// publishConfiguration publishes a new version of name and renders that version's
+// configuration (its own version number and a qualified ARN), the response body
+// AWS returns for a Publish=true Create/UpdateFunctionCode/Configuration.
+func (h *Handler) publishConfiguration(
+	ctx context.Context, name, description string,
+	info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig,
+) (functionConfiguration, error) {
+	ver, err := h.fn.PublishVersion(ctx, name, description)
+	if err != nil {
+		return functionConfiguration{}, err
+	}
+
+	return toVersionConfiguration(info, ver, awsCfg), nil
+}
+
+// resolveLayers maps the requested layer ARNs to the echoed Layers list,
+// resolving each layer version's CodeSize from its staged content when the layer
+// was published to this emulator, or a sane default otherwise.
+func (h *Handler) resolveLayers(arns []string) []sdrv.FunctionLayer {
+	if len(arns) == 0 {
+		return nil
+	}
+
+	out := make([]sdrv.FunctionLayer, 0, len(arns))
+
+	for _, arn := range arns {
+		size := int64(len(h.layerContentFor(arn)))
+		if size == 0 {
+			size = defaultLayerCodeSize
+		}
+
+		out = append(out, sdrv.FunctionLayer{ARN: arn, CodeSize: size})
+	}
+
+	return out
 }
 
 // resolveCode returns the deployment-package bytes for a CreateFunction request.
@@ -1118,25 +1254,49 @@ func toConfiguration(info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig) fu
 		cfg.Environment = &envEnvelope{Variables: info.Environment}
 	}
 
-	if awsCfg != nil {
-		if awsCfg.VPCConfig != nil {
-			cfg.VpcConfig = &vpcConfigEnvelope{
-				SubnetIDs:        awsCfg.VPCConfig.SubnetIDs,
-				SecurityGroupIDs: awsCfg.VPCConfig.SecurityGroupIDs,
-				VpcID:            awsCfg.VPCConfig.VpcID,
-			}
-		}
+	// AWS always reports Architectures and EphemeralStorage, defaulting to
+	// ["x86_64"] and 512 MB when the function was created without them.
+	cfg.Architectures = []string{archX8664}
+	cfg.EphemeralStorage = &ephemeralStorageEnvelope{Size: defaultEphemeralStorageMB}
 
-		if awsCfg.DeadLetterConfig != nil {
-			cfg.DeadLetterConfig = &deadLetterConfigEnvelope{TargetArn: awsCfg.DeadLetterConfig.TargetArn}
-		}
+	applyAWSConfigToResponse(&cfg, awsCfg)
 
-		if awsCfg.TracingConfig != nil {
-			cfg.TracingConfig = &tracingConfigEnvelope{Mode: awsCfg.TracingConfig.Mode}
+	return cfg
+}
+
+// applyAWSConfigToResponse overlays the stored AWS-only settings onto a function
+// configuration response: the imported layers, plus VpcConfig/DeadLetterConfig/
+// TracingConfig, and the non-default Architectures/EphemeralStorage.
+func applyAWSConfigToResponse(cfg *functionConfiguration, awsCfg *sdrv.AWSFunctionConfig) {
+	if awsCfg == nil {
+		return
+	}
+
+	if len(awsCfg.Architectures) > 0 {
+		cfg.Architectures = awsCfg.Architectures
+	}
+
+	if awsCfg.EphemeralStorage != nil {
+		cfg.EphemeralStorage = &ephemeralStorageEnvelope{Size: awsCfg.EphemeralStorage.Size}
+	}
+
+	cfg.Layers = toLayerReferences(awsCfg.Layers)
+
+	if awsCfg.VPCConfig != nil {
+		cfg.VpcConfig = &vpcConfigEnvelope{
+			SubnetIDs:        awsCfg.VPCConfig.SubnetIDs,
+			SecurityGroupIDs: awsCfg.VPCConfig.SecurityGroupIDs,
+			VpcID:            awsCfg.VPCConfig.VpcID,
 		}
 	}
 
-	return cfg
+	if awsCfg.DeadLetterConfig != nil {
+		cfg.DeadLetterConfig = &deadLetterConfigEnvelope{TargetArn: awsCfg.DeadLetterConfig.TargetArn}
+	}
+
+	if awsCfg.TracingConfig != nil {
+		cfg.TracingConfig = &tracingConfigEnvelope{Mode: awsCfg.TracingConfig.Mode}
+	}
 }
 
 // reservedConcurrency returns the function's reserved-concurrency envelope for
@@ -1175,20 +1335,16 @@ func (h *Handler) awsFnConfig(ctx context.Context, name string) *sdrv.AWSFunctio
 // request through the AWS-only optional interface, then returns the resulting
 // stored config for the response. It is a no-op returning nil when the backend
 // does not model these settings.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the SetFunctionAWSConfig value receiver.
 func (h *Handler) applyAWSConfig(
-	ctx context.Context, name string,
-	vpc *vpcConfigEnvelope, dlq *deadLetterConfigEnvelope, tracing *tracingConfigEnvelope, create bool,
+	ctx context.Context, name string, cfg sdrv.AWSFunctionConfig, create bool,
 ) *sdrv.AWSFunctionConfig {
 	mgr, ok := h.fn.(awsConfigManager)
 	if !ok {
 		return nil
 	}
 
-	cfg := sdrv.AWSFunctionConfig{
-		VPCConfig:        toDriverVPCConfig(vpc),
-		DeadLetterConfig: toDriverDeadLetter(dlq),
-		TracingConfig:    toDriverTracing(tracing),
-	}
 	if err := mgr.SetFunctionAWSConfig(ctx, name, cfg, create); err != nil {
 		return nil
 	}
@@ -1226,6 +1382,30 @@ func toDriverTracing(e *tracingConfigEnvelope) *sdrv.TracingConfig {
 	}
 
 	return &sdrv.TracingConfig{Mode: e.Mode}
+}
+
+// toDriverEphemeral maps a wire EphemeralStorage envelope to the driver type.
+func toDriverEphemeral(e *ephemeralStorageEnvelope) *sdrv.EphemeralStorage {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.EphemeralStorage{Size: e.Size}
+}
+
+// toLayerReferences maps the stored imported layers to the function
+// configuration's Layers list.
+func toLayerReferences(layers []sdrv.FunctionLayer) []layerReference {
+	if len(layers) == 0 {
+		return nil
+	}
+
+	out := make([]layerReference, 0, len(layers))
+	for i := range layers {
+		out = append(out, layerReference{Arn: layers[i].ARN, CodeSize: layers[i].CodeSize})
+	}
+
+	return out
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
