@@ -756,6 +756,17 @@ func (m *Mock) releasePrimaryENI(ctx context.Context, instanceID string) {
 	_ = m.networking.ReleaseInstanceNetworkInterfaces(ctx, instanceID)
 }
 
+// disassociateInstanceAddresses asks the networking mock to disassociate (not
+// release) any elastic IP bound to the terminated instance, so the address
+// survives as allocated-but-unassociated. A no-op until wired.
+func (m *Mock) disassociateInstanceAddresses(ctx context.Context, instanceID string) {
+	if m.networking == nil {
+		return
+	}
+
+	_ = m.networking.DisassociateInstanceAddresses(ctx, instanceID)
+}
+
 // allocatePrivateIP hands out the next private IPv4 inside the subnet's CIDR
 // (AWS allocates from the target subnet, e.g. 10.0.1.0/24 -> 10.0.1.x). It falls
 // back to the global 10.0.<n> pool when there is no subnet CIDR to draw from.
@@ -919,6 +930,7 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	// terminated instance must no longer hold them.
 	for _, id := range instanceIDs {
 		m.releasePrimaryENI(ctx, id)
+		m.disassociateInstanceAddresses(ctx, id)
 	}
 
 	// Tear down the real backing for any engine-backed instances. Every id is now

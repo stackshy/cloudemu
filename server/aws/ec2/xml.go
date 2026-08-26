@@ -92,23 +92,44 @@ type iamInstanceProfileXML struct {
 	ID  string `xml:"id,omitempty"`
 }
 
-// instanceENIAttachmentXML is the primary ENI's <attachment> (deviceIndex 0).
+// instanceENIAttachmentXML is an instance ENI's <attachment>: the device index
+// (0 for eth0), the attachment id, and the attachment status.
 type instanceENIAttachmentXML struct {
-	DeviceIndex int    `xml:"deviceIndex"`
-	Status      string `xml:"status"`
+	AttachmentID string `xml:"attachmentId,omitempty"`
+	DeviceIndex  int    `xml:"deviceIndex"`
+	Status       string `xml:"status"`
 }
 
-// instanceENIXML is one <networkInterfaceSet><item> describing the instance's
-// primary elastic network interface, as embedded in a DescribeInstances item.
-// It is distinct from the standalone networkInterfaceXML (DescribeNetworkInterfaces)
-// because the embedded shape carries privateIpAddress, groupSet and deviceIndex.
+// instanceENIXML is one <networkInterfaceSet><item> describing one of the
+// instance's elastic network interfaces, as embedded in a DescribeInstances
+// item. It is distinct from the standalone networkInterfaceXML
+// (DescribeNetworkInterfaces) because the embedded shape carries
+// privateIpAddress, groupSet and the per-attachment deviceIndex.
 type instanceENIXML struct {
 	NetworkInterfaceID string                   `xml:"networkInterfaceId,omitempty"`
 	SubnetID           string                   `xml:"subnetId,omitempty"`
 	VPCID              string                   `xml:"vpcId,omitempty"`
+	MacAddress         string                   `xml:"macAddress,omitempty"`
 	PrivateIP          string                   `xml:"privateIpAddress,omitempty"`
+	Status             string                   `xml:"status,omitempty"`
 	Groups             []groupItem              `xml:"groupSet>item,omitempty"`
 	Attachment         instanceENIAttachmentXML `xml:"attachment"`
+}
+
+// instanceBlockDeviceXML is one <blockDeviceMapping><item> in a DescribeInstances
+// item: the device name plus the EBS volume attached at that device.
+type instanceBlockDeviceXML struct {
+	DeviceName string         `xml:"deviceName"`
+	EBS        instanceEBSXML `xml:"ebs"`
+}
+
+// instanceEBSXML is the <ebs> child of an instance block-device mapping,
+// carrying the attached volume's id and attachment state.
+type instanceEBSXML struct {
+	VolumeID            string `xml:"volumeId"`
+	Status              string `xml:"status"`
+	AttachTime          string `xml:"attachTime,omitempty"`
+	DeleteOnTermination bool   `xml:"deleteOnTermination"`
 }
 
 // operatorXML is the nested <operator> element carrying managed-resource
@@ -126,32 +147,33 @@ type operatorXML struct {
 // DescribeInstances responses. We populate only the fields the SDK reliably
 // consumes and real apps actually read; unused AWS fields are omitted.
 type instanceXML struct {
-	InstanceID         string                 `xml:"instanceId"`
-	ImageID            string                 `xml:"imageId"`
-	State              instanceState          `xml:"instanceState"`
-	InstanceType       string                 `xml:"instanceType"`
-	LaunchTime         string                 `xml:"launchTime,omitempty"`
-	SubnetID           string                 `xml:"subnetId,omitempty"`
-	VPCID              string                 `xml:"vpcId,omitempty"`
-	PrivateIP          string                 `xml:"privateIpAddress,omitempty"`
-	PublicIP           string                 `xml:"ipAddress,omitempty"`
-	PrivateDNSName     string                 `xml:"privateDnsName,omitempty"`
-	PublicDNSName      string                 `xml:"dnsName,omitempty"`
-	KeyName            string                 `xml:"keyName,omitempty"`
-	AmiLaunchIndex     int                    `xml:"amiLaunchIndex"`
-	Architecture       string                 `xml:"architecture,omitempty"`
-	RootDeviceType     string                 `xml:"rootDeviceType,omitempty"`
-	RootDeviceName     string                 `xml:"rootDeviceName,omitempty"`
-	VirtualizationType string                 `xml:"virtualizationType,omitempty"`
-	Hypervisor         string                 `xml:"hypervisor,omitempty"`
-	Placement          *placementXML          `xml:"placement,omitempty"`
-	Monitoring         *monitoringXML         `xml:"monitoring,omitempty"`
-	MetadataOptions    *metadataOptionsXML    `xml:"metadataOptions,omitempty"`
-	IamInstanceProfile *iamInstanceProfileXML `xml:"iamInstanceProfile,omitempty"`
-	Groups             []groupItem            `xml:"groupSet>item,omitempty"`
-	NetworkInterfaces  []instanceENIXML       `xml:"networkInterfaceSet>item,omitempty"`
-	Tags               []tagItem              `xml:"tagSet>item,omitempty"`
-	Operator           *operatorXML           `xml:"operator,omitempty"`
+	InstanceID          string                   `xml:"instanceId"`
+	ImageID             string                   `xml:"imageId"`
+	State               instanceState            `xml:"instanceState"`
+	InstanceType        string                   `xml:"instanceType"`
+	LaunchTime          string                   `xml:"launchTime,omitempty"`
+	SubnetID            string                   `xml:"subnetId,omitempty"`
+	VPCID               string                   `xml:"vpcId,omitempty"`
+	PrivateIP           string                   `xml:"privateIpAddress,omitempty"`
+	PublicIP            string                   `xml:"ipAddress,omitempty"`
+	PrivateDNSName      string                   `xml:"privateDnsName,omitempty"`
+	PublicDNSName       string                   `xml:"dnsName,omitempty"`
+	KeyName             string                   `xml:"keyName,omitempty"`
+	AmiLaunchIndex      int                      `xml:"amiLaunchIndex"`
+	Architecture        string                   `xml:"architecture,omitempty"`
+	RootDeviceType      string                   `xml:"rootDeviceType,omitempty"`
+	RootDeviceName      string                   `xml:"rootDeviceName,omitempty"`
+	VirtualizationType  string                   `xml:"virtualizationType,omitempty"`
+	Hypervisor          string                   `xml:"hypervisor,omitempty"`
+	Placement           *placementXML            `xml:"placement,omitempty"`
+	Monitoring          *monitoringXML           `xml:"monitoring,omitempty"`
+	MetadataOptions     *metadataOptionsXML      `xml:"metadataOptions,omitempty"`
+	IamInstanceProfile  *iamInstanceProfileXML   `xml:"iamInstanceProfile,omitempty"`
+	Groups              []groupItem              `xml:"groupSet>item,omitempty"`
+	NetworkInterfaces   []instanceENIXML         `xml:"networkInterfaceSet>item,omitempty"`
+	BlockDeviceMappings []instanceBlockDeviceXML `xml:"blockDeviceMapping>item,omitempty"`
+	Tags                []tagItem                `xml:"tagSet>item,omitempty"`
+	Operator            *operatorXML             `xml:"operator,omitempty"`
 }
 
 // runInstancesResponse is the XML body for RunInstances.

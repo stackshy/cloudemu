@@ -150,6 +150,29 @@ func (m *Mock) DisassociateAddress(
 	)
 }
 
+// DisassociateInstanceAddresses clears the association of every elastic IP bound
+// to instanceID, leaving each EIP allocated but unassociated. Real EC2
+// disassociates (does not release) an instance's EIPs on TerminateInstances, so
+// the address survives the instance and can be reassociated. It is a no-op when
+// the instance holds no EIP.
+func (m *Mock) DisassociateInstanceAddresses(_ context.Context, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, eip := range m.eips.All() {
+		if eip.InstanceID != instanceID {
+			continue
+		}
+
+		eip.AssociationID = ""
+		eip.InstanceID = ""
+		eip.NetworkInterfaceID = ""
+		eip.PrivateIP = ""
+	}
+
+	return nil
+}
+
 // sameEIPTarget reports whether the requested association points at the target
 // the EIP already holds, in which case a strict re-associate is idempotent.
 func sameEIPTarget(eip *eipData, in driver.AssociateAddressInput) bool {
