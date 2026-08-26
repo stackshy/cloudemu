@@ -192,6 +192,15 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 
 	zoneID := trimZonePrefix(id)
 
+	// The hosted zone must exist before the change batch is validated: a change
+	// against a missing zone is NoSuchHostedZone (404), not the batch-level
+	// InvalidChangeBatch (400). Only record-level errors from batch validation
+	// map to InvalidChangeBatch.
+	if _, err := h.dns.GetZone(r.Context(), zoneID); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.validateChangeBatch(r, zoneID, req.ChangeBatch.Changes); err != nil {
 		writeChangeErr(w, err)
 		return

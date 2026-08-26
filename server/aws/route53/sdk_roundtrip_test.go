@@ -257,8 +257,12 @@ func TestSDKRoute53Errors(t *testing.T) {
 			}},
 		},
 	})
-	if err == nil {
-		t.Fatal("ChangeResourceRecordSets(missing zone): want error, got nil")
+
+	// A change against a missing zone is NoSuchHostedZone (404), not the
+	// batch-level InvalidChangeBatch (400) — asserting only err != nil would mask
+	// the wrong code.
+	if !errors.As(err, &notFound) {
+		t.Fatalf("ChangeResourceRecordSets(missing zone): got %v, want NoSuchHostedZone", err)
 	}
 
 	// A record-level conflict on an existing zone must surface as
