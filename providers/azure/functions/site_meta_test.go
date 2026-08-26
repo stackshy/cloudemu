@@ -108,13 +108,31 @@ func TestSiteFunctionsLifecycle(t *testing.T) {
 	}
 
 	// Create one and read it back with a generated default key.
-	created, err := m.CreateSiteFunction(ctx, "app1", SiteFunction{Name: "fn1", Language: "python"})
+	created, wasCreated, err := m.CreateSiteFunction(ctx, "app1", SiteFunction{Name: "fn1", Language: "python"})
 	if err != nil {
 		t.Fatalf("create function: %v", err)
 	}
 
+	if !wasCreated {
+		t.Fatal("first CreateSiteFunction reported created=false, want true")
+	}
+
 	if created.Keys["default"] == "" {
 		t.Fatalf("function default key not generated: %+v", created)
+	}
+
+	// A re-PUT with no keys preserves the generated key and reports created=false.
+	reput, wasCreated, err := m.CreateSiteFunction(ctx, "app1", SiteFunction{Name: "fn1", Language: "python"})
+	if err != nil {
+		t.Fatalf("re-put function: %v", err)
+	}
+
+	if wasCreated {
+		t.Fatal("re-PUT CreateSiteFunction reported created=true, want false")
+	}
+
+	if reput.Keys["default"] != created.Keys["default"] {
+		t.Fatalf("re-PUT rotated the function key: %q -> %q", created.Keys["default"], reput.Keys["default"])
 	}
 
 	keys, err := m.FunctionKeys(ctx, "app1", "fn1")
@@ -135,7 +153,7 @@ func TestSiteFunctionsLifecycle(t *testing.T) {
 	}
 
 	// Operations on a missing site are NotFound.
-	if _, err := m.CreateSiteFunction(ctx, "ghost", SiteFunction{Name: "fn"}); !cerrors.IsNotFound(err) {
+	if _, _, err := m.CreateSiteFunction(ctx, "ghost", SiteFunction{Name: "fn"}); !cerrors.IsNotFound(err) {
 		t.Fatalf("create on missing site = %v, want NotFound", err)
 	}
 }

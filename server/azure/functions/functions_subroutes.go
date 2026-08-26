@@ -86,7 +86,7 @@ func createFunction(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 		return
 	}
 
-	fn, err := store.CreateSiteFunction(r.Context(), rp.ResourceName, azfunctions.SiteFunction{
+	fn, created, err := store.CreateSiteFunction(r.Context(), rp.ResourceName, azfunctions.SiteFunction{
 		Name:       rp.SubResourceName,
 		Config:     req.Properties.Config,
 		Language:   req.Properties.Language,
@@ -97,7 +97,14 @@ func createFunction(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusCreated, toFunctionEnvelope(rp, fn))
+	// 201 only when the function was newly created; a re-PUT that updates an
+	// existing function answers 200 (and keeps its keys, per CreateSiteFunction).
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+
+	azurearm.WriteJSON(w, status, toFunctionEnvelope(rp, fn))
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.

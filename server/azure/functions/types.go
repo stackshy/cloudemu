@@ -99,6 +99,32 @@ type createSiteConfig struct {
 	AppSettings    []nameValue `json:"appSettings"`
 }
 
+// patchSiteRequest captures a PATCH (WebApps_Update / SitePatchResource) body.
+// Every field is a pointer (or a nil-able map/slice) so an omitted field is
+// distinguishable from one explicitly set to its zero value — PATCH must apply
+// only the fields the caller supplied and leave the rest as stored.
+type patchSiteRequest struct {
+	Kind       *string              `json:"kind"`
+	Location   *string              `json:"location"`
+	Identity   *siteIdentity        `json:"identity"`
+	Tags       map[string]string    `json:"tags"`
+	Properties *patchSiteProperties `json:"properties"`
+}
+
+type patchSiteProperties struct {
+	SiteConfig   *patchSiteConfig `json:"siteConfig"`
+	Reserved     *bool            `json:"reserved"`
+	ServerFarmID *string          `json:"serverFarmId"`
+	HTTPSOnly    *bool            `json:"httpsOnly"`
+}
+
+type patchSiteConfig struct {
+	LinuxFxVersion *string `json:"linuxFxVersion"`
+	// AppSettings is nil when the PATCH omitted the block (settings preserved) and
+	// non-nil (possibly empty) when it supplied one (settings replaced).
+	AppSettings []nameValue `json:"appSettings"`
+}
+
 // serverFarmResource is the ARM JSON shape for Microsoft.Web/serverfarms (App
 // Service plans) returned to the SDK. The SKU carries the pricing tier a plan
 // bills on — the fields an armappservice PlansClient reads back.

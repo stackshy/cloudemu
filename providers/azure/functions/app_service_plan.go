@@ -30,6 +30,78 @@ type AppServicePlan struct {
 	Tags          map[string]string
 }
 
+// App Service plan pricing tiers, the tier real Azure derives from a SKU name
+// when the caller omits it (azurerm sends only the SKU name + capacity).
+const (
+	tierFree             = "Free"
+	tierShared           = "Shared"
+	tierBasic            = "Basic"
+	tierStandard         = "Standard"
+	tierPremium          = "Premium"
+	tierPremiumV2        = "PremiumV2"
+	tierPremiumV3        = "PremiumV3"
+	tierDynamic          = "Dynamic"
+	tierElasticPremium   = "ElasticPremium"
+	tierIsolated         = "Isolated"
+	tierIsolatedV2       = "IsolatedV2"
+	tierWorkflowStandard = "WorkflowStandard"
+)
+
+// deriveSKUTier maps an App Service plan SKU name to its pricing tier the way
+// real Azure does server-side when a create omits the tier: Y->Dynamic (Consumption),
+// EP->ElasticPremium, WS->WorkflowStandard (Logic Apps), B->Basic, S->Standard,
+// P#v2->PremiumV2, P#v3->PremiumV3, P(other)->Premium, F->Free, D->Shared,
+// I(#v2)->IsolatedV2 else Isolated. An unrecognized name falls back to Standard
+// rather than forcing Dynamic (which would mis-bill a dedicated plan).
+func deriveSKUTier(skuName string) string {
+	name := strings.ToUpper(strings.TrimSpace(skuName))
+	if name == "" {
+		return tierDynamic
+	}
+
+	// Longest prefixes first so EP/WS win over the single-letter matches.
+	prefixes := []struct{ prefix, tier string }{
+		{"EP", tierElasticPremium},
+		{"WS", tierWorkflowStandard},
+		{"Y", tierDynamic},
+		{"F", tierFree},
+		{"D", tierShared},
+		{"B", tierBasic},
+		{"S", tierStandard},
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(name, p.prefix) {
+			return p.tier
+		}
+	}
+
+	if strings.HasPrefix(name, "P") {
+		return premiumTier(name)
+	}
+
+	if strings.HasPrefix(name, "I") {
+		if strings.HasSuffix(name, "V2") {
+			return tierIsolatedV2
+		}
+
+		return tierIsolated
+	}
+
+	return tierStandard
+}
+
+// premiumTier resolves the three Premium generations (legacy P#, P#v2, P#v3).
+func premiumTier(name string) string {
+	switch {
+	case strings.HasSuffix(name, "V2"):
+		return tierPremiumV2
+	case strings.HasSuffix(name, "V3"):
+		return tierPremiumV3
+	default:
+		return tierPremium
+	}
+}
+
 // planKey builds the composite key AppServicePlans are stored under, so a
 // plan named "default" in one resource group can never collide with (or be
 // overwritten by) a same-named plan in another resource group.
@@ -59,7 +131,7 @@ func (m *Mock) CreateAppServicePlan(_ context.Context, p AppServicePlan) (*AppSe
 	}
 
 	if p.SKUTier == "" {
-		p.SKUTier = "Dynamic"
+		p.SKUTier = deriveSKUTier(p.SKUName)
 	}
 
 	if p.Capacity == 0 {

@@ -14,6 +14,13 @@ const (
 	subResourceHost      = "host"
 	subResourceFunctions = "functions"
 	subResourceRestart   = "restart"
+	subResourceStart     = "start"
+	subResourceStop      = "stop"
+
+	// siteStateRunning/siteStateStopped are the ARM site running states reflected
+	// on GET; start/stop toggle the stored state between them.
+	siteStateRunning = "Running"
+	siteStateStopped = "Stopped"
 
 	configNameWeb         = "web"
 	configNameAppSettings = "appsettings"
@@ -47,9 +54,34 @@ func (h *Handler) serveSiteSubResource(w http.ResponseWriter, r *http.Request, r
 		h.serveFunctions(w, r, rp, store)
 	case subResourceRestart:
 		h.serveRestart(w, r, rp)
+	case subResourceStart:
+		h.serveSiteState(w, r, rp, store, siteStateRunning)
+	case subResourceStop:
+		h.serveSiteState(w, r, rp, store, siteStateStopped)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "unsupported sub-resource")
 	}
+}
+
+// serveSiteState handles POST .../sites/{name}/start and .../stop
+// (WebApps_Start / WebApps_Stop), toggling the stored running state so a
+// subsequent GET reflects it. Real Azure answers 200 with an empty body.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (*Handler) serveSiteState(
+	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps, state string,
+) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "start/stop requires POST")
+		return
+	}
+
+	if _, err := store.SetSiteState(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, state); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
