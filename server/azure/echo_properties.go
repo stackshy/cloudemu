@@ -327,10 +327,115 @@ func captureUnmodeled(
 	return fresh
 }
 
+// writeOnlyProperty reports whether an ARM request-body property key is a
+// write-only secret that real Azure accepts on write but never returns on a
+// read. Such a key must never be captured by the overlay or echoed back:
+// because the owning handler deliberately omits it from its response (mirroring
+// Azure), the generic overlay would otherwise treat it as an unmodeled property
+// and reflect the caller's secret on the create response and on every later GET
+// — a credential leak. Matched case-insensitively at any nesting depth, since
+// missingProperties descends into nested objects.
+//
+// A key is treated as write-only in two ways:
+//
+// 1. Suffix rule (the robust guard against wholly-unmodeled subtrees captured
+// verbatim): any key whose lowercased name ENDS WITH "password" or "secret".
+// This covers every write-only credential input real Azure accepts but never
+// echoes, regardless of the prefix a handler's model happens not to know:
+//   - administratorLoginPassword — Microsoft.Sql/servers (server/azure/sql),
+//     DBforMySQL/DBforPostgreSQL flexibleServers (mysqlflex/postgresflex) and
+//     Cosmos DB for PostgreSQL clusters (cosmospostgresql); each toARM* omits it.
+//   - adminPassword — VM osProfile (virtualmachines); the osProfile model has no
+//     password field, so it is dropped.
+//   - initialCassandraAdminPassword — managed Cassandra (managedcassandra);
+//     toARMCluster omits it.
+//   - password — Cosmos-PG role (toARMRole drops it) and Container Instances
+//     imageRegistryCredentials[].password (the array is unmodeled, captured
+//     verbatim — hence the []any recursion in sanitizeUnmodeled).
+//   - secret — AKS servicePrincipalProfile.secret (armManagedClusterProperties
+//     omits the whole block).
+//   - serverAppSecret / clientSecret — AKS aadProfile.serverAppSecret and any
+//     clientSecret-style field in a verbatim-captured subtree (aadProfile is
+//     unmodeled). The sibling serverAppID (public) does not end in the suffix,
+//     so it still round-trips, matching real Azure's aadProfile read.
+//
+// The suffix is a true endsWith, so it never touches a field that merely
+// contains the word: secretName, secretUri, secretRef, clientSecretSetting,
+// passwordPolicy and the plural list outputs secrets/accessKeys are all
+// preserved. Verified by sweeping every server/azure response/toARM* struct: no
+// field a handler RETURNS has a json name ending in "password" or "secret". The
+// sole password-ending returned field is the Container Instances exec action's
+// `password`, a bare {webSocketUri, password} object with no id/properties — the
+// overlay only rewrites ARM resources and only ever ADDS unmodeled keys onto a
+// properties map (it never removes a handler's own fields), so that response is
+// untouched. Output credential keys a client never sends on write
+// (primaryKey/secondaryKey/accessKeys/connectionString) never enter the
+// request-capture path and are correctly left alone.
+//
+// 2. Exact-match object keys: the Notification Hubs PNS credential blocks, which
+// carry secrets but do not end in the suffixes. toHubJSON (notificationhubs)
+// models only name/registrationTtl and drops these; real Azure serves them only
+// via GetPnsCredentials, never the generic hub GET. Each is an object, so
+// denylisting the key skips the whole credential subtree.
+//
+// The rule is matched case-insensitively at any nesting depth (missingProperties
+// and sanitizeUnmodeled recurse into nested objects and arrays), and never
+// suppresses a field a handler legitimately returns.
+func writeOnlyProperty(key string) bool {
+	lower := strings.ToLower(key)
+
+	if strings.HasSuffix(lower, "password") || strings.HasSuffix(lower, "secret") {
+		return true
+	}
+
+	switch lower {
+	case "gcmcredential", "apnscredential", "wnscredential",
+		"admcredential", "baiducredential", "mpnscredential":
+		return true
+	default:
+		return false
+	}
+}
+
+// sanitizeUnmodeled deep-copies a captured request value with every write-only
+// secret key (writeOnlyProperty) removed at every depth. It guards the wholesale
+// capture path in missingProperties: when the handler drops an entire object or
+// array, it is preserved as-is, so a secret nested inside it would otherwise
+// slip past the per-key denylist. Both objects (map[string]any) and arrays
+// ([]any, e.g. imageRegistryCredentials[].password) are recursed and deep-copied
+// so no request-owned map or slice is aliased into the overlay store; any other
+// value passes through unchanged.
+func sanitizeUnmodeled(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+
+		for k, val := range t {
+			if writeOnlyProperty(k) {
+				continue
+			}
+
+			out[k] = sanitizeUnmodeled(val)
+		}
+
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, el := range t {
+			out[i] = sanitizeUnmodeled(el)
+		}
+
+		return out
+	default:
+		return v
+	}
+}
+
 // missingProperties returns the entries of req that resp does not already carry,
 // descending into nested objects so an unmodeled leaf under a modeled parent is
 // still captured. A key present in both as scalars is considered modeled (the
-// handler owns it) and is omitted.
+// handler owns it) and is omitted. Write-only secret keys (writeOnlyProperty)
+// are skipped at every level so they are never captured, persisted, or echoed.
 func missingProperties(req, resp map[string]any) map[string]any {
 	if len(req) == 0 {
 		return nil
@@ -339,9 +444,18 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	out := map[string]any{}
 
 	for k, reqVal := range req {
+		if writeOnlyProperty(k) {
+			continue
+		}
+
 		respVal, present := resp[k]
 		if !present {
-			out[k] = reqVal
+			// A wholly-unmodeled object is captured verbatim, so strip any
+			// write-only secret nested inside it — the per-key skip above only
+			// covers keys the loop visits directly, not those buried in a
+			// subtree the handler dropped entirely (e.g. a VM osProfile the
+			// response omits, carrying adminPassword).
+			out[k] = sanitizeUnmodeled(reqVal)
 			continue
 		}
 
