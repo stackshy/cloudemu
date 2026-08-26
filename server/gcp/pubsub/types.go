@@ -27,6 +27,26 @@ type subscription struct {
 	Detached                 bool              `json:"detached,omitempty"`
 }
 
+// updateTopicRequest is PATCH topics/{name} (topics.patch): the topic fields to
+// update plus the field mask naming which of them to apply.
+type updateTopicRequest struct {
+	Topic      topic  `json:"topic"`
+	UpdateMask string `json:"updateMask"`
+}
+
+// updateSubscriptionRequest is PATCH subscriptions/{name} (subscriptions.patch).
+type updateSubscriptionRequest struct {
+	Subscription subscription `json:"subscription"`
+	UpdateMask   string       `json:"updateMask"`
+}
+
+// deadLetterPolicyJSON is the parsed shape of subscription.deadLetterPolicy,
+// used to route exhausted messages to the dead-letter topic.
+type deadLetterPolicyJSON struct {
+	DeadLetterTopic     string `json:"deadLetterTopic"`
+	MaxDeliveryAttempts int    `json:"maxDeliveryAttempts"`
+}
+
 type listTopicsResponse struct {
 	Topics        []topic `json:"topics"`
 	NextPageToken string  `json:"nextPageToken,omitempty"`

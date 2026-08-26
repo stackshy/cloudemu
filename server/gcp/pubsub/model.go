@@ -1,6 +1,7 @@
 package pubsub
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -9,7 +10,15 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
-const defaultAckDeadlineSeconds = 10
+const (
+	defaultAckDeadlineSeconds = 10
+	// defaultMaxDeliveryAttempts is Pub/Sub's default when a deadLetterPolicy
+	// sets a dead-letter topic but omits maxDeliveryAttempts.
+	defaultMaxDeliveryAttempts = 5
+	// deletedTopicName is what real Pub/Sub reports as a subscription's topic
+	// after the topic it was attached to is deleted.
+	deletedTopicName = "_deleted-topic_"
+)
 
 // storedMessage is one message in a topic's append-only log. Every subscription
 // on the topic reads from this shared log by index; per-subscription ack state
@@ -29,6 +38,13 @@ type storedMessage struct {
 type topicState struct {
 	messages []storedMessage
 	iam      *iamPolicy
+
+	// labels overrides the messagequeue driver's tags once a topic is created or
+	// patched through this handler, so topics.patch on labels is reflected on
+	// subsequent Get/List. labelsSet distinguishes an explicit empty map from
+	// "no override, fall back to the driver's tags".
+	labels    map[string]string
+	labelsSet bool
 }
 
 // lease is an outstanding (delivered, not-yet-acked) message on a subscription.
@@ -48,6 +64,10 @@ type subState struct {
 	outstanding      map[string]*lease // ackID -> leased message
 	deliveryAttempts map[int]int       // per-index delivery count (dead-letter surface)
 	iam              *iamPolicy
+
+	// filter is the parsed (immutable) subscription filter. nil means no filter
+	// was set, so every message is deliverable.
+	filter filterExpr
 }
 
 // snapState captures a subscription's ack cursor for later seek/replay.
@@ -101,6 +121,12 @@ func (h *Handler) appendMessage(topicName string, msg *storedMessage) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	return h.appendMessageLocked(topicName, msg)
+}
+
+// appendMessageLocked is appendMessage for callers already holding h.mu (e.g.
+// dead-letter routing from within deliver).
+func (h *Handler) appendMessageLocked(topicName string, msg *storedMessage) string {
 	ts := h.topicLog(topicName)
 	msg.id = fmt.Sprintf("%d", h.ackCounter.Add(1))
 	ts.messages = append(ts.messages, *msg)
@@ -111,7 +137,7 @@ func (h *Handler) appendMessage(topicName string, msg *storedMessage) string {
 // newSub registers a subscription that starts fresh: all messages already on
 // the topic are treated as consumed, so it only receives future publishes
 // (matching real Pub/Sub, where a new subscription has no backlog).
-func (h *Handler) newSub(name, topicShort string, cfg *subscription) {
+func (h *Handler) newSub(name, topicShort string, cfg *subscription, filter filterExpr) {
 	acked := make(map[int]bool)
 
 	if ts, ok := h.topics[topicShort]; ok {
@@ -127,6 +153,7 @@ func (h *Handler) newSub(name, topicShort string, cfg *subscription) {
 		acked:            acked,
 		outstanding:      make(map[string]*lease),
 		deliveryAttempts: make(map[int]int),
+		filter:           filter,
 	}
 }
 
@@ -142,16 +169,8 @@ func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {
 	now := time.Now().UTC()
 	sweepExpired(sub, now)
 
-	leased := make(map[int]bool, len(sub.outstanding))
-	for _, l := range sub.outstanding {
-		leased[l.msgIdx] = true
-	}
-
-	ackDeadline := sub.cfg.AckDeadlineSeconds
-	if ackDeadline <= 0 {
-		ackDeadline = defaultAckDeadlineSeconds
-	}
-
+	leased := leasedIndices(sub)
+	ackDeadline := effectiveAckDeadline(sub)
 	out := make([]receivedMessage, 0, maxMessages)
 
 	for idx := range ts.messages {
@@ -163,19 +182,109 @@ func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {
 			continue
 		}
 
-		ackID := fmt.Sprintf("ack-%d", h.ackCounter.Add(1))
-		sub.outstanding[ackID] = &lease{msgIdx: idx, deadline: now.Add(time.Duration(ackDeadline) * time.Second)}
-		sub.deliveryAttempts[idx]++
-
-		attempt := 0
-		if len(sub.cfg.DeadLetterPolicy) > 0 {
-			attempt = sub.deliveryAttempts[idx]
+		if msg, ok := h.tryDeliver(sub, ts, idx, now, ackDeadline); ok {
+			out = append(out, msg)
 		}
-
-		out = append(out, buildReceived(ackID, &ts.messages[idx], attempt))
 	}
 
 	return out
+}
+
+// tryDeliver decides one message's fate for a subscription: filtered-out and
+// dead-lettered messages are auto-acked and not returned; otherwise the message
+// is leased and returned. The caller holds h.mu.
+func (h *Handler) tryDeliver(
+	sub *subState, ts *topicState, idx int, now time.Time, ackDeadline int,
+) (receivedMessage, bool) {
+	// A message the filter rejects is never delivered and never backlogged:
+	// real Pub/Sub auto-acknowledges it for this subscription.
+	if sub.filter != nil && !sub.filter.eval(ts.messages[idx].attributes) {
+		sub.acked[idx] = true
+		return receivedMessage{}, false
+	}
+
+	sub.deliveryAttempts[idx]++
+	attempts := sub.deliveryAttempts[idx]
+
+	// Once delivery attempts exceed the dead-letter policy's limit, forward the
+	// message to the dead-letter topic and stop redelivering it here.
+	if h.routeToDeadLetter(sub, idx, attempts) {
+		sub.acked[idx] = true
+		return receivedMessage{}, false
+	}
+
+	ackID := fmt.Sprintf("ack-%d", h.ackCounter.Add(1))
+	sub.outstanding[ackID] = &lease{msgIdx: idx, deadline: now.Add(time.Duration(ackDeadline) * time.Second)}
+
+	attempt := 0
+	if len(sub.cfg.DeadLetterPolicy) > 0 {
+		attempt = attempts
+	}
+
+	return buildReceived(ackID, &ts.messages[idx], attempt), true
+}
+
+func leasedIndices(sub *subState) map[int]bool {
+	leased := make(map[int]bool, len(sub.outstanding))
+	for _, l := range sub.outstanding {
+		leased[l.msgIdx] = true
+	}
+
+	return leased
+}
+
+func effectiveAckDeadline(sub *subState) int {
+	if sub.cfg.AckDeadlineSeconds <= 0 {
+		return defaultAckDeadlineSeconds
+	}
+
+	return sub.cfg.AckDeadlineSeconds
+}
+
+// routeToDeadLetter forwards message idx to the subscription's dead-letter topic
+// when its delivery attempts have exceeded the configured limit, returning true
+// when the message was dead-lettered (and must not be delivered on the source).
+// The caller holds h.mu.
+func (h *Handler) routeToDeadLetter(sub *subState, idx, attempts int) bool {
+	dlqTopic, maxAttempts, ok := parseDeadLetter(sub.cfg.DeadLetterPolicy)
+	if !ok || attempts <= maxAttempts {
+		return false
+	}
+
+	src, ok := h.topics[sub.topic]
+	if !ok || idx >= len(src.messages) {
+		return false
+	}
+
+	msg := src.messages[idx]
+	h.appendMessageLocked(dlqTopic, &storedMessage{
+		body:        msg.body,
+		attributes:  msg.attributes,
+		orderingKey: msg.orderingKey,
+		publishTime: time.Now().UTC(),
+	})
+
+	return true
+}
+
+// parseDeadLetter extracts the dead-letter topic short-name and effective
+// max-delivery-attempts from a subscription's deadLetterPolicy raw JSON.
+func parseDeadLetter(raw json.RawMessage) (topicShort string, maxAttempts int, ok bool) {
+	if len(raw) == 0 {
+		return "", 0, false
+	}
+
+	var p deadLetterPolicyJSON
+	if err := json.Unmarshal(raw, &p); err != nil || p.DeadLetterTopic == "" {
+		return "", 0, false
+	}
+
+	maxAttempts = p.MaxDeliveryAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMaxDeliveryAttempts
+	}
+
+	return shortName(p.DeadLetterTopic), maxAttempts, true
 }
 
 // sweepExpired drops leases whose deadline has passed, making those messages
