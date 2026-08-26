@@ -62,6 +62,12 @@ type CacheInfo struct {
 	// it. Both are empty/zero for non-AWS providers.
 	NumCacheNodes   int
 	SubnetGroupName string
+
+	// ParameterGroupName is the custom AWS ElastiCache cache parameter group
+	// attached to the cluster, echoed back on Describe so IaC that references a
+	// custom group converges. Empty means the backend reports the engine's
+	// default (default.<family>). AWS-only and left empty by other callers.
+	ParameterGroupName string
 }
 
 // CacheConfig describes a cache instance to create.
@@ -99,6 +105,11 @@ type CacheConfig struct {
 	// zero means unspecified and the backend defaults it per engine (Redis
 	// 6379, Memcached 11211). AWS-only and left zero by other callers.
 	Port int
+
+	// ParameterGroupName names a custom AWS ElastiCache cache parameter group
+	// to attach; empty means the backend reports the engine's default
+	// (default.<family>). AWS-only and left empty by other callers.
+	ParameterGroupName string
 }
 
 // Cache is the interface that cache provider implementations must satisfy.

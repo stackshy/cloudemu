@@ -256,8 +256,15 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 	}
 
 	if info.Engine != "" {
+		// A custom parameter group the caller attached is echoed verbatim;
+		// otherwise report the engine family's default (default.<family>).
+		paramGroup := info.ParameterGroupName
+		if paramGroup == "" {
+			paramGroup = defaultParamGroupName(info.Engine, info.EngineVersion)
+		}
+
 		out.CacheParameterGroup = &cacheParameterGroupStatusXML{
-			CacheParameterGroupName: defaultParamGroupName(info.Engine, info.EngineVersion),
+			CacheParameterGroupName: paramGroup,
 			ParameterApplyStatus:    "in-sync",
 		}
 	}

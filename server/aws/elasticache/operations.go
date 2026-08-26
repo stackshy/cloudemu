@@ -47,14 +47,15 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := cachedriver.CacheConfig{
-		Name:            form.Get("CacheClusterId"),
-		NodeType:        form.Get("CacheNodeType"),
-		Engine:          form.Get("Engine"),
-		EngineVersion:   form.Get("EngineVersion"),
-		NumCacheNodes:   nodes,
-		Port:            port,
-		SubnetGroupName: form.Get("CacheSubnetGroupName"),
-		Tags:            parseTags(form),
+		Name:               form.Get("CacheClusterId"),
+		NodeType:           form.Get("CacheNodeType"),
+		Engine:             form.Get("Engine"),
+		EngineVersion:      form.Get("EngineVersion"),
+		NumCacheNodes:      nodes,
+		Port:               port,
+		SubnetGroupName:    form.Get("CacheSubnetGroupName"),
+		ParameterGroupName: form.Get("CacheParameterGroupName"),
+		Tags:               parseTags(form),
 	}
 
 	info, err := h.cache.CreateCache(r.Context(), cfg)

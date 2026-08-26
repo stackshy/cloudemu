@@ -214,18 +214,19 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:            cfg.Name,
-		Scope:           cfg.Scope,
-		NodeType:        nodeType,
-		Engine:          engine,
-		EngineVersion:   engineVersion,
-		Status:          statusAvailable,
-		Endpoint:        endpoint,
-		ARN:             m.cacheARN(cfg.Name),
-		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:            tags,
-		NumCacheNodes:   numNodes,
-		SubnetGroupName: cfg.SubnetGroupName,
+		Name:               cfg.Name,
+		Scope:              cfg.Scope,
+		NodeType:           nodeType,
+		Engine:             engine,
+		EngineVersion:      engineVersion,
+		Status:             statusAvailable,
+		Endpoint:           endpoint,
+		ARN:                m.cacheARN(cfg.Name),
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:               tags,
+		NumCacheNodes:      numNodes,
+		SubnetGroupName:    cfg.SubnetGroupName,
+		ParameterGroupName: cfg.ParameterGroupName,
 	}
 
 	// Opt-in: back the cache with a real server, replacing the synthetic
