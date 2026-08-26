@@ -30,6 +30,84 @@ func newEtag() string {
 	return idgen.GenerateID("etag-")
 }
 
+// resolveExpiry derives the RFC3339 expireTime from a ttl duration (e.g.
+// "3600s") relative to now, or echoes an explicit expireTime. ttl takes
+// precedence; an unparseable ttl is an invalid argument.
+func resolveExpiry(now time.Time, ttl, expireTime string) (string, error) {
+	if ttl != "" {
+		d, err := time.ParseDuration(ttl)
+		if err != nil {
+			return "", errors.Newf(errors.InvalidArgument, "invalid ttl %q", ttl)
+		}
+
+		return now.Add(d).Format(time.RFC3339), nil
+	}
+
+	return expireTime, nil
+}
+
+func copyMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+
+	return out
+}
+
+func copySlice(s []string) []string {
+	if s == nil {
+		return nil
+	}
+
+	out := make([]string, len(s))
+	copy(out, s)
+
+	return out
+}
+
+func cloneReplication(rep *driver.GCPReplication) *driver.GCPReplication {
+	if rep == nil {
+		return nil
+	}
+
+	out := &driver.GCPReplication{Automatic: rep.Automatic, AutomaticKMSKeyName: rep.AutomaticKMSKeyName}
+	if len(rep.UserManaged) > 0 {
+		out.UserManaged = make([]driver.GCPReplica, len(rep.UserManaged))
+		copy(out.UserManaged, rep.UserManaged)
+	}
+
+	return out
+}
+
+func cloneRotation(rot *driver.GCPRotation) *driver.GCPRotation {
+	if rot == nil {
+		return nil
+	}
+
+	clone := *rot
+
+	return &clone
+}
+
+// resolveAlias maps a version alias to its target version id, leaving numeric
+// ids and "" (current) untouched. Caller holds sd.mu.
+func resolveAlias(sd *secretData, versionID string) string {
+	if versionID == "" {
+		return versionID
+	}
+
+	if target, ok := sd.info.VersionAliases[versionID]; ok {
+		return target
+	}
+
+	return versionID
+}
+
 // Mock is an in-memory mock implementation of GCP Secret Manager.
 type Mock struct {
 	secrets *memstore.Store[*secretData]
@@ -62,15 +140,26 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		tags[k] = v
 	}
 
+	expireTime, err := resolveExpiry(m.opts.Clock.Now().UTC(), cfg.TTL, cfg.ExpireTime)
+	if err != nil {
+		return nil, err
+	}
+
 	info := driver.SecretInfo{
-		ID:          idgen.GenerateID("secret-"),
-		Name:        cfg.Name,
-		ResourceID:  selfLink,
-		Description: cfg.Description,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Tags:        tags,
-		Etag:        newEtag(),
+		ID:             idgen.GenerateID("secret-"),
+		Name:           cfg.Name,
+		ResourceID:     selfLink,
+		Description:    cfg.Description,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Tags:           tags,
+		Etag:           newEtag(),
+		Replication:    cloneReplication(cfg.Replication),
+		Annotations:    copyMap(cfg.Annotations),
+		ExpireTime:     expireTime,
+		Rotation:       cloneRotation(cfg.Rotation),
+		Topics:         copySlice(cfg.Topics),
+		VersionAliases: copyMap(cfg.VersionAliases),
 	}
 
 	sd := &secretData{info: info}
@@ -190,6 +279,8 @@ func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*drive
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
+
+	versionID = resolveAlias(sd, versionID)
 
 	for _, v := range sd.versions {
 		if versionID == "" && v.Current {

@@ -29,7 +29,7 @@ GCPSecrets is the GCP Secret Manager-specific surface kept off the shared
 | `DisableSecretVersion` | DisableSecretVersion moves a version to DISABLED. It fails on a DESTROYED |
 | `EnableSecretVersion` | EnableSecretVersion moves a version to ENABLED. It is idempotent on an |
 | `GetSecretIAMPolicy` | GetSecretIAMPolicy returns the secret's stored IAM policy (an empty |
-| `PatchSecret` | PatchSecret applies a partial update (labels) to a secret's metadata. |
+| `PatchSecret` | PatchSecret applies a partial update (labels, annotations, topics, version |
 | `SetSecretIAMPolicy` | SetSecretIAMPolicy stores the secret's IAM policy and returns it with a |
 | `TestSecretIAMPermissions` | TestSecretIAMPermissions returns the subset of permissions the caller |
 

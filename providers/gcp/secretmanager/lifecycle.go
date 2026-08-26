@@ -112,12 +112,32 @@ func (m *Mock) PatchSecret(_ context.Context, name string, patch driver.GCPSecre
 	defer sd.mu.Unlock()
 
 	if patch.SetLabels {
-		labels := make(map[string]string, len(patch.Labels))
-		for k, v := range patch.Labels {
-			labels[k] = v
+		sd.info.Tags = copyMap(patch.Labels)
+	}
+
+	if patch.SetAnnotations {
+		sd.info.Annotations = copyMap(patch.Annotations)
+	}
+
+	if patch.SetTopics {
+		sd.info.Topics = copySlice(patch.Topics)
+	}
+
+	if patch.SetVersionAliases {
+		sd.info.VersionAliases = copyMap(patch.VersionAliases)
+	}
+
+	if patch.SetRotation {
+		sd.info.Rotation = cloneRotation(patch.Rotation)
+	}
+
+	if patch.SetExpireTime {
+		expireTime, err := resolveExpiry(m.opts.Clock.Now().UTC(), patch.TTL, patch.ExpireTime)
+		if err != nil {
+			return nil, err
 		}
 
-		sd.info.Tags = labels
+		sd.info.ExpireTime = expireTime
 	}
 
 	sd.info.UpdatedAt = m.opts.Clock.Now().UTC().Format(time.RFC3339)
