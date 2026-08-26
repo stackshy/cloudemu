@@ -37,6 +37,13 @@ const (
 	defaultSKUTier = "Regional"
 
 	protocolTCP = "Tcp"
+
+	// Defaults Azure synthesizes for rule/probe fields omitted from the request,
+	// echoed back on GET so the emulator matches real-cloud output.
+	defaultIdleTimeoutMin   = 4         // loadBalancingRule / inboundNatRule idleTimeoutInMinutes
+	defaultLoadDistribution = "Default" // loadBalancingRule loadDistribution
+	defaultProbeIntervalSec = 15        // probe intervalInSeconds
+	defaultProbeCount       = 2         // probe numberOfProbes
 )
 
 // subResource is Azure's {"id": "..."} reference shape.

@@ -75,6 +75,61 @@ func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *az
 	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored, h.poolMembers(r.Context(), rp.Subscription)))
 }
 
+// updateLoadBalancerTags handles PATCH .../loadBalancers/{name} —
+// LoadBalancers.UpdateTags. The body carries only a tags map; the tags are
+// MERGED into the stored load balancer (existing tags are kept, matching keys
+// overwritten) and every child is preserved. Returns 200 with the updated load
+// balancer, matching the SDK's synchronous UpdateTags.
+func (h *Handler) updateLoadBalancerTags(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body loadBalancerJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	az, ok := h.azureLB()
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "load balancer not found")
+		return
+	}
+
+	stored, err := az.GetAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	merged := *stored
+	merged.Tags = mergeTags(stored.Tags, stripInternalTags(body.Tags))
+
+	updated, err := az.CreateOrUpdateAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName, merged)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, updated, h.poolMembers(r.Context(), rp.Subscription)))
+}
+
+// mergeTags returns base with every key in overlay applied on top (overlay
+// wins on conflict). Neither input is mutated.
+func mergeTags(base, overlay map[string]string) map[string]string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(base)+len(overlay))
+
+	for k, v := range base {
+		out[k] = v
+	}
+
+	for k, v := range overlay {
+		out[k] = v
+	}
+
+	return out
+}
+
 // deleteLoadBalancer removes the load balancer from both the native store and
 // the cross-cloud record. LoadBalancers.Delete is an LRO; a 200 with empty body
 // completes the poller.
@@ -243,6 +298,14 @@ func buildProbes(in []probeJSON) []lbdriver.AzureLBProbe {
 			pr.NumberOfProbes = int(p.NumberOfProbes)
 		}
 
+		if pr.IntervalInSeconds == 0 {
+			pr.IntervalInSeconds = defaultProbeIntervalSec
+		}
+
+		if pr.NumberOfProbes == 0 {
+			pr.NumberOfProbes = defaultProbeCount
+		}
+
 		out = append(out, pr)
 	}
 
@@ -279,6 +342,14 @@ func buildRules(in []loadBalancingRuleJSON) []lbdriver.AzureLBRule {
 			}
 		}
 
+		if rule.IdleTimeoutMin == 0 {
+			rule.IdleTimeoutMin = defaultIdleTimeoutMin
+		}
+
+		if rule.LoadDistribution == "" {
+			rule.LoadDistribution = defaultLoadDistribution
+		}
+
 		out = append(out, rule)
 	}
 
@@ -306,6 +377,10 @@ func buildNatRules(in []inboundNatRuleJSON) []lbdriver.AzureLBNatRule {
 			if p.EnableFloatingIP != nil {
 				rule.EnableFloatingIP = *p.EnableFloatingIP
 			}
+		}
+
+		if rule.IdleTimeoutMin == 0 {
+			rule.IdleTimeoutMin = defaultIdleTimeoutMin
 		}
 
 		out = append(out, rule)
