@@ -288,3 +288,92 @@ func TestSDKPublicIPIPConfigurationBackref(t *testing.T) {
 		t.Errorf("ipConfiguration.id=%q want %q", *got.Properties.IPConfiguration.ID, wantIPConfig)
 	}
 }
+
+// TestSDKPublicIPRePUTUpdatesInPlace guards the re-PUT idempotency fix: a
+// second CreateOrUpdate to the same publicIPAddresses/{name} must mutate the
+// existing allocation in place, not mint a duplicate. It asserts the critical
+// invariant — LIST returns exactly ONE entry for the name — plus the updated
+// idleTimeout and tags round-tripping on GET, and the address staying stable.
+func TestSDKPublicIPRePUTUpdatesInPlace(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+
+	pips, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := pips.BeginCreateOrUpdate(ctx, "rg-reput", "pip-reput", armnetwork.PublicIPAddress{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("dev")},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+			IdleTimeoutInMinutes:     to.Ptr(int32(4)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	created := pollDone(t, first)
+
+	// Second PUT to the same name with changed idleTimeout and tags.
+	second, err := pips.BeginCreateOrUpdate(ctx, "rg-reput", "pip-reput", armnetwork.PublicIPAddress{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("prod"), "team": to.Ptr("net")},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+			IdleTimeoutInMinutes:     to.Ptr(int32(20)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+
+	pollDone(t, second)
+
+	// The critical invariant: LIST returns exactly one entry for the name.
+	count := 0
+
+	pager := pips.NewListPager("rg-reput", nil)
+	for pager.More() {
+		page, pErr := pager.NextPage(ctx)
+		if pErr != nil {
+			t.Fatalf("list: %v", pErr)
+		}
+
+		for _, v := range page.Value {
+			if v.Name != nil && *v.Name == "pip-reput" {
+				count++
+			}
+		}
+	}
+
+	if count != 1 {
+		t.Fatalf("List returned %d entries for pip-reput, want 1 (re-PUT must not duplicate)", count)
+	}
+
+	got, err := pips.Get(ctx, "rg-reput", "pip-reput", nil)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	// Identity (address) preserved across the re-PUT.
+	if created.Properties == nil || created.Properties.IPAddress == nil ||
+		got.Properties == nil || got.Properties.IPAddress == nil ||
+		*got.Properties.IPAddress != *created.Properties.IPAddress {
+		t.Errorf("ipAddress changed across re-PUT: created=%v got=%v", created.Properties, got.Properties)
+	}
+
+	if got.Properties.IdleTimeoutInMinutes == nil || *got.Properties.IdleTimeoutInMinutes != 20 {
+		t.Errorf("idleTimeoutInMinutes=%v want 20 (updated by re-PUT)", got.Properties.IdleTimeoutInMinutes)
+	}
+
+	if got.Tags["env"] == nil || *got.Tags["env"] != "prod" {
+		t.Errorf("tags[env]=%v want prod (updated by re-PUT)", got.Tags["env"])
+	}
+
+	if got.Tags["team"] == nil || *got.Tags["team"] != "net" {
+		t.Errorf("tags[team]=%v want net (added by re-PUT)", got.Tags["team"])
+	}
+}

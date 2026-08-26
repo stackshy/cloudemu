@@ -263,3 +263,98 @@ func TestSDKNATGatewayResourceGroupIsolation(t *testing.T) {
 		t.Errorf("List(rg-a) returned %d NAT gateways, want 1 (rg-b's must not leak in)", count)
 	}
 }
+
+// TestSDKNATGatewayRePUTUpdatesTagsAndPIP guards the re-PUT idempotency fix for
+// NAT gateways: a second CreateOrUpdate re-applies the public-IP association and
+// tag changes (previously the found branch returned the gateway unchanged,
+// discarding both). It swaps the bound public IP and updates tags, then asserts
+// GET reflects the new association and tags, and that the freed public IP can be
+// rebound to another gateway.
+func TestSDKNATGatewayRePUTUpdatesTagsAndPIP(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+	opts := clientOpts(ts)
+
+	pips, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"pip-a", "pip-b"} {
+		pp, cErr := pips.BeginCreateOrUpdate(ctx, "rg-1", name, armnetwork.PublicIPAddress{
+			Location: to.Ptr("eastus"),
+			SKU:      &armnetwork.PublicIPAddressSKU{Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard)},
+			Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+				PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+			},
+		}, nil)
+		if cErr != nil {
+			t.Fatalf("create %s: %v", name, cErr)
+		}
+
+		pollDone(t, pp)
+	}
+
+	pipAID := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/publicIPAddresses/pip-a"
+	pipBID := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/publicIPAddresses/pip-b"
+
+	natClient, err := armnetwork.NewNatGatewaysClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := natClient.BeginCreateOrUpdate(ctx, "rg-1", "natgw-reput", armnetwork.NatGateway{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("dev")},
+		Properties: &armnetwork.NatGatewayPropertiesFormat{
+			PublicIPAddresses: []*armnetwork.SubResource{{ID: to.Ptr(pipAID)}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	pollDone(t, first)
+
+	// Re-PUT: swap the bound public IP (pip-a -> pip-b) and change the tags.
+	second, err := natClient.BeginCreateOrUpdate(ctx, "rg-1", "natgw-reput", armnetwork.NatGateway{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("prod")},
+		Properties: &armnetwork.NatGatewayPropertiesFormat{
+			PublicIPAddresses: []*armnetwork.SubResource{{ID: to.Ptr(pipBID)}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+
+	pollDone(t, second)
+
+	got, err := natClient.Get(ctx, "rg-1", "natgw-reput", nil)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.Properties == nil || len(got.Properties.PublicIPAddresses) != 1 ||
+		got.Properties.PublicIPAddresses[0].ID == nil || *got.Properties.PublicIPAddresses[0].ID != pipBID {
+		t.Errorf("publicIpAddresses=%v want [%s] (re-associated by re-PUT)", got.Properties, pipBID)
+	}
+
+	if got.Tags["env"] == nil || *got.Tags["env"] != "prod" {
+		t.Errorf("tags[env]=%v want prod (updated by re-PUT)", got.Tags["env"])
+	}
+
+	// The freed pip-a must be reusable: binding it to a fresh NAT gateway
+	// succeeds, proving the old association was released rather than leaked.
+	other, err := natClient.BeginCreateOrUpdate(ctx, "rg-1", "natgw-other", armnetwork.NatGateway{
+		Location: to.Ptr("eastus"),
+		Properties: &armnetwork.NatGatewayPropertiesFormat{
+			PublicIPAddresses: []*armnetwork.SubResource{{ID: to.Ptr(pipAID)}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("bind freed pip-a to another gateway: %v", err)
+	}
+
+	pollDone(t, other)
+}

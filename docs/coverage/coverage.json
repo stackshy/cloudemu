@@ -6648,6 +6648,14 @@
             "doc": "SetAzureVNetPeeringState atomically updates just the peeringState field of"
           },
           {
+            "name": "UpdateAzureNATGateway",
+            "doc": "UpdateAzureNATGateway re-applies the mutable fields of an existing NAT"
+          },
+          {
+            "name": "UpdateAzurePublicIP",
+            "doc": "UpdateAzurePublicIP overwrites the mutable fields of an existing public IP"
+          },
+          {
             "name": "UpsertAzureNSGRule",
             "doc": "UpsertAzureNSGRule creates or replaces a single custom security rule by"
           },

@@ -128,6 +128,54 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 	return nil
 }
 
+// UpdateAzureNATGateway re-applies the mutable fields of an existing NAT gateway
+// (its bound public-IP allocation and tags) in place, so a repeat ARM
+// CreateOrUpdate PUT re-associates the public IP and reflects tag changes rather
+// than discarding them. When the requested allocation differs from the current
+// one it binds the new public IP first (rejecting one already in use) and only
+// then frees the previous binding, so a failed rebind leaves the gateway
+// untouched. An empty allocationID detaches any bound public IP.
+func (m *Mock) UpdateAzureNATGateway(_ context.Context, id, allocationID string, tags map[string]string) error {
+	nat, ok := m.natGateways.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "NAT gateway %q not found", id)
+	}
+
+	if allocationID != nat.AllocationID {
+		newPublicIP := ""
+
+		if allocationID != "" {
+			address, err := m.bindNATGatewayAllocation(allocationID)
+			if err != nil {
+				return err
+			}
+
+			newPublicIP = address
+		}
+
+		if nat.AllocationID != "" {
+			m.eips.Update(nat.AllocationID, func(e *eipData) *eipData {
+				e.AssociationID = ""
+				return e
+			})
+		}
+
+		m.natGateways.Update(id, func(n *natGatewayData) *natGatewayData {
+			n.AllocationID = allocationID
+			n.PublicIP = newPublicIP
+
+			return n
+		})
+	}
+
+	m.natGateways.Update(id, func(n *natGatewayData) *natGatewayData {
+		n.Tags = copyTags(tags)
+		return n
+	})
+
+	return nil
+}
+
 // DescribeNATGateways returns NAT gateways matching the given IDs, or all if empty.
 func (m *Mock) DescribeNATGateways(_ context.Context, ids []string) ([]driver.NATGateway, error) {
 	return describeResources(m.natGateways, ids, toNATGatewayInfo), nil

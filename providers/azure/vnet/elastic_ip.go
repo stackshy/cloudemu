@@ -70,6 +70,48 @@ func (m *Mock) AllocateAddress(
 	return &info, nil
 }
 
+// UpdateAzurePublicIP overwrites the mutable fields of an existing public IP in
+// place (keyed by its allocation id), applying the same SKU/allocation-method
+// defaults as AllocateAddress and recomputing the DNS FQDN, so a repeat ARM
+// CreateOrUpdate PUT mutates the resource instead of minting a duplicate. The
+// allocation id, address and any existing association are preserved.
+//
+//nolint:gocritic // hugeParam: cfg mirrors AllocateAddress's driver signature.
+func (m *Mock) UpdateAzurePublicIP(_ context.Context, allocationID string, cfg driver.ElasticIPConfig) error {
+	sku := cfg.SKU
+	if sku == "" {
+		sku = "Standard"
+	}
+
+	allocMethod := cfg.AllocationMethod
+	if allocMethod == "" {
+		allocMethod = "Static"
+	}
+
+	found := m.eips.Update(allocationID, func(e *eipData) *eipData {
+		e.Tags = copyTags(cfg.Tags)
+		e.SKU = sku
+		e.AllocationMethod = allocMethod
+		e.IdleTimeoutMinutes = cfg.IdleTimeoutMinutes
+		e.DNSDomainNameLabel = cfg.DNSDomainNameLabel
+
+		e.Zones = append([]string(nil), cfg.Zones...)
+
+		if cfg.DNSDomainNameLabel != "" {
+			e.DNSFQDN = cfg.DNSDomainNameLabel + "." + defaultFQDNRegion + ".cloudapp.azure.com"
+		} else {
+			e.DNSFQDN = ""
+		}
+
+		return e
+	})
+	if !found {
+		return cerrors.Newf(cerrors.NotFound, "public IP %q not found", allocationID)
+	}
+
+	return nil
+}
+
 // ReleaseAddress releases a public IP address.
 func (m *Mock) ReleaseAddress(
 	_ context.Context, allocationID string,
