@@ -253,6 +253,9 @@ func New(opts ...config.Option) *Provider {
 	p.EC2.SetSubnetResolver(p.VPC)
 	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
 	p.ELB.SetSubnetResolver(p.VPC)
+	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
+	// targets of a file system share a VpcId and each reflects its subnet's zone.
+	p.EFS.SetSubnetResolver(p.VPC)
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)

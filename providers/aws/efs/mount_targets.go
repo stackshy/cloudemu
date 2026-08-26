@@ -8,10 +8,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/efs/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// CreateMountTarget creates a mount target for a file system in a subnet.
-func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetInput) (*driver.MountTarget, error) {
+// CreateMountTarget creates a mount target for a file system in a subnet. The
+// VpcId and Availability Zone are derived from the subnet (real EFS behavior):
+// all mount targets of one file system share a VpcId, and each reports its
+// subnet's AZ. When the subnet can't be resolved, a deterministic per-file-
+// system VpcId and the region's first AZ are used instead of a random VpcId.
+func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTargetInput) (*driver.MountTarget, error) {
 	if in.SubnetID == "" {
 		return nil, errors.New(errors.InvalidArgument, "SubnetId is required")
 	}
@@ -21,16 +26,17 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
+	subnet := m.resolveSubnet(ctx, in.SubnetID)
+	vpcID, azName, azIdent := m.mountTargetPlacement(fd.fs.FileSystemID, subnet)
+
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	// EFS allows one mount target per Availability Zone. The emulator models a
-	// subnet as its own AZ, so reject a second mount target in the same subnet.
-	for _, mt := range fd.mountTgts {
-		if mt.SubnetID == in.SubnetID {
-			return nil, conflict(driver.KindMountTarget,
-				"mount target already exists in subnet %q", in.SubnetID)
-		}
+	// EFS allows one mount target per Availability Zone. When the subnet's AZ is
+	// known, enforce that (two subnets in one AZ conflict); otherwise fall back to
+	// one per subnet.
+	if err := m.checkMountTargetConflict(fd, in.SubnetID, azName, subnet != nil); err != nil {
+		return nil, err
 	}
 
 	id := "fsmt-" + idgen.GenerateID("")
@@ -44,9 +50,9 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 		LifeCycleState:       driver.StateAvailable,
 		IPAddress:            ipAddressOrDefault(in.IPAddress),
 		NetworkInterfaceID:   eni,
-		AvailabilityZoneID:   azID(m.opts.Region),
-		AvailabilityZoneName: m.opts.Region + "a",
-		VPCID:                "vpc-" + idgen.GenerateID(""),
+		AvailabilityZoneID:   azIdent,
+		AvailabilityZoneName: azName,
+		VPCID:                vpcID,
 		SecurityGroups:       append([]string(nil), in.SecurityGroups...),
 	}
 
@@ -58,6 +64,55 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 	out := *mt
 
 	return &out, nil
+}
+
+// mountTargetPlacement resolves the VpcId and Availability Zone for a mount
+// target. A resolved subnet supplies the real VPC and AZ; otherwise the VpcId is
+// a deterministic value tied to the file system (so every mount target of one
+// file system shares it) and the AZ defaults to the region's first zone.
+func (m *Mock) mountTargetPlacement(
+	fileSystemID string, subnet *netdriver.SubnetInfo,
+) (vpcID, azName, azIdent string) {
+	azName = m.opts.Region + "a"
+	azIdent = azID(m.opts.Region)
+
+	if subnet != nil {
+		vpcID = subnet.VPCID
+
+		if subnet.AvailabilityZone != "" {
+			azName = subnet.AvailabilityZone
+			azIdent = azIDFromName(subnet.AvailabilityZone)
+		}
+	}
+
+	if vpcID == "" {
+		vpcID = "vpc-" + strings.TrimPrefix(fileSystemID, "fs-")
+	}
+
+	return vpcID, azName, azIdent
+}
+
+// checkMountTargetConflict enforces EFS's one-mount-target-per-AZ rule. When the
+// subnet's AZ is known, two mount targets in the same AZ conflict; otherwise the
+// check falls back to one mount target per subnet. Callers hold fd.mu.
+func (m *Mock) checkMountTargetConflict(fd *fsData, subnetID, azName string, azKnown bool) error {
+	for _, mt := range fd.mountTgts {
+		if azKnown {
+			if mt.AvailabilityZoneName == azName {
+				return conflict(driver.KindMountTarget,
+					"mount target already exists in availability zone %q", azName)
+			}
+
+			continue
+		}
+
+		if mt.SubnetID == subnetID {
+			return conflict(driver.KindMountTarget,
+				"mount target already exists in subnet %q", subnetID)
+		}
+	}
+
+	return nil
 }
 
 // regionShortCode builds an AWS-style region short code (e.g. us-east-1 → use1,

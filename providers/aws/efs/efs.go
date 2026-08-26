@@ -44,6 +44,11 @@ type Mock struct {
 	accountPref string
 	prefMu      sync.RWMutex
 
+	// subnetResolver derives a mount target's VpcId and AZ from its subnet. Real
+	// EFS infers both from the subnet; without a resolver a deterministic
+	// per-file-system fallback is used instead of a random per-call VpcId.
+	subnetResolver SubnetResolver
+
 	opts *config.Options
 }
 
