@@ -105,6 +105,15 @@ var azureExemptions = []exemption{
 			"Azure Monitor namespace, so ServiceBus (the real Service Bus " +
 			"instance) is wired and QueueStorage intentionally is not.",
 	},
+	{
+		field:  "Monitor",
+		method: "SetWebhookDeliverer",
+		reason: "SetWebhookDeliverer is a test-injection seam for the metric-alert " +
+			"action-group webhook path: the Monitor uses a default real-HTTP " +
+			"deliverer internally, and tests inject a fake one to assert delivery. " +
+			"Production New() deliberately does not override the default deliverer, " +
+			"so this setter is intentionally not wired.",
+	},
 }
 
 // exposedInjectors returns, sorted, the names of v's methods shaped like a
