@@ -138,6 +138,14 @@ DBProxies is an OPTIONAL capability for RDS Proxy, discovered by type
 | `ModifyDBProxy` |  |
 | `RegisterDBProxyTargets` |  |
 
+### DatabaseUpdater
+
+DatabaseUpdater is an OPTIONAL capability for updating a logical database's
+
+| Operation | Description |
+| --- | --- |
+| `UpdateDatabase` |  |
+
 ### Databases
 
 Databases is an OPTIONAL capability for managing the logical databases inside

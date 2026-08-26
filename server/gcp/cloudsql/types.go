@@ -1,6 +1,8 @@
 package cloudsql
 
 import (
+	"crypto/sha1" //nolint:gosec // SHA-1 fingerprints are the Cloud SQL cert identifier format, not a security control.
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -14,6 +16,16 @@ import (
 const (
 	activationAlways = "ALWAYS"
 	activationNever  = "NEVER"
+
+	// availabilityRegional / availabilityZonal are the Cloud SQL
+	// settings.availabilityType enum values. REGIONAL denotes a highly-available
+	// (multi-zone) instance; ZONAL is the single-zone default.
+	availabilityRegional = "REGIONAL"
+	availabilityZonal    = "ZONAL"
+
+	// serverCaCertPEM is the placeholder PEM returned as the instance's
+	// serverCaCert. It is a well-formed shape for SDK round-trips, not a real CA.
+	serverCaCertPEM = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----"
 
 	// selfLinkBase is the resource URI prefix Cloud SQL stamps on every
 	// selfLink/targetLink. Even the v1 client is answered with sql/v1beta4
@@ -46,6 +58,7 @@ type sqlInstance struct {
 	ReplicaNames       []string     `json:"replicaNames,omitempty"`
 	IPAddresses        []ipMapping  `json:"ipAddresses,omitempty"`
 	Settings           *sqlSettings `json:"settings,omitempty"`
+	ServerCaCert       *sslCert     `json:"serverCaCert,omitempty"`
 	CreateTime         string       `json:"createTime,omitempty"`
 }
 
@@ -56,6 +69,12 @@ type sqlSettings struct {
 	DataDiskType     string            `json:"dataDiskType,omitempty"`
 	AvailabilityType string            `json:"availabilityType,omitempty"`
 	UserLabels       map[string]string `json:"userLabels,omitempty"`
+	// databaseFlags, backupConfiguration and ipConfiguration are carried as
+	// opaque JSON so they round-trip unchanged on Insert->Get and Patch without
+	// the wire layer modeling every nested field real Cloud SQL exposes.
+	DatabaseFlags       json.RawMessage `json:"databaseFlags,omitempty"`
+	BackupConfiguration json.RawMessage `json:"backupConfiguration,omitempty"`
+	IPConfiguration     json.RawMessage `json:"ipConfiguration,omitempty"`
 }
 
 type ipMapping struct {
@@ -159,13 +178,58 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			{IPAddress: inst.Endpoint, Type: "PRIMARY"},
 		},
 		Settings: &sqlSettings{
-			Tier:             inst.InstanceClass,
-			DataDiskSizeGb:   inst.AllocatedStorage,
-			DataDiskType:     inst.StorageType,
-			UserLabels:       inst.Tags,
-			ActivationPolicy: activationFromState(inst.State),
+			Tier:                inst.InstanceClass,
+			DataDiskSizeGb:      inst.AllocatedStorage,
+			DataDiskType:        inst.StorageType,
+			UserLabels:          inst.Tags,
+			ActivationPolicy:    activationFromState(inst.State),
+			AvailabilityType:    availabilityType(inst.MultiAZ),
+			DatabaseFlags:       rawJSONOrNil(inst.GCPDatabaseFlags),
+			BackupConfiguration: rawJSONOrNil(inst.GCPBackupConfig),
+			IPConfiguration:     rawJSONOrNil(inst.GCPIPConfig),
 		},
-		CreateTime: inst.CreatedAt.UTC().Format(rfc3339Milli),
+		ServerCaCert: serverCaCertFor(inst),
+		CreateTime:   inst.CreatedAt.UTC().Format(rfc3339Milli),
+	}
+}
+
+// availabilityType maps the portable MultiAZ flag to the Cloud SQL
+// availabilityType enum: REGIONAL for a highly available (multi-zone) instance,
+// ZONAL otherwise — matching what real Cloud SQL returns on a Get.
+func availabilityType(multiAZ bool) string {
+	if multiAZ {
+		return availabilityRegional
+	}
+
+	return availabilityZonal
+}
+
+// rawJSONOrNil returns the stored opaque JSON as a RawMessage, or nil when empty
+// so the field is omitted rather than emitted as an empty value.
+func rawJSONOrNil(s string) json.RawMessage {
+	if s == "" {
+		return nil
+	}
+
+	return json.RawMessage(s)
+}
+
+// serverCaCertFor builds the synthetic server CA certificate Cloud SQL reports
+// on every instance. Terraform reads server_ca_cert as a computed attribute, so
+// it must be populated; the fingerprint is derived from the instance id so it is
+// stable across reads.
+func serverCaCertFor(inst *rdsdriver.Instance) *sslCert {
+	sum := sha1.Sum([]byte("serverCaCert/" + inst.ID)) //nolint:gosec // fingerprint id, not a security control.
+	fp := hex.EncodeToString(sum[:])
+
+	return &sslCert{
+		Kind:             "sql#sslCert",
+		CommonName:       "Google Cloud SQL Server CA",
+		Sha1Fingerprint:  fp,
+		CertSerialNumber: fp[:16],
+		Cert:             serverCaCertPEM,
+		Instance:         inst.ID,
+		CreateTime:       inst.CreatedAt.UTC().Format(rfc3339Milli),
 	}
 }
 

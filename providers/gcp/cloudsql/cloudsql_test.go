@@ -292,6 +292,74 @@ func TestSubResourcesRequireInstance(t *testing.T) {
 	}
 }
 
+func TestUpdateDatabase(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "inst", Engine: "POSTGRES_15"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "inst", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	updated, err := m.UpdateDatabase(ctx, rdsdriver.DatabaseConfig{
+		Server: "inst", Name: "app", Charset: "LATIN1", Collation: "en_US.ISO8859-1",
+	})
+	requireNoError(t, err)
+	assertEqual(t, "LATIN1", updated.Charset)
+	assertEqual(t, "en_US.ISO8859-1", updated.Collation)
+
+	got, err := m.GetDatabase(ctx, "inst", "app")
+	requireNoError(t, err)
+	assertEqual(t, "LATIN1", got.Charset)
+	assertEqual(t, "en_US.ISO8859-1", got.Collation)
+
+	if _, err := m.UpdateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "inst", Name: "ghost"}); err == nil {
+		t.Error("UpdateDatabase on missing database: expected error")
+	}
+}
+
+func TestInstanceSettingsRoundTrip(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	created, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:               "s",
+		Engine:           "POSTGRES_15",
+		MultiAZ:          true,
+		GCPDatabaseFlags: `[{"name":"max_connections","value":"100"}]`,
+		GCPBackupConfig:  `{"enabled":true}`,
+		GCPIPConfig:      `{"ipv4Enabled":true}`,
+	})
+	requireNoError(t, err)
+	assertEqual(t, true, created.MultiAZ)
+
+	got, err := m.DescribeInstances(ctx, []string{"s"})
+	requireNoError(t, err)
+	assertEqual(t, true, got[0].MultiAZ)
+	assertEqual(t, `[{"name":"max_connections","value":"100"}]`, got[0].GCPDatabaseFlags)
+	assertEqual(t, `{"enabled":true}`, got[0].GCPBackupConfig)
+	assertEqual(t, `{"ipv4Enabled":true}`, got[0].GCPIPConfig)
+
+	falseVal := false
+
+	if _, err := m.ModifyInstance(ctx, "s", rdsdriver.ModifyInstanceInput{
+		MultiAZ:          &falseVal,
+		GCPDatabaseFlags: `[{"name":"work_mem","value":"64MB"}]`,
+	}); err != nil {
+		t.Fatalf("ModifyInstance: %v", err)
+	}
+
+	after, err := m.DescribeInstances(ctx, []string{"s"})
+	requireNoError(t, err)
+	assertEqual(t, false, after[0].MultiAZ)
+	assertEqual(t, `[{"name":"work_mem","value":"64MB"}]`, after[0].GCPDatabaseFlags)
+	// Untouched blobs are preserved (patch merges).
+	assertEqual(t, `{"enabled":true}`, after[0].GCPBackupConfig)
+}
+
 func TestCloneAndCascade(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

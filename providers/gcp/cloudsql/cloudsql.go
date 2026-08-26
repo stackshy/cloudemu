@@ -283,6 +283,9 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		AvailabilityZone:   region,
 		CreatedAt:          m.opts.Clock.Now().UTC(),
 		Tags:               copyTags(cfg.Tags),
+		GCPDatabaseFlags:   cfg.GCPDatabaseFlags,
+		GCPBackupConfig:    cfg.GCPBackupConfig,
+		GCPIPConfig:        cfg.GCPIPConfig,
 	}
 }
 
@@ -394,12 +397,17 @@ func (m *Mock) ModifyInstance(
 	}
 
 	if input.EngineVersion != "" {
-		inst.EngineVersion = input.EngineVersion
+		// Cloud SQL's databaseVersion is stored in Engine (that is the field
+		// toSQLInstance renders as databaseVersion), so a patched databaseVersion
+		// must land there to be visible on the next Get.
+		inst.Engine = input.EngineVersion
 	}
 
 	if input.MultiAZ != nil {
 		inst.MultiAZ = *input.MultiAZ
 	}
+
+	applyGCPSettings(&inst, &input)
 
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
@@ -410,6 +418,22 @@ func (m *Mock) ModifyInstance(
 	out := cloneInstance(inst)
 
 	return &out, nil
+}
+
+// applyGCPSettings merges the Cloud SQL settings sub-object blobs from a Patch
+// onto the instance; an empty blob means "no change" (patch merges).
+func applyGCPSettings(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+	if input.GCPDatabaseFlags != "" {
+		inst.GCPDatabaseFlags = input.GCPDatabaseFlags
+	}
+
+	if input.GCPBackupConfig != "" {
+		inst.GCPBackupConfig = input.GCPBackupConfig
+	}
+
+	if input.GCPIPConfig != "" {
+		inst.GCPIPConfig = input.GCPIPConfig
+	}
 }
 
 // DeleteInstance removes an instance, unlinks it from any replica relationship,

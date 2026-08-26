@@ -18,6 +18,7 @@ import (
 // handler via type assertion.
 var (
 	_ rdsdriver.Databases        = (*Mock)(nil)
+	_ rdsdriver.DatabaseUpdater  = (*Mock)(nil)
 	_ rdsdriver.Users            = (*Mock)(nil)
 	_ rdsdriver.SslCerts         = (*Mock)(nil)
 	_ rdsdriver.Failover         = (*Mock)(nil)
@@ -137,6 +138,37 @@ func (m *Mock) ListDatabases(_ context.Context, instance string) ([]rdsdriver.Da
 	}
 
 	return out, nil
+}
+
+// UpdateDatabase updates a logical database's charset/collation, returning
+// NotFound when the database does not exist. Empty fields leave the current
+// value unchanged, matching Cloud SQL's merge on databases.patch/update.
+//
+//nolint:gocritic // cfg matches the driver signature and cannot be a pointer.
+func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := childKey(cfg.Server, cfg.Name)
+
+	db, ok := m.databases.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "database %q not found", cfg.Name)
+	}
+
+	if cfg.Charset != "" {
+		db.Charset = cfg.Charset
+	}
+
+	if cfg.Collation != "" {
+		db.Collation = cfg.Collation
+	}
+
+	m.databases.Set(key, db)
+
+	out := db
+
+	return &out, nil
 }
 
 // DeleteDatabase removes a logical database.

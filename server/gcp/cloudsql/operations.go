@@ -39,13 +39,51 @@ func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 	}
 
 	if body.Settings != nil {
-		cfg.InstanceClass = body.Settings.Tier
-		cfg.AllocatedStorage = body.Settings.DataDiskSizeGb
-		cfg.StorageType = body.Settings.DataDiskType
-		cfg.Tags = body.Settings.UserLabels
+		s := body.Settings
+		cfg.InstanceClass = s.Tier
+		cfg.AllocatedStorage = s.DataDiskSizeGb
+		cfg.StorageType = s.DataDiskType
+		cfg.Tags = s.UserLabels
+		// availabilityType maps to the portable MultiAZ flag (REGIONAL -> true);
+		// the three settings sub-objects are stored as opaque JSON so they
+		// round-trip on the next Get.
+		cfg.MultiAZ = strings.EqualFold(s.AvailabilityType, availabilityRegional)
+		cfg.GCPDatabaseFlags = string(s.DatabaseFlags)
+		cfg.GCPBackupConfig = string(s.BackupConfiguration)
+		cfg.GCPIPConfig = string(s.IPConfiguration)
 	}
 
 	return cfg
+}
+
+// modifyInputFromBody builds the driver ModifyInstanceInput for a Patch: only
+// fields present in the request body are set, so absent fields mean "no change"
+// (Cloud SQL patch merges the request onto the current configuration).
+func modifyInputFromBody(body *sqlInstance) rdsdriver.ModifyInstanceInput {
+	var input rdsdriver.ModifyInstanceInput
+
+	if body.DatabaseVersion != "" {
+		input.EngineVersion = body.DatabaseVersion
+	}
+
+	if body.Settings == nil {
+		return input
+	}
+
+	s := body.Settings
+	input.InstanceClass = s.Tier
+	input.AllocatedStorage = s.DataDiskSizeGb
+	input.Tags = s.UserLabels
+	input.GCPDatabaseFlags = string(s.DatabaseFlags)
+	input.GCPBackupConfig = string(s.BackupConfiguration)
+	input.GCPIPConfig = string(s.IPConfiguration)
+
+	if s.AvailabilityType != "" {
+		multiAZ := strings.EqualFold(s.AvailabilityType, availabilityRegional)
+		input.MultiAZ = &multiAZ
+	}
+
+	return input
 }
 
 func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -110,7 +148,6 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath
 	writeJSON(w, http.StatusOK, toSQLInstance(&insts[0], p.project))
 }
 
-//nolint:gocyclo // sequential field handling for activationPolicy + class + storage + version.
 func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	var body sqlInstance
 	if !decodeJSON(w, r, &body) {
@@ -133,21 +170,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPa
 		}
 	}
 
-	input := rdsdriver.ModifyInstanceInput{
-		Tags: nil,
-	}
-
-	if body.Settings != nil {
-		input.InstanceClass = body.Settings.Tier
-		input.AllocatedStorage = body.Settings.DataDiskSizeGb
-		input.Tags = body.Settings.UserLabels
-	}
-
-	if body.DatabaseVersion != "" {
-		input.EngineVersion = body.DatabaseVersion
-	}
-
-	if _, err := h.db.ModifyInstance(r.Context(), p.name, input); err != nil {
+	if _, err := h.db.ModifyInstance(r.Context(), p.name, modifyInputFromBody(&body)); err != nil {
 		writeErr(w, err)
 		return
 	}

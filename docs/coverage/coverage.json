@@ -8046,6 +8046,15 @@
         ]
       },
       {
+        "name": "DatabaseUpdater",
+        "doc": "DatabaseUpdater is an OPTIONAL capability for updating a logical database's",
+        "operations": [
+          {
+            "name": "UpdateDatabase"
+          }
+        ]
+      },
+      {
         "name": "Databases",
         "doc": "Databases is an OPTIONAL capability for managing the logical databases inside",
         "operations": [

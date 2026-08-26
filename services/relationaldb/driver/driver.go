@@ -112,7 +112,14 @@ type InstanceConfig struct {
 	// primary (Cloud SQL creates replicas via a normal insert with this field);
 	// empty for a standalone primary.
 	MasterInstanceName string
-	Tags               map[string]string
+	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig carry the Cloud SQL
+	// settings sub-objects (databaseFlags, backupConfiguration, ipConfiguration)
+	// as opaque JSON so they round-trip on Insert->Get. They are a Cloud SQL-only
+	// concern; AWS RDS and Redshift never set or read them.
+	GCPDatabaseFlags string
+	GCPBackupConfig  string
+	GCPIPConfig      string
+	Tags             map[string]string
 	// Scope records where the resource lives (Azure subscription/resource
 	// group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
@@ -175,6 +182,13 @@ type Instance struct {
 	// replica identifiers reading from this instance.
 	ReadReplicaSource  string
 	ReadReplicaTargets []string
+	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig echo the Cloud SQL
+	// settings sub-objects (databaseFlags, backupConfiguration, ipConfiguration)
+	// as opaque JSON so they round-trip on read. Empty for AWS RDS / Redshift,
+	// which never set or read them.
+	GCPDatabaseFlags string
+	GCPBackupConfig  string
+	GCPIPConfig      string
 	// Scope records where the resource lives (Azure subscription/resource
 	// group), echoed from the InstanceConfig it was created with. Zero for
 	// AWS/GCP and unscoped portable callers — Scope.Matches treats a zero
@@ -217,7 +231,13 @@ type ModifyInstanceInput struct {
 	NodeType      string
 	NumberOfNodes int
 	ClusterType   string
-	Tags          map[string]string
+	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig update the Cloud SQL
+	// settings sub-objects (opaque JSON); empty means "no change". Cloud SQL-only;
+	// RDS/Redshift ignore them.
+	GCPDatabaseFlags string
+	GCPBackupConfig  string
+	GCPIPConfig      string
+	Tags             map[string]string
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by
@@ -499,6 +519,14 @@ type Databases interface {
 	GetDatabase(ctx context.Context, server, name string) (*Database, error)
 	ListDatabases(ctx context.Context, server string) ([]Database, error)
 	DeleteDatabase(ctx context.Context, server, name string) error
+}
+
+// DatabaseUpdater is an OPTIONAL capability for updating a logical database's
+// charset/collation (Cloud SQL databases.update / databases.patch), discovered
+// by type assertion. Kept separate from Databases so providers that only expose
+// create/get/list/delete are unaffected.
+type DatabaseUpdater interface {
+	UpdateDatabase(ctx context.Context, cfg DatabaseConfig) (*Database, error)
 }
 
 // FirewallRuleConfig describes a server firewall rule to create or replace.
