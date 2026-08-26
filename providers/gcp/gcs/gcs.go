@@ -33,6 +33,7 @@ const (
 	gcsDefaultMaxKeys       = 1000
 	gcsTimeFormat           = "2006-01-02T15:04:05Z"
 	gcsHoursPerDay          = 24
+	gcsDefaultStorageClass  = "STANDARD"
 )
 
 // Compile-time check that Mock implements driver.Bucket and the GCS-specific
@@ -59,6 +60,7 @@ type gcsObject struct {
 	ContentEncoding    string
 	ContentDisposition string
 	ContentLanguage    string
+	StorageClass       string
 }
 
 type gcsMultipartUpload struct {
@@ -194,6 +196,7 @@ func toInfo(o *gcsObject, cloneMeta bool) driver.ObjectInfo {
 		MD5: o.MD5, CRC32C: o.CRC32C,
 		CacheControl: o.CacheControl, ContentEncoding: o.ContentEncoding,
 		ContentDisposition: o.ContentDisposition, ContentLanguage: o.ContentLanguage,
+		StorageClass: o.StorageClass,
 	}
 }
 
@@ -235,17 +238,24 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 }
 
 func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
-	_, err := m.putObject(ctx, bucket, key, data, contentType, metadata, driver.GCSPrecondition{})
+	_, err := m.putObject(ctx, bucket, key, data, contentType, metadata, nil, driver.GCSPrecondition{})
 
 	return err
 }
 
 // putObject is the shared write path behind PutObject and PutObjectGCS. It
 // evaluates any preconditions, archives the current generation when versioning
-// is enabled, mints a fresh generation, and returns the stored object's info.
+// is enabled, mints a fresh generation, and returns the stored object's info. A
+// non-nil attrs persists the insert-time system properties.
 func (m *Mock) putObject(
-	ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string, pre driver.GCSPrecondition,
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, attrs *driver.GCSObjectAttrs, pre driver.GCSPrecondition,
 ) (*driver.ObjectInfo, error) {
+	var oa driver.GCSObjectAttrs
+	if attrs != nil {
+		oa = *attrs
+	}
+
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -282,17 +292,22 @@ func (m *Mock) putObject(
 	md5b64, crc32cb64 := checksums(data)
 
 	obj := &gcsObject{
-		Key:            key,
-		Data:           stored,
-		Size:           int64(len(data)),
-		ContentType:    contentType,
-		ETag:           fmt.Sprintf("%x", sha256.Sum256(data)),
-		LastModified:   m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
-		Metadata:       metaCopy,
-		Generation:     m.gen.Add(1),
-		Metageneration: 1,
-		MD5:            md5b64,
-		CRC32C:         crc32cb64,
+		Key:                key,
+		Data:               stored,
+		Size:               int64(len(data)),
+		ContentType:        contentType,
+		ETag:               fmt.Sprintf("%x", sha256.Sum256(data)),
+		LastModified:       m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
+		Metadata:           metaCopy,
+		Generation:         m.gen.Add(1),
+		Metageneration:     1,
+		MD5:                md5b64,
+		CRC32C:             crc32cb64,
+		CacheControl:       oa.CacheControl,
+		ContentEncoding:    oa.ContentEncoding,
+		ContentDisposition: oa.ContentDisposition,
+		ContentLanguage:    oa.ContentLanguage,
+		StorageClass:       defaultObjectStorageClass(bkt, oa.StorageClass),
 	}
 	bkt.objects.Set(key, obj)
 
@@ -378,6 +393,23 @@ func archiveVersion(bkt *bucketMeta, key string, current *gcsObject, exists bool
 	bkt.versions[key] = append(bkt.versions[key], current)
 }
 
+// defaultObjectStorageClass resolves an object's storage class: the explicit
+// class when supplied, else the bucket's default class, else STANDARD.
+func defaultObjectStorageClass(bkt *bucketMeta, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	if bkt.storageClass != "" {
+		return bkt.storageClass
+	}
+
+	return gcsDefaultStorageClass
+}
+
 func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Object, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
@@ -425,13 +457,40 @@ func (m *Mock) objectBytes(ctx context.Context, bucket string, obj *gcsObject) (
 }
 
 func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
+	return m.deleteObject(ctx, bucket, key, nil, driver.GCSPrecondition{})
+}
+
+// deleteObject is the shared delete path. Preconditions are evaluated against
+// the live object. A generation-addressed delete is always permanent; a live
+// delete on a versioning-enabled bucket archives the current generation as
+// noncurrent instead of removing it.
+func (m *Mock) deleteObject(ctx context.Context, bucket, key string, generation *int64, pre driver.GCSPrecondition) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	if !bkt.objects.Has(key) {
+	current, exists := bkt.objects.Get(key)
+	if err := checkPrecondition(pre, current, exists); err != nil {
+		return err
+	}
+
+	if generation != nil {
+		return m.deleteGeneration(ctx, bkt, bucket, key, *generation, current, exists)
+	}
+
+	if !exists {
 		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	// Versioning-enabled live delete archives the current generation (it becomes
+	// noncurrent) — real GCS retains it, listable via versions=true.
+	if bkt.versioning {
+		archiveVersion(bkt, key, current, true)
+		bkt.objects.Delete(key)
+		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
+
+		return nil
 	}
 
 	bkt.objects.Delete(key)
@@ -443,6 +502,135 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
 
 	return nil
+}
+
+// DeleteObjectGCS deletes an object honoring pre and optional generation
+// addressing.
+func (m *Mock) DeleteObjectGCS(ctx context.Context, bucket, key string, generation *int64, pre driver.GCSPrecondition) error {
+	return m.deleteObject(ctx, bucket, key, generation, pre)
+}
+
+// deleteGeneration permanently removes one specific generation (live or
+// archived) of a key. Deletions addressed by generation are never archived.
+func (m *Mock) deleteGeneration(
+	ctx context.Context, bkt *bucketMeta, bucket, key string, gen int64, current *gcsObject, liveExists bool,
+) error {
+	if liveExists && current.Generation == gen {
+		bkt.objects.Delete(key)
+		m.purgeIfGone(ctx, bkt, bucket, key)
+		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
+
+		return nil
+	}
+
+	bkt.mu.Lock()
+
+	versions := bkt.versions[key]
+	for i, v := range versions {
+		if v.Generation != gen {
+			continue
+		}
+
+		bkt.versions[key] = append(versions[:i], versions[i+1:]...)
+		if len(bkt.versions[key]) == 0 {
+			delete(bkt.versions, key)
+		}
+
+		bkt.mu.Unlock()
+		m.purgeIfGone(ctx, bkt, bucket, key)
+		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
+
+		return nil
+	}
+
+	bkt.mu.Unlock()
+
+	return cerrors.Newf(cerrors.NotFound, "object %q generation %d not found in bucket %q", key, gen, bucket)
+}
+
+// purgeIfGone drops the storage-engine bytes for a key only once no live or
+// archived generation references it (the engine is keyed by bucket/key).
+func (m *Mock) purgeIfGone(ctx context.Context, bkt *bucketMeta, bucket, key string) {
+	if bkt.objects.Has(key) {
+		return
+	}
+
+	bkt.mu.Lock()
+	remaining := len(bkt.versions[key])
+	bkt.mu.Unlock()
+
+	if remaining > 0 {
+		return
+	}
+
+	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
+}
+
+// GetObjectGCS returns an object's bytes+info, selecting a specific generation
+// when generation is non-nil (else the live object).
+func (m *Mock) GetObjectGCS(ctx context.Context, bucket, key string, generation *int64) (*driver.Object, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj, ok := findGeneration(bkt, key, generation)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	dataCopy, err := m.objectBytes(ctx, bucket, obj)
+	if err != nil {
+		return nil, err
+	}
+
+	dims := map[string]string{"bucket_name": bucket}
+	m.emitMetric(ctx, "api/request_count", 1, dims)
+	m.emitMetric(ctx, "network/sent_bytes_count", float64(obj.Size), dims)
+
+	return &driver.Object{Info: toInfo(obj, true), Data: dataCopy}, nil
+}
+
+// HeadObjectGCS returns an object's info, selecting a specific generation when
+// generation is non-nil (else the live object).
+func (m *Mock) HeadObjectGCS(_ context.Context, bucket, key string, generation *int64) (*driver.ObjectInfo, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj, ok := findGeneration(bkt, key, generation)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	info := toInfo(obj, true)
+
+	return &info, nil
+}
+
+// findGeneration resolves a key to its live object (generation nil, or matching
+// the live generation) or an archived generation.
+func findGeneration(bkt *bucketMeta, key string, generation *int64) (*gcsObject, bool) {
+	current, exists := bkt.objects.Get(key)
+	if generation == nil {
+		return current, exists
+	}
+
+	if exists && current.Generation == *generation {
+		return current, true
+	}
+
+	bkt.mu.Lock()
+	defer bkt.mu.Unlock()
+
+	for _, v := range bkt.versions[key] {
+		if v.Generation == *generation {
+			return v, true
+		}
+	}
+
+	return nil, false
 }
 
 func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.ObjectInfo, error) {
@@ -577,6 +765,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		MD5: srcObj.MD5, CRC32C: srcObj.CRC32C,
 		CacheControl: srcObj.CacheControl, ContentEncoding: srcObj.ContentEncoding,
 		ContentDisposition: srcObj.ContentDisposition, ContentLanguage: srcObj.ContentLanguage,
+		StorageClass: defaultObjectStorageClass(dstBkt, srcObj.StorageClass),
 	})
 
 	dims := map[string]string{"bucket_name": dstBucket}
@@ -842,6 +1031,7 @@ func (m *Mock) CompleteMultipartUpload(
 		Metageneration: 1,
 		MD5:            md5b64,
 		CRC32C:         crc32cb64,
+		StorageClass:   defaultObjectStorageClass(bkt, ""),
 	})
 
 	bkt.multiparts.Delete(uploadID)
@@ -1141,15 +1331,17 @@ func (m *Mock) DeleteBucketTagging(_ context.Context, bucket string) error {
 // PutObjectGCS writes an object honoring GCS write preconditions and returns the
 // stored object's info with the newly minted generation.
 func (m *Mock) PutObjectGCS(
-	ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string, pre driver.GCSPrecondition,
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, attrs *driver.GCSObjectAttrs, pre driver.GCSPrecondition,
 ) (*driver.ObjectInfo, error) {
-	return m.putObject(ctx, bucket, key, data, contentType, metadata, pre)
+	return m.putObject(ctx, bucket, key, data, contentType, metadata, attrs, pre)
 }
 
 // UpdateObjectGCS mutates an existing object's system properties and/or custom
-// metadata without touching its data, bumping metageneration.
+// metadata without touching its data, bumping metageneration. A failed pre
+// returns a *driver.GCSPreconditionError.
 func (m *Mock) UpdateObjectGCS(
-	_ context.Context, bucket, key string, upd driver.GCSObjectUpdate,
+	_ context.Context, bucket, key string, upd driver.GCSObjectUpdate, pre driver.GCSPrecondition,
 ) (*driver.ObjectInfo, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
@@ -1159,6 +1351,10 @@ func (m *Mock) UpdateObjectGCS(
 	cur, ok := bkt.objects.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	if err := checkPrecondition(pre, cur, true); err != nil {
+		return nil, err
 	}
 
 	next := *cur
@@ -1205,9 +1401,11 @@ func mergeMetadata(cur map[string]string, patch map[string]*string) map[string]s
 }
 
 // ComposeObjectGCS concatenates the source objects' bytes (in order) into
-// dstKey, minting a new generation for the destination.
+// dstKey, minting a new generation for the destination and honoring the
+// destination pre and each source's pinned generation.
 func (m *Mock) ComposeObjectGCS(
-	ctx context.Context, bucket, dstKey string, srcKeys []string, contentType string, metadata map[string]string,
+	ctx context.Context, bucket, dstKey string, srcs []driver.GCSComposeSource,
+	contentType string, metadata map[string]string, pre driver.GCSPrecondition,
 ) (*driver.ObjectInfo, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
@@ -1216,10 +1414,10 @@ func (m *Mock) ComposeObjectGCS(
 
 	var composed []byte
 
-	for _, sk := range srcKeys {
-		srcObj, ok := bkt.objects.Get(sk)
+	for _, s := range srcs {
+		srcObj, ok := findGeneration(bkt, s.Key, s.Generation)
 		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "source object %q not found in bucket %q", sk, bucket)
+			return nil, cerrors.Newf(cerrors.NotFound, "source object %q not found in bucket %q", s.Key, bucket)
 		}
 
 		bytesOf, err := m.objectBytes(ctx, bucket, srcObj)
@@ -1234,7 +1432,7 @@ func (m *Mock) ComposeObjectGCS(
 		}
 	}
 
-	return m.putObject(ctx, bucket, dstKey, composed, contentType, metadata, driver.GCSPrecondition{})
+	return m.putObject(ctx, bucket, dstKey, composed, contentType, metadata, nil, pre)
 }
 
 // ListObjectGenerations returns every generation (current + archived) of the
@@ -1274,15 +1472,23 @@ func (m *Mock) ListObjectGenerations(_ context.Context, bucket string, opts driv
 	}, nil
 }
 
-// collectAllVersions returns archived-then-current generations for every key,
-// sorted by (key, generation) so a versioned listing is deterministic.
+// collectAllVersions returns archived-then-current generations for every key
+// (including keys whose live generation was deleted but whose noncurrent
+// generations are retained), sorted by (key, generation) so a versioned listing
+// is deterministic.
 func collectAllVersions(bkt *bucketMeta) []*gcsObject {
+	liveKeys := bkt.objects.Keys()
+
 	bkt.mu.Lock()
 	defer bkt.mu.Unlock()
 
+	seen := make(map[string]struct{}, len(liveKeys))
+
 	var all []*gcsObject
 
-	for _, k := range bkt.objects.Keys() {
+	for _, k := range liveKeys {
+		seen[k] = struct{}{}
+
 		if archived := bkt.versions[k]; len(archived) > 0 {
 			all = append(all, archived...)
 		}
@@ -1292,8 +1498,16 @@ func collectAllVersions(bkt *bucketMeta) []*gcsObject {
 		}
 	}
 
-	// Archived versions of keys that were fully deleted still count in GCS, but
-	// this mock drops them on delete; only live keys are surfaced here.
+	// Keys whose live generation was deleted keep their noncurrent generations
+	// on a versioned bucket — real GCS still lists these under versions=true.
+	for k, archived := range bkt.versions {
+		if _, live := seen[k]; live {
+			continue
+		}
+
+		all = append(all, archived...)
+	}
+
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].Key != all[j].Key {
 			return all[i].Key < all[j].Key

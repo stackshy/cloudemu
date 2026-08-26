@@ -118,6 +118,9 @@ GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
 | `BucketAttrsGCS` | BucketAttrsGCS returns the bucket's GCS-specific attributes. |
 | `BucketIAMPolicy` |  |
 | `ComposeObjectGCS` | ComposeObjectGCS concatenates the source objects' bytes (in order) into |
+| `DeleteObjectGCS` | DeleteObjectGCS deletes an object honoring pre and optional generation |
+| `GetObjectGCS` | GetObjectGCS returns an object's bytes+info, selecting a specific |
+| `HeadObjectGCS` | HeadObjectGCS returns an object's info, selecting a specific generation |
 | `ListObjectGenerations` | ListObjectGenerations returns every generation (current + archived) of the |
 | `PutObjectGCS` | PutObjectGCS writes an object honoring pre (a failed condition returns a |
 | `SetBucketAttrsGCS` | SetBucketAttrsGCS records the bucket's location and default storage class |

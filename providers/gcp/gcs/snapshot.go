@@ -57,6 +57,7 @@ type objectSnapshot struct {
 	ContentEncoding    string            `json:"contentEncoding,omitempty"`
 	ContentDisposition string            `json:"contentDisposition,omitempty"`
 	ContentLanguage    string            `json:"contentLanguage,omitempty"`
+	StorageClass       string            `json:"storageClass,omitempty"`
 }
 
 // Snapshot captures every bucket's state as JSON. When includeAssets is false
@@ -89,7 +90,7 @@ func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 			Generation: obj.Generation, Metageneration: obj.Metageneration,
 			MD5: obj.MD5, CRC32C: obj.CRC32C, CacheControl: obj.CacheControl,
 			ContentEncoding: obj.ContentEncoding, ContentDisposition: obj.ContentDisposition,
-			ContentLanguage: obj.ContentLanguage,
+			ContentLanguage: obj.ContentLanguage, StorageClass: obj.StorageClass,
 		}
 	}
 
@@ -146,7 +147,7 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 			Generation: os.Generation, Metageneration: os.Metageneration,
 			MD5: os.MD5, CRC32C: os.CRC32C, CacheControl: os.CacheControl,
 			ContentEncoding: os.ContentEncoding, ContentDisposition: os.ContentDisposition,
-			ContentLanguage: os.ContentLanguage,
+			ContentLanguage: os.ContentLanguage, StorageClass: os.StorageClass,
 		})
 	}
 
