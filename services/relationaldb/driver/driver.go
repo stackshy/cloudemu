@@ -894,6 +894,11 @@ type User struct {
 	Instance string
 	Name     string
 	Host     string
+	// Password is the user's login credential. It is write-only: set on
+	// CreateUser/UpdateUser and used to authenticate against a real backing
+	// engine, but never surfaced back on the wire (Cloud SQL, like AWS/Azure,
+	// does not echo passwords). RDS/Redshift/Azure-SQL consumers leave it empty.
+	Password string
 }
 
 // Users is an OPTIONAL capability for managing database user accounts,
