@@ -35,7 +35,7 @@ func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTarge
 	// EFS allows one mount target per Availability Zone. When the subnet's AZ is
 	// known, enforce that (two subnets in one AZ conflict); otherwise fall back to
 	// one per subnet.
-	if err := m.checkMountTargetConflict(fd, in.SubnetID, azName, subnet != nil); err != nil {
+	if err := checkMountTargetConflict(fd, in.SubnetID, azName, subnet != nil); err != nil {
 		return nil, err
 	}
 
@@ -95,7 +95,7 @@ func (m *Mock) mountTargetPlacement(
 // checkMountTargetConflict enforces EFS's one-mount-target-per-AZ rule. When the
 // subnet's AZ is known, two mount targets in the same AZ conflict; otherwise the
 // check falls back to one mount target per subnet. Callers hold fd.mu.
-func (m *Mock) checkMountTargetConflict(fd *fsData, subnetID, azName string, azKnown bool) error {
+func checkMountTargetConflict(fd *fsData, subnetID, azName string, azKnown bool) error {
 	for _, mt := range fd.mountTgts {
 		if azKnown {
 			if mt.AvailabilityZoneName == azName {
@@ -333,6 +333,7 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 	if name == "" {
 		name = in.Tags[nameTag]
 	}
+
 	ap := &driver.AccessPoint{
 		ClientToken:    in.ClientToken,
 		Name:           name,
