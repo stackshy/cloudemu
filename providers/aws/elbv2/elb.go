@@ -391,9 +391,11 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 // action, so a delete cannot silently orphan a forward target.
 func (m *Mock) checkTargetGroupNotInUse(arn string) error {
 	for _, li := range m.listeners.All() {
-		if li.TargetGroupARN == arn {
-			return errors.Newf(errors.FailedPrecondition,
-				"target group %q is currently in use by a listener", arn)
+		for _, a := range li.DefaultActions {
+			if a.TargetGroupARN == arn {
+				return errors.Newf(errors.FailedPrecondition,
+					"target group %q is currently in use by a listener", arn)
+			}
 		}
 	}
 
@@ -473,10 +475,10 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
-	// A default action that forwards to a target group must reference one that
-	// exists; real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
-	if cfg.TargetGroupARN != "" && !m.tgs.Has(cfg.TargetGroupARN) {
-		return nil, errors.Newf(errors.NotFound, "target group %q not found", cfg.TargetGroupARN)
+	// Any forward default action must reference a target group that exists;
+	// real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
+	if err := m.validateForwardActions(cfg.DefaultActions); err != nil {
+		return nil, err
 	}
 
 	// A listener ARN embeds the load balancer's resource path plus a unique
@@ -491,7 +493,7 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		LBARN:          cfg.LBARN,
 		Protocol:       cfg.Protocol,
 		Port:           cfg.Port,
-		TargetGroupARN: cfg.TargetGroupARN,
+		DefaultActions: cloneActions(cfg.DefaultActions),
 	}
 
 	m.listeners.Set(arn, li)
@@ -499,6 +501,28 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 	result := li
 
 	return &result, nil
+}
+
+// validateForwardActions reports TargetGroupNotFound when any forward action
+// references a target group that does not exist.
+func (m *Mock) validateForwardActions(actions []driver.RuleAction) error {
+	for _, a := range actions {
+		if a.TargetGroupARN != "" && !m.tgs.Has(a.TargetGroupARN) {
+			return errors.Newf(errors.NotFound, "target group %q not found", a.TargetGroupARN)
+		}
+	}
+
+	return nil
+}
+
+// cloneActions returns an independent copy of an action slice so stored state
+// never aliases the caller's input.
+func cloneActions(actions []driver.RuleAction) []driver.RuleAction {
+	if len(actions) == 0 {
+		return nil
+	}
+
+	return append([]driver.RuleAction(nil), actions...)
 }
 
 // DeleteListener deletes a listener by ARN.
@@ -625,6 +649,10 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 		return errors.Newf(errors.NotFound, "listener %q not found", input.ListenerARN)
 	}
 
+	if err := m.validateForwardActions(input.DefaultActions); err != nil {
+		return err
+	}
+
 	if input.Port != 0 {
 		li.Port = input.Port
 	}
@@ -634,7 +662,7 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 	}
 
 	if len(input.DefaultActions) > 0 {
-		li.TargetGroupARN = input.DefaultActions[0].TargetGroupARN
+		li.DefaultActions = cloneActions(input.DefaultActions)
 	}
 
 	m.listeners.Set(input.ListenerARN, li)

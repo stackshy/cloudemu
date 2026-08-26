@@ -242,7 +242,7 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 		LBARN:          form.Get("LoadBalancerArn"),
 		Protocol:       form.Get("Protocol"),
 		Port:           formInt(form.Get("Port")),
-		TargetGroupARN: firstForwardTargetGroup(form, "DefaultActions.member"),
+		DefaultActions: parseActions(form, "DefaultActions.member"),
 	}
 
 	li, err := h.lb.CreateListener(r.Context(), cfg)
@@ -473,22 +473,9 @@ func parseTags(form url.Values) map[string]string {
 	return out
 }
 
-// firstForwardTargetGroup returns the TargetGroupArn of the first forward
-// action in the given action-list prefix, checking both the flat form
-// (member.N.TargetGroupArn) and the ForwardConfig shape.
-func firstForwardTargetGroup(form url.Values, prefix string) string {
-	for _, a := range parseActions(form, prefix) {
-		if a.TargetGroupARN != "" {
-			return a.TargetGroupARN
-		}
-	}
-
-	return ""
-}
-
 // parseActions parses an Actions/DefaultActions member list into driver
-// RuleActions. Both the flat TargetGroupArn field and the
-// ForwardConfig.TargetGroups.member.N.TargetGroupArn nesting are accepted.
+// RuleActions, preserving the full shape of forward, redirect and
+// fixed-response actions so they round-trip on Describe.
 func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
@@ -496,22 +483,64 @@ func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 	}
 
 	out := make([]lbdriver.RuleAction, 0, len(indices))
-
 	for _, n := range indices {
-		base := prefix + "." + strconv.Itoa(n)
-
-		tgARN := form.Get(base + ".TargetGroupArn")
-		if tgARN == "" {
-			tgARN = form.Get(base + ".ForwardConfig.TargetGroups.member.1.TargetGroupArn")
-		}
-
-		out = append(out, lbdriver.RuleAction{
-			Type:           typeOr(form.Get(base+".Type"), "forward"),
-			TargetGroupARN: tgARN,
-		})
+		out = append(out, parseAction(form, prefix+"."+strconv.Itoa(n)))
 	}
 
 	return out
+}
+
+// parseAction parses a single action at the given form prefix. Both the flat
+// TargetGroupArn field and the ForwardConfig.TargetGroups.member.N nesting are
+// accepted for forward actions.
+func parseAction(form url.Values, base string) lbdriver.RuleAction {
+	tgARN := form.Get(base + ".TargetGroupArn")
+	if tgARN == "" {
+		tgARN = form.Get(base + ".ForwardConfig.TargetGroups.member.1.TargetGroupArn")
+	}
+
+	return lbdriver.RuleAction{
+		Type:                typeOr(form.Get(base+".Type"), "forward"),
+		TargetGroupARN:      tgARN,
+		Order:               formInt(form.Get(base + ".Order")),
+		RedirectConfig:      parseRedirectConfig(form, base+".RedirectConfig"),
+		FixedResponseConfig: parseFixedResponseConfig(form, base+".FixedResponseConfig"),
+	}
+}
+
+// parseRedirectConfig parses a RedirectConfig sub-structure, returning nil when
+// none of its fields are present.
+func parseRedirectConfig(form url.Values, base string) *lbdriver.RedirectActionConfig {
+	rc := lbdriver.RedirectActionConfig{
+		Protocol:   form.Get(base + ".Protocol"),
+		Port:       form.Get(base + ".Port"),
+		Host:       form.Get(base + ".Host"),
+		Path:       form.Get(base + ".Path"),
+		Query:      form.Get(base + ".Query"),
+		StatusCode: form.Get(base + ".StatusCode"),
+	}
+
+	if rc == (lbdriver.RedirectActionConfig{}) {
+		return nil
+	}
+
+	return &rc
+}
+
+// parseFixedResponseConfig parses a FixedResponseConfig sub-structure, returning
+// nil when none of its fields are present.
+func parseFixedResponseConfig(form url.Values, base string) *lbdriver.FixedResponseActionConfig {
+	fr := lbdriver.FixedResponseActionConfig{
+		StatusCode:  form.Get(base + ".StatusCode"),
+		ContentType: form.Get(base + ".ContentType"),
+		MessageBody: form.Get(base + ".MessageBody"),
+	}
+
+	if fr == (lbdriver.FixedResponseActionConfig{}) {
+		return nil
+	}
+
+	return &fr
 }
 
 // parseConditions parses a Conditions member list into driver RuleConditions.
@@ -644,17 +673,7 @@ func toRuleXML(rule *lbdriver.RuleInfo) ruleXML {
 		out.Conditions = conds
 	}
 
-	if len(rule.Actions) > 0 {
-		acts := &actionsXML{}
-		for _, a := range rule.Actions {
-			acts.Member = append(acts.Member, actionXML{
-				Type:           a.Type,
-				TargetGroupArn: a.TargetGroupARN,
-			})
-		}
-
-		out.Actions = acts
-	}
+	out.Actions = toActionsXML(rule.Actions)
 
 	return out
 }

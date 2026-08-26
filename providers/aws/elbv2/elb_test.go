@@ -181,7 +181,7 @@ func TestCreateListener(t *testing.T) {
 			LBARN:          lb.ARN,
 			Protocol:       "HTTP",
 			Port:           80,
-			TargetGroupARN: tg.ARN,
+			DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 		})
 		requireNoError(t, err)
 		assertNotEmpty(t, li.ARN)
@@ -453,7 +453,8 @@ func TestCreateRule(t *testing.T) {
 	lb := createTestLB(m)
 	tg := createTestTG(m)
 	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -497,7 +498,8 @@ func TestDescribeRules(t *testing.T) {
 	lb := createTestLB(m)
 	tg := createTestTG(m)
 	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 	})
 
 	_, _ = m.CreateRule(ctx, driver.RuleConfig{
@@ -562,7 +564,8 @@ func TestModifyListener(t *testing.T) {
 	lb := createTestLB(m)
 	tg := createTestTG(m)
 	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 	})
 
 	t.Run("modify port", func(t *testing.T) {

@@ -148,10 +148,27 @@ type deleteTargetGroupResponse struct {
 
 // --- listener / actions ---
 
+type redirectConfigXML struct {
+	Protocol   string `xml:"Protocol,omitempty"`
+	Port       string `xml:"Port,omitempty"`
+	Host       string `xml:"Host,omitempty"`
+	Path       string `xml:"Path,omitempty"`
+	Query      string `xml:"Query,omitempty"`
+	StatusCode string `xml:"StatusCode,omitempty"`
+}
+
+type fixedResponseConfigXML struct {
+	StatusCode  string `xml:"StatusCode,omitempty"`
+	ContentType string `xml:"ContentType,omitempty"`
+	MessageBody string `xml:"MessageBody,omitempty"`
+}
+
 type actionXML struct {
-	Type           string `xml:"Type"`
-	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
-	Order          int    `xml:"Order,omitempty"`
+	Type                string                  `xml:"Type"`
+	TargetGroupArn      string                  `xml:"TargetGroupArn,omitempty"`
+	Order               int                     `xml:"Order,omitempty"`
+	RedirectConfig      *redirectConfigXML      `xml:"RedirectConfig,omitempty"`
+	FixedResponseConfig *fixedResponseConfigXML `xml:"FixedResponseConfig,omitempty"`
 }
 
 type actionsXML struct {
@@ -369,24 +386,63 @@ func toTargetGroupXML(tg *lbdriver.TargetGroupInfo) targetGroupXML {
 	return out
 }
 
-// toListenerXML converts a driver ListenerInfo to its XML representation. The
-// forward-to-target-group default action is reconstructed from the stored
-// TargetGroupARN.
+// toListenerXML converts a driver ListenerInfo to its XML representation,
+// echoing every stored default action (forward, redirect, fixed-response) so a
+// listener round-trips exactly what it was created with.
 func toListenerXML(li *lbdriver.ListenerInfo) listenerXML {
-	out := listenerXML{
+	return listenerXML{
 		ListenerArn:     li.ARN,
 		LoadBalancerArn: li.LBARN,
 		Protocol:        li.Protocol,
 		Port:            li.Port,
+		DefaultActions:  toActionsXML(li.DefaultActions),
+	}
+}
+
+// toActionsXML renders a driver action slice as ELBv2 action members, or nil
+// when there are none. Shared by listener default actions and rule actions.
+func toActionsXML(actions []lbdriver.RuleAction) *actionsXML {
+	if len(actions) == 0 {
+		return nil
 	}
 
-	if li.TargetGroupARN != "" {
-		out.DefaultActions = &actionsXML{Member: []actionXML{{
-			Type:           "forward",
-			TargetGroupArn: li.TargetGroupARN,
-			Order:          1,
-		}}}
+	out := &actionsXML{Member: make([]actionXML, 0, len(actions))}
+	for i := range actions {
+		out.Member = append(out.Member, toActionXML(actions[i]))
 	}
 
 	return out
+}
+
+// toActionXML renders a single driver action, preserving redirect and
+// fixed-response configuration.
+//
+//nolint:gocritic // hugeParam: value receiver keeps the call site simple; copy cost is negligible.
+func toActionXML(a lbdriver.RuleAction) actionXML {
+	x := actionXML{
+		Type:           a.Type,
+		TargetGroupArn: a.TargetGroupARN,
+		Order:          a.Order,
+	}
+
+	if rc := a.RedirectConfig; rc != nil {
+		x.RedirectConfig = &redirectConfigXML{
+			Protocol:   rc.Protocol,
+			Port:       rc.Port,
+			Host:       rc.Host,
+			Path:       rc.Path,
+			Query:      rc.Query,
+			StatusCode: rc.StatusCode,
+		}
+	}
+
+	if fr := a.FixedResponseConfig; fr != nil {
+		x.FixedResponseConfig = &fixedResponseConfigXML{
+			StatusCode:  fr.StatusCode,
+			ContentType: fr.ContentType,
+			MessageBody: fr.MessageBody,
+		}
+	}
+
+	return x
 }

@@ -110,20 +110,28 @@ type RulePriorityPair struct {
 }
 
 // ListenerConfig describes a listener to create.
+//
+// DefaultActions carries the full ELBv2 default-action list (forward, redirect,
+// fixed-response), which AWS round-trips verbatim. TargetGroupARN is the simple
+// single-forward shortcut the Azure/GCP providers use; AWS ignores it in favor
+// of DefaultActions.
 type ListenerConfig struct {
 	LBARN          string
 	Protocol       string
 	Port           int
 	TargetGroupARN string
+	DefaultActions []RuleAction
 }
 
-// ListenerInfo describes a listener.
+// ListenerInfo describes a listener. See ListenerConfig for the relationship
+// between TargetGroupARN and DefaultActions.
 type ListenerInfo struct {
 	ARN            string
 	LBARN          string
 	Protocol       string
 	Port           int
 	TargetGroupARN string
+	DefaultActions []RuleAction
 }
 
 // RuleCondition describes a condition for a listener rule (e.g., path-pattern or host-header).
@@ -132,10 +140,36 @@ type RuleCondition struct {
 	Values []string
 }
 
-// RuleAction describes an action for a listener rule (e.g., forward to a target group).
+// RuleAction describes an action for a listener default action or a listener
+// rule. AWS supports several action types; the emulator round-trips the two
+// terminating non-forward actions (redirect, fixed-response) in full alongside
+// forward, so the common HTTP->HTTPS redirect and custom fixed-response
+// patterns survive a create/describe cycle instead of being silently dropped.
 type RuleAction struct {
-	Type           string // "forward"
-	TargetGroupARN string
+	Type                string // "forward", "redirect", "fixed-response", "authenticate-cognito", "authenticate-oidc"
+	TargetGroupARN      string
+	Order               int
+	RedirectConfig      *RedirectActionConfig
+	FixedResponseConfig *FixedResponseActionConfig
+}
+
+// RedirectActionConfig is the configuration of a "redirect" action. AWS requires
+// StatusCode (HTTP_301 or HTTP_302); the remaining fields default to the
+// "#{...}" pass-through tokens when unset.
+type RedirectActionConfig struct {
+	Protocol   string
+	Port       string
+	Host       string
+	Path       string
+	Query      string
+	StatusCode string
+}
+
+// FixedResponseActionConfig is the configuration of a "fixed-response" action.
+type FixedResponseActionConfig struct {
+	StatusCode  string
+	ContentType string
+	MessageBody string
 }
 
 // RuleConfig describes a listener rule to create.
