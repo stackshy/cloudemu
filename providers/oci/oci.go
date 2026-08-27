@@ -120,7 +120,9 @@ func (p *Provider) wireDiscovery() {
 // preserving snapshotting, keyed by a stable lowercased field-name service key.
 // persist iterates this map, so the persisted surface automatically tracks
 // whichever services implement snapshot.Snapshottable — no hand-kept registry to
-// drift. (No OCI service implements it yet, so this is empty today.)
+// drift. Discover asserts on the runtime value behind each interface field, so
+// the concrete mocks that implement it (Identity, VCN, Monitoring) are picked up
+// even though the provider exposes them as driver interfaces.
 func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
 	return snapshot.Discover(p)
 }

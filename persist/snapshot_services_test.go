@@ -151,12 +151,24 @@ func TestSnapshotServicesStableKeys(t *testing.T) {
 	}
 }
 
-// TestSnapshotServicesOCIEmpty documents that a provider with no Snapshottable
-// service yet (OCI today) discovers an empty map rather than erroring — the
-// mechanism auto-includes services as they implement the interface.
-func TestSnapshotServicesOCIEmpty(t *testing.T) {
-	if got := cloudemu.NewOCI().SnapshotServices(); len(got) != 0 {
-		t.Fatalf("oci SnapshotServices = %v, want empty", got)
+// TestSnapshotServicesOCIDiscovered documents that the OCI provider discovers its
+// Snapshottable services even though it exposes them as driver interfaces:
+// snapshot.Discover asserts on the runtime value behind each field, so the
+// concrete mocks that implement the interface (Identity, VCN, Monitoring) are
+// picked up. Nil service fields (not yet wired) contribute nothing.
+func TestSnapshotServicesOCIDiscovered(t *testing.T) {
+	got := cloudemu.NewOCI().SnapshotServices()
+
+	for _, want := range []string{"identity", "vcn", "monitoring"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("oci SnapshotServices missing %q; got keys %v", want, keysOf(got))
+		}
+	}
+
+	for name, s := range got {
+		if s == nil {
+			t.Errorf("oci service %q discovered as nil", name)
+		}
 	}
 }
 
@@ -222,11 +234,19 @@ func reflectSnapshotKeys(p any) (keys map[string]struct{}, collisions []string) 
 		}
 
 		fv := v.Field(i)
-		if fv.Kind() == reflect.Pointer && fv.IsNil() {
+		if (fv.Kind() == reflect.Pointer || fv.Kind() == reflect.Interface) && fv.IsNil() {
 			continue
 		}
 
-		if !fv.Type().Implements(snapType) {
+		// Resolve an interface-typed field to the concrete value it holds, so a
+		// mock exposed as a driver interface (every OCI service field) is
+		// discovered by the same criterion as a concrete field.
+		ft := fv.Type()
+		if fv.Kind() == reflect.Interface {
+			ft = fv.Elem().Type()
+		}
+
+		if !ft.Implements(snapType) {
 			continue
 		}
 
