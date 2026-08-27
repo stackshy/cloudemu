@@ -14,6 +14,7 @@ CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, GCP, OCI, and Ku
 - [Terraform / OpenTofu](terraform.md) -- Run real Terraform/OpenTofu against CloudEmu (the `cloudemu-tf` wrapper + manual provider config)
 - [Topology](topology.md) -- Network topology simulation engine
 - [Chaos](chaos.md) -- Fault, latency, and throttling injection across the service layer
+- [Persistence](persistence.md) -- Snapshot and restore the whole emulator's state (opt-in, identity-preserving)
 - [Getting Started](getting-started.md) -- Installation, provider creation, basic examples, configuration
 - [OCI Conventions](oci-conventions.md) -- The contract every OCI service implementation follows
 
@@ -30,5 +31,6 @@ CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, GCP, OCI, and Ku
 | Error injection and rate limiting | [Features](features.md#8-portable-api-cross-cutting-concerns) |
 | Cost tracking | [Features](features.md#7-cost-tracking) |
 | Real data-plane engines | [Features](features.md#11-real-data-plane-engines-opt-in) |
+| Snapshot & restore state | [Persistence](persistence.md) |
 | Configuration options | [Getting Started](getting-started.md#configuration-options) |
 | Package structure | [Architecture](architecture.md#package-structure-overview) |
