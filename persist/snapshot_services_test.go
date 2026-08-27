@@ -23,9 +23,9 @@ func TestSnapshotServicesDiscovery(t *testing.T) {
 		services map[string]struct{}
 		want     []string
 	}{
-		{"aws", asSet(keysOf(cloudemu.NewAWS().SnapshotServices())), []string{"dynamodb", "ec2", "s3", "secretsmanager"}},
-		{"azure", asSet(keysOf(cloudemu.NewAzure().SnapshotServices())), []string{"blobstorage", "cosmosdb", "keyvault", "virtualmachines"}},
-		{"gcp", asSet(keysOf(cloudemu.NewGCP().SnapshotServices())), []string{"firestore", "gce", "gcs", "secretmanager"}},
+		{"aws", asSet(keysOf(cloudemu.NewAWS().SnapshotServices())), []string{"dynamodb", "ec2", "s3", "secretsmanager", "vpc"}},
+		{"azure", asSet(keysOf(cloudemu.NewAzure().SnapshotServices())), []string{"blobstorage", "cosmosdb", "keyvault", "virtualmachines", "vnet"}},
+		{"gcp", asSet(keysOf(cloudemu.NewGCP().SnapshotServices())), []string{"firestore", "gce", "gcs", "secretmanager", "vpc"}},
 	}
 
 	for _, tc := range tests {
