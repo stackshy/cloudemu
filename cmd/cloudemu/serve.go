@@ -169,10 +169,11 @@ func runServe(args []string) error {
 	}
 
 	var (
-		rebuildMu sync.Mutex
-		targets   map[string]seed.Target               // provider → current drivers, for seeding
-		netEngine *topology.Engine                     // AWS network-reachability engine (nil if aws not selected)
-		discovery map[string]*resourcediscovery.Engine // provider → inventory engine, for cost estimation
+		rebuildMu   sync.Mutex
+		targets     map[string]seed.Target               // provider → current drivers, for seeding + fixtures
+		snapTargets map[string]persist.Services          // provider → snapshottable services, for persist
+		netEngine   *topology.Engine                     // AWS network-reachability engine (nil if aws not selected)
+		discovery   map[string]*resourcediscovery.Engine // provider → inventory engine, for cost estimation
 	)
 	rebuild := func() {
 		// Serialise resets so two concurrent /_cloudemu/reset calls can't
@@ -205,6 +206,7 @@ func runServe(args []string) error {
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
+		freshSnapTargets := make(map[string]persist.Services, len(sel))
 		freshDiscovery := make(map[string]*resourcediscovery.Engine, len(sel))
 
 		var freshEngine *topology.Engine
@@ -222,6 +224,7 @@ func runServe(args []string) error {
 				cloud.EKS.SetK8sAPI(k8s)
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
 				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
+				freshSnapTargets["aws"] = cloud.SnapshotServices()
 				freshEngine = topology.New(cloud.EC2, cloud.VPC, cloud.Route53)
 				freshDiscovery["aws"] = cloud.ResourceDiscovery
 			case "gcp":
@@ -231,6 +234,7 @@ func runServe(args []string) error {
 				cloud.GKE.SetK8sAPI(k8s)
 				fresh["gcp"] = wrap(gcpserver.New(d), "gcp", c.logReqs)
 				freshTargets["gcp"] = seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE}
+				freshSnapTargets["gcp"] = cloud.SnapshotServices()
 				freshDiscovery["gcp"] = cloud.ResourceDiscovery
 			case "azure":
 				// Azure subscriptions are GUIDs, unlike the 12-digit AWS
@@ -247,6 +251,7 @@ func runServe(args []string) error {
 				cloud.AKS.SetK8sAPI(k8s)
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
 				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
+				freshSnapTargets["azure"] = cloud.SnapshotServices()
 				freshDiscovery["azure"] = cloud.ResourceDiscovery
 			case "oci":
 				cloud := cloudemu.NewOCI(opts...)
@@ -257,6 +262,7 @@ func runServe(args []string) error {
 					Storage: cloud.ObjectStorage, Database: cloud.NoSQL,
 					Secrets: cloud.Vault, Compute: cloud.Compute,
 				}
+				freshSnapTargets["oci"] = cloud.SnapshotServices()
 			}
 		}
 		if k8sBackend != nil {
@@ -266,6 +272,7 @@ func runServe(args []string) error {
 			backends[p].Swap(h)
 		}
 		targets = freshTargets
+		snapTargets = freshSnapTargets
 		netEngine = freshEngine
 		discovery = freshDiscovery
 	}
@@ -274,7 +281,7 @@ func runServe(args []string) error {
 	// Restore persisted state into the freshly-built providers before serving,
 	// so the first request already sees the resources from the last run.
 	if c.persist {
-		if err := restoreState(context.Background(), c.stateFile, targets); err != nil {
+		if err := restoreState(context.Background(), c.stateFile, snapTargets); err != nil {
 			return fmt.Errorf("restore persisted state: %w", err)
 		}
 	}
@@ -326,7 +333,7 @@ func runServe(args []string) error {
 	// rebuilds to empty then loads the posted state.
 	snapshotFn := func() ([]byte, error) {
 		rebuildMu.Lock()
-		cur := targets
+		cur := snapTargets
 		rebuildMu.Unlock()
 
 		snap, err := persist.ExportAll(context.Background(), cur, persist.Options{IncludeAssets: true})
@@ -353,7 +360,7 @@ func runServe(args []string) error {
 		rebuild() // wipe to empty before loading
 
 		rebuildMu.Lock()
-		cur := targets
+		cur := snapTargets
 		rebuildMu.Unlock()
 
 		return persist.RestoreAll(context.Background(), &snap, cur)
@@ -517,7 +524,7 @@ func runServe(args []string) error {
 
 	// Snapshot after Shutdown so no in-flight request can mutate state mid-read.
 	if c.persist {
-		if err := snapshotState(context.Background(), c.stateFile, !c.persistMetaOnly, targets); err != nil {
+		if err := snapshotState(context.Background(), c.stateFile, !c.persistMetaOnly, snapTargets); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to save state to %s: %v\n", c.stateFile, err)
 		} else if !c.quiet {
 			fmt.Fprintf(os.Stdout, "state saved to %s\n", c.stateFile)
@@ -531,7 +538,7 @@ func runServe(args []string) error {
 // providers. A missing file is not an error — the server just starts empty,
 // exactly as it does without --persist. Providers present in the snapshot but
 // not running now are skipped.
-func restoreState(ctx context.Context, path string, targets map[string]seed.Target) error {
+func restoreState(ctx context.Context, path string, targets map[string]persist.Services) error {
 	snap, err := persist.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -752,7 +759,7 @@ func applyInitFile(ctx context.Context, path, name string, targets map[string]se
 
 // snapshotState exports every running provider's state and writes the snapshot
 // file. Called after Shutdown, so the providers are quiescent.
-func snapshotState(ctx context.Context, path string, includeAssets bool, targets map[string]seed.Target) error {
+func snapshotState(ctx context.Context, path string, includeAssets bool, targets map[string]persist.Services) error {
 	snap, err := persist.ExportAll(ctx, targets, persist.Options{IncludeAssets: includeAssets})
 	if err != nil {
 		return err

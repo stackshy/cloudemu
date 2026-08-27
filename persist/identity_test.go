@@ -7,7 +7,6 @@ import (
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/persist"
-	"github.com/stackshy/cloudemu/v2/seed"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -60,9 +59,7 @@ func TestIdentityPreservedAcrossRestore(t *testing.T) {
 	wantInstanceID := launched[0].ID
 
 	// Export the whole emulator to JSON bytes, exactly as the on-disk snapshot.
-	tSrc := seed.Target{Storage: src.S3, Database: src.DynamoDB, Secrets: src.SecretsManager, Compute: src.EC2}
-
-	snap, err := persist.ExportAll(ctx, map[string]seed.Target{"aws": tSrc}, persist.Options{IncludeAssets: true})
+	snap, err := persist.ExportAll(ctx, map[string]persist.Services{"aws": src.SnapshotServices()}, persist.Options{IncludeAssets: true})
 	if err != nil {
 		t.Fatalf("ExportAll: %v", err)
 	}
@@ -79,8 +76,7 @@ func TestIdentityPreservedAcrossRestore(t *testing.T) {
 
 	// Restore into a completely fresh provider.
 	dst := cloudemu.NewAWS()
-	tDst := seed.Target{Storage: dst.S3, Database: dst.DynamoDB, Secrets: dst.SecretsManager, Compute: dst.EC2}
-	if err := persist.RestoreAll(ctx, &got, map[string]seed.Target{"aws": tDst}); err != nil {
+	if err := persist.RestoreAll(ctx, &got, map[string]persist.Services{"aws": dst.SnapshotServices()}); err != nil {
 		t.Fatalf("RestoreAll: %v", err)
 	}
 
