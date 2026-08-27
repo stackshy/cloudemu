@@ -101,7 +101,7 @@ func (h *Handler) createNetworkACL(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, createNetworkACLResponseXML{
 		Xmlns:      awsquery.Namespace,
 		RequestID:  awsquery.RequestID,
-		NetworkACL: toNetworkACLXML(acl),
+		NetworkACL: h.toNetworkACLXML(acl),
 	})
 }
 
@@ -134,7 +134,7 @@ func (h *Handler) describeNetworkACLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := filterXML(acls, filters, naclMatchesFilters, toNetworkACLXML)
+	out := filterXML(acls, filters, naclMatchesFilters, h.toNetworkACLXML)
 	page, next := pageNetworkingXML(out, r, func(a networkACLXML) string { return a.NetworkACLID })
 
 	awsquery.WriteXMLResponse(w, describeNetworkACLsResponseXML{
@@ -276,11 +276,11 @@ func writeNetworkACLAssocErr(w http.ResponseWriter, err error) {
 	}
 }
 
-func toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
+func (h *Handler) toNetworkACLXML(a *netdriver.NetworkACL) networkACLXML {
 	x := networkACLXML{
 		NetworkACLID: a.ID,
 		VpcID:        a.VPCID,
-		OwnerID:      ownerID,
+		OwnerID:      h.accountID,
 		IsDefault:    a.IsDefault,
 		Tags:         toTagItems(a.Tags),
 	}

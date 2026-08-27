@@ -54,7 +54,7 @@ func (h *Handler) routeDHCPOptions(w http.ResponseWriter, r *http.Request, actio
 	return true
 }
 
-func (*Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (h *Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	out, err := d.CreateDHCPOptions(r.Context(), netdriver.DHCPOptionsConfig{
 		Configuration: parseDHCPConfigurations(r),
 		Tags:          mergeTagSpecs(awsquery.TagSpecs(r.Form), "dhcp-options"),
@@ -69,7 +69,7 @@ func (*Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netd
 		Xmlns   string         `xml:"xmlns,attr"`
 		Req     string         `xml:"requestId"`
 		Opts    dhcpOptionsXML `xml:"dhcpOptions"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Opts: toDHCPOptionsXML(out)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Opts: h.toDHCPOptionsXML(out)})
 }
 
 func (*Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
@@ -81,7 +81,7 @@ func (*Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netd
 	writeReturnTrue(w, "DeleteDhcpOptionsResponse")
 }
 
-func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (h *Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	items, err := d.DescribeDHCPOptions(r.Context(), awsquery.ListStrings(r.Form, "DhcpOptionsId"))
 	if err != nil {
 		writeDHCPErr(w, err)
@@ -94,7 +94,7 @@ func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d ne
 		return
 	}
 
-	out := filterXML(items, filters, dhcpMatchesFilters, toDHCPOptionsXML)
+	out := filterXML(items, filters, dhcpMatchesFilters, h.toDHCPOptionsXML)
 
 	page, next := pageNetworkingXML(out, r, func(d dhcpOptionsXML) string { return d.DhcpOptionsID })
 
@@ -136,7 +136,7 @@ func parseDHCPConfigurations(r *http.Request) map[string][]string {
 	return out
 }
 
-func toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
+func (h *Handler) toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
 	keys := make([]string, 0, len(d.Configuration))
 	for k := range d.Configuration {
 		keys = append(keys, k)
@@ -155,7 +155,7 @@ func toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
 		cfgs = append(cfgs, dhcpConfigXML{Key: k, Values: vals})
 	}
 
-	return dhcpOptionsXML{DhcpOptionsID: d.ID, OwnerID: ownerID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
+	return dhcpOptionsXML{DhcpOptionsID: d.ID, OwnerID: h.accountID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
 }
 
 func dhcpMatchesFilters(d *netdriver.DHCPOptions, filters []awsquery.Filter) bool {

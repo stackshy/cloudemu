@@ -21,7 +21,8 @@ import (
 // unit tests only need the compute driver; Phase-2 tests in security_group_test.go
 // and siblings construct their own Handler with both drivers.
 func newHandler() *Handler {
-	return New(awsec2.New(config.NewOptions()), nil)
+	opts := config.NewOptions()
+	return New(awsec2.New(opts), nil, opts.AccountID)
 }
 
 // do runs a request through the handler and returns the recorded response.
@@ -290,7 +291,7 @@ func TestToInstanceXMLs(t *testing.T) {
 		Tags:           map[string]string{"k": "v"},
 	}}
 
-	got := New(nil, nil).toInstanceXMLs(context.Background(), in)
+	got := New(nil, nil, "").toInstanceXMLs(context.Background(), in)
 
 	if len(got) != 1 {
 		t.Fatalf("len=%d want 1", len(got))
@@ -307,7 +308,7 @@ func TestToInstanceXMLs(t *testing.T) {
 }
 
 func TestToInstanceXMLsEmpty(t *testing.T) {
-	got := New(nil, nil).toInstanceXMLs(context.Background(), nil)
+	got := New(nil, nil, "").toInstanceXMLs(context.Background(), nil)
 	if len(got) != 0 {
 		t.Errorf("empty input should give empty result, got %v", got)
 	}

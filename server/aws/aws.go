@@ -552,7 +552,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
-		srv.Register(ec2.New(d.EC2, d.VPC))
+		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID))
 	}
 
 	if d.Lambda != nil {

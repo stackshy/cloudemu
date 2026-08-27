@@ -78,7 +78,7 @@ func (h *Handler) createInternetGateway(w http.ResponseWriter, r *http.Request) 
 	awsquery.WriteXMLResponse(w, createInternetGatewayResponseXML{
 		Xmlns:           awsquery.Namespace,
 		RequestID:       awsquery.RequestID,
-		InternetGateway: toInternetGatewayXML(igw),
+		InternetGateway: h.toInternetGatewayXML(igw),
 	})
 }
 
@@ -140,7 +140,7 @@ func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Reques
 	}
 
 	page, next := pageNetworkingXML(
-		filterXML(igws, filters, igwMatchesFilters, toInternetGatewayXML), r,
+		filterXML(igws, filters, igwMatchesFilters, h.toInternetGatewayXML), r,
 		func(igw internetGatewayXML) string { return igw.InternetGatewayID })
 
 	awsquery.WriteXMLResponse(w, describeInternetGatewaysResponseXML{
@@ -203,10 +203,10 @@ func igwAttachmentState(igw *netdriver.InternetGateway) string {
 	return stateAvailable
 }
 
-func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
+func (h *Handler) toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	xi := internetGatewayXML{
 		InternetGatewayID: igw.ID,
-		OwnerID:           ownerID,
+		OwnerID:           h.accountID,
 		Tags:              toTagItems(igw.Tags),
 	}
 

@@ -224,7 +224,7 @@ func (h *Handler) describeSecurityGroups(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
-		out = append(out, toSecurityGroupXML(&sgs[i]))
+		out = append(out, h.toSecurityGroupXML(&sgs[i]))
 	}
 
 	page, next := pageNetworkingXML(out, r, func(sg securityGroupXML) string { return sg.GroupID })
@@ -346,8 +346,8 @@ func (h *Handler) describeSecurityGroupRules(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
-		items = appendSGRuleXMLs(items, sg.ID, false, sg.IngressRules, wantRuleIDs, filters)
-		items = appendSGRuleXMLs(items, sg.ID, true, sg.EgressRules, wantRuleIDs, filters)
+		items = h.appendSGRuleXMLs(items, sg.ID, false, sg.IngressRules, wantRuleIDs, filters)
+		items = h.appendSGRuleXMLs(items, sg.ID, true, sg.EgressRules, wantRuleIDs, filters)
 	}
 
 	awsquery.WriteXMLResponse(w, describeSecurityGroupRulesResponseXML{
@@ -359,7 +359,7 @@ func (h *Handler) describeSecurityGroupRules(w http.ResponseWriter, r *http.Requ
 
 // appendSGRuleXMLs appends the rules to out as SecurityGroupRule items, keeping
 // only those whose id is in wantRuleIDs when that selector is non-empty.
-func appendSGRuleXMLs(
+func (h *Handler) appendSGRuleXMLs(
 	out []securityGroupRuleXML,
 	groupID string,
 	egress bool,
@@ -376,7 +376,7 @@ func appendSGRuleXMLs(
 			continue
 		}
 
-		out = append(out, toSecurityGroupRuleXML(groupID, egress, &rules[i]))
+		out = append(out, h.toSecurityGroupRuleXML(groupID, egress, &rules[i]))
 	}
 
 	return out
@@ -544,7 +544,7 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 	// Authorize (existing != nil) echoes the created SecurityGroupRule set; the
 	// idempotent Revoke path carries no payload.
 	if spec.existing != nil {
-		writeAuthorizeSGResponse(w, spec.responseName, groupID, spec.egress, rules)
+		h.writeAuthorizeSGResponse(w, spec.responseName, groupID, spec.egress, rules)
 		return
 	}
 
@@ -567,10 +567,10 @@ func applyRuleTagSpecs(form url.Values, rules []netdriver.SecurityRule) {
 
 // writeAuthorizeSGResponse emits <return>true</return> plus the
 // securityGroupRuleSet AWS returns from Authorize{Ingress,Egress}.
-func writeAuthorizeSGResponse(w http.ResponseWriter, name, groupID string, egress bool, rules []netdriver.SecurityRule) {
+func (h *Handler) writeAuthorizeSGResponse(w http.ResponseWriter, name, groupID string, egress bool, rules []netdriver.SecurityRule) {
 	items := make([]securityGroupRuleXML, 0, len(rules))
 	for i := range rules {
-		items = append(items, toSecurityGroupRuleXML(groupID, egress, &rules[i]))
+		items = append(items, h.toSecurityGroupRuleXML(groupID, egress, &rules[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, authorizeSecurityGroupResponseXML{
@@ -585,11 +585,11 @@ func writeAuthorizeSGResponse(w http.ResponseWriter, name, groupID string, egres
 // toSecurityGroupRuleXML maps one stored rule to the flat SecurityGroupRule
 // wire shape, emitting exactly the target element (cidrIpv4/cidrIpv6/
 // prefixListId/referencedGroupInfo) the rule carries.
-func toSecurityGroupRuleXML(groupID string, egress bool, rule *netdriver.SecurityRule) securityGroupRuleXML {
+func (h *Handler) toSecurityGroupRuleXML(groupID string, egress bool, rule *netdriver.SecurityRule) securityGroupRuleXML {
 	x := securityGroupRuleXML{
 		SecurityGroupRuleID: rule.RuleID,
 		GroupID:             groupID,
-		GroupOwnerID:        ownerID,
+		GroupOwnerID:        h.accountID,
 		IsEgress:            egress,
 		IPProtocol:          rule.Protocol,
 		FromPort:            rule.FromPort,
@@ -604,7 +604,7 @@ func toSecurityGroupRuleXML(groupID string, egress bool, rule *netdriver.Securit
 	if rule.ReferencedGroupID != "" {
 		userID := rule.ReferencedGroupOwnerID
 		if userID == "" {
-			userID = ownerID
+			userID = h.accountID
 		}
 
 		x.ReferencedGroupInfo = &referencedGroupInfoXML{GroupID: rule.ReferencedGroupID, UserID: userID}
@@ -772,15 +772,15 @@ func groupsFromNested(form url.Values, prefix string) []referencedGroup {
 	return out
 }
 
-func toSecurityGroupXML(s *netdriver.SecurityGroupInfo) securityGroupXML {
+func (h *Handler) toSecurityGroupXML(s *netdriver.SecurityGroupInfo) securityGroupXML {
 	return securityGroupXML{
-		OwnerID:             ownerID,
+		OwnerID:             h.accountID,
 		GroupID:             s.ID,
 		GroupName:           s.Name,
 		GroupDescription:    s.Description,
 		VpcID:               s.VPCID,
-		IPPermissions:       toIPPermissionXMLs(s.IngressRules),
-		IPPermissionsEgress: toIPPermissionXMLs(s.EgressRules),
+		IPPermissions:       h.toIPPermissionXMLs(s.IngressRules),
+		IPPermissionsEgress: h.toIPPermissionXMLs(s.EgressRules),
 		Tags:                toTagItems(s.Tags),
 	}
 }
@@ -788,7 +788,7 @@ func toSecurityGroupXML(s *netdriver.SecurityGroupInfo) securityGroupXML {
 // toIPPermissionXMLs groups rules by (protocol, fromPort, toPort) so each
 // entry in the response carries all its CIDR ranges in one <item>. That's
 // how real AWS shapes the DescribeSecurityGroups payload.
-func toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermissionXML {
+func (h *Handler) toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermissionXML {
 	if len(rules) == 0 {
 		return nil
 	}
@@ -818,7 +818,7 @@ func toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermissionXML {
 			order = append(order, k)
 		}
 
-		addRuleTarget(perm, rule)
+		h.addRuleTarget(perm, rule)
 	}
 
 	out := make([]ipPermissionXML, 0, len(order))
@@ -831,7 +831,7 @@ func toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermissionXML {
 
 // addRuleTarget appends the rule's single target (IPv4 / IPv6 / prefix list /
 // referenced group) to the matching sub-list of the IpPermission.
-func addRuleTarget(perm *ipPermissionXML, rule *netdriver.SecurityRule) {
+func (h *Handler) addRuleTarget(perm *ipPermissionXML, rule *netdriver.SecurityRule) {
 	switch {
 	case rule.CIDR != "":
 		perm.IPRanges = append(perm.IPRanges, ipRangeXML{CidrIP: rule.CIDR, Description: rule.Description})
@@ -843,7 +843,7 @@ func addRuleTarget(perm *ipPermissionXML, rule *netdriver.SecurityRule) {
 	case rule.ReferencedGroupID != "":
 		userID := rule.ReferencedGroupOwnerID
 		if userID == "" {
-			userID = ownerID
+			userID = h.accountID
 		}
 
 		perm.Groups = append(perm.Groups,

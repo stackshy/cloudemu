@@ -101,7 +101,7 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 		Xmlns:         awsquery.Namespace,
 		RequestID:     awsquery.RequestID,
 		ReservationID: reservationIDFor(&instances[0]),
-		OwnerID:       ownerID,
+		OwnerID:       h.accountID,
 		Instances:     h.toInstanceXMLs(r.Context(), instances),
 	})
 }
@@ -241,7 +241,7 @@ func (h *Handler) groupReservations(ctx context.Context, instances []computedriv
 		res, ok := byID[rid]
 		if !ok {
 			order = append(order, rid)
-			byID[rid] = &reservationXML{ReservationID: rid, OwnerID: ownerID}
+			byID[rid] = &reservationXML{ReservationID: rid, OwnerID: h.accountID}
 			res = byID[rid]
 		}
 
