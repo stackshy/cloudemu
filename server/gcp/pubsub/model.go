@@ -179,7 +179,12 @@ func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {
 
 	leased := leasedIndices(sub)
 	ackDeadline := effectiveAckDeadline(sub)
-	out := make([]receivedMessage, 0, maxMessages)
+
+	// maxMessages is caller-controlled; do not use it as an allocation hint (a
+	// huge value would be an unbounded allocation). The append-driven slice grows
+	// only as real messages are delivered, and the loop below stops at
+	// maxMessages, so the result stays bounded by the actual message count.
+	var out []receivedMessage
 
 	for idx := range ts.messages {
 		if len(out) >= maxMessages {

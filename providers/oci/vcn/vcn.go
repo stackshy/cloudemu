@@ -627,7 +627,10 @@ func hostIP(cidr string, offset uint32) string {
 // mergeTagMap returns a fresh map containing existing's keys plus tags's keys
 // (tags wins on overlap). The original map is not modified.
 func mergeTagMap(existing, tags map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(tags))
+	// Size the hint from the existing map only; adding len(tags) risks an integer
+	// overflow in the allocation size. The map grows to absorb tags as needed, so
+	// the result is unchanged.
+	out := make(map[string]string, len(existing))
 
 	for k, v := range existing {
 		out[k] = v

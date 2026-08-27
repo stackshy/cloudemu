@@ -123,6 +123,9 @@ const (
 	escLen = 2
 	// unicodeEscLen is the length of a \uXXXX escape.
 	unicodeEscLen = 6
+	// maxBMPCodepoint is the largest value a \uXXXX escape can encode (four hex
+	// digits). It bounds the parsed value before the rune conversion.
+	maxBMPCodepoint = 0xFFFF
 )
 
 func tokenize(s string) ([]token, error) {
@@ -279,7 +282,13 @@ func writeUnicodeEscape(b *strings.Builder, s string, i int) (next int, err erro
 		return 0, errFilter()
 	}
 
-	b.WriteRune(rune(v)) //nolint:gosec // 4 hex digits (<=0xFFFF) always fit in rune
+	// A \uXXXX escape is four hex digits, so v is always <= 0xFFFF; bound it
+	// explicitly so the rune conversion below cannot silently overflow.
+	if v > maxBMPCodepoint {
+		return 0, errFilter()
+	}
+
+	b.WriteRune(rune(v))
 
 	return i + unicodeEscLen, nil
 }

@@ -15,6 +15,10 @@ import (
 // unset, matching the real service.
 const defaultPasswordLength = 32
 
+// maxPasswordLength is GetRandomPassword's documented maximum PasswordLength.
+// A larger request is a ValidationException in the real service.
+const maxPasswordLength = 4096
+
 // isBinary reports whether a request carried its payload as SecretBinary
 // (SecretString empty, SecretBinary present).
 func isBinary(secretString string, secretBinary []byte) bool {
@@ -221,6 +225,14 @@ func randomPassword(req getRandomPasswordRequest) (string, error) {
 	length := req.PasswordLength
 	if length <= 0 {
 		length = defaultPasswordLength
+	}
+
+	// Real GetRandomPassword caps PasswordLength at 4096 (ValidationException
+	// beyond it); enforce the same bound so an oversized length can't drive an
+	// unbounded allocation.
+	if length > maxPasswordLength {
+		return "", cerrors.Newf(cerrors.InvalidArgument,
+			"PasswordLength must be between 1 and %d", maxPasswordLength)
 	}
 
 	if req.RequireEachIncludedType && length < int64(len(classes)) {
