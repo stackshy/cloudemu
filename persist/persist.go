@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -154,7 +155,17 @@ func Restore(ctx context.Context, services Services, ps *ProviderState) error {
 
 	for _, name := range names {
 		s, ok := services[name]
-		if !ok || s == nil {
+		if !ok {
+			// The snapshot carries a service this build no longer exposes (a
+			// wider-surface or newer snapshot restored into a narrower build).
+			// Skipping is intentional, but a silent skip hides state loss, so
+			// warn — this is what #817 asked for.
+			log.Printf("persist: restore: snapshot service %q has no matching target service; skipping", name)
+
+			continue
+		}
+
+		if s == nil {
 			continue
 		}
 
