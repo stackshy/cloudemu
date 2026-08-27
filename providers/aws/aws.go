@@ -180,6 +180,9 @@ type Provider struct {
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
+	// EnforceAuth mirrors config.Options.EnforceAuth: when true the AWS wire
+	// server verifies each request's SigV4 signature. Off by default.
+	EnforceAuth bool
 
 	// engineClosers holds any wired real engines that implement io.Closer, so
 	// Close can cascade teardown to them. Empty for the in-memory default.
@@ -235,6 +238,7 @@ func New(opts ...config.Option) *Provider {
 		GuardDuty:           guardduty.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
+		EnforceAuth:         o.EnforceAuth,
 		engineClosers:       o.EngineClosers(),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)

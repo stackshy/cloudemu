@@ -184,6 +184,27 @@ type VirtualMFADeviceInfo struct {
 	QRCodePNG        []byte
 }
 
+// AccessKeyAuth carries the secret and owning principal for one access key id.
+// It is used only by the AWS SigV4 request-authentication gate to verify an
+// incoming signature and resolve the caller; the secret never leaves the
+// server. It is AWS-only, so it is not referenced by the IAM interface below.
+type AccessKeyAuth struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	UserName        string
+	UserARN         string
+	AccountID       string
+}
+
+// AccessKeyResolver is an optional capability: an IAM implementation that can
+// resolve an access key id to its secret and owning principal. The AWS SigV4
+// authentication gate type-asserts for it. It is deliberately NOT part of the
+// IAM interface because all four providers (AWS, Azure, GCP, OCI) share that
+// interface, yet only the AWS provider serves SigV4-authenticated requests.
+type AccessKeyResolver interface {
+	AccessKeyByID(ctx context.Context, id string) (AccessKeyAuth, bool)
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)

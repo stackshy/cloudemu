@@ -69,6 +69,12 @@ type Options struct {
 	// every resource reporting its terminal state immediately (the historical
 	// behavior). See internal/settle.
 	AsyncSettle bool
+
+	// EnforceAuth, when true, makes the AWS wire server verify the SigV4
+	// signature on each incoming request against a registered IAM access key and
+	// reject bad/missing signatures with 403. Default false, which accepts any
+	// credentials exactly as before (the historical behavior).
+	EnforceAuth bool
 }
 
 // SettleDuration returns d when asynchronous state settling is enabled and 0
@@ -181,6 +187,16 @@ func WithClock(c Clock) Option {
 func WithAsyncSettle() Option {
 	return func(o *Options) {
 		o.AsyncSettle = true
+	}
+}
+
+// WithEnforceAuth turns on AWS SigV4 request authentication: the wire server
+// verifies each request's signature against a registered IAM access key and
+// rejects bad/missing signatures with 403. Off by default, which accepts any
+// credentials (the historical behavior).
+func WithEnforceAuth() Option {
+	return func(o *Options) {
+		o.EnforceAuth = true
 	}
 }
 

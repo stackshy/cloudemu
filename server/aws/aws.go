@@ -226,6 +226,13 @@ type Drivers struct {
 	ResourceDiscovery *resourcediscovery.Engine
 	AccountID         string
 	Region            string
+	// EnforceAuth turns on SigV4 request authentication: each incoming request's
+	// signature is verified against a registered IAM access key (resolved via the
+	// IAM driver) and bad/missing signatures are rejected with 403. Off by
+	// default, which accepts any credentials exactly as before. Requires IAM to
+	// implement the optional access-key resolver; without it every signed request
+	// fails to resolve its key (InvalidClientTokenId).
+	EnforceAuth bool
 }
 
 // DriversFrom builds a Drivers bundle wiring every service handler to the
@@ -283,6 +290,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ResourceDiscovery:   p.ResourceDiscovery,
 		AccountID:           p.AccountID,
 		Region:              p.Region,
+		EnforceAuth:         p.EnforceAuth,
 	}
 }
 
@@ -649,6 +657,12 @@ func New(d Drivers) *server.Server {
 	// activity. This is the one cross-service hook CloudTrail needs.
 	if rec, ok := d.CloudTrail.(cloudtraildriver.EventRecorder); ok {
 		srv.SetObserver(func(r *http.Request) { recordManagementEvent(rec, r) })
+	}
+
+	// Opt-in SigV4 request authentication. Installed only when enabled, so the
+	// default request path is byte-for-byte unchanged.
+	if d.EnforceAuth {
+		srv.SetPreDispatch(newAuthGate(d.IAM, d.AccountID))
 	}
 
 	return srv
