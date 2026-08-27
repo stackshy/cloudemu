@@ -18,6 +18,17 @@ const project = "p1"
 func newSDKClient(t *testing.T) *bt.Service {
 	t.Helper()
 
+	svc, _ := newSDKClientServer(t)
+
+	return svc
+}
+
+// newSDKClientServer returns a real bigtableadmin client and the httptest
+// server it targets, so tests that need the raw endpoint URL (e.g. list
+// paging over a call the SDK exposes no PageSize for) can reach it directly.
+func newSDKClientServer(t *testing.T) (*bt.Service, *httptest.Server) {
+	t.Helper()
+
 	cloud := cloudemu.NewGCP()
 	srv := gcpserver.New(gcpserver.Drivers{Bigtable: cloud.Bigtable})
 
@@ -29,7 +40,7 @@ func newSDKClient(t *testing.T) *bt.Service {
 		t.Fatalf("bigtableadmin.NewService: %v", err)
 	}
 
-	return svc
+	return svc, ts
 }
 
 func instanceParent() string { return "projects/" + project }

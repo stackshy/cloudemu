@@ -29,6 +29,15 @@ GCP's `cache` service · portable interface `driver.Cache` · [GCP index](./READ
 
 Discovered by type assertion; only some providers implement these.
 
+### AccessKeys
+
+AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure
+
+| Operation | Description |
+| --- | --- |
+| `ListCacheKeys` | ListCacheKeys returns the cache's current primary and secondary access |
+| `RegenerateCacheKey` | RegenerateCacheKey rotates the requested key ("Primary" or "Secondary") |
+
 ### ReplicationGroups
 
 ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
@@ -39,6 +48,15 @@ ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
 | `DeleteReplicationGroup` |  |
 | `DescribeReplicationGroups` |  |
 | `ModifyReplicationGroup` |  |
+
+### Snapshots
+
+Snapshots is an OPTIONAL capability, discovered by type assertion.
+
+| Operation | Description |
+| --- | --- |
+| `CreateSnapshot` |  |
+| `DescribeSnapshots` |  |
 
 ### SubnetGroups
 

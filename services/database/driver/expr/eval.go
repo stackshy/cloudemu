@@ -187,7 +187,7 @@ func setContains(v, target any) bool {
 		t, ok := target.(string)
 		return ok && stringSetHas(s, t)
 	case NumberSet:
-		t, ok := target.(float64)
+		t, ok := toNumber(target)
 		return ok && numberSetHas(s, t)
 	case BinarySet:
 		t, ok := target.([]byte)
@@ -367,6 +367,8 @@ func toFloat(v any) (float64, bool) {
 		return float64(n), true
 	case int:
 		return float64(n), true
+	case Number:
+		return n.Float()
 	}
 
 	return 0, false
@@ -387,13 +389,21 @@ func sizeOf(v any) (any, bool) {
 	return nil, false
 }
 
+// TypeCode returns the DynamoDB attribute type code (S, N, B, BOOL, NULL, L, M,
+// SS, NS, BS) for a decoded attribute value, or "" when the type is unknown. It
+// is the exported form of the evaluator's internal type resolution, used by
+// providers to validate a key attribute's type against the table schema.
+func TypeCode(v any) string { return dynamoType(v) }
+
 // dynamoType returns the DynamoDB attribute type code for a native value,
 // including the set types SS/NS/BS, which are modeled distinctly from a List.
 func dynamoType(v any) string {
 	switch v.(type) {
 	case string:
 		return "S"
-	case float64:
+	case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, Number:
+		// All native numeric kinds map to N so typed-Go-API integer keys/values
+		// are accepted (the wire path already normalizes to Number).
 		return "N"
 	case bool:
 		return "BOOL"

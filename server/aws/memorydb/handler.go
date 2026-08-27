@@ -118,6 +118,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, resource string, err error) {
 	msg := wireMessage(err)
 
+	// A referenced sibling resource (ACL / subnet group / parameter group) that
+	// does not exist carries its own kind, so it maps to the specific
+	// <Kind>NotFoundFault the SDK models rather than the operation's resource.
+	var nf *mdbdriver.NotFoundError
+	if stderrors.As(err, &nf) {
+		wire.WriteJSONError(w, http.StatusBadRequest, nf.Kind+"NotFoundFault", msg)
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, resource+"NotFoundFault", msg)

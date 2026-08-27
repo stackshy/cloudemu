@@ -11,6 +11,7 @@ package sqs
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,16 @@ import (
 )
 
 const targetPrefix = "AmazonSQS."
+
+// errNonExistentQueue is the __type value for a missing queue. Modern SQS speaks
+// AwsJson1_0, where the SDK resolves the error shape from __type: "QueueDoesNotExist"
+// is the modeled shape name, so it deserializes into the typed sqs types
+// QueueDoesNotExist that the aws-sdk-go-v2 / Terraform delete waiter matches on
+// (via errs.IsA and ErrorCode()=="QueueDoesNotExist"). Do NOT change this to the
+// legacy query-protocol code "AWS.SimpleQueueService.NonExistentQueue" — as a JSON
+// __type it matches no modeled shape, dropping the SDK back to a generic error the
+// waiter does not recognize, so destroy hangs.
+const errNonExistentQueue = "QueueDoesNotExist"
 
 // Handler serves SQS JSON-RPC requests against a messagequeue.MessageQueue
 // driver.
@@ -66,6 +77,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteMessageBatch(w, r)
 	case "ChangeMessageVisibility":
 		h.changeMessageVisibility(w, r)
+	case "ChangeMessageVisibilityBatch":
+		h.changeMessageVisibilityBatch(w, r)
+	case "ListDeadLetterSourceQueues":
+		h.listDeadLetterSourceQueues(w, r)
 	case "GetQueueAttributes":
 		h.getQueueAttributes(w, r)
 	case "SetQueueAttributes":
@@ -78,6 +93,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.untagQueue(w, r)
 	case "ListQueueTags":
 		h.listQueueTags(w, r)
+	case "AddPermission":
+		h.addPermission(w, r)
+	case "RemovePermission":
+		h.removePermission(w, r)
+	case "StartMessageMoveTask":
+		h.startMessageMoveTask(w, r)
+	case "CancelMessageMoveTask":
+		h.cancelMessageMoveTask(w, r)
+	case "ListMessageMoveTasks":
+		h.listMessageMoveTasks(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -95,10 +120,23 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validateQueueAttributeRanges(w, req.Attributes) {
+		return
+	}
+
 	cfg := mqdriver.QueueConfig{
-		Name: req.QueueName,
-		FIFO: req.Attributes["FifoQueue"] == "true" || strings.HasSuffix(req.QueueName, ".fifo"),
-		Tags: req.Tags,
+		Name:                          req.QueueName,
+		FIFO:                          req.Attributes["FifoQueue"] == attrTrue || strings.HasSuffix(req.QueueName, ".fifo"),
+		Tags:                          req.Tags,
+		DelaySeconds:                  atoiAttr(req.Attributes, "DelaySeconds"),
+		VisibilityTimeout:             atoiAttr(req.Attributes, "VisibilityTimeout"),
+		VisibilityTimeoutSet:          attrPresent(req.Attributes, "VisibilityTimeout"),
+		MaxMessageSize:                atoiAttr(req.Attributes, "MaximumMessageSize"),
+		MessageRetention:              atoiAttr(req.Attributes, "MessageRetentionPeriod"),
+		ReceiveMessageWaitTimeSeconds: atoiAttr(req.Attributes, "ReceiveMessageWaitTimeSeconds"),
+		ContentBasedDeduplication:     req.Attributes["ContentBasedDeduplication"] == attrTrue,
+		RedrivePolicy:                 req.Attributes["RedrivePolicy"],
+		RedriveAllowPolicy:            req.Attributes["RedriveAllowPolicy"],
 	}
 
 	info, err := h.mq.CreateQueue(r.Context(), cfg)
@@ -133,12 +171,14 @@ func (h *Handler) getQueueURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest,
-		"QueueDoesNotExist", "queue not found: "+req.QueueName)
+		errNonExistentQueue, "queue not found: "+req.QueueName)
 }
 
 func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueNamePrefix string `json:"QueueNamePrefix"`
+		MaxResults      int    `json:"MaxResults"`
+		NextToken       string `json:"NextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -156,7 +196,43 @@ func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
 		urls = append(urls, queues[i].URL)
 	}
 
-	wire.WriteJSON(w, map[string]any{"QueueUrls": urls})
+	sort.Strings(urls)
+
+	page, next := paginateURLs(urls, req.MaxResults, req.NextToken)
+
+	resp := map[string]any{"QueueUrls": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+// paginateURLs applies MaxResults/NextToken paging over a stable, sorted URL
+// slice. The token is the 1-based start offset encoded as a string.
+func paginateURLs(urls []string, maxResults int, token string) (page []string, next string) {
+	start := 0
+
+	if token != "" {
+		if n, err := strconv.Atoi(token); err == nil && n >= 0 {
+			start = n
+		}
+	}
+
+	if start > len(urls) {
+		start = len(urls)
+	}
+
+	end := len(urls)
+	if maxResults > 0 && start+maxResults < end {
+		end = start + maxResults
+	}
+
+	if end < len(urls) {
+		next = strconv.Itoa(end)
+	}
+
+	return urls[start:end], next
 }
 
 func (h *Handler) deleteQueue(w http.ResponseWriter, r *http.Request) {
@@ -178,39 +254,69 @@ func (h *Handler) deleteQueue(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		QueueURL          string         `json:"QueueUrl"`
-		MessageBody       string         `json:"MessageBody"`
-		DelaySeconds      int            `json:"DelaySeconds"`
-		GroupID           string         `json:"MessageGroupId"`
-		DeduplicationID   string         `json:"MessageDeduplicationId"`
-		MessageAttributes map[string]any `json:"MessageAttributes"`
+		QueueURL          string                          `json:"QueueUrl"`
+		MessageBody       string                          `json:"MessageBody"`
+		DelaySeconds      int                             `json:"DelaySeconds"`
+		GroupID           string                          `json:"MessageGroupId"`
+		DeduplicationID   string                          `json:"MessageDeduplicationId"`
+		MessageAttributes map[string]wireMessageAttribute `json:"MessageAttributes"`
+		SystemAttributes  map[string]wireMessageAttribute `json:"MessageSystemAttributes"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
+	if reason := validateSystemAttributes(req.SystemAttributes); reason != "" {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", reason)
+		return
+	}
+
+	msgAttrs := toDriverMessageAttributes(req.MessageAttributes)
+	sysAttrs := toDriverMessageAttributes(req.SystemAttributes)
+
 	out, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
-		QueueURL:        req.QueueURL,
-		Body:            req.MessageBody,
-		DelaySeconds:    req.DelaySeconds,
-		GroupID:         req.GroupID,
-		DeduplicationID: req.DeduplicationID,
+		QueueURL:          req.QueueURL,
+		Body:              req.MessageBody,
+		DelaySeconds:      req.DelaySeconds,
+		GroupID:           req.GroupID,
+		DeduplicationID:   req.DeduplicationID,
+		MessageAttributes: msgAttrs,
+		SystemAttributes:  sysAttrs,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"MessageId": out.MessageID})
+	resp := map[string]any{
+		"MessageId":        out.MessageID,
+		"MD5OfMessageBody": md5OfBody(req.MessageBody),
+	}
+	if md5Attrs := md5OfMessageAttributes(msgAttrs); md5Attrs != "" {
+		resp["MD5OfMessageAttributes"] = md5Attrs
+	}
+
+	if md5Sys := md5OfMessageAttributes(sysAttrs); md5Sys != "" {
+		resp["MD5OfMessageSystemAttributes"] = md5Sys
+	}
+
+	if out.SequenceNumber != "" {
+		resp["SequenceNumber"] = out.SequenceNumber
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		QueueURL            string `json:"QueueUrl"`
-		MaxNumberOfMessages int    `json:"MaxNumberOfMessages"`
-		WaitTimeSeconds     int    `json:"WaitTimeSeconds"`
-		VisibilityTimeout   int    `json:"VisibilityTimeout"`
+		QueueURL              string   `json:"QueueUrl"`
+		MaxNumberOfMessages   int      `json:"MaxNumberOfMessages"`
+		WaitTimeSeconds       int      `json:"WaitTimeSeconds"`
+		VisibilityTimeout     int      `json:"VisibilityTimeout"`
+		AttributeNames        []string `json:"AttributeNames"`
+		MessageSystemAttrs    []string `json:"MessageSystemAttributeNames"`
+		MessageAttributeNames []string `json:"MessageAttributeNames"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -232,16 +338,37 @@ func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sysNames := append(append([]string{}, req.AttributeNames...), req.MessageSystemAttrs...)
+
 	out := make([]map[string]any, 0, len(msgs))
 	for i := range msgs {
-		out = append(out, map[string]any{
-			"MessageId":     msgs[i].MessageID,
-			"ReceiptHandle": msgs[i].ReceiptHandle,
-			"Body":          msgs[i].Body,
-		})
+		out = append(out, buildReceiveEntry(&msgs[i], sysNames, req.MessageAttributeNames))
 	}
 
 	wire.WriteJSON(w, map[string]any{"Messages": out})
+}
+
+// buildReceiveEntry shapes one received message into the SQS wire response,
+// applying the requested system-attribute and message-attribute filters and
+// emitting the MD5 checksums real clients validate.
+func buildReceiveEntry(msg *mqdriver.Message, sysNames, msgAttrNames []string) map[string]any {
+	entry := map[string]any{
+		"MessageId":     msg.MessageID,
+		"ReceiptHandle": msg.ReceiptHandle,
+		"Body":          msg.Body,
+		"MD5OfBody":     md5OfBody(msg.Body),
+	}
+
+	if sys := selectSystemAttributes(msg.SystemAttributes, sysNames); len(sys) > 0 {
+		entry["Attributes"] = sys
+	}
+
+	if attrs := fromDriverMessageAttributes(msg.MessageAttributes, msgAttrNames); len(attrs) > 0 {
+		entry["MessageAttributes"] = attrs
+		entry["MD5OfMessageAttributes"] = md5OfMessageAttributes(msg.MessageAttributes)
+	}
+
+	return entry
 }
 
 func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +382,7 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mq.DeleteMessage(r.Context(), req.QueueURL, req.ReceiptHandle); err != nil {
-		writeErr(w, err)
+		writeReceiptErr(w, err)
 		return
 	}
 
@@ -274,22 +401,32 @@ func (h *Handler) changeMessageVisibility(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.mq.ChangeVisibility(r.Context(), req.QueueURL, req.ReceiptHandle, req.VisibilityTimeout); err != nil {
-		writeErr(w, err)
+		writeReceiptErr(w, err)
 		return
 	}
 
 	wire.WriteJSON(w, map[string]any{})
 }
 
-func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
+// writeReceiptErr maps a ChangeMessageVisibility failure: an unknown receipt
+// handle on an existing queue surfaces as ReceiptHandleIsInvalid, while a
+// missing queue keeps the standard QueueDoesNotExist mapping.
+func writeReceiptErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ReceiptHandleIsInvalid", err.Error())
+		return
+	}
+
+	writeErr(w, err)
+}
+
+func (h *Handler) changeMessageVisibilityBatch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueURL string `json:"QueueUrl"`
 		Entries  []struct {
-			ID                     string `json:"Id"`
-			MessageBody            string `json:"MessageBody"`
-			DelaySeconds           int    `json:"DelaySeconds"`
-			MessageGroupID         string `json:"MessageGroupId"`
-			MessageDeduplicationID string `json:"MessageDeduplicationId"`
+			ID                string `json:"Id"`
+			ReceiptHandle     string `json:"ReceiptHandle"`
+			VisibilityTimeout int    `json:"VisibilityTimeout"`
 		} `json:"Entries"`
 	}
 
@@ -297,14 +434,128 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := make([]mqdriver.BatchSendEntry, 0, len(req.Entries))
+	ids := make([]string, len(req.Entries))
 	for i := range req.Entries {
+		ids[i] = req.Entries[i].ID
+	}
+
+	if !validateBatchEntryIDs(w, ids) {
+		return
+	}
+
+	successful := make([]map[string]any, 0, len(req.Entries))
+	failed := make([]map[string]any, 0)
+
+	for i := range req.Entries {
+		err := h.mq.ChangeVisibility(r.Context(), req.QueueURL, req.Entries[i].ReceiptHandle, req.Entries[i].VisibilityTimeout)
+		if err != nil {
+			failed = append(failed, map[string]any{
+				"Id": req.Entries[i].ID, "Code": "ReceiptHandleIsInvalid",
+				"Message": err.Error(), "SenderFault": true,
+			})
+
+			continue
+		}
+
+		successful = append(successful, map[string]any{"Id": req.Entries[i].ID})
+	}
+
+	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": failed})
+}
+
+func (h *Handler) listDeadLetterSourceQueues(w http.ResponseWriter, r *http.Request) {
+	lister, ok := h.mq.(dlqSourceLister)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "ListDeadLetterSourceQueues not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL   string `json:"QueueUrl"`
+		MaxResults int    `json:"MaxResults"`
+		NextToken  string `json:"NextToken"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	sources, err := lister.ListDeadLetterSourceQueues(r.Context(), req.QueueURL)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if sources == nil {
+		sources = []string{}
+	}
+
+	sort.Strings(sources)
+
+	page, next := paginateURLs(sources, req.MaxResults, req.NextToken)
+
+	resp := map[string]any{"queueUrls": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+		Entries  []struct {
+			ID                     string                          `json:"Id"`
+			MessageBody            string                          `json:"MessageBody"`
+			DelaySeconds           int                             `json:"DelaySeconds"`
+			MessageGroupID         string                          `json:"MessageGroupId"`
+			MessageDeduplicationID string                          `json:"MessageDeduplicationId"`
+			MessageAttributes      map[string]wireMessageAttribute `json:"MessageAttributes"`
+			SystemAttributes       map[string]wireMessageAttribute `json:"MessageSystemAttributes"`
+		} `json:"Entries"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	ids := make([]string, len(req.Entries))
+	for i := range req.Entries {
+		ids[i] = req.Entries[i].ID
+	}
+
+	if !validateBatchEntryIDs(w, ids) {
+		return
+	}
+
+	for i := range req.Entries {
+		if reason := validateSystemAttributes(req.Entries[i].SystemAttributes); reason != "" {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", reason)
+			return
+		}
+	}
+
+	bodyByID := make(map[string]string, len(req.Entries))
+	attrsByID := make(map[string]map[string]mqdriver.MessageAttributeValue, len(req.Entries))
+	sysAttrsByID := make(map[string]map[string]mqdriver.MessageAttributeValue, len(req.Entries))
+
+	entries := make([]mqdriver.BatchSendEntry, 0, len(req.Entries))
+
+	for i := range req.Entries {
+		msgAttrs := toDriverMessageAttributes(req.Entries[i].MessageAttributes)
+		sysAttrs := toDriverMessageAttributes(req.Entries[i].SystemAttributes)
+		bodyByID[req.Entries[i].ID] = req.Entries[i].MessageBody
+		attrsByID[req.Entries[i].ID] = msgAttrs
+		sysAttrsByID[req.Entries[i].ID] = sysAttrs
 		entries = append(entries, mqdriver.BatchSendEntry{
-			ID:              req.Entries[i].ID,
-			Body:            req.Entries[i].MessageBody,
-			DelaySeconds:    req.Entries[i].DelaySeconds,
-			GroupID:         req.Entries[i].MessageGroupID,
-			DeduplicationID: req.Entries[i].MessageDeduplicationID,
+			ID:                req.Entries[i].ID,
+			Body:              req.Entries[i].MessageBody,
+			DelaySeconds:      req.Entries[i].DelaySeconds,
+			GroupID:           req.Entries[i].MessageGroupID,
+			DeduplicationID:   req.Entries[i].MessageDeduplicationID,
+			MessageAttributes: msgAttrs,
+			SystemAttributes:  sysAttrs,
 		})
 	}
 
@@ -314,15 +565,43 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	successful := make([]map[string]any, 0, len(res.Successful))
-	for i := range res.Successful {
-		successful = append(successful, map[string]any{
-			"Id":        res.Successful[i].ID,
-			"MessageId": res.Successful[i].MessageID,
-		})
-	}
+	successful := buildSendBatchSuccess(res.Successful, bodyByID, attrsByID, sysAttrsByID)
 
 	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": batchFailed(res.Failed)})
+}
+
+// buildSendBatchSuccess shapes the successful SendMessageBatch entries, attaching
+// the body/attribute MD5 checksums real clients validate, keyed back to each
+// entry by its request Id.
+func buildSendBatchSuccess(
+	entries []mqdriver.BatchSendResultEntry,
+	bodyByID map[string]string,
+	attrsByID, sysAttrsByID map[string]map[string]mqdriver.MessageAttributeValue,
+) []map[string]any {
+	successful := make([]map[string]any, 0, len(entries))
+
+	for i := range entries {
+		entry := map[string]any{
+			"Id":               entries[i].ID,
+			"MessageId":        entries[i].MessageID,
+			"MD5OfMessageBody": md5OfBody(bodyByID[entries[i].ID]),
+		}
+		if md5Attrs := md5OfMessageAttributes(attrsByID[entries[i].ID]); md5Attrs != "" {
+			entry["MD5OfMessageAttributes"] = md5Attrs
+		}
+
+		if md5Sys := md5OfMessageAttributes(sysAttrsByID[entries[i].ID]); md5Sys != "" {
+			entry["MD5OfMessageSystemAttributes"] = md5Sys
+		}
+
+		if entries[i].SequenceNumber != "" {
+			entry["SequenceNumber"] = entries[i].SequenceNumber
+		}
+
+		successful = append(successful, entry)
+	}
+
+	return successful
 }
 
 func (h *Handler) deleteMessageBatch(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +614,15 @@ func (h *Handler) deleteMessageBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	ids := make([]string, len(req.Entries))
+	for i := range req.Entries {
+		ids[i] = req.Entries[i].ID
+	}
+
+	if !validateBatchEntryIDs(w, ids) {
 		return
 	}
 
@@ -358,6 +646,23 @@ func (h *Handler) deleteMessageBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": batchFailed(res.Failed)})
+}
+
+// selectSystemAttributes returns the requested system attributes. Unlike
+// GetQueueAttributes, an empty request returns none (SQS ReceiveMessage
+// semantics: system Attributes appear only when explicitly requested).
+func selectSystemAttributes(all map[string]string, names []string) map[string]string {
+	want := attributeSelector(names)
+
+	out := make(map[string]string, len(all))
+
+	for k, v := range all {
+		if want(k) {
+			out[k] = v
+		}
+	}
+
+	return out
 }
 
 // batchFailed shapes driver batch failures into the SQS wire response form.
@@ -431,6 +736,7 @@ func (h *Handler) untagQueue(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
+//nolint:dupl // uniform optional-interface handler shape; distinct SQS operation.
 func (h *Handler) listQueueTags(w http.ResponseWriter, r *http.Request) {
 	tagger, ok := h.mq.(queueTagger)
 	if !ok {
@@ -455,10 +761,227 @@ func (h *Handler) listQueueTags(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"Tags": tags})
 }
 
-// numericAttrKeys are the SetQueueAttributes attributes the provider applies.
-var numericAttrKeys = []string{
-	"DelaySeconds", "VisibilityTimeout", "MaximumMessageSize",
-	"MessageRetentionPeriod", "ReceiveMessageWaitTimeSeconds",
+// attrConfigurator is the AWS-specific richer attribute surface (RedrivePolicy,
+// ContentBasedDeduplication, Policy, KmsMasterKeyId) that the numeric-only
+// portable driver cannot express. The handler type-asserts for it.
+type attrConfigurator interface {
+	SetQueueAttributesRaw(ctx context.Context, queueURL string, attrs map[string]string) error
+}
+
+// dlqSourceLister exposes ListDeadLetterSourceQueues (AWS-specific).
+type dlqSourceLister interface {
+	ListDeadLetterSourceQueues(ctx context.Context, dlqURL string) ([]string, error)
+}
+
+// queuePermissioner exposes the SQS AddPermission/RemovePermission access-policy
+// surface (AWS-specific). The handler type-asserts for it.
+type queuePermissioner interface {
+	AddPermission(ctx context.Context, queueURL, label string, accountIDs, actions []string) error
+	RemovePermission(ctx context.Context, queueURL, label string) error
+}
+
+// messageMover exposes the SQS dead-letter-queue redrive surface
+// (StartMessageMoveTask/CancelMessageMoveTask/ListMessageMoveTasks). It is
+// AWS-specific and not part of the portable MessageQueue driver, so the handler
+// type-asserts for it.
+type messageMover interface {
+	StartMessageMoveTask(ctx context.Context, sourceARN, destARN string, maxRate int) (string, error)
+	CancelMessageMoveTask(ctx context.Context, taskHandle string) (int64, error)
+	ListMessageMoveTasks(ctx context.Context, sourceARN string, maxResults int) ([]mqdriver.MessageMoveTask, error)
+}
+
+func (h *Handler) startMessageMoveTask(w http.ResponseWriter, r *http.Request) {
+	mover, ok := h.mq.(messageMover)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "StartMessageMoveTask not supported"))
+		return
+	}
+
+	var req struct {
+		SourceArn                    string `json:"SourceArn"`
+		DestinationArn               string `json:"DestinationArn"`
+		MaxNumberOfMessagesPerSecond int    `json:"MaxNumberOfMessagesPerSecond"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	handle, err := mover.StartMessageMoveTask(r.Context(), req.SourceArn, req.DestinationArn, req.MaxNumberOfMessagesPerSecond)
+	if err != nil {
+		writeMoveTaskErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"TaskHandle": handle})
+}
+
+//nolint:dupl // uniform optional-interface handler shape; distinct SQS operation.
+func (h *Handler) cancelMessageMoveTask(w http.ResponseWriter, r *http.Request) {
+	mover, ok := h.mq.(messageMover)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "CancelMessageMoveTask not supported"))
+		return
+	}
+
+	var req struct {
+		TaskHandle string `json:"TaskHandle"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	moved, err := mover.CancelMessageMoveTask(r.Context(), req.TaskHandle)
+	if err != nil {
+		writeMoveTaskErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"ApproximateNumberOfMessagesMoved": moved})
+}
+
+func (h *Handler) listMessageMoveTasks(w http.ResponseWriter, r *http.Request) {
+	mover, ok := h.mq.(messageMover)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "ListMessageMoveTasks not supported"))
+		return
+	}
+
+	var req struct {
+		SourceArn  string `json:"SourceArn"`
+		MaxResults int    `json:"MaxResults"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tasks, err := mover.ListMessageMoveTasks(r.Context(), req.SourceArn, req.MaxResults)
+	if err != nil {
+		writeMoveTaskErr(w, err)
+		return
+	}
+
+	results := make([]map[string]any, 0, len(tasks))
+	for i := range tasks {
+		results = append(results, moveTaskResult(&tasks[i]))
+	}
+
+	wire.WriteJSON(w, map[string]any{"Results": results})
+}
+
+// moveTaskResult shapes one move task into its SQS ListMessageMoveTasks wire
+// entry, omitting the optional fields real SQS leaves out when unset.
+func moveTaskResult(t *mqdriver.MessageMoveTask) map[string]any {
+	entry := map[string]any{
+		"ApproximateNumberOfMessagesMoved":  t.ApproxMessagesMoved,
+		"ApproximateNumberOfMessagesToMove": t.ApproxMessagesToMove,
+		"SourceArn":                         t.SourceARN,
+		"Status":                            t.Status,
+		"StartedTimestamp":                  t.StartedAt.UnixMilli(),
+	}
+
+	if t.TaskHandle != "" {
+		entry["TaskHandle"] = t.TaskHandle
+	}
+
+	if t.DestinationARN != "" {
+		entry["DestinationArn"] = t.DestinationARN
+	}
+
+	if t.MaxNumberOfMessagesPerSecond > 0 {
+		entry["MaxNumberOfMessagesPerSecond"] = t.MaxNumberOfMessagesPerSecond
+	}
+
+	if t.FailureReason != "" {
+		entry["FailureReason"] = t.FailureReason
+	}
+
+	return entry
+}
+
+// writeMoveTaskErr maps canonical errors to the SQS message-move error codes.
+func writeMoveTaskErr(w http.ResponseWriter, err error) {
+	switch {
+	case cerrors.IsNotFound(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedOperation", err.Error())
+	case cerrors.IsInvalidArgument(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+	default:
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", err.Error())
+	}
+}
+
+func (h *Handler) addPermission(w http.ResponseWriter, r *http.Request) {
+	perm, ok := h.mq.(queuePermissioner)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "AddPermission not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL      string   `json:"QueueUrl"`
+		Label         string   `json:"Label"`
+		AWSAccountIDs []string `json:"AWSAccountIds"`
+		Actions       []string `json:"Actions"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := perm.AddPermission(r.Context(), req.QueueURL, req.Label, req.AWSAccountIDs, req.Actions); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) removePermission(w http.ResponseWriter, r *http.Request) {
+	perm, ok := h.mq.(queuePermissioner)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "RemovePermission not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+		Label    string `json:"Label"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := perm.RemovePermission(r.Context(), req.QueueURL, req.Label); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+// attrPresent reports whether an attribute was supplied, distinguishing an
+// explicit "0" from an omitted value for defaults resolved in the provider.
+func attrPresent(attrs map[string]string, key string) bool {
+	_, ok := attrs[key]
+
+	return ok
+}
+
+// atoiAttr parses a string attribute as an int, returning 0 when absent or invalid.
+func atoiAttr(attrs map[string]string, key string) int {
+	if v, ok := attrs[key]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+
+	return 0
 }
 
 func (h *Handler) getQueueAttributes(w http.ResponseWriter, r *http.Request) {
@@ -487,16 +1010,37 @@ func (h *Handler) getQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		"QueueArn":                              info.ARN,
 		"ApproximateNumberOfMessages":           strconv.Itoa(attrs.ApproximateMessageCount),
 		"ApproximateNumberOfMessagesNotVisible": strconv.Itoa(attrs.ApproximateNotVisibleCount),
+		"ApproximateNumberOfMessagesDelayed":    strconv.Itoa(attrs.ApproximateDelayedCount),
 		"VisibilityTimeout":                     strconv.Itoa(attrs.VisibilityTimeout),
 		"DelaySeconds":                          strconv.Itoa(attrs.DelaySeconds),
 		"MaximumMessageSize":                    strconv.Itoa(attrs.MaximumMessageSize),
 		"MessageRetentionPeriod":                strconv.Itoa(attrs.MessageRetentionPeriod),
+		"ReceiveMessageWaitTimeSeconds":         strconv.Itoa(attrs.ReceiveMessageWaitTimeSeconds),
 		"CreatedTimestamp":                      strconv.FormatInt(attrs.CreatedAt.Unix(), 10),
 		"LastModifiedTimestamp":                 strconv.FormatInt(attrs.LastModifiedAt.Unix(), 10),
-		"FifoQueue":                             strconv.FormatBool(attrs.FifoQueue),
+		"SqsManagedSseEnabled":                  "false",
 	}
+
+	// SQS returns FifoQueue/ContentBasedDeduplication only for FIFO queues.
+	if attrs.FifoQueue {
+		all["FifoQueue"] = attrTrue
+		all["ContentBasedDeduplication"] = strconv.FormatBool(attrs.ContentBasedDeduplication)
+	}
+
 	if attrs.RedrivePolicy != "" {
 		all["RedrivePolicy"] = attrs.RedrivePolicy
+	}
+
+	if attrs.RedriveAllowPolicy != "" {
+		all["RedriveAllowPolicy"] = attrs.RedriveAllowPolicy
+	}
+
+	if attrs.Policy != "" {
+		all["Policy"] = attrs.Policy
+	}
+
+	if attrs.KmsMasterKeyID != "" {
+		all["KmsMasterKeyId"] = attrs.KmsMasterKeyID
 	}
 
 	wire.WriteJSON(w, map[string]any{"Attributes": selectAttributes(all, req.AttributeNames)})
@@ -510,12 +1054,13 @@ func selectAttributes(all map[string]string, names []string) map[string]string {
 	}
 
 	for _, n := range names {
-		if n == "All" {
+		if n == attrAll {
 			return all
 		}
 	}
 
 	out := make(map[string]string, len(names))
+
 	for _, n := range names {
 		if v, ok := all[n]; ok {
 			out[n] = v
@@ -535,7 +1080,30 @@ func (h *Handler) setQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validateQueueAttributeRanges(w, req.Attributes) {
+		return
+	}
+
+	// Prefer the richer AWS-specific setter so RedrivePolicy/ContentBasedDeduplication/
+	// Policy/KmsMasterKeyId are applied (DLQ redrive wiring depends on this).
+	if cfg, ok := h.mq.(attrConfigurator); ok {
+		if err := cfg.SetQueueAttributesRaw(r.Context(), req.QueueURL, req.Attributes); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		wire.WriteJSON(w, map[string]any{})
+
+		return
+	}
+
+	numericAttrKeys := []string{
+		"DelaySeconds", "VisibilityTimeout", "MaximumMessageSize",
+		"MessageRetentionPeriod", "ReceiveMessageWaitTimeSeconds",
+	}
+
 	attrs := make(map[string]int, len(numericAttrKeys))
+
 	for _, k := range numericAttrKeys {
 		if v, ok := req.Attributes[k]; ok {
 			if n, err := strconv.Atoi(v); err == nil {
@@ -573,7 +1141,7 @@ func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "QueueDoesNotExist", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, errNonExistentQueue, err.Error())
 	case cerrors.IsAlreadyExists(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "QueueNameExists", err.Error())
 	case cerrors.IsInvalidArgument(err):

@@ -3,6 +3,7 @@ package vpc
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 
@@ -18,6 +19,45 @@ const (
 	timeFormat                = time.RFC3339
 	maxOctetValue             = 256
 	defaultFlowLogRecordLimit = 10
+	// subnetReservedIPs is the number of addresses AWS reserves in every subnet
+	// CIDR (network, VPC router, DNS, future use, broadcast). A /24 therefore
+	// advertises 256-5 = 251 usable addresses on a fresh subnet.
+	subnetReservedIPs = 5
+	// maxSubnetHostBits caps the host-bit width baseSubnetIPCount will shift, so
+	// an absurd mask cannot overflow the address-count computation. 30 is well
+	// above any real subnet (the widest EC2 allows is a /16, 16 host bits) yet
+	// keeps 1<<hostBits within int range on every platform.
+	maxSubnetHostBits = 30
+)
+
+// VPC IPv4 CIDR netmask bounds. EC2 requires a VPC block between a /16 and a
+// /28; anything outside that range is rejected with InvalidVpcRange.
+const (
+	minVPCNetmask = 16
+	maxVPCNetmask = 28
+	// vpcRangeErrPrefix marks the range error so the wire layer can emit the
+	// resource-specific InvalidVpcRange code (mirrors the InvalidSubnet.* prefix
+	// convention used for subnet CIDR conflicts).
+	vpcRangeErrPrefix = "InvalidVpcRange: "
+	// subnetRangeErrPrefix marks a subnet CIDR that falls outside the VPC's CIDR
+	// block so the wire layer can emit the resource-specific InvalidSubnet.Range
+	// code (mirrors the InvalidSubnet.Conflict prefix convention).
+	subnetRangeErrPrefix = "InvalidSubnet.Range: "
+)
+
+// Default security group identity. EC2 gives every VPC a group named "default"
+// with this exact description; users can edit its rules but not delete it.
+const (
+	defaultSGName        = "default"
+	defaultSGDescription = "default VPC security group"
+)
+
+// VPC instance tenancy. Real EC2 CreateVpc accepts only "default" and
+// "dedicated"; "host" is a valid instance placement tenancy but is rejected by
+// CreateVpc, and any other value is an InvalidParameterValue.
+const (
+	tenancyDefault   = "default"
+	tenancyDedicated = "dedicated"
 )
 
 // Compile-time checks. The optional capabilities are asserted too: without
@@ -27,7 +67,10 @@ const (
 var (
 	_ driver.Networking                 = (*Mock)(nil)
 	_ driver.NetworkInterfaces          = (*Mock)(nil)
+	_ driver.NetworkInterfaceModifier   = (*Mock)(nil)
+	_ driver.NetworkACLAssociator       = (*Mock)(nil)
 	_ driver.VPCAttributes              = (*Mock)(nil)
+	_ driver.SubnetAttributes           = (*Mock)(nil)
 	_ driver.TransitGateways            = (*Mock)(nil)
 	_ driver.VPNConnections             = (*Mock)(nil)
 	_ driver.DHCPOptionSets             = (*Mock)(nil)
@@ -47,6 +90,7 @@ var (
 	_ driver.TrafficMirroring           = (*Mock)(nil)
 	_ driver.NetworkInsights            = (*Mock)(nil)
 	_ driver.VPCBlockPublicAccess       = (*Mock)(nil)
+	_ driver.NetworkResourceTagger      = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -66,6 +110,7 @@ type Mock struct {
 	flowLogs       *memstore.Store[*flowLogData]
 	routeTables    *memstore.Store[*routeTableData]
 	networkACLs    *memstore.Store[*networkACLData]
+	aclAssocs      *memstore.Store[*aclAssocData]
 	igws           *memstore.Store[*igwData]
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
@@ -132,6 +177,11 @@ type Mock struct {
 	// re-derived from VPCs/subnets on every read. Guarded by mu.
 	ipamResourceOverrides map[string]ipamResourceOverride
 
+	// eniIPCounters tracks the next private-IP offset handed out per subnet when
+	// a standalone ENI is created, so each interface gets a distinct address.
+	// Guarded by mu.
+	eniIPCounters map[string]int
+
 	opts *config.Options
 }
 
@@ -142,15 +192,18 @@ type vpcData struct {
 	Tags               map[string]string
 	EnableDNSSupport   bool
 	EnableDNSHostnames bool
+	DhcpOptionsID      string
+	InstanceTenancy    string
 }
 
 type subnetData struct {
-	ID               string
-	VPCID            string
-	CIDRBlock        string
-	AvailabilityZone string
-	State            string
-	Tags             map[string]string
+	ID                  string
+	VPCID               string
+	CIDRBlock           string
+	AvailabilityZone    string
+	State               string
+	Tags                map[string]string
+	MapPublicIPOnLaunch bool
 }
 
 type sgData struct {
@@ -161,6 +214,9 @@ type sgData struct {
 	IngressRules []driver.SecurityRule
 	EgressRules  []driver.SecurityRule
 	Tags         map[string]string
+	// IsDefault marks the group EC2 auto-creates with every VPC. It cannot be
+	// deleted on its own (Client.CannotDelete) and disappears with the VPC.
+	IsDefault bool
 }
 
 // New creates a new VPC mock with the given configuration options.
@@ -174,6 +230,7 @@ func New(opts *config.Options) *Mock {
 		flowLogs:       memstore.New[*flowLogData](),
 		routeTables:    memstore.New[*routeTableData](),
 		networkACLs:    memstore.New[*networkACLData](),
+		aclAssocs:      memstore.New[*aclAssocData](),
 		igws:           memstore.New[*igwData](),
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
@@ -224,6 +281,7 @@ func New(opts *config.Options) *Mock {
 		ipamPoolByCidr:        map[string]string{},
 		ipamPoolByAllocation:  map[string]string{},
 		ipamResourceOverrides: map[string]ipamResourceOverride{},
+		eniIPCounters:         map[string]int{},
 
 		opts: opts,
 	}
@@ -233,6 +291,15 @@ func New(opts *config.Options) *Mock {
 func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCInfo, error) {
 	if cfg.CIDRBlock == "" {
 		return nil, errors.Newf(errors.InvalidArgument, "CIDR block is required")
+	}
+
+	if err := validateVPCCIDR(cfg.CIDRBlock); err != nil {
+		return nil, err
+	}
+
+	tenancy, err := validateInstanceTenancy(cfg.InstanceTenancy)
+	if err != nil {
+		return nil, err
 	}
 
 	id := idgen.GenerateID("vpc-")
@@ -245,16 +312,42 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 		Tags:      tags,
 		// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
 		EnableDNSSupport: true,
+		InstanceTenancy:  tenancy,
 	}
 	m.vpcs.Set(id, v)
 
 	m.createMainRouteTable(id, cfg.CIDRBlock)
+	m.createDefaultSecurityGroup(id)
+	m.createDefaultNetworkACL(id)
 
 	m.mu.RLock()
 	info := toVPCInfo(v)
 	m.mu.RUnlock()
 
 	return &info, nil
+}
+
+// createDefaultSecurityGroup gives the new VPC the group EC2 auto-creates for
+// it: name "default", an allow-all egress rule, and a self-referencing ingress
+// rule that permits all traffic between members of the group. The group cannot
+// be deleted directly and is removed when the VPC is deleted.
+func (m *Mock) createDefaultSecurityGroup(vpcID string) {
+	id := idgen.GenerateID("sg-")
+
+	m.securityGroups.Set(id, &sgData{
+		ID:          id,
+		Name:        defaultSGName,
+		Description: defaultSGDescription,
+		VPCID:       vpcID,
+		IsDefault:   true,
+		IngressRules: []driver.SecurityRule{{
+			Protocol:          allTrafficProtocol,
+			ReferencedGroupID: id,
+			RuleID:            idgen.GenerateID("sgr-"),
+		}},
+		EgressRules: []driver.SecurityRule{newDefaultEgressRule()},
+		Tags:        map[string]string{},
+	})
 }
 
 // createMainRouteTable gives the new VPC the route table EC2 creates for it,
@@ -300,13 +393,31 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	// refuses, and a caller whose drain is broken never finds out.
 	if eni, blocked := m.attachedENIIn(id, ""); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: network interface %q is still attached in vpc %q", eni, id)
+			"network interface %q is still attached in vpc %q", eni, id)
+	}
+
+	// Real EC2 refuses the delete while user-managed dependencies remain and
+	// auto-removes the ones it created (main route table, default security
+	// group). An active peering connection does not block — it is deleted with
+	// the VPC — so it is deliberately absent from the dependency scan.
+	if dep, blocked := m.vpcDependency(id); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"the vpc %q has dependencies and cannot be deleted (%s)", id, dep)
 	}
 
 	m.vpcs.Delete(id)
+	m.deleteMainRouteTable(id)
+	m.deleteDefaultSecurityGroup(id)
+	m.deleteDefaultNetworkACL(id)
+	m.markVPCPeeringsDeleted(id)
 
+	return nil
+}
+
+// deleteMainRouteTable removes the VPC's main route table and its association.
+func (m *Mock) deleteMainRouteTable(vpcID string) {
 	for rtID, rt := range m.routeTables.All() {
-		if rt.VPCID != id || !rt.IsMain {
+		if rt.VPCID != vpcID || !rt.IsMain {
 			continue
 		}
 
@@ -318,8 +429,91 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 			}
 		}
 	}
+}
 
-	return nil
+// deleteDefaultSecurityGroup removes the group EC2 auto-created with the VPC.
+func (m *Mock) deleteDefaultSecurityGroup(vpcID string) {
+	for sgID, sg := range m.securityGroups.All() {
+		if sg.VPCID == vpcID && sg.IsDefault {
+			m.securityGroups.Delete(sgID)
+		}
+	}
+}
+
+// markVPCPeeringsDeleted transitions any peering that referenced the VPC to
+// deleted, mirroring real EC2's Deleting -> Deleted cascade. Peering never
+// blocks the delete, so this runs after the VPC is gone.
+func (m *Mock) markVPCPeeringsDeleted(vpcID string) {
+	for _, p := range m.peerings.All() {
+		if p.RequesterVPC == vpcID || p.AccepterVPC == vpcID {
+			p.Status = PeeringStatusDeleted
+		}
+	}
+}
+
+// vpcDependency reports the first user-managed resource that blocks deleting
+// the VPC, in the order real EC2 surfaces them. The main route table, the
+// default security group, and the default network ACL are excluded because EC2
+// removes them with the VPC; active peering connections are excluded because
+// they are deleted alongside it. Live NAT gateways, running instances, and
+// interface endpoints are already caught by the attached-ENI check in DeleteVPC.
+func (m *Mock) vpcDependency(id string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.subnets.All() {
+		if s.VPCID == id {
+			return "subnet " + s.ID, true
+		}
+	}
+
+	for _, sg := range m.securityGroups.All() {
+		if sg.VPCID == id && !sg.IsDefault {
+			return "security group " + sg.ID, true
+		}
+	}
+
+	if dep, blocked := m.vpcRoutingDependency(id); blocked {
+		return dep, true
+	}
+
+	return m.vpcGatewayDependency(id)
+}
+
+// vpcRoutingDependency reports a blocking non-main route table or non-default
+// network ACL in the VPC.
+func (m *Mock) vpcRoutingDependency(id string) (string, bool) {
+	for _, rt := range m.routeTables.All() {
+		if rt.VPCID == id && !rt.IsMain {
+			return "route table " + rt.ID, true
+		}
+	}
+
+	for _, acl := range m.networkACLs.All() {
+		if acl.VPCID == id && !acl.IsDefault {
+			return "network ACL " + acl.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// vpcGatewayDependency reports a blocking attached internet gateway or VPC
+// endpoint (gateway endpoints hold no ENI, so they need an explicit scan).
+func (m *Mock) vpcGatewayDependency(id string) (string, bool) {
+	for _, igw := range m.igws.All() {
+		if igw.VpcID == id && igw.State == IGWStateAttached {
+			return "internet gateway " + igw.ID, true
+		}
+	}
+
+	for _, ep := range m.endpoints.All() {
+		if ep.VPCID == id {
+			return "vpc endpoint " + ep.ID, true
+		}
+	}
+
+	return "", false
 }
 
 // DescribeVPCs returns VPCs matching the given IDs, or all VPCs if ids is empty.
@@ -346,8 +540,23 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 		return nil, errors.Newf(errors.InvalidArgument, "CIDR block is required")
 	}
 
-	if !m.vpcs.Has(cfg.VPCID) {
+	v, ok := m.vpcs.Get(cfg.VPCID)
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "vpc %q not found", cfg.VPCID)
+	}
+
+	if conflict, err := m.subnetCIDRConflict(cfg.VPCID, cfg.CIDRBlock); err != nil {
+		return nil, err
+	} else if conflict != "" {
+		return nil, errors.Newf(errors.AlreadyExists,
+			"InvalidSubnet.Conflict: subnet CIDR %q conflicts with existing subnet %q", cfg.CIDRBlock, conflict)
+	}
+
+	// A subnet's CIDR must sit entirely inside the VPC's CIDR block; real EC2
+	// rejects an out-of-range block with InvalidSubnet.Range.
+	if !cidrWithinVPC(cfg.CIDRBlock, v.CIDRBlock) {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"%sThe CIDR '%s' is invalid", subnetRangeErrPrefix, cfg.CIDRBlock)
 	}
 
 	id := idgen.GenerateID("subnet-")
@@ -363,26 +572,220 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	}
 	m.subnets.Set(id, s)
 
+	// A new subnet is automatically associated with its VPC's default network
+	// ACL, matching real EC2 (this is the association ReplaceNetworkAclAssociation
+	// later moves to a different ACL).
+	m.associateDefaultNetworkACL(cfg.VPCID, id)
+
 	info := toSubnetInfo(s)
+	info.AvailableIPAddressCount = m.subnetAvailableIPCount(s.ID, s.CIDRBlock)
 
 	return &info, nil
 }
 
+// subnetAvailableIPCount reports the usable IPv4 addresses left in the subnet:
+// the CIDR's host space minus AWS's five reserved addresses, minus every network
+// interface resident in the subnet (an instance's primary ENI, standalone ENIs,
+// and the ENIs NAT gateways and interface endpoints occupy). A malformed or
+// non-IPv4 CIDR yields 0. The count re-increments when those interfaces are
+// released — a terminated instance's primary ENI is deleted, freeing its address.
+func (m *Mock) subnetAvailableIPCount(subnetID, cidr string) int {
+	base := baseSubnetIPCount(cidr)
+	if base == 0 {
+		return 0
+	}
+
+	used := 0
+
+	for _, eni := range m.enis.All() {
+		if eni.SubnetID == subnetID {
+			used++
+		}
+	}
+
+	if used >= base {
+		return 0
+	}
+
+	return base - used
+}
+
+// baseSubnetIPCount is a subnet CIDR's usable-address count before any ENI
+// consumption: its host space minus AWS's five reserved addresses. A malformed
+// or non-IPv4 CIDR, or one too small to hold the reserved set, yields 0.
+func baseSubnetIPCount(cidr string) int {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0
+	}
+
+	ones, bits := ipnet.Mask.Size()
+	if bits != net.IPv4len*8 {
+		return 0
+	}
+
+	// hostBits is 0..32 for any IPv4 mask. Guard absurdly wide masks before the
+	// shift: 1<<31 already overflows a 32-bit int, so an unbounded shift amount is
+	// an integer-overflow hazard. Real VPC/subnet CIDRs are /16../28 (hostBits
+	// 4..16), far below the cap, so this changes nothing for valid inputs.
+	hostBits := net.IPv4len*8 - ones
+	if hostBits > maxSubnetHostBits {
+		return 0
+	}
+
+	total := 1 << uint(hostBits)
+	if total <= subnetReservedIPs {
+		return 0
+	}
+
+	return total - subnetReservedIPs
+}
+
 // DeleteSubnet deletes the subnet with the given ID.
 func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
-	sub, ok := m.subnets.Get(id)
-	if !ok {
+	if !m.subnets.Has(id) {
 		return errors.Newf(errors.NotFound, "subnet %q not found", id)
 	}
 
-	// Same contract as DeleteVPC, one level down: a managed resource holding
-	// an interface in this subnet keeps it alive.
-	if eni, blocked := m.attachedENIIn(sub.VPCID, id); blocked {
+	// Real EC2 refuses to delete a subnet while ANY network interface still
+	// resides in it — an unattached (available) ENI counts, not just an attached
+	// one. Accepting the delete otherwise lets a broken drain pass unnoticed.
+	if eni, blocked := m.eniInSubnet(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: network interface %q is still attached in subnet %q", eni, id)
+			"network interface %q still resides in subnet %q", eni, id)
 	}
 
 	m.subnets.Delete(id)
+
+	for assocID, a := range m.aclAssocs.All() {
+		if a.SubnetID == id {
+			m.aclAssocs.Delete(assocID)
+		}
+	}
+
+	return nil
+}
+
+// eniInSubnet reports the first network interface residing in the given subnet,
+// whether attached or available. Real EC2 blocks DeleteSubnet on either.
+func (m *Mock) eniInSubnet(subnetID string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, eni := range m.enis.All() {
+		if eni.SubnetID == subnetID {
+			return eni.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// validateVPCCIDR checks a VPC's IPv4 CIDR the way EC2 does: a malformed value
+// is an InvalidParameterValue, and a syntactically-valid block whose netmask
+// falls outside /16../28 is an InvalidVpcRange. The range error carries the
+// vpcRangeErrPrefix so the wire layer can emit the resource-specific code.
+func validateVPCCIDR(cidr string) error {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return errors.Newf(errors.InvalidArgument, "invalid CIDR block %q", cidr)
+	}
+
+	ones, bits := ipnet.Mask.Size()
+	if bits != net.IPv4len*8 {
+		return errors.Newf(errors.InvalidArgument, "invalid CIDR block %q", cidr)
+	}
+
+	if ones < minVPCNetmask || ones > maxVPCNetmask {
+		return errors.Newf(errors.InvalidArgument,
+			"%sThe block range must be between a /28 netmask and /16 netmask", vpcRangeErrPrefix)
+	}
+
+	return nil
+}
+
+// validateInstanceTenancy normalizes and checks a VPC's requested instance
+// tenancy. An empty value defaults to "default". Real EC2 CreateVpc accepts only
+// "default" and "dedicated" — "host" and every other value are rejected with
+// InvalidParameterValue (the wire layer maps this InvalidArgument to that code).
+func validateInstanceTenancy(tenancy string) (string, error) {
+	switch tenancy {
+	case "":
+		return tenancyDefault, nil
+	case tenancyDefault, tenancyDedicated:
+		return tenancy, nil
+	default:
+		return "", errors.Newf(errors.InvalidArgument,
+			"invalid value %q for InstanceTenancy", tenancy)
+	}
+}
+
+// cidrWithinVPC reports whether the subnet CIDR sits entirely inside the VPC's
+// CIDR block: its network address must fall within the VPC block and its prefix
+// must be at least as long (a smaller-or-equal block). An unparseable subnet CIDR
+// is not contained; an unparseable VPC CIDR does not block (validation happens at
+// VPC-create time).
+func cidrWithinVPC(subnetCIDR, vpcCIDR string) bool {
+	_, subnet, err := net.ParseCIDR(subnetCIDR)
+	if err != nil {
+		return false
+	}
+
+	_, vpcNet, err := net.ParseCIDR(vpcCIDR)
+	if err != nil {
+		return true
+	}
+
+	subnetOnes, _ := subnet.Mask.Size()
+	vpcOnes, _ := vpcNet.Mask.Size()
+
+	return subnetOnes >= vpcOnes && vpcNet.Contains(subnet.IP)
+}
+
+// subnetCIDRConflict reports an existing subnet in the same VPC whose CIDR
+// overlaps the candidate, or an error if either CIDR is malformed. An empty id
+// with a nil error means no conflict.
+func (m *Mock) subnetCIDRConflict(vpcID, cidr string) (string, error) {
+	_, candidate, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", errors.Newf(errors.InvalidArgument, "invalid CIDR block %q", cidr)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.subnets.All() {
+		if s.VPCID != vpcID {
+			continue
+		}
+
+		_, existing, perr := net.ParseCIDR(s.CIDRBlock)
+		if perr != nil {
+			continue
+		}
+
+		if existing.Contains(candidate.IP) || candidate.Contains(existing.IP) {
+			return s.ID, nil
+		}
+	}
+
+	return "", nil
+}
+
+// ModifySubnetAttribute changes one subnet launch attribute (the AWS-specific
+// SubnetAttributes optional capability). A nil pointer leaves that attribute
+// untouched, matching an API that accepts one attribute per call.
+func (m *Mock) ModifySubnetAttribute(_ context.Context, id string, update driver.SubnetAttributeUpdate) error {
+	if update.MapPublicIPOnLaunch == nil {
+		return nil
+	}
+
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.MapPublicIPOnLaunch = *update.MapPublicIPOnLaunch
+		return s
+	}) {
+		return errors.Newf(errors.NotFound, "subnet %q not found", id)
+	}
 
 	return nil
 }
@@ -411,15 +814,36 @@ func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
 
 // DescribeSubnets returns subnets matching the given IDs, or all subnets if ids is empty.
 func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.SubnetInfo, error) {
-	return describeResources(m.subnets, ids, toSubnetInfo), nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.subnets.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "subnet %q not found", id)
+		}
+	}
+
+	out := describeResources(m.subnets, ids, toSubnetInfo)
+	for i := range out {
+		out[i].AvailableIPAddressCount = m.subnetAvailableIPCount(out[i].ID, out[i].CIDRBlock)
+	}
+
+	return out, nil
 }
 
 // CreateSecurityGroup creates a new security group with the given configuration.
 // defaultEgressRule is the allow-all outbound rule real EC2 attaches to every
 // new security group (protocol -1, 0.0.0.0/0, all ports).
 //
-//nolint:gochecknoglobals // static default, mirrors real EC2
-var defaultEgressRule = driver.SecurityRule{Protocol: allTrafficProtocol, CIDR: allTrafficCIDR}
+// newDefaultEgressRule builds the allow-all outbound rule with a freshly minted
+// "sgr-" id so each group's default egress rule is individually identifiable.
+func newDefaultEgressRule() driver.SecurityRule {
+	return driver.SecurityRule{
+		Protocol: allTrafficProtocol,
+		CIDR:     allTrafficCIDR,
+		RuleID:   idgen.GenerateID("sgr-"),
+	}
+}
 
 func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	if cfg.Name == "" {
@@ -432,6 +856,16 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 
 	if !m.vpcs.Has(cfg.VPCID) {
 		return nil, errors.Newf(errors.NotFound, "vpc %q not found", cfg.VPCID)
+	}
+
+	// Security-group names are unique within a VPC. This invariant lives in the
+	// provider so every run mode (wire server, portable API, typed Go API) shares
+	// it; the wire layer only maps AlreadyExists to the InvalidGroup.Duplicate code.
+	for _, existing := range m.securityGroups.SortedValues() {
+		if existing.VPCID == cfg.VPCID && existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"security group %q already exists in vpc %q", cfg.Name, cfg.VPCID)
+		}
 	}
 
 	id := idgen.GenerateID("sg-")
@@ -447,7 +881,9 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 		// (no ingress). IaC tools rely on it — Terraform revokes this default
 		// before applying the egress blocks in the config — and the topology
 		// engine otherwise reports a fresh SG as denying all outbound traffic.
-		EgressRules: []driver.SecurityRule{defaultEgressRule},
+		// The rule gets its own "sgr-" id so DescribeSecurityGroupRules can
+		// return and filter it the way real EC2 does.
+		EgressRules: []driver.SecurityRule{newDefaultEgressRule()},
 		Tags:        tags,
 	}
 	m.securityGroups.Set(id, sg)
@@ -457,13 +893,65 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 	return &info, nil
 }
 
-// DeleteSecurityGroup deletes the security group with the given ID.
+// DeleteSecurityGroup deletes the security group with the given ID. The group
+// EC2 auto-creates for a VPC cannot be deleted directly; real EC2 answers
+// Client.CannotDelete, which the wire layer maps from this FailedPrecondition.
 func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
-	if !m.securityGroups.Delete(id) {
+	sg, ok := m.securityGroups.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", id)
 	}
 
+	if sg.IsDefault {
+		return errors.Newf(errors.FailedPrecondition,
+			"CannotDelete: default security group %q cannot be deleted", id)
+	}
+
+	// Real EC2 refuses to delete a security group that is still attached to a
+	// network interface or referenced by another security group in the VPC.
+	if dep, blocked := m.securityGroupInUse(id); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"security group %q is in use by %s", id, dep)
+	}
+
+	m.securityGroups.Delete(id)
+
 	return nil
+}
+
+// securityGroupInUse reports the first network interface using the group or the
+// first other security group whose rules reference it.
+func (m *Mock) securityGroupInUse(id string) (string, bool) {
+	for _, eni := range m.enis.All() {
+		for _, g := range eni.SecurityGroups {
+			if g == id {
+				return "network interface " + eni.ID, true
+			}
+		}
+	}
+
+	for _, other := range m.securityGroups.All() {
+		if other.ID == id {
+			continue
+		}
+
+		if sgReferencesGroup(other.IngressRules, id) || sgReferencesGroup(other.EgressRules, id) {
+			return "security group " + other.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// sgReferencesGroup reports whether any rule references the group id.
+func sgReferencesGroup(rules []driver.SecurityRule, id string) bool {
+	for i := range rules {
+		if rules[i].ReferencedGroupID == id {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DescribeSecurityGroups returns security groups matching the given IDs, or all if ids is empty.
@@ -507,6 +995,8 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 }
 
 // AddIngressRule adds an ingress rule to the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -519,6 +1009,8 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 }
 
 // AddEgressRule adds an egress rule to the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -531,14 +1023,16 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 }
 
 // RemoveIngressRule removes a matching ingress rule from the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
 	}
 
-	for i, r := range sg.IngressRules {
-		if r == rule {
+	for i := range sg.IngressRules {
+		if sg.IngressRules[i].Matches(&rule) {
 			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
 			return nil
 		}
@@ -548,14 +1042,16 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 }
 
 // RemoveEgressRule removes a matching egress rule from the specified security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
 	}
 
-	for i, r := range sg.EgressRules {
-		if r == rule {
+	for i := range sg.EgressRules {
+		if sg.EgressRules[i].Matches(&rule) {
 			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
 			return nil
 		}
@@ -644,7 +1140,10 @@ func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []stri
 // keys (tags wins on overlap). The original existing map is not modified
 // so concurrent readers can keep iterating it safely.
 func mergeTagMap(existing, tags map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(tags))
+	// Size the hint from the existing map only; adding len(tags) risks an integer
+	// overflow in the allocation size. The map grows to absorb tags as needed, so
+	// the result is unchanged.
+	out := make(map[string]string, len(existing))
 
 	for k, v := range existing {
 		out[k] = v
@@ -704,17 +1203,20 @@ func toVPCInfo(v *vpcData) driver.VPCInfo {
 		Tags:               copyTags(v.Tags),
 		EnableDNSSupport:   v.EnableDNSSupport,
 		EnableDNSHostnames: v.EnableDNSHostnames,
+		DhcpOptionsID:      v.DhcpOptionsID,
+		InstanceTenancy:    v.InstanceTenancy,
 	}
 }
 
 func toSubnetInfo(s *subnetData) driver.SubnetInfo {
 	return driver.SubnetInfo{
-		ID:               s.ID,
-		VPCID:            s.VPCID,
-		CIDRBlock:        s.CIDRBlock,
-		AvailabilityZone: s.AvailabilityZone,
-		State:            s.State,
-		Tags:             copyTags(s.Tags),
+		ID:                  s.ID,
+		VPCID:               s.VPCID,
+		CIDRBlock:           s.CIDRBlock,
+		AvailabilityZone:    s.AvailabilityZone,
+		State:               s.State,
+		Tags:                copyTags(s.Tags),
+		MapPublicIPOnLaunch: s.MapPublicIPOnLaunch,
 	}
 }
 

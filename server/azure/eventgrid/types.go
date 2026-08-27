@@ -12,14 +12,24 @@ const (
 	// reports once a topic is ready. Stamping it on the CreateOrUpdate response
 	// lets the SDK's body-based LRO poller complete on the first response.
 	provisioningSucceeded = "Succeeded"
+	// defaultInputSchema and defaultPublicNetworkAccess are the values Event
+	// Grid stamps on a topic created without overrides.
+	defaultInputSchema          = "EventGridSchema"
+	defaultPublicNetworkAccess  = "Enabled"
+	subEventSubscriptions       = "eventSubscriptions"
+	actionListKeys              = "listKeys"
+	subscriptionResourceType    = "Microsoft.EventGrid/topics/eventSubscriptions"
+	subscriptionProvisionedGood = "Succeeded"
 )
 
-// topicProperties carries the read-only provisioning state and endpoint the SDK
-// expects on a topic. The eventbus driver has no endpoint concept, so Endpoint
-// is left empty.
+// topicProperties carries the read-only fields the SDK expects on a topic. The
+// endpoint is the data-plane publish URL derived from the topic name and region.
 type topicProperties struct {
-	ProvisioningState string `json:"provisioningState,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
+	ProvisioningState   string `json:"provisioningState,omitempty"`
+	Endpoint            string `json:"endpoint,omitempty"`
+	InputSchema         string `json:"inputSchema,omitempty"`
+	PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
+	MetricResourceID    string `json:"metricResourceId,omitempty"`
 }
 
 // topicJSON is the ARM Topic resource shape. Only the fields the SDK reads back
@@ -37,17 +47,64 @@ type topicListResult struct {
 	Value []topicJSON `json:"value"`
 }
 
+// topicSharedAccessKeys is the Topics.ListSharedAccessKeys response.
+type topicSharedAccessKeys struct {
+	Key1 string `json:"key1"`
+	Key2 string `json:"key2"`
+}
+
+// topicLocation returns the region a topic was created in, defaulting to
+// "global" when the caller did not supply one.
+func topicLocation(info *ebdriver.EventBusInfo) string {
+	if info.Region != "" {
+		return info.Region
+	}
+
+	return defaultTopicLocation
+}
+
+// topicEndpoint builds the data-plane publish endpoint Event Grid advertises
+// for a topic: https://{name}.{region}-1.eventgrid.azure.net/api/events.
+func topicEndpoint(name, location string) string {
+	return "https://" + name + "." + location + "-1.eventgrid.azure.net/api/events"
+}
+
 // toTopicJSON converts a driver event bus into its ARM Topic element for the
-// given path scope. Event Grid topics are always "global" location.
+// given path scope.
 func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJSON {
+	// Build the id (and the derived metricResourceId) from the topic's own
+	// group, not the request path's — which is empty on a subscription-scoped
+	// list — so the id carries its true resourceGroups/{rg} segment.
+	rg := info.Scope.ResourceGroup
+	if rg == "" {
+		rg = rp.ResourceGroup
+	}
+
+	id := azurearm.BuildResourceID(rp.Subscription, rg, providerName, typeTopics, info.Name)
+	loc := topicLocation(info)
+
+	inputSchema := info.InputSchema
+	if inputSchema == "" {
+		inputSchema = defaultInputSchema
+	}
+
+	publicNetworkAccess := info.PublicNetworkAccess
+	if publicNetworkAccess == "" {
+		publicNetworkAccess = defaultPublicNetworkAccess
+	}
+
 	return topicJSON{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeTopics, info.Name),
+		ID:       id,
 		Name:     info.Name,
 		Type:     topicResourceType,
-		Location: defaultTopicLocation,
+		Location: loc,
 		Tags:     tagsToPtr(info.Tags),
 		Properties: &topicProperties{
-			ProvisioningState: provisioningSucceeded,
+			ProvisioningState:   provisioningSucceeded,
+			Endpoint:            topicEndpoint(info.Name, loc),
+			InputSchema:         inputSchema,
+			PublicNetworkAccess: publicNetworkAccess,
+			MetricResourceID:    id,
 		},
 	}
 }

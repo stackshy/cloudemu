@@ -108,6 +108,133 @@ func TestReplicationGroupSDKRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReplicationGroupMemberAndReaderFields covers that Describe populates
+// MemberClusters, the reader endpoint, per-node membership, and the failover
+// status a caller reads back (Terraform aws_elasticache_replication_group).
+func TestReplicationGroupMemberAndReaderFields(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	if _, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("rg-fields"),
+		ReplicationGroupDescription: aws.String("with reader + members"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+		NumCacheClusters:            aws.Int32(2),
+		AutomaticFailoverEnabled:    aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	desc, err := c.DescribeReplicationGroups(ctx, &awselasticache.DescribeReplicationGroupsInput{
+		ReplicationGroupId: aws.String("rg-fields"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeReplicationGroups: %v", err)
+	}
+
+	rg := desc.ReplicationGroups[0]
+
+	if len(rg.MemberClusters) != 2 {
+		t.Fatalf("MemberClusters = %v, want 2 entries", rg.MemberClusters)
+	}
+
+	if rg.MemberClusters[0] != "rg-fields-001" || rg.MemberClusters[1] != "rg-fields-002" {
+		t.Fatalf("MemberClusters = %v, want rg-fields-001/-002", rg.MemberClusters)
+	}
+
+	if rg.AutomaticFailover != cachetypes.AutomaticFailoverStatusEnabled {
+		t.Fatalf("AutomaticFailover = %q, want enabled", rg.AutomaticFailover)
+	}
+
+	ng := rg.NodeGroups[0]
+	if ng.ReaderEndpoint == nil || aws.ToString(ng.ReaderEndpoint.Address) == "" {
+		t.Fatalf("ReaderEndpoint = %+v, want non-empty", ng.ReaderEndpoint)
+	}
+
+	if len(ng.NodeGroupMembers) != 2 {
+		t.Fatalf("NodeGroupMembers = %d, want 2", len(ng.NodeGroupMembers))
+	}
+
+	if aws.ToString(ng.NodeGroupMembers[0].CurrentRole) != "primary" {
+		t.Fatalf("first member role = %q, want primary", aws.ToString(ng.NodeGroupMembers[0].CurrentRole))
+	}
+}
+
+// TestDeleteReplicationGroupFinalSnapshot guards that DeleteReplicationGroup
+// with FinalSnapshotIdentifier takes a final snapshot before deletion — real
+// ElastiCache does, and the snapshot then shows up in DescribeSnapshots.
+func TestDeleteReplicationGroupFinalSnapshot(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	if _, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("drg"),
+		ReplicationGroupDescription: aws.String("group to snapshot on delete"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+	}); err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	if _, err := c.DeleteReplicationGroup(ctx, &awselasticache.DeleteReplicationGroupInput{
+		ReplicationGroupId:      aws.String("drg"),
+		FinalSnapshotIdentifier: aws.String("finalsnap"),
+	}); err != nil {
+		t.Fatalf("DeleteReplicationGroup: %v", err)
+	}
+
+	got, err := c.DescribeSnapshots(ctx, &awselasticache.DescribeSnapshotsInput{
+		SnapshotName: aws.String("finalsnap"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeSnapshots: %v", err)
+	}
+
+	if len(got.Snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1 (final snapshot on delete)", len(got.Snapshots))
+	}
+
+	if id := aws.ToString(got.Snapshots[0].ReplicationGroupId); id != "drg" {
+		t.Errorf("snapshot ReplicationGroupId = %q, want drg", id)
+	}
+}
+
+// TestDeleteReplicationGroupRetainPrimary guards that RetainPrimaryCluster keeps
+// the primary node group as a standalone cache cluster instead of tearing it
+// down.
+func TestDeleteReplicationGroupRetainPrimary(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	if _, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("keeprg"),
+		ReplicationGroupDescription: aws.String("retain primary on delete"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+	}); err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	if _, err := c.DeleteReplicationGroup(ctx, &awselasticache.DeleteReplicationGroupInput{
+		ReplicationGroupId:   aws.String("keeprg"),
+		RetainPrimaryCluster: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("DeleteReplicationGroup: %v", err)
+	}
+
+	got, err := c.DescribeCacheClusters(ctx, &awselasticache.DescribeCacheClustersInput{
+		CacheClusterId: aws.String("keeprg"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeCacheClusters: %v", err)
+	}
+
+	if len(got.CacheClusters) != 1 {
+		t.Fatalf("retained clusters = %d, want 1", len(got.CacheClusters))
+	}
+}
+
 // Callers string-match these two codes: AlreadyExists to make a re-run
 // idempotent, NotFoundFault to treat an absent group as already deleted.
 // Losing either turns a safe path into a failure.

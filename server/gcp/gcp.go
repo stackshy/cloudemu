@@ -8,6 +8,7 @@ package gcp
 
 import (
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
@@ -34,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
@@ -139,19 +141,47 @@ func New(d Drivers) *server.Server {
 
 	srv := server.New()
 
-	// Shared location-operations poller. Registered FIRST so it owns every
-	// GET /v1/projects/{p}/locations/{l}/operations/{op} uniformly, instead of
-	// alloydb/gke greedily claiming (and 404ing) operations created by
-	// artifactregistry, eventarc, memorystore, etc. All emulated ops are
-	// synchronous, so a done response is always correct.
-	srv.Register(lro.New())
+	// GKE registers ahead of the shared LRO poller because it answers a richer
+	// operation shape (operationType/targetLink/selfLink/zone/timestamps) for
+	// its OWN operations. Its Matches claims a named operation poll only when
+	// the op was recorded by the GKE mock, so foreign location operations still
+	// fall through to lro below — no shadowing.
+	if d.GKE != nil {
+		srv.Register(gke.New(d.GKE))
+	}
+
+	// Shared location-operations poller. Registered ahead of the remaining
+	// service handlers so it owns every GET /v1/projects/{p}/locations/{l}/
+	// operations/{op} uniformly, instead of alloydb greedily claiming (and
+	// 404ing) operations created by artifactregistry, eventarc, memorystore,
+	// etc. Each service registers the operations it creates into opsReg so the
+	// poller replays their typed response and 404s an operation name that was
+	// never created (as real GCP does).
+	opsReg := lro.NewRegistry()
+	srv.Register(lro.New(opsReg))
+
+	// Shared compute-operation registry. The compute handler's /operations route
+	// serves every compute#operation poll (its own, plus the networks and load-
+	// balancing handlers', which mint compute operations but have no operations
+	// route of their own). Sharing one registry lets an Insert/Delete poll resolve
+	// a real operation and 404 a name that was never issued, uniformly across the
+	// three handlers.
+	computeOps := gcprest.NewOperationRegistry()
 
 	if d.Compute != nil {
-		srv.Register(compute.New(d.Compute))
+		// d.Networking (may be nil) lets insert allocate the instance's private
+		// networkIP from the referenced subnetwork's CIDR.
+		computeH := compute.New(d.Compute, d.Networking)
+		computeH.SetOperationRegistry(computeOps)
+		srv.Register(computeH)
 	}
 
 	if d.Networking != nil {
-		srv.Register(vpc.New(d.Networking))
+		// d.Compute (may be nil) lets the subnetwork delete guard reject removing a
+		// subnet that still has instances.
+		netH := vpc.New(d.Networking, d.Compute)
+		netH.SetOperationRegistry(computeOps)
+		srv.Register(netH)
 	}
 
 	// Service Networking has no driver: a private-services connection is a
@@ -168,12 +198,24 @@ func New(d Drivers) *server.Server {
 	// return operation envelopes the SDK polls via the compute handler's
 	// /global/operations route.
 	if d.LB != nil {
-		srv.Register(lbsrv.New(d.LB))
+		lbH := lbsrv.New(d.LB)
+		lbH.SetOperationRegistry(computeOps)
+		srv.Register(lbH)
+	}
+
+	// Compute-space catch-all. Registered AFTER the compute, networks and load-
+	// balancing handlers so first-match-wins keeps every implemented /compute/v1
+	// path on its real handler; this only claims the leftovers, answering with a
+	// GCP JSON error envelope instead of the dispatcher's bare-text 501.
+	if d.Compute != nil || d.Networking != nil || d.LB != nil {
+		srv.Register(compute.NewFallback())
 	}
 
 	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths
 	// before Firestore so the locations+functions guard wins over Firestore's
 	// /v1/projects/ prefix match.
+	var cfHandler *cloudfunctions.Handler
+
 	if d.CloudFunctions != nil {
 		var cfOpts []cloudfunctions.Option
 		if d.Storage != nil {
@@ -183,7 +225,8 @@ func New(d Drivers) *server.Server {
 			cfOpts = append(cfOpts, cloudfunctions.WithObjectStore(d.Storage))
 		}
 
-		srv.Register(cloudfunctions.New(d.CloudFunctions, cfOpts...))
+		cfHandler = cloudfunctions.New(d.CloudFunctions, cfOpts...)
+		srv.Register(cfHandler)
 	}
 
 	// Cloud Run matches /v2/projects/{p}/locations/{l}/{jobs|operations}[/…].
@@ -197,8 +240,29 @@ func New(d Drivers) *server.Server {
 	// PubSub matches /v1/projects/{p}/{topics|subscriptions}/...; register
 	// before Firestore so its more-specific resource-type guard wins over
 	// Firestore's permissive /v1/projects/ prefix.
+	var pubsubHandler *pubsub.Handler
+
 	if d.PubSub != nil {
-		srv.Register(pubsub.New(d.PubSub))
+		pubsubHandler = pubsub.New(d.PubSub)
+		// PubSub -> Cloud Functions: a publish invokes every function whose
+		// eventTrigger targets the topic (gen1 resource / gen2 pubsubTopic),
+		// mirroring the AWS S3/DynamoDB -> Lambda event-delivery wiring. Push
+		// subscription HTTP delivery is self-contained in the PubSub handler.
+		if cfHandler != nil {
+			pubsubHandler.SetFunctionInvoker(cfHandler)
+		}
+
+		// Monitoring -> PubSub: an alert-policy breach publishes the incident to
+		// each pubsub notification channel's topic. Topic fanout is wire-only, so
+		// the publisher is wired here (not providers/gcp/gcp.go) as an adapter over
+		// the PubSub handler — the same layer #803 wired the function-invoker at.
+		if setter, ok := d.Monitoring.(interface {
+			SetPubSubPublisher(gcpmon.PubSubPublisher)
+		}); ok {
+			setter.SetPubSubPublisher(monitoringPubSubAdapter{h: pubsubHandler})
+		}
+
+		srv.Register(pubsubHandler)
 	}
 
 	// Cloud SQL matches /v1/projects/{p}/{instances|operations}/...; same
@@ -216,14 +280,13 @@ func New(d Drivers) *server.Server {
 	// the two are mutually exclusive on one server. Registered before GKE so an
 	// AlloyDB-configured server (GKE nil) works; DriversFrom leaves AlloyDB nil.
 	if d.AlloyDB != nil {
-		srv.Register(alloydbsrv.New(d.AlloyDB))
+		alloyH := alloydbsrv.New(d.AlloyDB)
+		alloyH.SetOperationRegistry(opsReg)
+		srv.Register(alloyH)
 	}
 
-	// GKE matches /v1/projects/{p}/locations/{l}/{clusters|operations}/...;
-	// same /v1/projects/ space as Firestore, so register first.
-	if d.GKE != nil {
-		srv.Register(gke.New(d.GKE))
-	}
+	// GKE is registered ahead of the LRO poller above (see the top of New) so
+	// its richer operation shape wins for its own operations.
 
 	// Vertex AI matches /v1/projects/{p}/locations/{l}/{models|endpoints|datasets|
 	// customJobs|batchPredictionJobs}/... and /v1/publishers/...:generateContent.
@@ -255,7 +318,9 @@ func New(d Drivers) *server.Server {
 	// — disjoint from IAM (serviceAccounts|roles) and Cloud Asset. Registered
 	// among the /v1/projects/ family, before Firestore's catch-all.
 	if d.ArtifactRegistry != nil {
-		srv.Register(artifactregistry.New(d.ArtifactRegistry))
+		arH := artifactregistry.New(d.ArtifactRegistry)
+		arH.SetOperationRegistry(opsReg)
+		srv.Register(arH)
 	}
 
 	// Secret Manager matches /v1/projects/{p}/secrets[/…] — disjoint from IAM
@@ -270,7 +335,9 @@ func New(d Drivers) *server.Server {
 	// GKE, and the rest of the /v1/projects/ family. Registered before
 	// Firestore's catch-all.
 	if d.Eventarc != nil {
-		srv.Register(eventarc.New(d.Eventarc))
+		eaH := eventarc.New(d.Eventarc)
+		eaH.SetOperationRegistry(opsReg)
+		srv.Register(eaH)
 	}
 
 	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...] — a distinct
@@ -295,7 +362,9 @@ func New(d Drivers) *server.Server {
 	// registration order among them is unconstrained. Registered before
 	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
 	if d.Memorystore != nil {
-		srv.Register(memorystoresrv.New(d.Memorystore))
+		msH := memorystoresrv.New(d.Memorystore)
+		msH.SetOperationRegistry(opsReg)
+		srv.Register(msH)
 	}
 
 	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other
@@ -320,7 +389,15 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Storage != nil {
-		srv.Register(gcs.New(d.Storage))
+		gcsHandler := gcs.New(d.Storage)
+		// GCS -> Pub/Sub: an object finalize/delete emits an event to each
+		// matching bucket notificationConfig's topic, completing the
+		// GCS -> Pub/Sub -> Cloud Functions chain.
+		if pubsubHandler != nil {
+			gcsHandler.SetPublisher(pubsubHandler)
+		}
+
+		srv.Register(gcsHandler)
 	}
 
 	return srv

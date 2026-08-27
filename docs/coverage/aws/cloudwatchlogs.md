@@ -3,7 +3,7 @@
 
 AWS's `logging` service · portable interface `driver.Logging` · [AWS index](./README.md)
 
-## Operations (14)
+## Operations (17)
 
 | Operation | Description |
 | --- | --- |
@@ -12,7 +12,9 @@ AWS's `logging` service · portable interface `driver.Logging` · [AWS index](./
 | `DeleteLogGroup` |  |
 | `DeleteLogStream` |  |
 | `DeleteMetricFilter` |  |
+| `DeleteSubscriptionFilter` |  |
 | `DescribeMetricFilters` |  |
+| `DescribeSubscriptionFilters` |  |
 | `FilterLogEvents` |  |
 | `GetLogEvents` |  |
 | `GetLogGroup` |  |
@@ -20,7 +22,29 @@ AWS's `logging` service · portable interface `driver.Logging` · [AWS index](./
 | `ListLogStreams` |  |
 | `PutLogEvents` |  |
 | `PutMetricFilter` |  |
+| `PutSubscriptionFilter` |  |
 | `UpdateLogGroup` | UpdateLogGroup replaces the mutable fields (retention, tags) of an |
+
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### GCPLogging
+
+GCPLogging is an optional interface implemented by the GCP logging backend for
+
+| Operation | Description |
+| --- | --- |
+| `CreateLogMetric` |  |
+| `CreateSink` |  |
+| `DeleteLogMetric` |  |
+| `DeleteSink` |  |
+| `GetLogMetric` |  |
+| `GetSink` |  |
+| `ListLogMetrics` |  |
+| `ListSinks` |  |
+| `UpdateLogMetric` |  |
+| `UpdateSink` |  |
 
 ## Not in scope
 

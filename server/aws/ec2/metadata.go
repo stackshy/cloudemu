@@ -3,8 +3,11 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 // commonRegions is the representative region set DescribeRegions reports. Tools
@@ -35,11 +38,54 @@ func (h *Handler) routeMetadata(w http.ResponseWriter, r *http.Request, action s
 		h.describeRegions(w, r)
 	case "DescribeInstanceTypes":
 		h.describeInstanceTypes(w, r)
+	case "ModifyInstanceMetadataOptions":
+		h.modifyInstanceMetadataOptions(w, r)
 	default:
 		return false
 	}
 
 	return true
+}
+
+type modifyInstanceMetadataOptionsResponseXML struct {
+	XMLName    xml.Name            `xml:"ModifyInstanceMetadataOptionsResponse"`
+	Xmlns      string              `xml:"xmlns,attr"`
+	RequestID  string              `xml:"requestId"`
+	InstanceID string              `xml:"instanceId"`
+	Options    *metadataOptionsXML `xml:"instanceMetadataOptions"`
+}
+
+// modifyInstanceMetadataOptions updates an instance's IMDS settings (e.g.
+// HttpTokens=required to enforce IMDSv2). Served by the AWS-only
+// InstanceMetadataModifier capability; a driver without it reports Unimplemented.
+func (h *Handler) modifyInstanceMetadataOptions(w http.ResponseWriter, r *http.Request) {
+	modifier, ok := h.compute.(computedriver.InstanceMetadataModifier)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "ModifyInstanceMetadataOptions is not supported"))
+		return
+	}
+
+	instanceID := r.Form.Get("InstanceId")
+	hopLimit, _ := strconv.Atoi(r.Form.Get("HttpPutResponseHopLimit"))
+
+	opts, err := modifier.ModifyInstanceMetadataOptions(r.Context(), instanceID, computedriver.MetadataOptions{
+		HTTPTokens:              r.Form.Get("HttpTokens"),
+		HTTPPutResponseHopLimit: hopLimit,
+		HTTPEndpoint:            r.Form.Get("HttpEndpoint"),
+		HTTPProtocolIPv6:        r.Form.Get("HttpProtocolIpv6"),
+		InstanceMetadataTags:    r.Form.Get("InstanceMetadataTags"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyInstanceMetadataOptionsResponseXML{
+		Xmlns:      awsquery.Namespace,
+		RequestID:  awsquery.RequestID,
+		InstanceID: instanceID,
+		Options:    metadataOptionsXMLFor(opts),
+	})
 }
 
 // describeRegions answers ec2:DescribeRegions. If explicit RegionName.N filters
@@ -66,25 +112,30 @@ func (*Handler) describeRegions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// instanceTypeSpec is the vCPU/memory profile reported for an instance type.
+// instanceTypeSpec is the profile reported for an instance type: vCPU/memory
+// plus the processor and network facts real DescribeInstanceTypes returns.
 type instanceTypeSpec struct {
-	vcpus     int
-	memoryMiB int
+	vcpus       int
+	memoryMiB   int
+	clockGHz    float64
+	networkPerf string
+	maxENIs     int
+	ipsPerENI   int
 }
 
-// knownInstanceTypes maps the common instance types to their specs. An
-// unrecognized type still gets a response (small default) so validation calls
-// don't fail on a type the emulator hasn't enumerated.
+// knownInstanceTypes maps the common instance types to their specs. Unlike
+// before, an unrecognized *explicitly requested* type is rejected with
+// InvalidInstanceType (matching real EC2) rather than fabricated.
 var knownInstanceTypes = map[string]instanceTypeSpec{ //nolint:gochecknoglobals // static lookup table
-	"t2.micro":  {1, 1024},
-	"t2.small":  {1, 2048},
-	"t3.micro":  {2, 1024},
-	"t3.small":  {2, 2048},
-	"t3.medium": {2, 4096},
-	"m5.large":  {2, 8192},
-	"m5.xlarge": {4, 16384},
-	"c5.large":  {2, 4096},
-	"r5.large":  {2, 16384},
+	"t2.micro":  {vcpus: 1, memoryMiB: 1024, clockGHz: 3.3, networkPerf: "Low to Moderate", maxENIs: 2, ipsPerENI: 2},
+	"t2.small":  {vcpus: 1, memoryMiB: 2048, clockGHz: 3.3, networkPerf: "Low to Moderate", maxENIs: 3, ipsPerENI: 4},
+	"t3.micro":  {vcpus: 2, memoryMiB: 1024, clockGHz: 3.1, networkPerf: "Up to 5 Gigabit", maxENIs: 2, ipsPerENI: 2},
+	"t3.small":  {vcpus: 2, memoryMiB: 2048, clockGHz: 3.1, networkPerf: "Up to 5 Gigabit", maxENIs: 3, ipsPerENI: 4},
+	"t3.medium": {vcpus: 2, memoryMiB: 4096, clockGHz: 3.1, networkPerf: "Up to 5 Gigabit", maxENIs: 3, ipsPerENI: 6},
+	"m5.large":  {vcpus: 2, memoryMiB: 8192, clockGHz: 3.1, networkPerf: "Up to 10 Gigabit", maxENIs: 3, ipsPerENI: 10},
+	"m5.xlarge": {vcpus: 4, memoryMiB: 16384, clockGHz: 3.1, networkPerf: "Up to 10 Gigabit", maxENIs: 4, ipsPerENI: 15},
+	"c5.large":  {vcpus: 2, memoryMiB: 4096, clockGHz: 3.4, networkPerf: "Up to 10 Gigabit", maxENIs: 3, ipsPerENI: 10},
+	"r5.large":  {vcpus: 2, memoryMiB: 16384, clockGHz: 3.1, networkPerf: "Up to 10 Gigabit", maxENIs: 3, ipsPerENI: 10},
 }
 
 type vCPUInfoXML struct {
@@ -95,10 +146,24 @@ type memoryInfoXML struct {
 	SizeInMiB int `xml:"sizeInMiB"`
 }
 
+type processorInfoXML struct {
+	SupportedArchitectures   []string `xml:"supportedArchitectures>item"`
+	SustainedClockSpeedInGhz float64  `xml:"sustainedClockSpeedInGhz"`
+}
+
+type networkInfoXML struct {
+	NetworkPerformance        string `xml:"networkPerformance"`
+	MaximumNetworkInterfaces  int    `xml:"maximumNetworkInterfaces"`
+	Ipv4AddressesPerInterface int    `xml:"ipv4AddressesPerInterface"`
+}
+
 type instanceTypeInfoXML struct {
-	InstanceType string        `xml:"instanceType"`
-	VCPUInfo     vCPUInfoXML   `xml:"vCpuInfo"`
-	MemoryInfo   memoryInfoXML `xml:"memoryInfo"`
+	InstanceType      string           `xml:"instanceType"`
+	CurrentGeneration bool             `xml:"currentGeneration"`
+	VCPUInfo          vCPUInfoXML      `xml:"vCpuInfo"`
+	MemoryInfo        memoryInfoXML    `xml:"memoryInfo"`
+	ProcessorInfo     processorInfoXML `xml:"processorInfo"`
+	NetworkInfo       networkInfoXML   `xml:"networkInfo"`
 }
 
 type describeInstanceTypesResponseXML struct {
@@ -109,8 +174,9 @@ type describeInstanceTypesResponseXML struct {
 }
 
 // describeInstanceTypes answers ec2:DescribeInstanceTypes. Explicit
-// InstanceType.N values are echoed with their (or a default) spec; with none
-// supplied, the known set is reported.
+// InstanceType.N values are echoed with their spec; an unrecognized explicit
+// type is rejected with InvalidInstanceType (real EC2). With none supplied, the
+// whole known set is reported.
 func (*Handler) describeInstanceTypes(w http.ResponseWriter, r *http.Request) {
 	requested := awsquery.ListStrings(r.Form, "InstanceType")
 
@@ -126,13 +192,26 @@ func (*Handler) describeInstanceTypes(w http.ResponseWriter, r *http.Request) {
 	for _, name := range names {
 		spec, ok := knownInstanceTypes[name]
 		if !ok {
-			spec = instanceTypeSpec{vcpus: 2, memoryMiB: 4096}
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidInstanceType",
+				"The instance type '"+name+"' is not supported")
+
+			return
 		}
 
 		out = append(out, instanceTypeInfoXML{
-			InstanceType: name,
-			VCPUInfo:     vCPUInfoXML{DefaultVCpus: spec.vcpus},
-			MemoryInfo:   memoryInfoXML{SizeInMiB: spec.memoryMiB},
+			InstanceType:      name,
+			CurrentGeneration: true,
+			VCPUInfo:          vCPUInfoXML{DefaultVCpus: spec.vcpus},
+			MemoryInfo:        memoryInfoXML{SizeInMiB: spec.memoryMiB},
+			ProcessorInfo: processorInfoXML{
+				SupportedArchitectures:   []string{archX86},
+				SustainedClockSpeedInGhz: spec.clockGHz,
+			},
+			NetworkInfo: networkInfoXML{
+				NetworkPerformance:        spec.networkPerf,
+				MaximumNetworkInterfaces:  spec.maxENIs,
+				Ipv4AddressesPerInterface: spec.ipsPerENI,
+			},
 		})
 	}
 

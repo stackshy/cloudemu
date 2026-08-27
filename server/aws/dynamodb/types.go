@@ -2,9 +2,8 @@ package dynamodb
 
 import (
 	"encoding/base64"
-	"fmt"
-	"strconv"
 
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
@@ -24,19 +23,12 @@ func fromWireItem(wire map[string]any) map[string]any {
 	return item
 }
 
-// toWireItem converts a plain map back to DynamoDB wire format.
+// toWireItem converts a plain map back to DynamoDB wire format. It delegates to
+// the canonical driver-package encoder so the control-plane responses, the
+// Streams data plane, and Lambda stream event delivery all render identical
+// AttributeValue JSON.
 func toWireItem(item map[string]any) map[string]any {
-	if item == nil {
-		return nil
-	}
-
-	w := make(map[string]any, len(item))
-
-	for k, v := range item {
-		w[k] = toAttributeValue(v)
-	}
-
-	return w
+	return dbdriver.MarshalItem(item)
 }
 
 // fromAttributeValue extracts the plain value from a DynamoDB AttributeValue.
@@ -51,10 +43,11 @@ func fromAttributeValue(v any) any {
 	}
 
 	if n, ok := av["N"]; ok {
+		// DynamoDB Number is a decimal transmitted as a string; keep the exact
+		// string (expr.Number) so values beyond float64 precision round-trip
+		// losslessly. Parsing through float64 here corrupts large ids/counters.
 		if s, ok := n.(string); ok {
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				return f
-			}
+			return expr.Number(s)
 		}
 
 		return n
@@ -142,14 +135,20 @@ func decodeNumberSet(v any) any {
 	out := make(expr.NumberSet, 0, len(list))
 
 	for _, e := range list {
+		// DynamoDB transmits NS as an array of decimal strings; keep each element's
+		// exact string (expr.Number) so large ids/high-precision decimals round-trip
+		// losslessly. Parsing through float64 here corrupts values beyond 2^53.
 		if s, ok := e.(string); ok {
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				out = append(out, f)
-			}
+			out = append(out, expr.Number(s))
 		}
 	}
 
-	return out
+	// Dedup by numeric value (union with an empty set) so equal forms such as
+	// "1" and "1.0" collapse to one element, matching DynamoDB set semantics,
+	// while values that differ beyond float64 precision are preserved distinct.
+	deduped, _ := expr.UnionSets(nil, out)
+
+	return deduped
 }
 
 func decodeBinarySet(v any) any {
@@ -193,77 +192,4 @@ func fromMap(v any) map[string]any {
 	}
 
 	return fromWireItem(m)
-}
-
-// toAttributeValue wraps a plain value into DynamoDB wire format.
-func toAttributeValue(v any) map[string]any {
-	if av, ok := toBinaryOrSetValue(v); ok {
-		return av
-	}
-
-	switch val := v.(type) {
-	case string:
-		return map[string]any{"S": val}
-	case float64:
-		return map[string]any{"N": strconv.FormatFloat(val, 'f', -1, 64)}
-	case int:
-		return map[string]any{"N": strconv.Itoa(val)}
-	case int64:
-		return map[string]any{"N": strconv.FormatInt(val, 10)}
-	case bool:
-		return map[string]any{"BOOL": val}
-	case nil:
-		return map[string]any{"NULL": true}
-	case []any:
-		return toListValue(val)
-	case map[string]any:
-		return map[string]any{"M": toWireItem(val)}
-	default:
-		return map[string]any{"S": fmt.Sprintf("%v", val)}
-	}
-}
-
-// toBinaryOrSetValue encodes the binary scalar (B) and the set types (SS/NS/BS),
-// keeping toAttributeValue's own type switch within the complexity budget.
-func toBinaryOrSetValue(v any) (map[string]any, bool) {
-	switch val := v.(type) {
-	case []byte:
-		return map[string]any{"B": base64.StdEncoding.EncodeToString(val)}, true
-	case expr.StringSet:
-		return map[string]any{"SS": []string(val)}, true
-	case expr.NumberSet:
-		return map[string]any{"NS": formatNumberSet(val)}, true
-	case expr.BinarySet:
-		return map[string]any{"BS": formatBinarySet(val)}, true
-	default:
-		return nil, false
-	}
-}
-
-func formatNumberSet(ns expr.NumberSet) []string {
-	out := make([]string, 0, len(ns))
-	for _, f := range ns {
-		out = append(out, strconv.FormatFloat(f, 'f', -1, 64))
-	}
-
-	return out
-}
-
-func formatBinarySet(bs expr.BinarySet) []string {
-	out := make([]string, 0, len(bs))
-	for _, b := range bs {
-		out = append(out, base64.StdEncoding.EncodeToString(b))
-	}
-
-	return out
-}
-
-func toListValue(list []any) map[string]any {
-	items := make([]any, 0, len(list))
-
-	for _, elem := range list {
-		items = append(items, toAttributeValue(elem))
-	}
-
-	return map[string]any{"L": items}
 }

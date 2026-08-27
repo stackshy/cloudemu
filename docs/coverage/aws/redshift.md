@@ -138,6 +138,14 @@ DBProxies is an OPTIONAL capability for RDS Proxy, discovered by type
 | `ModifyDBProxy` |  |
 | `RegisterDBProxyTargets` |  |
 
+### DatabaseUpdater
+
+DatabaseUpdater is an OPTIONAL capability for updating a logical database's
+
+| Operation | Description |
+| --- | --- |
+| `UpdateDatabase` |  |
+
 ### Databases
 
 Databases is an OPTIONAL capability for managing the logical databases inside
@@ -296,6 +304,14 @@ ReplicaPromotion is an OPTIONAL capability that promotes a read replica to a
 | Operation | Description |
 | --- | --- |
 | `PromoteReplica` |  |
+
+### ScopedDelete
+
+ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
+
+| Operation | Description |
+| --- | --- |
+| `DeleteInstanceInScope` |  |
 
 ### SslCerts
 

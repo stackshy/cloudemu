@@ -80,16 +80,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // returns errors as HTTP 400 with a "__type" body the SDK maps to a typed
 // exception.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ParameterNotFound", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ParameterNotFound", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ParameterAlreadyExists", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ParameterAlreadyExists", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "ParameterLimitExceeded", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ParameterLimitExceeded", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", msg)
 	}
 }

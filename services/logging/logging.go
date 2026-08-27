@@ -251,3 +251,53 @@ func (l *Logging) DescribeMetricFilters(
 
 	return out.([]driver.MetricFilterInfo), nil
 }
+
+// PutSubscriptionFilter creates or updates a subscription filter for a log group.
+func (l *Logging) PutSubscriptionFilter(
+	ctx context.Context,
+	cfg *driver.SubscriptionFilterConfig,
+) error {
+	_, err := l.do(ctx, "PutSubscriptionFilter", cfg, func() (any, error) {
+		return nil, l.driver.PutSubscriptionFilter(ctx, cfg)
+	})
+
+	return err
+}
+
+// DeleteSubscriptionFilter deletes a subscription filter from a log group.
+func (l *Logging) DeleteSubscriptionFilter(
+	ctx context.Context,
+	logGroup, filterName string,
+) error {
+	_, err := l.do(
+		ctx, "DeleteSubscriptionFilter",
+		map[string]string{
+			"logGroup": logGroup, "filterName": filterName,
+		},
+		func() (any, error) {
+			return nil, l.driver.DeleteSubscriptionFilter(
+				ctx, logGroup, filterName,
+			)
+		},
+	)
+
+	return err
+}
+
+// DescribeSubscriptionFilters lists all subscription filters for a log group.
+func (l *Logging) DescribeSubscriptionFilters(
+	ctx context.Context,
+	logGroup string,
+) ([]driver.SubscriptionFilterInfo, error) {
+	out, err := l.do(
+		ctx, "DescribeSubscriptionFilters", logGroup,
+		func() (any, error) {
+			return l.driver.DescribeSubscriptionFilters(ctx, logGroup)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.SubscriptionFilterInfo), nil
+}

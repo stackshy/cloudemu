@@ -223,6 +223,33 @@ jobs:
       # -race in CI rather than being inert.
       - run: go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
 
+  race:
+    name: Race (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+      # Advisory whole-tree race detector. -race is 2-10x slower and much of the
+      # codebase is not race-clean yet (mutable entities held as *T behind
+      # memstore.Store have their fields mutated without per-entity sync), so this
+      # is non-blocking for now: it surfaces data races as warnings while the
+      # per-entity-mutex idiom (see SQS queueData.mu; use memstore.Update, never
+      # Get+Set) is rolled out provider-by-provider. Flip to blocking once green.
+      # Tracking: github issue "Architecture Theme 1".
+      - name: go test -race ./... (advisory)
+        run: go test -race -timeout 20m ./... || echo '::warning::go test -race reported findings (advisory; concurrency hardening in progress)'
+
   tidy:
     name: Tidy
     runs-on: ubuntu-latest
@@ -291,6 +318,41 @@ jobs:
             exit 1
           fi
           echo "structure: no cloud-prefixed provider/wire directories — OK"
+      - name: same filename across layers (docs/STRUCTURE.md §3, advisory)
+        run: |
+          # STRUCTURE.md §3: a feature uses the same filename across the
+          # provider and wire layers, so one filename finds both the mock and
+          # the wire handler. Checked loosely — anywhere under server/<cloud>/,
+          # not necessarily the same <service> subdir, since a sub-surface can
+          # legitimately live under a differently-named service on each side
+          # (e.g. providers/aws/vpc/traffic_mirror.go /
+          # server/aws/ec2/traffic_mirror.go). Exempts each service's own
+          # core-CRUD file plus clone.go/tags.go — the per-directory template
+          # (§4) documents these as provider-only. Advisory: real pre-existing
+          # drift (renamed files, provider-only helpers) means this warns
+          # rather than fails a build.
+          missing=0
+          for cloud in aws azure gcp; do
+            provdir="providers/$cloud"
+            srvdir="server/$cloud"
+            [ -d "$provdir" ] || continue
+            [ -d "$srvdir" ] || continue
+            for f in $(find "$provdir" -mindepth 2 -name '*.go' ! -name '*_test.go' ! -path '*/driver/*'); do
+              base=$(basename "$f")
+              svc=$(basename "$(dirname "$f")")
+              case "$base" in
+                "$svc.go"|clone.go|tags.go) continue ;;
+              esac
+              if ! find "$srvdir" -name "$base" ! -name '*_test.go' | grep -q .; then
+                echo "structure: $f has no same-named file anywhere under $srvdir/ (docs/STRUCTURE.md §3)"
+                missing=$((missing + 1))
+              fi
+            done
+          done
+          echo "structure: $missing provider file(s) with no same-named wire-layer file"
+          if [ "$missing" -gt 0 ]; then
+            echo "::warning::$missing provider file(s) lack a same-named file under server/<cloud>/ (docs/STRUCTURE.md §3, advisory)"
+          fi
 
   format:
     name: Format

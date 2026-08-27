@@ -241,7 +241,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		State:            rdsdriver.StateAvailable,
 		ClusterID:        cfg.ClusterID,
 		ElasticPoolID:    cfg.ElasticPoolID,
-		AvailabilityZone: server.SubnetGroupName, // re-use as region carrier
+		Location:         server.Location,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
 	}
@@ -465,11 +465,10 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		Endpoint:       cfg.ID + ".database.windows.net",
 		Port:           defaultPort,
 		State:          rdsdriver.StateAvailable,
-		// Stash region in SubnetGroupName since the field exists; consumers
-		// can read it back from there.
-		SubnetGroupName: m.opts.Region,
-		CreatedAt:       m.opts.Clock.Now().UTC(),
-		Tags:            copyTags(cfg.Tags),
+		Location:       orDefault(cfg.Location, m.opts.Region),
+		CreatedAt:      m.opts.Clock.Now().UTC(),
+		Tags:           copyTags(cfg.Tags),
+		Scope:          cfg.Scope,
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
@@ -560,35 +559,31 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 	return nil
 }
 
-// deleteChildren removes the firewall rules, vnet rules, elastic pools,
-// failover groups and AAD admin belonging to server id, matching Azure's
-// cascade delete on server removal. The caller already holds the write lock.
+// deleteByPrefix removes every entry of store whose key starts with prefix.
+// Keys in every child store here are "{server}/{name}", so this is the shared
+// cascade primitive deleteChildren applies to each one.
+func deleteByPrefix[V any](store *memstore.Store[V], prefix string) {
+	for key := range store.All() {
+		if strings.HasPrefix(key, prefix) {
+			store.Delete(key)
+		}
+	}
+}
+
+// deleteChildren removes the logical databases, firewall rules, vnet rules,
+// elastic pools, failover groups and AAD admin belonging to server id,
+// matching Azure's cascade delete on server removal ("a logical container
+// with strong lifetime semantics - delete a server and it deletes its
+// databases and elastic pools": learn.microsoft.com/azure/azure-sql/database/
+// logical-servers). The caller already holds the write lock.
 func (m *Mock) deleteChildren(server string) {
 	prefix := server + "/"
 
-	for key := range m.firewallRules.All() {
-		if strings.HasPrefix(key, prefix) {
-			m.firewallRules.Delete(key)
-		}
-	}
-
-	for key := range m.vnetRules.All() {
-		if strings.HasPrefix(key, prefix) {
-			m.vnetRules.Delete(key)
-		}
-	}
-
-	for key := range m.elasticPools.All() {
-		if strings.HasPrefix(key, prefix) {
-			m.elasticPools.Delete(key)
-		}
-	}
-
-	for key := range m.failoverGroups.All() {
-		if strings.HasPrefix(key, prefix) {
-			m.failoverGroups.Delete(key)
-		}
-	}
+	deleteByPrefix(m.databases, prefix)
+	deleteByPrefix(m.firewallRules, prefix)
+	deleteByPrefix(m.vnetRules, prefix)
+	deleteByPrefix(m.elasticPools, prefix)
+	deleteByPrefix(m.failoverGroups, prefix)
 
 	m.aadAdmins.Delete(server)
 }

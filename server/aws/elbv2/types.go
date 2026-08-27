@@ -2,9 +2,14 @@ package elbv2
 
 import (
 	"encoding/xml"
+	"time"
 
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
+
+// defaultAvailabilityZone is the placeholder AZ name reported for a load
+// balancer's subnets; the emulator does not model subnet placement.
+const defaultAvailabilityZone = "us-east-1a"
 
 // All ELBv2 query-protocol responses are wrapped in <FooResponse> with a
 // <FooResult> child and a trailing <ResponseMetadata>. Lists are wrapped in a
@@ -29,6 +34,7 @@ type loadBalancerStateXML struct {
 }
 
 type availabilityZoneXML struct {
+	ZoneName string `xml:"ZoneName,omitempty"`
 	SubnetID string `xml:"SubnetId,omitempty"`
 }
 
@@ -36,15 +42,23 @@ type availabilityZonesXML struct {
 	Member []availabilityZoneXML `xml:"member,omitempty"`
 }
 
+type securityGroupsXML struct {
+	Member []string `xml:"member,omitempty"`
+}
+
 type loadBalancerXML struct {
-	LoadBalancerArn   string                `xml:"LoadBalancerArn"`
-	LoadBalancerName  string                `xml:"LoadBalancerName"`
-	DNSName           string                `xml:"DNSName,omitempty"`
-	Scheme            string                `xml:"Scheme,omitempty"`
-	Type              string                `xml:"Type,omitempty"`
-	VpcID             string                `xml:"VpcId,omitempty"`
-	State             *loadBalancerStateXML `xml:"State,omitempty"`
-	AvailabilityZones *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
+	LoadBalancerArn       string                `xml:"LoadBalancerArn"`
+	LoadBalancerName      string                `xml:"LoadBalancerName"`
+	DNSName               string                `xml:"DNSName,omitempty"`
+	CanonicalHostedZoneId string                `xml:"CanonicalHostedZoneId,omitempty"`
+	CreatedTime           string                `xml:"CreatedTime,omitempty"`
+	Scheme                string                `xml:"Scheme,omitempty"`
+	Type                  string                `xml:"Type,omitempty"`
+	VpcID                 string                `xml:"VpcId,omitempty"`
+	IpAddressType         string                `xml:"IpAddressType,omitempty"`
+	State                 *loadBalancerStateXML `xml:"State,omitempty"`
+	AvailabilityZones     *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
+	SecurityGroups        *securityGroupsXML    `xml:"SecurityGroups,omitempty"`
 }
 
 type loadBalancersXML struct {
@@ -53,6 +67,7 @@ type loadBalancersXML struct {
 
 type loadBalancersResult struct {
 	LoadBalancers loadBalancersXML `xml:"LoadBalancers"`
+	NextMarker    string           `xml:"NextMarker,omitempty"`
 }
 
 type createLoadBalancerResponse struct {
@@ -79,13 +94,26 @@ type deleteLoadBalancerResponse struct {
 // --- target group ---
 
 type targetGroupXML struct {
-	TargetGroupArn  string `xml:"TargetGroupArn"`
-	TargetGroupName string `xml:"TargetGroupName"`
-	Protocol        string `xml:"Protocol,omitempty"`
-	Port            int    `xml:"Port,omitempty"`
-	VpcID           string `xml:"VpcId,omitempty"`
-	TargetType      string `xml:"TargetType,omitempty"`
-	HealthCheckPath string `xml:"HealthCheckPath,omitempty"`
+	TargetGroupArn             string      `xml:"TargetGroupArn"`
+	TargetGroupName            string      `xml:"TargetGroupName"`
+	Protocol                   string      `xml:"Protocol,omitempty"`
+	Port                       int         `xml:"Port,omitempty"`
+	VpcID                      string      `xml:"VpcId,omitempty"`
+	TargetType                 string      `xml:"TargetType,omitempty"`
+	HealthCheckProtocol        string      `xml:"HealthCheckProtocol,omitempty"`
+	HealthCheckPort            string      `xml:"HealthCheckPort,omitempty"`
+	HealthCheckPath            string      `xml:"HealthCheckPath,omitempty"`
+	HealthCheckEnabled         bool        `xml:"HealthCheckEnabled"`
+	HealthCheckIntervalSeconds int         `xml:"HealthCheckIntervalSeconds,omitempty"`
+	HealthCheckTimeoutSeconds  int         `xml:"HealthCheckTimeoutSeconds,omitempty"`
+	HealthyThresholdCount      int         `xml:"HealthyThresholdCount,omitempty"`
+	UnhealthyThresholdCount    int         `xml:"UnhealthyThresholdCount,omitempty"`
+	Matcher                    *matcherXML `xml:"Matcher,omitempty"`
+}
+
+// matcherXML is the ELBv2 Matcher element (HTTP/gRPC success codes).
+type matcherXML struct {
+	HttpCode string `xml:"HttpCode,omitempty"`
 }
 
 type targetGroupsXML struct {
@@ -94,6 +122,7 @@ type targetGroupsXML struct {
 
 type targetGroupsResult struct {
 	TargetGroups targetGroupsXML `xml:"TargetGroups"`
+	NextMarker   string          `xml:"NextMarker,omitempty"`
 }
 
 type createTargetGroupResponse struct {
@@ -119,22 +148,64 @@ type deleteTargetGroupResponse struct {
 
 // --- listener / actions ---
 
-type actionXML struct {
-	Type           string `xml:"Type"`
+type redirectConfigXML struct {
+	Protocol   string `xml:"Protocol,omitempty"`
+	Port       string `xml:"Port,omitempty"`
+	Host       string `xml:"Host,omitempty"`
+	Path       string `xml:"Path,omitempty"`
+	Query      string `xml:"Query,omitempty"`
+	StatusCode string `xml:"StatusCode,omitempty"`
+}
+
+type fixedResponseConfigXML struct {
+	StatusCode  string `xml:"StatusCode,omitempty"`
+	ContentType string `xml:"ContentType,omitempty"`
+	MessageBody string `xml:"MessageBody,omitempty"`
+}
+
+type targetGroupTupleXML struct {
 	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
-	Order          int    `xml:"Order,omitempty"`
+	Weight         int32  `xml:"Weight"`
+}
+
+type targetGroupTuplesXML struct {
+	Member []targetGroupTupleXML `xml:"member,omitempty"`
+}
+
+type forwardConfigXML struct {
+	TargetGroups *targetGroupTuplesXML `xml:"TargetGroups,omitempty"`
+}
+
+type actionXML struct {
+	Type                string                  `xml:"Type"`
+	TargetGroupArn      string                  `xml:"TargetGroupArn,omitempty"`
+	Order               int                     `xml:"Order,omitempty"`
+	ForwardConfig       *forwardConfigXML       `xml:"ForwardConfig,omitempty"`
+	RedirectConfig      *redirectConfigXML      `xml:"RedirectConfig,omitempty"`
+	FixedResponseConfig *fixedResponseConfigXML `xml:"FixedResponseConfig,omitempty"`
 }
 
 type actionsXML struct {
 	Member []actionXML `xml:"member,omitempty"`
 }
 
+type certificateXML struct {
+	CertificateArn string `xml:"CertificateArn,omitempty"`
+	IsDefault      bool   `xml:"IsDefault,omitempty"`
+}
+
+type certificatesXML struct {
+	Member []certificateXML `xml:"member,omitempty"`
+}
+
 type listenerXML struct {
-	ListenerArn     string      `xml:"ListenerArn"`
-	LoadBalancerArn string      `xml:"LoadBalancerArn,omitempty"`
-	Protocol        string      `xml:"Protocol,omitempty"`
-	Port            int         `xml:"Port,omitempty"`
-	DefaultActions  *actionsXML `xml:"DefaultActions,omitempty"`
+	ListenerArn     string           `xml:"ListenerArn"`
+	LoadBalancerArn string           `xml:"LoadBalancerArn,omitempty"`
+	Protocol        string           `xml:"Protocol,omitempty"`
+	Port            int              `xml:"Port,omitempty"`
+	SslPolicy       string           `xml:"SslPolicy,omitempty"`
+	Certificates    *certificatesXML `xml:"Certificates,omitempty"`
+	DefaultActions  *actionsXML      `xml:"DefaultActions,omitempty"`
 }
 
 type listenersXML struct {
@@ -142,7 +213,8 @@ type listenersXML struct {
 }
 
 type listenersResult struct {
-	Listeners listenersXML `xml:"Listeners"`
+	Listeners  listenersXML `xml:"Listeners"`
+	NextMarker string       `xml:"NextMarker,omitempty"`
 }
 
 type createListenerResponse struct {
@@ -168,9 +240,39 @@ type deleteListenerResponse struct {
 
 // --- rules ---
 
-type ruleConditionXML struct {
-	Field  string         `xml:"Field,omitempty"`
+// valuesConfigXML is the shared shape of the condition configs that carry only
+// a Values list (host-header, path-pattern, source-ip, http-request-method).
+type valuesConfigXML struct {
 	Values *stringListXML `xml:"Values,omitempty"`
+}
+
+type httpHeaderConfigXML struct {
+	HTTPHeaderName string         `xml:"HttpHeaderName,omitempty"`
+	Values         *stringListXML `xml:"Values,omitempty"`
+}
+
+type queryStringKVXML struct {
+	Key   string `xml:"Key,omitempty"`
+	Value string `xml:"Value,omitempty"`
+}
+
+type queryStringValuesXML struct {
+	Member []queryStringKVXML `xml:"member,omitempty"`
+}
+
+type queryStringConfigXML struct {
+	Values *queryStringValuesXML `xml:"Values,omitempty"`
+}
+
+type ruleConditionXML struct {
+	Field                   string                `xml:"Field,omitempty"`
+	Values                  *stringListXML        `xml:"Values,omitempty"`
+	HostHeaderConfig        *valuesConfigXML      `xml:"HostHeaderConfig,omitempty"`
+	PathPatternConfig       *valuesConfigXML      `xml:"PathPatternConfig,omitempty"`
+	HTTPHeaderConfig        *httpHeaderConfigXML  `xml:"HttpHeaderConfig,omitempty"`
+	QueryStringConfig       *queryStringConfigXML `xml:"QueryStringConfig,omitempty"`
+	SourceIPConfig          *valuesConfigXML      `xml:"SourceIpConfig,omitempty"`
+	HTTPRequestMethodConfig *valuesConfigXML      `xml:"HttpRequestMethodConfig,omitempty"`
 }
 
 type ruleConditionsXML struct {
@@ -194,7 +296,8 @@ type rulesXML struct {
 }
 
 type rulesResult struct {
-	Rules rulesXML `xml:"Rules"`
+	Rules      rulesXML `xml:"Rules"`
+	NextMarker string   `xml:"NextMarker,omitempty"`
 }
 
 type createRuleResponse struct {
@@ -226,8 +329,9 @@ type targetDescriptionXML struct {
 }
 
 type targetHealthXML struct {
-	State  string `xml:"State,omitempty"`
-	Reason string `xml:"Reason,omitempty"`
+	State       string `xml:"State,omitempty"`
+	Reason      string `xml:"Reason,omitempty"`
+	Description string `xml:"Description,omitempty"`
 }
 
 type targetHealthDescriptionXML struct {
@@ -267,57 +371,164 @@ type describeTargetHealthResponse struct {
 // toLoadBalancerXML converts a driver LBInfo to its XML representation.
 func toLoadBalancerXML(lb *lbdriver.LBInfo) loadBalancerXML {
 	out := loadBalancerXML{
-		LoadBalancerArn:  lb.ARN,
-		LoadBalancerName: lb.Name,
-		DNSName:          lb.DNSName,
-		Scheme:           lb.Scheme,
-		Type:             lb.Type,
-		State:            &loadBalancerStateXML{Code: lb.State},
+		LoadBalancerArn:       lb.ARN,
+		LoadBalancerName:      lb.Name,
+		DNSName:               lb.DNSName,
+		CanonicalHostedZoneId: lb.CanonicalHostedZoneID,
+		Scheme:                lb.Scheme,
+		Type:                  lb.Type,
+		VpcID:                 lb.VPCID,
+		IpAddressType:         lb.IPAddressType,
+		State:                 &loadBalancerStateXML{Code: lb.State},
+	}
+
+	if !lb.CreatedTime.IsZero() {
+		out.CreatedTime = lb.CreatedTime.UTC().Format(time.RFC3339)
 	}
 
 	if len(lb.Subnets) > 0 {
 		az := &availabilityZonesXML{}
 		for _, s := range lb.Subnets {
-			az.Member = append(az.Member, availabilityZoneXML{SubnetID: s})
+			az.Member = append(az.Member, availabilityZoneXML{
+				ZoneName: zoneNameForSubnet(),
+				SubnetID: s,
+			})
 		}
 
 		out.AvailabilityZones = az
 	}
 
+	if len(lb.SecurityGroups) > 0 {
+		out.SecurityGroups = &securityGroupsXML{Member: append([]string(nil), lb.SecurityGroups...)}
+	}
+
 	return out
+}
+
+// zoneNameForSubnet returns the availability-zone name reported for a subnet.
+// The emulator does not model subnet placement, so it reports the region's
+// first zone — enough to populate the non-empty ZoneName real ELBv2 returns.
+func zoneNameForSubnet() string {
+	return defaultAvailabilityZone
 }
 
 // toTargetGroupXML converts a driver TargetGroupInfo to its XML representation.
 func toTargetGroupXML(tg *lbdriver.TargetGroupInfo) targetGroupXML {
-	return targetGroupXML{
-		TargetGroupArn:  tg.ARN,
-		TargetGroupName: tg.Name,
-		Protocol:        tg.Protocol,
-		Port:            tg.Port,
-		VpcID:           tg.VPCID,
-		TargetType:      "instance",
-		HealthCheckPath: tg.HealthPath,
+	targetType := tg.TargetType
+	if targetType == "" {
+		targetType = "instance"
 	}
+
+	out := targetGroupXML{
+		TargetGroupArn:             tg.ARN,
+		TargetGroupName:            tg.Name,
+		Protocol:                   tg.Protocol,
+		Port:                       tg.Port,
+		VpcID:                      tg.VPCID,
+		TargetType:                 targetType,
+		HealthCheckProtocol:        tg.HealthCheck.Protocol,
+		HealthCheckPort:            tg.HealthCheck.Port,
+		HealthCheckPath:            tg.HealthPath,
+		HealthCheckEnabled:         true,
+		HealthCheckIntervalSeconds: tg.HealthCheck.IntervalSeconds,
+		HealthCheckTimeoutSeconds:  tg.HealthCheck.TimeoutSeconds,
+		HealthyThresholdCount:      tg.HealthCheck.HealthyThreshold,
+		UnhealthyThresholdCount:    tg.HealthCheck.UnhealthyThreshold,
+	}
+
+	if tg.HealthCheck.Matcher != "" {
+		out.Matcher = &matcherXML{HttpCode: tg.HealthCheck.Matcher}
+	}
+
+	return out
 }
 
-// toListenerXML converts a driver ListenerInfo to its XML representation. The
-// forward-to-target-group default action is reconstructed from the stored
-// TargetGroupARN.
+// toListenerXML converts a driver ListenerInfo to its XML representation,
+// echoing every stored default action (forward, redirect, fixed-response) so a
+// listener round-trips exactly what it was created with.
 func toListenerXML(li *lbdriver.ListenerInfo) listenerXML {
-	out := listenerXML{
+	return listenerXML{
 		ListenerArn:     li.ARN,
 		LoadBalancerArn: li.LBARN,
 		Protocol:        li.Protocol,
 		Port:            li.Port,
+		SslPolicy:       li.SslPolicy,
+		Certificates:    toCertificatesXML(li.Certificates),
+		DefaultActions:  toActionsXML(li.DefaultActions),
+	}
+}
+
+// toCertificatesXML renders a listener's certificate list, or nil when empty.
+func toCertificatesXML(certs []lbdriver.Certificate) *certificatesXML {
+	if len(certs) == 0 {
+		return nil
 	}
 
-	if li.TargetGroupARN != "" {
-		out.DefaultActions = &actionsXML{Member: []actionXML{{
-			Type:           "forward",
-			TargetGroupArn: li.TargetGroupARN,
-			Order:          1,
-		}}}
+	out := &certificatesXML{Member: make([]certificateXML, 0, len(certs))}
+	for _, c := range certs {
+		out.Member = append(out.Member, certificateXML{
+			CertificateArn: c.CertificateArn,
+			IsDefault:      c.IsDefault,
+		})
 	}
 
 	return out
+}
+
+// toActionsXML renders a driver action slice as ELBv2 action members, or nil
+// when there are none. Shared by listener default actions and rule actions.
+func toActionsXML(actions []lbdriver.RuleAction) *actionsXML {
+	if len(actions) == 0 {
+		return nil
+	}
+
+	out := &actionsXML{Member: make([]actionXML, 0, len(actions))}
+	for i := range actions {
+		out.Member = append(out.Member, toActionXML(actions[i]))
+	}
+
+	return out
+}
+
+// toActionXML renders a single driver action, preserving redirect and
+// fixed-response configuration.
+func toActionXML(a lbdriver.RuleAction) actionXML {
+	x := actionXML{
+		Type:           a.Type,
+		TargetGroupArn: a.TargetGroupARN,
+		Order:          a.Order,
+	}
+
+	if len(a.ForwardConfig) > 0 {
+		tuples := &targetGroupTuplesXML{Member: make([]targetGroupTupleXML, 0, len(a.ForwardConfig))}
+		for _, tg := range a.ForwardConfig {
+			tuples.Member = append(tuples.Member, targetGroupTupleXML{
+				TargetGroupArn: tg.TargetGroupARN,
+				Weight:         tg.Weight,
+			})
+		}
+
+		x.ForwardConfig = &forwardConfigXML{TargetGroups: tuples}
+	}
+
+	if rc := a.RedirectConfig; rc != nil {
+		x.RedirectConfig = &redirectConfigXML{
+			Protocol:   rc.Protocol,
+			Port:       rc.Port,
+			Host:       rc.Host,
+			Path:       rc.Path,
+			Query:      rc.Query,
+			StatusCode: rc.StatusCode,
+		}
+	}
+
+	if fr := a.FixedResponseConfig; fr != nil {
+		x.FixedResponseConfig = &fixedResponseConfigXML{
+			StatusCode:  fr.StatusCode,
+			ContentType: fr.ContentType,
+			MessageBody: fr.MessageBody,
+		}
+	}
+
+	return x
 }

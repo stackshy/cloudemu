@@ -19,18 +19,3 @@ type SubnetResolver interface {
 func (m *Mock) SetSubnetResolver(r SubnetResolver) {
 	m.subnetResolver = r
 }
-
-// resolveSubnetVPC returns the VPC that owns subnetID, or "" when there is no
-// subnet, no resolver, or the subnet can't be found.
-func (m *Mock) resolveSubnetVPC(ctx context.Context, subnetID string) string {
-	if subnetID == "" || m.subnetResolver == nil {
-		return ""
-	}
-
-	subs, err := m.subnetResolver.DescribeSubnets(ctx, []string{subnetID})
-	if err != nil || len(subs) == 0 {
-		return ""
-	}
-
-	return subs[0].VPCID
-}

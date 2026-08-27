@@ -3,9 +3,11 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
@@ -26,6 +28,13 @@ func (m *Mock) CreateEventSourceMapping(
 		return nil, cerrors.New(cerrors.InvalidArgument, "event source ARN is required")
 	}
 
+	// The target function must exist. Real Lambda rejects an event-source mapping
+	// whose FunctionName points at a missing function with ResourceNotFoundException
+	// rather than creating a mapping that silently never fires.
+	if _, ok := m.funcs.Get(functionNameFromARN(cfg.FunctionName)); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "Function not found: %s", cfg.FunctionName)
+	}
+
 	batchSize := cfg.BatchSize
 	if batchSize == 0 {
 		batchSize = defaultBatchSize
@@ -43,6 +52,7 @@ func (m *Mock) CreateEventSourceMapping(
 		UUID:             uuid,
 		EventSourceArn:   cfg.EventSourceArn,
 		FunctionName:     cfg.FunctionName,
+		FunctionArn:      m.functionARN(cfg.FunctionName),
 		BatchSize:        batchSize,
 		Enabled:          cfg.Enabled,
 		StartingPosition: cfg.StartingPosition,
@@ -55,6 +65,64 @@ func (m *Mock) CreateEventSourceMapping(
 	result := *info
 
 	return &result, nil
+}
+
+// functionARN resolves an event-source-mapping target to a full function ARN.
+// A value already shaped like an ARN is returned unchanged; a bare name is
+// looked up (falling back to a synthesized ARN if the function isn't tracked,
+// e.g. it was referenced before creation) so the wire layer always returns a
+// FunctionArn, never the bare name.
+func (m *Mock) functionARN(nameOrARN string) string {
+	if strings.HasPrefix(nameOrARN, "arn:") {
+		return nameOrARN
+	}
+
+	if fd, ok := m.funcs.Get(nameOrARN); ok {
+		return fd.info.ARN
+	}
+
+	return idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+nameOrARN)
+}
+
+// DeliverEventSourceBatch invokes every enabled event-source-mapping whose
+// EventSourceArn matches the given source (a DynamoDB stream ARN, SQS queue ARN,
+// or Kinesis stream ARN) with the pre-built event payload. It backs synchronous
+// in-emulator ESM delivery, the Lambda counterpart to the S3 -> Lambda
+// InvokeExternal wiring: the source records a change and calls this so the
+// mapped function actually runs. A disabled mapping is skipped; an unknown
+// target function is a no-op (InvokeExternal), so stale mappings never error.
+// Every matching mapping is invoked regardless of an earlier one's outcome
+// (each is an independent poller against the same source in real AWS); if any
+// invocation fails, its error is returned after all mappings have run, so a
+// caller such as the SQS mock can tell success from failure (delete the
+// message vs. leave it for redrive) without silently starving other mappings.
+//
+// delivered reports whether at least one enabled mapping matched eventSourceARN
+// at all, distinct from err: a source with no ESM configured must be a true
+// no-op to its caller (e.g. SQS must not delete a message nobody consumed),
+// which a nil error alone cannot express since "no mapping" and "mapping
+// succeeded" would otherwise look identical.
+//
+// ctx's re-entrant delivery depth is enforced inside InvokeExternal (see
+// internal/recursionguard), which is the single choke point every delivery
+// path funnels through, so a handler that writes back into its own event
+// source cannot recurse this call chain unboundedly.
+func (m *Mock) DeliverEventSourceBatch(ctx context.Context, eventSourceARN string, payload []byte) (delivered bool, err error) {
+	var deliveryErr error
+
+	for _, info := range m.mappings.All() {
+		if info.State != stateEnabled || info.EventSourceArn != eventSourceARN {
+			continue
+		}
+
+		delivered = true
+
+		if invokeErr := m.InvokeExternal(ctx, info.FunctionArn, payload); invokeErr != nil {
+			deliveryErr = invokeErr
+		}
+	}
+
+	return delivered, deliveryErr
 }
 
 // DeleteEventSourceMapping deletes an event source mapping by UUID.
@@ -110,6 +178,7 @@ func (m *Mock) UpdateEventSourceMapping(
 
 	if cfg.FunctionName != "" {
 		updated.FunctionName = cfg.FunctionName
+		updated.FunctionArn = m.functionARN(cfg.FunctionName)
 	}
 
 	if cfg.EventSourceArn != "" {

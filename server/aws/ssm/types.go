@@ -21,9 +21,11 @@ type parameterJSON struct {
 
 // parameterMetadataJSON is the wire shape for ParameterMetadata (DescribeParameters).
 type parameterMetadataJSON struct {
+	AllowedPattern   string  `json:"AllowedPattern,omitempty"`
 	ARN              string  `json:"ARN,omitempty"`
 	DataType         string  `json:"DataType,omitempty"`
 	Description      string  `json:"Description,omitempty"`
+	KeyID            string  `json:"KeyId,omitempty"`
 	LastModifiedDate float64 `json:"LastModifiedDate,omitempty"`
 	LastModifiedUser string  `json:"LastModifiedUser,omitempty"`
 	Name             string  `json:"Name"`
@@ -35,13 +37,16 @@ type parameterMetadataJSON struct {
 // --- request envelopes ---
 
 type putParameterRequest struct {
-	Name        string `json:"Name"`
-	Value       string `json:"Value"`
-	Type        string `json:"Type"`
-	Description string `json:"Description"`
-	Overwrite   bool   `json:"Overwrite"`
-	Tier        string `json:"Tier"`
-	DataType    string `json:"DataType"`
+	Name           string   `json:"Name"`
+	Value          string   `json:"Value"`
+	Type           string   `json:"Type"`
+	Description    string   `json:"Description"`
+	Overwrite      bool     `json:"Overwrite"`
+	Tier           string   `json:"Tier"`
+	DataType       string   `json:"DataType"`
+	KeyID          string   `json:"KeyId"`
+	AllowedPattern string   `json:"AllowedPattern"`
+	Tags           []ssmTag `json:"Tags"`
 }
 
 type getParameterRequest struct {
@@ -55,16 +60,32 @@ type getParametersRequest struct {
 }
 
 type getParametersByPathRequest struct {
-	Path           string `json:"Path"`
-	Recursive      bool   `json:"Recursive"`
-	WithDecryption bool   `json:"WithDecryption"`
-	MaxResults     int32  `json:"MaxResults"`
-	NextToken      string `json:"NextToken"`
+	Path             string                  `json:"Path"`
+	Recursive        bool                    `json:"Recursive"`
+	WithDecryption   bool                    `json:"WithDecryption"`
+	MaxResults       int32                   `json:"MaxResults"`
+	NextToken        string                  `json:"NextToken"`
+	ParameterFilters []parameterStringFilter `json:"ParameterFilters"`
+}
+
+// parameterStringFilter is the modern DescribeParameters ParameterFilters shape
+// ({Key, Option, Values}); parametersFilter is the legacy Filters shape.
+type parameterStringFilter struct {
+	Key    string   `json:"Key"`
+	Option string   `json:"Option"`
+	Values []string `json:"Values"`
+}
+
+type parametersFilter struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
 }
 
 type describeParametersRequest struct {
-	MaxResults int32  `json:"MaxResults"`
-	NextToken  string `json:"NextToken"`
+	MaxResults       int32                   `json:"MaxResults"`
+	NextToken        string                  `json:"NextToken"`
+	ParameterFilters []parameterStringFilter `json:"ParameterFilters"`
+	Filters          []parametersFilter      `json:"Filters"`
 }
 
 type nameRequest struct {
@@ -117,19 +138,33 @@ type labelParameterVersionResponse struct {
 	ParameterVersion int64    `json:"ParameterVersion"`
 }
 
+type getParameterHistoryRequest struct {
+	Name           string `json:"Name"`
+	WithDecryption bool   `json:"WithDecryption"`
+	MaxResults     int32  `json:"MaxResults"`
+	NextToken      string `json:"NextToken"`
+}
+
 type getParameterHistoryResponse struct {
 	Parameters []parameterHistoryJSON `json:"Parameters"`
+	NextToken  string                 `json:"NextToken,omitempty"`
 }
 
 // parameterHistoryJSON is the wire shape for a ParameterHistory entry.
 type parameterHistoryJSON struct {
-	ARN              string  `json:"ARN,omitempty"`
-	DataType         string  `json:"DataType,omitempty"`
-	LastModifiedDate float64 `json:"LastModifiedDate,omitempty"`
-	Name             string  `json:"Name"`
-	Type             string  `json:"Type,omitempty"`
-	Value            string  `json:"Value,omitempty"`
-	Version          int64   `json:"Version"`
+	AllowedPattern   string   `json:"AllowedPattern,omitempty"`
+	ARN              string   `json:"ARN,omitempty"`
+	DataType         string   `json:"DataType,omitempty"`
+	Description      string   `json:"Description,omitempty"`
+	KeyID            string   `json:"KeyId,omitempty"`
+	Labels           []string `json:"Labels,omitempty"`
+	LastModifiedDate float64  `json:"LastModifiedDate,omitempty"`
+	LastModifiedUser string   `json:"LastModifiedUser,omitempty"`
+	Name             string   `json:"Name"`
+	Tier             string   `json:"Tier,omitempty"`
+	Type             string   `json:"Type,omitempty"`
+	Value            string   `json:"Value,omitempty"`
+	Version          int64    `json:"Version"`
 }
 
 // epochSeconds converts an RFC3339 timestamp to Unix epoch seconds, the form
@@ -141,6 +176,24 @@ func epochSeconds(iso string) float64 {
 	}
 
 	return float64(t.Unix())
+}
+
+// toDriverFilters converts wire ParameterFilters to the driver shape.
+func toDriverFilters(filters []parameterStringFilter) []ssmdriver.ParameterStringFilter {
+	if len(filters) == 0 {
+		return nil
+	}
+
+	out := make([]ssmdriver.ParameterStringFilter, 0, len(filters))
+	for _, f := range filters {
+		out = append(out, ssmdriver.ParameterStringFilter{
+			Key:    f.Key,
+			Option: f.Option,
+			Values: f.Values,
+		})
+	}
+
+	return out
 }
 
 func toParameterJSON(p ssmdriver.Parameter) parameterJSON {

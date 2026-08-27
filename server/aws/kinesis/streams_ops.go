@@ -133,13 +133,14 @@ func (h *Handler) describeStreamSummary(w http.ResponseWriter, r *http.Request) 
 }
 
 type listStreamsRequest struct {
-	Limit     int32  `json:"Limit"`
-	NextToken string `json:"NextToken"`
+	Limit                    int32  `json:"Limit"`
+	NextToken                string `json:"NextToken"`
+	ExclusiveStartStreamName string `json:"ExclusiveStartStreamName"`
 }
 
 func (h *Handler) listStreams(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listStreamsRequest) (any, error) {
-		out, err := h.kinesis.ListStreams(ctx, req.NextToken, req.Limit)
+		out, err := h.kinesis.ListStreams(ctx, req.NextToken, req.ExclusiveStartStreamName, req.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -162,11 +163,16 @@ func (h *Handler) listStreams(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		return map[string]any{
+		resp := map[string]any{
 			"StreamNames":     out.StreamNames,
 			"StreamSummaries": summaries,
 			"HasMoreStreams":  out.HasMoreStreams,
-		}, nil
+		}
+		if out.NextToken != "" {
+			resp["NextToken"] = out.NextToken
+		}
+
+		return resp, nil
 	})
 }
 

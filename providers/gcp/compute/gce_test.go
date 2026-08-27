@@ -191,7 +191,9 @@ func TestStartInstances(t *testing.T) {
 	}{
 		{name: "success", ids: []string{id}},
 		{name: "not found", ids: []string{"nonexistent"}, wantErr: true, errSubstr: "not found"},
-		{name: "already running", ids: []string{id}, wantErr: true, errSubstr: "cannot start"},
+		// Real GCE returns a completed zone operation (no error) when
+		// instances.start is called on an already-running instance.
+		{name: "idempotent on already running", ids: []string{id}},
 	}
 
 	for _, tt := range tests {
@@ -227,7 +229,9 @@ func TestStopInstances(t *testing.T) {
 	}{
 		{name: "success", ids: []string{id}},
 		{name: "not found", ids: []string{"nonexistent"}, wantErr: true, errSubstr: "not found"},
-		{name: "already stopped", ids: []string{id}, wantErr: true, errSubstr: "cannot stop"},
+		// Real GCE returns a completed zone operation (no error) when
+		// instances.stop is called on an already-stopped instance.
+		{name: "idempotent on already stopped", ids: []string{id}},
 	}
 
 	for _, tt := range tests {
@@ -1531,7 +1535,7 @@ func TestDetachVolume(t *testing.T) {
 		err = m.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
 		require.NoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		require.NoError(t, err)
 
 		// Verify state changed back to available
@@ -1546,7 +1550,7 @@ func TestDetachVolume(t *testing.T) {
 		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
 		require.NoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not attached")
 	})

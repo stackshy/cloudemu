@@ -228,6 +228,82 @@ func TestSDKCloudAsset(t *testing.T) {
 	})
 }
 
+// TestSDKCloudAssetScopeRespected pins the scope fix: searchAllResources reports
+// asset names and the project field under the queried scope, not a fixed
+// default project.
+func TestSDKCloudAssetScopeRespected(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+
+	_, _, err := cloudP.GKE.CreateCluster(ctx, &gke.CreateClusterInput{Name: "prod", Location: "us-central1"})
+	require.NoError(t, err)
+
+	// No ProjectID override: the handler's project == the engine account id, so
+	// asset self-links embed that project.
+	srv := gcpserver.New(gcpserver.Drivers{
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := cloudasset.NewService(ctx, option.WithEndpoint(ts.URL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	engineProject := cloudP.ResourceDiscovery.AccountID()
+	require.NotEmpty(t, engineProject)
+
+	const queried = "audit-proj"
+
+	out, err := client.V1.SearchAllResources("projects/" + queried).
+		Query("assetType:container.googleapis.com/Cluster").Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, out.Results)
+
+	for _, r := range out.Results {
+		assert.Equal(t, "projects/"+queried, r.Project, "project field must reflect the queried scope")
+		assert.Contains(t, r.Name, "projects/"+queried+"/", "asset name must be rescoped to the queried project")
+		assert.NotContains(t, r.Name, "projects/"+engineProject+"/",
+			"asset name must not leak the engine's default project")
+	}
+}
+
+// TestSDKCloudAssetExportOutputConfig pins the export fix: the requested
+// outputConfig is reflected in the operation response instead of a fixed
+// placeholder.
+func TestSDKCloudAssetExportOutputConfig(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+	const projectID = "export-proj"
+
+	require.NoError(t, cloudP.GCS.CreateBucket(ctx, "bkt"))
+
+	srv := gcpserver.New(gcpserver.Drivers{
+		Storage:           cloudP.GCS,
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		ProjectID:         projectID,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := cloudasset.NewService(ctx, option.WithEndpoint(ts.URL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const uri = "gs://my-export-bucket/dump.json"
+
+	op, err := client.V1.ExportAssets("projects/"+projectID, &cloudasset.ExportAssetsRequest{
+		OutputConfig: &cloudasset.OutputConfig{
+			GcsDestination: &cloudasset.GcsDestination{Uri: uri},
+		},
+	}).Do()
+	require.NoError(t, err)
+	require.True(t, op.Done)
+	require.NotNil(t, op.Response)
+
+	// The response must carry the caller's destination, not "cloudemu://in-memory".
+	assert.Contains(t, string(op.Response), uri)
+	assert.NotContains(t, string(op.Response), "cloudemu://in-memory")
+}
+
 // TestSDKCloudAsset_KubernetesIndexing mirrors the Databricks/Azure precedent
 // for the GKE types added in this PR: a cluster and its node pool must be
 // retrievable through the real Cloud Asset search/list handler, and an
@@ -242,8 +318,9 @@ func TestSDKCloudAsset_KubernetesIndexing(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	npCount := int64(1)
 	_, _, err = cloudP.GKE.CreateNodePool(ctx, "us-central1", "prod", &gke.NodePoolSpec{
-		Name: "np-1", InitialNodeCount: 1,
+		Name: "np-1", InitialNodeCount: &npCount,
 	})
 	require.NoError(t, err)
 

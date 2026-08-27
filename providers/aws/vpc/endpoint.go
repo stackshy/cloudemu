@@ -8,6 +8,16 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
+// vpcEndpointTypeInterface is the endpoint type that provisions a backing ENI in
+// each specified subnet. Gateway-type endpoints hold no interfaces.
+const vpcEndpointTypeInterface = "Interface"
+
+// endpointENIDescription is the description stamped on the ENIs an Interface
+// endpoint occupies, so DeleteVpcEndpoint can release exactly this endpoint's set.
+func endpointENIDescription(endpointID string) string {
+	return "VPC Endpoint Interface " + endpointID
+}
+
 // copyStringSlice creates a shallow copy of a string slice.
 func copyStringSlice(src []string) []string {
 	if src == nil {
@@ -58,30 +68,56 @@ func (m *Mock) CreateVPCEndpoint(
 		Tags:             copyTags(cfg.Tags),
 		CreatedAt:        m.opts.Clock.Now().Format(timeFormat),
 	}
+
+	// An Interface endpoint provisions one requester-managed ENI per subnet, which
+	// consumes a subnet IP and (like a NAT gateway's ENI) blocks a premature subnet
+	// or VPC delete. Gateway endpoints hold none.
+	if cfg.EndpointType == vpcEndpointTypeInterface {
+		for _, subnetID := range ep.SubnetIDs {
+			eni := m.attachManagedENI(cfg.VPCID, subnetID, endpointENIDescription(id))
+			ep.NetworkInterfaceIDs = append(ep.NetworkInterfaceIDs, eni.ID)
+		}
+	}
+
 	m.endpoints.Set(id, ep)
 
 	return copyEndpoint(ep), nil
 }
 
-// DeleteVPCEndpoint deletes the VPC endpoint with the given ID.
+// DeleteVPCEndpoint deletes the VPC endpoint with the given ID, releasing any
+// backing ENIs an Interface endpoint provisioned.
 func (m *Mock) DeleteVPCEndpoint(
 	_ context.Context, id string,
 ) error {
-	if !m.endpoints.Delete(id) {
+	if !m.endpoints.Has(id) {
 		return errors.Newf(
 			errors.NotFound,
 			"vpc endpoint %q not found", id,
 		)
 	}
 
+	m.endpoints.Delete(id)
+	m.releaseManagedENIs(endpointENIDescription(id))
+
 	return nil
 }
 
 // DescribeVPCEndpoints returns VPC endpoints matching the
 // given IDs, or all endpoints if ids is empty.
+//
+// An explicitly named vpce- ID that does not exist is NotFound rather than an
+// empty list, matching real EC2 (InvalidVpcEndpointId.NotFound).
 func (m *Mock) DescribeVPCEndpoints(
 	_ context.Context, ids []string,
 ) ([]driver.VPCEndpoint, error) {
+	for _, id := range ids {
+		if !m.endpoints.Has(id) {
+			return nil, errors.Newf(
+				errors.NotFound, "vpc endpoint %q not found", id,
+			)
+		}
+	}
+
 	return describeResources(
 		m.endpoints, ids, toEndpointInfo,
 	), nil
@@ -126,15 +162,16 @@ func toEndpointInfo(ep *driver.VPCEndpoint) driver.VPCEndpoint {
 
 func copyEndpoint(ep *driver.VPCEndpoint) *driver.VPCEndpoint {
 	return &driver.VPCEndpoint{
-		ID:               ep.ID,
-		VPCID:            ep.VPCID,
-		ServiceName:      ep.ServiceName,
-		EndpointType:     ep.EndpointType,
-		State:            ep.State,
-		SubnetIDs:        copyStringSlice(ep.SubnetIDs),
-		SecurityGroupIDs: copyStringSlice(ep.SecurityGroupIDs),
-		RouteTableIDs:    copyStringSlice(ep.RouteTableIDs),
-		Tags:             copyTags(ep.Tags),
-		CreatedAt:        ep.CreatedAt,
+		ID:                  ep.ID,
+		VPCID:               ep.VPCID,
+		ServiceName:         ep.ServiceName,
+		EndpointType:        ep.EndpointType,
+		State:               ep.State,
+		SubnetIDs:           copyStringSlice(ep.SubnetIDs),
+		SecurityGroupIDs:    copyStringSlice(ep.SecurityGroupIDs),
+		RouteTableIDs:       copyStringSlice(ep.RouteTableIDs),
+		Tags:                copyTags(ep.Tags),
+		CreatedAt:           ep.CreatedAt,
+		NetworkInterfaceIDs: copyStringSlice(ep.NetworkInterfaceIDs),
 	}
 }

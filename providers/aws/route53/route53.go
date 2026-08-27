@@ -3,6 +3,7 @@ package route53
 
 import (
 	"context"
+	"crypto/rand"
 	"maps"
 	"strings"
 	"sync"
@@ -86,13 +87,39 @@ func recordKey(zoneID, name, recordType, setID string) string {
 	return key
 }
 
+// hostedZoneIDLen is the number of random characters after the "Z" prefix in an
+// opaque Route 53 hosted-zone id (e.g. Z1D633PJN98FT9).
+const hostedZoneIDLen = 13
+
+// hostedZoneIDAlphabet is the uppercase-alphanumeric set real Route 53
+// hosted-zone ids draw from.
+const hostedZoneIDAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// newHostedZoneID returns an opaque uppercase hosted-zone id in Route 53's real
+// shape ("Z" + random uppercase alphanumerics), not a sequential "zone-N" that
+// breaks ARN construction and id pattern matching.
+func newHostedZoneID() string {
+	buf := make([]byte, hostedZoneIDLen)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand failing is not something the mock can recover from
+		// meaningfully; fall back to the monotonic generator so ids stay unique.
+		return "Z" + strings.ToUpper(idgen.GenerateID(""))
+	}
+
+	for i := range buf {
+		buf[i] = hostedZoneIDAlphabet[int(buf[i])%len(hostedZoneIDAlphabet)]
+	}
+
+	return "Z" + string(buf)
+}
+
 // CreateZone creates a new DNS hosted zone.
 func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "zone name is required")
 	}
 
-	id := idgen.GenerateID("zone-")
+	id := newHostedZoneID()
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -100,12 +127,15 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	}
 
 	zone := driver.ZoneInfo{
-		ID:          id,
-		Name:        cfg.Name,
-		Private:     cfg.Private,
-		RecordCount: 0,
-		Tags:        tags,
-		Scope:       cfg.Scope,
+		ID:              id,
+		Name:            cfg.Name,
+		Private:         cfg.Private,
+		RecordCount:     0,
+		Tags:            tags,
+		CallerReference: cfg.CallerReference,
+		Comment:         cfg.Comment,
+		VPCs:            copyVPCs(cfg.VPCs),
+		Scope:           cfg.Scope,
 	}
 
 	m.zones.Set(id, zone)
@@ -121,10 +151,11 @@ func (m *Mock) DeleteZone(_ context.Context, id string) error {
 		return errors.Newf(errors.NotFound, "zone %q not found", id)
 	}
 
-	// Delete all records belonging to this zone.
+	// Delete all records belonging to this zone. Index by key rather than
+	// ranging the value so a grown RecordInfo isn't copied each iteration.
 	all := m.records.All()
-	for key, rec := range all {
-		if rec.ZoneID == id {
+	for key := range all {
+		if all[key].ZoneID == id {
 			m.records.Delete(key)
 		}
 	}
@@ -140,6 +171,7 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	}
 
 	result := zone
+	result.VPCs = copyVPCs(zone.VPCs)
 
 	return &result, nil
 }
@@ -199,6 +231,78 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	return &result, nil
 }
 
+// AssociateVPC adds an Amazon VPC to a private hosted zone's association list.
+// It is idempotent: associating an already-associated VPC is a no-op. Caller
+// validation (the zone must be private) is done at the wire layer, which has
+// the zone's Private flag from GetZone. This is the AWS-only private-hosted-zone
+// VPC-association extension; other DNS providers don't implement it.
+func (m *Mock) AssociateVPC(_ context.Context, zoneID string, vpc driver.VPCAssociation) error {
+	if _, ok := m.zones.Get(zoneID); !ok {
+		return errors.Newf(errors.NotFound, "zone %q not found", zoneID)
+	}
+
+	m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
+		if containsVPCAssoc(z.VPCs, vpc) {
+			return z
+		}
+
+		z.VPCs = append(copyVPCs(z.VPCs), vpc)
+
+		return z
+	})
+
+	return nil
+}
+
+// containsVPCAssoc reports whether a VPC-association list already holds vpc.
+func containsVPCAssoc(vpcs []driver.VPCAssociation, vpc driver.VPCAssociation) bool {
+	for _, v := range vpcs {
+		if v == vpc {
+			return true
+		}
+	}
+
+	return false
+}
+
+// DisassociateVPC removes an Amazon VPC from a private hosted zone's association
+// list. Caller validation (the VPC must be associated and must not be the last
+// one) is done at the wire layer from the zone's VPCs returned by GetZone.
+func (m *Mock) DisassociateVPC(_ context.Context, zoneID string, vpc driver.VPCAssociation) error {
+	if _, ok := m.zones.Get(zoneID); !ok {
+		return errors.Newf(errors.NotFound, "zone %q not found", zoneID)
+	}
+
+	m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
+		kept := make([]driver.VPCAssociation, 0, len(z.VPCs))
+
+		for _, v := range z.VPCs {
+			if v != vpc {
+				kept = append(kept, v)
+			}
+		}
+
+		z.VPCs = kept
+
+		return z
+	})
+
+	return nil
+}
+
+// copyVPCs returns a detached copy of a VPC-association slice so a stored zone
+// never aliases caller memory (and vice versa).
+func copyVPCs(vpcs []driver.VPCAssociation) []driver.VPCAssociation {
+	if len(vpcs) == 0 {
+		return nil
+	}
+
+	out := make([]driver.VPCAssociation, len(vpcs))
+	copy(out, vpcs)
+
+	return out
+}
+
 // CreateRecord creates a new DNS record in the specified zone.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
@@ -221,20 +325,7 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, errors.Newf(errors.AlreadyExists, "record %q already exists in zone %q", cfg.Name, cfg.ZoneID)
 	}
 
-	values := make([]string, len(cfg.Values))
-	copy(values, cfg.Values)
-
-	weight := copyWeight(cfg.Weight)
-
-	rec := driver.RecordInfo{
-		ZoneID: cfg.ZoneID,
-		Name:   cfg.Name,
-		Type:   cfg.Type,
-		TTL:    cfg.TTL,
-		Values: values,
-		Weight: weight,
-		SetID:  cfg.SetID,
-	}
+	rec := recordFromConfig(cfg)
 
 	m.records.Set(key, rec)
 
@@ -249,43 +340,30 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	return &result, nil
 }
 
-// DeleteRecord deletes a DNS record from the specified zone.
-func (m *Mock) DeleteRecord(_ context.Context, zoneID, name, recordType string) error {
+// DeleteRecord deletes a DNS record from the specified zone. It targets the
+// record set with no SetIdentifier (a simple, non-routing record); routing
+// record sets are addressed by SetIdentifier via DeleteRecordSet.
+func (m *Mock) DeleteRecord(ctx context.Context, zoneID, name, recordType string) error {
+	return m.DeleteRecordSet(ctx, zoneID, name, recordType, "")
+}
+
+// DeleteRecordSet deletes the single record set identified by
+// zoneID+name+type+setID. It never touches sibling record sets that share the
+// same name+type but carry a different SetIdentifier — a DELETE of one
+// weighted/latency/failover/geo record must leave its siblings intact.
+func (m *Mock) DeleteRecordSet(_ context.Context, zoneID, name, recordType, setID string) error {
 	if _, ok := m.zones.Get(zoneID); !ok {
 		return errors.Newf(errors.NotFound, "zone %q not found", zoneID)
 	}
 
-	key := recordKey(zoneID, name, recordType, "")
+	key := recordKey(zoneID, name, recordType, setID)
 
-	// Try without set ID first. If not found, search for any matching record with a set ID.
-	if m.records.Delete(key) {
-		m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
-			z.RecordCount--
-			return z
-		})
-
-		return nil
-	}
-
-	// Search for weighted records with a set ID.
-	prefix := zoneID + ":" + name + ":" + recordType + ":"
-	all := m.records.All()
-	deleted := 0
-
-	for k := range all {
-		if strings.HasPrefix(k, prefix) {
-			m.records.Delete(k)
-
-			deleted++
-		}
-	}
-
-	if deleted == 0 {
+	if !m.records.Delete(key) {
 		return errors.Newf(errors.NotFound, "record %q of type %q not found in zone %q", name, recordType, zoneID)
 	}
 
 	m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
-		z.RecordCount -= deleted
+		z.RecordCount--
 		return z
 	})
 
@@ -310,9 +388,11 @@ func (m *Mock) GetRecord(_ context.Context, zoneID, name, recordType string) (*d
 	// sorted-key order and return the lowest set ID, so a name+type with
 	// several weighted records resolves to the same record every call rather
 	// than a map-order-random one (#259).
-	for _, r := range m.records.SortedValues() {
+	sorted := m.records.SortedValues()
+	for i := range sorted {
+		r := &sorted[i]
 		if r.ZoneID == zoneID && r.Name == name && r.Type == recordType && r.SetID != "" {
-			result := r
+			result := *r
 			return &result, nil
 		}
 	}
@@ -332,9 +412,9 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 	all := m.records.SortedValues()
 
 	records := make([]driver.RecordInfo, 0, len(all))
-	for _, rec := range all {
-		if rec.ZoneID == zoneID {
-			records = append(records, rec)
+	for i := range all {
+		if all[i].ZoneID == zoneID {
+			records = append(records, all[i])
 		}
 	}
 
@@ -355,26 +435,39 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, errors.Newf(errors.NotFound, "record %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
 	}
 
-	values := make([]string, len(cfg.Values))
-	copy(values, cfg.Values)
-
-	weight := copyWeight(cfg.Weight)
-
-	rec := driver.RecordInfo{
-		ZoneID: cfg.ZoneID,
-		Name:   cfg.Name,
-		Type:   cfg.Type,
-		TTL:    cfg.TTL,
-		Values: values,
-		Weight: weight,
-		SetID:  cfg.SetID,
-	}
+	rec := recordFromConfig(cfg)
 
 	m.records.Set(key, rec)
 
 	result := rec
 
 	return &result, nil
+}
+
+// recordFromConfig builds a stored RecordInfo from a RecordConfig, deep-copying
+// the slice and pointer fields so a later caller mutation cannot reach into the
+// store.
+//
+//nolint:gocritic // hugeParam: value copy is intentional to detach from caller.
+func recordFromConfig(cfg driver.RecordConfig) driver.RecordInfo {
+	values := make([]string, len(cfg.Values))
+	copy(values, cfg.Values)
+
+	return driver.RecordInfo{
+		ZoneID:           cfg.ZoneID,
+		Name:             cfg.Name,
+		Type:             cfg.Type,
+		TTL:              cfg.TTL,
+		Values:           values,
+		Weight:           copyWeight(cfg.Weight),
+		SetID:            cfg.SetID,
+		Failover:         cfg.Failover,
+		Region:           cfg.Region,
+		HealthCheckID:    cfg.HealthCheckID,
+		MultiValueAnswer: copyBool(cfg.MultiValueAnswer),
+		GeoLocation:      copyGeo(cfg.GeoLocation),
+		AliasTarget:      copyAlias(cfg.AliasTarget),
+	}
 }
 
 // copyWeight creates a copy of a weight pointer.
@@ -384,6 +477,39 @@ func copyWeight(w *int) *int {
 	}
 
 	v := *w
+
+	return &v
+}
+
+// copyBool copies a *bool so stored records don't alias caller memory.
+func copyBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+
+	v := *b
+
+	return &v
+}
+
+// copyGeo copies a *GeoLocation so stored records don't alias caller memory.
+func copyGeo(g *driver.GeoLocation) *driver.GeoLocation {
+	if g == nil {
+		return nil
+	}
+
+	v := *g
+
+	return &v
+}
+
+// copyAlias copies a *AliasTarget so stored records don't alias caller memory.
+func copyAlias(a *driver.AliasTarget) *driver.AliasTarget {
+	if a == nil {
+		return nil
+	}
+
+	v := *a
 
 	return &v
 }

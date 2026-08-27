@@ -78,11 +78,11 @@ func TestDataCenterParentLinkage(t *testing.T) {
 	ctx := context.Background()
 	mustCluster(t, m, "rg1", "cass")
 
-	// A datacenter under a missing cluster is rejected.
+	// A datacenter under a missing cluster is rejected as a missing parent.
 	if _, err := m.CreateOrUpdateDataCenter(ctx, mcdriver.CreateDataCenterConfig{
 		ClusterName: "ghost", ResourceGroup: "rg1", Name: "dc1",
-	}); !cerrors.IsInvalidArgument(err) {
-		t.Fatalf("dc under missing cluster: got %v, want InvalidArgument", err)
+	}); !cerrors.IsNotFound(err) {
+		t.Fatalf("dc under missing cluster: got %v, want NotFound", err)
 	}
 
 	dc, err := m.CreateOrUpdateDataCenter(ctx, mcdriver.CreateDataCenterConfig{

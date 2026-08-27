@@ -3,6 +3,7 @@ package vnet
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -62,25 +63,50 @@ type Mock struct {
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
-	opts           *config.Options
+	nics           *memstore.Store[*nicData]
+	// azureVNetMeta / azureNSGMeta hold the ARM-specific fields the cross-cloud
+	// VPC / SecurityGroup model cannot represent (region, full address-prefix
+	// list, Azure security rules), keyed by the driver resource id.
+	azureVNetMeta *memstore.Store[driver.AzureVNetMetadata]
+	azureNSGMeta  *memstore.Store[driver.AzureNSGMetadata]
+	// azureRouteTableMeta holds the ARM-specific route-table fields (region,
+	// routes, user tags) the cross-cloud RouteTable model cannot represent, keyed
+	// by the driver route table id.
+	azureRouteTableMeta *memstore.Store[driver.AzureRouteTableMetadata]
+	// azureVNetPeerings holds the ARM-specific virtualNetworkPeerings
+	// sub-resources for each VNet, keyed by the VNet's driver id, separately
+	// from azureVNetMeta so a whole-VNet PUT's PutAzureVNetMetadata (which
+	// replaces the vnet's metadata wholesale) never clobbers peerings created
+	// through the dedicated peerings sub-resource CRUD.
+	azureVNetPeerings *memstore.Store[[]driver.AzureVNetPeering]
+	// nicMu serializes network-interface create/update, whose private-IP
+	// allocation is a read-modify-write across the nics store (memstore is
+	// per-op safe but can't make that sequence atomic).
+	nicMu sync.RWMutex
+	opts  *config.Options
 }
 
 // New creates a new Azure Virtual Network mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		vpcs:           memstore.New[*vpcData](),
-		subnets:        memstore.New[*subnetData](),
-		securityGroups: memstore.New[*sgData](),
-		peerings:       memstore.New[*peeringData](),
-		natGateways:    memstore.New[*natGatewayData](),
-		flowLogs:       memstore.New[*flowLogData](),
-		routeTables:    memstore.New[*routeTableData](),
-		networkACLs:    memstore.New[*networkACLData](),
-		igws:           memstore.New[*igwData](),
-		eips:           memstore.New[*eipData](),
-		rtAssocs:       memstore.New[*rtAssocData](),
-		endpoints:      memstore.New[*driver.VPCEndpoint](),
-		opts:           opts,
+		vpcs:                memstore.New[*vpcData](),
+		subnets:             memstore.New[*subnetData](),
+		securityGroups:      memstore.New[*sgData](),
+		peerings:            memstore.New[*peeringData](),
+		natGateways:         memstore.New[*natGatewayData](),
+		flowLogs:            memstore.New[*flowLogData](),
+		routeTables:         memstore.New[*routeTableData](),
+		networkACLs:         memstore.New[*networkACLData](),
+		igws:                memstore.New[*igwData](),
+		eips:                memstore.New[*eipData](),
+		rtAssocs:            memstore.New[*rtAssocData](),
+		endpoints:           memstore.New[*driver.VPCEndpoint](),
+		nics:                memstore.New[*nicData](),
+		azureVNetMeta:       memstore.New[driver.AzureVNetMetadata](),
+		azureNSGMeta:        memstore.New[driver.AzureNSGMetadata](),
+		azureRouteTableMeta: memstore.New[driver.AzureRouteTableMetadata](),
+		azureVNetPeerings:   memstore.New[[]driver.AzureVNetPeering](),
+		opts:                opts,
 	}
 }
 
@@ -243,6 +269,8 @@ func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver
 }
 
 // AddIngressRule adds an inbound security rule to the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -255,6 +283,8 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 }
 
 // AddEgressRule adds an outbound security rule to the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -267,6 +297,8 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 }
 
 // RemoveIngressRule removes a matching inbound rule from the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -274,7 +306,7 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 	}
 
 	for i, r := range sg.IngressRules {
-		if r == rule {
+		if r.Equal(&rule) {
 			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
 			return nil
 		}
@@ -284,6 +316,8 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 }
 
 // RemoveEgressRule removes a matching outbound rule from the specified network security group.
+//
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
@@ -291,7 +325,7 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	}
 
 	for i, r := range sg.EgressRules {
-		if r == rule {
+		if r.Equal(&rule) {
 			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
 			return nil
 		}
@@ -321,6 +355,23 @@ func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error 
 		return v
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
+	}
+
+	return nil
+}
+
+// UpdateSubnetCIDR changes a subnet's address prefix in place, implementing the
+// SubnetCIDRUpdater capability (the ARM Subnets.CreateOrUpdate re-PUT path).
+func (m *Mock) UpdateSubnetCIDR(_ context.Context, id, cidr string) error {
+	if cidr == "" {
+		return cerrors.New(cerrors.InvalidArgument, "CIDR block is required")
+	}
+
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.CIDRBlock = cidr
+		return s
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
 
 	return nil
@@ -378,7 +429,10 @@ func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []stri
 // keys (tags wins on overlap). The original existing map is not modified
 // so concurrent readers can keep iterating it safely.
 func mergeTagMap(existing, tags map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(tags))
+	// Size the hint from the existing map only; adding len(tags) risks an integer
+	// overflow in the allocation size. The map grows to absorb tags as needed, so
+	// the result is unchanged.
+	out := make(map[string]string, len(existing))
 
 	for k, v := range existing {
 		out[k] = v

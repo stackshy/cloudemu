@@ -4,22 +4,19 @@
 // in an httptest TLS server.
 //
 // The Cosmos HTTP surface (server/azure/cosmos/handler.go) covers: account
-// probe, virtual databases, container create/list/read/delete, document
+// probe, per-database isolation, container create/list/read/delete, document
 // create/list/read/replace/delete, and query (SQL WHERE / ORDER BY /
 // projection / aggregates evaluated).
 // TTL and the change feed are driver-level only (no HTTP endpoint), so those
 // journeys mix SDK writes with direct driver calls on the same provider, per
 // the suite SDK-test-setup notes.
 //
+// Item identity is (partition key, id), matching real Cosmos: a duplicate-id
+// create returns 409, and two documents with the same partition key but
+// different ids coexist and point-read independently.
+//
 // Emulator divergences from real Cosmos that these tests pin down (asserting
 // the emulator's actual, documented behavior, marked DIVERGENCE below):
-//   - CreateItem with a duplicate id succeeds (blind upsert; real Cosmos: 409).
-//   - ReplaceItem ignores IfMatchEtag (real Cosmos: 412 on stale etag).
-//   - DeleteItem on a missing document returns 204 (real Cosmos: 404).
-//   - Queries evaluate the SQL WHERE/ORDER BY/projection but treat the
-//     partition key as advisory (cross-partition), since item identity is the
-//     partition-key value only, so two docs with the same pk but different ids
-//     collide (real Cosmos keys on (pk, id)).
 //   - PATCH (PatchItem) is not routed at all (405 MethodNotAllowed).
 //   - NOT over a composite predicate (AND/OR of several fields) uses two-valued
 //     logic, so an absent field is not excluded; NOT over a single-field
@@ -88,9 +85,8 @@ func newCosmosEnv(t *testing.T, opts ...config.Option) *cosmosEnv {
 	return &cosmosEnv{provider: cloudP, client: client}
 }
 
-// container creates database db (virtual) and container name with partition
-// key path "/pk" (required — per-document GETs/DELETEs hardcode the "pk"
-// attribute) and returns its client.
+// container creates database db and container name with partition
+// key path "/pk" and returns its client.
 func (e *cosmosEnv) container(ctx context.Context, t *testing.T, db, name string) *azcosmos.ContainerClient {
 	t.Helper()
 
@@ -346,11 +342,12 @@ func TestCosmosTypedErrors(t *testing.T) {
 	wantRespErr(t, err, 400, "CreateItem without id")
 }
 
-// TestCosmosWriteDivergences pins down the emulator's write
-// semantics where they knowingly diverge from real Cosmos (see file header):
-// duplicate create succeeds, etag preconditions are ignored, deleting a
-// missing document succeeds, PATCH is not routed, and item identity collides
-// on the partition-key value alone.
+// TestCosmosWriteDivergences pins down the emulator's write semantics: the
+// (partition key, id) identity model — duplicate create 409s, an upsert of the
+// same id succeeds, and same-pk/different-id documents coexist — plus
+// optimistic concurrency (a stale If-Match is 412) and a 404 on deleting a
+// missing document. The one remaining knowing divergence is that PATCH is not
+// routed (405).
 func TestCosmosWriteDivergences(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
@@ -359,81 +356,128 @@ func TestCosmosWriteDivergences(t *testing.T) {
 	pk := azcosmos.NewPartitionKeyString("team-a")
 	createDoc(ctx, t, cc, "team-a", map[string]any{"id": "u1", "pk": "team-a", "name": "Alice", "rev": 1})
 
-	// DIVERGENCE: creating the same id again is a blind upsert and succeeds
-	// with 201 (real Cosmos returns 409 Conflict). "Conditional write
-	// failure" is therefore unreachable on this emulator.
+	// Creating the same (pk, id) again is a Conflict, matching real Cosmos.
 	dup, _ := json.Marshal(map[string]any{"id": "u1", "pk": "team-a", "name": "Alice-2", "rev": 2})
 
-	resp, err := cc.CreateItem(ctx, pk, dup, nil)
-	if err != nil {
-		t.Fatalf("duplicate CreateItem (emulator upserts): %v", err)
+	if _, err := cc.CreateItem(ctx, pk, dup, nil); err == nil {
+		t.Fatal("duplicate CreateItem: expected 409 Conflict, got nil error")
+	} else {
+		wantRespErr(t, err, 409, "duplicate CreateItem")
 	}
 
-	if resp.RawResponse.StatusCode != 201 {
-		t.Errorf("duplicate CreateItem status=%d want 201", resp.RawResponse.StatusCode)
+	// The original document is untouched by the rejected create.
+	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(1) {
+		t.Errorf("rev=%v want 1 (rejected create must not overwrite)", got["rev"])
+	}
+
+	// UpsertItem with the same id is a create-or-replace and succeeds.
+	ups, _ := json.Marshal(map[string]any{"id": "u1", "pk": "team-a", "name": "Alice-2", "rev": 2})
+	if _, err := cc.UpsertItem(ctx, pk, ups, nil); err != nil {
+		t.Fatalf("UpsertItem same id: %v", err)
 	}
 
 	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(2) {
-		t.Errorf("rev=%v want 2 (second create should have overwritten)", got["rev"])
+		t.Errorf("rev=%v want 2 (upsert should have overwritten)", got["rev"])
 	}
 
-	// DIVERGENCE: ReplaceItem with a deliberately stale IfMatchEtag succeeds
-	// (real Cosmos returns 412 PreconditionFailed). ConditionExpression-style
-	// guards are not implemented anywhere in the driver.
+	// ReplaceItem with a deliberately stale IfMatchEtag is rejected 412
+	// PreconditionFailed, matching real Cosmos optimistic concurrency, and the
+	// stored document is left untouched (still rev 2 from the upsert above).
 	stale := azcore.ETag(`"definitely-stale-etag"`)
 	repl, _ := json.Marshal(map[string]any{"id": "u1", "pk": "team-a", "name": "Alice-3", "rev": 3})
 
-	if _, err := cc.ReplaceItem(ctx, pk, "u1", repl, &azcosmos.ItemOptions{IfMatchEtag: &stale}); err != nil {
-		t.Fatalf("ReplaceItem with stale etag (emulator ignores preconditions): %v", err)
-	}
+	_, staleErr := cc.ReplaceItem(ctx, pk, "u1", repl, &azcosmos.ItemOptions{IfMatchEtag: &stale})
+	wantRespErr(t, staleErr, 412, "ReplaceItem with stale etag")
 
-	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(3) {
-		t.Errorf("rev=%v want 3 (stale-etag replace should have applied)", got["rev"])
+	if got := readDoc(ctx, t, cc, "team-a", "u1"); got["rev"] != float64(2) {
+		t.Errorf("rev=%v want 2 (stale-etag replace must not apply)", got["rev"])
 	}
 
 	// DIVERGENCE: PATCH is not routed by the handler → 405 (real Cosmos
 	// supports partial document updates).
 	patch := azcosmos.PatchOperations{}
 	patch.AppendSet("/name", "Patched")
-	_, err = cc.PatchItem(ctx, pk, "u1", patch, nil)
-	wantRespErr(t, err, 405, "PatchItem (unrouted PATCH)")
+	_, patchErr := cc.PatchItem(ctx, pk, "u1", patch, nil)
+	wantRespErr(t, patchErr, 405, "PatchItem (unrouted PATCH)")
 
-	// DIVERGENCE: deleting a document that does not exist succeeds with 204
-	// (real Cosmos returns 404) — the driver delete is idempotent.
-	delResp, err := cc.DeleteItem(ctx, pk, "never-existed", nil)
-	if err != nil {
-		t.Fatalf("DeleteItem missing doc (emulator is idempotent): %v", err)
-	}
+	// Deleting a document that does not exist is a 404, matching real Cosmos.
+	_, missErr := cc.DeleteItem(ctx, pk, "never-existed", nil)
+	wantRespErr(t, missErr, 404, "DeleteItem missing doc")
 
-	if delResp.RawResponse.StatusCode != 204 {
-		t.Errorf("DeleteItem missing doc status=%d want 204", delResp.RawResponse.StatusCode)
-	}
-
-	// DIVERGENCE: item identity is the partition-key value only. Two docs
-	// with the same pk but different ids share one slot, and a point read for
-	// the first id returns the second document (real Cosmos keys on (pk,id)).
+	// Item identity is (pk, id): two docs with the same partition key but
+	// different ids coexist, and each point-reads back independently.
 	createDoc(ctx, t, cc, "shared", map[string]any{"id": "doc-a", "pk": "shared", "who": "first"})
 	createDoc(ctx, t, cc, "shared", map[string]any{"id": "doc-b", "pk": "shared", "who": "second"})
 
-	got := readDoc(ctx, t, cc, "shared", "doc-a")
-	if got["id"] != "doc-b" || got["who"] != "second" {
-		t.Errorf("pk-collision read got id=%v who=%v; emulator keys items by pk only, expected doc-b/second",
-			got["id"], got["who"])
+	if got := readDoc(ctx, t, cc, "shared", "doc-a"); got["id"] != "doc-a" || got["who"] != "first" {
+		t.Errorf("(pk,id) read got id=%v who=%v; want doc-a/first", got["id"], got["who"])
 	}
+
+	if got := readDoc(ctx, t, cc, "shared", "doc-b"); got["id"] != "doc-b" || got["who"] != "second" {
+		t.Errorf("(pk,id) read got id=%v who=%v; want doc-b/second", got["id"], got["who"])
+	}
+}
+
+// TestCosmosReplaceSemantics pins the two replace-path invariants real Cosmos
+// enforces: the partition key is immutable (a replace that would move the
+// document to a new partition is rejected 400 and leaves no orphan), and a
+// replace of a non-existent id is a 404, not a silent create.
+func TestCosmosReplaceSemantics(t *testing.T) {
+	ctx := context.Background()
+	env := newCosmosEnv(t)
+	cc := env.container(ctx, t, "repldb", "items")
+
+	createDoc(ctx, t, cc, "books", map[string]any{"id": "i1", "pk": "books", "title": "Dune"})
+
+	// Replacing the document with a body that changes the partition key value
+	// is rejected 400 — the partition key is immutable.
+	moved, _ := json.Marshal(map[string]any{"id": "i1", "pk": "movies", "title": "Dune"})
+
+	_, err := cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "i1", moved, nil)
+	wantRespErr(t, err, 400, "ReplaceItem with mutated partition key")
+
+	// No orphan landed under the attempted new partition.
+	_, err = cc.ReadItem(ctx, azcosmos.NewPartitionKeyString("movies"), "i1", nil)
+	wantRespErr(t, err, 404, "point read under new partition (no orphan)")
+
+	// The original document under the real partition is untouched.
+	if got := readDoc(ctx, t, cc, "books", "i1"); got["title"] != "Dune" || got["pk"] != "books" {
+		t.Errorf("original doc mutated: title=%v pk=%v want Dune/books", got["title"], got["pk"])
+	}
+
+	// A same-partition replace (other fields change) still succeeds.
+	same, _ := json.Marshal(map[string]any{"id": "i1", "pk": "books", "title": "Dune Messiah"})
+	if _, err := cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "i1", same, nil); err != nil {
+		t.Fatalf("same-partition ReplaceItem: %v", err)
+	}
+
+	if got := readDoc(ctx, t, cc, "books", "i1"); got["title"] != "Dune Messiah" {
+		t.Errorf("after same-pk replace title=%v want Dune Messiah", got["title"])
+	}
+
+	// Replacing an id that does not exist is a 404, not a create.
+	ghost, _ := json.Marshal(map[string]any{"id": "ghost", "pk": "books", "title": "Nope"})
+
+	_, err = cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "ghost", ghost, nil)
+	wantRespErr(t, err, 404, "ReplaceItem on non-existent id")
+
+	// The rejected replace did not create the document.
+	_, err = cc.ReadItem(ctx, azcosmos.NewPartitionKeyString("books"), "ghost", nil)
+	wantRespErr(t, err, 404, "point read of ghost after rejected replace")
 }
 
 // TestCosmosQueryAndPagination drives the SDK query pager: empty container
 // first, then 30 documents across two partitions. The WHERE clause is
 // evaluated faithfully, so `c.part = 'part-a'` returns exactly the 15 part-a
-// documents. The partition-key header is advisory in the emulator (its item
-// model conflates partition and document identity), so cross-partition WHERE
-// does the filtering.
+// documents. Each document has a distinct partition key (pk = its id), so the
+// WHERE filtering is exercised as a cross-partition query (no partition key);
+// a partition-scoped query would only ever see its own partition's document.
 func TestCosmosQueryAndPagination(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "querydb", "events")
 
-	pkA := azcosmos.NewPartitionKeyString("part-a")
+	pkA := azcosmos.NewPartitionKey()
 
 	countAll := func(label string) int {
 		t.Helper()
@@ -582,6 +626,11 @@ func TestCosmosTTL(t *testing.T) {
 	cc := env.container(ctx, t, "ttldb", "sessions")
 	drv := env.provider.CosmosDB
 
+	// The container lives in the "ttldb" database, so the wire handler backs it
+	// with a database-qualified driver table (see server/azure/cosmosdb qualify).
+	// Driver-level calls, which bypass the HTTP layer, address it by that name.
+	const drvTable = "ttldb/sessions"
+
 	// Two sessions expiring 5 minutes from the fake "now" (absolute epoch
 	// seconds). Distinct pk values because item identity is pk-only.
 	expires := start.Add(5 * time.Minute).Unix()
@@ -589,11 +638,11 @@ func TestCosmosTTL(t *testing.T) {
 	createDoc(ctx, t, cc, "s2", map[string]any{"id": "s2", "pk": "s2", "user": "bob", "expiresAt": expires})
 
 	// Enable TTL at the driver level and read the config back.
-	if err := drv.UpdateTTL(ctx, "sessions", dbdriver.TTLConfig{Enabled: true, AttributeName: "expiresAt"}); err != nil {
+	if err := drv.UpdateTTL(ctx, drvTable, dbdriver.TTLConfig{Enabled: true, AttributeName: "expiresAt"}); err != nil {
 		t.Fatalf("UpdateTTL: %v", err)
 	}
 
-	ttlCfg, err := drv.DescribeTTL(ctx, "sessions")
+	ttlCfg, err := drv.DescribeTTL(ctx, drvTable)
 	if err != nil {
 		t.Fatalf("DescribeTTL: %v", err)
 	}
@@ -615,8 +664,9 @@ func TestCosmosTTL(t *testing.T) {
 	wantRespErr(t, err, 404, "ReadItem expired session")
 
 	// Documented quirk: BatchGetItems does NOT check TTL, so the expired s2
-	// (never point-read since expiry) is still returned by a batch get.
-	batch, err := drv.BatchGetItems(ctx, "sessions", []map[string]any{{"pk": "s2"}})
+	// (never point-read since expiry) is still returned by a batch get. The key
+	// carries the full (pk, id) identity the container uses.
+	batch, err := drv.BatchGetItems(ctx, drvTable, []map[string]any{{"pk": "s2", "id": "s2"}})
 	if err != nil {
 		t.Fatalf("BatchGetItems: %v", err)
 	}
@@ -661,12 +711,17 @@ func TestCosmosChangeFeed(t *testing.T) {
 	cc := env.container(ctx, t, "feeddb", "chats")
 	drv := env.provider.CosmosDB
 
+	// The container is in the "feeddb" database; its flat driver-table name is
+	// database-qualified (see server/azure/cosmosdb qualify), and driver-level
+	// change-feed calls, which bypass the HTTP layer, address it by that name.
+	const drvTable = "feeddb/chats"
+
 	// Feed disabled → FailedPrecondition.
-	if _, err := drv.GetStreamRecords(ctx, "chats", 0, ""); !cerrors.IsFailedPrecondition(err) {
+	if _, err := drv.GetStreamRecords(ctx, drvTable, 0, ""); !cerrors.IsFailedPrecondition(err) {
 		t.Fatalf("GetStreamRecords before enable: err=%v want FailedPrecondition", err)
 	}
 
-	if err := drv.UpdateStreamConfig(ctx, "chats", dbdriver.StreamConfig{
+	if err := drv.UpdateStreamConfig(ctx, drvTable, dbdriver.StreamConfig{
 		Enabled:  true,
 		ViewType: "NEW_AND_OLD_IMAGES",
 	}); err != nil {
@@ -686,7 +741,7 @@ func TestCosmosChangeFeed(t *testing.T) {
 		t.Fatalf("DeleteItem: %v", err)
 	}
 
-	it, err := drv.GetStreamRecords(ctx, "chats", 0, "")
+	it, err := drv.GetStreamRecords(ctx, drvTable, 0, "")
 	if err != nil {
 		t.Fatalf("GetStreamRecords: %v", err)
 	}
@@ -740,7 +795,7 @@ func TestCosmosChangeFeed(t *testing.T) {
 	}
 
 	// Token-based resumption: first page of 2, then the remainder.
-	page1, err := drv.GetStreamRecords(ctx, "chats", 2, "")
+	page1, err := drv.GetStreamRecords(ctx, drvTable, 2, "")
 	if err != nil {
 		t.Fatalf("GetStreamRecords page1: %v", err)
 	}
@@ -749,7 +804,7 @@ func TestCosmosChangeFeed(t *testing.T) {
 		t.Fatalf("page1 records=%d next=%q want 2 records, token \"2\"", len(page1.Records), page1.NextToken)
 	}
 
-	page2, err := drv.GetStreamRecords(ctx, "chats", 2, page1.NextToken)
+	page2, err := drv.GetStreamRecords(ctx, drvTable, 2, page1.NextToken)
 	if err != nil {
 		t.Fatalf("GetStreamRecords page2: %v", err)
 	}
@@ -775,7 +830,10 @@ func TestCosmosQueryFidelity(t *testing.T) {
 		createDoc(ctx, t, cc, d["pk"].(string), d)
 	}
 
-	pk := azcosmos.NewPartitionKeyString("p1") // advisory in the emulator
+	// Documents live in distinct partitions (pk = p1/p2/p3), so query fidelity is
+	// exercised cross-partition (no partition key); the WHERE/ORDER BY/projection
+	// logic is what's under test, not partition routing.
+	pk := azcosmos.NewPartitionKey()
 
 	rawItems := func(sql string, opts *azcosmos.QueryOptions) [][]byte {
 		t.Helper()

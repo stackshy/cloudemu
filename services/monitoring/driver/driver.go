@@ -12,16 +12,34 @@ import (
 type MetricIdentifier struct {
 	Namespace  string
 	MetricName string
+	Dimensions map[string]string
 }
 
-// MetricDatum is a single metric data point.
+// StatisticSet is a pre-aggregated metric sample: the SampleCount/Sum/Minimum/
+// Maximum a caller supplies via PutMetricData's StatisticValues instead of a
+// single Value. It lets the series answer every statistic without the raw
+// observations.
+type StatisticSet struct {
+	SampleCount float64
+	Sum         float64
+	Minimum     float64
+	Maximum     float64
+}
+
+// MetricDatum is a single metric data point. A datum carries either a single
+// Value, a pre-aggregated StatisticValues set, or paired Values/Counts arrays
+// (each Values[i] observed Counts[i] times); the later two let a caller publish
+// aggregated data without the individual observations.
 type MetricDatum struct {
-	Namespace  string
-	MetricName string
-	Value      float64
-	Unit       string
-	Dimensions map[string]string
-	Timestamp  time.Time
+	Namespace       string
+	MetricName      string
+	Value           float64
+	Unit            string
+	Dimensions      map[string]string
+	Timestamp       time.Time
+	StatisticValues *StatisticSet
+	Values          []float64
+	Counts          []float64
 }
 
 // GetMetricInput configures a metric retrieval operation.
@@ -39,6 +57,7 @@ type GetMetricInput struct {
 type MetricDataResult struct {
 	Timestamps []time.Time
 	Values     []float64
+	Unit       string // the unit stored with the underlying datapoints, if any
 }
 
 // AlarmConfig describes an alarm to create.
@@ -51,20 +70,43 @@ type AlarmConfig struct {
 	Threshold               float64
 	Period                  int
 	EvaluationPeriods       int
+	DatapointsToAlarm       int // M in the M-of-N rule; 0 defaults to EvaluationPeriods
 	Stat                    string
+	ExtendedStatistic       string   // percentile statistic (e.g. "p95"); alternative to Stat
+	Unit                    string   // the metric unit the alarm watches
+	TreatMissingData        string   // "missing" (default), "notBreaching", "breaching", "ignore"
 	AlarmActions            []string // channel IDs to notify on ALARM
 	OKActions               []string // channel IDs to notify on OK
 	InsufficientDataActions []string // channel IDs to notify on INSUFFICIENT_DATA
+	AlarmDescription        string
+	ActionsEnabled          *bool // nil defaults to true (AWS semantics)
+	Tags                    map[string]string
 }
 
 // AlarmInfo describes an alarm.
 type AlarmInfo struct {
-	Name               string
-	Namespace          string
-	MetricName         string
-	State              string // "OK", "ALARM", "INSUFFICIENT_DATA"
-	ComparisonOperator string
-	Threshold          float64
+	Name                    string
+	Namespace               string
+	MetricName              string
+	State                   string // "OK", "ALARM", "INSUFFICIENT_DATA"
+	ComparisonOperator      string
+	Threshold               float64
+	StateReason             string
+	StateUpdatedTimestamp   time.Time
+	Period                  int
+	EvaluationPeriods       int
+	DatapointsToAlarm       int
+	Statistic               string
+	ExtendedStatistic       string
+	Unit                    string
+	TreatMissingData        string
+	ActionsEnabled          bool
+	AlarmActions            []string
+	OKActions               []string
+	InsufficientDataActions []string
+	AlarmDescription        string
+	AlarmArn                string
+	Dimensions              map[string]string
 }
 
 // NotificationChannelConfig describes a notification channel.
@@ -90,7 +132,10 @@ type AlarmHistoryEntry struct {
 	Timestamp time.Time
 	OldState  string
 	NewState  string
-	Reason    string
+	// HistoryItemType classifies the entry (e.g. "StateUpdate",
+	// "ConfigurationUpdate", "Action"); empty is treated as "StateUpdate".
+	HistoryItemType string
+	Reason          string
 }
 
 // Monitoring is the interface that monitoring provider implementations must satisfy.

@@ -38,11 +38,20 @@ type Mock struct {
 	// via SetIfAbsent so concurrent same-token CreateFileSystem calls can't both
 	// create (EFS idempotency).
 	tokenIndex *memstore.Store[string]
+	// apTokenIndex maps a CreateAccessPoint ClientToken to its access-point id,
+	// claimed atomically via SetIfAbsent so a repeated ClientToken returns the
+	// existing access point rather than creating a duplicate (EFS idempotency).
+	apTokenIndex *memstore.Store[string]
 
 	// accountPref is the account-level resource-id preference ("LONG_ID" |
 	// "SHORT_ID"); empty until PutAccountPreferences is called.
 	accountPref string
 	prefMu      sync.RWMutex
+
+	// subnetResolver derives a mount target's VpcId and AZ from its subnet. Real
+	// EFS infers both from the subnet; without a resolver a deterministic
+	// per-file-system fallback is used instead of a random per-call VpcId.
+	subnetResolver SubnetResolver
 
 	opts *config.Options
 }
@@ -50,11 +59,12 @@ type Mock struct {
 // New creates a new EFS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		fileSystems: memstore.New[*fsData](),
-		mtIndex:     memstore.New[string](),
-		apIndex:     memstore.New[string](),
-		tokenIndex:  memstore.New[string](),
-		opts:        opts,
+		fileSystems:  memstore.New[*fsData](),
+		mtIndex:      memstore.New[string](),
+		apIndex:      memstore.New[string](),
+		tokenIndex:   memstore.New[string](),
+		apTokenIndex: memstore.New[string](),
+		opts:         opts,
 	}
 }
 
@@ -64,6 +74,15 @@ func (m *Mock) fsARN(id string) string {
 
 func (m *Mock) accessPointARN(id string) string {
 	return idgen.AWSARN("elasticfilesystem", m.opts.Region, m.opts.AccountID, "access-point/"+id)
+}
+
+// defaultEFSKeyID is the fixed key id used for the account's AWS-managed
+// aws/elasticfilesystem CMK, which encrypted file systems default to.
+const defaultEFSKeyID = "d7a8f6c0-3b2e-4f1a-9c5d-6e7f80912a34"
+
+// defaultKMSKeyARN returns the ARN of the account's default EFS CMK.
+func (m *Mock) defaultKMSKeyARN() string {
+	return idgen.AWSARN("kms", m.opts.Region, m.opts.AccountID, "key/"+defaultEFSKeyID)
 }
 
 // getFS resolves a file system by id under a read lock check.

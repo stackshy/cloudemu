@@ -27,6 +27,19 @@ func newTestEngine() (*Engine, *ec2.Mock, *vpc.Mock, *route53.Mock) {
 	return engine, ec2Mock, vpcMock, dnsMock
 }
 
+// attachIGW creates an internet gateway attached to vpcID and returns its id.
+// CreateRoute validates its target exists, so route tests need a real gateway.
+func attachIGW(t *testing.T, vpcMock *vpc.Mock, vpcID string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	igw, err := vpcMock.CreateInternetGateway(ctx, netdriver.InternetGatewayConfig{})
+	require.NoError(t, err)
+	require.NoError(t, vpcMock.AttachInternetGateway(ctx, igw.ID, vpcID))
+
+	return igw.ID
+}
+
 // CIDR helper tests
 func TestIPInCIDR(t *testing.T) {
 	tests := []struct {
@@ -271,8 +284,14 @@ func TestEvaluateNetworkACLAllow(t *testing.T) {
 	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
 	require.NoError(t, err)
 
-	// CreateNetworkACL adds default allow-all at rule 100. That should pass.
+	// A fresh custom ACL denies by default (only the '*' rules), so add an
+	// explicit allow at rule 100; the matching allow should pass.
 	acl, err := vpcMock.CreateNetworkACL(ctx, v.ID, nil)
+	require.NoError(t, err)
+
+	err = vpcMock.AddNetworkACLRule(ctx, acl.ID, &netdriver.NetworkACLRule{
+		RuleNumber: 100, Protocol: "-1", Action: "allow", CIDR: "0.0.0.0/0", Egress: false,
+	})
 	require.NoError(t, err)
 
 	verdict, err := engine.EvaluateNetworkACL(ctx, acl.ID, "10.0.1.5", "10.0.2.5", 443, "tcp", true)
@@ -562,7 +581,8 @@ func TestTraceRoute(t *testing.T) {
 	rt, err := vpcMock.CreateRouteTable(ctx, netdriver.RouteTableConfig{VPCID: v.ID})
 	require.NoError(t, err)
 
-	err = vpcMock.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-123", "gateway")
+	igwID := attachIGW(t, vpcMock, v.ID)
+	err = vpcMock.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igwID, "gateway")
 	require.NoError(t, err)
 
 	// The subnet has to be associated with this table for its routes to
@@ -604,7 +624,7 @@ func TestTraceRoute(t *testing.T) {
 
 	// Fourth hop: gateway via the 0.0.0.0/0 route.
 	assert.Equal(t, "gateway", hops[3].Type)
-	assert.Equal(t, "igw-123", hops[3].ResourceID)
+	assert.Equal(t, igwID, hops[3].ResourceID)
 }
 
 // Resolve tests
@@ -662,7 +682,7 @@ func TestTraceRouteUnassociatedSubnetUsesMainTable(t *testing.T) {
 	// with it, so it does not govern this subnet's traffic.
 	rt, err := vpcMock.CreateRouteTable(ctx, netdriver.RouteTableConfig{VPCID: v.ID})
 	require.NoError(t, err)
-	require.NoError(t, vpcMock.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-123", "gateway"))
+	require.NoError(t, vpcMock.CreateRoute(ctx, rt.ID, "0.0.0.0/0", attachIGW(t, vpcMock, v.ID), "gateway"))
 
 	sg, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
 		VPCID: v.ID, Name: "unassoc-sg", Description: "unassociated subnet",

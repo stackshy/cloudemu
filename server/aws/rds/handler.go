@@ -11,6 +11,7 @@
 package rds
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -154,7 +155,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	// the SigV4 credential scope names "rds"; otherwise let them fall through
 	// to the owning handler.
 	if _, ambiguous := rdsAmbiguousTagActions[action]; ambiguous {
-		return sigV4ScopeService(r.Header.Get("Authorization")) == "rds"
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "rds"
 	}
 
 	return true
@@ -166,24 +167,6 @@ var rdsAmbiguousTagActions = map[string]struct{}{ //nolint:gochecknoglobals // s
 	"AddTagsToResource":      {},
 	"RemoveTagsFromResource": {},
 	"ListTagsForResource":    {},
-}
-
-// sigV4ScopeService extracts the service from a SigV4 Authorization credential
-// scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
-func sigV4ScopeService(auth string) string {
-	i := strings.Index(auth, "Credential=")
-	if i < 0 {
-		return ""
-	}
-
-	parts := strings.Split(auth[i+len("Credential="):], "/")
-
-	const serviceField = 3
-	if len(parts) <= serviceField {
-		return ""
-	}
-
-	return parts[serviceField]
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
@@ -357,20 +340,37 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeErr maps cloudemu errors to RDS XML error responses.
+// writeErr maps cloudemu errors to RDS XML error responses. The fault Code is
+// the machine-readable part; the Message carries the clean human sentence with
+// no internal enum prefix, matching real RDS error responses. The fault-code
+// pickers still read err.Error() so the resource keyword drives the code.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := errMessage(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidDBInstanceState", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
+}
+
+// errMessage returns the human-readable message for a cloudemu error without
+// the "Code: " prefix that Error() prepends. Real RDS fault messages carry no
+// such prefix, so surfacing it would leak an internal detail.
+func errMessage(err error) string {
+	var e *cerrors.Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+
+	return err.Error()
 }
 
 // faultMapping maps a resource keyword found in an error message to the
@@ -430,9 +430,30 @@ var alreadyExistsFaults = []faultMapping{
 	{"DB snapshot", "DBSnapshotAlreadyExists"},
 }
 
+// invalidStateFaults maps an illegal-state error to the AWS-shaped fault code.
+// Real AWS distinguishes per-resource state faults, so an in-use parameter /
+// subnet / option group each gets its own fault code; a message naming a DB
+// cluster gets InvalidDBClusterStateFault; everything else falls back to
+// InvalidDBInstanceState. Ordered most-specific-first: the group entries must
+// precede "DB instance"/"DB cluster", whose keyword their messages also contain.
+//
+//nolint:gochecknoglobals // ordered static lookup table
+var invalidStateFaults = []faultMapping{
+	{"parameter group", "InvalidDBParameterGroupState"},
+	{"subnet group", "InvalidDBSubnetGroupStateFault"},
+	{"option group", "InvalidOptionGroupStateFault"},
+	{"DB cluster", "InvalidDBClusterStateFault"},
+	{"DB instance", "InvalidDBInstanceState"},
+}
+
 // notFoundCode picks the AWS-shaped NotFound fault from the error message.
 func notFoundCode(err error) string {
 	return matchFault(err.Error(), notFoundFaults, "ResourceNotFoundFault")
+}
+
+// invalidStateCode picks the AWS-shaped illegal-state fault from the message.
+func invalidStateCode(err error) string {
+	return matchFault(err.Error(), invalidStateFaults, "InvalidDBInstanceState")
 }
 
 // alreadyExistsCode picks the AWS-shaped AlreadyExists fault from the message.

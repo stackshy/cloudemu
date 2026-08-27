@@ -1,7 +1,6 @@
 package loganalytics
 
 import (
-	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
@@ -10,14 +9,25 @@ import (
 // response without a follow-up poll.
 const provisioningSucceeded = "Succeeded"
 
+// defaultSKUName is the SKU real Log Analytics defaults a workspace to when the
+// caller omits one (the current commitment-tier-less pricing SKU).
+const defaultSKUName = "PerGB2018"
+
+// workspaceSKU is the ARM Workspace SKU sub-object (properties.sku).
+type workspaceSKU struct {
+	Name string `json:"name"`
+}
+
 // workspaceProperties is the subset of Log Analytics workspace properties we
-// model. RetentionInDays round-trips through the driver; provisioningState is
-// synthesized so the SDK's LRO poller sees a terminal state.
+// model. RetentionInDays round-trips through the driver; provisioningState,
+// customerId and sku are Azure-only ARM fields tracked in the wire handler's
+// per-workspace metadata.
 type workspaceProperties struct {
-	ProvisioningState string `json:"provisioningState,omitempty"`
-	RetentionInDays   *int32 `json:"retentionInDays,omitempty"`
-	CustomerID        string `json:"customerId,omitempty"`
-	CreatedDate       string `json:"createdDate,omitempty"`
+	ProvisioningState string        `json:"provisioningState,omitempty"`
+	RetentionInDays   *int32        `json:"retentionInDays,omitempty"`
+	CustomerID        string        `json:"customerId,omitempty"`
+	SKU               *workspaceSKU `json:"sku,omitempty"`
+	CreatedDate       string        `json:"createdDate,omitempty"`
 }
 
 // workspaceJSON is the ARM Workspace resource envelope.
@@ -40,7 +50,8 @@ type workspaceRequest struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags"`
 	Properties *struct {
-		RetentionInDays *int32 `json:"retentionInDays"`
+		RetentionInDays *int32        `json:"retentionInDays"`
+		SKU             *workspaceSKU `json:"sku"`
 	} `json:"properties"`
 }
 
@@ -54,22 +65,31 @@ func (req *workspaceRequest) retentionDays() int {
 	return int(*req.Properties.RetentionInDays)
 }
 
-// toWorkspaceJSON renders a driver log group as an ARM workspace. location is
-// echoed from the request on create; on read paths it is empty (the driver does
-// not persist location), which the SDK tolerates.
-func toWorkspaceJSON(rp *azurearm.ResourcePath, info *logdriver.LogGroupInfo, location string) workspaceJSON {
+// skuName returns the requested SKU name, or "" when unset.
+func (req *workspaceRequest) skuName() string {
+	if req.Properties == nil || req.Properties.SKU == nil {
+		return ""
+	}
+
+	return req.Properties.SKU.Name
+}
+
+// toWorkspaceJSON renders a driver log group as an ARM workspace, folding in the
+// Azure-only ARM fields (location, customerId GUID, sku) held in meta.
+func toWorkspaceJSON(info *logdriver.LogGroupInfo, meta *workspaceMeta) workspaceJSON {
 	retention := int32(info.RetentionDays) //nolint:gosec // retention days is a small positive value
 
 	return workspaceJSON{
 		ID:       info.ResourceID,
 		Name:     info.Name,
 		Type:     providerName + "/" + typeWorkspaces,
-		Location: location,
+		Location: meta.Location,
 		Tags:     info.Tags,
 		Properties: workspaceProperties{
 			ProvisioningState: provisioningSucceeded,
 			RetentionInDays:   &retention,
-			CustomerID:        info.ResourceID,
+			CustomerID:        meta.CustomerID,
+			SKU:               &workspaceSKU{Name: meta.SKU},
 			CreatedDate:       info.CreatedAt,
 		},
 	}

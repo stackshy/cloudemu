@@ -15,6 +15,86 @@ AWS's `secrets` service · portable interface `driver.Secrets` · [AWS index](./
 | `ListSecrets` |  |
 | `PutSecretValue` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### GCPSecrets
+
+GCPSecrets is the GCP Secret Manager-specific surface kept off the shared
+
+| Operation | Description |
+| --- | --- |
+| `DestroySecretVersion` | DestroySecretVersion moves a version to DESTROYED, wipes its payload, and |
+| `DisableSecretVersion` | DisableSecretVersion moves a version to DISABLED. It fails on a DESTROYED |
+| `EnableSecretVersion` | EnableSecretVersion moves a version to ENABLED. It is idempotent on an |
+| `GetSecretIAMPolicy` | GetSecretIAMPolicy returns the secret's stored IAM policy (an empty |
+| `PatchSecret` | PatchSecret applies a partial update (labels, annotations, topics, version |
+| `SetSecretIAMPolicy` | SetSecretIAMPolicy stores the secret's IAM policy and returns it with a |
+| `TestSecretIAMPermissions` | TestSecretIAMPermissions returns the subset of permissions the caller |
+
+### KeyVaultCertificates
+
+KeyVaultCertificates is the Azure Key Vault-specific certificate data-plane
+
+| Operation | Description |
+| --- | --- |
+| `CreateCertificate` |  |
+| `DeleteCertificate` |  |
+| `GetCertificate` |  |
+| `GetDeletedCertificate` |  |
+| `ListCertificateVersions` |  |
+| `ListCertificates` |  |
+| `ListDeletedCertificates` |  |
+| `PurgeDeletedCertificate` |  |
+| `RecoverDeletedCertificate` |  |
+
+### KeyVaultKeys
+
+KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle
+
+| Operation | Description |
+| --- | --- |
+| `CreateKey` |  |
+| `DecryptKey` |  |
+| `DeleteKey` |  |
+| `EncryptKey` |  |
+| `GetDeletedKey` |  |
+| `GetKey` |  |
+| `GetKeyRotationPolicy` |  |
+| `ImportKey` |  |
+| `ListDeletedKeys` |  |
+| `ListKeyVersions` |  |
+| `ListKeys` |  |
+| `PurgeDeletedKey` |  |
+| `RecoverDeletedKey` |  |
+| `RotateKey` |  |
+| `SignKey` |  |
+| `UnwrapKey` |  |
+| `UpdateKey` |  |
+| `UpdateKeyRotationPolicy` |  |
+| `VerifyKey` |  |
+| `WrapKey` |  |
+
+### KeyVaultSecrets
+
+KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version
+
+| Operation | Description |
+| --- | --- |
+| `BackupKeyVaultSecret` |  |
+| `DeleteKeyVaultSecret` |  |
+| `GetDeletedKeyVaultSecret` |  |
+| `GetKeyVaultSecret` |  |
+| `ListDeletedKeyVaultSecrets` |  |
+| `ListKeyVaultSecretVersions` |  |
+| `ListKeyVaultSecrets` |  |
+| `PurgeDeletedKeyVaultSecret` |  |
+| `RecoverDeletedKeyVaultSecret` |  |
+| `RestoreKeyVaultSecret` |  |
+| `SetKeyVaultSecret` |  |
+| `UpdateKeyVaultSecret` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

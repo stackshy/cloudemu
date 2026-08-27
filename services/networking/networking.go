@@ -161,6 +161,7 @@ func (n *Networking) DescribeSecurityGroups(ctx context.Context, ids []string) (
 	return out.([]driver.SecurityGroupInfo), nil
 }
 
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (n *Networking) AddIngressRule(ctx context.Context, groupID string, rule driver.SecurityRule) error {
 	_, err := n.do(ctx, "AddIngressRule", rule, func() (any, error) {
 		return nil, n.driver.AddIngressRule(ctx, groupID, rule)
@@ -169,6 +170,7 @@ func (n *Networking) AddIngressRule(ctx context.Context, groupID string, rule dr
 	return err
 }
 
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (n *Networking) AddEgressRule(ctx context.Context, groupID string, rule driver.SecurityRule) error {
 	_, err := n.do(ctx, "AddEgressRule", rule, func() (any, error) {
 		return nil, n.driver.AddEgressRule(ctx, groupID, rule)
@@ -177,6 +179,7 @@ func (n *Networking) AddEgressRule(ctx context.Context, groupID string, rule dri
 	return err
 }
 
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (n *Networking) RemoveIngressRule(ctx context.Context, groupID string, rule driver.SecurityRule) error {
 	_, err := n.do(ctx, "RemoveIngressRule", rule, func() (any, error) {
 		return nil, n.driver.RemoveIngressRule(ctx, groupID, rule)
@@ -185,6 +188,7 @@ func (n *Networking) RemoveIngressRule(ctx context.Context, groupID string, rule
 	return err
 }
 
+//nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (n *Networking) RemoveEgressRule(ctx context.Context, groupID string, rule driver.SecurityRule) error {
 	_, err := n.do(ctx, "RemoveEgressRule", rule, func() (any, error) {
 		return nil, n.driver.RemoveEgressRule(ctx, groupID, rule)
@@ -515,6 +519,8 @@ func (n *Networking) DetachInternetGateway(
 }
 
 // AllocateAddress allocates a new elastic IP address.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
 func (n *Networking) AllocateAddress(
 	ctx context.Context, cfg driver.ElasticIPConfig,
 ) (*driver.ElasticIP, error) {
@@ -558,7 +564,7 @@ func (n *Networking) AssociateAddress(
 	ctx context.Context, allocationID, instanceID string,
 ) (string, error) {
 	out, err := n.do(ctx, "AssociateAddress", allocationID, func() (any, error) {
-		return n.driver.AssociateAddress(ctx, allocationID, instanceID)
+		return n.driver.AssociateAddress(ctx, allocationID, driver.AssociateAddressInput{InstanceID: instanceID})
 	})
 	if err != nil {
 		return "", err

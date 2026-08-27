@@ -2,13 +2,16 @@ package s3
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // S3 object ETags are defined as MD5 digests, not a security primitive
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -30,8 +33,12 @@ const (
 )
 
 var (
-	_ driver.Bucket          = (*Mock)(nil)
-	_ driver.VersionedBucket = (*Mock)(nil)
+	_ driver.Bucket            = (*Mock)(nil)
+	_ driver.VersionedBucket   = (*Mock)(nil)
+	_ driver.RawBucketConfig   = (*Mock)(nil)
+	_ driver.ObjectCopier      = (*Mock)(nil)
+	_ driver.RegionalBucket    = (*Mock)(nil)
+	_ driver.SystemPropsBucket = (*Mock)(nil)
 )
 
 type s3Object struct {
@@ -49,6 +56,10 @@ type s3Object struct {
 	// VersionID is the version id of the current object on a versioned bucket
 	// ("null" when suspended, empty when the bucket never had versioning).
 	VersionID string
+	// SystemProps holds the S3 system-defined object properties (Cache-Control,
+	// Content-Encoding, Content-Disposition, Content-Language, Expires) and the
+	// object's storage class, recorded on PutObject and echoed back on read.
+	SystemProps driver.ObjectSystemProps
 }
 
 // s3Version is one entry in a key's version history (a stored object or a
@@ -62,12 +73,16 @@ type s3Version struct {
 	lastModified string
 	metadata     map[string]string
 	deleteMarker bool
+	storageClass string
 }
 
 type multipartUpload struct {
 	id          string
 	key         string
 	contentType string
+	// tags is the create-time object tag set (S3 x-amz-tagging on
+	// CreateMultipartUpload), applied to the object when the upload completes.
+	tags map[string]string
 	// mu guards parts: the SDK uploader sends parts concurrently (UploadPart
 	// writes) while ListParts/CompleteMultipartUpload read them.
 	mu        sync.Mutex
@@ -92,15 +107,37 @@ type bucketMeta struct {
 	corsConfig    *driver.CORSConfig
 	encryption    *driver.EncryptionConfig
 	tags          map[string]string
-	notifications []QueueNotification
+	notifications []BucketNotification
+	// rawConfigs holds opaque configuration sub-resource documents (policy, cors,
+	// encryption, lifecycle, website, …) exactly as written, so the wire handler
+	// can echo them back byte-for-byte. Guarded by rawConfigMu.
+	rawConfigMu sync.Mutex
+	rawConfigs  map[string][]byte
 }
 
-// QueueNotification is one S3 bucket-notification target: an SQS queue that
-// receives events whose names match one of Events (e.g. "s3:ObjectCreated:*").
-type QueueNotification struct {
-	ID       string
-	QueueARN string
-	Events   []string
+// Notification target kinds for a bucket-notification configuration.
+const (
+	NotifyQueue  = "queue"
+	NotifyTopic  = "topic"
+	NotifyLambda = "lambda"
+)
+
+// NotificationFilterRule is one S3Key name-filter rule of a bucket notification:
+// Name is "prefix" or "suffix", Value the object-key fragment to match.
+type NotificationFilterRule struct {
+	Name  string
+	Value string
+}
+
+// BucketNotification is one S3 bucket-notification target: an SQS queue, SNS
+// topic, or Lambda function that receives events whose names match one of Events
+// and whose object key satisfies every S3Key filter rule.
+type BucketNotification struct {
+	ID      string
+	Target  string // NotifyQueue / NotifyTopic / NotifyLambda
+	ARN     string
+	Events  []string
+	Filters []NotificationFilterRule
 }
 
 // SQSDeliverer delivers an S3 event notification into an SQS queue by ARN. The
@@ -109,18 +146,45 @@ type SQSDeliverer interface {
 	DeliverExternal(ctx context.Context, queueARN, body string) error
 }
 
+// SNSPublisher publishes an S3 event notification to an SNS topic by ARN. The
+// SNS mock satisfies this, enabling real S3 -> SNS event delivery.
+type SNSPublisher interface {
+	PublishExternal(ctx context.Context, topicARN, message string) error
+}
+
+// LambdaInvoker asynchronously invokes a Lambda function by ARN with an S3 event
+// payload. The Lambda mock satisfies this, enabling real S3 -> Lambda delivery.
+type LambdaInvoker interface {
+	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+}
+
 // Mock is an in-memory mock implementation of the AWS S3 service.
 type Mock struct {
 	buckets    *memstore.Store[*bucketMeta]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	sqs        SQSDeliverer
+	sns        SNSPublisher
+	lambda     LambdaInvoker
+	eventSeq   atomic.Uint64 // monotonic source for object-event sequencer tokens
 }
 
-// SetSQSDeliverer wires the SQS backend so object-create events deliver to
-// buckets' SQS notification targets.
+// SetSQSDeliverer wires the SQS backend so object events deliver to buckets' SQS
+// notification targets.
 func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
 	m.sqs = d
+}
+
+// SetSNSPublisher wires the SNS backend so object events deliver to buckets' SNS
+// topic notification targets.
+func (m *Mock) SetSNSPublisher(p SNSPublisher) {
+	m.sns = p
+}
+
+// SetLambdaInvoker wires the Lambda backend so object events invoke buckets'
+// Lambda function notification targets.
+func (m *Mock) SetLambdaInvoker(i LambdaInvoker) {
+	m.lambda = i
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -177,7 +241,14 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-func (m *Mock) CreateBucket(_ context.Context, name string) error {
+func (m *Mock) CreateBucket(ctx context.Context, name string) error {
+	return m.CreateBucketInRegion(ctx, name, "")
+}
+
+// CreateBucketInRegion creates a bucket, recording region when non-empty
+// (S3 CreateBucketConfiguration.LocationConstraint). An empty region falls back
+// to the mock's default region, so GetBucketLocation reports it back correctly.
+func (m *Mock) CreateBucketInRegion(_ context.Context, name, region string) error {
 	if name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "bucket name cannot be empty")
 	}
@@ -186,9 +257,13 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.AlreadyExists, "bucket %q already exists", name)
 	}
 
+	if region == "" {
+		region = m.opts.Region
+	}
+
 	m.buckets.Set(name, &bucketMeta{
 		Name:       name,
-		Region:     m.opts.Region,
+		Region:     region,
 		CreatedAt:  m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		objects:    memstore.New[*s3Object](),
 		multiparts: memstore.New[*multipartUpload](),
@@ -207,9 +282,32 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q is not empty", name)
 	}
 
+	// A versioning-enabled/suspended bucket may hold no current objects yet still
+	// retain noncurrent versions and/or delete markers. Real S3 requires every
+	// object version (including delete markers) to be removed before the bucket
+	// can be deleted, so a non-empty version history also fails DeleteBucket.
+	if bkt.hasVersionHistory() {
+		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q is not empty", name)
+	}
+
 	m.buckets.Delete(name)
 
 	return nil
+}
+
+// hasVersionHistory reports whether the bucket retains any object version or
+// delete marker in its version history.
+func (b *bucketMeta) hasVersionHistory() bool {
+	b.versionsMu.Lock()
+	defer b.versionsMu.Unlock()
+
+	for _, chain := range b.versions {
+		if len(chain) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
@@ -234,27 +332,116 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	return result, nil
 }
 
+// md5Hex returns the hex-encoded MD5 digest of data. Real S3 reports an object's
+// ETag as its MD5 (32 hex chars); CLIs, transfer managers, and conditional-GET
+// clients compare against this exact shape.
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+	return hex.EncodeToString(sum[:])
+}
+
+// multipartETag computes the ETag S3 assigns a completed multipart object: the
+// MD5 of the concatenated raw MD5 digests of each part, suffixed with "-N" where
+// N is the part count. Tools detect multipart objects by that "-N" suffix.
+func multipartETag(orderedParts [][]byte) string {
+	var concat []byte
+	for _, p := range orderedParts {
+		sum := md5.Sum(p) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+		concat = append(concat, sum[:]...)
+	}
+
+	final := md5.Sum(concat) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+
+	return fmt.Sprintf("%x-%d", final, len(orderedParts))
+}
+
 func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
+	return m.PutObjectWithSystemProps(ctx, bucket, key, data, contentType, metadata, nil)
+}
+
+// PutObjectWithSystemProps implements driver.SystemPropsBucket: it writes the
+// object like PutObject and additionally records the S3 system-defined object
+// properties (Cache-Control, Content-Encoding, …) and storage class carried by
+// props (nil = none), so a later Head/Get/List reflects them.
+func (m *Mock) PutObjectWithSystemProps(
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, props *driver.ObjectSystemProps,
+) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
+	obj := m.newObject(key, data, contentType, metadata)
+	if props != nil {
+		obj.SystemProps = *props
+	}
+
+	m.storeObject(bkt, key, obj)
+
+	return m.afterPut(ctx, bkt, bucket, key, obj, data, contentType, metadata)
+}
+
+// PutObjectConditional implements driver.ConditionalBucket: it writes the object
+// only if the If-None-Match / If-Match precondition holds, evaluating the guard
+// and the store atomically under versionsMu so concurrent create-if-absent
+// writers cannot both win. A failed precondition returns a FailedPrecondition
+// error (mapped to 412 by the wire handler) and leaves any existing object
+// untouched.
+func (m *Mock) PutObjectConditional(
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, pre driver.S3PutPrecondition,
+) (*driver.ObjectInfo, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj := m.newObject(key, data, contentType, metadata)
+	if err := m.storeObjectConditional(bkt, key, obj, pre); err != nil {
+		return nil, err
+	}
+
+	if err := m.afterPut(ctx, bkt, bucket, key, obj, data, contentType, metadata); err != nil {
+		return nil, err
+	}
+
+	return &driver.ObjectInfo{
+		Key:          key,
+		Size:         obj.Size,
+		ContentType:  obj.ContentType,
+		ETag:         obj.ETag,
+		LastModified: obj.LastModified,
+		Metadata:     obj.Metadata,
+		VersionID:    obj.VersionID,
+	}, nil
+}
+
+// newObject builds a fresh current-object record from a PutObject body, copying
+// the bytes so a later caller mutation cannot alias stored data.
+func (m *Mock) newObject(key string, data []byte, contentType string, metadata map[string]string) *s3Object {
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
-	obj := &s3Object{
+
+	return &s3Object{
 		Key:          key,
 		Data:         dataCopy,
 		Size:         int64(len(data)),
 		ContentType:  contentType,
-		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
+		ETag:         md5Hex(data),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     maps.Clone(metadata),
 	}
-	m.storeObject(bkt, key, obj)
+}
 
-	// storeObject stamps obj.VersionID, so the engine ref matches what GetObject
-	// (and GetObjectVersion for a versioned PUT) reads back.
+// afterPut runs the side effects shared by every PutObject variant: persist the
+// bytes to a configured storage engine, emit request metrics, and fire the
+// s3:ObjectCreated notification. storeObject has already stamped obj.VersionID,
+// so the engine ref matches what GetObject reads back.
+func (m *Mock) afterPut(
+	ctx context.Context, bkt *bucketMeta, bucket, key string, obj *s3Object,
+	data []byte, contentType string, metadata map[string]string,
+) error {
 	if err := m.engineStore(ctx, bucket, key, obj.VersionID, contentType, data, metadata); err != nil {
 		return err
 	}
@@ -268,7 +455,7 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 	m.emitMetric("PutRequests", 1, "Count", dims)
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
 
-	m.notifyObjectCreated(bkt, bucket, key, int64(len(data)))
+	m.notifyObjectCreated(ctx, bkt, bucket, key, int64(len(data)), obj.ETag, obj.VersionID)
 
 	return nil
 }
@@ -283,14 +470,36 @@ const (
 
 func newVersionID() string { return idgen.GenerateID("") }
 
-// storeObject sets key's current object and, on a versioned bucket, records the
-// new version in history (stamping obj.VersionID). Enabled appends a fresh
-// version; Suspended overwrites the reusable "null" version; an unversioned
-// bucket keeps no history.
+// storeObject records key's current object under versionsMu (see
+// storeObjectLocked for the versioning behavior).
 func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
 
+	m.storeObjectLocked(bkt, key, obj)
+}
+
+// storeObjectConditional evaluates an If-None-Match / If-Match precondition
+// against the current object and, only if it holds, stores obj — both under a
+// single versionsMu hold so the check and the write are atomic.
+func (m *Mock) storeObjectConditional(bkt *bucketMeta, key string, obj *s3Object, pre driver.S3PutPrecondition) error {
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	if err := evalPutPrecondition(bkt, key, pre); err != nil {
+		return err
+	}
+
+	m.storeObjectLocked(bkt, key, obj)
+
+	return nil
+}
+
+// storeObjectLocked records key's current object; the caller must hold
+// versionsMu. On a versioned bucket it also appends/overwrites the version
+// history (stamping obj.VersionID). Enabled appends a fresh version; Suspended
+// overwrites the reusable "null" version; an unversioned bucket keeps no history.
+func (m *Mock) storeObjectLocked(bkt *bucketMeta, key string, obj *s3Object) {
 	// When an engine holds the bytes, the version record keeps only metadata +
 	// size; its bytes live in the engine under the version id (dropData).
 	dropData := m.opts.StorageEngine != nil
@@ -307,6 +516,36 @@ func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
 	bkt.objects.Set(key, obj)
 }
 
+// evalPutPrecondition reports whether a conditional PutObject may proceed. It
+// runs under versionsMu, reading the current object (a delete marker leaves no
+// current object, so the key reads as absent). If-None-Match: "*" requires the
+// object be absent; a specific ETag requires no current object with that ETag;
+// If-Match requires a current object whose ETag matches. A violated condition
+// returns FailedPrecondition (mapped to 412 PreconditionFailed at the wire).
+func evalPutPrecondition(bkt *bucketMeta, key string, pre driver.S3PutPrecondition) error {
+	cur, exists := bkt.objects.Get(key)
+
+	if pre.IfNoneMatch != "" {
+		if pre.IfNoneMatch == "*" && exists {
+			return failedPrecondition()
+		}
+
+		if pre.IfNoneMatch != "*" && exists && etagMatches(pre.IfNoneMatch, cur.ETag) {
+			return failedPrecondition()
+		}
+	}
+
+	if pre.IfMatch != "" && (!exists || !etagMatches(pre.IfMatch, cur.ETag)) {
+		return failedPrecondition()
+	}
+
+	return nil
+}
+
+func failedPrecondition() error {
+	return cerrors.New(cerrors.FailedPrecondition, "At least one of the preconditions you specified did not hold")
+}
+
 func versionFromObject(obj *s3Object, dropData bool) *s3Version {
 	data := obj.Data
 	if dropData {
@@ -321,6 +560,7 @@ func versionFromObject(obj *s3Object, dropData bool) *s3Version {
 		etag:         obj.ETag,
 		lastModified: obj.LastModified,
 		metadata:     obj.Metadata,
+		storageClass: obj.SystemProps.StorageClass,
 	}
 }
 
@@ -370,14 +610,14 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 	m.emitMetric("GetRequests", 1, "Count", dims)
 	m.emitMetric("BytesDownloaded", float64(obj.Size), "Bytes", dims)
 
-	return &driver.Object{
-		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-			VersionID: obj.VersionID,
-		},
-		Data: dataCopy,
-	}, nil
+	info := driver.ObjectInfo{
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
+		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+		VersionID: obj.VersionID,
+	}
+	applyObjectSystemProps(&info, obj)
+
+	return &driver.Object{Info: info, Data: dataCopy}, nil
 }
 
 func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -411,7 +651,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("DeleteRequests", 1, "Count", dims)
 
-	m.notifyObjectRemoved(bkt, bucket, key)
+	m.notifyObjectRemoved(ctx, bkt, bucket, key, vid, deleteMarker)
 
 	return nil
 }
@@ -455,11 +695,26 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
-	return &driver.ObjectInfo{
+	info := &driver.ObjectInfo{
 		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		VersionID: obj.VersionID,
-	}, nil
+	}
+	applyObjectSystemProps(info, obj)
+
+	return info, nil
+}
+
+// applyObjectSystemProps copies obj's S3 system-defined object properties and
+// storage class onto info, so a Head/Get/List response reflects what PutObject
+// recorded.
+func applyObjectSystemProps(info *driver.ObjectInfo, obj *s3Object) {
+	info.CacheControl = obj.SystemProps.CacheControl
+	info.ContentEncoding = obj.SystemProps.ContentEncoding
+	info.ContentDisposition = obj.SystemProps.ContentDisposition
+	info.ContentLanguage = obj.SystemProps.ContentLanguage
+	info.Expires = obj.SystemProps.Expires
+	info.StorageClass = obj.SystemProps.StorageClass
 }
 
 func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOptions) (*driver.ListResult, error) {
@@ -471,20 +726,109 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	allKeys := bkt.objects.Keys()
 	sort.Strings(allKeys)
 
-	var matchedObjects []driver.ObjectInfo
+	matchedObjects, commonPrefixSet := matchListKeys(bkt, allKeys, opts)
 
-	commonPrefixSet := make(map[string]struct{})
+	maxKeys := opts.MaxKeys
+	if maxKeys <= 0 {
+		maxKeys = s3DefaultMaxKeys
+	}
+
+	// Real S3 caps object keys and rolled-up common prefixes JOINTLY by
+	// MaxKeys over a single lexicographically-ordered stream: each prefix is
+	// returned on exactly one page, and truncation carries an offset in the
+	// continuation token. Merge the two into one ordered stream, paginate
+	// that, then split the returned page back into keys and prefixes.
+	entries := mergeListEntries(matchedObjects, commonPrefixSet)
+
+	page, err := pagination.Paginate(entries, opts.PageToken, maxKeys)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
+
+	objects := make([]driver.ObjectInfo, 0, len(page.Items))
+	commonPrefixes := make([]string, 0, len(page.Items))
+
+	for i := range page.Items {
+		e := &page.Items[i]
+		if e.isPrefix {
+			commonPrefixes = append(commonPrefixes, e.key)
+			continue
+		}
+
+		// Clone metadata only for the page actually returned — cloning every
+		// match would make a paged scan O(bucket) allocations per request.
+		obj := e.obj
+		obj.Metadata = maps.Clone(obj.Metadata)
+		objects = append(objects, obj)
+	}
+
+	dims := map[string]string{"BucketName": bucket}
+	m.emitMetric("AllRequests", 1, "Count", dims)
+	m.emitMetric("ListRequests", 1, "Count", dims)
+
+	return &driver.ListResult{
+		Objects:        objects,
+		CommonPrefixes: commonPrefixes,
+		NextPageToken:  page.NextPageToken,
+		IsTruncated:    page.HasMore,
+	}, nil
+}
+
+// listEntry is one item in the combined listing stream: either an object key
+// or a rolled-up common prefix. S3 caps keys and common prefixes jointly by
+// MaxKeys over one lexicographic ordering, so pagination runs against the
+// merged stream rather than over keys alone.
+type listEntry struct {
+	key      string
+	isPrefix bool
+	obj      driver.ObjectInfo
+}
+
+// mergeListEntries builds the single lexicographically-sorted stream of object
+// keys and common prefixes. Keys are unique across the two sets — an object
+// that rolls up into a prefix is excluded from matchedObjects — so the merged
+// ordering is total and stable across paged calls, keeping offset tokens valid.
+func mergeListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{}) []listEntry {
+	entries := make([]listEntry, 0, len(objects)+len(prefixSet))
+
+	for i := range objects {
+		entries = append(entries, listEntry{key: objects[i].Key, obj: objects[i]})
+	}
+
+	for p := range prefixSet {
+		entries = append(entries, listEntry{key: p, isPrefix: true})
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+
+	return entries
+}
+
+// matchListKeys applies the prefix, start-after, and delimiter filters to the
+// sorted key set, returning the matched objects and the rolled-up common
+// prefixes. start-after begins the listing strictly after the given key. It is
+// applied unconditionally so the filtered array stays identical across a paged
+// scan: our continuation is an offset into this array, and a real S3
+// continuation always resumes past the start-after key anyway, so re-applying
+// it on a resumed page is a correctness no-op that keeps the offset stable.
+func matchListKeys(
+	bkt *bucketMeta, allKeys []string, opts driver.ListOptions,
+) (matchedObjects []driver.ObjectInfo, commonPrefixSet map[string]struct{}) {
+	commonPrefixSet = make(map[string]struct{})
 
 	for _, k := range allKeys {
 		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
 			continue
 		}
 
+		if opts.StartAfter != "" && k <= opts.StartAfter {
+			continue
+		}
+
 		if opts.Delimiter != "" {
 			rest := k[len(opts.Prefix):]
 
-			idx := strings.Index(rest, opts.Delimiter)
-			if idx >= 0 {
+			if idx := strings.Index(rest, opts.Delimiter); idx >= 0 {
 				commonPrefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
 				continue
 			}
@@ -495,45 +839,15 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 			continue
 		}
 
-		matchedObjects = append(matchedObjects, driver.ObjectInfo{
+		info := driver.ObjectInfo{
 			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
-		})
+		}
+		applyObjectSystemProps(&info, obj)
+		matchedObjects = append(matchedObjects, info)
 	}
 
-	commonPrefixes := make([]string, 0, len(commonPrefixSet))
-	for p := range commonPrefixSet {
-		commonPrefixes = append(commonPrefixes, p)
-	}
-
-	sort.Strings(commonPrefixes)
-
-	maxKeys := opts.MaxKeys
-	if maxKeys <= 0 {
-		maxKeys = s3DefaultMaxKeys
-	}
-
-	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
-	}
-
-	// Clone metadata only for the page actually returned — cloning every
-	// match would make a paged scan O(bucket) allocations per request.
-	for i := range page.Items {
-		page.Items[i].Metadata = maps.Clone(page.Items[i].Metadata)
-	}
-
-	dims := map[string]string{"BucketName": bucket}
-	m.emitMetric("AllRequests", 1, "Count", dims)
-	m.emitMetric("ListRequests", 1, "Count", dims)
-
-	return &driver.ListResult{
-		Objects:        page.Items,
-		CommonPrefixes: commonPrefixes,
-		NextPageToken:  page.NextPageToken,
-		IsTruncated:    page.HasMore,
-	}, nil
+	return matchedObjects, commonPrefixSet
 }
 
 func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
@@ -563,7 +877,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	dstObj := &s3Object{
 		Key: dstKey, Data: dataCopy, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
-		Metadata: meta,
+		Metadata: meta, Tags: maps.Clone(srcObj.Tags), SystemProps: srcObj.SystemProps,
 	}
 	m.storeObject(dstBkt, dstKey, dstObj)
 
@@ -581,9 +895,227 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("CopyRequests", 1, "Count", dims)
 
-	m.notifyObjectCreated(dstBkt, dstBucket, dstKey, srcObj.Size)
+	m.notifyObjectCreated(ctx, dstBkt, dstBucket, dstKey, srcObj.Size, dstObj.ETag, dstObj.VersionID)
 
 	return nil
+}
+
+// copySrcSnapshot is the resolved source object for a server-side copy.
+type copySrcSnapshot struct {
+	data         []byte
+	size         int64
+	contentType  string
+	etag         string
+	lastModified string
+	metadata     map[string]string
+	tags         map[string]string
+	versionID    string
+	systemProps  driver.ObjectSystemProps
+}
+
+// copyDstSystemProps resolves the destination object's system properties for a
+// server-side copy: the content properties inherit from the source (default
+// COPY directive) or come from the request (REPLACE), while the storage class
+// always comes from the request's x-amz-storage-class (never inherited).
+func copyDstSystemProps(req *driver.CopyObjectRequest, src *copySrcSnapshot) driver.ObjectSystemProps {
+	props := src.systemProps
+	if req.ReplaceMetadata {
+		props = req.SystemProps
+	}
+
+	props.StorageClass = req.SystemProps.StorageClass
+
+	return props
+}
+
+// CopyObjectV2 performs a full-fidelity S3 server-side copy: it honors a
+// versioned source, the COPY/REPLACE metadata directive, and copy-source
+// preconditions (a failed precondition aborts with FailedPrecondition; a
+// delete-marker source version with InvalidArgument). The destination inherits
+// the source ETag exactly (COPY) unless REPLACE supplies new metadata.
+func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
+	src, err := m.resolveCopySource(ctx, req.Src, req.SrcVersionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkCopyPreconditions(req, src); err != nil {
+		return nil, err
+	}
+
+	dstBkt, ok := m.buckets.Get(req.DstBucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "destination bucket %q not found", req.DstBucket)
+	}
+
+	metadata, contentType := src.metadata, src.contentType
+	if req.ReplaceMetadata {
+		metadata = req.Metadata
+		contentType = req.ContentType
+
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+	}
+
+	dataCopy := make([]byte, len(src.data))
+	copy(dataCopy, src.data)
+
+	// COPY tagging directive (the default) inherits the source object's tags;
+	// REPLACE takes the request's x-amz-tagging tag set instead.
+	tags := src.tags
+	if req.ReplaceTags {
+		tags = req.Tags
+	}
+
+	dstObj := &s3Object{
+		Key: req.DstKey, Data: dataCopy, Size: src.size, ContentType: contentType,
+		ETag: src.etag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
+		Metadata: maps.Clone(metadata), Tags: maps.Clone(tags), SystemProps: copyDstSystemProps(req, src),
+	}
+	m.storeObject(dstBkt, req.DstKey, dstObj)
+
+	if err := m.engineStore(ctx, req.DstBucket, req.DstKey, dstObj.VersionID, contentType, dataCopy, metadata); err != nil {
+		return nil, err
+	}
+
+	if m.opts.StorageEngine != nil {
+		dstObj.Data = nil
+	}
+
+	dims := map[string]string{"BucketName": req.DstBucket}
+	m.emitMetric("AllRequests", 1, "Count", dims)
+	m.emitMetric("CopyRequests", 1, "Count", dims)
+
+	m.notifyObjectCreated(ctx, dstBkt, req.DstBucket, req.DstKey, src.size, dstObj.ETag, dstObj.VersionID)
+
+	return &driver.CopyObjectResult{
+		ETag: dstObj.ETag, LastModified: dstObj.LastModified,
+		VersionID: dstObj.VersionID, SourceVersionID: src.versionID,
+	}, nil
+}
+
+// resolveCopySource loads the source object for a copy: a specific version when
+// versionID is set (a delete-marker version is rejected with InvalidArgument),
+// otherwise the current object.
+func (m *Mock) resolveCopySource(ctx context.Context, src driver.CopySource, versionID string) (*copySrcSnapshot, error) {
+	srcBkt, ok := m.buckets.Get(src.Bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "source bucket %q not found", src.Bucket)
+	}
+
+	if versionID != "" {
+		return m.resolveCopySourceVersion(ctx, srcBkt, src, versionID)
+	}
+
+	srcObj, ok := srcBkt.objects.Get(src.Key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "source object %q not found", src.Key)
+	}
+
+	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: srcObj.VersionID}, srcObj.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &copySrcSnapshot{
+		data: data, size: srcObj.Size, contentType: srcObj.ContentType, etag: srcObj.ETag,
+		lastModified: srcObj.LastModified, metadata: srcObj.Metadata, tags: srcObj.Tags, versionID: srcObj.VersionID,
+		systemProps: srcObj.SystemProps,
+	}, nil
+}
+
+func (m *Mock) resolveCopySourceVersion(
+	ctx context.Context, srcBkt *bucketMeta, src driver.CopySource, versionID string,
+) (*copySrcSnapshot, error) {
+	srcBkt.versionsMu.Lock()
+	v := findVersion(srcBkt, src.Key, versionID)
+	srcBkt.versionsMu.Unlock()
+
+	if v == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "source version %q of %q not found", versionID, src.Key)
+	}
+
+	if v.deleteMarker {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "source version %q of %q is a delete marker", versionID, src.Key)
+	}
+
+	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: versionID}, v.data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &copySrcSnapshot{
+		data: data, size: v.size, contentType: v.contentType, etag: v.etag,
+		lastModified: v.lastModified, metadata: v.metadata, versionID: versionID,
+		systemProps: driver.ObjectSystemProps{StorageClass: v.storageClass},
+	}, nil
+}
+
+// checkCopyPreconditions evaluates the four x-amz-copy-source-if-* headers
+// against the source, returning FailedPrecondition when one is not satisfied.
+//
+// AWS's CopyObject API reference documents a combined-precedence override: when
+// both x-amz-copy-source-if-match and x-amz-copy-source-if-unmodified-since are
+// present and if-match evaluates true, S3 returns 200 OK and copies the data
+// even if if-unmodified-since evaluates false. if-match therefore overrides the
+// if-unmodified-since result rather than the two being independently ANDed.
+func checkCopyPreconditions(req *driver.CopyObjectRequest, src *copySrcSnapshot) error {
+	etag := strings.Trim(src.etag, `"`)
+	skipUnmodified := req.IfMatch != "" && !req.IfUnmodifiedSince.IsZero() && etagMatches(req.IfMatch, etag)
+
+	if err := checkCopyETagPreconditions(req, src.etag); err != nil {
+		return err
+	}
+
+	return checkCopyTimePreconditions(req, src.lastModified, skipUnmodified)
+}
+
+func checkCopyETagPreconditions(req *driver.CopyObjectRequest, etag string) error {
+	etag = strings.Trim(etag, `"`)
+
+	if req.IfMatch != "" && !etagMatches(req.IfMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-match precondition failed")
+	}
+
+	if req.IfNoneMatch != "" && etagMatches(req.IfNoneMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-none-match precondition failed")
+	}
+
+	return nil
+}
+
+// checkCopyTimePreconditions evaluates the two time-based copy-source headers.
+// skipUnmodified suppresses the if-unmodified-since check when a true if-match
+// header has taken precedence over it (see checkCopyPreconditions).
+func checkCopyTimePreconditions(req *driver.CopyObjectRequest, lastModified string, skipUnmodified bool) error {
+	if req.IfUnmodifiedSince.IsZero() && req.IfModifiedSince.IsZero() {
+		return nil
+	}
+
+	mod, err := time.Parse(s3TimeFormat, lastModified)
+	if err != nil {
+		return nil // an unparseable timestamp can't be evaluated; do not block the copy
+	}
+
+	if !skipUnmodified && !req.IfUnmodifiedSince.IsZero() && mod.After(req.IfUnmodifiedSince) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-unmodified-since precondition failed")
+	}
+
+	if !req.IfModifiedSince.IsZero() && !mod.After(req.IfModifiedSince) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-modified-since precondition failed")
+	}
+
+	return nil
+}
+
+// etagMatches reports whether an If-[None-]Match header value matches the
+// object ETag: "*" matches any object; otherwise a quote-insensitive,
+// case-insensitive comparison.
+func etagMatches(header, etag string) bool {
+	header = strings.Trim(header, `"`)
+
+	return header == "*" || strings.EqualFold(header, etag)
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
@@ -704,7 +1236,15 @@ func objectExpired(obj *s3Object, cfg *driver.LifecycleConfig, now time.Time) bo
 	return false
 }
 
-func (m *Mock) CreateMultipartUpload(_ context.Context, bucket, key, contentType string) (*driver.MultipartUpload, error) {
+func (m *Mock) CreateMultipartUpload(ctx context.Context, bucket, key, contentType string) (*driver.MultipartUpload, error) {
+	return m.CreateMultipartUploadWithTagging(ctx, bucket, key, contentType, nil)
+}
+
+// CreateMultipartUploadWithTagging begins a multipart upload carrying the
+// create-time x-amz-tagging tag set, applied to the object on completion.
+func (m *Mock) CreateMultipartUploadWithTagging(
+	_ context.Context, bucket, key, contentType string, tags map[string]string,
+) (*driver.MultipartUpload, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -717,6 +1257,7 @@ func (m *Mock) CreateMultipartUpload(_ context.Context, bucket, key, contentType
 		id:          uploadID,
 		key:         key,
 		contentType: contentType,
+		tags:        maps.Clone(tags),
 		parts:       make(map[int][]byte),
 		createdAt:   now,
 	})
@@ -744,7 +1285,7 @@ func (m *Mock) UploadPart(_ context.Context, bucket, _, uploadID string, partNum
 	mp.parts[partNumber] = dataCopy
 	mp.mu.Unlock()
 
-	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+	etag := md5Hex(data)
 
 	return &driver.UploadPart{
 		PartNumber: partNumber, ETag: etag, Size: int64(len(data)),
@@ -779,7 +1320,7 @@ func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]drive
 		data := mp.parts[n]
 		out = append(out, driver.UploadPart{
 			PartNumber: n,
-			ETag:       fmt.Sprintf("%x", sha256.Sum256(data)),
+			ETag:       md5Hex(data),
 			Size:       int64(len(data)),
 		})
 	}
@@ -800,13 +1341,29 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 
 	mp.mu.Lock()
 	for _, p := range parts {
-		if _, exists := mp.parts[p.PartNumber]; !exists {
+		stored, exists := mp.parts[p.PartNumber]
+		if !exists {
 			mp.mu.Unlock()
 			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
 		}
+
+		// Real S3 validates each supplied part ETag against the stored part and
+		// rejects a mismatch with InvalidPart. An empty client ETag skips the
+		// check (some callers omit it); a non-empty one must match the stored
+		// part's MD5, case-insensitively.
+		if p.ETag != "" && !strings.EqualFold(strings.Trim(p.ETag, `"`), md5Hex(stored)) {
+			mp.mu.Unlock()
+			return cerrors.Newf(cerrors.InvalidArgument, "part %d ETag does not match the uploaded part in upload %q", p.PartNumber, uploadID)
+		}
 	}
-	data := assemblePartsInOrder(mp.parts, parts)
+
+	ordered := orderedPartData(mp.parts, parts)
 	mp.mu.Unlock()
+
+	var data []byte
+	for _, p := range ordered {
+		data = append(data, p...)
+	}
 
 	// storeObject (not a bare objects.Set) so a completed multipart upload is
 	// versioned like a PutObject on a versioning-enabled bucket.
@@ -815,9 +1372,10 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 		Data:         data,
 		Size:         int64(len(data)),
 		ContentType:  mp.contentType,
-		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
+		ETag:         multipartETag(ordered),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     make(map[string]string),
+		Tags:         maps.Clone(mp.tags),
 	}
 	m.storeObject(bkt, key, obj)
 
@@ -838,24 +1396,25 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 	m.emitMetric("PutRequests", 1, "Count", dims)
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
 
-	m.notifyObjectCreated(bkt, bucket, key, int64(len(data)))
+	m.notifyObjectCreated(ctx, bkt, bucket, key, int64(len(data)), obj.ETag, obj.VersionID)
 
 	return nil
 }
 
-func assemblePartsInOrder(allParts map[int][]byte, parts []driver.UploadPart) []byte {
-	// S3 assembles parts by ascending PartNumber regardless of the order the
-	// client lists them in CompleteMultipartUpload; sort so an out-of-order
-	// (or unsorted-SDK) Complete doesn't corrupt the object.
+// orderedPartData returns each requested part's bytes in ascending PartNumber
+// order. S3 assembles (and hashes) parts by ascending PartNumber regardless of
+// the order the client lists them in CompleteMultipartUpload; sorting keeps an
+// out-of-order (or unsorted-SDK) Complete from corrupting the object or ETag.
+func orderedPartData(allParts map[int][]byte, parts []driver.UploadPart) [][]byte {
 	ordered := append([]driver.UploadPart(nil), parts...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].PartNumber < ordered[j].PartNumber })
 
-	var data []byte
+	out := make([][]byte, 0, len(ordered))
 	for _, p := range ordered {
-		data = append(data, allParts[p.PartNumber]...)
+		out = append(out, allParts[p.PartNumber])
 	}
 
-	return data
+	return out
 }
 
 func (m *Mock) AbortMultipartUpload(_ context.Context, bucket, _, uploadID string) error {
@@ -967,8 +1526,12 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 	v := findVersion(bkt, key, versionID)
 	bkt.versionsMu.Unlock()
 
-	if v == nil || v.deleteMarker {
+	if v == nil {
 		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	if v.deleteMarker {
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
 	}
 
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: versionID}, v.data)
@@ -997,8 +1560,12 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 	v := findVersion(bkt, key, versionID)
 	bkt.versionsMu.Unlock()
 
-	if v == nil || v.deleteMarker {
+	if v == nil {
 		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	if v.deleteMarker {
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
 	}
 
 	info := infoFromVersion(key, v)
@@ -1019,8 +1586,16 @@ func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID s
 	defer bkt.versionsMu.Unlock()
 
 	if versionID == "" {
-		vid, marker, _ := m.deleteTopLevelLocked(bkt, key)
+		vid, marker, existed := m.deleteTopLevelLocked(bkt, key)
+		if !existed {
+			// Unversioned bucket, key never existed: a no-op idempotent delete,
+			// matching real S3 — nothing was removed, so no event fires.
+			return "", false, nil
+		}
+
 		_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
+
+		m.notifyObjectRemoved(ctx, bkt, bucket, key, vid, marker)
 
 		return vid, marker, nil
 	}
@@ -1049,6 +1624,11 @@ func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID s
 	m.recomputeCurrentLocked(bkt, key)
 
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key, Version: versionID})
+
+	// An explicit versionId always permanently removes that version — even when
+	// the removed version was itself a delete marker — so this always fires
+	// ObjectRemoved:Delete, never DeleteMarkerCreated.
+	m.notifyObjectRemoved(ctx, bkt, bucket, key, versionID, false)
 
 	return versionID, removed.deleteMarker, nil
 }
@@ -1105,6 +1685,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 					Key: k, VersionID: nullVersionID, IsLatest: true,
 					Size: obj.Size, ETag: obj.ETag,
 					ContentType: obj.ContentType, LastModified: obj.LastModified,
+					StorageClass: obj.SystemProps.StorageClass,
 				})
 			}
 
@@ -1117,6 +1698,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 				Key: k, VersionID: v.versionID, IsLatest: i == len(chain)-1,
 				DeleteMarker: v.deleteMarker, Size: v.size, ETag: v.etag,
 				ContentType: v.contentType, LastModified: v.lastModified,
+				StorageClass: v.storageClass,
 			})
 		}
 	}
@@ -1345,6 +1927,64 @@ func (m *Mock) DeleteObjectTagging(_ context.Context, bucket, key string) error 
 	}
 
 	obj.Tags = nil
+
+	return nil
+}
+
+// PutBucketConfig stores an opaque bucket-configuration document (policy, cors,
+// encryption, lifecycle, website, …) verbatim so GetBucketConfig can echo it.
+func (m *Mock) PutBucketConfig(_ context.Context, bucket, name string, body []byte) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	stored := make([]byte, len(body))
+	copy(stored, body)
+
+	bkt.rawConfigMu.Lock()
+	if bkt.rawConfigs == nil {
+		bkt.rawConfigs = make(map[string][]byte)
+	}
+
+	bkt.rawConfigs[name] = stored
+	bkt.rawConfigMu.Unlock()
+
+	return nil
+}
+
+// GetBucketConfig returns a stored configuration document, or NotFound when the
+// sub-resource was never configured.
+func (m *Mock) GetBucketConfig(_ context.Context, bucket, name string) ([]byte, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.rawConfigMu.Lock()
+	defer bkt.rawConfigMu.Unlock()
+
+	body, ok := bkt.rawConfigs[name]
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "no %s configuration for bucket %q", name, bucket)
+	}
+
+	out := make([]byte, len(body))
+	copy(out, body)
+
+	return out, nil
+}
+
+// DeleteBucketConfig removes a stored configuration document (idempotent).
+func (m *Mock) DeleteBucketConfig(_ context.Context, bucket, name string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.rawConfigMu.Lock()
+	delete(bkt.rawConfigs, name)
+	bkt.rawConfigMu.Unlock()
 
 	return nil
 }

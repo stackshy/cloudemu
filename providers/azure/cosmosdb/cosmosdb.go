@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +71,8 @@ type Mock struct {
 var _ driver.TableAttributes = (*Mock)(nil)
 
 // SetTableAttributes seeds the Cosmos-account cost attributes for a table.
+//
+//nolint:gocritic // hugeParam: attrs mirrors the optional-capability signature.
 func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -79,6 +82,25 @@ func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) 
 	}
 
 	m.accountAttrs[table] = attrs
+}
+
+// AccountTables returns the names of tables that have been registered as Cosmos
+// DB accounts (i.e. had account attributes seeded through SetTableAttributes),
+// sorted for a deterministic listing. Data-plane containers, which never carry
+// account attributes, are excluded — so an ARM account list returns only real
+// accounts, not the SQL containers sharing this driver.
+func (m *Mock) AccountTables() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.accountAttrs))
+	for name := range m.accountAttrs {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // TableAttributes implements the database TableAttributes optional capability,
@@ -107,6 +129,13 @@ func (m *Mock) TableAttributes(_ context.Context, table string) (driver.AccountA
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// Clock exposes the mock's injected clock so the Cosmos wire handler can drive
+// its container-TTL expiry and write-time timestamps from the same clock,
+// letting a FakeClock set on the provider make those deterministic in tests.
+func (m *Mock) Clock() config.Clock {
+	return m.opts.Clock
 }
 
 func (m *Mock) emitMetric(container string, metrics map[string]float64) {
@@ -171,6 +200,36 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	delete(m.tables, name)
 
 	return nil
+}
+
+// PurgeAccount fully tears down a Cosmos databaseAccount's driver footprint: the
+// account's own table, every data-plane container table in its namespace (the
+// tables whose name is prefixed "{account}/"), and the account's discovery
+// attributes (accountAttrs). A plain DeleteTable removes only the single named
+// table, which left the deleted account visible in AccountTables and its
+// container tables live; PurgeAccount is the account-delete teardown that makes
+// a deleted account stop listing and a same-name recreate start from an empty
+// namespace.
+func (m *Mock) PurgeAccount(account string) {
+	// Guard against an empty account: prefix "" makes HasPrefix always true, so an
+	// empty account would match and delete every table (a match-all data-loss
+	// footgun). Purging the empty/default account is a no-op.
+	if account == "" {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.tables, account)
+	delete(m.accountAttrs, account)
+
+	prefix := account + "/"
+	for name := range m.tables {
+		if strings.HasPrefix(name, prefix) {
+			delete(m.tables, name)
+		}
+	}
 }
 
 // DescribeTable returns the configuration of a container (table).

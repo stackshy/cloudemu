@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -81,6 +82,18 @@ func key(resourceGroup, name string) string {
 	return resourceGroup + "/" + name
 }
 
+// subOrDefault returns the request subscription, falling back to the emulator's
+// default account when a caller (e.g. the typed Go API) supplies none. ARM
+// resource IDs must reflect the subscription the request targeted, not the
+// default account.
+func (m *Mock) subOrDefault(subscription string) string {
+	if subscription != "" {
+		return subscription
+	}
+
+	return m.opts.AccountID
+}
+
 // CreateWorkspace creates a workspace, completing provisioning synchronously.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
@@ -107,15 +120,20 @@ func (m *Mock) CreateWorkspace(_ context.Context, cfg driver.WorkspaceConfig) (*
 		updated.Tags = copyMap(cfg.Tags)
 		updated.SKUName = skuOrDefault(cfg.SKUName)
 		updated.SKUTier = cfg.SKUTier
+		// ARM PUT replaces the resource: apply the incoming VNet/CMK/network
+		// properties so a re-PUT reflects the new desired state.
+		updated.WorkspaceExtendedProperties = cfg.WorkspaceExtendedProperties
 		m.workspaces.Set(k, &updated)
 
 		return cloneWorkspace(&updated), nil
 	}
 
 	wsID := workspaceID(k)
+	sub := m.subOrDefault(cfg.Subscription)
 	ws := &driver.Workspace{
-		ID:                     idgen.AzureID(m.opts.AccountID, cfg.ResourceGroup, providerNamespace, resourceType, cfg.Name),
+		ID:                     idgen.AzureID(sub, cfg.ResourceGroup, providerNamespace, resourceType, cfg.Name),
 		Name:                   cfg.Name,
+		Subscription:           sub,
 		ResourceGroup:          cfg.ResourceGroup,
 		Location:               cfg.Location,
 		SKUName:                skuOrDefault(cfg.SKUName),
@@ -126,6 +144,8 @@ func (m *Mock) CreateWorkspace(_ context.Context, cfg driver.WorkspaceConfig) (*
 		ProvisioningState:      driver.StateSucceeded,
 		Tags:                   copyMap(cfg.Tags),
 		CreatedAt:              m.opts.Clock.Now().UTC().Format(time.RFC3339),
+
+		WorkspaceExtendedProperties: cfg.WorkspaceExtendedProperties,
 	}
 
 	m.workspaces.Set(k, ws)
@@ -162,9 +182,13 @@ func (m *Mock) UpdateWorkspaceTags(_ context.Context, resourceGroup, name string
 	}
 
 	// Mutate a copy and swap it in rather than writing the shared struct in
-	// place, so concurrent readers never observe a torn update.
+	// place, so concurrent readers never observe a torn update. A nil tags map
+	// leaves the field unchanged (PATCH semantics); an explicit empty map clears.
 	updated := *ws
-	updated.Tags = copyMap(tags)
+	if tags != nil {
+		updated.Tags = copyMap(tags)
+	}
+
 	m.workspaces.Set(k, &updated)
 
 	return cloneWorkspace(&updated), nil
@@ -175,7 +199,7 @@ func (m *Mock) ListWorkspacesByResourceGroup(_ context.Context, resourceGroup st
 	out := make([]driver.Workspace, 0)
 
 	for _, ws := range m.workspaces.All() {
-		if ws.ResourceGroup == resourceGroup {
+		if strings.EqualFold(ws.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneWorkspace(ws))
 		}
 	}

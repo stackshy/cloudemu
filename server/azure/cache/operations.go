@@ -27,11 +27,13 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 	cfg := cachedriver.CacheConfig{
 		Name:     rp.ResourceName,
 		Engine:   "redis",
+		Location: body.Location,
 		NodeType: nodeTypeFromBody(&body),
 		Tags:     body.Tags,
 		Scope:    scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
 	}
 	applySKUAndClustering(&cfg, &body)
+	applyRedisProperties(&cfg, &body)
 
 	if _, err := h.cache.GetCache(r.Context(), rp.ResourceName); err == nil {
 		info, uerr := h.cache.UpdateCache(r.Context(), cfg)
@@ -39,7 +41,11 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 			azurearm.WriteCErr(w, uerr)
 			return
 		}
-		azurearm.WriteJSON(w, http.StatusOK, toRedisJSON(rp, info))
+
+		resp := toRedisJSON(rp, info)
+		attachAccessKeys(&resp, info)
+		azurearm.WriteJSON(w, http.StatusOK, resp)
+
 		return
 	}
 
@@ -49,7 +55,23 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusCreated, toRedisJSON(rp, info))
+	resp := toRedisJSON(rp, info)
+	attachAccessKeys(&resp, info)
+	azurearm.WriteJSON(w, http.StatusCreated, resp)
+}
+
+// attachAccessKeys adds the cache's access keys to a Create/Update response.
+// Real Azure returns properties.accessKeys only on create/update (never on
+// Get/List), so Get and List keep using the bare toRedisJSON.
+func attachAccessKeys(out *redisJSON, info *cachedriver.CacheInfo) {
+	if info.PrimaryKey == "" && info.SecondaryKey == "" {
+		return
+	}
+
+	out.Properties.AccessKeys = &accessKeysJSON{
+		PrimaryKey:   info.PrimaryKey,
+		SecondaryKey: info.SecondaryKey,
+	}
 }
 
 // skuNamePremium is the Redis SKU tier that supports clustering (shardCount /
@@ -102,6 +124,23 @@ func applySKUAndClustering(cfg *cachedriver.CacheConfig, body *redisJSON) {
 	}
 }
 
+// applyRedisProperties copies the remaining top-level Redis properties
+// (redisConfiguration, enableNonSslPort, minimumTlsVersion, publicNetworkAccess,
+// redisVersion) from the request onto the driver config so they round-trip
+// instead of being dropped. Absent fields stay zero/nil, which the driver's
+// UpdateCache treats as "leave unchanged" so a partial PATCH does not wipe them.
+func applyRedisProperties(cfg *cachedriver.CacheConfig, body *redisJSON) {
+	if body.Properties == nil {
+		return
+	}
+
+	cfg.RedisConfiguration = body.Properties.RedisConfiguration
+	cfg.EnableNonSSLPort = body.Properties.EnableNonSSLPort
+	cfg.MinimumTLSVersion = body.Properties.MinimumTLSVersion
+	cfg.PublicNetworkAccess = body.Properties.PublicNetworkAccess
+	cfg.RedisVersion = body.Properties.RedisVersion
+}
+
 // nodeTypeFromBody derives the driver's node-type string from the request SKU.
 // Azure node types look like "Standard_C1"; when the body carries a SKU we
 // reconstruct that shape, otherwise the driver's default applies.
@@ -123,7 +162,10 @@ func nodeTypeFromBody(body *redisJSON) string {
 	return sku.Name + "_" + family + strconv.Itoa(sku.Capacity)
 }
 
-// getCache handles GET on a single resource — Redis.Get.
+// getCache handles GET on a single resource — Redis.Get. The driver keys caches
+// by name alone, so the handler enforces the request's resource-group scope: a
+// cache created in one group must not resolve under a different group in the URL
+// (real ARM answers 404, since the id would contradict the request path).
 func (h *Handler) getCache(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	info, err := h.cache.GetCache(r.Context(), rp.ResourceName)
 	if err != nil {
@@ -131,7 +173,87 @@ func (h *Handler) getCache(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
+	if !info.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"cache "+rp.ResourceName+" not found in resource group "+rp.ResourceGroup)
+		return
+	}
+
 	azurearm.WriteJSON(w, http.StatusOK, toRedisJSON(rp, info))
+}
+
+// listKeys handles POST .../redis/{name}/listKeys — Redis.ListKeys. Returns the
+// cache's primary and secondary access keys.
+func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	keys, ok := h.cache.(cachedriver.AccessKeys)
+	if !ok {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidAction", "access keys are not supported by this backend")
+		return
+	}
+
+	if !h.cacheInScope(w, r, rp) {
+		return
+	}
+
+	primary, secondary, err := keys.ListCacheKeys(r.Context(), rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, accessKeysJSON{PrimaryKey: primary, SecondaryKey: secondary})
+}
+
+// regenerateKey handles POST .../redis/{name}/regenerateKey — Redis.RegenerateKey.
+// The body selects which key to rotate ("Primary" or "Secondary"); the response
+// carries both current keys.
+func (h *Handler) regenerateKey(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	keys, ok := h.cache.(cachedriver.AccessKeys)
+	if !ok {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidAction", "access keys are not supported by this backend")
+		return
+	}
+
+	var body regenerateKeyRequest
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if body.KeyType != "Primary" && body.KeyType != "Secondary" {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameterValue", "keyType must be Primary or Secondary")
+		return
+	}
+
+	if !h.cacheInScope(w, r, rp) {
+		return
+	}
+
+	primary, secondary, err := keys.RegenerateCacheKey(r.Context(), rp.ResourceName, body.KeyType)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, accessKeysJSON{PrimaryKey: primary, SecondaryKey: secondary})
+}
+
+// cacheInScope resolves the cache and verifies it lives in the request's
+// resource group, writing a 404 (and returning false) when it does not. Used by
+// the key sub-actions, which address a cache by name under a scoped path.
+func (h *Handler) cacheInScope(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) bool {
+	info, err := h.cache.GetCache(r.Context(), rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return false
+	}
+
+	if !info.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"cache "+rp.ResourceName+" not found in resource group "+rp.ResourceGroup)
+		return false
+	}
+
+	return true
 }
 
 // deleteCache handles DELETE — Redis.BeginDelete. Returning 200 with an empty

@@ -76,12 +76,15 @@ type createGrantResponse struct {
 }
 
 type listGrantsRequest struct {
-	KeyID string `json:"KeyId"`
+	KeyID  string `json:"KeyId"`
+	Limit  int32  `json:"Limit"`
+	Marker string `json:"Marker"`
 }
 
 type listGrantsResponse struct {
-	Grants    []grantJSON `json:"Grants"`
-	Truncated bool        `json:"Truncated"`
+	Grants     []grantJSON `json:"Grants"`
+	NextMarker string      `json:"NextMarker,omitempty"`
+	Truncated  bool        `json:"Truncated"`
 }
 
 type revokeGrantRequest struct {
@@ -97,6 +100,20 @@ type retireGrantRequest struct {
 
 type listRetirableGrantsRequest struct {
 	RetiringPrincipal string `json:"RetiringPrincipal"`
+	Limit             int32  `json:"Limit"`
+	Marker            string `json:"Marker"`
+}
+
+type listKeyRotationsRequest struct {
+	KeyID  string `json:"KeyId"`
+	Limit  int32  `json:"Limit"`
+	Marker string `json:"Marker"`
+}
+
+type listKeyPoliciesRequest struct {
+	KeyID  string `json:"KeyId"`
+	Limit  int32  `json:"Limit"`
+	Marker string `json:"Marker"`
 }
 
 type enableKeyRotationRequest struct {
@@ -119,8 +136,9 @@ type rotationJSON struct {
 }
 
 type listKeyRotationsResponse struct {
-	Rotations []rotationJSON `json:"Rotations"`
-	Truncated bool           `json:"Truncated"`
+	Rotations  []rotationJSON `json:"Rotations"`
+	NextMarker string         `json:"NextMarker,omitempty"`
+	Truncated  bool           `json:"Truncated"`
 }
 
 type rotateKeyOnDemandResponse struct {
@@ -145,5 +163,6 @@ type putKeyPolicyRequest struct {
 
 type listKeyPoliciesResponse struct {
 	PolicyNames []string `json:"PolicyNames"`
+	NextMarker  string   `json:"NextMarker,omitempty"`
 	Truncated   bool     `json:"Truncated"`
 }

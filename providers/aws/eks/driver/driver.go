@@ -55,15 +55,58 @@ type VPCConfig struct {
 	EndpointPublicAccess  bool
 	EndpointPrivateAccess bool
 	PublicAccessCidrs     []string
+	// ClusterSecurityGroupID and VpcID are populated by the provider on cluster
+	// create (they are not caller inputs): real EKS auto-creates a cluster
+	// security group and reports it here, and derives vpcId from the subnets.
+	ClusterSecurityGroupID string
+	VpcID                  string
+}
+
+// ClusterLogging is one EKS control-plane log-type group and whether it is
+// enabled. Real EKS normalizes cluster logging into (up to) two entries: the
+// enabled log types and the disabled ones. The recognized types are api,
+// audit, authenticator, controllerManager, and scheduler.
+type ClusterLogging struct {
+	Types   []string
+	Enabled bool
+}
+
+// NetworkConfig captures the Kubernetes networking configuration surfaced under
+// DescribeCluster kubernetesNetworkConfig. ServiceIPv4CIDR and IPFamily are
+// caller inputs; ServiceIPv6CIDR is provider-assigned for IPv6 clusters (the
+// caller cannot choose it), mirroring how VpcID is derived on VPCConfig.
+type NetworkConfig struct {
+	ServiceIPv4CIDR string
+	ServiceIPv6CIDR string
+	IPFamily        string
+}
+
+// AccessConfigRequest is the caller-supplied access configuration on
+// CreateCluster. BootstrapClusterCreatorAdminPermissions is a pointer so the
+// provider can distinguish "omitted" (apply the AWS default of true) from an
+// explicit false.
+type AccessConfigRequest struct {
+	AuthenticationMode                      string
+	BootstrapClusterCreatorAdminPermissions *bool
+}
+
+// AccessConfig is the resolved cluster access-management configuration surfaced
+// under DescribeCluster accessConfig.
+type AccessConfig struct {
+	AuthenticationMode                      string
+	BootstrapClusterCreatorAdminPermissions bool
 }
 
 // ClusterConfig configures a new EKS cluster.
 type ClusterConfig struct {
-	Name      string
-	Version   string
-	RoleArn   string
-	VPCConfig VPCConfig
-	Tags      map[string]string
+	Name          string
+	Version       string
+	RoleArn       string
+	VPCConfig     VPCConfig
+	Logging       []ClusterLogging
+	NetworkConfig NetworkConfig
+	AccessConfig  AccessConfigRequest
+	Tags          map[string]string
 }
 
 // Cluster is the mock-side representation of an EKS cluster.
@@ -77,8 +120,15 @@ type Cluster struct {
 	CertificateAuthority string
 	Status               string
 	VPCConfig            VPCConfig
+	Logging              []ClusterLogging
+	NetworkConfig        NetworkConfig
+	AccessConfig         AccessConfig
 	Tags                 map[string]string
 	CreatedAt            time.Time
+	// OIDCIssuer is the cluster's OpenID Connect issuer URL, surfaced under
+	// DescribeCluster identity.oidc.issuer. Required for IRSA and
+	// aws_iam_openid_connect_provider wiring.
+	OIDCIssuer string
 }
 
 // ClusterUpdate is returned by mutating cluster ops; SDKs poll this via
@@ -88,6 +138,12 @@ type ClusterUpdate struct {
 	Type      string // VersionUpdate, EndpointAccessUpdate, …
 	Status    string // InProgress, Failed, Canceled, Successful
 	CreatedAt time.Time
+	// ClusterName is the cluster the update belongs to; used by ListUpdates.
+	ClusterName string
+	// NodegroupName / AddonName scope the update to a child resource when set,
+	// so ListUpdates can filter by nodegroupName/addonName like real EKS.
+	NodegroupName string
+	AddonName     string
 }
 
 // NodegroupScalingConfig captures Auto Scaling sizing for a nodegroup.
@@ -95,6 +151,15 @@ type NodegroupScalingConfig struct {
 	MinSize     int
 	MaxSize     int
 	DesiredSize int
+}
+
+// Taint is a Kubernetes taint applied to a managed node group's nodes. Effect
+// is one of NO_SCHEDULE, PREFER_NO_SCHEDULE, or NO_EXECUTE. A taint is
+// identified by its Key+Effect pair.
+type Taint struct {
+	Key    string
+	Value  string
+	Effect string
 }
 
 // NodegroupConfig configures a new managed node group.
@@ -111,6 +176,7 @@ type NodegroupConfig struct {
 	ReleaseVersion string
 	ScalingConfig  NodegroupScalingConfig
 	Labels         map[string]string
+	Taints         []Taint
 	Tags           map[string]string
 }
 
@@ -130,8 +196,24 @@ type Nodegroup struct {
 	ScalingConfig  NodegroupScalingConfig
 	Status         string
 	Labels         map[string]string
+	Taints         []Taint
 	Tags           map[string]string
 	CreatedAt      time.Time
+	// ModifiedAt advances on every mutating op (config/version update); on a
+	// freshly created nodegroup it equals CreatedAt.
+	ModifiedAt time.Time
+}
+
+// NodegroupConfigUpdate carries the mutable fields UpdateNodegroupConfig
+// applies. Scaling, when non-nil, is the already-merged target sizing (the
+// caller overlays partial requests). Label and taint changes are expressed as
+// add/update and remove deltas, matching the real EKS request shape.
+type NodegroupConfigUpdate struct {
+	Scaling           *NodegroupScalingConfig
+	AddOrUpdateLabels map[string]string
+	RemoveLabels      []string
+	AddOrUpdateTaints []Taint
+	RemoveTaints      []Taint
 }
 
 // FargateProfileSelector matches Pods to a Fargate profile.
@@ -198,13 +280,17 @@ type EKS interface {
 	UpdateClusterVersion(ctx context.Context, name, version string) (*ClusterUpdate, error)
 	DeleteCluster(ctx context.Context, name string) (*Cluster, error)
 
+	// Updates
+	DescribeUpdate(ctx context.Context, clusterName, updateID string) (*ClusterUpdate, error)
+	ListUpdates(ctx context.Context, clusterName, nodegroupName, addonName string) ([]string, error)
+
 	// Node groups
 	CreateNodegroup(ctx context.Context, cfg NodegroupConfig) (*Nodegroup, error)
 	DescribeNodegroup(ctx context.Context, clusterName, nodegroupName string) (*Nodegroup, error)
 	ListNodegroups(ctx context.Context, clusterName string) ([]string, error)
 	UpdateNodegroupConfig(
 		ctx context.Context, clusterName, nodegroupName string,
-		scaling *NodegroupScalingConfig, labels map[string]string,
+		upd NodegroupConfigUpdate,
 	) (*ClusterUpdate, error)
 	UpdateNodegroupVersion(
 		ctx context.Context, clusterName, nodegroupName, version, releaseVersion string,

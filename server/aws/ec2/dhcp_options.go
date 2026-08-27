@@ -27,6 +27,7 @@ type dhcpConfigXML struct {
 
 type dhcpOptionsXML struct {
 	DhcpOptionsID      string          `xml:"dhcpOptionsId"`
+	OwnerID            string          `xml:"ownerId"`
 	DhcpConfigurations []dhcpConfigXML `xml:"dhcpConfigurationSet>item,omitempty"`
 	Tags               []tagItem       `xml:"tagSet>item,omitempty"`
 }
@@ -53,7 +54,7 @@ func (h *Handler) routeDHCPOptions(w http.ResponseWriter, r *http.Request, actio
 	return true
 }
 
-func (*Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (h *Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	out, err := d.CreateDHCPOptions(r.Context(), netdriver.DHCPOptionsConfig{
 		Configuration: parseDHCPConfigurations(r),
 		Tags:          mergeTagSpecs(awsquery.TagSpecs(r.Form), "dhcp-options"),
@@ -68,7 +69,7 @@ func (*Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netd
 		Xmlns   string         `xml:"xmlns,attr"`
 		Req     string         `xml:"requestId"`
 		Opts    dhcpOptionsXML `xml:"dhcpOptions"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Opts: toDHCPOptionsXML(out)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Opts: h.toDHCPOptionsXML(out)})
 }
 
 func (*Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
@@ -80,25 +81,30 @@ func (*Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netd
 	writeReturnTrue(w, "DeleteDhcpOptionsResponse")
 }
 
-//nolint:dupl // parallel per-resource marshaling
-func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (h *Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	items, err := d.DescribeDHCPOptions(r.Context(), awsquery.ListStrings(r.Form, "DhcpOptionsId"))
 	if err != nil {
 		writeDHCPErr(w, err)
 		return
 	}
 
-	out := make([]dhcpOptionsXML, 0, len(items))
-	for i := range items {
-		out = append(out, toDHCPOptionsXML(&items[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, dhcpFilterMatch); err != nil {
+		writeDHCPErr(w, err)
+		return
 	}
+
+	out := filterXML(items, filters, dhcpMatchesFilters, h.toDHCPOptionsXML)
+
+	page, next := pageNetworkingXML(out, r, func(d dhcpOptionsXML) string { return d.DhcpOptionsID })
 
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name         `xml:"DescribeDhcpOptionsResponse"`
 		Xmlns   string           `xml:"xmlns,attr"`
 		Req     string           `xml:"requestId"`
 		Set     []dhcpOptionsXML `xml:"dhcpOptionsSet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		Next    string           `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: page, Next: next})
 }
 
 func (*Handler) associateDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
@@ -130,7 +136,7 @@ func parseDHCPConfigurations(r *http.Request) map[string][]string {
 	return out
 }
 
-func toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
+func (h *Handler) toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
 	keys := make([]string, 0, len(d.Configuration))
 	for k := range d.Configuration {
 		keys = append(keys, k)
@@ -149,7 +155,49 @@ func toDHCPOptionsXML(d *netdriver.DHCPOptions) dhcpOptionsXML {
 		cfgs = append(cfgs, dhcpConfigXML{Key: k, Values: vals})
 	}
 
-	return dhcpOptionsXML{DhcpOptionsID: d.ID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
+	return dhcpOptionsXML{DhcpOptionsID: d.ID, OwnerID: h.accountID, DhcpConfigurations: cfgs, Tags: toTagItems(d.Tags)}
+}
+
+func dhcpMatchesFilters(d *netdriver.DHCPOptions, filters []awsquery.Filter) bool {
+	return matchNetworkingFilters(d, filters, dhcpFilterMatch)
+}
+
+// dhcpFilterMatch reports whether d satisfies filter f and whether f is a filter
+// DescribeDhcpOptions recognizes. The key/value filters match against the option
+// set's configuration entries (e.g. key=domain-name-servers).
+func dhcpFilterMatch(d *netdriver.DHCPOptions, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case filterDHCPOptionsID:
+		return containsString(f.Values, d.ID), true
+	case "key":
+		return dhcpConfigHasKey(d.Configuration, f.Values), true
+	case "value":
+		return dhcpConfigHasValue(d.Configuration, f.Values), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, d.Tags)
+	}
+}
+
+func dhcpConfigHasKey(cfg map[string][]string, values []string) bool {
+	for k := range cfg {
+		if containsString(values, k) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func dhcpConfigHasValue(cfg map[string][]string, values []string) bool {
+	for _, vals := range cfg {
+		for _, v := range vals {
+			if containsString(values, v) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func writeDHCPErr(w http.ResponseWriter, err error) {

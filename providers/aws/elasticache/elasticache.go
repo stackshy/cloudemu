@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -18,7 +19,35 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-const defaultRedisPort = 6379
+const (
+	defaultRedisPort     = 6379
+	defaultMemcachedPort = 11211
+)
+
+// resolvePort returns the requested port, or the engine default when unset:
+// Memcached listens on 11211, Redis/Valkey on 6379.
+func resolvePort(engine string, port int) int {
+	if port != 0 {
+		return port
+	}
+
+	if engine == engineMemcached {
+		return defaultMemcachedPort
+	}
+
+	return defaultRedisPort
+}
+
+// clusterEndpoint builds the synthetic host:port a client connects to. Memcached
+// exposes a single configuration endpoint whose host carries the ".cfg" segment
+// real AWS uses; Redis/Valkey use a plain per-cluster host.
+func clusterEndpoint(name, region, engine string, port int) string {
+	if engine == engineMemcached {
+		return fmt.Sprintf("%s.cfg.%s.cache.amazonaws.com:%d", name, region, port)
+	}
+
+	return fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", name, region, port)
+}
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -38,18 +67,110 @@ type cacheData struct {
 // replication groups so the two cannot drift apart.
 const (
 	defaultEngine   = "redis"
+	engineMemcached = "memcached"
 	defaultNodeType = "cache.t3.micro"
 	statusAvailable = "available"
+
+	defaultRedisVersion     = "7.1"
+	defaultMemcachedVersion = "1.6.22"
+
+	// maxMemcachedNodes is the ElastiCache ceiling on Memcached nodes per cluster;
+	// Redis/Valkey clusters must have exactly one node.
+	maxMemcachedNodes = 40
 )
+
+// validateNodeCount enforces the per-engine NumCacheNodes limits real
+// ElastiCache applies: Memcached allows 1-40 nodes, while Redis/Valkey clusters
+// must have exactly 1 (a larger count is InvalidParameterValue, not silently
+// accepted).
+func validateNodeCount(engine string, numNodes int) error {
+	if engine == engineMemcached {
+		if numNodes > maxMemcachedNodes {
+			return errors.Newf(errors.InvalidArgument,
+				"NumCacheNodes must be between 1 and %d for Memcached", maxMemcachedNodes)
+		}
+
+		return nil
+	}
+
+	if numNodes > 1 {
+		return errors.Newf(errors.InvalidArgument,
+			"NumCacheNodes must be 1 for engine %q", engine)
+	}
+
+	return nil
+}
+
+// normalizeNodeCount defaults an unset node count to 1 and validates it against
+// the engine's limits.
+func normalizeNodeCount(engine string, requested int) (int, error) {
+	n := requested
+	if n < 1 {
+		n = 1
+	}
+
+	if err := validateNodeCount(engine, n); err != nil {
+		return 0, err
+	}
+
+	return n, nil
+}
+
+// requireSubnetGroup rejects a create that names a cache subnet group which does
+// not exist, matching real ElastiCache (CacheSubnetGroupNotFoundFault) rather
+// than silently accepting a typo (mirrors RDS CreateDBInstance's DBSubnetGroup
+// check). An empty name places the cluster in the default subnet group.
+func (m *Mock) requireSubnetGroup(name string) error {
+	if name != "" && !m.subnetGroups.Has(name) {
+		return errors.Newf(errors.NotFound,
+			"CacheSubnetGroupNotFoundFault: cache subnet group %q not found", name)
+	}
+
+	return nil
+}
+
+// cacheARN builds an ElastiCache cluster ARN.
+func (m *Mock) cacheARN(name string) string {
+	return "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID + ":cluster:" + name
+}
+
+// defaultEngineVersion returns the ElastiCache default engine version for an
+// engine, matching what real ElastiCache assigns when the caller omits it.
+func defaultEngineVersion(engine string) string {
+	if engine == engineMemcached {
+		return defaultMemcachedVersion
+	}
+
+	return defaultRedisVersion
+}
 
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 type Mock struct {
 	caches            *memstore.Store[*cacheData]
 	subnetGroups      *memstore.Store[driver.SubnetGroup]
 	replicationGroups *memstore.Store[driver.ReplicationGroup]
+	parameterGroups   *memstore.Store[ParameterGroup]
+	snapshots         *memstore.Store[driver.Snapshot]
 	subnetResolver    SubnetResolver
 	opts              *config.Options
 	monitoring        mondriver.Monitoring
+
+	tagMu     sync.Mutex
+	tagsByARN map[string]map[string]string
+}
+
+// ParameterGroup is an ElastiCache cache parameter group — a named, engine-family
+// set of engine parameters. The emulator stores its identity plus any user
+// overrides (name→value) applied via ModifyCacheParameterGroup, so IaC that
+// creates a group, sets `parameter { … }` blocks, and reads them back on refresh
+// converges. The engine-family defaults themselves are synthesized on demand
+// (see defaultCacheParameters); Overrides holds only the parameters the user has
+// changed from their default.
+type ParameterGroup struct {
+	Name        string
+	Family      string
+	Description string
+	Overrides   map[string]string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -75,6 +196,9 @@ func New(opts *config.Options) *Mock {
 		caches:            memstore.New[*cacheData](),
 		subnetGroups:      memstore.New[driver.SubnetGroup](),
 		replicationGroups: memstore.New[driver.ReplicationGroup](),
+		parameterGroups:   memstore.New[ParameterGroup](),
+		snapshots:         memstore.New[driver.Snapshot](),
+		tagsByARN:         make(map[string]map[string]string),
 		opts:              opts,
 	}
 }
@@ -99,7 +223,21 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		nodeType = defaultNodeType
 	}
 
-	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
+	engineVersion := cfg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(engine)
+	}
+
+	numNodes, err := normalizeNodeCount(engine, cfg.NumCacheNodes)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
+		return nil, err
+	}
+
+	endpoint := clusterEndpoint(cfg.Name, m.opts.Region, engine, resolvePort(engine, cfg.Port))
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -107,14 +245,19 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:      cfg.Name,
-		Scope:     cfg.Scope,
-		NodeType:  nodeType,
-		Engine:    engine,
-		Status:    statusAvailable,
-		Endpoint:  endpoint,
-		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:      tags,
+		Name:               cfg.Name,
+		Scope:              cfg.Scope,
+		NodeType:           nodeType,
+		Engine:             engine,
+		EngineVersion:      engineVersion,
+		Status:             statusAvailable,
+		Endpoint:           endpoint,
+		ARN:                m.cacheARN(cfg.Name),
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:               tags,
+		NumCacheNodes:      numNodes,
+		SubnetGroupName:    cfg.SubnetGroupName,
+		ParameterGroupName: cfg.ParameterGroupName,
 	}
 
 	// Opt-in: back the cache with a real server, replacing the synthetic
@@ -129,29 +272,60 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	m.caches.Set(cfg.Name, cd)
+	m.seedTags(info.ARN, tags)
 
 	result := info
 
 	return &result, nil
 }
 
-// ModifyCache updates the mutable fields (node type, engine) of an existing
-// cache cluster (ElastiCache ModifyCacheCluster). Empty arguments leave the
-// corresponding field unchanged.
-func (m *Mock) ModifyCache(_ context.Context, name, nodeType, engine string) (*driver.CacheInfo, error) {
+// ModifyCache updates the mutable fields (node type, engine version, node
+// count) of an existing cache cluster (ElastiCache ModifyCacheCluster). Empty or
+// zero fields leave the corresponding attribute unchanged. A NumCacheNodes
+// change is re-validated against the cluster's engine (Memcached scales 1-40;
+// Redis/Valkey stays at 1).
+func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*driver.CacheInfo, error) {
+	cd, ok := m.caches.Get(cfg.Name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
+	}
+
+	if cfg.NumCacheNodes > 0 {
+		if err := validateNodeCount(cd.info.Engine, cfg.NumCacheNodes); err != nil {
+			return nil, err
+		}
+	}
+
+	if cfg.NodeType != "" {
+		cd.info.NodeType = cfg.NodeType
+	}
+
+	if cfg.EngineVersion != "" {
+		cd.info.EngineVersion = cfg.EngineVersion
+	}
+
+	if cfg.NumCacheNodes > 0 {
+		cd.info.NumCacheNodes = cfg.NumCacheNodes
+	}
+
+	m.caches.Set(cfg.Name, cd)
+
+	result := cd.info
+
+	return &result, nil
+}
+
+// RebootCache reboots a cache cluster (ElastiCache RebootCacheCluster), the
+// path real deployments use to apply pending parameter-group changes. The
+// cluster stays available in the emulator; a reboot metric is emitted to mirror
+// the lifecycle event.
+func (m *Mock) RebootCache(_ context.Context, name string) (*driver.CacheInfo, error) {
 	cd, ok := m.caches.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
 	}
 
-	if nodeType != "" {
-		cd.info.NodeType = nodeType
-	}
-	if engine != "" {
-		cd.info.Engine = engine
-	}
-
-	m.caches.Set(name, cd)
+	m.emitMetric("Reboots", 1, map[string]string{"CacheClusterId": name})
 
 	result := cd.info
 

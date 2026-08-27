@@ -93,6 +93,10 @@ func (h *Handler) serveDatabase(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -197,6 +201,10 @@ func (h *Handler) serveFirewallRule(w http.ResponseWriter, r *http.Request, rp *
 	fw, ok := h.firewallRules()
 	if !ok {
 		writeUnsupported(w, "firewallRules")
+		return
+	}
+
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
 		return
 	}
 
@@ -308,6 +316,10 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -389,6 +401,10 @@ func (h *Handler) batchUpdateConfigurations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if _, inScope := h.lookupInScope(w, r, rp); !inScope {
+		return
+	}
+
 	var body armConfigBatch
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
@@ -454,6 +470,10 @@ func toARMConfiguration(c *rdsdriver.Configuration, rp *azurearm.ResourcePath) a
 // ---- Failover ----
 
 func (h *Handler) failoverServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if _, ok := h.lookupInScope(w, r, rp); !ok {
+		return
+	}
+
 	fo, ok := h.failoverCap()
 	if !ok {
 		writeUnsupported(w, "failover")

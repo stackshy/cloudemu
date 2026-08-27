@@ -166,6 +166,21 @@ func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.Subnet
 	return describeResources(m.subnets, ids, toSubnetInfo), nil
 }
 
+// ExpandSubnetCIDR widens a subnetwork's primary IP range, backing GCP's
+// subnetworks.expandIpCidrRange. The wire layer validates that cidr is a
+// superset of the current range before calling; here it just replaces the
+// stored block under the store lock.
+func (m *Mock) ExpandSubnetCIDR(_ context.Context, id, cidr string) error {
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.CIDRBlock = cidr
+		return s
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	return nil
+}
+
 // CreateSecurityGroup creates a new firewall rule group.
 func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	if cfg.Name == "" {
@@ -272,7 +287,7 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 	}
 
 	for i, r := range sg.IngressRules {
-		if r == rule {
+		if r.Equal(&rule) {
 			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
 
 			return nil
@@ -290,7 +305,7 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	}
 
 	for i, r := range sg.EgressRules {
-		if r == rule {
+		if r.Equal(&rule) {
 			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
 
 			return nil
@@ -378,7 +393,10 @@ func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []stri
 // mergeTagMap returns a fresh map containing existing's keys plus tags's
 // keys (tags wins on overlap). The original existing map is not modified.
 func mergeTagMap(existing, tags map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(tags))
+	// Size the hint from the existing map only; adding len(tags) risks an integer
+	// overflow in the allocation size. The map grows to absorb tags as needed, so
+	// the result is unchanged.
+	out := make(map[string]string, len(existing))
 
 	for k, v := range existing {
 		out[k] = v

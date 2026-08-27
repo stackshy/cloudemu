@@ -22,6 +22,7 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -42,7 +43,10 @@ const (
 	diskWriteOpsRunning   = 5.0
 )
 
-var _ rdsdriver.RelationalDB = (*Mock)(nil)
+var (
+	_ rdsdriver.RelationalDB = (*Mock)(nil)
+	_ rdsdriver.ScopedDelete = (*Mock)(nil)
+)
 
 // Mock is the in-memory Azure MySQL Flexible Server implementation.
 type Mock struct {
@@ -195,7 +199,7 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		tier = defaultSKU
 	}
 
-	region := cfg.AvailabilityZone
+	region := cfg.Location
 	if region == "" {
 		region = m.opts.Region
 	}
@@ -217,11 +221,13 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		PubliclyAccessible:      cfg.PubliclyAccessible,
 		VPCSecurityGroups:       append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:         cfg.SubnetGroupName,
-		AvailabilityZone:        region,
+		Location:                region,
+		AvailabilityZone:        cfg.AvailabilityZone,
 		HighAvailabilityMode:    cfg.HighAvailabilityMode,
 		StandbyAvailabilityZone: cfg.StandbyAvailabilityZone,
 		CreatedAt:               m.opts.Clock.Now().UTC(),
 		Tags:                    copyTags(cfg.Tags),
+		Scope:                   cfg.Scope,
 	}
 }
 
@@ -344,11 +350,27 @@ func (m *Mock) ModifyInstance(
 
 // DeleteInstance removes a server.
 func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
+	return m.deleteInstanceScoped(ctx, id, scope.Scope{})
+}
+
+// DeleteInstanceInScope removes a server, refusing (NotFound) when it exists
+// but was created under a different subscription/resource group. Implements
+// the optional rdsdriver.ScopedDelete capability so a cross-tenant DELETE
+// through the ARM handler can never remove another scope's server.
+func (m *Mock) DeleteInstanceInScope(ctx context.Context, id string, filter scope.Scope) error {
+	return m.deleteInstanceScoped(ctx, id, filter)
+}
+
+// deleteInstanceScoped performs the get-check-delete under a single lock
+// acquisition so the scope check and the delete are atomic. A zero filter
+// matches any scope (see scope.Scope.Matches), so DeleteInstance's unscoped
+// callers are unaffected.
+func (m *Mock) deleteInstanceScoped(ctx context.Context, id string, filter scope.Scope) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	inst, ok := m.instances.Get(id)
-	if !ok {
+	if !ok || !inst.Scope.Matches(filter) {
 		return cerrors.Newf(cerrors.NotFound, "MySQL Flexible Server %q not found", id)
 	}
 
@@ -606,7 +628,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		Endpoint:         input.NewInstanceID + endpointSuffix,
 		Port:             defaultPort,
 		State:            rdsdriver.StateAvailable,
-		AvailabilityZone: m.opts.Region,
+		Location:         m.opts.Region,
 		CreatedAt:        now,
 		Tags:             copyTags(input.Tags),
 	}

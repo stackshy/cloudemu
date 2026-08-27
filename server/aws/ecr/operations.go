@@ -2,9 +2,16 @@ package ecr
 
 import (
 	"net/http"
+	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+)
+
+const (
+	tagStatusTagged   = "TAGGED"
+	tagStatusUntagged = "UNTAGGED"
 )
 
 func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request) {
@@ -24,10 +31,7 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := toRepositoryJSON(repo)
-	out.ImageTagMutability = req.ImageTagMutability
-
-	wire.WriteJSON(w, createRepositoryResponse{Repository: out})
+	wire.WriteJSON(w, createRepositoryResponse{Repository: toRepositoryJSON(repo)})
 }
 
 func (h *Handler) describeRepositories(w http.ResponseWriter, r *http.Request) {
@@ -42,12 +46,20 @@ func (h *Handler) describeRepositories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]repositoryJSON, 0, len(repos))
-	for i := range repos {
-		out = append(out, toRepositoryJSON(&repos[i]))
+	page, err := pagination.PaginateSorted(repos,
+		func(a, b crdriver.Repository) bool { return a.Name < b.Name },
+		req.NextToken, req.MaxResults)
+	if err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		return
 	}
 
-	wire.WriteJSON(w, describeRepositoriesResponse{Repositories: out})
+	out := make([]repositoryJSON, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toRepositoryJSON(&page.Items[i]))
+	}
+
+	wire.WriteJSON(w, describeRepositoriesResponse{Repositories: out, NextToken: page.NextPageToken})
 }
 
 // collectRepositories returns the named repositories, or all of them when no
@@ -104,9 +116,10 @@ func (h *Handler) putImage(w http.ResponseWriter, r *http.Request) {
 		Digest:     req.ImageDigest,
 		MediaType:  req.ImageManifestMediaType,
 		SizeBytes:  int64(len(req.ImageManifest)),
+		Manifest:   req.ImageManifest,
 	})
 	if err != nil {
-		writeErr(w, err)
+		writePutImageErr(w, err)
 		return
 	}
 
@@ -131,12 +144,30 @@ func (h *Handler) listImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	images = filterByTagStatus(images, req.Filter.TagStatus)
+
 	ids := make([]imageIDJSON, 0, len(images))
 	for i := range images {
 		ids = append(ids, imageIDsForDetail(&images[i])...)
 	}
 
-	wire.WriteJSON(w, listImagesResponse{ImageIDs: ids})
+	page, err := pagination.PaginateSorted(ids, lessImageID, req.NextToken, req.MaxResults)
+	if err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		return
+	}
+
+	wire.WriteJSON(w, listImagesResponse{ImageIDs: page.Items, NextToken: page.NextPageToken})
+}
+
+// lessImageID orders image ids deterministically (digest, then tag) so that
+// offset-based pagination tokens stay stable across calls.
+func lessImageID(a, b imageIDJSON) bool {
+	if a.ImageDigest != b.ImageDigest {
+		return a.ImageDigest < b.ImageDigest
+	}
+
+	return a.ImageTag < b.ImageTag
 }
 
 // imageIDsForDetail expands an image into one id per tag (real ECR lists each
@@ -171,6 +202,20 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real ECR throws ImageNotFoundException when a requested imageId does not
+	// resolve to any image in the repository.
+	if missing := firstUnmatchedID(images, req.ImageIDs); missing != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ImageNotFoundException",
+			"The image with imageId "+imageReference(*missing)+" does not exist within the repository")
+		return
+	}
+
+	// The tagStatus filter applies to the repository-wide listing (it is not
+	// combined with an explicit imageIds selection in real ECR).
+	if len(req.ImageIDs) == 0 {
+		images = filterByTagStatus(images, req.Filter.TagStatus)
+	}
+
 	details := make([]imageDetailJSON, 0, len(images))
 
 	for i := range images {
@@ -181,27 +226,56 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 		details = append(details, toImageDetailJSON(&images[i]))
 	}
 
-	wire.WriteJSON(w, describeImagesResponse{ImageDetails: details})
+	page, err := pagination.PaginateSorted(details,
+		func(a, b imageDetailJSON) bool { return a.ImageDigest < b.ImageDigest },
+		req.NextToken, req.MaxResults)
+	if err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		return
+	}
+
+	wire.WriteJSON(w, describeImagesResponse{ImageDetails: page.Items, NextToken: page.NextPageToken})
 }
 
-func (h *Handler) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
+// firstUnmatchedID returns the first requested image id that matches no image,
+// or nil when every requested id resolves (or none were requested).
+func firstUnmatchedID(images []crdriver.ImageDetail, ids []imageIDJSON) *imageIDJSON {
+	for i := range ids {
+		matched := false
+
+		for j := range images {
+			if matchesAnyID(&images[j], []imageIDJSON{ids[i]}) {
+				matched = true
+				break
+			}
+		}
+
+		if !matched {
+			return &ids[i]
+		}
+	}
+
+	return nil
+}
+
+func (h *Handler) batchGetImage(w http.ResponseWriter, r *http.Request) {
 	var req imageIDsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	// A missing repository is a thrown error; missing images become per-image
-	// failures, matching real ECR.
-	if _, err := h.registry.GetRepository(r.Context(), req.RepositoryName); err != nil {
+	images, err := h.registry.ListImages(r.Context(), req.RepositoryName)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	deleted := make([]imageIDJSON, 0, len(req.ImageIDs))
+	found := make([]imageJSON, 0, len(req.ImageIDs))
 	failures := make([]imageFailureJSON, 0)
 
 	for _, id := range req.ImageIDs {
-		if err := h.registry.DeleteImage(r.Context(), req.RepositoryName, imageReference(id)); err != nil {
+		detail := findImageDetail(images, id)
+		if detail == nil {
 			failures = append(failures, imageFailureJSON{
 				ImageID:       id,
 				FailureCode:   "ImageNotFound",
@@ -211,10 +285,149 @@ func (h *Handler) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		deleted = append(deleted, id)
+		found = append(found, imageJSON{
+			RegistryID:             detail.RegistryID,
+			RepositoryName:         detail.Repository,
+			ImageID:                imageIDJSON{ImageDigest: detail.Digest, ImageTag: returnedTag(detail, id)},
+			ImageManifest:          detail.Manifest,
+			ImageManifestMediaType: detail.MediaType,
+		})
+	}
+
+	wire.WriteJSON(w, batchGetImageResponse{Images: found, Failures: failures})
+}
+
+// findImageDetail resolves a requested image id (digest or tag) to a stored
+// image detail, or nil when none matches.
+func findImageDetail(images []crdriver.ImageDetail, id imageIDJSON) *crdriver.ImageDetail {
+	for i := range images {
+		if id.ImageDigest != "" && id.ImageDigest == images[i].Digest {
+			return &images[i]
+		}
+
+		if id.ImageTag != "" && containsTag(images[i].Tags, id.ImageTag) {
+			return &images[i]
+		}
+	}
+
+	return nil
+}
+
+// returnedTag picks the tag to echo for a resolved image: the requested tag if
+// one was given, otherwise the image's first tag.
+func returnedTag(detail *crdriver.ImageDetail, id imageIDJSON) string {
+	if id.ImageTag != "" {
+		return id.ImageTag
+	}
+
+	if len(detail.Tags) > 0 {
+		return detail.Tags[0]
+	}
+
+	return ""
+}
+
+func (h *Handler) batchDeleteImage(w http.ResponseWriter, r *http.Request) {
+	var req imageIDsRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// A missing repository is a thrown error; missing images become per-image
+	// failures, matching real ECR. Snapshotting the images before deletion lets
+	// the response echo the digest and every tag a delete removes.
+	images, err := h.registry.ListImages(r.Context(), req.RepositoryName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	deleted := make([]imageIDJSON, 0, len(req.ImageIDs))
+	failures := make([]imageFailureJSON, 0)
+
+	for _, id := range req.ImageIDs {
+		detail := findImageDetail(images, id)
+
+		if derr := h.registry.DeleteImage(r.Context(), req.RepositoryName, deleteReference(id)); derr != nil {
+			failures = append(failures, imageFailureJSON{
+				ImageID:       id,
+				FailureCode:   "ImageNotFound",
+				FailureReason: "Requested image not found",
+			})
+
+			continue
+		}
+
+		deleted = append(deleted, deletedImageIDs(detail, id)...)
 	}
 
 	wire.WriteJSON(w, batchDeleteImageResponse{ImageIDs: deleted, Failures: failures})
+}
+
+// deleteReference chooses the delete target: a tag reference (untag) when a tag
+// is given, otherwise the digest (delete the whole manifest). This mirrors ECR,
+// where specifying a tag removes just that tag and specifying a digest removes
+// the image and all of its tags.
+func deleteReference(id imageIDJSON) string {
+	if id.ImageTag != "" {
+		return id.ImageTag
+	}
+
+	return id.ImageDigest
+}
+
+// deletedImageIDs builds the imageIds echoed for a successful delete. A tag
+// delete echoes the digest plus that tag; a digest delete echoes the digest
+// with every tag it removed (or a digest-only id when the image was untagged).
+func deletedImageIDs(detail *crdriver.ImageDetail, id imageIDJSON) []imageIDJSON {
+	if detail == nil {
+		return []imageIDJSON{id}
+	}
+
+	if id.ImageTag != "" {
+		return []imageIDJSON{{ImageDigest: detail.Digest, ImageTag: id.ImageTag}}
+	}
+
+	if len(detail.Tags) == 0 {
+		return []imageIDJSON{{ImageDigest: detail.Digest}}
+	}
+
+	out := make([]imageIDJSON, 0, len(detail.Tags))
+	for _, tag := range detail.Tags {
+		out = append(out, imageIDJSON{ImageDigest: detail.Digest, ImageTag: tag})
+	}
+
+	return out
+}
+
+// filterByTagStatus keeps only images matching an ECR tagStatus filter. An
+// empty value or ANY passes every image through.
+func filterByTagStatus(images []crdriver.ImageDetail, tagStatus string) []crdriver.ImageDetail {
+	want := strings.ToUpper(tagStatus)
+	if want != tagStatusTagged && want != tagStatusUntagged {
+		return images
+	}
+
+	out := make([]crdriver.ImageDetail, 0, len(images))
+
+	for i := range images {
+		if (want == tagStatusTagged) == hasAnyTag(&images[i]) {
+			out = append(out, images[i])
+		}
+	}
+
+	return out
+}
+
+// hasAnyTag reports whether an image carries at least one non-empty tag.
+func hasAnyTag(d *crdriver.ImageDetail) bool {
+	for _, t := range d.Tags {
+		if t != "" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func tagsToMap(tags []tagJSON) map[string]string {

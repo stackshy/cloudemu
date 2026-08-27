@@ -14,6 +14,28 @@ func rpScope(rp *azurearm.ResourcePath) scope.Scope {
 	return scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
 }
 
+// az returns the Azure-only Notification Hubs capability if the driver
+// implements it.
+func (h *Handler) az() (notifdriver.AzureNotificationHubs, bool) {
+	az, ok := h.notif.(notifdriver.AzureNotificationHubs)
+	return az, ok
+}
+
+// namespaceSKU returns the stored SKU name for a namespace, or "" when unset.
+func (h *Handler) namespaceSKU(r *http.Request, namespace string) string {
+	az, ok := h.az()
+	if !ok {
+		return ""
+	}
+
+	meta, err := az.GetNamespaceMeta(r.Context(), namespace)
+	if err != nil {
+		return ""
+	}
+
+	return meta.SKU
+}
+
 // --- namespaces ---
 
 // createOrUpdateNamespace maps Namespaces.CreateOrUpdate onto the driver:
@@ -27,9 +49,15 @@ func (h *Handler) createOrUpdateNamespace(w http.ResponseWriter, r *http.Request
 	}
 
 	cfg := notifdriver.TopicConfig{
-		Name:  rp.ResourceName,
-		Tags:  body.Tags,
-		Scope: rpScope(rp),
+		Name:   rp.ResourceName,
+		Tags:   body.Tags,
+		Scope:  rpScope(rp),
+		Region: body.Location,
+	}
+
+	skuName := ""
+	if body.SKU != nil {
+		skuName = body.SKU.Name
 	}
 
 	if _, err := h.notif.GetTopic(r.Context(), rp.ResourceName); err == nil {
@@ -38,7 +66,10 @@ func (h *Handler) createOrUpdateNamespace(w http.ResponseWriter, r *http.Request
 			azurearm.WriteCErr(w, uerr)
 			return
 		}
-		azurearm.WriteJSON(w, http.StatusOK, toNamespaceJSON(rp, info))
+
+		h.storeNamespaceSKU(r, rp.ResourceName, skuName)
+		azurearm.WriteJSON(w, http.StatusOK, toNamespaceJSON(rp, info, h.namespaceSKU(r, rp.ResourceName)))
+
 		return
 	}
 
@@ -48,7 +79,19 @@ func (h *Handler) createOrUpdateNamespace(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusCreated, toNamespaceJSON(rp, info))
+	h.storeNamespaceSKU(r, rp.ResourceName, skuName)
+	azurearm.WriteJSON(w, http.StatusCreated, toNamespaceJSON(rp, info, h.namespaceSKU(r, rp.ResourceName)))
+}
+
+// storeNamespaceSKU records the namespace SKU when supplied and supported.
+func (h *Handler) storeNamespaceSKU(r *http.Request, namespace, skuName string) {
+	if skuName == "" {
+		return
+	}
+
+	if az, ok := h.az(); ok {
+		_ = az.SetNamespaceMeta(r.Context(), namespace, notifdriver.AzureNamespaceMeta{SKU: skuName})
+	}
 }
 
 func (h *Handler) getNamespace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -58,7 +101,23 @@ func (h *Handler) getNamespace(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toNamespaceJSON(rp, info))
+	// A namespace lives in exactly one resource group; a Get scoped to a
+	// different group must 404 (the driver keys topics by bare name).
+	if wrongResourceGroup(rp, info) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"namespace "+rp.ResourceName+" not found in resource group "+rp.ResourceGroup)
+
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toNamespaceJSON(rp, info, h.namespaceSKU(r, rp.ResourceName)))
+}
+
+// wrongResourceGroup reports whether the request's resource group disagrees
+// with the namespace's stored resource group.
+func wrongResourceGroup(rp *azurearm.ResourcePath, info *notifdriver.TopicInfo) bool {
+	return rp.ResourceGroup != "" && info.Scope.ResourceGroup != "" &&
+		!strings.EqualFold(info.Scope.ResourceGroup, rp.ResourceGroup)
 }
 
 // deleteNamespace removes the namespace topic and every hub topic nested under
@@ -93,7 +152,7 @@ func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, rp *azu
 		}
 
 		info := topics[i]
-		out = append(out, toNamespaceJSON(rp, &info))
+		out = append(out, toNamespaceJSON(rp, &info, h.namespaceSKU(r, info.Name)))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, namespaceListResult{Value: out})
@@ -102,23 +161,21 @@ func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, rp *azu
 // --- notification hubs ---
 
 func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	var body putBody
+	// Decode with the properties block kept raw so PNS credentials (whose shape
+	// is platform-specific) round-trip verbatim for GetPnsCredentials.
+	var body hubPutBody
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
 	key := hubKey(rp.ResourceName, rp.SubResourceName)
 
-	ttl := ""
-	if body.Properties != nil {
-		ttl = body.Properties.RegistrationTTL
-	}
-
 	cfg := notifdriver.TopicConfig{
 		Name:        key,
-		DisplayName: ttl,
+		DisplayName: body.registrationTTL(),
 		Tags:        body.Tags,
 		Scope:       rpScope(rp),
+		Region:      body.Location,
 	}
 
 	if _, err := h.notif.GetTopic(r.Context(), key); err == nil {
@@ -127,7 +184,10 @@ func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *
 			azurearm.WriteCErr(w, uerr)
 			return
 		}
+
+		h.storePnsCredentials(r, key, body.Properties)
 		azurearm.WriteJSON(w, http.StatusOK, toHubJSON(rp, rp.ResourceName, rp.SubResourceName, info))
+
 		return
 	}
 
@@ -137,6 +197,7 @@ func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *
 		return
 	}
 
+	h.storePnsCredentials(r, key, body.Properties)
 	azurearm.WriteJSON(w, http.StatusCreated, toHubJSON(rp, rp.ResourceName, rp.SubResourceName, info))
 }
 

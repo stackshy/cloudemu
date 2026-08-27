@@ -23,6 +23,7 @@ package queue
 import (
 	"encoding/xml"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,11 +39,40 @@ const (
 	// xmsVersion is the Queue Storage service version we report.
 	xmsVersion = "2018-03-28"
 
-	compList = "list"
+	compList     = "list"
+	compMetadata = "metadata"
+
+	// maxUpdateVisibilityTimeout is the Azure ceiling for a message's visibility
+	// timeout (7 days, in seconds).
+	maxUpdateVisibilityTimeout = 7 * 24 * 60 * 60
+
+	// minNumOfMessages / maxNumOfMessages bound the numofmessages query parameter
+	// for Get Messages and Peek Messages. Azure rejects anything outside [1, 32].
+	minNumOfMessages = 1
+	maxNumOfMessages = 32
 
 	// maxEnqueueBodyBytes caps a single enqueued message body. Azure allows up
 	// to 64 KiB; we use a generous 1 MiB cap.
 	maxEnqueueBodyBytes = 1 << 20
+
+	// defaultMessageTTLSeconds is the message time-to-live Put Message applies
+	// when the messagettl query parameter is omitted.
+	defaultMessageTTLSeconds = 7 * 24 * 60 * 60
+
+	// defaultVisibilityTimeoutSeconds is the visibility timeout Get Messages applies
+	// when the visibilitytimeout query parameter is omitted, matching the driver's
+	// effective default; used only to report TimeNextVisible on the dequeue response.
+	defaultVisibilityTimeoutSeconds = 30
+
+	// neverExpireTTL is the messagettl value meaning "the message never expires".
+	neverExpireTTL = -1
+
+	// neverExpireHorizon is how far in the future the wire response reports a
+	// message's expiration when it never expires. Azure caps a "never expire"
+	// message's DateTime at a maximal value; a century is comfortably beyond
+	// any real workload's concern while still formatting as a valid RFC1123
+	// timestamp.
+	neverExpireHorizon = 100 * 365 * 24 * time.Hour
 )
 
 // Handler serves Azure Queue Storage REST requests against a messagequeue
@@ -105,6 +135,10 @@ func (*Handler) Matches(r *http.Request) bool {
 		switch r.Method {
 		case http.MethodPut, http.MethodDelete:
 			return q.Get("restype") == ""
+		case http.MethodGet, http.MethodHead:
+			// GET|HEAD /{queue}?comp=metadata — queue properties. Blob container
+			// metadata carries restype=container, so this is unambiguous.
+			return q.Get("comp") == compMetadata && q.Get("restype") == ""
 		}
 	}
 
@@ -159,6 +193,11 @@ func parseQueuePath(path string) (queue, sub, msgID string) {
 }
 
 func (h *Handler) queueOp(w http.ResponseWriter, r *http.Request, queue string) {
+	if r.URL.Query().Get("comp") == compMetadata {
+		h.metadataOp(w, r, queue)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createQueue(w, r, queue)
@@ -169,13 +208,62 @@ func (h *Handler) queueOp(w http.ResponseWriter, r *http.Request, queue string) 
 	}
 }
 
-func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, queue string) {
-	_, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: queue})
+// metadataOp handles GET|PUT /{queue}?comp=metadata (queue properties + metadata).
+func (h *Handler) metadataOp(w http.ResponseWriter, r *http.Request, queue string) {
+	svc, ok := h.mq.(mqdriver.AzureQueueStorage)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "queue metadata is not supported by this queue driver")
+		return
+	}
+
+	url, err := h.resolveQueueURL(r, queue)
 	if err != nil {
-		// Azure returns 204 No Content when the queue already exists with the
-		// same metadata (idempotent create).
+		writeErr(w, err)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		getQueueMetadata(w, r, svc, url)
+	case http.MethodPut:
+		setQueueMetadata(w, r, svc, url)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+func getQueueMetadata(w http.ResponseWriter, r *http.Request, svc mqdriver.AzureQueueStorage, url string) {
+	meta, err := svc.GetQueueMetadata(r.Context(), url)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.Header().Set("x-ms-approximate-messages-count", strconv.Itoa(meta.ApproximateMessageCount))
+
+	for k, v := range meta.Metadata {
+		w.Header().Set("x-ms-meta-"+k, v)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func setQueueMetadata(w http.ResponseWriter, r *http.Request, svc mqdriver.AzureQueueStorage, url string) {
+	if err := svc.SetQueueMetadata(r.Context(), url, metadataFromHeaders(r.Header)); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, queue string) {
+	metadata := metadataFromHeaders(r.Header)
+
+	_, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: queue, Metadata: metadata})
+	if err != nil {
 		if cerrors.IsAlreadyExists(err) {
-			w.WriteHeader(http.StatusNoContent)
+			h.handleDuplicateCreate(w, r, queue, metadata)
 			return
 		}
 
@@ -185,6 +273,36 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, queue stri
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleDuplicateCreate resolves the idempotency of a Create Queue on a name that
+// already exists: Azure returns 204 No Content when the requested metadata matches
+// the existing queue's, and 409 QueueAlreadyExists when it differs.
+func (h *Handler) handleDuplicateCreate(w http.ResponseWriter, r *http.Request, queue string, requested map[string]string) {
+	svc, ok := h.mq.(mqdriver.AzureQueueStorage)
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	url, err := h.resolveQueueURL(r, queue)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	meta, err := svc.GetQueueMetadata(r.Context(), url)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if maps.Equal(requested, meta.Metadata) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	writeError(w, http.StatusConflict, "QueueAlreadyExists", "The specified queue already exists.")
 }
 
 func (h *Handler) deleteQueue(w http.ResponseWriter, r *http.Request, queue string) {
@@ -225,6 +343,11 @@ func (h *Handler) messagesOp(w http.ResponseWriter, r *http.Request, queue strin
 	case http.MethodPost:
 		h.enqueue(w, r, queue)
 	case http.MethodGet:
+		if r.URL.Query().Get("peekonly") == "true" {
+			h.peek(w, r, queue)
+			return
+		}
+
 		h.dequeue(w, r, queue)
 	case http.MethodDelete:
 		// DELETE /{queue}/messages with no id = clear queue.
@@ -255,10 +378,16 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 
 	visTimeout := atoiDefault(r.URL.Query().Get("visibilitytimeout"), 0)
 
+	ttlSeconds, ok := parseMessageTTL(w, r.URL.Query().Get("messagettl"))
+	if !ok {
+		return
+	}
+
 	out, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
-		QueueURL:     url,
-		Body:         req.MessageText,
-		DelaySeconds: visTimeout,
+		QueueURL:          url,
+		Body:              req.MessageText,
+		DelaySeconds:      visTimeout,
+		MessageTTLSeconds: &ttlSeconds,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -269,8 +398,8 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 	resp := messagesList{Messages: []messageXML{{
 		MessageID:       out.MessageID,
 		InsertionTime:   now.Format(time.RFC1123),
-		ExpirationTime:  now.Add(7 * 24 * time.Hour).Format(time.RFC1123),
-		PopReceipt:      out.MessageID,
+		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(time.RFC1123),
+		PopReceipt:      out.PopReceipt,
 		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
 	}}}
 
@@ -285,31 +414,96 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 	}
 
 	q := r.URL.Query()
-	maxMsgs := atoiDefault(q.Get("numofmessages"), 1)
+
+	maxMsgs, ok := parseNumOfMessages(w, q.Get("numofmessages"))
+	if !ok {
+		return
+	}
+
 	visTimeout := atoiDefault(q.Get("visibilitytimeout"), 0)
 
-	msgs, err := h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
-		QueueURL:          url,
-		MaxMessages:       maxMsgs,
-		VisibilityTimeout: visTimeout,
-	})
+	msgs, err := h.dequeueMessages(r, url, maxMsgs, visTimeout)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	now := time.Now().UTC()
+	// The driver defaults an omitted visibilitytimeout to 30s; mirror that so the
+	// reported TimeNextVisible matches when the message actually reappears.
+	effectiveVis := visTimeout
+	if effectiveVis == 0 {
+		effectiveVis = defaultVisibilityTimeoutSeconds
+	}
+
+	timeNextVisible := now.Add(time.Duration(effectiveVis) * time.Second).Format(time.RFC1123)
 	out := messagesList{}
 
-	for _, m := range msgs {
+	for i := range msgs {
+		m := &msgs[i]
 		out.Messages = append(out.Messages, messageXML{
 			MessageID:       m.MessageID,
-			InsertionTime:   now.Format(time.RFC1123),
-			ExpirationTime:  now.Add(7 * 24 * time.Hour).Format(time.RFC1123),
+			InsertionTime:   m.InsertedAt.UTC().Format(time.RFC1123),
+			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
 			PopReceipt:      m.ReceiptHandle,
-			TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
-			DequeueCount:    1,
+			TimeNextVisible: timeNextVisible,
+			DequeueCount:    int64(m.ReceiveCount),
 			MessageText:     m.Body,
+		})
+	}
+
+	writeXML(w, http.StatusOK, out)
+}
+
+// dequeueMessages retrieves messages using the Azure Queue Storage surface when
+// the driver exposes it (respecting the 32-message max), falling back to the
+// cross-cloud receive path otherwise.
+func (h *Handler) dequeueMessages(r *http.Request, url string, maxMsgs, visTimeout int) ([]mqdriver.Message, error) {
+	if svc, ok := h.mq.(mqdriver.AzureQueueStorage); ok {
+		return svc.DequeueMessages(r.Context(), url, maxMsgs, visTimeout)
+	}
+
+	return h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
+		QueueURL:          url,
+		MaxMessages:       maxMsgs,
+		VisibilityTimeout: visTimeout,
+	})
+}
+
+// peek handles GET /{queue}/messages?peekonly=true — a non-destructive read
+// that leaves message visibility unchanged and issues no pop receipts.
+func (h *Handler) peek(w http.ResponseWriter, r *http.Request, queue string) {
+	svc, ok := h.mq.(mqdriver.AzureQueueStorage)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "peek is not supported by this queue driver")
+		return
+	}
+
+	url, err := h.resolveQueueURL(r, queue)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	maxMsgs, ok := parseNumOfMessages(w, r.URL.Query().Get("numofmessages"))
+	if !ok {
+		return
+	}
+
+	msgs, err := svc.PeekMessages(r.Context(), url, maxMsgs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := peekMessagesList{}
+	for _, m := range msgs {
+		out.Messages = append(out.Messages, peekMessageXML{
+			MessageID:      m.MessageID,
+			InsertionTime:  m.InsertedAt.UTC().Format(time.RFC1123),
+			ExpirationTime: displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
+			DequeueCount:   int64(m.ReceiveCount),
+			MessageText:    m.Body,
 		})
 	}
 
@@ -331,13 +525,20 @@ func (h *Handler) clearQueue(w http.ResponseWriter, r *http.Request, queue strin
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// messageIDOp handles DELETE /{queue}/messages/{messageid}?popreceipt=….
-func (h *Handler) messageIDOp(w http.ResponseWriter, r *http.Request, queue, _ string) {
-	if r.Method != http.MethodDelete {
+// messageIDOp handles DELETE and PUT on /{queue}/messages/{messageid}.
+func (h *Handler) messageIDOp(w http.ResponseWriter, r *http.Request, queue, msgID string) {
+	switch r.Method {
+	case http.MethodDelete:
+		h.deleteMessage(w, r, queue)
+	case http.MethodPut:
+		h.updateMessage(w, r, queue, msgID)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
 	}
+}
 
+// deleteMessage handles DELETE /{queue}/messages/{messageid}?popreceipt=….
+func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, queue string) {
 	url, err := h.resolveQueueURL(r, queue)
 	if err != nil {
 		writeErr(w, err)
@@ -351,10 +552,72 @@ func (h *Handler) messageIDOp(w http.ResponseWriter, r *http.Request, queue, _ s
 	}
 
 	if err := h.mq.DeleteMessage(r.Context(), url, popReceipt); err != nil {
+		// The queue was already resolved, so a NotFound here means the message or
+		// its pop receipt did not match — Azure returns 404 MessageNotFound.
+		if cerrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			return
+		}
+
+		writeErr(w, err)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateMessage handles PUT /{queue}/messages/{id}?popreceipt=…&visibilitytimeout=….
+// It renews visibility and optionally replaces the message body, returning a new
+// pop receipt in x-ms-popreceipt (Azure Update Message).
+func (h *Handler) updateMessage(w http.ResponseWriter, r *http.Request, queue, msgID string) {
+	svc, ok := h.mq.(mqdriver.AzureQueueStorage)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "update message is not supported by this queue driver")
+		return
+	}
+
+	url, err := h.resolveQueueURL(r, queue)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	q := r.URL.Query()
+
+	popReceipt := q.Get("popreceipt")
+	if popReceipt == "" {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", "popreceipt is required")
+		return
+	}
+
+	visTimeout, ok := parseVisibilityTimeout(w, q.Get("visibilitytimeout"))
+	if !ok {
+		return
+	}
+
+	body, err := readMessageText(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidXmlDocument", "malformed request body")
+		return
+	}
+
+	res, err := svc.UpdateMessage(r.Context(), url, msgID, popReceipt, visTimeout, body)
+	if err != nil {
+		// The queue was already resolved, so a NotFound here means the message
+		// or its pop receipt did not match.
+		if cerrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			return
+		}
+
+		writeErr(w, err)
+
+		return
+	}
+
+	w.Header().Set("x-ms-popreceipt", res.PopReceipt)
+	w.Header().Set("x-ms-time-next-visible", res.TimeNextVisible.UTC().Format(time.RFC1123))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -388,6 +651,125 @@ func atoiDefault(s string, def int) int {
 	return def
 }
 
+// parseVisibilityTimeout validates the required visibilitytimeout parameter for
+// Update Message: a non-negative integer no larger than 7 days. It writes a 400
+// and returns ok=false on a bad value.
+func parseVisibilityTimeout(w http.ResponseWriter, raw string) (int, bool) {
+	if raw == "" {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", "visibilitytimeout is required")
+		return 0, false
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 || v > maxUpdateVisibilityTimeout {
+		writeError(w, http.StatusBadRequest, "OutOfRangeQueryParameterValue", "visibilitytimeout is out of range")
+		return 0, false
+	}
+
+	return v, true
+}
+
+// parseMessageTTL validates the optional messagettl parameter for Put Message:
+// a positive number of seconds, or -1 meaning the message never expires. An
+// absent value returns Azure's documented default of 7 days. It writes a 400
+// and returns ok=false on a bad value.
+func parseMessageTTL(w http.ResponseWriter, raw string) (int, bool) {
+	if raw == "" {
+		return defaultMessageTTLSeconds, true
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue",
+			"Value for one of the query parameters specified in the request URI is invalid.")
+
+		return 0, false
+	}
+
+	if v != neverExpireTTL && v < 1 {
+		writeError(w, http.StatusBadRequest, "OutOfRangeQueryParameterValue", "messagettl is out of range")
+		return 0, false
+	}
+
+	return v, true
+}
+
+// displayExpiry returns t, or — for a message that never expires (the zero
+// time.Time internal marker) — a far-future timestamp so the wire response's
+// ExpirationTime element reads as "effectively unbounded" rather than
+// formatting the zero time as year 0001 (which would look already expired).
+func displayExpiry(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Now().UTC().Add(neverExpireHorizon)
+	}
+
+	return t
+}
+
+// parseNumOfMessages validates the optional numofmessages parameter for Get
+// Messages and Peek Messages. An absent value defaults to 1; a present value
+// must be an integer in [1, 32]. A non-integer is a 400 InvalidQueryParameterValue
+// and an out-of-range integer is a 400 OutOfRangeQueryParameterValue carrying the
+// permissible bounds, matching real Azure Queue Storage. It writes the error and
+// returns ok=false on a bad value.
+func parseNumOfMessages(w http.ResponseWriter, raw string) (int, bool) {
+	if raw == "" {
+		return minNumOfMessages, true
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue",
+			"Value for one of the query parameters specified in the request URI is invalid.")
+
+		return 0, false
+	}
+
+	if n < minNumOfMessages || n > maxNumOfMessages {
+		writeQueryParameterRangeError(w, "numofmessages", raw, minNumOfMessages, maxNumOfMessages)
+		return 0, false
+	}
+
+	return n, true
+}
+
+// readMessageText reads an optional <QueueMessage><MessageText> body, returning
+// nil when the body is empty (visibility-only update).
+func readMessageText(w http.ResponseWriter, r *http.Request) (*string, error) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxEnqueueBodyBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(string(data)) == "" {
+		return nil, nil
+	}
+
+	var req enqueueRequest
+	if err := xml.Unmarshal(data, &req); err != nil {
+		return nil, err
+	}
+
+	return &req.MessageText, nil
+}
+
+// metadataFromHeaders collects x-ms-meta-{name} request headers into a map.
+func metadataFromHeaders(h http.Header) map[string]string {
+	const prefix = "X-Ms-Meta-"
+
+	out := make(map[string]string)
+
+	for k, vals := range h {
+		if len(vals) == 0 || !strings.HasPrefix(k, prefix) {
+			continue
+		}
+
+		out[strings.TrimPrefix(k, prefix)] = vals[0]
+	}
+
+	return out
+}
+
 func writeXML(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", contentTypeXML)
 	w.WriteHeader(status)
@@ -401,6 +783,26 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(xml.Header))
 	_ = xml.NewEncoder(w).Encode(errorXML{Code: code, Message: msg})
+}
+
+// writeQueryParameterRangeError emits the Azure Queue Storage 400
+// OutOfRangeQueryParameterValue error, including the offending parameter's name
+// and value plus the permitted [min, max] bounds, as real Queue Storage does.
+func writeQueryParameterRangeError(w http.ResponseWriter, name, value string, minVal, maxVal int) {
+	const code = "OutOfRangeQueryParameterValue"
+
+	w.Header().Set("Content-Type", contentTypeXML)
+	w.Header().Set("X-Ms-Error-Code", code)
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write([]byte(xml.Header))
+	_ = xml.NewEncoder(w).Encode(queryParamRangeErrorXML{
+		Code:                code,
+		Message:             "One of the query parameters specified in the request URI is outside the permissible range.",
+		QueryParameterName:  name,
+		QueryParameterValue: value,
+		MinimumAllowed:      strconv.Itoa(minVal),
+		MaximumAllowed:      strconv.Itoa(maxVal),
+	})
 }
 
 // writeErr maps CloudEmu canonical errors to Azure Queue HTTP errors.

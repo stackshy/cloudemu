@@ -26,6 +26,20 @@ func TestCreateScaleSetDefaults(t *testing.T) {
 	assert.Equal(t, "Linux", ss.OSType)
 }
 
+func TestCreateScaleSetExplicitZeroCapacityHonored(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	ss, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-zero", Capacity: 0, CapacityZero: true})
+	require.NoError(t, err)
+	assert.Equal(t, 0, ss.Capacity)
+
+	list, err := m.ListScaleSets(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, 0, list[0].Capacity)
+}
+
 func TestCreateScaleSetRequiresName(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

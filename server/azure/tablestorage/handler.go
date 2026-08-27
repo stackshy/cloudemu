@@ -14,10 +14,11 @@
 //	MERGE|PATCH /{table}(PartitionKey='p',RowKey='r')     — merge entity
 //	DELETE /{table}(PartitionKey='p',RowKey='r')          — delete entity
 //	GET    /{table}()?$filter=…                           — query entities
+//	POST   /$batch                                        — entity group transaction
 //
-// Access policies and transactional batches are out of scope. Upsert (a PUT or
-// MERGE with no If-Match header against a missing row) is supported as an
-// insert-or-replace/merge, matching aztables UpsertEntity.
+// Access policies are out of scope. Upsert (a PUT or MERGE with no If-Match
+// header against a missing row) is supported as an insert-or-replace/merge,
+// matching aztables UpsertEntity.
 package tablestorage
 
 import (
@@ -39,6 +40,12 @@ const (
 
 	// maxBodyBytes caps request bodies (entities / table-create payloads).
 	maxBodyBytes = 1 << 20
+
+	// etagProp is the system property carrying an entity's ETag on read.
+	etagProp = "odata.etag"
+
+	// pathBatch is the entity-group-transaction endpoint path segment.
+	pathBatch = "$batch"
 )
 
 // Handler serves Azure Table Storage REST requests against a TableStorage
@@ -73,6 +80,11 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/")
+
+	// /$batch — entity group transactions.
+	if path == pathBatch {
+		return true
+	}
 
 	// /Tables and /Tables('name').
 	if path == "Tables" || strings.HasPrefix(path, "Tables(") {
@@ -109,6 +121,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
 	switch {
+	case path == pathBatch:
+		h.batch(w, r)
 	case path == "Tables":
 		h.tablesCollectionOp(w, r)
 	case strings.HasPrefix(path, "Tables("):
@@ -144,7 +158,15 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.ts.CreateTable(r.Context(), body.TableName); err != nil {
+		// A duplicate table is TableAlreadyExists, distinct from the generic
+		// EntityAlreadyExists that a duplicate entity insert reports.
+		if cerrors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, "TableAlreadyExists", err.Error())
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
@@ -216,7 +238,7 @@ func (h *Handler) entityOp(w http.ResponseWriter, r *http.Request, path string) 
 		h.getEntity(w, r, table, pk, rk)
 	case http.MethodPut:
 		h.updateEntity(w, r, table, pk, rk, driver.UpdateModeReplace)
-	case http.MethodPatch, "MERGE":
+	case http.MethodPatch, methodMerge:
 		h.updateEntity(w, r, table, pk, rk, driver.UpdateModeMerge)
 	case http.MethodDelete:
 		h.deleteEntity(w, r, table, pk, rk)
@@ -231,17 +253,30 @@ func (h *Handler) queryEntities(w http.ResponseWriter, r *http.Request, table st
 		return
 	}
 
-	entities, err := h.ts.QueryEntities(r.Context(), table, driver.QueryOptions{
-		Filter: r.URL.Query().Get("$filter"),
+	q := r.URL.Query()
+
+	res, err := h.ts.QueryEntities(r.Context(), table, driver.QueryOptions{
+		Filter:           q.Get("$filter"),
+		Top:              atoiDefault(q.Get("$top"), 0),
+		Select:           q.Get("$select"),
+		NextPartitionKey: q.Get("NextPartitionKey"),
+		NextRowKey:       q.Get("NextRowKey"),
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	value := make([]map[string]any, 0, len(entities))
-	for _, e := range entities {
+	value := make([]map[string]any, 0, len(res.Entities))
+	for _, e := range res.Entities {
 		value = append(value, entityToJSON(e))
+	}
+
+	// Continuation tokens travel as response headers, mirroring the real
+	// service; aztables' pager reads them to fetch the next page.
+	if res.NextPartitionKey != "" || res.NextRowKey != "" {
+		w.Header().Set("X-Ms-Continuation-Nextpartitionkey", res.NextPartitionKey)
+		w.Header().Set("X-Ms-Continuation-Nextrowkey", res.NextRowKey)
 	}
 
 	resp := map[string]any{
@@ -262,7 +297,10 @@ func (h *Handler) getEntity(w http.ResponseWriter, r *http.Request, table, pk, r
 	out := entityToJSON(ent)
 	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, table)
 
-	w.Header().Set("ETag", entityETag())
+	if etag := asString(ent[etagProp]); etag != "" {
+		w.Header().Set("ETag", etag)
+	}
+
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -276,7 +314,8 @@ func (h *Handler) insertEntity(w http.ResponseWriter, r *http.Request, table str
 	pk := asString(ent["PartitionKey"])
 	rk := asString(ent["RowKey"])
 
-	if err := h.ts.InsertEntity(r.Context(), table, pk, rk, driver.Entity(ent)); err != nil {
+	etag, err := h.ts.InsertEntity(r.Context(), table, pk, rk, driver.Entity(ent))
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -284,8 +323,9 @@ func (h *Handler) insertEntity(w http.ResponseWriter, r *http.Request, table str
 	// Default (no Prefer header): return-content — echo the entity with 201.
 	out := entityToJSON(ent)
 	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, table)
+	out[etagProp] = etag
 
-	w.Header().Set("ETag", entityETag())
+	w.Header().Set("ETag", etag)
 
 	if strings.EqualFold(r.Header.Get("Prefer"), "return-no-content") {
 		w.Header().Set("Preference-Applied", "return-no-content")
@@ -311,32 +351,37 @@ func (h *Handler) updateEntity(
 	ent["PartitionKey"] = pk
 	ent["RowKey"] = rk
 
-	if err := h.ts.UpdateEntity(r.Context(), table, pk, rk, driver.Entity(ent), mode); err != nil {
+	ifMatch := r.Header.Get("If-Match")
+
+	etag, err := h.ts.UpdateEntity(r.Context(), table, pk, rk, driver.Entity(ent), mode, ifMatch)
+	if err != nil {
 		// aztables UpdateEntity sends an If-Match header; UpsertEntity does not.
 		// With no If-Match, a PUT/MERGE against a missing row is an insert
 		// (insert-or-replace/merge), so create it instead of returning 404.
-		if cerrors.IsNotFound(err) && r.Header.Get("If-Match") == "" {
-			if ierr := h.ts.InsertEntity(r.Context(), table, pk, rk, driver.Entity(ent)); ierr != nil {
+		if cerrors.IsNotFound(err) && ifMatch == "" {
+			ietag, ierr := h.ts.InsertEntity(r.Context(), table, pk, rk, driver.Entity(ent))
+			if ierr != nil {
 				writeErr(w, ierr)
 				return
 			}
 
-			w.Header().Set("ETag", entityETag())
+			w.Header().Set("ETag", ietag)
 			w.WriteHeader(http.StatusNoContent)
 
 			return
 		}
 
 		writeErr(w, err)
+
 		return
 	}
 
-	w.Header().Set("ETag", entityETag())
+	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) deleteEntity(w http.ResponseWriter, r *http.Request, table, pk, rk string) {
-	if err := h.ts.DeleteEntity(r.Context(), table, pk, rk); err != nil {
+	if err := h.ts.DeleteEntity(r.Context(), table, pk, rk, r.Header.Get("If-Match")); err != nil {
 		writeErr(w, err)
 		return
 	}

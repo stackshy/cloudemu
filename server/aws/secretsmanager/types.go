@@ -26,6 +26,14 @@ type secretListEntryJSON struct {
 	Tags            []tagJSON `json:"Tags,omitempty"`
 	CreatedDate     float64   `json:"CreatedDate,omitempty"`
 	LastChangedDate float64   `json:"LastChangedDate,omitempty"`
+	// DeletedDate is set only for a secret scheduled for deletion: the date the
+	// secret is scheduled to be removed (delete request + RecoveryWindowInDays).
+	DeletedDate float64 `json:"DeletedDate,omitempty"`
+	// KmsKeyId is the customer KMS key the secret is encrypted with, echoed on
+	// DescribeSecret. Omitted when the default aws/secretsmanager key is used.
+	KmsKeyID string `json:"KmsKeyId,omitempty"`
+
+	VersionIDsToStages map[string][]string `json:"VersionIdsToStages,omitempty"`
 }
 
 type versionJSON struct {
@@ -37,26 +45,78 @@ type versionJSON struct {
 // --- request envelopes ---
 
 type createSecretRequest struct {
-	Name         string    `json:"Name"`
-	Description  string    `json:"Description"`
-	SecretString string    `json:"SecretString"`
-	SecretBinary []byte    `json:"SecretBinary"`
-	Tags         []tagJSON `json:"Tags"`
+	Name               string    `json:"Name"`
+	Description        string    `json:"Description"`
+	SecretString       string    `json:"SecretString"`
+	SecretBinary       []byte    `json:"SecretBinary"`
+	Tags               []tagJSON `json:"Tags"`
+	KmsKeyID           string    `json:"KmsKeyId"`
+	ClientRequestToken string    `json:"ClientRequestToken"`
 }
 
 type secretIDRequest struct {
 	SecretID string `json:"SecretId"`
 }
 
+type listSecretVersionIDsRequest struct {
+	SecretID string `json:"SecretId"`
+	// IncludeDeprecated, when true, also returns versions that carry no staging
+	// labels (deprecated versions). By default AWS omits them.
+	IncludeDeprecated bool   `json:"IncludeDeprecated"`
+	MaxResults        int32  `json:"MaxResults"`
+	NextToken         string `json:"NextToken"`
+}
+
+type deleteSecretRequest struct {
+	SecretID string `json:"SecretId"`
+	// RecoveryWindowInDays is a pointer so an absent field (nil) is
+	// distinguishable from an explicit 0 — the latter is an invalid value AWS
+	// rejects, while nil applies the default recovery window.
+	RecoveryWindowInDays       *int64 `json:"RecoveryWindowInDays"`
+	ForceDeleteWithoutRecovery bool   `json:"ForceDeleteWithoutRecovery"`
+}
+
 type getSecretValueRequest struct {
-	SecretID  string `json:"SecretId"`
-	VersionID string `json:"VersionId"`
+	SecretID     string `json:"SecretId"`
+	VersionID    string `json:"VersionId"`
+	VersionStage string `json:"VersionStage"`
+}
+
+type getRandomPasswordRequest struct {
+	PasswordLength          int64  `json:"PasswordLength"`
+	ExcludeCharacters       string `json:"ExcludeCharacters"`
+	ExcludeNumbers          bool   `json:"ExcludeNumbers"`
+	ExcludePunctuation      bool   `json:"ExcludePunctuation"`
+	ExcludeUppercase        bool   `json:"ExcludeUppercase"`
+	ExcludeLowercase        bool   `json:"ExcludeLowercase"`
+	IncludeSpace            bool   `json:"IncludeSpace"`
+	RequireEachIncludedType bool   `json:"RequireEachIncludedType"`
+}
+
+type secretFilter struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
+}
+
+type listSecretsRequest struct {
+	MaxResults int32          `json:"MaxResults"`
+	NextToken  string         `json:"NextToken"`
+	Filters    []secretFilter `json:"Filters"`
 }
 
 type putSecretValueRequest struct {
-	SecretID     string `json:"SecretId"`
-	SecretString string `json:"SecretString"`
-	SecretBinary []byte `json:"SecretBinary"`
+	SecretID           string   `json:"SecretId"`
+	SecretString       string   `json:"SecretString"`
+	SecretBinary       []byte   `json:"SecretBinary"`
+	ClientRequestToken string   `json:"ClientRequestToken"`
+	VersionStages      []string `json:"VersionStages"`
+}
+
+type updateSecretVersionStageRequest struct {
+	SecretID            string `json:"SecretId"`
+	VersionStage        string `json:"VersionStage"`
+	RemoveFromVersionID string `json:"RemoveFromVersionId"`
+	MoveToVersionID     string `json:"MoveToVersionId"`
 }
 
 type updateSecretRequest struct {
@@ -77,6 +137,12 @@ type untagResourceRequest struct {
 }
 
 type updateSecretResponse struct {
+	ARN       string `json:"ARN"`
+	Name      string `json:"Name"`
+	VersionID string `json:"VersionId,omitempty"`
+}
+
+type updateSecretVersionStageResponse struct {
 	ARN  string `json:"ARN"`
 	Name string `json:"Name"`
 }
@@ -90,12 +156,31 @@ type createSecretResponse struct {
 }
 
 type deleteSecretResponse struct {
+	ARN          string  `json:"ARN"`
+	Name         string  `json:"Name"`
+	DeletionDate float64 `json:"DeletionDate,omitempty"`
+}
+
+// secretRefResponse is the {ARN, Name} envelope returned by the operations that
+// only echo the secret reference: RestoreSecret and Put/DeleteResourcePolicy.
+type secretRefResponse struct {
 	ARN  string `json:"ARN"`
 	Name string `json:"Name"`
 }
 
+type rotateSecretResponse struct {
+	ARN       string `json:"ARN"`
+	Name      string `json:"Name"`
+	VersionID string `json:"VersionId"`
+}
+
+type getRandomPasswordResponse struct {
+	RandomPassword string `json:"RandomPassword"`
+}
+
 type listSecretsResponse struct {
 	SecretList []secretListEntryJSON `json:"SecretList"`
+	NextToken  string                `json:"NextToken,omitempty"`
 }
 
 type getSecretValueResponse struct {
@@ -103,6 +188,7 @@ type getSecretValueResponse struct {
 	Name          string   `json:"Name"`
 	VersionID     string   `json:"VersionId"`
 	SecretString  string   `json:"SecretString,omitempty"`
+	SecretBinary  []byte   `json:"SecretBinary,omitempty"`
 	VersionStages []string `json:"VersionStages,omitempty"`
 	CreatedDate   float64  `json:"CreatedDate,omitempty"`
 }
@@ -115,9 +201,71 @@ type putSecretValueResponse struct {
 }
 
 type listSecretVersionIDsResponse struct {
-	ARN      string        `json:"ARN"`
-	Name     string        `json:"Name"`
-	Versions []versionJSON `json:"Versions"`
+	ARN       string        `json:"ARN"`
+	Name      string        `json:"Name"`
+	Versions  []versionJSON `json:"Versions"`
+	NextToken string        `json:"NextToken,omitempty"`
+}
+
+type putResourcePolicyRequest struct {
+	SecretID          string `json:"SecretId"`
+	ResourcePolicy    string `json:"ResourcePolicy"`
+	BlockPublicPolicy bool   `json:"BlockPublicPolicy"`
+}
+
+// getResourcePolicyResponse omits ResourcePolicy when none is set, which the SDK
+// reads as "no policy".
+type getResourcePolicyResponse struct {
+	ARN            string `json:"ARN"`
+	Name           string `json:"Name"`
+	ResourcePolicy string `json:"ResourcePolicy,omitempty"`
+}
+
+type validateResourcePolicyRequest struct {
+	SecretID       string `json:"SecretId"`
+	ResourcePolicy string `json:"ResourcePolicy"`
+}
+
+type validationErrorEntry struct {
+	CheckName    string `json:"CheckName"`
+	ErrorMessage string `json:"ErrorMessage"`
+}
+
+type validateResourcePolicyResponse struct {
+	PolicyValidationPassed bool                   `json:"PolicyValidationPassed"`
+	ValidationErrors       []validationErrorEntry `json:"ValidationErrors"`
+}
+
+type batchGetSecretValueRequest struct {
+	SecretIDList []string       `json:"SecretIdList"`
+	Filters      []secretFilter `json:"Filters"`
+	MaxResults   int32          `json:"MaxResults"`
+	NextToken    string         `json:"NextToken"`
+}
+
+// secretValueEntry is one resolved secret in a BatchGetSecretValue response.
+type secretValueEntry struct {
+	ARN           string   `json:"ARN"`
+	Name          string   `json:"Name"`
+	VersionID     string   `json:"VersionId"`
+	SecretString  string   `json:"SecretString,omitempty"`
+	SecretBinary  []byte   `json:"SecretBinary,omitempty"`
+	VersionStages []string `json:"VersionStages,omitempty"`
+	CreatedDate   float64  `json:"CreatedDate,omitempty"`
+}
+
+// batchErrorEntry reports a per-secret failure (e.g. a missing secret) in a
+// BatchGetSecretValue response, so one bad id does not fail the whole batch.
+type batchErrorEntry struct {
+	SecretID  string `json:"SecretId"`
+	ErrorCode string `json:"ErrorCode"`
+	Message   string `json:"Message"`
+}
+
+type batchGetSecretValueResponse struct {
+	SecretValues []secretValueEntry `json:"SecretValues"`
+	Errors       []batchErrorEntry  `json:"Errors"`
+	NextToken    string             `json:"NextToken,omitempty"`
 }
 
 // epochSeconds converts an RFC3339 timestamp to Unix epoch seconds, the form
@@ -132,9 +280,11 @@ func epochSeconds(iso string) float64 {
 }
 
 // resolveSecretID accepts either a plain secret name or a full ARN
-// ("arn:aws:secretsmanager:<region>:<account>:secret:<name>") — real Secrets
-// Manager accepts both forms for SecretId — and returns the bare name the
-// driver keys on.
+// ("arn:aws:secretsmanager:<region>:<account>:secret:<name>-<suffix>") — real
+// Secrets Manager accepts both forms for SecretId — and returns the bare name
+// the driver keys on. For an ARN, the trailing 6-char "-<suffix>" AWS appends is
+// stripped so a lookup by the suffixed ARN resolves to the same secret as the
+// friendly name. A plain name is returned untouched (its own hyphens are kept).
 func resolveSecretID(id string) string {
 	const marker = ":secret:"
 
@@ -142,11 +292,41 @@ func resolveSecretID(id string) string {
 		return id
 	}
 
-	if i := strings.LastIndex(id, marker); i >= 0 {
-		return id[i+len(marker):]
+	i := strings.LastIndex(id, marker)
+	if i < 0 {
+		return id
 	}
 
-	return id
+	return stripARNSuffix(id[i+len(marker):])
+}
+
+// arnSuffixLen is the length of the random suffix (excluding the hyphen) AWS
+// appends to a Secrets Manager ARN's resource segment.
+const arnSuffixLen = 6
+
+// stripARNSuffix removes a trailing "-XXXXXX" (hyphen + 6 alphanumerics) from an
+// ARN resource segment, recovering the friendly secret name.
+func stripARNSuffix(seg string) string {
+	if len(seg) < arnSuffixLen+1 {
+		return seg
+	}
+
+	cut := len(seg) - arnSuffixLen - 1
+	if seg[cut] != '-' {
+		return seg
+	}
+
+	for _, c := range seg[cut+1:] {
+		if !isAlphaNum(c) {
+			return seg
+		}
+	}
+
+	return seg[:cut]
+}
+
+func isAlphaNum(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 // secretValue picks the string payload if present, else the binary one — the
@@ -201,5 +381,6 @@ func toSecretListEntry(info *secretsdriver.SecretInfo) secretListEntryJSON {
 		Tags:            mapToTags(info.Tags),
 		CreatedDate:     epochSeconds(info.CreatedAt),
 		LastChangedDate: epochSeconds(info.UpdatedAt),
+		KmsKeyID:        info.KMSKeyID,
 	}
 }

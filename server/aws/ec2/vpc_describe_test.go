@@ -1,0 +1,261 @@
+package ec2_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+)
+
+// TestDescribeVpcsCIDRFilterNarrows pins that DescribeVpcs honors the cidr filter,
+// returning only the matching VPC instead of every VPC. This is the Terraform /
+// CLI data-source lookup the audit flagged as broken.
+func TestDescribeVpcsCIDRFilterNarrows(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	vpcA := mkVPC(ctx, t, c, "10.0.0.0/16")
+	mkVPC(ctx, t, c, "10.1.0.0/16")
+
+	out, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("cidr"), Values: []string{"10.0.0.0/16"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeVpcs: %v", err)
+	}
+
+	if len(out.Vpcs) != 1 || aws.ToString(out.Vpcs[0].VpcId) != vpcA {
+		t.Fatalf("cidr filter returned %d vpcs, want only %s", len(out.Vpcs), vpcA)
+	}
+
+	if got := aws.ToString(out.Vpcs[0].OwnerId); got != "123456789012" {
+		t.Errorf("VPC OwnerId = %q, want 123456789012", got)
+	}
+}
+
+// TestDescribeVpcsTagFilter pins the tag:<key> filter on DescribeVpcs.
+func TestDescribeVpcsTagFilter(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	tagged, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.2.0.0/16"),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeVpc,
+			Tags:         []ec2types.Tag{{Key: aws.String("Env"), Value: aws.String("prod")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateVpc: %v", err)
+	}
+
+	mkVPC(ctx, t, c, "10.3.0.0/16")
+
+	out, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("tag:Env"), Values: []string{"prod"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeVpcs(tag): %v", err)
+	}
+
+	if len(out.Vpcs) != 1 || aws.ToString(out.Vpcs[0].VpcId) != aws.ToString(tagged.Vpc.VpcId) {
+		t.Fatalf("tag filter returned %d vpcs, want only the tagged one", len(out.Vpcs))
+	}
+}
+
+// TestDescribeVpcsCidrBlockAssociationSet pins that a VPC reports its primary
+// CIDR in cidrBlockAssociationSet with a stable vpc-cidr-assoc- id and an
+// "associated" state, alongside the flat cidrBlock. Terraform's aws_vpc reads
+// this set; an empty set makes the VPC look like it has no CIDR association.
+func TestDescribeVpcsCidrBlockAssociationSet(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	out, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{vpcID}})
+	if err != nil {
+		t.Fatalf("DescribeVpcs: %v", err)
+	}
+
+	assocs := out.Vpcs[0].CidrBlockAssociationSet
+	if len(assocs) != 1 {
+		t.Fatalf("cidrBlockAssociationSet = %d entries, want 1", len(assocs))
+	}
+
+	if got := aws.ToString(assocs[0].CidrBlock); got != "10.0.0.0/16" {
+		t.Errorf("association cidrBlock = %q, want 10.0.0.0/16", got)
+	}
+
+	if got := aws.ToString(assocs[0].AssociationId); got == "" || got[:len("vpc-cidr-assoc-")] != "vpc-cidr-assoc-" {
+		t.Errorf("association id = %q, want vpc-cidr-assoc- prefix", got)
+	}
+
+	if assocs[0].CidrBlockState == nil || assocs[0].CidrBlockState.State != ec2types.VpcCidrBlockStateCodeAssociated {
+		t.Errorf("association state = %+v, want associated", assocs[0].CidrBlockState)
+	}
+}
+
+// TestDescribeVpcsPaginates pins that MaxResults caps the page and returns a
+// NextToken, and that following the token returns the remaining VPCs with an
+// empty final token. Without honoring MaxResults every call returns the full
+// set, which breaks SDK paginators that page by NextToken.
+func TestDescribeVpcsPaginates(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	want := map[string]bool{}
+	for _, cidr := range []string{"10.0.0.0/16", "10.1.0.0/16", "10.2.0.0/16"} {
+		want[mkVPC(ctx, t, c, cidr)] = true
+	}
+
+	first, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{MaxResults: aws.Int32(1)})
+	if err != nil {
+		t.Fatalf("DescribeVpcs(page1): %v", err)
+	}
+
+	if len(first.Vpcs) != 1 {
+		t.Fatalf("page1 returned %d vpcs, want 1", len(first.Vpcs))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatalf("page1 NextToken empty, want a cursor with 2 vpcs left")
+	}
+
+	seen := map[string]bool{aws.ToString(first.Vpcs[0].VpcId): true}
+	token := first.NextToken
+
+	for token != nil && aws.ToString(token) != "" {
+		next, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{MaxResults: aws.Int32(1), NextToken: token})
+		if err != nil {
+			t.Fatalf("DescribeVpcs(page): %v", err)
+		}
+
+		for _, v := range next.Vpcs {
+			seen[aws.ToString(v.VpcId)] = true
+		}
+
+		token = next.NextToken
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("paged through %d vpcs, want %d unique", len(seen), len(want))
+	}
+
+	for id := range want {
+		if !seen[id] {
+			t.Fatalf("vpc %s missing from page-through", id)
+		}
+	}
+}
+
+// TestDhcpOptionsOwnerID pins that DHCP option sets report their owning account
+// id, which Terraform's aws_vpc_dhcp_options reads.
+func TestDhcpOptionsOwnerID(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	opts, err := c.CreateDhcpOptions(ctx, &ec2.CreateDhcpOptionsInput{
+		DhcpConfigurations: []ec2types.NewDhcpConfiguration{{
+			Key:    aws.String("domain-name-servers"),
+			Values: []string{"10.0.0.2"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateDhcpOptions: %v", err)
+	}
+
+	doptID := aws.ToString(opts.DhcpOptions.DhcpOptionsId)
+
+	desc, err := c.DescribeDhcpOptions(ctx, &ec2.DescribeDhcpOptionsInput{DhcpOptionsIds: []string{doptID}})
+	if err != nil {
+		t.Fatalf("DescribeDhcpOptions: %v", err)
+	}
+
+	if got := aws.ToString(desc.DhcpOptions[0].OwnerId); got != "123456789012" {
+		t.Errorf("DhcpOptions OwnerId = %q, want 123456789012", got)
+	}
+}
+
+// TestAssociateDhcpOptionsReflectedOnVpc pins that AssociateDhcpOptions actually
+// changes the VPC's dhcpOptionsId, rather than the VPC forever reporting
+// "default".
+func TestAssociateDhcpOptionsReflectedOnVpc(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	opts, err := c.CreateDhcpOptions(ctx, &ec2.CreateDhcpOptionsInput{
+		DhcpConfigurations: []ec2types.NewDhcpConfiguration{{
+			Key:    aws.String("domain-name-servers"),
+			Values: []string{"10.0.0.2"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateDhcpOptions: %v", err)
+	}
+
+	doptID := aws.ToString(opts.DhcpOptions.DhcpOptionsId)
+
+	if _, err := c.AssociateDhcpOptions(ctx, &ec2.AssociateDhcpOptionsInput{
+		DhcpOptionsId: aws.String(doptID),
+		VpcId:         aws.String(vpcID),
+	}); err != nil {
+		t.Fatalf("AssociateDhcpOptions: %v", err)
+	}
+
+	out, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{vpcID}})
+	if err != nil {
+		t.Fatalf("DescribeVpcs: %v", err)
+	}
+
+	if got := aws.ToString(out.Vpcs[0].DhcpOptionsId); got != doptID {
+		t.Fatalf("VPC DhcpOptionsId = %q, want %q", got, doptID)
+	}
+}
+
+// TestDescribeInternetGatewaysAttachmentFilter pins the attachment.vpc-id filter
+// and the ownerId field on internet gateways.
+func TestDescribeInternetGatewaysAttachmentFilter(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	igw, err := c.CreateInternetGateway(ctx, &ec2.CreateInternetGatewayInput{})
+	if err != nil {
+		t.Fatalf("CreateInternetGateway: %v", err)
+	}
+
+	igwID := aws.ToString(igw.InternetGateway.InternetGatewayId)
+
+	if _, err := c.AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwID),
+		VpcId:             aws.String(vpcID),
+	}); err != nil {
+		t.Fatalf("AttachInternetGateway: %v", err)
+	}
+
+	// A second, unattached IGW must be filtered out by attachment.vpc-id.
+	if _, err := c.CreateInternetGateway(ctx, &ec2.CreateInternetGatewayInput{}); err != nil {
+		t.Fatalf("CreateInternetGateway(2): %v", err)
+	}
+
+	out, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+		Filters: []ec2types.Filter{{Name: aws.String("attachment.vpc-id"), Values: []string{vpcID}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeInternetGateways: %v", err)
+	}
+
+	if len(out.InternetGateways) != 1 || aws.ToString(out.InternetGateways[0].InternetGatewayId) != igwID {
+		t.Fatalf("attachment.vpc-id filter returned %d gateways, want only %s", len(out.InternetGateways), igwID)
+	}
+
+	if got := aws.ToString(out.InternetGateways[0].OwnerId); got != "123456789012" {
+		t.Errorf("IGW OwnerId = %q, want 123456789012", got)
+	}
+}

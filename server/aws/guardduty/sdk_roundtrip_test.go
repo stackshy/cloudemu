@@ -159,6 +159,42 @@ func TestSDKDetectorLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKGetDetectorDefaultsDataSourcesAndFeatures verifies a detector created
+// without explicit features/data sources still reports a populated DataSources
+// block and a non-empty Features list, matching real GuardDuty's GetDetector.
+func TestSDKGetDetectorDefaultsDataSourcesAndFeatures(t *testing.T) {
+	ctx := context.Background()
+	c := newGDClient(t)
+
+	create, err := c.CreateDetector(ctx, &awsgd.CreateDetectorInput{Enable: aws.Bool(true)})
+	if err != nil {
+		t.Fatalf("CreateDetector: %v", err)
+	}
+
+	get, err := c.GetDetector(ctx, &awsgd.GetDetectorInput{DetectorId: create.DetectorId})
+	if err != nil {
+		t.Fatalf("GetDetector: %v", err)
+	}
+
+	if get.DataSources == nil {
+		t.Fatal("DataSources is nil, want a populated data-source configuration")
+	}
+
+	if get.DataSources.CloudTrail == nil || get.DataSources.CloudTrail.Status != gdtypes.DataSourceStatusEnabled {
+		t.Fatalf("CloudTrail data source not ENABLED: %+v", get.DataSources.CloudTrail)
+	}
+
+	if len(get.Features) == 0 {
+		t.Fatal("Features is empty, want the default enabled feature set")
+	}
+
+	for _, f := range get.Features {
+		if f.Name == "" {
+			t.Fatalf("feature has empty name: %+v", f)
+		}
+	}
+}
+
 func TestSDKIPSetLifecycle(t *testing.T) {
 	ctx := context.Background()
 	c := newGDClient(t)

@@ -246,8 +246,9 @@ func TestLifecycle(t *testing.T) {
 			t.Fatalf("PutItem should fully replace, old field survived: %+v", got)
 		}
 
-		// Failure analogs: duplicate table create and update-of-missing-item
-		// are the typed-error "condition failed" paths the driver does have.
+		// Failure analog: a duplicate table create is a typed "condition failed"
+		// path. (UpdateItem of a missing item is NOT an error — real DynamoDB
+		// UpdateItem upserts.)
 		e2eRequireCode(t, m.CreateTable(ctx, cfg), cerrors.AlreadyExists)
 
 		_, err = m.UpdateItem(ctx, driver.UpdateItemInput{
@@ -255,7 +256,7 @@ func TestLifecycle(t *testing.T) {
 			Key:     map[string]any{"pk": "ghost", "sk": "none"},
 			Actions: []driver.UpdateAction{{Action: "SET", Field: "a", Value: 1}},
 		})
-		e2eRequireCode(t, err, cerrors.NotFound)
+		e2eRequireNoErr(t, err)
 	})
 
 	t.Run("batch put and batch get", func(t *testing.T) {

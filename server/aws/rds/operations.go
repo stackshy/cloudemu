@@ -5,9 +5,29 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
+
+// paginateRDS stable-sorts items by the identifier that key returns, then slices a
+// Marker/MaxRecords page out of them — the shared body behind every RDS
+// Describe* list handler. On an invalid Marker it writes the RDS
+// InvalidParameterValue wire error and returns ok=false so the caller returns
+// without emitting a result.
+func paginateRDS[T any](w http.ResponseWriter, r *http.Request,
+	items []T, key func(*T) string,
+) (pagination.Page[T], bool) {
+	page, err := pagination.PaginateSorted(items,
+		func(a, b T) bool { return key(&a) < key(&b) },
+		r.Form.Get("Marker"), formInt(r.Form.Get("MaxRecords")))
+	if err != nil {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", "invalid Marker")
+		return pagination.Page[T]{}, false
+	}
+
+	return page, true
+}
 
 // instanceFromForm pulls the common DBInstance fields out of a form. Used by
 // CreateDBInstance and as the basis for ModifyDBInstance.
@@ -31,6 +51,9 @@ func instanceConfigFromForm(form url.Values) rdsdriver.InstanceConfig {
 		OptionGroupName:      form.Get("OptionGroupName"),
 		ClusterID:            form.Get("DBClusterIdentifier"),
 		AvailabilityZone:     form.Get("AvailabilityZone"),
+		StorageEncrypted:     formBool(form.Get("StorageEncrypted")),
+		KmsKeyID:             form.Get("KmsKeyId"),
+		DeletionProtection:   formBool(form.Get("DeletionProtection")),
 		Tags:                 parseRDSTags(form),
 	}
 }
@@ -74,12 +97,11 @@ func (h *Handler) createDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, createDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
-//nolint:dupl // shape mirrors describeDBClusters but operates on instances.
 func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBInstanceIdentifier")
 
@@ -88,22 +110,141 @@ func (h *Handler) describeDBInstances(w http.ResponseWriter, r *http.Request) {
 		ids = []string{id}
 	}
 
+	filters := parseInstanceFilters(r.Form)
+	if name, ok := unknownInstanceFilter(filters); !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue",
+			"Unrecognized RDS filter: "+name)
+
+		return
+	}
+
 	insts, err := h.db.DescribeInstances(r.Context(), ids)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := dbInstancesXML{DBInstance: make([]dbInstanceXML, 0, len(insts))}
-	for i := range insts {
-		out.DBInstance = append(out.DBInstance, toInstanceXML(&insts[i]))
+	insts = filterInstances(insts, filters)
+
+	page, ok := paginateRDS(w, r, insts, func(i *rdsdriver.Instance) string { return i.ID })
+	if !ok {
+		return
+	}
+
+	out := dbInstancesXML{DBInstance: make([]dbInstanceXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.DBInstance = append(out.DBInstance,
+			toInstanceXML(&page.Items[i], h.resolveInstanceSubnetGroupXML(r.Context(), &page.Items[i])))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBInstancesResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstancesResult{DBInstances: out},
+		Result:   dbInstancesResult{Marker: page.NextPageToken, DBInstances: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// parseInstanceFilters reads the Filters.Filter.N.{Name,Values.Value.M} entries
+// into a name→values map. The handler validates the names via
+// unknownInstanceFilter before filtering, so an unrecognized name is rejected
+// with InvalidParameterValue rather than silently matching nothing.
+func parseInstanceFilters(form url.Values) map[string][]string {
+	indices := awsquery.CollectIndices(form, "Filters.Filter")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make(map[string][]string, len(indices))
+
+	for _, n := range indices {
+		base := "Filters.Filter." + strconv.Itoa(n)
+
+		name := form.Get(base + ".Name")
+		if name == "" {
+			continue
+		}
+
+		out[name] = awsquery.ListStrings(form, base+".Values.Value")
+	}
+
+	return out
+}
+
+// filterInstances keeps only the instances matching every supplied filter (AND
+// across names, OR within a name's values), mirroring RDS filter semantics for
+// db-instance-id, engine and db-cluster-id.
+func filterInstances(insts []rdsdriver.Instance, filters map[string][]string) []rdsdriver.Instance {
+	if len(filters) == 0 {
+		return insts
+	}
+
+	out := make([]rdsdriver.Instance, 0, len(insts))
+
+	for i := range insts {
+		if instanceMatchesFilters(&insts[i], filters) {
+			out = append(out, insts[i])
+		}
+	}
+
+	return out
+}
+
+func instanceMatchesFilters(inst *rdsdriver.Instance, filters map[string][]string) bool {
+	for name, values := range filters {
+		field, known := instanceFilterField(inst, name)
+		if !known {
+			// Unknown names are rejected up front by unknownInstanceFilter, so a
+			// filter reaching here is always modeled.
+			continue
+		}
+
+		if !containsString(values, field) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// instanceFilterField returns the instance field a DescribeDBInstances filter
+// name selects, and whether the name is one RDS models. Real RDS errors on any
+// other name rather than silently matching nothing.
+func instanceFilterField(inst *rdsdriver.Instance, name string) (field string, known bool) {
+	switch name {
+	case "db-instance-id":
+		return inst.ID, true
+	case "engine":
+		return inst.Engine, true
+	case "db-cluster-id":
+		return inst.ClusterID, true
+	default:
+		return "", false
+	}
+}
+
+// unknownInstanceFilter reports the first filter name DescribeDBInstances does
+// not recognize (ok=false), so the handler can answer InvalidParameterValue the
+// way real RDS does instead of returning an empty result set.
+func unknownInstanceFilter(filters map[string][]string) (name string, ok bool) {
+	var probe rdsdriver.Instance
+
+	for n := range filters {
+		if _, known := instanceFilterField(&probe, n); !known {
+			return n, false
+		}
+	}
+
+	return "", true
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
@@ -112,18 +253,30 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("DBInstanceIdentifier")
 
 	input := rdsdriver.ModifyInstanceInput{
-		InstanceClass:        form.Get("DBInstanceClass"),
-		AllocatedStorage:     formInt(form.Get("AllocatedStorage")),
-		EngineVersion:        form.Get("EngineVersion"),
-		MasterUserPassword:   form.Get("MasterUserPassword"),
-		DBParameterGroupName: form.Get("DBParameterGroupName"),
-		OptionGroupName:      form.Get("OptionGroupName"),
-		Tags:                 parseRDSTags(form),
+		InstanceClass:              form.Get("DBInstanceClass"),
+		AllocatedStorage:           formInt(form.Get("AllocatedStorage")),
+		EngineVersion:              form.Get("EngineVersion"),
+		MasterUserPassword:         form.Get("MasterUserPassword"),
+		DBParameterGroupName:       form.Get("DBParameterGroupName"),
+		OptionGroupName:            form.Get("OptionGroupName"),
+		NewInstanceID:              form.Get("NewDBInstanceIdentifier"),
+		BackupRetentionPeriod:      formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:      form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
+		StorageType:                form.Get("StorageType"),
+		Iops:                       formInt(form.Get("Iops")),
+		ApplyImmediately:           formBool(form.Get("ApplyImmediately")),
+		Tags:                       parseRDSTags(form),
 	}
 
 	if v := form.Get("MultiAZ"); v != "" {
 		b := formBool(v)
 		input.MultiAZ = &b
+	}
+
+	if v := form.Get("DeletionProtection"); v != "" {
+		b := formBool(v)
+		input.DeletionProtection = &b
 	}
 
 	inst, err := h.db.ModifyInstance(r.Context(), id, input)
@@ -134,12 +287,11 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, modifyDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
-//nolint:dupl // shape mirrors deleteDBCluster but operates on instances.
 func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBInstanceIdentifier")
 
@@ -157,14 +309,55 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	last := insts[0]
 	last.State = rdsdriver.StateDeleting
 
+	// A deletion-protected instance cannot be deleted; the flag must be cleared
+	// via ModifyDBInstance first. Real RDS rejects with InvalidParameterCombination
+	// and leaves the instance untouched.
+	if last.DeletionProtection {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			"Cannot delete protected DB Instance, please disable deletion protection and try again.")
+
+		return
+	}
+
+	// A standalone instance takes a final snapshot unless SkipFinalSnapshot is
+	// set. When a final snapshot is requested, FinalDBSnapshotIdentifier is
+	// mandatory (InvalidParameterCombination otherwise). Cluster members carry no
+	// final-snapshot semantics — that belongs to DeleteDBCluster.
+	var finalID string
+
+	if last.ClusterID == "" && !formBool(r.Form.Get("SkipFinalSnapshot")) {
+		finalID = r.Form.Get("FinalDBSnapshotIdentifier")
+		if finalID == "" {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
+
+			return
+		}
+
+		if _, err := h.db.CreateSnapshot(r.Context(),
+			rdsdriver.SnapshotConfig{ID: finalID, InstanceID: id}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
 	if err := h.db.DeleteInstance(r.Context(), id); err != nil {
+		// The delete precondition (live read replicas, invalid state) is enforced
+		// inside DeleteInstance, so a rejection can land after the final snapshot
+		// was already written. Roll that snapshot back so a rejected delete leaves
+		// no phantom snapshot behind — real RDS validates before taking it.
+		if finalID != "" {
+			_ = h.db.DeleteSnapshot(r.Context(), finalID)
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
 	awsquery.WriteXMLResponse(w, deleteDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&last)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&last, h.resolveInstanceSubnetGroupXML(r.Context(), &last))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -186,7 +379,7 @@ func (h *Handler) startDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, startDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0])},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0], h.resolveInstanceSubnetGroupXML(r.Context(), &insts[0]))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -208,7 +401,7 @@ func (h *Handler) stopDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, stopDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0])},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0], h.resolveInstanceSubnetGroupXML(r.Context(), &insts[0]))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -230,7 +423,7 @@ func (h *Handler) rebootDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, rebootDBInstanceResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0])},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(&insts[0], h.resolveInstanceSubnetGroupXML(r.Context(), &insts[0]))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -249,6 +442,11 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
 		SubnetGroupName:             form.Get("DBSubnetGroupName"),
 		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		EngineMode:                  form.Get("EngineMode"),
+		StorageEncrypted:            formBool(form.Get("StorageEncrypted")),
+		KmsKeyID:                    form.Get("KmsKeyId"),
+		AllocatedStorage:            formInt(form.Get("AllocatedStorage")),
+		DeletionProtection:          formBool(form.Get("DeletionProtection")),
 		Tags:                        parseRDSTags(form),
 	}
 
@@ -265,7 +463,6 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // shape mirrors describeDBInstances but operates on clusters.
 func (h *Handler) describeDBClusters(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBClusterIdentifier")
 
@@ -280,14 +477,19 @@ func (h *Handler) describeDBClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := dbClustersXML{DBCluster: make([]dbClusterXML, 0, len(clusters))}
-	for i := range clusters {
-		out.DBCluster = append(out.DBCluster, toClusterXML(&clusters[i]))
+	page, ok := paginateRDS(w, r, clusters, func(c *rdsdriver.Cluster) string { return c.ID })
+	if !ok {
+		return
+	}
+
+	out := dbClustersXML{DBCluster: make([]dbClusterXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.DBCluster = append(out.DBCluster, toClusterXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBClustersResponse{
 		Xmlns:    Namespace,
-		Result:   dbClustersResult{DBClusters: out},
+		Result:   dbClustersResult{Marker: page.NextPageToken, DBClusters: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -304,6 +506,11 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 		Tags:                        parseRDSTags(form),
 	}
 
+	if v := form.Get("DeletionProtection"); v != "" {
+		b := formBool(v)
+		input.DeletionProtection = &b
+	}
+
 	cluster, err := h.db.ModifyCluster(r.Context(), id, input)
 	if err != nil {
 		writeErr(w, err)
@@ -317,7 +524,6 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // shape mirrors deleteDBInstance but operates on clusters.
 func (h *Handler) deleteDBCluster(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBClusterIdentifier")
 
@@ -334,6 +540,34 @@ func (h *Handler) deleteDBCluster(w http.ResponseWriter, r *http.Request) {
 
 	last := clusters[0]
 	last.State = rdsdriver.StateDeleting
+
+	// A deletion-protected cluster cannot be deleted; the flag must be cleared via
+	// ModifyDBCluster first. Real RDS rejects with InvalidParameterCombination.
+	if last.DeletionProtection {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			"Cannot delete protected DB Cluster, please disable deletion protection and try again.")
+
+		return
+	}
+
+	// A cluster takes a final snapshot unless SkipFinalSnapshot is set. When a
+	// final snapshot is requested, FinalDBSnapshotIdentifier is mandatory
+	// (InvalidParameterCombination otherwise), mirroring DeleteDBInstance.
+	if !formBool(r.Form.Get("SkipFinalSnapshot")) {
+		finalID := r.Form.Get("FinalDBSnapshotIdentifier")
+		if finalID == "" {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
+
+			return
+		}
+
+		if _, err := h.db.CreateClusterSnapshot(r.Context(),
+			rdsdriver.ClusterSnapshotConfig{ID: finalID, ClusterID: id}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
 
 	if err := h.db.DeleteCluster(r.Context(), id); err != nil {
 		writeErr(w, err)
@@ -431,18 +665,33 @@ func (h *Handler) describeDBSnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := dbSnapshotsXML{DBSnapshot: make([]dbSnapshotXML, 0, len(snaps))}
-	for i := range snaps {
-		out.DBSnapshot = append(out.DBSnapshot, toSnapshotXML(&snaps[i]))
+	// A specific DBSnapshotIdentifier that matches nothing is a hard error in
+	// real RDS (DBSnapshotNotFoundFault), mirroring DescribeDBInstances /
+	// DescribeDBClusters; the provider's filter-style lookup returns an empty
+	// set instead, so surface the fault here.
+	if id != "" && len(snaps) == 0 {
+		writeErr(w, errSnapshotNotFound(id))
+		return
+	}
+
+	page, ok := paginateRDS(w, r, snaps, func(s *rdsdriver.Snapshot) string { return s.ID })
+	if !ok {
+		return
+	}
+
+	out := dbSnapshotsXML{DBSnapshot: make([]dbSnapshotXML, 0, len(page.Items))}
+	for i := range page.Items {
+		out.DBSnapshot = append(out.DBSnapshot, toSnapshotXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBSnapshotsResponse{
 		Xmlns:    Namespace,
-		Result:   dbSnapshotsResult{DBSnapshots: out},
+		Result:   dbSnapshotsResult{Marker: page.NextPageToken, DBSnapshots: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
+//nolint:dupl // shape mirrors deleteDBClusterSnapshot but operates on instance snapshots.
 func (h *Handler) deleteDBSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBSnapshotIdentifier")
 
@@ -473,6 +722,7 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 		NewInstanceID: form.Get("DBInstanceIdentifier"),
 		SnapshotID:    form.Get("DBSnapshotIdentifier"),
 		InstanceClass: form.Get("DBInstanceClass"),
+		Port:          formInt(form.Get("Port")),
 		Tags:          parseRDSTags(form),
 	}
 
@@ -484,7 +734,7 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 
 	awsquery.WriteXMLResponse(w, restoreDBInstanceFromDBSnapshotResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -541,6 +791,7 @@ func (h *Handler) describeDBClusterSnapshots(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+//nolint:dupl // shape mirrors deleteDBSnapshot but operates on cluster snapshots.
 func (h *Handler) deleteDBClusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBClusterSnapshotIdentifier")
 

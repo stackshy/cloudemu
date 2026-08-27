@@ -46,26 +46,51 @@ const (
 	serviceAccountsSeg = "serviceAccounts"
 	rolesSeg           = "roles"
 	keysSeg            = "keys"
+
+	undeleteVerb = "undelete"
 )
 
 // Handler serves iam.googleapis.com v1 REST requests against the IAM driver.
 //
-// Service-account resource policies and the enabled/disabled bit have no place
-// in the portable IAM driver, so they're tracked here keyed by SA email.
+// Service-account resource policies, the enabled/disabled bit, policy etag
+// versions and soft-deleted resources have no place in the portable IAM
+// driver, so they're tracked here keyed by SA email / role id. The driver
+// hard-deletes, so undelete is served from these local tombstones.
 type Handler struct {
 	iam iamdriver.IAM
 
-	mu       sync.RWMutex
-	saPolicy map[string]*iamPolicy // SA email -> resource policy
-	disabled map[string]bool       // SA email -> disabled
+	mu            sync.RWMutex
+	saPolicy      map[string]*iamPolicy   // SA email -> resource policy
+	policyVersion map[string]int          // SA email -> monotonic policy etag version
+	disabled      map[string]bool         // SA email -> disabled
+	deletedSA     map[string]*deletedSA   // SA email -> soft-deleted account
+	deletedRole   map[string]*deletedRole // role id -> soft-deleted role
+}
+
+// deletedSA is a tombstone captured at delete time so undelete can restore the
+// account with the same project, metadata and disabled bit.
+type deletedSA struct {
+	project     string
+	displayName string
+	description string
+	disabled    bool
+}
+
+// deletedRole is a tombstone for a soft-deleted custom role.
+type deletedRole struct {
+	project string
+	props   roleProps
 }
 
 // New returns an IAM handler backed by drv.
 func New(drv iamdriver.IAM) *Handler {
 	return &Handler{
-		iam:      drv,
-		saPolicy: make(map[string]*iamPolicy),
-		disabled: make(map[string]bool),
+		iam:           drv,
+		saPolicy:      make(map[string]*iamPolicy),
+		policyVersion: make(map[string]int),
+		disabled:      make(map[string]bool),
+		deletedSA:     make(map[string]*deletedSA),
+		deletedRole:   make(map[string]*deletedRole),
 	}
 }
 
@@ -224,6 +249,13 @@ func (h *Handler) routeServiceAccountKeys(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) routeRoles(w http.ResponseWriter, r *http.Request, rt *route) {
+	// One-off ":method" calls on a specific role (undelete) are POSTs. Route
+	// them before the plain method switch, which is otherwise verb-blind.
+	if rt.verb != "" && rt.name != "" {
+		h.routeRoleVerb(w, r, rt)
+		return
+	}
+
 	switch rt.name {
 	case "":
 		switch r.Method {
@@ -248,4 +280,23 @@ func (h *Handler) routeRoles(w http.ResponseWriter, r *http.Request, rt *route) 
 				"unsupported verb on role: "+r.Method)
 		}
 	}
+}
+
+// routeRoleVerb dispatches one-off ":method" calls on a specific role. The
+// only such method is undelete, always a POST.
+func (h *Handler) routeRoleVerb(w http.ResponseWriter, r *http.Request, rt *route) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
+			"method "+rt.verb+" requires POST")
+
+		return
+	}
+
+	if rt.verb == undeleteVerb {
+		h.undeleteRole(w, r, rt.project, rt.name)
+
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "notFound", "unknown method: "+rt.verb)
 }

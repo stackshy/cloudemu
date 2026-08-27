@@ -65,7 +65,7 @@ func jobCfg() driver.JobConfig {
 			Image:   "busybox",
 			Command: []string{"echo"},
 			Args:    []string{"hi"},
-			Env:     map[string]string{"K": "V"},
+			Env:     []driver.EnvVar{{Name: "K", Value: "V"}},
 		}},
 	}
 }

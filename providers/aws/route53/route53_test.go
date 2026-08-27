@@ -330,6 +330,46 @@ func TestWeightedRecords(t *testing.T) {
 	assertNotEmpty(t, rec.Name)
 }
 
+func TestDeleteRecordSetKeepsSiblings(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	z := createTestZone(m)
+
+	w := 10
+	for _, id := range []string{"blue", "green", "red"} {
+		_, err := m.CreateRecord(ctx, driver.RecordConfig{
+			ZoneID: z.ID, Name: "app.example.com", Type: "A",
+			TTL: 60, Values: []string{"1.1.1.1"}, Weight: &w, SetID: id,
+		})
+		requireNoError(t, err)
+	}
+
+	// Deleting one SetIdentifier must leave the other two intact.
+	requireNoError(t, m.DeleteRecordSet(ctx, z.ID, "app.example.com", "A", "green"))
+
+	records, err := m.ListRecords(ctx, z.ID)
+	requireNoError(t, err)
+
+	var setIDs []string
+
+	for i := range records {
+		if records[i].Name == "app.example.com" {
+			setIDs = append(setIDs, records[i].SetID)
+		}
+	}
+
+	assertEqual(t, 2, len(setIDs))
+
+	for _, id := range setIDs {
+		if id == "green" {
+			t.Fatalf("green survived DeleteRecordSet: %v", setIDs)
+		}
+	}
+
+	// Deleting a missing SetIdentifier is a not-found, not a silent no-op.
+	assertError(t, m.DeleteRecordSet(ctx, z.ID, "app.example.com", "A", "green"), true)
+}
+
 func TestDeleteZoneCascadesRecords(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

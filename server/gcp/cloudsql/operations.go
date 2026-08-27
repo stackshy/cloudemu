@@ -39,13 +39,94 @@ func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 	}
 
 	if body.Settings != nil {
-		cfg.InstanceClass = body.Settings.Tier
-		cfg.AllocatedStorage = body.Settings.DataDiskSizeGb
-		cfg.StorageType = body.Settings.DataDiskType
-		cfg.Tags = body.Settings.UserLabels
+		s := body.Settings
+		cfg.InstanceClass = s.Tier
+		cfg.AllocatedStorage = s.DataDiskSizeGb
+		cfg.StorageType = s.DataDiskType
+		cfg.Tags = s.UserLabels
+		// availabilityType maps to the portable MultiAZ flag (REGIONAL -> true);
+		// the three settings sub-objects are stored as opaque JSON so they
+		// round-trip on the next Get.
+		cfg.MultiAZ = strings.EqualFold(s.AvailabilityType, availabilityRegional)
+		if s.DeletionProtectionEnabled != nil {
+			cfg.DeletionProtection = *s.DeletionProtectionEnabled
+		}
+		cfg.GCPDatabaseFlags = string(s.DatabaseFlags)
+		cfg.GCPBackupConfig = string(s.BackupConfiguration)
+		cfg.GCPIPConfig = string(s.IPConfiguration)
 	}
 
 	return cfg
+}
+
+// modifyInputFromBody builds the driver ModifyInstanceInput for an instances
+// update. With replace=false (PATCH) only fields present in the request body are
+// set, so absent fields mean "no change" (Cloud SQL patch merges the request
+// onto the current configuration). With replace=true (PUT) omitted settings
+// revert to their defaults, matching Cloud SQL's full-resource update semantics.
+func modifyInputFromBody(body *sqlInstance, replace bool) rdsdriver.ModifyInstanceInput {
+	var input rdsdriver.ModifyInstanceInput
+
+	if body.DatabaseVersion != "" {
+		input.EngineVersion = body.DatabaseVersion
+	}
+
+	s := body.Settings
+	if s == nil {
+		if !replace {
+			return input
+		}
+
+		s = &sqlSettings{}
+	}
+
+	input.InstanceClass = orDefaultStr(s.Tier, defaultTier, replace)
+	input.AllocatedStorage = orDefaultInt(s.DataDiskSizeGb, defaultStorage, replace)
+	input.StorageType = orDefaultStr(s.DataDiskType, defaultStorageType, replace)
+	input.GCPDatabaseFlags = string(s.DatabaseFlags)
+	input.GCPBackupConfig = string(s.BackupConfiguration)
+	input.GCPIPConfig = string(s.IPConfiguration)
+
+	// On replace an absent userLabels clears the labels (empty non-nil map),
+	// while on merge an absent map leaves them unchanged (nil).
+	switch {
+	case s.UserLabels != nil:
+		input.Tags = s.UserLabels
+	case replace:
+		input.Tags = map[string]string{}
+	}
+
+	if s.AvailabilityType != "" || replace {
+		multiAZ := strings.EqualFold(s.AvailabilityType, availabilityRegional)
+		input.MultiAZ = &multiAZ
+	}
+
+	if s.DeletionProtectionEnabled != nil {
+		input.DeletionProtection = s.DeletionProtectionEnabled
+	} else if replace {
+		off := false
+		input.DeletionProtection = &off
+	}
+
+	return input
+}
+
+// orDefaultStr returns v, or def when v is empty and replace is set (a PUT
+// reverts an omitted field to its default; a PATCH leaves it as "no change").
+func orDefaultStr(v, def string, replace bool) string {
+	if v == "" && replace {
+		return def
+	}
+
+	return v
+}
+
+func orDefaultInt(v, def int, replace bool) int {
+	if v == 0 && replace {
+		return def
+	}
+
+	return v
 }
 
 func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -62,9 +143,9 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, p *sqlP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "create-"+inst.ID, "CREATE", "instances", inst.ID,
-	))
+	)
 }
 
 func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -74,12 +155,25 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, p *sqlPa
 		return
 	}
 
-	out := sqlInstanceList{Kind: "sql#instancesList", Items: make([]sqlInstance, 0, len(insts))}
+	items := make([]sqlInstance, 0, len(insts))
 	for i := range insts {
-		out.Items = append(out.Items, toSQLInstance(&insts[i], p.project))
+		items = append(items, toSQLInstance(&insts[i], p.project))
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	q := r.URL.Query()
+	items = filterInstances(items, q.Get("filter"))
+
+	page, err := paginateInstances(items, q.Get("pageToken"), q.Get("maxResults"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageToken")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sqlInstanceList{
+		Kind:          "sql#instancesList",
+		Items:         page.Items,
+		NextPageToken: page.NextPageToken,
+	})
 }
 
 func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -97,8 +191,10 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath
 	writeJSON(w, http.StatusOK, toSQLInstance(&insts[0], p.project))
 }
 
-//nolint:gocyclo // sequential field handling for activationPolicy + class + storage + version.
-func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+// patchInstance handles both instances.patch (replace=false, merge) and
+// instances.update / PUT (replace=true, full-resource replace where omitted
+// settings revert to their defaults).
+func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPath, replace bool) {
 	var body sqlInstance
 	if !decodeJSON(w, r, &body) {
 		return
@@ -120,28 +216,14 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *sqlPa
 		}
 	}
 
-	input := rdsdriver.ModifyInstanceInput{
-		Tags: nil,
-	}
-
-	if body.Settings != nil {
-		input.InstanceClass = body.Settings.Tier
-		input.AllocatedStorage = body.Settings.DataDiskSizeGb
-		input.Tags = body.Settings.UserLabels
-	}
-
-	if body.DatabaseVersion != "" {
-		input.EngineVersion = body.DatabaseVersion
-	}
-
-	if _, err := h.db.ModifyInstance(r.Context(), p.name, input); err != nil {
+	if _, err := h.db.ModifyInstance(r.Context(), p.name, modifyInputFromBody(&body, replace)); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "patch-"+p.name, "UPDATE", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -150,9 +232,9 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, p *sqlP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "delete-"+p.name, "DELETE", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) restartInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -161,9 +243,9 @@ func (h *Handler) restartInstance(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "restart-"+p.name, "RESTART", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -186,9 +268,9 @@ func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "restore-"+p.name, "RESTORE_VOLUME", "instances", p.name,
-	))
+	)
 }
 
 func (h *Handler) insertBackupRun(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -200,10 +282,10 @@ func (h *Handler) insertBackupRun(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "create-backup-"+snap.ID, "BACKUP_VOLUME",
 		"instances/"+p.name+"/backupRuns", snap.ID,
-	))
+	)
 }
 
 func (h *Handler) listBackupRuns(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -244,8 +326,8 @@ func (h *Handler) deleteBackupRun(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(
+	h.completeOp(w,
 		p.project, "delete-backup-"+p.subName, "DELETE",
 		"instances/"+p.name+"/backupRuns", p.subName,
-	))
+	)
 }

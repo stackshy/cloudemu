@@ -4,18 +4,51 @@ package gcs
 // Names map directly to the wire format the SDK expects.
 
 type bucketResource struct {
-	Kind         string            `json:"kind"`
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	SelfLink     string            `json:"selfLink,omitempty"`
-	Location     string            `json:"location,omitempty"`
-	StorageClass string            `json:"storageClass,omitempty"`
-	Versioning   *bucketVersioning `json:"versioning,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	TimeCreated  string            `json:"timeCreated,omitempty"`
+	Kind             string            `json:"kind"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	SelfLink         string            `json:"selfLink,omitempty"`
+	Location         string            `json:"location,omitempty"`
+	LocationType     string            `json:"locationType,omitempty"`
+	StorageClass     string            `json:"storageClass,omitempty"`
+	Versioning       *bucketVersioning `json:"versioning,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Lifecycle        *bucketLifecycle  `json:"lifecycle,omitempty"`
+	IamConfiguration *iamConfiguration `json:"iamConfiguration,omitempty"`
+	Metageneration   string            `json:"metageneration,omitempty"`
+	Etag             string            `json:"etag,omitempty"`
+	TimeCreated      string            `json:"timeCreated,omitempty"`
+	Updated          string            `json:"updated,omitempty"`
 }
 
 type bucketVersioning struct {
+	Enabled bool `json:"enabled"`
+}
+
+type bucketLifecycle struct {
+	Rule []lifecycleRule `json:"rule"`
+}
+
+type lifecycleRule struct {
+	Action    lifecycleAction    `json:"action"`
+	Condition lifecycleCondition `json:"condition"`
+}
+
+type lifecycleAction struct {
+	Type         string `json:"type"`
+	StorageClass string `json:"storageClass,omitempty"`
+}
+
+type lifecycleCondition struct {
+	Age int `json:"age,omitempty"`
+}
+
+type iamConfiguration struct {
+	UniformBucketLevelAccess *uniformBucketLevelAccess `json:"uniformBucketLevelAccess,omitempty"`
+	PublicAccessPrevention   string                    `json:"publicAccessPrevention,omitempty"`
+}
+
+type uniformBucketLevelAccess struct {
 	Enabled bool `json:"enabled"`
 }
 
@@ -25,22 +58,27 @@ type bucketsListResponse struct {
 }
 
 type objectResource struct {
-	Kind           string            `json:"kind"`
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Bucket         string            `json:"bucket"`
-	Generation     string            `json:"generation"`
-	Metageneration string            `json:"metageneration"`
-	ContentType    string            `json:"contentType,omitempty"`
-	Size           string            `json:"size"`
-	MD5Hash        string            `json:"md5Hash,omitempty"`
-	ETag           string            `json:"etag,omitempty"`
-	StorageClass   string            `json:"storageClass,omitempty"`
-	TimeCreated    string            `json:"timeCreated,omitempty"`
-	Updated        string            `json:"updated,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
-	SelfLink       string            `json:"selfLink,omitempty"`
-	MediaLink      string            `json:"mediaLink,omitempty"`
+	Kind               string            `json:"kind"`
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	Bucket             string            `json:"bucket"`
+	Generation         string            `json:"generation"`
+	Metageneration     string            `json:"metageneration"`
+	ContentType        string            `json:"contentType,omitempty"`
+	Size               string            `json:"size"`
+	MD5Hash            string            `json:"md5Hash,omitempty"`
+	CRC32C             string            `json:"crc32c,omitempty"`
+	ETag               string            `json:"etag,omitempty"`
+	StorageClass       string            `json:"storageClass,omitempty"`
+	CacheControl       string            `json:"cacheControl,omitempty"`
+	ContentEncoding    string            `json:"contentEncoding,omitempty"`
+	ContentDisposition string            `json:"contentDisposition,omitempty"`
+	ContentLanguage    string            `json:"contentLanguage,omitempty"`
+	TimeCreated        string            `json:"timeCreated,omitempty"`
+	Updated            string            `json:"updated,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	SelfLink           string            `json:"selfLink,omitempty"`
+	MediaLink          string            `json:"mediaLink,omitempty"`
 }
 
 type objectsListResponse struct {
@@ -48,6 +86,51 @@ type objectsListResponse struct {
 	Items         []objectResource `json:"items"`
 	Prefixes      []string         `json:"prefixes,omitempty"`
 	NextPageToken string           `json:"nextPageToken,omitempty"`
+}
+
+// objectPatchBody is the Objects: patch/update request. Pointer fields let the
+// handler tell "field absent" from "field set to empty"; metadata values are
+// pointers so a null entry deletes that custom-metadata key (GCS merge patch).
+type objectPatchBody struct {
+	ContentType        *string            `json:"contentType"`
+	CacheControl       *string            `json:"cacheControl"`
+	ContentEncoding    *string            `json:"contentEncoding"`
+	ContentDisposition *string            `json:"contentDisposition"`
+	ContentLanguage    *string            `json:"contentLanguage"`
+	Metadata           map[string]*string `json:"metadata"`
+}
+
+// composeRequest is the Objects: compose request body.
+type composeRequest struct {
+	SourceObjects []composeSource `json:"sourceObjects"`
+	Destination   *objectResource `json:"destination,omitempty"`
+}
+
+type composeSource struct {
+	Name string `json:"name"`
+	// Generation is JSON-encoded as a string by the GCS API / Go storage SDK
+	// (like objectResource.Generation), so it needs the ,string option.
+	Generation int64 `json:"generation,omitempty,string"`
+}
+
+// iamPolicyResource is the storage#policy document (Buckets: get/setIamPolicy).
+type iamPolicyResource struct {
+	Kind       string          `json:"kind"`
+	ResourceID string          `json:"resourceId"`
+	Version    int             `json:"version"`
+	Bindings   []iamPolicyBind `json:"bindings"`
+	Etag       string          `json:"etag"`
+}
+
+type iamPolicyBind struct {
+	Role    string   `json:"role"`
+	Members []string `json:"members"`
+}
+
+// testPermissionsResponse is the Buckets: testIamPermissions response.
+type testPermissionsResponse struct {
+	Kind        string   `json:"kind"`
+	Permissions []string `json:"permissions"`
 }
 
 type errorEnvelope struct {

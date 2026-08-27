@@ -2,11 +2,11 @@ package tablestorage
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
-	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	driver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
@@ -113,18 +113,34 @@ func unquote(s string) string {
 }
 
 // entityToJSON copies an entity's properties into a fresh JSON map. The
-// PartitionKey/RowKey and user properties round-trip verbatim.
+// PartitionKey/RowKey and user properties round-trip verbatim, except an
+// Edm.Int64 (stored as a native int64) is rendered as a JSON string, which is
+// how Table Storage encodes 64-bit integers on the wire.
 func entityToJSON(e driver.Entity) map[string]any {
 	out := make(map[string]any, len(e)+1)
 	for k, v := range e {
+		if n, ok := v.(int64); ok {
+			out[k] = strconv.FormatInt(n, 10)
+			continue
+		}
+
 		out[k] = v
 	}
 
 	return out
 }
 
-func entityETag() string {
-	return fmt.Sprintf("W/\"datetime'%s'\"", time.Now().UTC().Format(time.RFC3339Nano))
+// atoiDefault parses s as an int, returning def when s is empty or invalid.
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+
+	return def
 }
 
 func scheme(r *http.Request) string {
@@ -180,14 +196,24 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 
 // writeErr maps CloudEmu canonical errors to Azure Table HTTP errors.
 func writeErr(w http.ResponseWriter, err error) {
+	status, code := mapErr(err)
+	writeError(w, status, code, err.Error())
+}
+
+// mapErr maps a CloudEmu canonical error to its Azure Table HTTP status + code.
+func mapErr(err error) (status int, code string) {
 	switch {
+	case errors.Is(err, driver.ErrTableNotFound):
+		return http.StatusNotFound, "TableNotFound"
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFound", err.Error())
+		return http.StatusNotFound, "EntityNotFound"
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "EntityAlreadyExists", err.Error())
+		return http.StatusConflict, "EntityAlreadyExists"
+	case cerrors.IsFailedPrecondition(err):
+		return http.StatusPreconditionFailed, "UpdateConditionNotSatisfied"
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		return http.StatusBadRequest, "InvalidInput"
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return http.StatusInternalServerError, "InternalError"
 	}
 }

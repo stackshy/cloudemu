@@ -115,19 +115,22 @@ cloudemu start --persist                       # full: structure + object bodies
 cloudemu start --persist --persist-metadata-only   # smaller: structure only
 ```
 
-Coverage is currently the data-bearing services that share a cross-provider
-driver interface — object storage (S3/Blob/GCS), NoSQL tables
-(DynamoDB/Firestore/Cosmos), secrets (Secrets Manager/Key Vault/Secret Manager),
-and compute instances (EC2/VMs/GCE); other services still start empty. The
-snapshot is a single human-readable JSON file spanning all three providers, so
-you can inspect or `git diff` it.
+Coverage is **full-surface**: every stateful service across all four providers
+(AWS, Azure, GCP, OCI) is captured, not a hand-picked subset — object storage,
+NoSQL tables, secrets, compute, networking, queues, DNS, and the rest — and a
+build-time completeness guard (`persist/completeness_test.go`) fails if a new
+stateful service is added without persistence, so coverage can't silently drift.
+The snapshot is a single human-readable JSON file spanning every provider, so you
+can inspect or `git diff` it. See [persistence.md](persistence.md) for the full
+picture (endpoint, Go API, guarantees).
 
-Fidelity notes: object bodies, secret values, and table items are all saved by
-default, along with any secondary indexes present in a table's configuration.
-Pass `--persist-metadata-only` to drop object *bodies* for a smaller snapshot —
-restored objects then come back as zero-byte keys until you re-upload them.
-Compute instances are recreated via `RunInstances`, so image/type/tags are
-preserved but the emulator assigns fresh instance IDs and IPs on restore.
+Fidelity notes: the snapshot is **identity-preserving** — resource IDs and the
+cross-references between resources are serialized as-is, so a restored EC2
+instance keeps its original `i-…` ID and IP, not a freshly minted one. Object
+bodies, secret values, and table items (with any secondary indexes) are all saved
+by default. Pass `--persist-metadata-only` to drop object *bodies* for a smaller
+snapshot — restored objects then come back as zero-byte keys until you re-upload
+them.
 
 ### Named snapshots (`snapshot save` / `load` / `list` / `delete`)
 
@@ -141,7 +144,7 @@ cloudemu start
 cloudemu snapshot save baseline     # capture current state as "baseline"
 # … run a destructive test …
 cloudemu snapshot load baseline     # restore it instantly — no restart
-cloudemu snapshot list              # NAME  CREATED  SIZE
+cloudemu snapshot list              # NAME  CREATED  PROVIDERS  SIZE
 cloudemu snapshot delete baseline
 ```
 
@@ -152,8 +155,8 @@ copy the file to a teammate and they `snapshot load` the identical state.
 `save` and `load` talk to the running server's control plane, so they need the
 `--admin` plane (on by default) and the `aws` or `gcp` provider running; `list`
 and `delete` are file operations that work without a running server. Snapshots
-cover the same services as persistence (object storage, NoSQL tables, secrets,
-compute instances). Names must match `[A-Za-z0-9._-]` (1–64 chars).
+cover the same full surface as persistence (every stateful service across all
+running providers). Names must match `[A-Za-z0-9._-]` (1–64 chars).
 
 `load` is destructive: it wipes the running state (reset semantics) and then
 repopulates from the snapshot, so anything created since the snapshot is
@@ -458,9 +461,3 @@ cloudemu-server --all-real
 `--db`/`--cache`/`--functions` need no Docker (`contrib/realengine`);
 `--compute`/`--containers` require a Docker daemon (`contrib/dockerengine`). The
 server calls `Provider.Close()` on shutdown, tearing every engine down.
-
-## Not yet included
-
-**Persistence** covers object storage and NoSQL tables today (see "Persistence
-across restarts" above); the remaining services and full **snapshot/restore**
-fidelity are tracked in #107.

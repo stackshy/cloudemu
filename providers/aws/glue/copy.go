@@ -97,6 +97,10 @@ func copyCrawler(in driver.Crawler) driver.Crawler {
 	out := in
 	out.Classifiers = copyStrings(in.Classifiers)
 	out.Targets = copyAnyMap(in.Targets)
+	out.SchemaChangePolicy = copyAnyMap(in.SchemaChangePolicy)
+	out.RecrawlPolicy = copyAnyMap(in.RecrawlPolicy)
+	out.LineageConfiguration = copyAnyMap(in.LineageConfiguration)
+	out.Tags = copyTags(in.Tags)
 
 	return out
 }
@@ -114,6 +118,10 @@ func copyJob(in driver.Job) driver.Job {
 	out := in
 	out.Command = copyAnyMap(in.Command)
 	out.DefaultArguments = copyTags(in.DefaultArguments)
+	out.ExecutionProperty = copyAnyMap(in.ExecutionProperty)
+	out.Connections = copyAnyMap(in.Connections)
+	out.NotificationProperty = copyAnyMap(in.NotificationProperty)
+	out.Tags = copyTags(in.Tags)
 
 	return out
 }

@@ -36,9 +36,11 @@ const (
 const (
 	KeyAlgRSA2048 = "RSA_2048"
 	KeyAlgRSA1024 = "RSA_1024"
+	KeyAlgRSA3072 = "RSA_3072"
 	KeyAlgRSA4096 = "RSA_4096"
 	KeyAlgECP256  = "EC_prime256v1"
 	KeyAlgECP384  = "EC_secp384r1"
+	KeyAlgECP521  = "EC_secp521r1"
 )
 
 // Certificate transparency logging preferences.
@@ -53,15 +55,27 @@ const (
 	RenewalIneligible = "INELIGIBLE"
 )
 
-// DomainValidation is the per-domain validation state of a certificate.
+// DomainValidation is the per-domain validation state of a certificate. For DNS
+// validation the ResourceRecord* fields carry the CNAME to add; for EMAIL
+// validation ValidationEmails lists the approver mailboxes the request was sent
+// to (rooted at ValidationDomain). The two sets are mutually exclusive.
 type DomainValidation struct {
 	DomainName       string
 	ValidationDomain string
 	ValidationStatus string
 	ValidationMethod string
-	ResourceRecordN  string // DNS validation record name
-	ResourceRecordT  string // DNS validation record type (CNAME)
-	ResourceRecordV  string // DNS validation record value
+	ResourceRecordN  string   // DNS validation record name
+	ResourceRecordT  string   // DNS validation record type (CNAME)
+	ResourceRecordV  string   // DNS validation record value
+	ValidationEmails []string // EMAIL validation approver addresses
+}
+
+// DomainValidationOption pins the domain an EMAIL validation request is routed
+// to. ValidationDomain must be DomainName or one of its superdomains; when unset
+// ACM defaults it to DomainName.
+type DomainValidationOption struct {
+	DomainName       string
+	ValidationDomain string
 }
 
 // Certificate is the full ACM certificate description plus the material needed
@@ -101,6 +115,7 @@ type RequestCertificateInput struct {
 	DomainName              string
 	SubjectAlternativeNames []string
 	ValidationMethod        string
+	DomainValidationOptions []DomainValidationOption
 	KeyAlgorithm            string
 	IdempotencyToken        string
 	CTLoggingPreference     string
@@ -117,9 +132,12 @@ type ImportCertificateInput struct {
 	Tags           map[string]string
 }
 
-// ListFilter narrows ListCertificates.
+// ListFilter narrows ListCertificates. An empty KeyTypes applies ACM's default
+// filtering, which returns only RSA_2048 certificates; a non-empty KeyTypes
+// returns only certificates whose key algorithm is in the set.
 type ListFilter struct {
 	Statuses []string
+	KeyTypes []string
 }
 
 // AccountConfiguration is the account-level ACM configuration.

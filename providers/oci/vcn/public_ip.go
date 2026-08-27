@@ -28,6 +28,8 @@ type publicIPData struct {
 
 // AllocateAddress reserves a public IP. cfg.AllocationMethod carries OCI's
 // lifetime, defaulting to RESERVED.
+//
+//nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AllocateAddress(_ context.Context, cfg driver.ElasticIPConfig) (*driver.ElasticIP, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -85,10 +87,11 @@ func (m *Mock) DescribeAddresses(_ context.Context, ids []string) ([]driver.Elas
 // the private IP's OCID, which is what OCI clears the assignment by. A private
 // IP holds at most one public IP, and DisassociateAddress takes that handle,
 // so a second address on the same private IP would be unaddressable.
-func (m *Mock) AssociateAddress(_ context.Context, allocationID, instanceID string) (string, error) {
+func (m *Mock) AssociateAddress(_ context.Context, allocationID string, in driver.AssociateAddressInput) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	instanceID := in.InstanceID
 	if instanceID == "" {
 		return "", cerrors.New(cerrors.InvalidArgument, "private IP OCID is required")
 	}

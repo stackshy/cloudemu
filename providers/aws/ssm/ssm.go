@@ -7,11 +7,14 @@
 //
 // Values are stored verbatim regardless of Type; SecureString parameters are
 // NOT encrypted (there is no real KMS integration), so WithDecryption is a
-// no-op and the raw value is always returned.
+// no-op and the raw value is always returned. A SecureString's KeyId is still
+// recorded and round-tripped (defaulting to alias/aws/ssm) — the emulator
+// models the KeyId association without performing the encryption.
 package ssm
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,12 +33,14 @@ var _ driver.ParameterStore = (*Mock)(nil)
 
 // version is a single stored revision of a parameter.
 type version struct {
-	value        string
-	typ          string
-	dataType     string
-	version      int64
-	lastModified string
-	labels       []string
+	value          string
+	typ            string
+	dataType       string
+	version        int64
+	lastModified   string
+	labels         []string
+	keyID          string
+	allowedPattern string
 }
 
 // paramData holds all versions and current metadata for a parameter name.
@@ -86,20 +91,114 @@ func ensureLeadingSlash(name string) string {
 	return "/" + name
 }
 
-func defaultType(t string) string {
+// validType reports whether t is one of the parameter types AWS accepts.
+func validType(t string) bool {
 	switch t {
 	case driver.TypeString, driver.TypeStringList, driver.TypeSecureString:
-		return t
+		return true
 	default:
-		return driver.TypeString
+		return false
 	}
+}
+
+// defaultType returns t when it is a recognized type, and String otherwise —
+// used only for an omitted (empty) type, which defaults to String. An
+// explicitly invalid type is rejected earlier by PutParameter.
+func defaultType(t string) string {
+	if validType(t) {
+		return t
+	}
+
+	return driver.TypeString
+}
+
+// resolveKeyID validates and resolves the KMS KeyId for a parameter of the
+// given effective type. KeyId is only valid for SecureString: supplying it for
+// a String/StringList is rejected. An omitted KeyId on a SecureString defaults
+// to the AWS-managed key alias/aws/ssm.
+func resolveKeyID(effectiveType, keyID string) (string, error) {
+	if effectiveType != driver.TypeSecureString {
+		if keyID != "" {
+			return "", driver.ErrKeyIDOnNonSecure
+		}
+
+		return "", nil
+	}
+
+	if keyID == "" {
+		return driver.DefaultSecureStringKeyID, nil
+	}
+
+	return keyID, nil
+}
+
+// validateAllowedPattern checks that value satisfies pattern. An empty pattern
+// is a no-op. A pattern that is not a valid regexp is rejected, as is a value
+// that does not match it — matching real Parameter Store validation.
+func validateAllowedPattern(pattern, value string) error {
+	if pattern == "" {
+		return nil
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return driver.ErrInvalidAllowedPattern
+	}
+
+	if !re.MatchString(value) {
+		return driver.ErrValuePatternMismatch
+	}
+
+	return nil
+}
+
+// resolveOverwriteType decides the type of a new version appended to an existing
+// parameter. A type isn't required when updating: omitting it retains the
+// existing type (a SecureString stays SecureString). Specifying a type that
+// differs from the existing one is rejected — real Parameter Store returns
+// HierarchyTypeMismatchException.
+func resolveOverwriteType(existing *paramData, requested string) (string, error) {
+	existingType := defaultType("")
+	if cur, ok := existing.versionByNumber(existing.latest); ok {
+		existingType = cur.typ
+	}
+
+	if requested == "" {
+		return existingType, nil
+	}
+
+	if newType := defaultType(requested); newType == existingType {
+		return newType, nil
+	}
+
+	return "", driver.ErrTypeMismatch
 }
 
 // PutParameter creates a new parameter or, when Overwrite is set, appends a new
 // version to an existing one.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	if cfg.Name == "" {
 		return 0, "", errors.New(errors.InvalidArgument, "parameter name is required")
+	}
+
+	if cfg.Overwrite && len(cfg.Tags) > 0 {
+		return 0, "", driver.ErrTagsWithOverwrite
+	}
+
+	// An explicitly set Type must be one AWS recognizes; an unrecognized value
+	// is rejected (UnsupportedParameterType) rather than coerced to String. An
+	// omitted Type is allowed here: it defaults to String on create and retains
+	// the existing type on Overwrite.
+	if cfg.Type != "" && !validType(cfg.Type) {
+		return 0, "", driver.ErrUnsupportedType
+	}
+
+	// AllowedPattern (if set) must be a valid regexp and the Value must match it.
+	// This is independent of the parameter type, so validate it up front.
+	if err := validateAllowedPattern(cfg.AllowedPattern, cfg.Value); err != nil {
+		return 0, "", err
 	}
 
 	tier := cfg.Tier
@@ -115,27 +214,62 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	now := m.now()
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		existing.mu.Lock()
-		defer existing.mu.Unlock()
+		return overwriteParameter(existing, &cfg, tier, dataType, now)
+	}
 
-		if !cfg.Overwrite {
-			return 0, "", errors.Newf(errors.AlreadyExists,
-				"parameter %q already exists; set Overwrite to update it", cfg.Name)
-		}
+	return m.createParameter(ctx, &cfg, tier, dataType, now)
+}
 
-		next := existing.latest + 1
-		existing.versions = append(existing.versions, &version{
-			value:        cfg.Value,
-			typ:          defaultType(cfg.Type),
-			dataType:     dataType,
-			version:      next,
-			lastModified: now,
-		})
-		existing.latest = next
-		existing.description = cfg.Description
-		existing.tier = tier
+// overwriteParameter appends a new version to an existing parameter (the
+// Overwrite path). Overwrite without the flag is rejected, and changing the
+// type is rejected via resolveOverwriteType.
+func overwriteParameter(
+	existing *paramData, cfg *driver.PutConfig, tier, dataType, now string,
+) (ver int64, assignedTier string, err error) {
+	existing.mu.Lock()
+	defer existing.mu.Unlock()
 
-		return next, tier, nil
+	if !cfg.Overwrite {
+		return 0, "", errors.Newf(errors.AlreadyExists,
+			"parameter %q already exists; set Overwrite to update it", cfg.Name)
+	}
+
+	newType, err := resolveOverwriteType(existing, cfg.Type)
+	if err != nil {
+		return 0, "", err
+	}
+
+	keyID, err := resolveKeyID(newType, cfg.KeyID)
+	if err != nil {
+		return 0, "", err
+	}
+
+	next := existing.latest + 1
+	existing.versions = append(existing.versions, &version{
+		value:          cfg.Value,
+		typ:            newType,
+		dataType:       dataType,
+		version:        next,
+		lastModified:   now,
+		keyID:          keyID,
+		allowedPattern: cfg.AllowedPattern,
+	})
+	existing.latest = next
+	existing.description = cfg.Description
+	existing.tier = tier
+
+	return next, tier, nil
+}
+
+// createParameter stores a brand-new parameter (version 1) with its tags.
+func (m *Mock) createParameter(
+	ctx context.Context, cfg *driver.PutConfig, tier, dataType, now string,
+) (ver int64, assignedTier string, err error) {
+	newType := defaultType(cfg.Type)
+
+	keyID, err := resolveKeyID(newType, cfg.KeyID)
+	if err != nil {
+		return 0, "", err
 	}
 
 	pd := &paramData{
@@ -144,12 +278,15 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 		tier:        tier,
 		latest:      1,
 		versions: []*version{{
-			value:        cfg.Value,
-			typ:          defaultType(cfg.Type),
-			dataType:     dataType,
-			version:      1,
-			lastModified: now,
+			value:          cfg.Value,
+			typ:            newType,
+			dataType:       dataType,
+			version:        1,
+			lastModified:   now,
+			keyID:          keyID,
+			allowedPattern: cfg.AllowedPattern,
 		}},
+		tags: copyTags(cfg.Tags),
 	}
 
 	// SetIfAbsent guards against a concurrent create racing between Get and Set.
@@ -162,7 +299,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 
 		cfg.Overwrite = true
 
-		return m.PutParameter(ctx, cfg)
+		return m.PutParameter(ctx, *cfg)
 	}
 
 	return 1, tier, nil
@@ -317,6 +454,10 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 		return nil, errors.New(errors.InvalidArgument, "path must begin with '/'")
 	}
 
+	if err := validateByPathFilters(in.ParameterFilters); err != nil {
+		return nil, err
+	}
+
 	prefix := path
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -337,7 +478,7 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 		}
 
 		pd.mu.RLock()
-		if v, ok := pd.versionByNumber(pd.latest); ok {
+		if v, ok := pd.versionByNumber(pd.latest); ok && matchesByPathFilters(v, in.ParameterFilters) {
 			out = append(out, m.toParameter(pd, v, ""))
 		}
 		pd.mu.RUnlock()
@@ -396,6 +537,8 @@ func (m *Mock) DescribeParameters(_ context.Context) ([]driver.ParameterMetadata
 				DataType:         v.dataType,
 				LastModified:     v.lastModified,
 				LastModifiedUser: idgen.AWSARN("iam", "", m.opts.AccountID, "user/cloudemu"),
+				KeyID:            v.keyID,
+				AllowedPattern:   v.allowedPattern,
 			})
 		}
 		pd.mu.RUnlock()
@@ -416,16 +559,25 @@ func (m *Mock) GetParameterHistory(_ context.Context, name string) ([]driver.Par
 	pd.mu.RLock()
 	defer pd.mu.RUnlock()
 
+	lastModifiedUser := idgen.AWSARN("iam", "", m.opts.AccountID, "user/cloudemu")
+
 	out := make([]driver.Parameter, 0, len(pd.versions))
 	for _, v := range pd.versions {
+		labels := append([]string(nil), v.labels...)
 		out = append(out, driver.Parameter{
-			Name:         pd.name,
-			Type:         v.typ,
-			Value:        v.value,
-			Version:      v.version,
-			ARN:          m.arn(pd.name),
-			DataType:     v.dataType,
-			LastModified: v.lastModified,
+			Name:             pd.name,
+			Type:             v.typ,
+			Value:            v.value,
+			Version:          v.version,
+			ARN:              m.arn(pd.name),
+			DataType:         v.dataType,
+			LastModified:     v.lastModified,
+			Labels:           labels,
+			Description:      pd.description,
+			Tier:             pd.tier,
+			LastModifiedUser: lastModifiedUser,
+			KeyID:            v.keyID,
+			AllowedPattern:   v.allowedPattern,
 		})
 	}
 

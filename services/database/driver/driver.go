@@ -51,6 +51,10 @@ type TableConfig struct {
 	PartitionKey string
 	SortKey      string
 	GSIs         []GSIConfig
+	// LSIs carries the Local Secondary Indexes declared at create time. Like
+	// GSIs they share the table's partition key but define an alternate sort
+	// key; a describe echoes them so an IaC-declared LSI round-trips.
+	LSIs []LSIConfig
 	// Attributes carries the attribute definitions (name + type) so a describe
 	// echoes them back — an IaC client compares them and otherwise sees a diff.
 	Attributes []AttributeDef
@@ -61,9 +65,18 @@ type TableConfig struct {
 	// IaC client sees a perpetual diff. Ignored for PAY_PER_REQUEST.
 	ReadCapacityUnits  int64
 	WriteCapacityUnits int64
-	// TableArn and CreatedAtUnix are populated by the provider on create.
+	// StreamEnabled/StreamViewType carry the requested StreamSpecification. When
+	// StreamEnabled is set the provider turns on the change stream and populates
+	// StreamArn/StreamLabel, which a describe surfaces as LatestStreamArn/Label.
+	StreamEnabled  bool
+	StreamViewType string
+	StreamArn      string
+	StreamLabel    string
+	// TableArn, CreatedAtUnix and TableID are populated by the provider on
+	// create. TableID is a UUID a real table carries and IaC clients read back.
 	TableArn      string
 	CreatedAtUnix float64
+	TableID       string
 }
 
 // AttributeDef is a DynamoDB attribute definition (name + scalar type S/N/B).
@@ -77,6 +90,24 @@ type GSIConfig struct {
 	Name         string
 	PartitionKey string
 	SortKey      string
+	// Projection is the DynamoDB projection type (ALL, KEYS_ONLY, INCLUDE); a
+	// describe echoes it so an IaC client's declared index round-trips.
+	Projection string
+	// NonKeyAttributes are the base-table attributes an INCLUDE projection copies
+	// into the index in addition to the key attributes. Ignored for ALL/KEYS_ONLY.
+	NonKeyAttributes []string
+}
+
+// LSIConfig describes a Local Secondary Index. An LSI shares the table's
+// partition key and defines an alternate sort key. Projection is the DynamoDB
+// projection type (ALL, KEYS_ONLY, INCLUDE), echoed by a describe.
+type LSIConfig struct {
+	Name       string
+	SortKey    string
+	Projection string
+	// NonKeyAttributes are the base-table attributes an INCLUDE projection copies
+	// into the index in addition to the key attributes. Ignored for ALL/KEYS_ONLY.
+	NonKeyAttributes []string
 }
 
 // UpdateAction represents a single field-level update action. It is the legacy,
@@ -180,6 +211,15 @@ type QueryInput struct {
 	// The zero value (ascending) matches the historical behavior.
 	SortDescending bool
 
+	// ProjectionRequested reports that the caller supplied a ProjectionExpression
+	// which the wire layer will apply to the returned items. It only matters for
+	// a Local Secondary Index: real DynamoDB transparently fetches non-projected
+	// attributes from the base table, so when a projection is requested the driver
+	// must expose the full base item (letting the wire layer select any
+	// attribute). With no projection an index query defaults to
+	// ALL_PROJECTED_ATTRIBUTES, so the driver still trims to the projected set.
+	ProjectionRequested bool
+
 	// Deprecated: never implemented; use SortDescending. Retained so
 	// existing constructors keep compiling.
 	ScanForward bool
@@ -188,6 +228,10 @@ type QueryInput struct {
 // ScanInput configures a scan operation.
 type ScanInput struct {
 	Table string
+	// IndexName scans a secondary index instead of the base table. Items lacking
+	// the index's key attributes are skipped (sparse index), and only the
+	// index's projected attributes are returned.
+	IndexName string
 	// Filters is the legacy pre-simplified filter; ignored when
 	// FilterExpression is set. Retained for back-compat.
 	Filters []ScanFilter
@@ -203,6 +247,20 @@ type ScanInput struct {
 
 	// ExclusiveStartKey selects key-based continuation; see QueryInput.
 	ExclusiveStartKey map[string]any
+
+	// ProjectionRequested reports that the caller supplied a ProjectionExpression;
+	// see QueryInput.ProjectionRequested. On a Local Secondary Index scan it makes
+	// the driver expose the full base item so non-projected attributes can be
+	// fetched, matching real DynamoDB.
+	ProjectionRequested bool
+
+	// Segment/TotalSegments select one shard of a parallel scan. When
+	// TotalSegments is non-nil the scan returns only the items whose stable
+	// primary-key hash falls in Segment, so the union of all TotalSegments shards
+	// covers every item exactly once (no duplicate, no skip). Both nil is an
+	// ordinary full scan. The AWS wire layer validates the pair before calling.
+	Segment       *int32
+	TotalSegments *int32
 }
 
 // QueryResult is the result of a query or scan.
@@ -210,6 +268,12 @@ type QueryResult struct {
 	Items         []map[string]any
 	Count         int
 	NextPageToken string
+
+	// ScannedCount is the number of items examined before a FilterExpression
+	// was applied (items matching the key condition for Query, all items for
+	// Scan). Count is the post-filter count; the two differ when a filter drops
+	// items, exactly as real DynamoDB reports.
+	ScannedCount int
 
 	// LastEvaluatedKey holds the key attributes of the last returned item
 	// whenever more items remain, enabling DynamoDB-style continuation.
@@ -224,15 +288,34 @@ type IndexInfo struct {
 	Status       string // "ACTIVE", "CREATING", "DELETING"
 }
 
-// Database is the interface that database provider implementations must satisfy.
+// AccountLocation is one region entry in a Cosmos account's declared
+// topology, mirroring the ARM `Location` shape (locationName +
+// failoverPriority + isZoneRedundant) without depending on any ARM wire type.
+type AccountLocation struct {
+	Name             string // region name, e.g. "westus2"
+	FailoverPriority int32  // 0 = write region; must be unique per account
+	IsZoneRedundant  bool
+}
+
 // AccountAttributes are the Cosmos-DB-account cost/identity attributes a real
 // Azure `documentdb/databaseaccounts` resource carries but a DynamoDB/Firestore
 // table does not. Surfaced through the optional TableAttributes capability.
 type AccountAttributes struct {
-	Kind           string   // GlobalDocumentDB / MongoDB
-	OfferType      string   // databaseAccountOfferType (Standard)
-	EnableFreeTier bool     // free-tier flag (cost)
-	Capabilities   []string // e.g. EnableServerless (cost)
+	Kind           string            // GlobalDocumentDB / MongoDB
+	OfferType      string            // databaseAccountOfferType (Standard)
+	EnableFreeTier bool              // free-tier flag (cost)
+	Capabilities   []string          // e.g. EnableServerless (cost)
+	Location       string            // creation region (e.g. eastus) — first/write location
+	ResourceGroup  string            // owning resource group (for byRG listing)
+	Tags           map[string]string // user-supplied resource tags
+	// Locations is the full multi-region topology declared at create time (or
+	// last reordered by failoverPriorityChange). Locations/readLocations/
+	// writeLocations/failoverPolicies are all derived from this one list.
+	// Empty means the account is single-region, using Location above.
+	Locations []AccountLocation
+	// EnableMultipleWriteLocations mirrors the ARM property of the same name:
+	// when true every declared location accepts writes, not just priority 0.
+	EnableMultipleWriteLocations bool
 }
 
 // TableAttributes is an OPTIONAL capability, discovered by type assertion (like
@@ -243,6 +326,7 @@ type TableAttributes interface {
 	TableAttributes(ctx context.Context, table string) (AccountAttributes, error)
 }
 
+// Database is the interface that database provider implementations must satisfy.
 type Database interface {
 	CreateTable(ctx context.Context, config TableConfig) error
 	DeleteTable(ctx context.Context, name string) error
@@ -340,6 +424,8 @@ func CompareValues(a, b any) int {
 
 func toFloat(v any) (float64, bool) {
 	switch n := v.(type) {
+	case expr.Number:
+		return n.Float()
 	case float64:
 		return n, true
 	case float32:

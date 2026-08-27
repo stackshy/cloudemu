@@ -32,22 +32,30 @@ type Mock struct {
 	groups           *memstore.Store[*groupData]
 	accessKeys       *memstore.Store[*accessKeyData]
 	instanceProfiles *memstore.Store[*driver.InstanceProfileInfo]
+	mfaDevices       *memstore.Store[*mfaDeviceData]
 
-	mu           sync.RWMutex
-	userPolicies map[string]map[string]bool // userName -> set of policy ARNs
-	rolePolicies map[string]map[string]bool // roleName -> set of policy ARNs
-	groupUsers   map[string]map[string]bool // groupName -> set of userNames
+	mu            sync.RWMutex
+	userPolicies  map[string]map[string]bool // userName -> set of managed policy ARNs
+	rolePolicies  map[string]map[string]bool // roleName -> set of managed policy ARNs
+	groupPolicies map[string]map[string]bool // groupName -> set of managed policy ARNs
+	groupUsers    map[string]map[string]bool // groupName -> set of userNames
+
+	userInlinePolicies  map[string]map[string]string // userName -> policyName -> document
+	groupInlinePolicies map[string]map[string]string // groupName -> policyName -> document
+
+	passwordPolicy *driver.PasswordPolicy // nil until UpdateAccountPasswordPolicy is called
 
 	opts *config.Options
 }
 
 type userData struct {
-	Name      string
-	ID        string
-	ARN       string
-	Path      string
-	Tags      map[string]string
-	CreatedAt string
+	Name                string
+	ID                  string
+	ARN                 string
+	Path                string
+	Tags                map[string]string
+	CreatedAt           string
+	permissionsBoundary string // ARN of the permissions-boundary policy, if any
 }
 
 type roleData struct {
@@ -55,11 +63,13 @@ type roleData struct {
 	ID                  string
 	ARN                 string
 	Path                string
+	Description         string
 	AssumeRolePolicyDoc string
 	MaxSessionDuration  int
 	CreatedAt           string
 	Tags                map[string]string
 	inlinePolicies      map[string]string // policyName -> policy document JSON
+	permissionsBoundary string            // ARN of the permissions-boundary policy, if any
 }
 
 type policyData struct {
@@ -82,6 +92,7 @@ type policyVersionData struct {
 
 type groupData struct {
 	Name      string
+	ID        string
 	ARN       string
 	Path      string
 	CreatedAt string
@@ -98,16 +109,20 @@ type accessKeyData struct {
 // New creates a new IAM mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		users:            memstore.New[*userData](),
-		roles:            memstore.New[*roleData](),
-		policies:         memstore.New[*policyData](),
-		groups:           memstore.New[*groupData](),
-		accessKeys:       memstore.New[*accessKeyData](),
-		instanceProfiles: memstore.New[*driver.InstanceProfileInfo](),
-		userPolicies:     make(map[string]map[string]bool),
-		rolePolicies:     make(map[string]map[string]bool),
-		groupUsers:       make(map[string]map[string]bool),
-		opts:             opts,
+		users:               memstore.New[*userData](),
+		roles:               memstore.New[*roleData](),
+		policies:            memstore.New[*policyData](),
+		groups:              memstore.New[*groupData](),
+		accessKeys:          memstore.New[*accessKeyData](),
+		instanceProfiles:    memstore.New[*driver.InstanceProfileInfo](),
+		mfaDevices:          memstore.New[*mfaDeviceData](),
+		userPolicies:        make(map[string]map[string]bool),
+		rolePolicies:        make(map[string]map[string]bool),
+		groupPolicies:       make(map[string]map[string]bool),
+		groupUsers:          make(map[string]map[string]bool),
+		userInlinePolicies:  make(map[string]map[string]string),
+		groupInlinePolicies: make(map[string]map[string]string),
+		opts:                opts,
 	}
 }
 
@@ -127,7 +142,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 	}
 
 	id := idgen.GenerateID("AIDA")
-	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "user/"+cfg.Name)
+	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "user/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
 	u := &userData{
@@ -145,15 +160,45 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 	return &info, nil
 }
 
-// DeleteUser deletes the IAM user with the given name.
+// DeleteUser deletes the IAM user with the given name. Like real IAM it refuses
+// (DeleteConflict) while managed policies are still attached, access keys still
+// exist, or the user is still a member of a group — the caller must remove
+// those first.
 func (m *Mock) DeleteUser(_ context.Context, name string) error {
-	if !m.users.Delete(name) {
+	if !m.users.Has(name) {
 		return errors.Newf(errors.NotFound, "user %q not found", name)
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.userPolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete user %q: managed policies are still attached (detach them first)", name)
+	}
+
+	if len(m.userInlinePolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete user %q: inline policies still exist (delete them first)", name)
+	}
+
+	for _, members := range m.groupUsers {
+		if members[name] {
+			return errors.Newf(errors.FailedPrecondition,
+				"cannot delete user %q: still a member of a group (remove it first)", name)
+		}
+	}
+
+	for _, ak := range m.accessKeys.All() {
+		if ak.UserName == name {
+			return errors.Newf(errors.FailedPrecondition,
+				"cannot delete user %q: access keys still exist (delete them first)", name)
+		}
+	}
+
+	m.users.Delete(name)
 	delete(m.userPolicies, name)
-	m.mu.Unlock()
+	delete(m.userInlinePolicies, name)
 
 	return nil
 }
@@ -165,6 +210,9 @@ func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error)
 		return nil, errors.Newf(errors.NotFound, "user %q not found", name)
 	}
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	info := toUserInfo(u)
 
 	return &info, nil
@@ -174,6 +222,9 @@ func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error)
 func (m *Mock) ListUsers(_ context.Context) ([]driver.UserInfo, error) {
 	all := m.users.All()
 	result := make([]driver.UserInfo, 0, len(all))
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	for _, u := range all {
 		result = append(result, toUserInfo(u))
@@ -198,7 +249,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	}
 
 	id := idgen.GenerateID("AROA")
-	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+cfg.Name)
+	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
 	maxSession := cfg.MaxSessionDuration
@@ -211,6 +262,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		ID:                  id,
 		ARN:                 arn,
 		Path:                path,
+		Description:         cfg.Description,
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
 		MaxSessionDuration:  maxSession,
 		CreatedAt:           m.opts.Clock.Now().UTC().Format(timeFormat),
@@ -223,15 +275,38 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	return &info, nil
 }
 
-// DeleteRole deletes the IAM role with the given name.
+// DeleteRole deletes the IAM role with the given name. Like real IAM, it
+// refuses (DeleteConflict) while managed policies are still attached or inline
+// policies still exist — the caller must detach/delete them first.
 func (m *Mock) DeleteRole(_ context.Context, name string) error {
-	if !m.roles.Delete(name) {
+	role, ok := m.roles.Get(name)
+	if !ok {
 		return errors.Newf(errors.NotFound, "role %q not found", name)
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.rolePolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete role %q: managed policies are still attached (detach them first)", name)
+	}
+
+	if len(role.inlinePolicies) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete role %q: inline policies still exist (delete them first)", name)
+	}
+
+	for _, p := range m.instanceProfiles.All() {
+		if p.RoleName == name {
+			return errors.Newf(errors.FailedPrecondition,
+				"cannot delete role %q: it is still associated with instance profile %q "+
+					"(remove it with RemoveRoleFromInstanceProfile first)", name, p.Name)
+		}
+	}
+
+	m.roles.Delete(name)
 	delete(m.rolePolicies, name)
-	m.mu.Unlock()
 
 	return nil
 }
@@ -243,6 +318,9 @@ func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error)
 		return nil, errors.Newf(errors.NotFound, "role %q not found", name)
 	}
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	info := toRoleInfo(r)
 
 	return &info, nil
@@ -252,6 +330,9 @@ func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error)
 func (m *Mock) ListRoles(_ context.Context) ([]driver.RoleInfo, error) {
 	all := m.roles.All()
 	result := make([]driver.RoleInfo, 0, len(all))
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	for _, r := range all {
 		result = append(result, toRoleInfo(r))
@@ -272,7 +353,7 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 	}
 
 	id := idgen.GenerateID("ANPA")
-	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "policy/"+cfg.Name)
+	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "policy/"+strings.TrimPrefix(path, "/")+cfg.Name)
 
 	if m.policies.Has(arn) {
 		return nil, errors.Newf(errors.AlreadyExists, "policy %q already exists", cfg.Name)
@@ -296,13 +377,55 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 	return &info, nil
 }
 
-// DeletePolicy deletes the IAM policy with the given ARN.
+// DeletePolicy deletes the IAM policy with the given ARN. Like real IAM it
+// refuses (DeleteConflict) while the policy is still attached to any user or
+// role — the caller must detach it everywhere first.
 func (m *Mock) DeletePolicy(_ context.Context, arn string) error {
-	if !m.policies.Delete(arn) {
+	if !m.policies.Has(arn) {
 		return errors.Newf(errors.NotFound, "policy %q not found", arn)
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.policyAttachmentCountLocked(arn) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete policy %q: still attached to one or more users or roles (detach it first)", arn)
+	}
+
+	m.policies.Delete(arn)
+
 	return nil
+}
+
+// policyAttachmentCountLocked returns how many users and roles currently have
+// the given policy ARN attached. The caller must hold m.mu.
+func (m *Mock) policyAttachmentCountLocked(arn string) int {
+	count := 0
+
+	for _, arns := range m.userPolicies {
+		if arns[arn] {
+			count++
+		}
+	}
+
+	for _, arns := range m.rolePolicies {
+		if arns[arn] {
+			count++
+		}
+	}
+
+	return count
+}
+
+// PolicyAttachmentCount returns how many principals have the given managed
+// policy attached. It exists for the wire layer to populate AttachmentCount and
+// to honor ListPolicies OnlyAttached; it is not part of the portable driver.
+func (m *Mock) PolicyAttachmentCount(_ context.Context, arn string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.policyAttachmentCountLocked(arn), nil
 }
 
 // GetPolicy returns the IAM policy with the given ARN.
@@ -795,11 +918,12 @@ func (m *Mock) CreateGroup(
 	}
 
 	arn := idgen.AWSARN(
-		"iam", "", m.opts.AccountID, "group/"+cfg.Name,
+		"iam", "", m.opts.AccountID, "group/"+strings.TrimPrefix(path, "/")+cfg.Name,
 	)
 
 	g := &groupData{
 		Name:      cfg.Name,
+		ID:        idgen.GenerateID("AGPA"),
 		ARN:       arn,
 		Path:      path,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
@@ -813,15 +937,34 @@ func (m *Mock) CreateGroup(
 
 // DeleteGroup deletes the IAM group with the given name.
 func (m *Mock) DeleteGroup(_ context.Context, name string) error {
-	if !m.groups.Delete(name) {
+	if !m.groups.Has(name) {
 		return errors.Newf(
 			errors.NotFound, "group %q not found", name,
 		)
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.groupUsers[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete group %q: it still has member users (remove them first)", name)
+	}
+
+	if len(m.groupPolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete group %q: managed policies are still attached (detach them first)", name)
+	}
+
+	if len(m.groupInlinePolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete group %q: inline policies still exist (delete them first)", name)
+	}
+
+	m.groups.Delete(name)
 	delete(m.groupUsers, name)
-	m.mu.Unlock()
+	delete(m.groupPolicies, name)
+	delete(m.groupInlinePolicies, name)
 
 	return nil
 }
@@ -851,6 +994,32 @@ func (m *Mock) ListGroups(
 
 	for _, g := range all {
 		result = append(result, toGroupInfo(g))
+	}
+
+	return result, nil
+}
+
+// ListGroupMembers returns the users that belong to the given group. It exists
+// for the wire layer to populate GetGroup's Users list; it is not part of the
+// portable driver.
+func (m *Mock) ListGroupMembers(_ context.Context, groupName string) ([]driver.UserInfo, error) {
+	if !m.groups.Has(groupName) {
+		return nil, errors.Newf(errors.NotFound, "group %q not found", groupName)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	members := m.groupUsers[groupName]
+	result := make([]driver.UserInfo, 0, len(members))
+
+	for userName := range members {
+		u, ok := m.users.Get(userName)
+		if !ok {
+			continue
+		}
+
+		result = append(result, toUserInfo(u))
 	}
 
 	return result, nil
@@ -942,6 +1111,23 @@ func (m *Mock) ListGroupsForUser(
 	return result, nil
 }
 
+// maxAccessKeysPerUser is the AWS quota: an IAM user may hold at most two
+// access keys at a time.
+const maxAccessKeysPerUser = 2
+
+// countAccessKeys returns how many access keys currently belong to userName.
+func (m *Mock) countAccessKeys(userName string) int {
+	count := 0
+
+	for _, ak := range m.accessKeys.All() {
+		if ak.UserName == userName {
+			count++
+		}
+	}
+
+	return count
+}
+
 // CreateAccessKey creates a new access key for the given user.
 func (m *Mock) CreateAccessKey(
 	_ context.Context, cfg driver.AccessKeyConfig,
@@ -956,6 +1142,13 @@ func (m *Mock) CreateAccessKey(
 		return nil, errors.Newf(
 			errors.NotFound, "user %q not found", cfg.UserName,
 		)
+	}
+
+	// Real IAM caps a user at maxAccessKeysPerUser keys; a further create is
+	// rejected with LimitExceeded (HTTP 409).
+	if m.countAccessKeys(cfg.UserName) >= maxAccessKeysPerUser {
+		return nil, errors.Newf(errors.ResourceExhausted,
+			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
 	}
 
 	keyID := fmt.Sprintf("AKIA%s", idgen.GenerateID(""))
@@ -1041,15 +1234,21 @@ func (m *Mock) CreateInstanceProfile(
 		)
 	}
 
+	path := cfg.Path
+	if path == "" {
+		path = "/"
+	}
+
 	id := idgen.GenerateID("AIPA")
 	arn := idgen.AWSARN(
 		"iam", "", m.opts.AccountID,
-		"instance-profile/"+cfg.Name,
+		"instance-profile/"+strings.TrimPrefix(path, "/")+cfg.Name,
 	)
 
 	info := &driver.InstanceProfileInfo{
 		ID:        id,
 		Name:      cfg.Name,
+		Path:      path,
 		RoleName:  cfg.RoleName,
 		ARN:       arn,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
@@ -1064,12 +1263,21 @@ func (m *Mock) CreateInstanceProfile(
 func (m *Mock) DeleteInstanceProfile(
 	_ context.Context, name string,
 ) error {
-	if !m.instanceProfiles.Delete(name) {
+	p, ok := m.instanceProfiles.Get(name)
+	if !ok {
 		return errors.Newf(
 			errors.NotFound,
 			"instance profile %q not found", name,
 		)
 	}
+
+	if p.RoleName != "" {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete instance profile %q: role %q is still associated "+
+				"(remove it with RemoveRoleFromInstanceProfile first)", name, p.RoleName)
+	}
+
+	m.instanceProfiles.Delete(name)
 
 	return nil
 }
@@ -1122,9 +1330,12 @@ func (m *Mock) AddRoleToInstanceProfile(
 	}
 
 	if p.RoleName != "" {
+		// An instance profile can contain only one role and this quota cannot be
+		// increased, so a second (different) role is a limit breach, not a
+		// duplicate. Real IAM returns LimitExceeded here.
 		return errors.Newf(
-			errors.AlreadyExists,
-			"instance profile %q already has role %q",
+			errors.ResourceExhausted,
+			"instance profile %q already has role %q; an instance profile can contain only one role",
 			profileName, p.RoleName,
 		)
 	}
@@ -1165,6 +1376,7 @@ func copyProfileInfo(p *driver.InstanceProfileInfo) *driver.InstanceProfileInfo 
 	return &driver.InstanceProfileInfo{
 		ID:        p.ID,
 		Name:      p.Name,
+		Path:      p.Path,
 		RoleName:  p.RoleName,
 		ARN:       p.ARN,
 		CreatedAt: p.CreatedAt,
@@ -1203,6 +1415,7 @@ func toRoleInfo(r *roleData) driver.RoleInfo {
 		ID:                  r.ID,
 		ARN:                 r.ARN,
 		Path:                r.Path,
+		Description:         r.Description,
 		AssumeRolePolicyDoc: r.AssumeRolePolicyDoc,
 		MaxSessionDuration:  r.MaxSessionDuration,
 		CreatedAt:           r.CreatedAt,
@@ -1224,6 +1437,7 @@ func toPolicyInfo(p *policyData) driver.PolicyInfo {
 func toGroupInfo(g *groupData) driver.GroupInfo {
 	return driver.GroupInfo{
 		Name:      g.Name,
+		ID:        g.ID,
 		Path:      g.Path,
 		ARN:       g.ARN,
 		CreatedAt: g.CreatedAt,

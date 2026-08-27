@@ -2,6 +2,7 @@ package kms
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
@@ -51,18 +52,33 @@ func (h *Handler) describeKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
+	var req listKeysRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	keys, err := h.kms.ListKeys(r.Context())
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	entries := make([]keyListEntry, 0, len(keys))
-	for i := range keys {
+	// Sort before paging: the provider returns keys in map-iteration order, so an
+	// unsorted offset Marker could repeat or skip keys across pages.
+	sort.Slice(keys, func(i, j int) bool { return keys[i].KeyID < keys[j].KeyID })
+
+	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(keys))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	entries := make([]keyListEntry, 0, end-start)
+	for i := start; i < end; i++ {
 		entries = append(entries, keyListEntry{KeyID: keys[i].KeyID, KeyArn: keys[i].ARN})
 	}
 
-	wire.WriteJSON(w, listKeysResponse{Keys: entries, Truncated: false})
+	wire.WriteJSON(w, listKeysResponse{Keys: entries, NextMarker: next, Truncated: truncated})
 }
 
 func (h *Handler) enableKey(w http.ResponseWriter, r *http.Request) {
@@ -195,8 +211,17 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := make([]aliasListEntry, 0, len(aliases))
-	for i := range aliases {
+	// Sort before paging: the provider returns aliases in map-iteration order.
+	sort.Slice(aliases, func(i, j int) bool { return aliases[i].Name < aliases[j].Name })
+
+	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(aliases))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	entries := make([]aliasListEntry, 0, end-start)
+	for i := start; i < end; i++ {
 		entries = append(entries, aliasListEntry{
 			AliasName:       aliases[i].Name,
 			AliasArn:        aliases[i].ARN,
@@ -206,7 +231,7 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	wire.WriteJSON(w, listAliasesResponse{Aliases: entries, Truncated: false})
+	wire.WriteJSON(w, listAliasesResponse{Aliases: entries, NextMarker: next, Truncated: truncated})
 }
 
 func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +263,7 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listResourceTags(w http.ResponseWriter, r *http.Request) {
-	var req keyIDRequest
+	var req listResourceTagsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -249,5 +274,14 @@ func (h *Handler) listResourceTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, listResourceTagsResponse{Tags: mapToTags(tags), Truncated: false})
+	all := mapToTags(tags)
+	sort.Slice(all, func(i, j int) bool { return all[i].TagKey < all[j].TagKey })
+
+	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(all))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, listResourceTagsResponse{Tags: all[start:end], NextMarker: next, Truncated: truncated})
 }

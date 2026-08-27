@@ -104,8 +104,11 @@ func (m *Mock) DeleteMLWorkspace(_ context.Context, resourceGroup, name string) 
 	return nil
 }
 
-func (m *Mock) UpdateMLWorkspaceTags(
-	_ context.Context, resourceGroup, name string, tags map[string]string,
+// UpdateMLWorkspace applies a PATCH: only fields present in upd change; omitted
+// fields (nil pointers) are preserved. Tags are merged into the existing set,
+// never wiped by an absent tags block.
+func (m *Mock) UpdateMLWorkspace(
+	_ context.Context, resourceGroup, name string, upd driver.MLWorkspaceUpdate,
 ) (*driver.MLWorkspace, error) {
 	k := key(resourceGroup, name)
 
@@ -115,7 +118,26 @@ func (m *Mock) UpdateMLWorkspaceTags(
 	}
 
 	updated := *w
-	updated.Tags = copyMap(tags)
+	updated.Tags = copyMap(w.Tags)
+
+	if upd.Tags != nil {
+		if updated.Tags == nil {
+			updated.Tags = make(map[string]string, len(*upd.Tags))
+		}
+
+		for tk, tv := range *upd.Tags {
+			updated.Tags[tk] = tv
+		}
+	}
+
+	if upd.FriendlyName != nil {
+		updated.FriendlyName = *upd.FriendlyName
+	}
+
+	if upd.Description != nil {
+		updated.Description = *upd.Description
+	}
+
 	m.mlWorkspaces.Set(k, &updated)
 
 	return cloneMLWorkspace(&updated), nil
@@ -125,7 +147,7 @@ func (m *Mock) ListMLWorkspacesByResourceGroup(_ context.Context, resourceGroup 
 	out := make([]driver.MLWorkspace, 0)
 
 	for _, w := range m.mlWorkspaces.All() {
-		if w.ResourceGroup == resourceGroup {
+		if strings.EqualFold(w.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneMLWorkspace(w))
 		}
 	}

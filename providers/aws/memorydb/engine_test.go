@@ -49,7 +49,7 @@ func TestCreateClusterUsesEngineEndpoint(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
-		Name: "c1", NumShards: 2, NumReplicasPerShard: 1,
+		Name: "c1", NumShards: 2, NumReplicasPerShard: i32p(1),
 	})
 	requireNoError(t, err)
 

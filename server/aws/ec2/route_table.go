@@ -3,7 +3,9 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -14,6 +16,17 @@ const (
 	targetTypeGateway    = "gateway"
 	targetTypeNatGateway = "nat-gateway"
 	targetTypePeering    = "peering"
+	targetTypeLocal      = "local"
+
+	// routeOriginCreateRouteTable is the origin AWS reports for the implicit
+	// local route created with the table; routeOriginCreateRoute is what it
+	// reports for routes a caller added afterward.
+	routeOriginCreateRouteTable = "CreateRouteTable"
+	routeOriginCreateRoute      = "CreateRoute"
+
+	// filterAssocMain is the DescribeRouteTables filter selecting the VPC's main
+	// route table (association.main = true/false).
+	filterAssocMain = "association.main"
 )
 
 type routeXML struct {
@@ -22,6 +35,7 @@ type routeXML struct {
 	NatGatewayID         string `xml:"natGatewayId,omitempty"`
 	VpcPeeringConnection string `xml:"vpcPeeringConnectionId,omitempty"`
 	State                string `xml:"state"`
+	Origin               string `xml:"origin,omitempty"`
 }
 
 type rtAssociationStateXML struct {
@@ -39,6 +53,7 @@ type rtAssociationXML struct {
 type routeTableXML struct {
 	RouteTableID string             `xml:"routeTableId"`
 	VpcID        string             `xml:"vpcId"`
+	OwnerID      string             `xml:"ownerId"`
 	Routes       []routeXML         `xml:"routeSet>item,omitempty"`
 	Associations []rtAssociationXML `xml:"associationSet>item,omitempty"`
 	Tags         []tagItem          `xml:"tagSet>item,omitempty"`
@@ -56,6 +71,7 @@ type describeRouteTablesResponseXML struct {
 	Xmlns         string          `xml:"xmlns,attr"`
 	RequestID     string          `xml:"requestId"`
 	RouteTableSet []routeTableXML `xml:"routeTableSet>item"`
+	NextToken     string          `xml:"nextToken,omitempty"`
 }
 
 type createRouteResponseXML struct {
@@ -67,6 +83,13 @@ type createRouteResponseXML struct {
 
 type deleteRouteResponseXML struct {
 	XMLName   xml.Name `xml:"DeleteRouteResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type replaceRouteResponseXML struct {
+	XMLName   xml.Name `xml:"ReplaceRouteResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
@@ -109,7 +132,7 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, createRouteTableResponseXML{
 		Xmlns:      awsquery.Namespace,
 		RequestID:  awsquery.RequestID,
-		RouteTable: toRouteTableXML(rt),
+		RouteTable: h.toRouteTableXML(rt),
 	})
 }
 
@@ -134,13 +157,16 @@ func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		out = append(out, toRouteTableXML(&rts[i]))
+		out = append(out, h.toRouteTableXML(&rts[i]))
 	}
+
+	page, next := pageNetworkingXML(out, r, func(rt routeTableXML) string { return rt.RouteTableID })
 
 	awsquery.WriteXMLResponse(w, describeRouteTablesResponseXML{
 		Xmlns:         awsquery.Namespace,
 		RequestID:     awsquery.RequestID,
-		RouteTableSet: out,
+		RouteTableSet: page,
+		NextToken:     next,
 	})
 }
 
@@ -160,7 +186,7 @@ func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
 		r.Form.Get("DestinationCidrBlock"),
 		target, targetType)
 	if err != nil {
-		writeRouteTableErr(w, err)
+		writeCreateRouteErr(w, err)
 		return
 	}
 
@@ -171,11 +197,55 @@ func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// replaceRoute swaps the target of an existing route, keyed by its destination
+// CIDR. Real EC2 requires the route to already exist (a miss is
+// InvalidRoute.NotFound), so it is modeled as DeleteRoute-then-CreateRoute: the
+// delete step's NotFound is exactly the "route must exist" precondition, and the
+// create step re-adds it with the new target.
+func (h *Handler) replaceRoute(w http.ResponseWriter, r *http.Request) {
+	target, targetType := resolveRouteTarget(r)
+	if target == "" {
+		writeReplaceRouteErr(w, newInvalidParameterErr(
+			"one of GatewayId / NatGatewayId / VpcPeeringConnectionId is required"))
+
+		return
+	}
+
+	routeTableID := r.Form.Get("RouteTableId")
+	destinationCIDR := r.Form.Get("DestinationCidrBlock")
+
+	// A missing route TABLE is InvalidRouteTableID.NotFound; a missing ROUTE on an
+	// existing table is InvalidRoute.NotFound. DeleteRoute conflates the two, so
+	// resolve the table first.
+	if rts, _ := h.vpc.DescribeRouteTables(r.Context(), []string{routeTableID}); len(rts) == 0 {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidRouteTableID.NotFound",
+			"The route table ID '"+routeTableID+"' does not exist")
+
+		return
+	}
+
+	if err := h.vpc.DeleteRoute(r.Context(), routeTableID, destinationCIDR); err != nil {
+		writeReplaceRouteErr(w, err)
+		return
+	}
+
+	if err := h.vpc.CreateRoute(r.Context(), routeTableID, destinationCIDR, target, targetType); err != nil {
+		writeReplaceRouteErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, replaceRouteResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
 func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	err := h.vpc.DeleteRoute(r.Context(),
 		r.Form.Get("RouteTableId"), r.Form.Get("DestinationCidrBlock"))
 	if err != nil {
-		writeRouteTableErr(w, err)
+		writeDeleteRouteErr(w, err)
 		return
 	}
 
@@ -269,7 +339,7 @@ func routeTableFilterKnown(name string) bool {
 	switch name {
 	case "route-table-id", "vpc-id",
 		"association.route-table-association-id", "association.route-table-id",
-		"association.subnet-id", "association.main":
+		filterAssocSubnetID, filterAssocMain:
 		return true
 	default:
 		return false
@@ -304,9 +374,9 @@ func routeTableMatchesFilter(rt *netdriver.RouteTable, f awsquery.Filter) bool {
 		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool {
 			return containsString(f.Values, nonEmpty(a.RouteTableID, rt.ID))
 		})
-	case "association.subnet-id":
+	case filterAssocSubnetID:
 		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool { return containsString(f.Values, a.SubnetID) })
-	case "association.main":
+	case filterAssocMain:
 		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool {
 			return containsString(f.Values, boolFilterValue(a.Main))
 		})
@@ -335,10 +405,11 @@ func anyAssoc(rt *netdriver.RouteTable, pred func(netdriver.RouteTableAssociatio
 	return false
 }
 
-func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
+func (h *Handler) toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 	x := routeTableXML{
 		RouteTableID: rt.ID,
 		VpcID:        rt.VPCID,
+		OwnerID:      h.accountID,
 		Tags:         toTagItems(rt.Tags),
 	}
 
@@ -356,6 +427,7 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 		rx := routeXML{
 			DestinationCIDR: route.DestinationCIDR,
 			State:           nonEmpty(route.State, "active"),
+			Origin:          routeOrigin(route.TargetType),
 		}
 
 		switch route.TargetType {
@@ -365,12 +437,26 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 			rx.NatGatewayID = route.TargetID
 		case targetTypePeering:
 			rx.VpcPeeringConnection = route.TargetID
+		case targetTypeLocal:
+			// The VPC-local route reports gatewayId "local", not the internal
+			// target id the driver stores.
+			rx.GatewayID = targetTypeLocal
 		}
 
 		x.Routes = append(x.Routes, rx)
 	}
 
 	return x
+}
+
+// routeOrigin reports how a route was created: the implicit local route comes
+// from CreateRouteTable, every other target type is a route a caller added.
+func routeOrigin(targetType string) string {
+	if targetType == targetTypeLocal {
+		return routeOriginCreateRouteTable
+	}
+
+	return routeOriginCreateRoute
 }
 
 func nonEmpty(s, fallback string) string {
@@ -383,4 +469,70 @@ func nonEmpty(s, fallback string) string {
 
 func writeRouteTableErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidRouteTableID.NotFound", "DependencyViolation")
+}
+
+// writeCreateRouteErr maps CreateRoute's resource-specific errors: a destination
+// CIDR that already exists is RouteAlreadyExists (not the generic
+// ResourceAlreadyExists), and a route pointing at a gateway / NAT / peering that
+// does not exist maps to that target's not-found code. A missing route table
+// still falls through to InvalidRouteTableID.NotFound.
+func writeCreateRouteErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "RouteAlreadyExists", cerrors.Message(err))
+		return
+	}
+
+	if code, ok := routeTargetNotFoundCode(err); ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, code, cerrors.Message(err))
+		return
+	}
+
+	writeRouteTableErr(w, err)
+}
+
+// writeDeleteRouteErr maps a miss on an existing route table to
+// InvalidRoute.NotFound (the route is what's absent), while a missing route table
+// still maps to InvalidRouteTableID.NotFound. The provider's message
+// disambiguates the two ("not found in route table" is the route miss).
+func writeDeleteRouteErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "not found in route table") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidRoute.NotFound", cerrors.Message(err))
+		return
+	}
+
+	writeRouteTableErr(w, err)
+}
+
+// writeReplaceRouteErr maps a NotFound to InvalidRoute.NotFound: ReplaceRoute's
+// precondition is that the route already exists, so the delete-step miss reports
+// the missing route, matching real EC2, rather than the route-table code. A
+// re-create pointing at a nonexistent target still maps to that target's code.
+func writeReplaceRouteErr(w http.ResponseWriter, err error) {
+	if code, ok := routeTargetNotFoundCode(err); ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, code, cerrors.Message(err))
+		return
+	}
+
+	writeErrWithNotFound(w, err, "InvalidRoute.NotFound", "DependencyViolation")
+}
+
+// routeTargetNotFoundCode reports the target-specific EC2 error code a CreateRoute
+// carries when its gateway / NAT / peering target does not exist. The provider
+// marks each with the code as a message prefix.
+func routeTargetNotFoundCode(err error) (string, bool) {
+	if !cerrors.IsNotFound(err) {
+		return "", false
+	}
+
+	for _, code := range []string{
+		"InvalidInternetGatewayID.NotFound",
+		"InvalidNatGatewayID.NotFound",
+		"InvalidVpcPeeringConnectionID.NotFound",
+	} {
+		if strings.Contains(err.Error(), code+":") {
+			return code, true
+		}
+	}
+
+	return "", false
 }

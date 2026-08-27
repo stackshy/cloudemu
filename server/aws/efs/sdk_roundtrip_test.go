@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -102,6 +103,63 @@ func TestSDKFileSystemLifecycle(t *testing.T) {
 	var nf *efstypes.FileSystemNotFound
 	if !errors.As(err, &nf) {
 		t.Fatalf("want FileSystemNotFound, got %v", err)
+	}
+}
+
+// TestSDKEncryptedFileSystemHasDefaultKMSKey verifies an encrypted file system
+// created without an explicit KMS key reports the account's default CMK ARN,
+// matching real EFS (rather than an empty KmsKeyId).
+func TestSDKEncryptedFileSystemHasDefaultKMSKey(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{
+		CreationToken: aws.String("enc-default-key"),
+		Encrypted:     aws.Bool(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateFileSystem: %v", err)
+	}
+
+	if !aws.ToBool(fs.Encrypted) {
+		t.Fatalf("Encrypted = false, want true")
+	}
+
+	key := aws.ToString(fs.KmsKeyId)
+	if key == "" {
+		t.Fatal("encrypted file system has empty KmsKeyId, want a default CMK ARN")
+	}
+
+	if !strings.HasPrefix(key, "arn:aws:kms:") || !strings.Contains(key, ":key/") {
+		t.Fatalf("KmsKeyId = %q, want a kms key ARN", key)
+	}
+
+	// The default must survive a Describe round-trip.
+	desc, err := c.DescribeFileSystems(ctx, &awsefs.DescribeFileSystemsInput{FileSystemId: fs.FileSystemId})
+	if err != nil {
+		t.Fatalf("DescribeFileSystems: %v", err)
+	}
+
+	if aws.ToString(desc.FileSystems[0].KmsKeyId) != key {
+		t.Fatalf("described KmsKeyId = %q, want %q", aws.ToString(desc.FileSystems[0].KmsKeyId), key)
+	}
+}
+
+// TestSDKUnencryptedFileSystemHasNoKMSKey verifies an unencrypted file system
+// does not get a default CMK.
+func TestSDKUnencryptedFileSystemHasNoKMSKey(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{
+		CreationToken: aws.String("unencrypted"),
+	})
+	if err != nil {
+		t.Fatalf("CreateFileSystem: %v", err)
+	}
+
+	if aws.ToString(fs.KmsKeyId) != "" {
+		t.Fatalf("unencrypted file system KmsKeyId = %q, want empty", aws.ToString(fs.KmsKeyId))
 	}
 }
 
@@ -347,5 +405,65 @@ func TestSDKDescribeMountTargetsByID(t *testing.T) {
 
 	if len(byAP.MountTargets) != 1 {
 		t.Fatalf("describe by AP id: want 1 mount target, got %d", len(byAP.MountTargets))
+	}
+}
+
+// TestSDKDuplicateTokenCarriesFileSystemId verifies a duplicate CreationToken is
+// rejected with a FileSystemAlreadyExists error that carries the existing file
+// system's id, so an idempotent CreateFileSystem retry can recover it.
+func TestSDKDuplicateTokenCarriesFileSystemId(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	first, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("idem-token")})
+	if err != nil {
+		t.Fatalf("first CreateFileSystem: %v", err)
+	}
+
+	_, err = c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("idem-token")})
+	if err == nil {
+		t.Fatal("duplicate token: want FileSystemAlreadyExists, got nil")
+	}
+
+	var already *efstypes.FileSystemAlreadyExists
+	if !errors.As(err, &already) {
+		t.Fatalf("want FileSystemAlreadyExists, got %T: %v", err, err)
+	}
+
+	if aws.ToString(already.FileSystemId) != aws.ToString(first.FileSystemId) {
+		t.Fatalf("FileSystemAlreadyExists.FileSystemId = %q, want %q",
+			aws.ToString(already.FileSystemId), aws.ToString(first.FileSystemId))
+	}
+}
+
+// TestSDKOneZoneAvailabilityZoneId verifies a One Zone file system reports a
+// consistent AvailabilityZoneId derived from the AvailabilityZoneName.
+func TestSDKOneZoneAvailabilityZoneId(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{
+		CreationToken: aws.String("oz-1"), AvailabilityZoneName: aws.String("us-east-1b"),
+	})
+	if err != nil {
+		t.Fatalf("CreateFileSystem(One Zone): %v", err)
+	}
+
+	if aws.ToString(fs.AvailabilityZoneName) != "us-east-1b" {
+		t.Fatalf("AvailabilityZoneName = %q, want us-east-1b", aws.ToString(fs.AvailabilityZoneName))
+	}
+
+	if aws.ToString(fs.AvailabilityZoneId) != "use1-az2" {
+		t.Fatalf("AvailabilityZoneId = %q, want use1-az2", aws.ToString(fs.AvailabilityZoneId))
+	}
+
+	desc, err := c.DescribeFileSystems(ctx, &awsefs.DescribeFileSystemsInput{FileSystemId: fs.FileSystemId})
+	if err != nil || len(desc.FileSystems) != 1 {
+		t.Fatalf("DescribeFileSystems = %d, %v", len(desc.FileSystems), err)
+	}
+
+	if aws.ToString(desc.FileSystems[0].AvailabilityZoneId) != "use1-az2" {
+		t.Fatalf("Describe AvailabilityZoneId = %q, want use1-az2",
+			aws.ToString(desc.FileSystems[0].AvailabilityZoneId))
 	}
 }

@@ -144,3 +144,42 @@ func TestSDKAccessPoints(t *testing.T) {
 		t.Fatalf("DeleteAccessPoint: %v", err)
 	}
 }
+
+// TestSDKAccessPointClientTokenIdempotency verifies that two CreateAccessPoint
+// calls with the same ClientToken on one file system return the same access
+// point rather than creating duplicates.
+func TestSDKAccessPointClientTokenIdempotency(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, _ := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("ap-idem")})
+
+	in := &awsefs.CreateAccessPointInput{
+		FileSystemId: fs.FileSystemId,
+		ClientToken:  aws.String("ct-1"),
+	}
+
+	first, err := c.CreateAccessPoint(ctx, in)
+	if err != nil {
+		t.Fatalf("first CreateAccessPoint: %v", err)
+	}
+
+	second, err := c.CreateAccessPoint(ctx, in)
+	if err != nil {
+		t.Fatalf("second CreateAccessPoint: %v", err)
+	}
+
+	if aws.ToString(first.AccessPointId) != aws.ToString(second.AccessPointId) {
+		t.Fatalf("idempotent ClientToken produced distinct ids: %q vs %q",
+			aws.ToString(first.AccessPointId), aws.ToString(second.AccessPointId))
+	}
+
+	aps, err := c.DescribeAccessPoints(ctx, &awsefs.DescribeAccessPointsInput{FileSystemId: fs.FileSystemId})
+	if err != nil {
+		t.Fatalf("DescribeAccessPoints: %v", err)
+	}
+
+	if len(aps.AccessPoints) != 1 {
+		t.Fatalf("want 1 access point after idempotent retry, got %d", len(aps.AccessPoints))
+	}
+}

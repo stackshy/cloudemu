@@ -51,8 +51,13 @@ func TestSDKRDSParameterGroupLifecycle(t *testing.T) {
 		t.Fatalf("DescribeDBParameters: %v", err)
 	}
 
-	if len(params.Parameters) != 1 || aws.ToString(params.Parameters[0].ParameterName) != "max_connections" {
-		t.Fatalf("unexpected params: %+v", params.Parameters)
+	// The full engine-default set is returned with the modification overlaid.
+	mc := findSDKParam(params.Parameters, "max_connections")
+	if mc == nil || aws.ToString(mc.ParameterValue) != "200" || aws.ToString(mc.Source) != "user" {
+		t.Fatalf("max_connections = %+v, want value 200 source user", mc)
+	}
+	if len(params.Parameters) < 10 {
+		t.Fatalf("got %d params, want the full engine-default set", len(params.Parameters))
 	}
 
 	if _, err := client.ResetDBParameterGroup(ctx, &awsrds.ResetDBParameterGroupInput{
@@ -62,10 +67,17 @@ func TestSDKRDSParameterGroupLifecycle(t *testing.T) {
 		t.Fatalf("ResetDBParameterGroup: %v", err)
 	}
 
-	if params, _ := client.DescribeDBParameters(ctx, &awsrds.DescribeDBParametersInput{
+	// After reset-all the engine defaults remain, but nothing is user-sourced.
+	after, _ := client.DescribeDBParameters(ctx, &awsrds.DescribeDBParametersInput{
 		DBParameterGroupName: aws.String("pg-1"),
-	}); len(params.Parameters) != 0 {
-		t.Fatalf("after reset-all: got %d params, want 0", len(params.Parameters))
+	})
+	if len(after.Parameters) == 0 {
+		t.Fatal("after reset-all: engine defaults should still be returned")
+	}
+	for i := range after.Parameters {
+		if aws.ToString(after.Parameters[i].Source) == "user" {
+			t.Fatalf("after reset-all, %s is still user-sourced", aws.ToString(after.Parameters[i].ParameterName))
+		}
 	}
 
 	copied, err := client.CopyDBParameterGroup(ctx, &awsrds.CopyDBParameterGroupInput{
@@ -116,8 +128,9 @@ func TestSDKRDSClusterParameterGroupLifecycle(t *testing.T) {
 		t.Fatalf("DescribeDBClusterParameters: %v", err)
 	}
 
-	if len(params.Parameters) != 1 {
-		t.Fatalf("got %d cluster params, want 1", len(params.Parameters))
+	if cs := findSDKParam(params.Parameters, "character_set_server"); cs == nil ||
+		aws.ToString(cs.ParameterValue) != "utf8mb4" || aws.ToString(cs.Source) != "user" {
+		t.Fatalf("cluster params missing the modification: got %d", len(params.Parameters))
 	}
 
 	desc, err := client.DescribeDBClusterParameterGroups(ctx, &awsrds.DescribeDBClusterParameterGroupsInput{})
@@ -133,5 +146,39 @@ func TestSDKRDSClusterParameterGroupLifecycle(t *testing.T) {
 		DBClusterParameterGroupName: aws.String("cpg-1"),
 	}); err != nil {
 		t.Fatalf("DeleteDBClusterParameterGroup: %v", err)
+	}
+}
+
+func findSDKParam(params []awsrdstypes.Parameter, name string) *awsrdstypes.Parameter {
+	for i := range params {
+		if aws.ToString(params[i].ParameterName) == name {
+			return &params[i]
+		}
+	}
+
+	return nil
+}
+
+// TestSDKRDSDescribeDefaultParameters pins that DescribeDBParameters on the
+// always-present default parameter group (never explicitly created) returns the
+// engine-default set — real RDS never returns an empty parameter list.
+func TestSDKRDSDescribeDefaultParameters(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	out, err := client.DescribeDBParameters(ctx, &awsrds.DescribeDBParametersInput{
+		DBParameterGroupName: aws.String("default.mysql8.0"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBParameters(default.mysql8.0): %v", err)
+	}
+
+	if len(out.Parameters) < 10 {
+		t.Fatalf("default group returned %d params, want the engine-default set", len(out.Parameters))
+	}
+
+	mc := findSDKParam(out.Parameters, "max_connections")
+	if mc == nil || aws.ToString(mc.Source) != "engine-default" || aws.ToString(mc.ParameterValue) == "" {
+		t.Fatalf("max_connections in default group = %+v, want an engine-default value", mc)
 	}
 }

@@ -37,7 +37,7 @@ func (e *recordingEngine) Deprovision(_ context.Context, _ string) error { retur
 func newEngineHandler(eng config.ComputeEngine) *Handler {
 	opts := config.NewOptions(config.WithComputeEngine(eng))
 
-	return New(awsec2.New(opts), nil)
+	return New(awsec2.New(opts), nil, opts.AccountID)
 }
 
 func TestRunInstancesBase64DecodesUserData(t *testing.T) {

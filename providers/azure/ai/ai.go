@@ -145,8 +145,19 @@ func csOrDefaultSKU(name string) string {
 	return name
 }
 
-// accountEndpoint derives the data-plane endpoint for an account from its kind.
-func accountEndpoint(name, kind string) string {
+// accountSubdomain is the endpoint host label: the customSubDomainName when set,
+// otherwise the account name (matching real Cognitive Services behavior).
+func accountSubdomain(customDomain, name string) string {
+	if customDomain != "" {
+		return customDomain
+	}
+
+	return name
+}
+
+// accountEndpoint derives the data-plane endpoint for an account from its
+// custom-subdomain (or name) and kind.
+func accountEndpoint(subdomain, kind string) string {
 	host := "cognitiveservices"
 	if strings.EqualFold(kind, "OpenAI") {
 		host = "openai"
@@ -154,7 +165,7 @@ func accountEndpoint(name, kind string) string {
 		host = "services.ai"
 	}
 
-	return "https://" + name + "." + host + ".azure.com/"
+	return "https://" + subdomain + "." + host + ".azure.com/"
 }
 
 // --- Accounts ---
@@ -191,8 +202,9 @@ func (m *Mock) CreateAccount(_ context.Context, cfg driver.AccountConfig) (*driv
 		updated.SKUName = csOrDefaultSKU(cfg.SKUName)
 		updated.Tags = copyMap(cfg.Tags)
 
-		if cfg.CustomDomain != "" {
+		if cfg.CustomDomain != "" && cfg.CustomDomain != updated.CustomDomain {
 			updated.CustomDomain = cfg.CustomDomain
+			updated.Endpoint = accountEndpoint(accountSubdomain(updated.CustomDomain, updated.Name), updated.Kind)
 		}
 
 		m.accounts.Set(k, &updated)
@@ -207,7 +219,7 @@ func (m *Mock) CreateAccount(_ context.Context, cfg driver.AccountConfig) (*driv
 		Location:          cfg.Location,
 		Kind:              kind,
 		SKUName:           csOrDefaultSKU(cfg.SKUName),
-		Endpoint:          accountEndpoint(cfg.Name, kind),
+		Endpoint:          accountEndpoint(accountSubdomain(cfg.CustomDomain, cfg.Name), kind),
 		CustomDomain:      cfg.CustomDomain,
 		ProvisioningState: driver.StateSucceeded,
 		Tags:              copyMap(cfg.Tags),
@@ -236,8 +248,11 @@ func (m *Mock) DeleteAccount(_ context.Context, resourceGroup, name string) erro
 	return nil
 }
 
-func (m *Mock) UpdateAccountTags(
-	_ context.Context, resourceGroup, name string, tags map[string]string,
+// UpdateAccount applies a PATCH: only fields present in upd change; omitted
+// fields (nil pointers) are preserved. Tags are merged into the existing set,
+// never wiped by an absent tags block.
+func (m *Mock) UpdateAccount(
+	_ context.Context, resourceGroup, name string, upd driver.AccountUpdate,
 ) (*driver.Account, error) {
 	k := key(resourceGroup, name)
 
@@ -247,7 +262,27 @@ func (m *Mock) UpdateAccountTags(
 	}
 
 	updated := *a
-	updated.Tags = copyMap(tags)
+	updated.Tags = copyMap(a.Tags)
+
+	if upd.Tags != nil {
+		if updated.Tags == nil {
+			updated.Tags = make(map[string]string, len(*upd.Tags))
+		}
+
+		for tk, tv := range *upd.Tags {
+			updated.Tags[tk] = tv
+		}
+	}
+
+	if upd.SKUName != nil {
+		updated.SKUName = csOrDefaultSKU(*upd.SKUName)
+	}
+
+	if upd.CustomDomain != nil && *upd.CustomDomain != updated.CustomDomain {
+		updated.CustomDomain = *upd.CustomDomain
+		updated.Endpoint = accountEndpoint(accountSubdomain(updated.CustomDomain, updated.Name), updated.Kind)
+	}
+
 	m.accounts.Set(k, &updated)
 
 	return cloneAccount(&updated), nil
@@ -257,7 +292,7 @@ func (m *Mock) ListAccountsByResourceGroup(_ context.Context, resourceGroup stri
 	out := make([]driver.Account, 0)
 
 	for _, a := range m.accounts.All() {
-		if a.ResourceGroup == resourceGroup {
+		if strings.EqualFold(a.ResourceGroup, resourceGroup) {
 			out = append(out, *cloneAccount(a))
 		}
 	}
@@ -304,15 +339,20 @@ func (m *Mock) RegenerateAccountKey(_ context.Context, resourceGroup, name, keyN
 		return nil, errors.Newf(errors.NotFound, "account %q not found", name)
 	}
 
+	isKey1 := strings.EqualFold(keyName, "Key1")
+	if !isKey1 && !strings.EqualFold(keyName, "Key2") {
+		return nil, errors.Newf(errors.InvalidArgument, "keyName must be Key1 or Key2, got %q", keyName)
+	}
+
 	keys := m.currentAccountKeys(resourceGroup, name)
 
 	// Salt the named key with a monotonic counter so the rotation is distinct
 	// and observable via a subsequent ListAccountKeys; the other key is stable.
 	salt := "regen-" + strconv.FormatInt(m.seq.Add(1), 16)
-	if strings.EqualFold(keyName, "Key2") {
-		keys.Key2 = deterministicKey(resourceGroup, name, salt)
-	} else {
+	if isKey1 {
 		keys.Key1 = deterministicKey(resourceGroup, name, salt)
+	} else {
+		keys.Key2 = deterministicKey(resourceGroup, name, salt)
 	}
 
 	m.accountKeys.Set(key(resourceGroup, name), keys)

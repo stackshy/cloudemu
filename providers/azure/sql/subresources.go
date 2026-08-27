@@ -45,16 +45,6 @@ const (
 
 func subKey(server, name string) string { return server + "/" + name }
 
-// elasticPoolName extracts the pool name from an elasticPoolId, which may be a
-// bare name or a full ARM resource ID ending in ".../elasticPools/{name}".
-func elasticPoolName(id string) string {
-	if i := strings.LastIndex(id, "/elasticPools/"); i >= 0 {
-		return id[i+len("/elasticPools/"):]
-	}
-
-	return id
-}
-
 // requireElasticPool returns NotFound when a non-empty elastic-pool reference
 // doesn't resolve to an existing pool on the server. Empty id is a no-op (a
 // standalone database). Callers hold the write lock.
@@ -63,7 +53,7 @@ func (m *Mock) requireElasticPool(server, poolID string) error {
 		return nil
 	}
 
-	name := elasticPoolName(poolID)
+	name := rdsdriver.ElasticPoolName(poolID)
 	if _, ok := m.elasticPools.Get(subKey(server, name)); !ok {
 		return cerrors.Newf(cerrors.NotFound, "elastic pool %q not found on server %q", name, server)
 	}
@@ -284,6 +274,7 @@ func (m *Mock) CreateElasticPool(_ context.Context, cfg rdsdriver.ElasticPoolCon
 		Location:     location,
 		SKUName:      cfg.SKUName,
 		SKUTier:      cfg.SKUTier,
+		SKUCapacity:  cfg.SKUCapacity,
 		MaxSizeBytes: cfg.MaxSizeBytes,
 		MinCapacity:  cfg.MinCapacity,
 		MaxCapacity:  cfg.MaxCapacity,
@@ -356,8 +347,16 @@ func (m *Mock) ListElasticPools(_ context.Context, server string) ([]rdsdriver.E
 	return out, nil
 }
 
-// DeleteElasticPool removes an elastic pool. Like real Azure, it fails with a
-// precondition error while the pool still contains databases.
+// DeleteElasticPool removes an elastic pool. Like real Azure it refuses to
+// delete a non-empty pool (real Azure answers 400 ElasticPoolNotEmpty:
+// learn.microsoft.com/rest/api/sql/elastic-pools/delete — "Request to delete
+// an elastic pool that is not empty"; this codebase maps FailedPrecondition to
+// 409 for every driver, so the mock follows that convention here too).
+// Membership is checked against both the Databases capability (the store the
+// ARM wire server actually populates for Microsoft.Sql/servers/databases) and
+// the legacy Instance store (the RDS-shaped portable API), so a pool created
+// and populated purely over the wire is protected the same as one populated
+// via the portable API.
 func (m *Mock) DeleteElasticPool(_ context.Context, server, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -366,23 +365,40 @@ func (m *Mock) DeleteElasticPool(_ context.Context, server, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "elastic pool %q not found", name)
 	}
 
-	suffix := "/elasticPools/" + name
-
-	insts := m.instances.SortedValues()
-	for i := range insts {
-		if insts[i].ClusterID != server {
-			continue
-		}
-
-		if insts[i].ElasticPoolID == name || strings.HasSuffix(insts[i].ElasticPoolID, suffix) {
-			return cerrors.Newf(cerrors.FailedPrecondition,
-				"elastic pool %q cannot be deleted while it contains databases", name)
-		}
+	if m.elasticPoolHasMembers(server, name) {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"elastic pool %q cannot be deleted while it contains databases", name)
 	}
 
 	m.elasticPools.Delete(subKey(server, name))
 
 	return nil
+}
+
+// elasticPoolHasMembers reports whether any database or instance on server
+// still references the named elastic pool. Callers hold m.mu.
+func (m *Mock) elasticPoolHasMembers(server, name string) bool {
+	suffix := "/elasticPools/" + name
+
+	inPool := func(poolID string) bool {
+		return poolID == name || strings.HasSuffix(poolID, suffix)
+	}
+
+	dbs := m.databases.SortedValues()
+	for i := range dbs {
+		if dbs[i].Server == server && inPool(dbs[i].ElasticPoolID) {
+			return true
+		}
+	}
+
+	insts := m.instances.SortedValues()
+	for i := range insts {
+		if insts[i].ClusterID == server && inPool(insts[i].ElasticPoolID) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // UpdateElasticPool applies the non-zero fields of cfg to an existing pool
@@ -410,6 +426,10 @@ func (m *Mock) UpdateElasticPool(_ context.Context, cfg rdsdriver.ElasticPoolCon
 
 	if cfg.SKUTier != "" {
 		pool.SKUTier = cfg.SKUTier
+	}
+
+	if cfg.SKUCapacity != 0 {
+		pool.SKUCapacity = cfg.SKUCapacity
 	}
 
 	if cfg.MaxSizeBytes != 0 {

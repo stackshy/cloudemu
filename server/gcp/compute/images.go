@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -13,20 +14,37 @@ import (
 // gcpImageNameTag is the tag we round-trip the image name through.
 const gcpImageNameTag = "cloudemu:gcpImageName"
 
+// Internal tags round-tripping the GCP-specific image fields the portable
+// compute driver model does not carry, so a read reflects them.
+const (
+	gcpImageSourceDiskTag     = "cloudemu:gcpImageSourceDisk"
+	gcpImageSourceSnapshotTag = "cloudemu:gcpImageSourceSnapshot"
+	gcpImageFamilyTag         = "cloudemu:gcpImageFamily"
+	gcpImageDiskSizeGbTag     = "cloudemu:gcpImageDiskSizeGb"
+)
+
 type imageRequest struct {
 	Name           string            `json:"name"`
 	SourceDisk     string            `json:"sourceDisk,omitempty"`
 	SourceSnapshot string            `json:"sourceSnapshot,omitempty"`
+	Family         string            `json:"family,omitempty"`
+	DiskSizeGb     int               `json:"diskSizeGb,string,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 }
 
 type imageResponse struct {
-	Kind     string            `json:"kind"`
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	Status   string            `json:"status"`
-	SelfLink string            `json:"selfLink"`
-	Labels   map[string]string `json:"labels,omitempty"`
+	Kind              string            `json:"kind"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Status            string            `json:"status"`
+	SelfLink          string            `json:"selfLink"`
+	SourceDisk        string            `json:"sourceDisk,omitempty"`
+	SourceDiskID      string            `json:"sourceDiskId,omitempty"`
+	SourceSnapshot    string            `json:"sourceSnapshot,omitempty"`
+	Family            string            `json:"family,omitempty"`
+	DiskSizeGb        string            `json:"diskSizeGb,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 }
 
 type imageListResponse struct {
@@ -54,6 +72,10 @@ func (h *Handler) insertImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
+	if _, err := findImageByName(r.Context(), h.compute, req.Name); conflictIfExists(w, err, "image "+req.Name+" already exists") {
+		return
+	}
+
 	// GCP images are created from a disk, snapshot, or import — never from a
 	// source instance (that is EC2's model). Pass an empty InstanceID so the
 	// driver takes the source-based path; record the source in the description
@@ -61,7 +83,7 @@ func (h *Handler) insertImage(w http.ResponseWriter, r *http.Request, rp gcprest
 	cfg := computedriver.ImageConfig{
 		Name:        req.Name,
 		Description: imageSourceDescription(&req),
-		Tags:        mergeImageTags(req.Labels, req.Name),
+		Tags:        h.mergeImageTags(r.Context(), req.Labels, &req),
 	}
 
 	if _, err := h.compute.CreateImage(r.Context(), cfg); err != nil {
@@ -69,7 +91,7 @@ func (h *Handler) insertImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"images", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -124,7 +146,7 @@ func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"images", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -166,47 +188,88 @@ func findImageByName(ctx context.Context, c computedriver.Compute, name string) 
 //nolint:gocritic // rp is a request-scoped value
 func toImageResponse(img *computedriver.ImageInfo, rp gcprest.ResourcePath, host string) imageResponse {
 	name := tagOr(img.Tags, gcpImageNameTag, img.Name)
+	sourceDisk := img.Tags[gcpImageSourceDiskTag]
 
-	return imageResponse{
-		Kind:     "compute#image",
-		ID:       numericID(img.ID),
-		Name:     name,
-		Status:   "READY",
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", name),
-		Labels:   stripInternalImageTags(img.Tags),
+	resp := imageResponse{
+		Kind:              "compute#image",
+		ID:                numericID(img.ID),
+		Name:              name,
+		Status:            "READY",
+		SelfLink:          gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", name),
+		SourceDisk:        sourceDisk,
+		SourceSnapshot:    img.Tags[gcpImageSourceSnapshotTag],
+		Family:            img.Tags[gcpImageFamilyTag],
+		DiskSizeGb:        img.Tags[gcpImageDiskSizeGbTag],
+		Labels:            userLabels(img.Tags),
+		CreationTimestamp: img.CreatedAt,
 	}
+
+	if sourceDisk != "" {
+		resp.SourceDiskID = numericID(sourceDisk)
+	}
+
+	return resp
 }
 
-func mergeImageTags(in map[string]string, name string) map[string]string {
-	out := make(map[string]string, len(in)+1)
+// mergeImageTags builds the image's tag map: user labels plus the internal tags
+// round-tripping the GCP name and source fields (sourceDisk/sourceSnapshot/
+// family/diskSizeGb). diskSizeGb is resolved from the source disk when the
+// request does not carry it, mirroring real GCP.
+func (h *Handler) mergeImageTags(ctx context.Context, in map[string]string, req *imageRequest) map[string]string {
+	out := make(map[string]string, len(in)+internalTagCap)
 
 	for k, v := range in {
 		out[k] = v
 	}
 
-	out[gcpImageNameTag] = name
+	out[gcpImageNameTag] = req.Name
+
+	putIfSet(out, gcpImageSourceDiskTag, req.SourceDisk)
+	putIfSet(out, gcpImageSourceSnapshotTag, req.SourceSnapshot)
+	putIfSet(out, gcpImageFamilyTag, req.Family)
+
+	if size := h.imageDiskSizeGb(ctx, req); size != "" {
+		out[gcpImageDiskSizeGbTag] = size
+	}
 
 	return out
 }
 
-func stripInternalImageTags(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
+// imageDiskSizeGb returns the image's diskSizeGb as a string: the request value
+// when given, otherwise the size of the source disk it is built from.
+func (h *Handler) imageDiskSizeGb(ctx context.Context, req *imageRequest) string {
+	if req.DiskSizeGb > 0 {
+		return strconv.Itoa(req.DiskSizeGb)
 	}
 
-	out := make(map[string]string, len(in))
+	if req.SourceDisk == "" {
+		return ""
+	}
 
-	for k, v := range in {
-		if k == gcpImageNameTag {
-			continue
+	if vol, err := findDiskByName(ctx, h.compute, lastSegment(req.SourceDisk), zoneFromDiskURL(req.SourceDisk)); err == nil {
+		return strconv.Itoa(vol.Size)
+	}
+
+	return ""
+}
+
+// zoneFromDiskURL extracts the zone from a zonal disk self-link of the form
+// ".../zones/{zone}/disks/{name}". It returns "" when no zone segment is
+// present, which matches a disk in any zone (defensive for bare names).
+func zoneFromDiskURL(url string) string {
+	segs := strings.Split(url, "/")
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "zones" {
+			return segs[i+1]
 		}
-
-		out[k] = v
 	}
 
-	if len(out) == 0 {
-		return nil
-	}
+	return ""
+}
 
-	return out
+// putIfSet inserts key=val into m only when val is non-empty.
+func putIfSet(m map[string]string, key, val string) {
+	if val != "" {
+		m[key] = val
+	}
 }

@@ -23,18 +23,38 @@ const formContentType = "application/x-www-form-urlencoded"
 // plenty of headroom while preventing memory-exhaustion attacks.
 const maxFormBodyBytes = 1 << 20
 
+// codeInvalidInstanceID is the EC2 error code for a request naming a
+// non-existent instance id.
+const codeInvalidInstanceID = "InvalidInstanceID.NotFound"
+
+// defaultAccountID is the owner account id echoed on EC2/VPC resources when the
+// server is constructed without an explicit account id. It matches the AWS
+// server's default so EC2 owner-ids and ARNs agree with STS/IAM/SQS/etc.
+const defaultAccountID = "000000000000"
+
 // Handler serves EC2 query-protocol requests. Real AWS EC2 serves both
 // compute and VPC/networking on one endpoint, so the handler holds both
 // drivers and dispatches based on the Action parameter.
 type Handler struct {
 	compute computedriver.Compute
 	vpc     netdriver.Networking
+	// accountID is the configured owner account echoed as the ownerId on
+	// resources and embedded in ARNs, so EC2/VPC agree with the account id the
+	// rest of the AWS server (STS/IAM/SQS/...) reports. Defaults to
+	// defaultAccountID when the caller passes an empty string.
+	accountID string
 }
 
 // New returns an EC2 handler backed by c and v. Either may be nil if only
 // one service is being emulated, though most workflows need both together.
-func New(c computedriver.Compute, v netdriver.Networking) *Handler {
-	return &Handler{compute: c, vpc: v}
+// accountID is the owner account echoed on resources; an empty string falls
+// back to defaultAccountID.
+func New(c computedriver.Compute, v netdriver.Networking, accountID string) *Handler {
+	if accountID == "" {
+		accountID = defaultAccountID
+	}
+
+	return &Handler{compute: c, vpc: v, accountID: accountID}
 }
 
 // Matches returns true for EC2-shaped requests. EC2 uses the AWS query
@@ -93,6 +113,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routePrefixLists,
 		h.routeEgressOnlyIGW,
 		h.routeEndpointServices,
+		h.routeVPCEndpoints,
 		h.routeClientVPN,
 		h.routeIPAM,
 		h.routeIPAMResources,
@@ -103,10 +124,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeTrafficMirroring,
 		h.routeNetworkInsights,
 		h.routeVPCBlockPublicAccess,
+		h.routePlacementGroups,
 		h.routeVPC,
 		h.routeTags,
 		h.routeMetadata,
 		h.routeInstanceStatus,
+		h.routeIamInstanceProfileAssociations,
 	}
 	for _, route := range routes {
 		if route(w, r, action) {
@@ -126,6 +149,12 @@ func (h *Handler) routeSnapshots(w http.ResponseWriter, r *http.Request, action 
 		h.deleteSnapshot(w, r)
 	case "DescribeSnapshots":
 		h.describeSnapshots(w, r)
+	case "ModifySnapshotAttribute":
+		h.modifySnapshotAttribute(w, r)
+	case "DescribeSnapshotAttribute":
+		h.describeSnapshotAttribute(w, r)
+	case "CopySnapshot":
+		h.copySnapshot(w, r)
 	default:
 		return false
 	}
@@ -137,10 +166,18 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 	switch action {
 	case "CreateImage":
 		h.createImage(w, r)
+	case "RegisterImage":
+		h.registerImage(w, r)
 	case "DeregisterImage":
 		h.deregisterImage(w, r)
 	case "DescribeImages":
 		h.describeImages(w, r)
+	case "DescribeImageAttribute":
+		h.describeImageAttribute(w, r)
+	case "CopyImage":
+		h.copyImage(w, r)
+	case "ModifyImageAttribute":
+		h.modifyImageAttribute(w, r)
 	default:
 		return false
 	}
@@ -169,6 +206,8 @@ func (h *Handler) routeVpcPeering(w http.ResponseWriter, r *http.Request, action
 		h.createVpcPeeringConnection(w, r)
 	case "AcceptVpcPeeringConnection":
 		h.acceptVpcPeeringConnection(w, r)
+	case "RejectVpcPeeringConnection":
+		h.rejectVpcPeeringConnection(w, r)
 	case "DeleteVpcPeeringConnection":
 		h.deleteVpcPeeringConnection(w, r)
 	case "DescribeVpcPeeringConnections":
@@ -205,6 +244,10 @@ func (h *Handler) routeNetworkACLs(w http.ResponseWriter, r *http.Request, actio
 		h.describeNetworkACLs(w, r)
 	case "CreateNetworkAclEntry":
 		h.createNetworkACLEntry(w, r)
+	case "ReplaceNetworkAclEntry":
+		h.replaceNetworkACLEntry(w, r)
+	case "ReplaceNetworkAclAssociation":
+		h.replaceNetworkACLAssociation(w, r)
 	case "DeleteNetworkAclEntry":
 		h.deleteNetworkACLEntry(w, r)
 	default:
@@ -237,6 +280,14 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 		h.deleteLaunchTemplate(w, r)
 	case "DescribeLaunchTemplates":
 		h.describeLaunchTemplates(w, r)
+	case "ModifyLaunchTemplate":
+		h.modifyLaunchTemplate(w, r)
+	case "CreateLaunchTemplateVersion":
+		h.createLaunchTemplateVersion(w, r)
+	case "DescribeLaunchTemplateVersions":
+		h.describeLaunchTemplateVersions(w, r)
+	case "GetLaunchTemplateData":
+		h.getLaunchTemplateData(w, r)
 	default:
 		return false
 	}
@@ -272,8 +323,6 @@ func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, actio
 
 // routeInstances dispatches instance-lifecycle actions backed by the compute
 // driver. Returns true if the action was handled.
-//
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "RunInstances":
@@ -290,6 +339,8 @@ func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action 
 		h.terminateInstances(w, r)
 	case "ModifyInstanceAttribute":
 		h.modifyInstanceAttribute(w, r)
+	case "DescribeInstanceAttribute":
+		h.describeInstanceAttribute(w, r)
 	case "GetConsoleOutput":
 		h.getConsoleOutput(w, r)
 	default:
@@ -311,6 +362,10 @@ func (h *Handler) routeVolumes(w http.ResponseWriter, r *http.Request, action st
 		h.attachVolume(w, r)
 	case "DetachVolume":
 		h.detachVolume(w, r)
+	case "DescribeVolumeStatus":
+		h.describeVolumeStatus(w, r)
+	case "ModifyVolume":
+		h.modifyVolume(w, r)
 	default:
 		return false
 	}
@@ -322,6 +377,8 @@ func (h *Handler) routeKeyPairs(w http.ResponseWriter, r *http.Request, action s
 	switch action {
 	case "CreateKeyPair":
 		h.createKeyPair(w, r)
+	case "ImportKeyPair":
+		h.importKeyPair(w, r)
 	case "DeleteKeyPair":
 		h.deleteKeyPair(w, r)
 	case "DescribeKeyPairs":
@@ -349,6 +406,10 @@ func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string
 		return true
 	}
 
+	if h.routeVPCSecurityGroupRule(w, r, action) {
+		return true
+	}
+
 	if h.routeVPCInternetGateway(w, r, action) {
 		return true
 	}
@@ -356,7 +417,6 @@ func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string
 	return h.routeVPCRouteTable(w, r, action)
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateVpc":
@@ -396,6 +456,8 @@ func (h *Handler) routeVPCSubnet(w http.ResponseWriter, r *http.Request, action 
 		h.deleteSubnet(w, r)
 	case "DescribeSubnets":
 		h.describeSubnets(w, r)
+	case "ModifySubnetAttribute":
+		h.modifySubnetAttribute(w, r)
 	default:
 		return false
 	}
@@ -403,6 +465,7 @@ func (h *Handler) routeVPCSubnet(w http.ResponseWriter, r *http.Request, action 
 	return true
 }
 
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateSecurityGroup":
@@ -411,6 +474,8 @@ func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, 
 		h.deleteSecurityGroup(w, r)
 	case "DescribeSecurityGroups":
 		h.describeSecurityGroups(w, r)
+	case "DescribeSecurityGroupRules":
+		h.describeSecurityGroupRules(w, r)
 	case "AuthorizeSecurityGroupIngress":
 		h.authorizeSecurityGroupIngress(w, r)
 	case "AuthorizeSecurityGroupEgress":
@@ -419,6 +484,24 @@ func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, 
 		h.revokeSecurityGroupIngress(w, r)
 	case "RevokeSecurityGroupEgress":
 		h.revokeSecurityGroupEgress(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeVPCSecurityGroupRule dispatches the AWS-only security-group rule-mutation
+// actions (rule full-replace + description updates). It is kept separate from
+// routeVPCSecurityGroup so each dispatch table stays small.
+func (h *Handler) routeVPCSecurityGroupRule(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "ModifySecurityGroupRules":
+		h.modifySecurityGroupRules(w, r)
+	case "UpdateSecurityGroupRuleDescriptionsIngress":
+		h.updateSecurityGroupRuleDescriptions(w, r, false)
+	case "UpdateSecurityGroupRuleDescriptionsEgress":
+		h.updateSecurityGroupRuleDescriptions(w, r, true)
 	default:
 		return false
 	}
@@ -457,18 +540,33 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 		h.createRoute(w, r)
 	case "DeleteRoute":
 		h.deleteRoute(w, r)
+	case "ReplaceRoute":
+		h.replaceRoute(w, r)
 	case "AssociateRouteTable":
 		h.associateRouteTable(w, r)
 	case "DisassociateRouteTable":
 		h.disassociateRouteTable(w, r)
+	default:
+		return h.routeVPCNetworkInterfaces(w, r, action)
+	}
+
+	return true
+}
+
+func (h *Handler) routeVPCNetworkInterfaces(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
 	case "CreateNetworkInterface":
 		h.createNetworkInterface(w, r)
 	case "DescribeNetworkInterfaces":
 		h.describeNetworkInterfaces(w, r)
+	case "AttachNetworkInterface":
+		h.attachNetworkInterface(w, r)
 	case "DetachNetworkInterface":
 		h.detachNetworkInterface(w, r)
 	case "DeleteNetworkInterface":
 		h.deleteNetworkInterface(w, r)
+	case "ModifyNetworkInterfaceAttribute":
+		h.modifyNetworkInterfaceAttribute(w, r)
 	default:
 		return false
 	}
@@ -480,26 +578,33 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 // VPC ops should use writeErrWithNotFound to emit resource-specific codes like
 // "InvalidVpcID.NotFound" or "InvalidSubnetID.NotFound".
 func writeErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidInstanceID.NotFound", "IncorrectInstanceState")
+	writeErrWithNotFound(w, err, codeInvalidInstanceID, "IncorrectInstanceState")
 }
 
 // writeErrWithNotFound writes an error with caller-supplied NotFound and
 // FailedPrecondition codes so each resource type emits the right AWS error.
 func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, preconditionCode string) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode, err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode, msg)
 	case cerrors.IsAlreadyExists(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"ResourceAlreadyExists", err.Error())
+			"ResourceAlreadyExists", msg)
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidParameterValue", err.Error())
+			"InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			preconditionCode, err.Error())
+			preconditionCode, msg)
+	case cerrors.GetCode(err) == cerrors.Unimplemented:
+		// An unsupported optional op is a client-facing 400 InvalidAction, not a
+		// 500 — matching how the launch-template ops answer an absent capability.
+		awsquery.WriteXMLError(w, http.StatusBadRequest,
+			"InvalidAction", msg)
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError,
-			"InternalError", err.Error())
+			"InternalError", msg)
 	}
 }

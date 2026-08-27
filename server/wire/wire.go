@@ -56,3 +56,22 @@ func WriteJSONError(w http.ResponseWriter, status int, errType, msg string) {
 		"Message": msg,
 	})
 }
+
+// WriteJSONErrorFields writes a JSON error response carrying additional
+// top-level members alongside __type and Message. DynamoDB uses this for
+// ConditionalCheckFailedException, which returns the conflicting item in an
+// Item member when ReturnValuesOnConditionCheckFailure=ALL_OLD.
+func WriteJSONErrorFields(w http.ResponseWriter, status int, errType, msg string, extra map[string]any) {
+	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.WriteHeader(status)
+
+	body := map[string]any{
+		"__type":  errType,
+		"Message": msg,
+	}
+	for k, v := range extra {
+		body[k] = v
+	}
+
+	json.NewEncoder(w).Encode(body) //nolint:errcheck // best-effort response
+}

@@ -4,13 +4,17 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// stateAttached is the attachment state shared by internet gateways and
-// network interfaces.
-const stateAttached = "attached"
+// stateAttached is the network-interface attachment state. stateDetached is the
+// driver's internal "not attached to a VPC" marker for internet gateways.
+const (
+	stateAttached = "attached"
+	stateDetached = "detached"
+)
 
 type igwAttachmentXML struct {
 	VpcID string `xml:"vpcId"`
@@ -19,6 +23,7 @@ type igwAttachmentXML struct {
 
 type internetGatewayXML struct {
 	InternetGatewayID string             `xml:"internetGatewayId"`
+	OwnerID           string             `xml:"ownerId"`
 	Attachments       []igwAttachmentXML `xml:"attachmentSet>item,omitempty"`
 	Tags              []tagItem          `xml:"tagSet>item,omitempty"`
 }
@@ -35,6 +40,7 @@ type describeInternetGatewaysResponseXML struct {
 	Xmlns              string               `xml:"xmlns,attr"`
 	RequestID          string               `xml:"requestId"`
 	InternetGatewaySet []internetGatewayXML `xml:"internetGatewaySet>item"`
+	NextToken          string               `xml:"nextToken,omitempty"`
 }
 
 type attachInternetGatewayResponseXML struct {
@@ -72,14 +78,14 @@ func (h *Handler) createInternetGateway(w http.ResponseWriter, r *http.Request) 
 	awsquery.WriteXMLResponse(w, createInternetGatewayResponseXML{
 		Xmlns:           awsquery.Namespace,
 		RequestID:       awsquery.RequestID,
-		InternetGateway: toInternetGatewayXML(igw),
+		InternetGateway: h.toInternetGatewayXML(igw),
 	})
 }
 
 func (h *Handler) attachInternetGateway(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.AttachInternetGateway(r.Context(),
 		r.Form.Get("InternetGatewayId"), r.Form.Get("VpcId")); err != nil {
-		writeIGWErr(w, err)
+		writeAttachIGWErr(w, err)
 		return
 	}
 
@@ -93,7 +99,7 @@ func (h *Handler) attachInternetGateway(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) detachInternetGateway(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.DetachInternetGateway(r.Context(),
 		r.Form.Get("InternetGatewayId"), r.Form.Get("VpcId")); err != nil {
-		writeIGWErr(w, err)
+		writeDetachIGWErr(w, err)
 		return
 	}
 
@@ -117,7 +123,7 @@ func (h *Handler) deleteInternetGateway(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/route_table
+//nolint:dupl // per-resource describe+filter pattern; sibling in vpc
 func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InternetGatewayId")
 
@@ -127,31 +133,85 @@ func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	out := make([]internetGatewayXML, 0, len(igws))
-	for i := range igws {
-		out = append(out, toInternetGatewayXML(&igws[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateIGWFilters(filters); err != nil {
+		writeIGWErr(w, err)
+		return
 	}
+
+	page, next := pageNetworkingXML(
+		filterXML(igws, filters, igwMatchesFilters, h.toInternetGatewayXML), r,
+		func(igw internetGatewayXML) string { return igw.InternetGatewayID })
 
 	awsquery.WriteXMLResponse(w, describeInternetGatewaysResponseXML{
 		Xmlns:              awsquery.Namespace,
 		RequestID:          awsquery.RequestID,
-		InternetGatewaySet: out,
+		InternetGatewaySet: page,
+		NextToken:          next,
 	})
 }
 
-func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
+// validateIGWFilters rejects filter names DescribeInternetGateways does not
+// model, matching the sibling Describe handlers.
+func validateIGWFilters(filters []awsquery.Filter) error {
+	var probe netdriver.InternetGateway
+
+	for _, f := range filters {
+		if _, known := igwFilterMatch(&probe, f); !known {
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+func igwMatchesFilters(igw *netdriver.InternetGateway, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if matched, _ := igwFilterMatch(igw, f); !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+// igwFilterMatch reports whether igw satisfies filter f and whether f is a
+// filter DescribeInternetGateways recognizes.
+func igwFilterMatch(igw *netdriver.InternetGateway, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "internet-gateway-id":
+		return containsString(f.Values, igw.ID), true
+	case "attachment.vpc-id":
+		return igw.VpcID != "" && containsString(f.Values, igw.VpcID), true
+	case "attachment.state":
+		return igw.VpcID != "" && containsString(f.Values, igwAttachmentState(igw)), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, igw.Tags)
+	}
+}
+
+// igwAttachmentState maps the driver's internal attachment bookkeeping to the
+// AWS wire value. An attached internet gateway reports "available" (not the
+// internal "attached"); a detached one reports "detached". Both the filter and
+// the describe output go through this so filtering by attachment.state=available
+// matches what describe returns.
+func igwAttachmentState(igw *netdriver.InternetGateway) string {
+	if igw.State == stateDetached {
+		return stateDetached
+	}
+
+	return stateAvailable
+}
+
+func (h *Handler) toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	xi := internetGatewayXML{
 		InternetGatewayID: igw.ID,
+		OwnerID:           h.accountID,
 		Tags:              toTagItems(igw.Tags),
 	}
 
 	if igw.VpcID != "" {
-		state := igw.State
-		if state == "" {
-			state = stateAttached
-		}
-
-		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: state}}
+		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: igwAttachmentState(igw)}}
 	}
 
 	return xi
@@ -159,4 +219,25 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 
 func writeIGWErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidInternetGatewayID.NotFound", "DependencyViolation")
+}
+
+// writeAttachIGWErr maps AttachInternetGateway errors. A gateway that is already
+// attached, or a VPC that already has an internet gateway, is
+// Resource.AlreadyAssociated (an internet gateway attaches to exactly one VPC),
+// not the generic ResourceAlreadyExists.
+func writeAttachIGWErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "Resource.AlreadyAssociated", cerrors.Message(err))
+		return
+	}
+
+	writeIGWErr(w, err)
+}
+
+// writeDetachIGWErr maps DetachInternetGateway errors. Detaching an internet
+// gateway that is not attached to the specified VPC is a distinct AWS error
+// code (Gateway.NotAttached), not the DependencyViolation used for delete-while-
+// attached. Both are 400 client errors.
+func writeDetachIGWErr(w http.ResponseWriter, err error) {
+	writeErrWithNotFound(w, err, "InvalidInternetGatewayID.NotFound", "Gateway.NotAttached")
 }

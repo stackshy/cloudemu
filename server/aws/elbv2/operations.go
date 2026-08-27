@@ -1,8 +1,10 @@
 package elbv2
 
 import (
+	"context"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -16,11 +18,13 @@ func (h *Handler) createLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := lbdriver.LBConfig{
-		Name:    form.Get("Name"),
-		Type:    typeOrDefault(form.Get("Type")),
-		Scheme:  schemeOrDefault(form.Get("Scheme")),
-		Subnets: awsquery.ListStrings(form, "Subnets.member"),
-		Tags:    parseTags(form),
+		Name:           form.Get("Name"),
+		Type:           typeOrDefault(form.Get("Type")),
+		Scheme:         schemeOrDefault(form.Get("Scheme")),
+		Subnets:        awsquery.ListStrings(form, "Subnets.member"),
+		SecurityGroups: awsquery.ListStrings(form, "SecurityGroups.member"),
+		IPAddressType:  form.Get("IpAddressType"),
+		Tags:           parseTags(form),
 	}
 
 	lb, err := h.lb.CreateLoadBalancer(r.Context(), cfg)
@@ -49,6 +53,17 @@ func (h *Handler) describeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Sort for a stable order so the offset-based Marker is meaningful.
+	sort.Slice(lbs, func(i, j int) bool { return lbs[i].ARN < lbs[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(lbs))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	lbs = lbs[start:end]
+
 	out := loadBalancersXML{Member: make([]loadBalancerXML, 0, len(lbs))}
 	for i := range lbs {
 		out.Member = append(out.Member, toLoadBalancerXML(&lbs[i]))
@@ -56,7 +71,7 @@ func (h *Handler) describeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 
 	awsquery.WriteXMLResponse(w, describeLoadBalancersResponse{
 		Xmlns:    Namespace,
-		Result:   loadBalancersResult{LoadBalancers: out},
+		Result:   loadBalancersResult{LoadBalancers: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -114,12 +129,14 @@ func (h *Handler) createTargetGroup(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := lbdriver.TargetGroupConfig{
-		Name:       form.Get("Name"),
-		Protocol:   form.Get("Protocol"),
-		Port:       formInt(form.Get("Port")),
-		VPCID:      form.Get("VpcId"),
-		HealthPath: form.Get("HealthCheckPath"),
-		Tags:       parseTags(form),
+		Name:        form.Get("Name"),
+		Protocol:    form.Get("Protocol"),
+		Port:        formInt(form.Get("Port")),
+		VPCID:       form.Get("VpcId"),
+		TargetType:  form.Get("TargetType"),
+		HealthPath:  form.Get("HealthCheckPath"),
+		HealthCheck: parseHealthCheck(form),
+		Tags:        parseTags(form),
 	}
 
 	tg, err := h.lb.CreateTargetGroup(r.Context(), cfg)
@@ -148,6 +165,16 @@ func (h *Handler) describeTargetGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sort.Slice(tgs, func(i, j int) bool { return tgs[i].ARN < tgs[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(tgs))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	tgs = tgs[start:end]
+
 	out := targetGroupsXML{Member: make([]targetGroupXML, 0, len(tgs))}
 	for i := range tgs {
 		out.Member = append(out.Member, toTargetGroupXML(&tgs[i]))
@@ -155,7 +182,7 @@ func (h *Handler) describeTargetGroups(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeTargetGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   targetGroupsResult{TargetGroups: out},
+		Result:   targetGroupsResult{TargetGroups: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -215,7 +242,9 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 		LBARN:          form.Get("LoadBalancerArn"),
 		Protocol:       form.Get("Protocol"),
 		Port:           formInt(form.Get("Port")),
-		TargetGroupARN: firstForwardTargetGroup(form, "DefaultActions.member"),
+		DefaultActions: parseActions(form, "DefaultActions.member"),
+		SslPolicy:      form.Get("SslPolicy"),
+		Certificates:   parseCertificates(form, "Certificates.member"),
 	}
 
 	li, err := h.lb.CreateListener(r.Context(), cfg)
@@ -233,17 +262,40 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) describeListeners(w http.ResponseWriter, r *http.Request) {
 	lbARN := r.Form.Get("LoadBalancerArn")
+	wanted := awsquery.ListStrings(r.Form, "ListenerArns.member")
 
-	lis, err := h.lb.DescribeListeners(r.Context(), lbARN)
+	// LoadBalancerArn and ListenerArns are alternative, both-optional filters.
+	// A DescribeListeners with only ListenerArns must resolve those listeners by
+	// ARN, not fall through to a load-balancer existence check on an empty ARN.
+	var (
+		lis []lbdriver.ListenerInfo
+		err error
+	)
+
+	if lbARN == "" && len(wanted) > 0 {
+		lis, err = h.listenersByARN(r.Context(), wanted)
+	} else {
+		lis, err = h.lb.DescribeListeners(r.Context(), lbARN)
+		if err == nil && len(wanted) > 0 {
+			lis = filterListeners(lis, wanted)
+		}
+	}
+
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	// Filter to specific listener ARNs if requested.
-	if wanted := awsquery.ListStrings(r.Form, "ListenerArns.member"); len(wanted) > 0 {
-		lis = filterListeners(lis, wanted)
+	// Sort for a stable order so the offset-based Marker is meaningful.
+	sort.Slice(lis, func(i, j int) bool { return lis[i].ARN < lis[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(lis))
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
+
+	lis = lis[start:end]
 
 	out := listenersXML{Member: make([]listenerXML, 0, len(lis))}
 	for i := range lis {
@@ -252,7 +304,7 @@ func (h *Handler) describeListeners(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeListenersResponse{
 		Xmlns:    Namespace,
-		Result:   listenersResult{Listeners: out},
+		Result:   listenersResult{Listeners: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -305,6 +357,17 @@ func (h *Handler) describeRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort for a stable order so the offset-based Marker is meaningful.
+	sort.Slice(rules, func(i, j int) bool { return rules[i].ARN < rules[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(rules))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	rules = rules[start:end]
+
 	out := rulesXML{Member: make([]ruleXML, 0, len(rules))}
 	for i := range rules {
 		out.Member = append(out.Member, toRuleXML(&rules[i]))
@@ -312,7 +375,7 @@ func (h *Handler) describeRules(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeRulesResponse{
 		Xmlns:    Namespace,
-		Result:   rulesResult{Rules: out},
+		Result:   rulesResult{Rules: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -383,8 +446,9 @@ func (h *Handler) describeTargetHealth(w http.ResponseWriter, r *http.Request) {
 		out.Member = append(out.Member, targetHealthDescriptionXML{
 			Target: targetDescriptionXML{ID: th.Target.ID, Port: th.Target.Port},
 			TargetHealth: &targetHealthXML{
-				State:  th.State,
-				Reason: th.Reason,
+				State:       th.State,
+				Reason:      th.Reason,
+				Description: th.Description,
 			},
 		})
 	}
@@ -397,6 +461,22 @@ func (h *Handler) describeTargetHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- form parsing helpers ---
+
+// parseHealthCheck parses the health-check fields of a CreateTargetGroup
+// request. Unset fields stay zero so the driver can apply its protocol-derived
+// defaults.
+func parseHealthCheck(form url.Values) lbdriver.HealthCheck {
+	return lbdriver.HealthCheck{
+		Protocol:           form.Get("HealthCheckProtocol"),
+		Port:               form.Get("HealthCheckPort"),
+		Path:               form.Get("HealthCheckPath"),
+		IntervalSeconds:    formInt(form.Get("HealthCheckIntervalSeconds")),
+		TimeoutSeconds:     formInt(form.Get("HealthCheckTimeoutSeconds")),
+		HealthyThreshold:   formInt(form.Get("HealthyThresholdCount")),
+		UnhealthyThreshold: formInt(form.Get("UnhealthyThresholdCount")),
+		Matcher:            form.Get("Matcher.HttpCode"),
+	}
+}
 
 // parseTags parses the ELBv2 Tags.member.N.{Key,Value} entries.
 func parseTags(form url.Values) map[string]string {
@@ -417,22 +497,9 @@ func parseTags(form url.Values) map[string]string {
 	return out
 }
 
-// firstForwardTargetGroup returns the TargetGroupArn of the first forward
-// action in the given action-list prefix, checking both the flat form
-// (member.N.TargetGroupArn) and the ForwardConfig shape.
-func firstForwardTargetGroup(form url.Values, prefix string) string {
-	for _, a := range parseActions(form, prefix) {
-		if a.TargetGroupARN != "" {
-			return a.TargetGroupARN
-		}
-	}
-
-	return ""
-}
-
 // parseActions parses an Actions/DefaultActions member list into driver
-// RuleActions. Both the flat TargetGroupArn field and the
-// ForwardConfig.TargetGroups.member.N.TargetGroupArn nesting are accepted.
+// RuleActions, preserving the full shape of forward, redirect and
+// fixed-response actions so they round-trip on Describe.
 func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
@@ -440,25 +507,128 @@ func parseActions(form url.Values, prefix string) []lbdriver.RuleAction {
 	}
 
 	out := make([]lbdriver.RuleAction, 0, len(indices))
-
 	for _, n := range indices {
-		base := prefix + "." + strconv.Itoa(n)
-
-		tgARN := form.Get(base + ".TargetGroupArn")
-		if tgARN == "" {
-			tgARN = form.Get(base + ".ForwardConfig.TargetGroups.member.1.TargetGroupArn")
-		}
-
-		out = append(out, lbdriver.RuleAction{
-			Type:           typeOr(form.Get(base+".Type"), "forward"),
-			TargetGroupARN: tgARN,
-		})
+		out = append(out, parseAction(form, prefix+"."+strconv.Itoa(n)))
 	}
 
 	return out
 }
 
-// parseConditions parses a Conditions member list into driver RuleConditions.
+// parseAction parses a single action at the given form prefix. Both the flat
+// TargetGroupArn field and the ForwardConfig.TargetGroups.member.N nesting are
+// accepted for forward actions; a multi-target-group (weighted) ForwardConfig is
+// preserved in full so canary / blue-green splits round-trip on Describe.
+func parseAction(form url.Values, base string) lbdriver.RuleAction {
+	forward := parseForwardConfig(form, base+".ForwardConfig")
+
+	tgARN := form.Get(base + ".TargetGroupArn")
+	if tgARN == "" && len(forward) > 0 {
+		tgARN = forward[0].TargetGroupARN
+	}
+
+	return lbdriver.RuleAction{
+		Type:                typeOr(form.Get(base+".Type"), "forward"),
+		TargetGroupARN:      tgARN,
+		ForwardConfig:       forward,
+		Order:               formInt(form.Get(base + ".Order")),
+		RedirectConfig:      parseRedirectConfig(form, base+".RedirectConfig"),
+		FixedResponseConfig: parseFixedResponseConfig(form, base+".FixedResponseConfig"),
+	}
+}
+
+// parseForwardConfig parses a forward action's ForwardConfig.TargetGroups member
+// list into weighted target groups, returning nil when none are present. A
+// single-target forward carried only as the flat TargetGroupArn yields nil here;
+// the caller keeps the scalar field for that case.
+func parseForwardConfig(form url.Values, base string) []lbdriver.ForwardTargetGroup {
+	indices := awsquery.CollectIndices(form, base+".TargetGroups.member")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]lbdriver.ForwardTargetGroup, 0, len(indices))
+
+	for _, n := range indices {
+		member := base + ".TargetGroups.member." + strconv.Itoa(n)
+
+		arn := form.Get(member + ".TargetGroupArn")
+		if arn == "" {
+			continue
+		}
+
+		out = append(out, lbdriver.ForwardTargetGroup{
+			TargetGroupARN: arn,
+			Weight:         formInt32(form.Get(member + ".Weight")),
+		})
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// parseRedirectConfig parses a RedirectConfig sub-structure, returning nil when
+// none of its fields are present.
+func parseRedirectConfig(form url.Values, base string) *lbdriver.RedirectActionConfig {
+	rc := lbdriver.RedirectActionConfig{
+		Protocol:   form.Get(base + ".Protocol"),
+		Port:       form.Get(base + ".Port"),
+		Host:       form.Get(base + ".Host"),
+		Path:       form.Get(base + ".Path"),
+		Query:      form.Get(base + ".Query"),
+		StatusCode: form.Get(base + ".StatusCode"),
+	}
+
+	if rc == (lbdriver.RedirectActionConfig{}) {
+		return nil
+	}
+
+	return &rc
+}
+
+// parseFixedResponseConfig parses a FixedResponseConfig sub-structure, returning
+// nil when none of its fields are present.
+func parseFixedResponseConfig(form url.Values, base string) *lbdriver.FixedResponseActionConfig {
+	fr := lbdriver.FixedResponseActionConfig{
+		StatusCode:  form.Get(base + ".StatusCode"),
+		ContentType: form.Get(base + ".ContentType"),
+		MessageBody: form.Get(base + ".MessageBody"),
+	}
+
+	if fr == (lbdriver.FixedResponseActionConfig{}) {
+		return nil
+	}
+
+	return &fr
+}
+
+// parseCertificates parses a listener Certificates member list. The listener's
+// create certificate is its default, so the first entry is marked IsDefault —
+// matching what real ELBv2 reports on DescribeListeners.
+func parseCertificates(form url.Values, prefix string) []lbdriver.Certificate {
+	indices := awsquery.CollectIndices(form, prefix)
+	if len(indices) == 0 {
+		return nil
+	}
+
+	out := make([]lbdriver.Certificate, 0, len(indices))
+
+	for i, n := range indices {
+		arn := form.Get(prefix + "." + strconv.Itoa(n) + ".CertificateArn")
+		if arn == "" {
+			continue
+		}
+
+		out = append(out, lbdriver.Certificate{CertificateArn: arn, IsDefault: i == 0})
+	}
+
+	return out
+}
+
+// parseConditions parses a Conditions member list into driver RuleConditions,
+// preserving each condition's typed config so it round-trips on DescribeRules.
 func parseConditions(form url.Values, prefix string) []lbdriver.RuleCondition {
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
@@ -466,26 +636,85 @@ func parseConditions(form url.Values, prefix string) []lbdriver.RuleCondition {
 	}
 
 	out := make([]lbdriver.RuleCondition, 0, len(indices))
-
 	for _, n := range indices {
-		base := prefix + "." + strconv.Itoa(n)
-
-		field := form.Get(base + ".Field")
-
-		values := awsquery.ListStrings(form, base+".Values.member")
-		if len(values) == 0 {
-			// Some SDKs nest values under the typed config
-			// (PathPatternConfig / HostHeaderConfig).
-			values = append(values,
-				awsquery.ListStrings(form, base+".PathPatternConfig.Values.member")...)
-			values = append(values,
-				awsquery.ListStrings(form, base+".HostHeaderConfig.Values.member")...)
-		}
-
-		out = append(out, lbdriver.RuleCondition{Field: field, Values: values})
+		out = append(out, parseCondition(form, prefix+"."+strconv.Itoa(n)))
 	}
 
 	return out
+}
+
+// parseCondition parses a single rule condition at the given form prefix.
+func parseCondition(form url.Values, base string) lbdriver.RuleCondition {
+	c := lbdriver.RuleCondition{
+		Field:  form.Get(base + ".Field"),
+		Values: awsquery.ListStrings(form, base+".Values.member"),
+	}
+
+	if v := awsquery.ListStrings(form, base+".HostHeaderConfig.Values.member"); len(v) > 0 {
+		c.HostHeaderConfig = &lbdriver.HostHeaderConditionConfig{Values: v}
+	}
+
+	if v := awsquery.ListStrings(form, base+".PathPatternConfig.Values.member"); len(v) > 0 {
+		c.PathPatternConfig = &lbdriver.PathPatternConditionConfig{Values: v}
+	}
+
+	c.HTTPHeaderConfig = parseHTTPHeaderConfig(form, base+".HttpHeaderConfig")
+	c.QueryStringConfig = parseQueryStringConfig(form, base+".QueryStringConfig")
+
+	if v := awsquery.ListStrings(form, base+".SourceIpConfig.Values.member"); len(v) > 0 {
+		c.SourceIPConfig = &lbdriver.SourceIPConditionConfig{Values: v}
+	}
+
+	if v := awsquery.ListStrings(form, base+".HttpRequestMethodConfig.Values.member"); len(v) > 0 {
+		c.HTTPRequestMethodConfig = &lbdriver.HTTPRequestMethodConditionConfig{Values: v}
+	}
+
+	// AWS still echoes the deprecated flat Values for path-pattern/host-header,
+	// so backfill it from the typed config when the caller only sent the config.
+	if len(c.Values) == 0 {
+		switch {
+		case c.PathPatternConfig != nil:
+			c.Values = c.PathPatternConfig.Values
+		case c.HostHeaderConfig != nil:
+			c.Values = c.HostHeaderConfig.Values
+		}
+	}
+
+	return c
+}
+
+// parseHTTPHeaderConfig parses an HttpHeaderConfig sub-structure, returning nil
+// when absent.
+func parseHTTPHeaderConfig(form url.Values, base string) *lbdriver.HTTPHeaderConditionConfig {
+	name := form.Get(base + ".HttpHeaderName")
+	values := awsquery.ListStrings(form, base+".Values.member")
+
+	if name == "" && len(values) == 0 {
+		return nil
+	}
+
+	return &lbdriver.HTTPHeaderConditionConfig{HTTPHeaderName: name, Values: values}
+}
+
+// parseQueryStringConfig parses a QueryStringConfig sub-structure (a list of
+// key/value pairs), returning nil when absent.
+func parseQueryStringConfig(form url.Values, base string) *lbdriver.QueryStringConditionConfig {
+	indices := awsquery.CollectIndices(form, base+".Values.member")
+	if len(indices) == 0 {
+		return nil
+	}
+
+	pairs := make([]lbdriver.QueryStringKeyValue, 0, len(indices))
+
+	for _, n := range indices {
+		p := base + ".Values.member." + strconv.Itoa(n)
+		pairs = append(pairs, lbdriver.QueryStringKeyValue{
+			Key:   form.Get(p + ".Key"),
+			Value: form.Get(p + ".Value"),
+		})
+	}
+
+	return &lbdriver.QueryStringConditionConfig{Values: pairs}
 }
 
 // parseTargets parses a Targets member list into driver Targets.
@@ -511,6 +740,29 @@ func parseTargets(form url.Values, prefix string) []lbdriver.Target {
 	return out
 }
 
+// listenersByARN resolves the named listeners directly by ARN (used when
+// DescribeListeners is called with ListenerArns and no LoadBalancerArn). A
+// listener ARN that does not exist yields ListenerNotFound.
+func (h *Handler) listenersByARN(ctx context.Context, arns []string) ([]lbdriver.ListenerInfo, error) {
+	getter, ok := h.lb.(lbdriver.ListenerGetter)
+	if !ok {
+		return nil, cerrors.New(cerrors.NotFound, "listener lookup by ARN is not supported")
+	}
+
+	out := make([]lbdriver.ListenerInfo, 0, len(arns))
+
+	for _, arn := range arns {
+		li, err := getter.GetListener(ctx, arn)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, *li)
+	}
+
+	return out, nil
+}
+
 // filterListeners keeps only listeners whose ARN is in wanted.
 func filterListeners(lis []lbdriver.ListenerInfo, wanted []string) []lbdriver.ListenerInfo {
 	set := make(map[string]struct{}, len(wanted))
@@ -528,18 +780,47 @@ func filterListeners(lis []lbdriver.ListenerInfo, wanted []string) []lbdriver.Li
 	return out
 }
 
-// filterHealth keeps only the health entries whose target ID appears in wanted.
+// healthKey identifies a registered target by (ID, Port). AWS lets the same
+// instance ID be registered on multiple ports, so a bare ID is not unique.
+type healthKey struct {
+	id   string
+	port int
+}
+
+// filterHealth resolves the health for the explicitly requested targets. Real
+// ELBv2 does not silently drop a requested target that isn't registered: it
+// returns a TargetHealthDescription with State=unused and
+// Reason=Target.NotRegistered. Registered targets keep their real health. A
+// requested target with no port matches every registration of that instance ID.
 func filterHealth(health []lbdriver.TargetHealth, wanted []lbdriver.Target) []lbdriver.TargetHealth {
-	set := make(map[string]struct{}, len(wanted))
-	for _, t := range wanted {
-		set[t.ID] = struct{}{}
+	byKey := make(map[healthKey]lbdriver.TargetHealth, len(health))
+	byID := make(map[string][]lbdriver.TargetHealth, len(health))
+
+	for i := range health {
+		t := health[i].Target
+		byKey[healthKey{t.ID, t.Port}] = health[i]
+		byID[t.ID] = append(byID[t.ID], health[i])
 	}
 
-	out := health[:0]
-	for i := range health {
-		if _, ok := set[health[i].Target.ID]; ok {
-			out = append(out, health[i])
+	out := make([]lbdriver.TargetHealth, 0, len(wanted))
+
+	for _, w := range wanted {
+		if w.Port != 0 {
+			if h, ok := byKey[healthKey{w.ID, w.Port}]; ok {
+				out = append(out, h)
+				continue
+			}
+		} else if hs, ok := byID[w.ID]; ok {
+			out = append(out, hs...)
+			continue
 		}
+
+		out = append(out, lbdriver.TargetHealth{
+			Target:      w,
+			State:       "unused",
+			Reason:      "Target.NotRegistered",
+			Description: "Target is not registered to the target group",
+		})
 	}
 
 	return out
@@ -555,26 +836,64 @@ func toRuleXML(rule *lbdriver.RuleInfo) ruleXML {
 
 	if len(rule.Conditions) > 0 {
 		conds := &ruleConditionsXML{}
-		for _, c := range rule.Conditions {
-			conds.Member = append(conds.Member, ruleConditionXML{
-				Field:  c.Field,
-				Values: &stringListXML{Member: c.Values},
-			})
+		for i := range rule.Conditions {
+			conds.Member = append(conds.Member, toConditionXML(rule.Conditions[i]))
 		}
 
 		out.Conditions = conds
 	}
 
-	if len(rule.Actions) > 0 {
-		acts := &actionsXML{}
-		for _, a := range rule.Actions {
-			acts.Member = append(acts.Member, actionXML{
-				Type:           a.Type,
-				TargetGroupArn: a.TargetGroupARN,
-			})
-		}
+	out.Actions = toActionsXML(rule.Actions)
 
-		out.Actions = acts
+	return out
+}
+
+// toConditionXML renders a driver rule condition, echoing both the deprecated
+// flat Values and whichever typed config the condition carries.
+//
+//nolint:gocritic // hugeParam: value receiver keeps the call site simple; copy cost is negligible.
+func toConditionXML(c lbdriver.RuleCondition) ruleConditionXML {
+	x := ruleConditionXML{Field: c.Field}
+
+	if len(c.Values) > 0 {
+		x.Values = &stringListXML{Member: c.Values}
+	}
+
+	if c.HostHeaderConfig != nil {
+		x.HostHeaderConfig = &valuesConfigXML{Values: &stringListXML{Member: c.HostHeaderConfig.Values}}
+	}
+
+	if c.PathPatternConfig != nil {
+		x.PathPatternConfig = &valuesConfigXML{Values: &stringListXML{Member: c.PathPatternConfig.Values}}
+	}
+
+	if c.SourceIPConfig != nil {
+		x.SourceIPConfig = &valuesConfigXML{Values: &stringListXML{Member: c.SourceIPConfig.Values}}
+	}
+
+	if c.HTTPRequestMethodConfig != nil {
+		x.HTTPRequestMethodConfig = &valuesConfigXML{Values: &stringListXML{Member: c.HTTPRequestMethodConfig.Values}}
+	}
+
+	if hc := c.HTTPHeaderConfig; hc != nil {
+		x.HTTPHeaderConfig = &httpHeaderConfigXML{
+			HTTPHeaderName: hc.HTTPHeaderName,
+			Values:         &stringListXML{Member: hc.Values},
+		}
+	}
+
+	if qc := c.QueryStringConfig; qc != nil {
+		x.QueryStringConfig = toQueryStringConfigXML(qc)
+	}
+
+	return x
+}
+
+// toQueryStringConfigXML renders a query-string condition's key/value pairs.
+func toQueryStringConfigXML(qc *lbdriver.QueryStringConditionConfig) *queryStringConfigXML {
+	out := &queryStringConfigXML{Values: &queryStringValuesXML{}}
+	for _, kv := range qc.Values {
+		out.Values.Member = append(out.Values.Member, queryStringKVXML{Key: kv.Key, Value: kv.Value})
 	}
 
 	return out
@@ -629,4 +948,19 @@ func formInt(v string) int {
 	}
 
 	return n
+}
+
+// formInt32 parses a form value as an int32, returning 0 for an empty or
+// malformed value. Used for the bounded Weight field of a weighted forward.
+func formInt32(v string) int32 {
+	if v == "" {
+		return 0
+	}
+
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil {
+		return 0
+	}
+
+	return int32(n)
 }

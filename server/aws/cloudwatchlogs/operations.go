@@ -1,13 +1,93 @@
 package cloudwatchlogs
 
 import (
-	"github.com/stackshy/cloudemu/v2/services/scope"
+	"encoding/base64"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
+
+// defaultDescribeLimit is the page size CloudWatch Logs applies to
+// DescribeLogGroups / DescribeLogStreams when the caller omits limit.
+const defaultDescribeLimit = 50
+
+// defaultEventLimit is the page size CloudWatch Logs applies to GetLogEvents /
+// FilterLogEvents when the caller omits limit (AWS caps a page at 10000 events).
+const defaultEventLimit = 10000
+
+// forwardTokenPrefix / backwardTokenPrefix mark the GetLogEvents cursor
+// direction; AWS forward tokens are "f/<...>" and backward tokens "b/<...>".
+const (
+	forwardTokenPrefix  = "f/"
+	backwardTokenPrefix = "b/"
+)
+
+// encodePositionToken renders a slice offset as a direction-prefixed GetLogEvents
+// token (e.g. "f/<base64>").
+func encodePositionToken(prefix string, offset int) string {
+	return prefix + encodeOffsetToken(offset)
+}
+
+// decodePositionToken parses a GetLogEvents forward/backward token back into a
+// slice offset, tolerating either direction prefix.
+func decodePositionToken(tok string) int {
+	tok = strings.TrimPrefix(tok, forwardTokenPrefix)
+	tok = strings.TrimPrefix(tok, backwardTokenPrefix)
+
+	return decodeOffsetToken(tok)
+}
+
+// decodeOffsetToken parses a nextToken produced by encodeOffsetToken back into a
+// slice offset. An empty token means "start from the beginning"; a malformed
+// token is treated as offset 0 so a stray token never wedges pagination.
+func decodeOffsetToken(tok string) int {
+	if tok == "" {
+		return 0
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(tok)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.Atoi(string(raw))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
+// encodeOffsetToken renders a slice offset as an opaque nextToken.
+func encodeOffsetToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+// pageBounds resolves [start,end) and the next-page offset for a slice of the
+// given length, honoring a caller limit (falling back to defaultDescribeLimit).
+// next is 0 when no further page remains.
+func pageBounds(total, start int, limit int32) (from, to, next int) {
+	size := int(limit)
+	if size <= 0 {
+		size = defaultDescribeLimit
+	}
+
+	if start > total {
+		start = total
+	}
+
+	end := start + size
+	if end >= total {
+		return start, total, 0
+	}
+
+	return start, end, end
+}
 
 // --- log groups ---
 
@@ -41,17 +121,29 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]logGroupJSON, 0, len(infos))
+	matched := make([]logdriver.LogGroupInfo, 0, len(infos))
 
 	for i := range infos {
 		if req.LogGroupNamePrefix != "" && !strings.HasPrefix(infos[i].Name, req.LogGroupNamePrefix) {
 			continue
 		}
 
-		out = append(out, toLogGroupJSON(&infos[i]))
+		matched = append(matched, infos[i])
 	}
 
-	wire.WriteJSON(w, describeLogGroupsResponse{LogGroups: out})
+	from, to, next := pageBounds(len(matched), decodeOffsetToken(req.NextToken), req.Limit)
+
+	out := make([]logGroupJSON, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, toLogGroupJSON(&matched[i]))
+	}
+
+	resp := describeLogGroupsResponse{LogGroups: out}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) deleteLogGroup(w http.ResponseWriter, r *http.Request) {
@@ -96,12 +188,67 @@ func (h *Handler) describeLogStreams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]logStreamJSON, 0, len(infos))
-	for i := range infos {
-		out = append(out, toLogStreamJSON(&infos[i]))
+	// logStreamNamePrefix filters to streams whose name starts with the prefix.
+	// ListLogStreams already returns streams ordered by name (the default
+	// orderBy=LogStreamName), so filtering the slice keeps that order.
+	if req.LogStreamNamePrefix != "" {
+		filtered := make([]logdriver.LogStreamInfo, 0, len(infos))
+
+		for i := range infos {
+			if strings.HasPrefix(infos[i].Name, req.LogStreamNamePrefix) {
+				filtered = append(filtered, infos[i])
+			}
+		}
+
+		infos = filtered
 	}
 
-	wire.WriteJSON(w, describeLogStreamsResponse{LogStreams: out})
+	// Order the streams: LogStreamName (the driver's default) or LastEventTime,
+	// each optionally reversed by descending.
+	orderLogStreams(infos, req.OrderBy, req.Descending)
+
+	// The stream ARN is derived from the owning group's ARN, which the driver
+	// carries on the group, not the stream.
+	groupARN := ""
+	if g, gerr := h.logs.GetLogGroup(r.Context(), req.LogGroupName); gerr == nil {
+		groupARN = g.ResourceID
+	}
+
+	from, to, next := pageBounds(len(infos), decodeOffsetToken(req.NextToken), req.Limit)
+
+	out := make([]logStreamJSON, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, toLogStreamJSON(&infos[i], groupARN))
+	}
+
+	resp := describeLogStreamsResponse{LogStreams: out}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+// orderByLastEventTime is the DescribeLogStreams orderBy value that sorts by
+// each stream's most recent event timestamp instead of its name.
+const orderByLastEventTime = "LastEventTime"
+
+// orderLogStreams sorts streams in place to honor DescribeLogStreams orderBy /
+// descending. The driver already returns streams name-sorted ascending, so the
+// default (LogStreamName, ascending) is a no-op; LastEventTime sorts by each
+// stream's last-event timestamp, and descending reverses whichever key is used.
+func orderLogStreams(infos []logdriver.LogStreamInfo, orderBy string, descending bool) {
+	if orderBy == orderByLastEventTime {
+		sort.SliceStable(infos, func(i, j int) bool {
+			return isoToEpochMillis(infos[i].LastEvent) < isoToEpochMillis(infos[j].LastEvent)
+		})
+	}
+
+	if descending {
+		for i, j := 0, len(infos)-1; i < j; i, j = i+1, j-1 {
+			infos[i], infos[j] = infos[j], infos[i]
+		}
+	}
 }
 
 func (h *Handler) deleteLogStream(w http.ResponseWriter, r *http.Request) {
@@ -144,38 +291,88 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, putLogEventsResponse{NextSequenceToken: "0"})
 }
 
+// getLogEventsWindow picks the [start,end) slice bounds for a GetLogEvents page
+// over an ascending (oldest→newest) event set. A continuation token wins and is
+// direction-aware: a forward token marks the START of the next page, a backward
+// token marks the END (exclusive) of the previous page — so following the
+// backward token yields the older window, not the current one. With no token the
+// AWS default (startFromHead false) returns the tail (latest events first) and
+// startFromHead=true returns the head.
+func getLogEventsWindow(nextToken string, startFromHead *bool, total, size int) (start, end int) {
+	switch {
+	case strings.HasPrefix(nextToken, backwardTokenPrefix):
+		end = decodePositionToken(nextToken)
+		start = end - size
+	case nextToken != "":
+		start = decodePositionToken(nextToken)
+		end = start + size
+	case startFromHead != nil && *startFromHead:
+		start, end = 0, size
+	default:
+		start, end = total-size, total
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if start > total {
+		start = total
+	}
+
+	if end > total {
+		end = total
+	}
+
+	if end < start {
+		end = start
+	}
+
+	return start, end
+}
+
 func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 	var req getLogEventsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
+	// Fetch the full ordered slice (Limit -1 = no cap) and page it here so the
+	// forward / backward tokens can carry a real position across all events.
 	events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{
 		LogGroup:  req.LogGroupName,
 		LogStream: req.LogStreamName,
 		StartTime: millisToTime(req.StartTime),
 		EndTime:   millisToTime(req.EndTime),
-		Limit:     int(req.Limit),
+		Limit:     -1,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := make([]outputLogEvent, 0, len(events))
-	for _, e := range events {
+	size := int(req.Limit)
+	if size <= 0 {
+		size = defaultEventLimit
+	}
+
+	start, end := getLogEventsWindow(req.NextToken, req.StartFromHead, len(events), size)
+
+	out := make([]outputLogEvent, 0, end-start)
+	for _, e := range events[start:end] {
 		out = append(out, outputLogEvent{
 			Timestamp:     epochMillis(e.Timestamp),
 			Message:       e.Message,
-			IngestionTime: epochMillis(e.Timestamp),
+			IngestionTime: ingestionMillis(e.IngestionTime, e.Timestamp),
 		})
 	}
 
-	// Token values are opaque to the SDK; a stable pair terminates paging.
+	// Tokens are never null. When the cursor is at the end, the forward token
+	// equals the one the caller passed in, which is how the SDK paginator stops.
 	wire.WriteJSON(w, getLogEventsResponse{
 		Events:            out,
-		NextForwardToken:  "f/0",
-		NextBackwardToken: "b/0",
+		NextForwardToken:  encodePositionToken(forwardTokenPrefix, end),
+		NextBackwardToken: encodePositionToken(backwardTokenPrefix, start),
 	})
 }
 
@@ -185,35 +382,99 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// logStreamNames and logStreamNamePrefix are mutually exclusive; supplying
+	// both is an InvalidParameterException on real AWS.
+	if len(req.LogStreamNames) > 0 && req.LogStreamNamePrefix != "" {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
+			"logStreamNames and logStreamNamePrefix are mutually exclusive")
+		return
+	}
+
 	// The driver filters one stream at a time; when the caller scopes the query
-	// to a single stream, honor it, otherwise search across all streams.
+	// to exactly one stream (and no prefix), push it down. A name list or a
+	// prefix needs events from every stream, which are then scoped below.
 	stream := ""
-	if len(req.LogStreamNames) == 1 {
+	if len(req.LogStreamNames) == 1 && req.LogStreamNamePrefix == "" {
 		stream = req.LogStreamNames[0]
 	}
 
+	// Fetch every match (Limit -1 = no cap) and page here so a NextToken can be
+	// handed back across all matches.
 	events, err := h.logs.FilterLogEvents(r.Context(), &logdriver.FilterLogEventsInput{
 		LogGroup:      req.LogGroupName,
 		LogStream:     stream,
 		FilterPattern: req.FilterPattern,
 		StartTime:     millisToTime(req.StartTime),
 		EndTime:       millisToTime(req.EndTime),
-		Limit:         int(req.Limit),
+		Limit:         -1,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := make([]filteredLogEvent, 0, len(events))
-	for _, e := range events {
+	// Restrict to the requested streams: an explicit name list (membership) or a
+	// name prefix. The single-stream fast path already scoped the driver query,
+	// so this only trims the multi-name and prefix cases.
+	events = scopeFilteredStreams(events, req.LogStreamNames, req.LogStreamNamePrefix)
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultEventLimit
+	}
+
+	from, to, next := pageBounds(len(events), decodeOffsetToken(req.NextToken), limit)
+
+	out := make([]filteredLogEvent, 0, to-from)
+	for _, e := range events[from:to] {
 		out = append(out, filteredLogEvent{
 			LogStreamName: e.LogStream,
 			Timestamp:     epochMillis(e.Timestamp),
 			Message:       e.Message,
-			IngestionTime: epochMillis(e.Timestamp),
+			IngestionTime: ingestionMillis(e.IngestionTime, e.Timestamp),
 		})
 	}
 
-	wire.WriteJSON(w, filterLogEventsResponse{Events: out})
+	// searchedLogStreams is an always-empty list on modern AWS (deprecated 2020).
+	resp := filterLogEventsResponse{Events: out, SearchedLogStreams: []searchedLogStreamJSON{}}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+// scopeFilteredStreams restricts filtered events to the caller's requested
+// streams. names limits results to that exact set; prefix limits them to streams
+// whose name starts with it. With neither set (or an empty names list), events
+// pass through unchanged. names and prefix are mutually exclusive at the call
+// site, so at most one is ever active.
+func scopeFilteredStreams(
+	events []logdriver.FilteredLogEvent,
+	names []string,
+	prefix string,
+) []logdriver.FilteredLogEvent {
+	if len(names) == 0 && prefix == "" {
+		return events
+	}
+
+	allowed := make(map[string]bool, len(names))
+	for _, n := range names {
+		allowed[n] = true
+	}
+
+	scoped := make([]logdriver.FilteredLogEvent, 0, len(events))
+
+	for i := range events {
+		switch {
+		case len(names) > 0:
+			if allowed[events[i].LogStream] {
+				scoped = append(scoped, events[i])
+			}
+		case strings.HasPrefix(events[i].LogStream, prefix):
+			scoped = append(scoped, events[i])
+		}
+	}
+
+	return scoped
 }

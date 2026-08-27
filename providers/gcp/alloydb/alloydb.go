@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -70,6 +71,12 @@ type clusterExtra struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string
 	PrimaryCluster         string // source cluster name, for a SECONDARY cluster
+	// DisplayName is the caller-supplied display name (empty when unset); real
+	// AlloyDB echoes only what the caller sent, never the id.
+	DisplayName string
+	// UpdatedAt is the last-modification time; zero until the first modify, in
+	// which case the cluster's CreatedAt stands in as the update time.
+	UpdatedAt time.Time
 }
 
 // instanceExtra holds AlloyDB instance attributes that don't map onto the
@@ -81,6 +88,9 @@ type instanceExtra struct {
 	AvailabilityType string
 	IPAddress        string
 	GceZone          string
+	// UpdatedAt is the last-modification time; zero until the first modify, in
+	// which case the instance's CreatedAt stands in as the update time.
+	UpdatedAt time.Time
 }
 
 // backupExtra holds AlloyDB backup attributes beyond the portable

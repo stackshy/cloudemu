@@ -159,11 +159,20 @@ type structField struct {
 // a pointer to another package's type (`*pkg.Mock`), carrying the field name and
 // that package's local alias.
 func providerFields(file *ast.File) []structField {
+	return structFields(file, providerStructName)
+}
+
+// structFields returns the named fields of the top-level struct type typeName
+// whose type is a package-selector expression (`pkg.Type` or `*pkg.Type`),
+// carrying the field name and that package's local alias. Shared by
+// providerFields (typeName "Provider") and the registration cross-check
+// (typeName "Drivers").
+func structFields(file *ast.File, typeName string) []structField {
 	var out []structField
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		ts, ok := n.(*ast.TypeSpec)
-		if !ok || ts.Name.Name != providerStructName {
+		if !ok || ts.Name.Name != typeName {
 			return true
 		}
 

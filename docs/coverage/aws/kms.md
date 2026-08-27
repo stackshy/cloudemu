@@ -3,7 +3,7 @@
 
 AWS's `kms` service · portable interface `driver.KMS` · [AWS index](./README.md)
 
-## Operations (45)
+## Operations (46)
 
 | Operation | Description |
 | --- | --- |
@@ -29,6 +29,7 @@ AWS's `kms` service · portable interface `driver.KMS` · [AWS index](./README.m
 | `GetKeyPolicy` | Key policies. |
 | `GetKeyRotationStatus` |  |
 | `GetParametersForImport` |  |
+| `GetPublicKey` |  |
 | `ImportKeyMaterial` |  |
 | `ListAliases` |  |
 | `ListGrants` |  |
@@ -71,6 +72,7 @@ Crypto is the cryptographic surface of KMS. It is embedded in the KMS
 | `GenerateDataKeyWithoutPlaintext` |  |
 | `GenerateMac` |  |
 | `GenerateRandom` |  |
+| `GetPublicKey` |  |
 | `ReEncrypt` |  |
 | `Sign` |  |
 | `Verify` |  |

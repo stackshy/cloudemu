@@ -370,6 +370,45 @@ func TestDeleteThenGetReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPutSecretValuePreservesTags(t *testing.T) {
+	m := newTestMock()
+
+	cfg := driver.SecretConfig{Name: "rotate-secret", Tags: map[string]string{"env": "prod", "team": "platform"}}
+
+	_, err := m.CreateSecret(context.Background(), cfg, []byte("v1"))
+	require.NoError(t, err)
+
+	// Rotating the value via the shared cross-cloud path must not clear the
+	// secret's resource-level tags (AWS/GCP semantics).
+	_, err = m.PutSecretValue(context.Background(), "rotate-secret", []byte("v2"))
+	require.NoError(t, err)
+
+	info, err := m.GetSecret(context.Background(), "rotate-secret")
+	require.NoError(t, err)
+
+	assert.Equal(t, "prod", info.Tags["env"])
+	assert.Equal(t, "platform", info.Tags["team"])
+}
+
+func TestCreateSecretRejectsSoftDeletedName(t *testing.T) {
+	m := newTestMock()
+
+	createTestSecret(t, m, "sd-secret", "v1")
+
+	require.NoError(t, m.DeleteSecret(context.Background(), "sd-secret"))
+
+	// A create against a soft-deleted name must be rejected, not silently
+	// overwrite the recoverable secret.
+	_, err := m.CreateSecret(context.Background(), driver.SecretConfig{Name: "sd-secret"}, []byte("v2"))
+	require.Error(t, err)
+
+	// The soft-deleted secret is untouched and still recoverable with its
+	// original value.
+	recovered, err := m.RecoverDeletedKeyVaultSecret(context.Background(), "default", "sd-secret")
+	require.NoError(t, err)
+	assert.Equal(t, "v1", string(recovered.Value))
+}
+
 func TestCreateSecretTagsCopied(t *testing.T) {
 	m := newTestMock()
 	tags := map[string]string{"key": "original"}

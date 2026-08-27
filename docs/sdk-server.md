@@ -192,7 +192,7 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **Disks / Snapshots / Images / SSH Public Keys** | `Microsoft.Compute/{disks,snapshots,images,sshPublicKeys}` — full CRUD |
 | **Blob Storage** *(data plane)* | Containers + Blobs: Create/Delete/List, PutBlob, GetBlob, DeleteBlob, CopyBlob |
 | **Cosmos DB** *(data plane)* | Databases, Containers, Documents — full CRUD with `x-ms-documentdb-*` headers |
-| **Virtual Network** | `Microsoft.Network/virtualNetworks` — CRUD + subnets |
+| **Virtual Network** | `Microsoft.Network/{virtualNetworks,networkSecurityGroups,publicIPAddresses,networkInterfaces}` — CRUD + nested subnets; NICs bind a subnet and get a private IP |
 | **Azure Monitor** | `microsoft.insights/metricAlerts` and metric data ingest/read |
 | **Functions** | `Microsoft.Web/sites` (Function Apps): CreateOrUpdate, Get, List, Delete + non-ARM `/api/{name}` invoke |
 | **Service Bus** | `Microsoft.ServiceBus/namespaces[/queues]` ARM CRUD + raw-HTTP REST data plane (`POST /{ns}/{queue}/messages`, `DELETE /messages/head`) |

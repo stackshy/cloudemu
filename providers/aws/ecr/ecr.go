@@ -18,11 +18,10 @@ import (
 )
 
 const (
-	defaultMediaType     = "application/vnd.docker.distribution.manifest.v2+json"
-	mutableTag           = "MUTABLE"
-	immutableTag         = "IMMUTABLE"
-	scanStatusComplete   = "COMPLETE"
-	digestHashFormatByte = 8
+	defaultMediaType   = "application/vnd.docker.distribution.manifest.v2+json"
+	mutableTag         = "MUTABLE"
+	immutableTag       = "IMMUTABLE"
+	scanStatusComplete = "COMPLETE"
 )
 
 // Compile-time check that Mock implements driver.ContainerRegistry.
@@ -81,6 +80,9 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 		return nil, errors.New(errors.InvalidArgument, "repository name is required")
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.repos.Has(cfg.Name) {
 		return nil, errors.Newf(errors.AlreadyExists, "repository %q already exists", cfg.Name)
 	}
@@ -92,13 +94,18 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 
 	tags := copyTags(cfg.Tags)
 	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, m.opts.Region, cfg.Name)
+	arn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", m.opts.Region, m.opts.AccountID, cfg.Name)
 
 	info := driver.Repository{
-		Name:       cfg.Name,
-		URI:        uri,
-		CreatedAt:  m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:       tags,
-		ImageCount: 0,
+		Name:               cfg.Name,
+		URI:                uri,
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:               tags,
+		ImageCount:         0,
+		Arn:                arn,
+		RegistryID:         m.opts.AccountID,
+		ImageTagMutability: mutability,
+		ScanOnPush:         cfg.ImageScanOnPush,
 	}
 
 	rd := &repoData{
@@ -116,8 +123,62 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 	return &result, nil
 }
 
+// PutImageTagMutability updates a repository's image tag mutability setting.
+// This is AWS-specific (not part of the portable ContainerRegistry driver), so
+// the ECR wire handler reaches it via type assertion. The new value takes effect
+// immediately: it is read by checkTagMutability on subsequent pushes.
+func (m *Mock) PutImageTagMutability(
+	_ context.Context, repository, mutability string,
+) (*driver.Repository, error) {
+	if mutability != mutableTag && mutability != immutableTag {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	rd.tagMutability = mutability
+	rd.info.ImageTagMutability = mutability
+
+	result := rd.info
+	result.ImageCount = rd.images.Len()
+
+	return &result, nil
+}
+
+// PutImageScanningConfiguration updates a repository's scan-on-push setting.
+// AWS-specific; reached by the ECR wire handler via type assertion.
+func (m *Mock) PutImageScanningConfiguration(
+	_ context.Context, repository string, scanOnPush bool,
+) (*driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	rd.scanOnPush = scanOnPush
+	rd.info.ScanOnPush = scanOnPush
+
+	result := rd.info
+	result.ImageCount = rd.images.Len()
+
+	return &result, nil
+}
+
 // DeleteRepository deletes an ECR repository.
 func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", name)
@@ -134,6 +195,9 @@ func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) erro
 
 // GetRepository retrieves information about an ECR repository.
 func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", name)
@@ -147,6 +211,9 @@ func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository
 
 // ListRepositories lists all ECR repositories.
 func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	all := m.repos.All()
 	repos := make([]driver.Repository, 0, len(all))
 
@@ -175,26 +242,8 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		return nil, err
 	}
 
-	digest := resolveDigest(manifest, m.opts.Clock.Now())
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	mediaType := resolveMediaType(manifest.MediaType)
-
-	detail := driver.ImageDetail{
-		RegistryID: m.opts.AccountID,
-		Repository: manifest.Repository,
-		Digest:     digest,
-		Tags:       []string{manifest.Tag},
-		SizeBytes:  manifest.SizeBytes,
-		PushedAt:   now,
-		MediaType:  mediaType,
-	}
-
-	img := &imageData{detail: detail, layers: manifest.Layers}
-	rd.images.Set(digest, img)
-
-	if manifest.Tag != "" {
-		updateTagIndex(rd, digest, manifest.Tag)
-	}
+	digest := resolveDigest(manifest)
+	img := m.storeImage(rd, manifest, digest)
 
 	rd.info.ImageCount = rd.images.Len()
 
@@ -204,13 +253,46 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 
 	m.emitMetric("ImagePushCount", 1, map[string]string{"RepositoryName": manifest.Repository})
 
-	result := detail
+	result := img.detail
 
 	return &result, nil
 }
 
+// storeImage adds or updates the image identified by digest. An image is
+// identified by its digest and carries a SET of tags: re-pushing the same
+// manifest under a new tag accumulates the tag onto the existing manifest
+// (preserving its original push time) rather than replacing it, and the tag is
+// moved off any other manifest that currently holds it.
+func (m *Mock) storeImage(rd *repoData, manifest *driver.ImageManifest, digest string) *imageData {
+	img, ok := rd.images.Get(digest)
+	if !ok {
+		img = &imageData{
+			detail: driver.ImageDetail{
+				RegistryID: m.opts.AccountID,
+				Repository: manifest.Repository,
+				Digest:     digest,
+				SizeBytes:  manifest.SizeBytes,
+				PushedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+				MediaType:  resolveMediaType(manifest.MediaType),
+				Manifest:   manifest.Manifest,
+			},
+			layers: manifest.Layers,
+		}
+		rd.images.Set(digest, img)
+	}
+
+	if manifest.Tag != "" {
+		updateTagIndex(rd, digest, manifest.Tag)
+	}
+
+	return img
+}
+
 // GetImage retrieves image details by repository and reference.
 func (m *Mock) GetImage(_ context.Context, repository, reference string) (*driver.ImageDetail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -230,6 +312,9 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 
 // ListImages lists all images in an ECR repository.
 func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageDetail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -258,6 +343,19 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 	img := findImage(rd, reference)
 	if img == nil {
 		return errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+	}
+
+	// A reference that resolves to the manifest digest deletes the whole image
+	// and all of its tags. A tag reference removes only that tag; the manifest
+	// survives while other tags remain, and is deleted only with its last tag.
+	if reference != img.detail.Digest {
+		remaining := removeTag(img.detail.Tags, reference)
+		if len(remaining) > 0 {
+			img.detail.Tags = remaining
+			rd.images.Set(img.detail.Digest, img)
+
+			return nil
+		}
 	}
 
 	rd.images.Delete(img.detail.Digest)
@@ -298,6 +396,9 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 
 // PutLifecyclePolicy sets a lifecycle policy on an ECR repository.
 func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy driver.LifecyclePolicy) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -311,6 +412,9 @@ func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy d
 
 // GetLifecyclePolicy retrieves the lifecycle policy for an ECR repository.
 func (m *Mock) GetLifecyclePolicy(_ context.Context, repository string) (*driver.LifecyclePolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -325,8 +429,32 @@ func (m *Mock) GetLifecyclePolicy(_ context.Context, repository string) (*driver
 	return &result, nil
 }
 
+// DeleteLifecyclePolicy removes the lifecycle policy from an ECR repository and
+// returns the policy that was deleted.
+func (m *Mock) DeleteLifecyclePolicy(_ context.Context, repository string) (*driver.LifecyclePolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	if rd.policy == nil {
+		return nil, errors.Newf(errors.NotFound, "no lifecycle policy for repository %q", repository)
+	}
+
+	result := copyLifecyclePolicy(*rd.policy)
+	rd.policy = nil
+
+	return &result, nil
+}
+
 // EvaluateLifecyclePolicy evaluates the lifecycle policy and returns digests to expire.
 func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -341,14 +469,17 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 
 // StartImageScan starts a vulnerability scan on an image in an ECR repository.
 func (m *Mock) StartImageScan(_ context.Context, repository, reference string) (*driver.ScanResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return nil, apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	img := findImage(rd, reference)
 	if img == nil {
-		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+		return nil, apiErrf(excImageNotFound, "image %q not found in repository %q", reference, repository)
 	}
 
 	scan := generateScanResult(repository, img.detail.Digest, m.opts.Clock.Now())
@@ -363,19 +494,23 @@ func (m *Mock) StartImageScan(_ context.Context, repository, reference string) (
 func (m *Mock) GetImageScanResults(
 	_ context.Context, repository, reference string,
 ) (*driver.ScanResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return nil, apiErrf(excRepositoryNotFound, "repository %q not found", repository)
 	}
 
 	img := findImage(rd, reference)
 	if img == nil {
-		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+		return nil, apiErrf(excImageNotFound, "image %q not found in repository %q", reference, repository)
 	}
 
 	scan, ok := rd.scans.Get(img.detail.Digest)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "no scan results for image %q in repository %q", reference, repository)
+		return nil, apiErrf(excScanNotFound,
+			"no scan results for image %q in repository %q", reference, repository)
 	}
 
 	result := *scan
@@ -425,16 +560,18 @@ func checkTagMutability(rd *repoData, tag string) error {
 	return nil
 }
 
-// resolveDigest generates a digest from the manifest if not provided.
-func resolveDigest(manifest *driver.ImageManifest, now time.Time) string {
+// resolveDigest returns the image digest. When the client supplies an explicit
+// imageDigest it is respected; otherwise the digest is content-addressed as the
+// full sha256 of the manifest bytes, so identical manifest content yields the
+// same 64-hex digest regardless of tag or push time (matching real ECR).
+func resolveDigest(manifest *driver.ImageManifest) string {
 	if manifest.Digest != "" {
 		return manifest.Digest
 	}
 
-	input := fmt.Sprintf("%s:%s:%s", manifest.Repository, manifest.Tag, now.String())
-	hash := sha256.Sum256([]byte(input))
+	hash := sha256.Sum256([]byte(manifest.Manifest))
 
-	return fmt.Sprintf("sha256:%x", hash[:digestHashFormatByte])
+	return fmt.Sprintf("sha256:%x", hash)
 }
 
 // updateTagIndex removes a tag from any existing image and adds it to the target digest.
@@ -629,7 +766,7 @@ func copyLifecyclePolicy(p driver.LifecyclePolicy) driver.LifecyclePolicy {
 	rules := make([]driver.LifecycleRule, len(p.Rules))
 	copy(rules, p.Rules)
 
-	return driver.LifecyclePolicy{Rules: rules}
+	return driver.LifecyclePolicy{Rules: rules, Document: p.Document}
 }
 
 func removeTag(tags []string, tag string) []string {

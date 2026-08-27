@@ -45,8 +45,10 @@ func TestMonitorAlertCRUD(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
-		t.Errorf("PUT status=%d want 201", resp.StatusCode)
+	// Metric Alerts - Create Or Update documents a single response, 200 OK,
+	// for both a first create and a subsequent update.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("PUT status=%d want 200", resp.StatusCode)
 	}
 
 	var got map[string]any

@@ -55,10 +55,16 @@ func (h *Handler) putLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"repositoryName":      req.RepositoryName,
 		"lifecyclePolicyText": req.LifecyclePolicyText,
-	})
+	}
+
+	if repo, err := h.registry.GetRepository(r.Context(), req.RepositoryName); err == nil {
+		resp["registryId"] = repo.RegistryID
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
@@ -71,8 +77,38 @@ func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	policy, err := h.registry.GetLifecyclePolicy(r.Context(), req.RepositoryName)
+	h.writeLifecyclePolicyResult(w, r, req.RepositoryName, policy, err)
+}
+
+func (h *Handler) deleteLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName string `json:"repositoryName"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	policy, err := h.registry.DeleteLifecyclePolicy(r.Context(), req.RepositoryName)
+	h.writeLifecyclePolicyResult(w, r, req.RepositoryName, policy, err)
+}
+
+// writeLifecyclePolicyResult renders the shared Get/DeleteLifecyclePolicy
+// response: the policy body plus the owning registryId, or the exception that
+// distinguishes a missing repository from a repository with no policy.
+func (h *Handler) writeLifecyclePolicyResult(
+	w http.ResponseWriter, r *http.Request, repositoryName string, policy *crdriver.LifecyclePolicy, err error,
+) {
 	if err != nil {
-		writeErr(w, err)
+		// A missing repository is RepositoryNotFoundException; a repository with
+		// no lifecycle policy is LifecyclePolicyNotFoundException.
+		if _, repoErr := h.registry.GetRepository(r.Context(), repositoryName); repoErr != nil {
+			writeErr(w, repoErr)
+			return
+		}
+
+		wire.WriteJSONError(w, http.StatusBadRequest, "LifecyclePolicyNotFoundException", err.Error())
+
 		return
 	}
 
@@ -82,10 +118,18 @@ func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
-		"repositoryName":      req.RepositoryName,
+	resp := map[string]any{
+		"repositoryName":      repositoryName,
 		"lifecyclePolicyText": text,
-	})
+	}
+
+	// The repository is known to exist here, so echo its registryId (real ECR
+	// always returns it).
+	if repo, repoErr := h.registry.GetRepository(r.Context(), repositoryName); repoErr == nil {
+		resp["registryId"] = repo.RegistryID
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func parseLifecyclePolicyText(text string) (crdriver.LifecyclePolicy, error) {
@@ -109,7 +153,10 @@ func parseLifecyclePolicyText(text string) (crdriver.LifecyclePolicy, error) {
 		})
 	}
 
-	return crdriver.LifecyclePolicy{Rules: rules}, nil
+	// Preserve the original document verbatim so GetLifecyclePolicy round-trips it
+	// byte-faithfully (Terraform sees no drift), while the structured Rules remain
+	// available for lifecycle evaluation.
+	return crdriver.LifecyclePolicy{Rules: rules, Document: text}, nil
 }
 
 func firstTagPattern(sel *lifecycleSelection) string {
@@ -125,6 +172,14 @@ func firstTagPattern(sel *lifecycleSelection) string {
 }
 
 func marshalLifecyclePolicyText(policy *crdriver.LifecyclePolicy) (string, error) {
+	// Return the stored document verbatim when available, so a multi-rule policy
+	// with full tagPrefixList/tagPatternList arrays comes back exactly as it went
+	// in. Fall back to re-serializing the structured rules for policies stored
+	// without a raw document.
+	if policy.Document != "" {
+		return policy.Document, nil
+	}
+
 	doc := lifecyclePolicyText{Rules: make([]lifecycleRuleText, 0, len(policy.Rules))}
 
 	for i := range policy.Rules {

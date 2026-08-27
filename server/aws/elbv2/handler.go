@@ -44,12 +44,20 @@ var elbActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"CreateTargetGroup":              {},
 	"DescribeTargetGroups":           {},
 	"DeleteTargetGroup":              {},
+	"ModifyTargetGroup":              {},
+	"DescribeTargetGroupAttributes":  {},
+	"ModifyTargetGroupAttributes":    {},
 	"CreateListener":                 {},
 	"DescribeListeners":              {},
 	"DeleteListener":                 {},
+	"ModifyListener":                 {},
 	"CreateRule":                     {},
 	"DescribeRules":                  {},
 	"DeleteRule":                     {},
+	"ModifyRule":                     {},
+	"SetRulePriorities":              {},
+	"SetSecurityGroups":              {},
+	"SetSubnets":                     {},
 	"RegisterTargets":                {},
 	"DeregisterTargets":              {},
 	"DescribeTargetHealth":           {},
@@ -87,9 +95,22 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := elbActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
 
-	return ok
+	_, ok := elbActions[action]
+	if !ok {
+		return false
+	}
+
+	// DescribeTags is a generic tag verb elbv2 shares with EC2 (the query
+	// catch-all, registered after elbv2). Claim it only when the SigV4 credential
+	// scope names elbv2; otherwise let EC2's DescribeTags handle it — without this
+	// gate elbv2 swallows every service's DescribeTags and returns empty.
+	if action == "DescribeTags" {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "elasticloadbalancing"
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
@@ -121,18 +142,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeTargetGroups(w, r)
 	case "DeleteTargetGroup":
 		h.deleteTargetGroup(w, r)
+	case "ModifyTargetGroup":
+		h.modifyTargetGroup(w, r)
+	case "DescribeTargetGroupAttributes":
+		h.describeTargetGroupAttributes(w, r)
+	case "ModifyTargetGroupAttributes":
+		h.modifyTargetGroupAttributes(w, r)
 	case "CreateListener":
 		h.createListener(w, r)
 	case "DescribeListeners":
 		h.describeListeners(w, r)
 	case "DeleteListener":
 		h.deleteListener(w, r)
+	case "ModifyListener":
+		h.modifyListener(w, r)
 	case "CreateRule":
 		h.createRule(w, r)
 	case "DescribeRules":
 		h.describeRules(w, r)
 	case "DeleteRule":
 		h.deleteRule(w, r)
+	case "ModifyRule":
+		h.modifyRule(w, r)
+	case "SetRulePriorities":
+		h.setRulePriorities(w, r)
+	case "SetSecurityGroups":
+		h.setSecurityGroups(w, r)
+	case "SetSubnets":
+		h.setSubnets(w, r)
 	case "RegisterTargets":
 		h.registerTargets(w, r)
 	case "DeregisterTargets":
@@ -151,14 +188,41 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsNotFound(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode(err), err.Error())
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "DuplicateLoadBalancerName", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, duplicateNameCode(err), err.Error())
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "ResourceInUse", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 	}
+}
+
+// failedPreconditionCode picks the AWS error code for a FailedPrecondition.
+// Deleting a deletion-protected load balancer is OperationNotPermitted; a
+// listener rule reusing a priority is PriorityInUse; everything else (a target
+// group still referenced by an action) is ResourceInUse.
+func failedPreconditionCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "deletion protection"):
+		return "OperationNotPermitted"
+	case strings.Contains(msg, "priority"):
+		return "PriorityInUse"
+	default:
+		return "ResourceInUse"
+	}
+}
+
+// duplicateNameCode distinguishes a duplicate target-group name from a
+// duplicate load-balancer name so each maps to its own AWS error code.
+func duplicateNameCode(err error) string {
+	if strings.Contains(err.Error(), "target group") {
+		return "DuplicateTargetGroupName"
+	}
+
+	return "DuplicateLoadBalancerName"
 }
 
 // notFoundCode picks the AWS-shaped error code from the error message. The

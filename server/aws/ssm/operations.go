@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
@@ -14,16 +15,42 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var tags map[string]string
+	if len(req.Tags) > 0 {
+		tags = make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			tags[t.Key] = t.Value
+		}
+	}
+
 	version, tier, err := h.store.PutParameter(r.Context(), ssmdriver.PutConfig{
-		Name:        req.Name,
-		Value:       req.Value,
-		Type:        req.Type,
-		Description: req.Description,
-		Overwrite:   req.Overwrite,
-		Tier:        req.Tier,
-		DataType:    req.DataType,
+		Name:           req.Name,
+		Value:          req.Value,
+		Type:           req.Type,
+		Description:    req.Description,
+		Overwrite:      req.Overwrite,
+		Tier:           req.Tier,
+		DataType:       req.DataType,
+		KeyID:          req.KeyID,
+		AllowedPattern: req.AllowedPattern,
+		Tags:           tags,
 	})
 	if err != nil {
+		// Changing a parameter's type on an Overwrite update is rejected by
+		// real Parameter Store with HierarchyTypeMismatchException, not the
+		// generic ValidationException.
+		if errors.Is(err, ssmdriver.ErrTypeMismatch) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyTypeMismatchException", cerrors.Message(err))
+			return
+		}
+
+		// An unrecognized Type is UnsupportedParameterType, not the generic
+		// ValidationException that InvalidArgument maps to.
+		if errors.Is(err, ssmdriver.ErrUnsupportedType) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedParameterType", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -42,7 +69,7 @@ func (h *Handler) getParameter(w http.ResponseWriter, r *http.Request) {
 		// The parameter existed but the requested version/label didn't — AWS
 		// returns the distinct ParameterVersionNotFound, not ParameterNotFound.
 		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))
 			return
 		}
 		writeErr(w, err)
@@ -79,11 +106,24 @@ func (h *Handler) getParametersByPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	found, err := h.store.GetParametersByPath(r.Context(), ssmdriver.GetByPathInput{
-		Path:           req.Path,
-		Recursive:      req.Recursive,
-		WithDecryption: req.WithDecryption,
+		Path:             req.Path,
+		Recursive:        req.Recursive,
+		WithDecryption:   req.WithDecryption,
+		ParameterFilters: toDriverFilters(req.ParameterFilters),
 	})
 	if err != nil {
+		// GetParametersByPath rejects an unsupported filter key/option with the
+		// distinct InvalidFilterKey/InvalidFilterOption, not ValidationException.
+		if errors.Is(err, ssmdriver.ErrInvalidFilterKey) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterKey", cerrors.Message(err))
+			return
+		}
+
+		if errors.Is(err, ssmdriver.ErrInvalidFilterOption) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterOption", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -145,6 +185,20 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply ParameterFilters/Filters before paginating so the window is over the
+	// filtered set (and NextToken offsets stay stable).
+	if len(req.ParameterFilters) > 0 || len(req.Filters) > 0 {
+		filtered := metas[:0:0]
+
+		for i := range metas {
+			if matchesParameterFilters(&metas[i], req.ParameterFilters, req.Filters) {
+				filtered = append(filtered, metas[i])
+			}
+		}
+
+		metas = filtered
+	}
+
 	// Sorted-by-name from the driver; paginate here (MaxResults/NextToken).
 	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, maxResultsDescribe, len(metas))
 	if err != nil {
@@ -155,9 +209,11 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 	out := make([]parameterMetadataJSON, 0, end-start)
 	for _, md := range metas[start:end] {
 		out = append(out, parameterMetadataJSON{
+			AllowedPattern:   md.AllowedPattern,
 			ARN:              md.ARN,
 			DataType:         md.DataType,
 			Description:      md.Description,
+			KeyID:            md.KeyID,
 			LastModifiedDate: epochSeconds(md.LastModified),
 			LastModifiedUser: md.LastModifiedUser,
 			Name:             md.Name,
@@ -171,7 +227,7 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
-	var req nameRequest
+	var req getParameterHistoryRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -182,20 +238,33 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]parameterHistoryJSON, 0, len(history))
-	for _, p := range history {
+	// The driver returns versions oldest-first; paginate over that stable order.
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, maxResultsHistory, len(history))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := make([]parameterHistoryJSON, 0, end-start)
+	for _, p := range history[start:end] {
 		out = append(out, parameterHistoryJSON{
+			AllowedPattern:   p.AllowedPattern,
 			ARN:              p.ARN,
 			DataType:         p.DataType,
+			Description:      p.Description,
+			KeyID:            p.KeyID,
+			Labels:           p.Labels,
 			LastModifiedDate: epochSeconds(p.LastModified),
+			LastModifiedUser: p.LastModifiedUser,
 			Name:             p.Name,
+			Tier:             p.Tier,
 			Type:             p.Type,
 			Value:            p.Value,
 			Version:          p.Version,
 		})
 	}
 
-	wire.WriteJSON(w, getParameterHistoryResponse{Parameters: out})
+	wire.WriteJSON(w, getParameterHistoryResponse{Parameters: out, NextToken: next})
 }
 
 func (h *Handler) labelParameterVersion(w http.ResponseWriter, r *http.Request) {

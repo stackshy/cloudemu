@@ -3,6 +3,8 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -11,6 +13,8 @@ import (
 
 type eniAttachmentXML struct {
 	AttachmentID string `xml:"attachmentId"`
+	InstanceID   string `xml:"instanceId,omitempty"`
+	DeviceIndex  int    `xml:"deviceIndex"`
 	Status       string `xml:"status"`
 }
 
@@ -20,8 +24,18 @@ type networkInterfaceXML struct {
 	SubnetID           string            `xml:"subnetId,omitempty"`
 	Status             string            `xml:"status"`
 	Description        string            `xml:"description,omitempty"`
+	PrivateIPAddress   string            `xml:"privateIpAddress,omitempty"`
+	MacAddress         string            `xml:"macAddress,omitempty"`
+	SourceDestCheck    bool              `xml:"sourceDestCheck"`
 	Attachment         *eniAttachmentXML `xml:"attachment,omitempty"`
 	Tags               []tagItem         `xml:"tagSet>item,omitempty"`
+}
+
+type modifyNetworkInterfaceAttributeResponseXML struct {
+	XMLName   xml.Name `xml:"ModifyNetworkInterfaceAttributeResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
 }
 
 type describeNetworkInterfacesResponseXML struct {
@@ -29,6 +43,7 @@ type describeNetworkInterfacesResponseXML struct {
 	Xmlns               string                `xml:"xmlns,attr"`
 	RequestID           string                `xml:"requestId"`
 	NetworkInterfaceSet []networkInterfaceXML `xml:"networkInterfaceSet>item"`
+	NextToken           string                `xml:"nextToken,omitempty"`
 }
 
 type createNetworkInterfaceResponseXML struct {
@@ -36,6 +51,14 @@ type createNetworkInterfaceResponseXML struct {
 	Xmlns            string              `xml:"xmlns,attr"`
 	RequestID        string              `xml:"requestId"`
 	NetworkInterface networkInterfaceXML `xml:"networkInterface"`
+}
+
+type attachNetworkInterfaceResponseXML struct {
+	XMLName          xml.Name `xml:"AttachNetworkInterfaceResponse"`
+	Xmlns            string   `xml:"xmlns,attr"`
+	RequestID        string   `xml:"requestId"`
+	AttachmentID     string   `xml:"attachmentId"`
+	NetworkCardIndex int      `xml:"networkCardIndex"`
 }
 
 type detachNetworkInterfaceResponseXML struct {
@@ -86,10 +109,13 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 		out = append(out, toNetworkInterfaceXML(&enis[i]))
 	}
 
+	page, next := pageNetworkingXML(out, r, func(e networkInterfaceXML) string { return e.NetworkInterfaceID })
+
 	awsquery.WriteXMLResponse(w, describeNetworkInterfacesResponseXML{
 		Xmlns:               awsquery.Namespace,
 		RequestID:           awsquery.RequestID,
-		NetworkInterfaceSet: out,
+		NetworkInterfaceSet: page,
+		NextToken:           next,
 	})
 }
 
@@ -97,7 +123,7 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 // The second result reports whether the filter is recognized at all.
 func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool) {
 	switch name {
-	case "vpc-id":
+	case filterVPCID:
 		return eni.VPCID, true
 	case "subnet-id":
 		return eni.SubnetID, true
@@ -105,7 +131,7 @@ func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool)
 		return eni.Status, true
 	case "network-interface-id":
 		return eni.ID, true
-	case "description":
+	case filterDescription:
 		return eni.Description, true
 	case "group-id":
 		// ENIs don't model security-group membership, so this filter is
@@ -177,6 +203,7 @@ func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request)
 	}
 
 	eni, err := creator.CreateNetworkInterface(r.Context(), subnetID, r.Form.Get("Description"),
+		awsquery.ListStrings(r.Form, "SecurityGroupId"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-interface"))
 	if err != nil {
 		writeENIErr(w, err)
@@ -188,6 +215,55 @@ func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request)
 		RequestID:        awsquery.RequestID,
 		NetworkInterface: toNetworkInterfaceXML(eni),
 	})
+}
+
+// attachNetworkInterface attaches an existing ENI to an instance
+// (ec2:AttachNetworkInterface). The instance's existence is verified against
+// the compute driver here — the networking provider does not model instances —
+// so an unknown instance answers InvalidInstanceID.NotFound.
+func (h *Handler) attachNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	attacher, ok := h.vpc.(netdriver.NetworkInterfaceAttacher)
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	instanceID := r.Form.Get("InstanceId")
+	if h.compute != nil {
+		insts, err := h.compute.DescribeInstances(r.Context(), []string{instanceID}, nil)
+		if err != nil || len(insts) == 0 {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidInstanceID,
+				"instance "+instanceID+" not found")
+
+			return
+		}
+	}
+
+	deviceIndex, _ := strconv.Atoi(r.Form.Get("DeviceIndex"))
+
+	attachmentID, err := attacher.AttachNetworkInterface(r.Context(),
+		r.Form.Get("NetworkInterfaceId"), instanceID, deviceIndex)
+	if err != nil {
+		writeENIAttachErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, attachNetworkInterfaceResponseXML{
+		Xmlns:        awsquery.Namespace,
+		RequestID:    awsquery.RequestID,
+		AttachmentID: attachmentID,
+	})
+}
+
+// writeENIAttachErr maps an already-attached interface to InvalidNetworkInterface.InUse
+// (real EC2's code), falling back to the shared ENI error mapping otherwise.
+func writeENIAttachErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "InvalidNetworkInterface.InUse:") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterface.InUse", err.Error())
+		return
+	}
+
+	writeENIErr(w, err)
 }
 
 func (h *Handler) detachNetworkInterface(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +295,7 @@ func (h *Handler) deleteNetworkInterface(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := store.DeleteNetworkInterface(r.Context(), r.Form.Get("NetworkInterfaceId")); err != nil {
-		writeENIErr(w, err)
+		writeENIDeleteErr(w, err)
 		return
 	}
 
@@ -230,6 +306,56 @@ func (h *Handler) deleteNetworkInterface(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// modifyNetworkInterfaceAttribute changes an ENI's SourceDestCheck, Description,
+// or security groups (ec2:ModifyNetworkInterfaceAttribute). Disabling
+// SourceDestCheck is the required step for a NAT-instance / firewall / router VM.
+func (h *Handler) modifyNetworkInterfaceAttribute(w http.ResponseWriter, r *http.Request) {
+	modifier, ok := h.vpc.(netdriver.NetworkInterfaceModifier)
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	var update netdriver.NetworkInterfaceAttributeUpdate
+
+	if v := r.Form.Get("SourceDestCheck.Value"); v != "" {
+		b := v == formTrue
+		update.SourceDestCheck = &b
+	}
+
+	if _, present := r.Form["Description.Value"]; present {
+		d := r.Form.Get("Description.Value")
+		update.Description = &d
+	}
+
+	if groups := awsquery.ListStrings(r.Form, "SecurityGroupId"); len(groups) > 0 {
+		update.Groups = groups
+	}
+
+	if err := modifier.ModifyNetworkInterfaceAttribute(r.Context(), r.Form.Get("NetworkInterfaceId"), update); err != nil {
+		writeENIErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyNetworkInterfaceAttributeResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+// writeENIDeleteErr maps a delete-while-attached interface to
+// InvalidNetworkInterface.InUse (real EC2's code), falling back to the shared ENI
+// error mapping otherwise.
+func writeENIDeleteErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "InvalidNetworkInterface.InUse:") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterface.InUse", err.Error())
+		return
+	}
+
+	writeENIErr(w, err)
+}
+
 func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 	x := networkInterfaceXML{
 		NetworkInterfaceID: e.ID,
@@ -237,11 +363,19 @@ func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 		SubnetID:           e.SubnetID,
 		Status:             nonEmpty(e.Status, "available"),
 		Description:        e.Description,
+		PrivateIPAddress:   e.PrivateIP,
+		MacAddress:         e.MacAddress,
+		SourceDestCheck:    e.SourceDestCheck,
 		Tags:               toTagItems(e.Tags),
 	}
 
 	if e.AttachmentID != "" {
-		x.Attachment = &eniAttachmentXML{AttachmentID: e.AttachmentID, Status: stateAttached}
+		x.Attachment = &eniAttachmentXML{
+			AttachmentID: e.AttachmentID,
+			InstanceID:   e.InstanceID,
+			DeviceIndex:  e.DeviceIndex,
+			Status:       stateAttached,
+		}
 	}
 
 	return x

@@ -7,11 +7,11 @@
 //
 // The workspace lifecycle (CreateOrUpdate / Get / List / Delete) maps onto the
 // logging driver's log-group lifecycle: a workspace is a log group. The
-// retention-in-days and tags carry across; ARM read-only fields
-// (provisioningState, customerId, sku) are synthesized. The data-plane
-// log-query API (api.loganalytics.io "query" / ingestion) is a separate wire
-// surface and is out of scope for this slice — see the package README note in
-// the roundtrip test.
+// retention-in-days and tags carry across the driver; the Azure-only ARM fields
+// (provisioningState, customerId, sku, location) live in the wire handler's
+// per-workspace metadata. Workspace child resources (savedSearches, tables,
+// dataExports) and the sharedKeys action are served from the handler's own
+// in-memory stores — they have no portable equivalent.
 //
 // Microsoft.OperationalInsights is a distinct ARM provider name from every
 // other Azure handler (compute, network, DNS, sql, …), so registration order is
@@ -24,6 +24,11 @@
 //	DELETE .../workspaces/{w}                                — Workspaces.BeginDelete (LRO, completes inline)
 //	GET    .../providers/Microsoft.OperationalInsights/workspaces — Workspaces.NewListPager (subscription scope)
 //	GET    .../resourceGroups/{rg}/…/workspaces             — Workspaces.NewListByResourceGroupPager
+//	PUT/GET/DELETE .../workspaces/{w}/savedSearches/{id}     — SavedSearchesClient
+//	GET    .../workspaces/{w}/savedSearches                  — SavedSearchesClient.ListByWorkspace
+//	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          — TablesClient
+//	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     — DataExportsClient
+//	POST   .../workspaces/{w}/sharedKeys                     — SharedKeysClient.GetSharedKeys
 package loganalytics
 
 import (
@@ -39,17 +44,24 @@ const (
 	// typeWorkspaces is the ARM resource type. The subscription-scoped list path
 	// may serialize it lowercase, so matching is case-insensitive.
 	typeWorkspaces = "workspaces"
+
+	subSavedSearches = "savedSearches"
+	subTables        = "tables"
+	subDataExports   = "dataExports"
+	subSharedKeys    = "sharedKeys"
 )
 
 // Handler serves Microsoft.OperationalInsights/workspaces ARM requests against
 // a logging driver.
 type Handler struct {
-	logs logdriver.Logging
+	logs     logdriver.Logging
+	meta     *metaStore
+	children *childStore
 }
 
 // New returns an Azure Log Analytics handler backed by l.
 func New(l logdriver.Logging) *Handler {
-	return &Handler{logs: l}
+	return &Handler{logs: l, meta: newMetaStore(), children: newChildStore()}
 }
 
 // isWorkspacesType reports whether the ARM resource type is workspaces,
@@ -84,6 +96,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A child resource or action verb hangs off the workspace.
+	if rp.SubResource != "" {
+		h.serveSubResource(w, r, &rp)
+		return
+	}
+
 	h.serveWorkspace(w, r, &rp)
 }
 
@@ -106,6 +124,20 @@ func (h *Handler) serveWorkspace(w http.ResponseWriter, r *http.Request, rp *azu
 		h.deleteWorkspace(w, r, rp)
 	default:
 		writeMethodNotAllowed(w)
+	}
+}
+
+// serveSubResource routes the workspace child resources and the sharedKeys
+// action verb. An unknown sub-resource is a 404 rather than the old bug where
+// every child was misrouted to createOrUpdateWorkspace and echoed the workspace.
+func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	switch rp.SubResource {
+	case subSharedKeys:
+		h.getSharedKeys(w, r, rp)
+	case subSavedSearches, subTables, subDataExports:
+		h.serveChild(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown workspace sub-resource: "+rp.SubResource)
 	}
 }
 

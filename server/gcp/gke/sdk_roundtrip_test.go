@@ -10,7 +10,6 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
-	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
@@ -80,8 +79,8 @@ func TestSDKGKECreateGetList(t *testing.T) {
 		t.Fatalf("got status %q, want RUNNING", got.Status)
 	}
 
-	if !strings.Contains(got.Endpoint, gkeprov.StubEndpoint) {
-		t.Fatalf("expected Wave-2 stub endpoint, got %q", got.Endpoint)
+	if got.Endpoint == "" || strings.Contains(got.Endpoint, "NOT-IMPLEMENTED") {
+		t.Fatalf("expected a non-sentinel control-plane endpoint, got %q", got.Endpoint)
 	}
 
 	if got.MasterAuth == nil || got.MasterAuth.ClusterCaCertificate == "" {

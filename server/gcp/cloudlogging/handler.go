@@ -16,13 +16,15 @@
 //	GET    /v2/projects/{p}/logs          — ListLogs        -> ListLogGroups
 //	DELETE /v2/projects/{p}/logs/{logid}  — DeleteLog       -> DeleteLogGroup
 //
+// Export sinks (projects.sinks) and log-based metrics (projects.metrics) — GCP
+// resource surfaces with no cross-provider equivalent — are served through the
+// optional driver.GCPLogging interface, which the GCP backend implements.
+//
 // The /v2/ URL space is disjoint from the /v1/projects/ family (Firestore, IAM,
 // …), /compute/v1/, and /dns/v1/, so registration order relative to them is
 // unconstrained. Registered before the GCS fallback for consistency.
 //
-// Out of scope for this slice: log buckets / sinks / metrics
-// (projects.locations.buckets, projects.sinks, projects.metrics) — a separate
-// resource surface not backed by the logging driver's group/stream model.
+// Out of scope for this slice: log buckets (projects.locations.buckets).
 package cloudlogging
 
 import (
@@ -34,11 +36,13 @@ import (
 )
 
 const (
-	basePrefix     = "/v2/"
-	entriesWrite   = "/v2/entries:write"
-	entriesList    = "/v2/entries:list"
-	logsCollection = "logs"
-	projectsSeg    = "projects"
+	basePrefix        = "/v2/"
+	entriesWrite      = "/v2/entries:write"
+	entriesList       = "/v2/entries:list"
+	logsCollection    = "logs"
+	sinksCollection   = "sinks"
+	metricsCollection = "metrics"
+	projectsSeg       = "projects"
 )
 
 // defaultStream is the implicit log stream every Cloud Logging write lands in.
@@ -66,26 +70,33 @@ func (*Handler) Matches(r *http.Request) bool {
 		return true
 	}
 
-	return logsPath(p) != ""
+	return collectionPath(p, logsCollection) != "" ||
+		collectionPath(p, sinksCollection) != "" ||
+		collectionPath(p, metricsCollection) != ""
 }
 
-// logsPath returns the tail after "/v2/projects/{p}/logs" for a logs URL, or ""
-// when p is not a logs path. A bare collection returns "/".
-func logsPath(p string) string {
+// collectionPath returns the tail after "/v2/projects/{p}/{collection}" for a
+// matching URL, or "" when p is not under that collection. A bare collection
+// returns "/".
+func collectionPath(p, collection string) string {
 	if !strings.HasPrefix(p, basePrefix) {
 		return ""
 	}
 
+	// A collection URL is projects/{p}/{collection}[/{tail}...] — at least the
+	// three leading segments must be present.
+	const collectionSegments = 3
+
 	parts := strings.Split(strings.TrimPrefix(p, basePrefix), "/")
-	if len(parts) < 3 || parts[0] != projectsSeg || parts[2] != logsCollection {
+	if len(parts) < collectionSegments || parts[0] != projectsSeg || parts[2] != collection {
 		return ""
 	}
 
-	if len(parts) == 3 {
+	if len(parts) == collectionSegments {
 		return "/"
 	}
 
-	return "/" + strings.Join(parts[3:], "/")
+	return "/" + strings.Join(parts[collectionSegments:], "/")
 }
 
 // ServeHTTP routes on the path and method.
@@ -99,15 +110,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tail := logsPath(r.URL.Path)
-	switch {
-	case tail == "/":
-		h.serveLogsCollection(w, r)
-	case tail != "":
-		h.serveLog(w, r, strings.TrimPrefix(tail, "/"))
-	default:
-		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unrecognized Cloud Logging path")
+	if tail := collectionPath(r.URL.Path, logsCollection); tail != "" {
+		h.routeLogs(w, r, tail)
+		return
 	}
+
+	if tail := collectionPath(r.URL.Path, sinksCollection); tail != "" {
+		h.routeSinks(w, r, tail)
+		return
+	}
+
+	if tail := collectionPath(r.URL.Path, metricsCollection); tail != "" {
+		h.routeMetrics(w, r, tail)
+		return
+	}
+
+	gcprest.WriteError(w, http.StatusNotFound, "notFound", "unrecognized Cloud Logging path")
+}
+
+func (h *Handler) routeLogs(w http.ResponseWriter, r *http.Request, tail string) {
+	if tail == "/" {
+		h.serveLogsCollection(w, r)
+		return
+	}
+
+	h.serveLog(w, r, strings.TrimPrefix(tail, "/"))
 }
 
 func (h *Handler) serveEntriesWrite(w http.ResponseWriter, r *http.Request) {

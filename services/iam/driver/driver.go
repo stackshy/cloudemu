@@ -24,6 +24,7 @@ type UserInfo struct {
 type RoleConfig struct {
 	Name                string
 	Path                string
+	Description         string
 	AssumeRolePolicyDoc string
 	MaxSessionDuration  int
 	Tags                map[string]string
@@ -35,6 +36,7 @@ type RoleInfo struct {
 	ID                  string
 	ARN                 string
 	Path                string
+	Description         string
 	AssumeRolePolicyDoc string
 	MaxSessionDuration  int
 	CreatedAt           string
@@ -83,6 +85,7 @@ type GroupConfig struct {
 // GroupInfo describes an IAM group.
 type GroupInfo struct {
 	Name      string
+	ID        string
 	Path      string
 	ARN       string
 	CreatedAt string
@@ -105,6 +108,7 @@ type AccessKeyInfo struct {
 // InstanceProfileConfig describes an instance profile to create.
 type InstanceProfileConfig struct {
 	Name     string
+	Path     string
 	RoleName string
 	Tags     map[string]string
 }
@@ -113,10 +117,71 @@ type InstanceProfileConfig struct {
 type InstanceProfileInfo struct {
 	ID        string
 	Name      string
+	Path      string
 	RoleName  string
 	ARN       string
 	CreatedAt string
 	Tags      map[string]string
+}
+
+// SimulationResult is one action-on-resource evaluation returned by an IAM
+// policy simulation (SimulatePrincipalPolicy / SimulateCustomPolicy). Decision
+// is one of "allowed", "explicitDeny", or "implicitDeny". It is an AWS-only
+// shape, so it is not referenced by the IAM interface below — providers that
+// support simulation expose it through a type-asserted optional method.
+type SimulationResult struct {
+	ActionName   string
+	ResourceName string
+	Decision     string
+}
+
+// PolicyEntity is one principal (user, group, or role) that a managed policy is
+// attached to. Path lets the wire layer apply the ListEntitiesForPolicy
+// PathPrefix filter. It is an AWS-only shape (ListEntitiesForPolicy), so it is
+// not referenced by the IAM interface below — providers that support it expose
+// it through a type-asserted optional method.
+type PolicyEntity struct {
+	Name string
+	ID   string
+	Path string
+}
+
+// PolicyEntities are the principals a managed policy is attached to, split by
+// type. AWS-only (ListEntitiesForPolicy).
+type PolicyEntities struct {
+	Users  []PolicyEntity
+	Groups []PolicyEntity
+	Roles  []PolicyEntity
+}
+
+// PasswordPolicy describes an AWS account password policy. ExpirePasswords is
+// derived (MaxPasswordAge > 0) and reported by the wire layer, not stored. It
+// is AWS-only and not referenced by the IAM interface.
+type PasswordPolicy struct {
+	MinimumPasswordLength      int
+	RequireSymbols             bool
+	RequireNumbers             bool
+	RequireUppercaseCharacters bool
+	RequireLowercaseCharacters bool
+	AllowUsersToChangePassword bool
+	MaxPasswordAge             int
+	PasswordReusePrevention    int
+	HardExpiry                 bool
+}
+
+// MFADeviceInfo describes an MFA device assigned to a user. AWS-only.
+type MFADeviceInfo struct {
+	UserName     string
+	SerialNumber string
+	EnableDate   string
+}
+
+// VirtualMFADeviceInfo describes a newly created virtual MFA device. The seed
+// and QR-code payloads are opaque bytes the wire layer base64-encodes. AWS-only.
+type VirtualMFADeviceInfo struct {
+	SerialNumber     string
+	Base32StringSeed []byte
+	QRCodePNG        []byte
 }
 
 // IAM is the interface that IAM provider implementations must satisfy.

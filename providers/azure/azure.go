@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -201,6 +202,7 @@ func New(opts ...config.Option) *Provider {
 		Region:             o.Region,
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
+	p.VirtualMachines.SetNICAttacher(p.VNet)
 	p.BlobStorage.SetMonitoring(p.Monitor)
 	p.CosmosDB.SetMonitoring(p.Monitor)
 	p.Functions.SetMonitoring(p.Monitor)
@@ -210,6 +212,9 @@ func New(opts ...config.Option) *Provider {
 	p.NotificationHubs.SetMonitoring(p.Monitor)
 	p.ACR.SetMonitoring(p.Monitor)
 	p.EventGrid.SetMonitoring(p.Monitor)
+	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
+	p.EventGrid.SetFunctionInvoker(p.Functions)
+	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
@@ -265,6 +270,15 @@ func (p *Provider) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// SnapshotServices returns the provider's services that support identity-
+// preserving snapshotting, keyed by a stable lowercased field-name service key
+// (e.g. "blobstorage", "cosmosdb", "virtualmachines"). persist iterates this
+// map, so the persisted surface automatically tracks whichever services
+// implement snapshot.Snapshottable — no hand-kept registry to drift.
+func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
+	return snapshot.Discover(p)
 }
 
 // sqlDiscovery adapts the Azure relational mocks (SQL logical servers plus
@@ -409,7 +423,7 @@ type appServicePlanDiscovery struct{ m *functions.Mock }
 func (a appServicePlanDiscovery) DiscoverAppServicePlans(
 	ctx context.Context,
 ) ([]resourcediscovery.DiscoveredAppServicePlan, error) {
-	plans, err := a.m.ListAppServicePlans(ctx)
+	plans, err := a.m.ListAppServicePlans(ctx, "", "")
 	if err != nil {
 		return nil, err
 	}

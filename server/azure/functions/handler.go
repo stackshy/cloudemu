@@ -62,7 +62,46 @@ const (
 // satisfies it; backends that don't model plans fall through to 501.
 type appServicePlanStore interface {
 	CreateAppServicePlan(ctx context.Context, p azfunctions.AppServicePlan) (*azfunctions.AppServicePlan, error)
-	ListAppServicePlans(ctx context.Context) ([]azfunctions.AppServicePlan, error)
+	GetAppServicePlan(ctx context.Context, subscription, resourceGroup, name string) (*azfunctions.AppServicePlan, error)
+	DeleteAppServicePlan(ctx context.Context, subscription, resourceGroup, name string) error
+	ListAppServicePlans(ctx context.Context, subscription, resourceGroup string) ([]azfunctions.AppServicePlan, error)
+}
+
+// azureFunctionApps is the Azure-only site surface the handler layers on top of
+// the portable serverless driver: region/plan metadata, app settings, host and
+// function keys, and deployed functions. Only the Azure provider Mock
+// (*azfunctions.Mock) satisfies it; other backends fall through to the generic
+// portable behavior (or 501 for Azure-only sub-routes).
+type azureFunctionApps interface {
+	UpsertSiteMeta(ctx context.Context, in azfunctions.SiteMeta) (*azfunctions.SiteMeta, error)
+	PatchSiteMeta(
+		ctx context.Context, subscription, resourceGroup, name string, patch azfunctions.SiteMetaPatch,
+	) (*azfunctions.SiteMeta, error)
+	SetSiteState(ctx context.Context, subscription, resourceGroup, name, state string) (*azfunctions.SiteMeta, error)
+	GetSiteMeta(ctx context.Context, subscription, resourceGroup, name string) (*azfunctions.SiteMeta, error)
+	DeleteSiteMeta(ctx context.Context, subscription, resourceGroup, name string) error
+	ListSiteMeta(ctx context.Context, subscription, resourceGroup string) ([]azfunctions.SiteMeta, error)
+	CreateSiteFunction(ctx context.Context, site string, fn azfunctions.SiteFunction) (*azfunctions.SiteFunction, bool, error)
+	GetSiteFunction(ctx context.Context, site, name string) (*azfunctions.SiteFunction, error)
+	ListSiteFunctions(ctx context.Context, site string) ([]azfunctions.SiteFunction, error)
+	DeleteSiteFunction(ctx context.Context, site, name string) error
+	FunctionKeys(ctx context.Context, site, name string) (map[string]string, error)
+	UpdateAppSettings(
+		ctx context.Context, subscription, resourceGroup, name string, settings map[string]string,
+	) (*azfunctions.SiteMeta, error)
+}
+
+// azureScopedSites optionally scopes a site's get/delete to the (subscription,
+// resourceGroup) it was created under. The underlying portable function record
+// (sdrv.Serverless) is keyed by name alone across every resource group —
+// matching real Azure's globally-unique Web App names — so without this, an
+// ARM GET/DELETE against the wrong resourceGroups segment would return or
+// remove another resource group's site. Only the Azure provider Mock
+// (*azfunctions.Mock) satisfies it; other backends fall back to the unscoped
+// sdrv.Serverless calls.
+type azureScopedSites interface {
+	GetFunctionScoped(ctx context.Context, subscription, resourceGroup, name string) (*sdrv.FunctionInfo, error)
+	DeleteFunctionScoped(ctx context.Context, subscription, resourceGroup, name string) error
 }
 
 // Handler serves ARM JSON requests for Microsoft.Web/sites and direct invoke
@@ -74,6 +113,13 @@ type Handler struct {
 // New returns a Functions handler backed by fn.
 func New(fn sdrv.Serverless) *Handler {
 	return &Handler{fn: fn}
+}
+
+// siteStore returns the Azure site surface when the backend provides it.
+func (h *Handler) siteStore() (azureFunctionApps, bool) {
+	s, ok := h.fn.(azureFunctionApps)
+
+	return s, ok
 }
 
 // Matches accepts ARM Microsoft.Web/sites paths plus the non-ARM /api/{name}
@@ -138,9 +184,19 @@ func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rp azure
 		return
 	}
 
+	// config/appsettings/list, config/web, host/default/listkeys, functions[/...],
+	// and the restart verb are Azure-only site sub-routes.
+	if rp.SubResource != "" {
+		h.serveSiteSubResource(w, r, rp)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.patch(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -179,7 +235,6 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// from the settings the function sees, so it never leaks as a literal env
 	// var (and isn't echoed back in the response).
 	handler, settings := extractHandlerSetting(req.Properties.SiteConfig.AppSettings)
-	req.Properties.SiteConfig.AppSettings = settings
 
 	cfg := sdrv.FunctionConfig{
 		Name:        rp.ResourceName,
@@ -195,22 +250,219 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, req))
+	meta := h.upsertSiteMeta(r, rp, req, settings)
+
+	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, meta))
 }
 
+// upsertSiteMeta records the Azure-only site metadata (region, plan flags, app
+// settings) when the backend supports it, returning the stored view used to
+// build the response. Returns nil for backends without the site surface.
+//
+//nolint:gocritic // rp/req travel the dispatch chain once per request.
+func (h *Handler) upsertSiteMeta(
+	r *http.Request, rp azurearm.ResourcePath, req createSiteRequest, settings []nameValue,
+) *azfunctions.SiteMeta {
+	store, ok := h.siteStore()
+	if !ok {
+		return nil
+	}
+
+	location := req.Location
+	if location == "" {
+		location = defaultLocation
+	}
+
+	meta, err := store.UpsertSiteMeta(r.Context(), azfunctions.SiteMeta{
+		Name:           rp.ResourceName,
+		Subscription:   rp.Subscription,
+		ResourceGroup:  rp.ResourceGroup,
+		Location:       location,
+		Kind:           req.Kind,
+		ServerFarmID:   req.Properties.ServerFarmID,
+		HTTPSOnly:      req.Properties.HTTPSOnly,
+		Reserved:       req.Properties.Reserved,
+		LinuxFxVersion: req.Properties.SiteConfig.LinuxFxVersion,
+		Identity:       toSiteMetaIdentity(req.Identity),
+		AppSettings:    appSettingsToMap(settings),
+	})
+	if err != nil {
+		return nil
+	}
+
+	return meta
+}
+
+// patch serves PATCH .../sites/{name} — WebApps_Update (`az functionapp update`,
+// `az functionapp identity assign`, SDK .Update()). Unlike PUT, PATCH is a
+// partial update: only the fields the body carries are applied; everything else
+// is left as stored. The site must already exist (404 otherwise).
+//
 //nolint:gocritic // rp travels the dispatch chain once per request.
-func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	info, err := h.fn.GetFunction(r.Context(), rp.ResourceName)
+func (h *Handler) patch(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if rp.ResourceGroup == "" {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing resourceGroups segment")
+		return
+	}
+
+	// PATCH targets an existing resource; resolving it first (scoped) yields the
+	// 404 real Azure returns for a PATCH against a missing site or the wrong
+	// resource group, before any partial write lands.
+	if _, err := h.getFunction(r.Context(), rp); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxControlBytes)
+
+	var req patchSiteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
+		return
+	}
+
+	handler, settings, hasSettings := extractPatchSettings(req)
+
+	info, err := h.fn.UpdateFunction(r.Context(), rp.ResourceName, patchFunctionConfig(rp, req, handler, settings, hasSettings))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, createSiteRequest{}))
+	meta := h.patchSiteMeta(r, rp, req, settings, hasSettings)
+
+	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, meta))
+}
+
+// extractPatchSettings splits the handler entrypoint out of a PATCH body's app
+// settings (as createOrUpdate does for PUT). hasSettings reports whether the
+// body carried a siteConfig.appSettings block at all, so an omitted block
+// preserves the stored settings instead of clearing them.
+func extractPatchSettings(req patchSiteRequest) (handler string, settings []nameValue, hasSettings bool) {
+	if req.Properties == nil || req.Properties.SiteConfig == nil || req.Properties.SiteConfig.AppSettings == nil {
+		return "", nil, false
+	}
+
+	handler, settings = extractHandlerSetting(req.Properties.SiteConfig.AppSettings)
+
+	return handler, settings, true
+}
+
+// patchFunctionConfig builds the partial FunctionConfig a PATCH applies to the
+// portable function. Only fields the body supplied are set; UpdateFunction's
+// applyConfigUpdates then preserves every zero field, so an omitted runtime,
+// handler, tags or app-settings block is left untouched.
+//
+//nolint:gocritic // rp/req travel the dispatch chain once per request.
+func patchFunctionConfig(
+	rp azurearm.ResourcePath, req patchSiteRequest, handler string, settings []nameValue, hasSettings bool,
+) sdrv.FunctionConfig {
+	cfg := sdrv.FunctionConfig{Name: rp.ResourceName, Handler: handler, Tags: req.Tags}
+
+	if req.Properties != nil && req.Properties.SiteConfig != nil && req.Properties.SiteConfig.LinuxFxVersion != nil {
+		cfg.Runtime = *req.Properties.SiteConfig.LinuxFxVersion
+	}
+
+	if hasSettings {
+		cfg.Environment = appSettingsToMap(settings)
+	}
+
+	return cfg
+}
+
+// patchSiteMeta applies the PATCH's partial site metadata when the backend
+// supports the Azure site surface, returning the stored view for the response.
+// A nil field in the built patch preserves the stored value.
+//
+//nolint:gocritic // rp/req travel the dispatch chain once per request.
+func (h *Handler) patchSiteMeta(
+	r *http.Request, rp azurearm.ResourcePath, req patchSiteRequest, settings []nameValue, hasSettings bool,
+) *azfunctions.SiteMeta {
+	store, ok := h.siteStore()
+	if !ok {
+		return nil
+	}
+
+	patch := azfunctions.SiteMetaPatch{Location: req.Location, Kind: req.Kind}
+
+	if req.Identity != nil {
+		patch.Identity = toSiteMetaIdentity(req.Identity)
+	}
+
+	if req.Properties != nil {
+		patch.ServerFarmID = req.Properties.ServerFarmID
+		patch.HTTPSOnly = req.Properties.HTTPSOnly
+		patch.Reserved = req.Properties.Reserved
+
+		if req.Properties.SiteConfig != nil {
+			patch.LinuxFxVersion = req.Properties.SiteConfig.LinuxFxVersion
+		}
+	}
+
+	if hasSettings {
+		m := appSettingsToMap(settings)
+		patch.AppSettings = &m
+	}
+
+	meta, err := store.PatchSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, patch)
+	if err != nil {
+		return nil
+	}
+
+	return meta
+}
+
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	info, err := h.getFunction(r.Context(), rp)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, h.siteMeta(r, rp)))
+}
+
+// getFunction resolves the function for rp, scoped to its (subscription,
+// resourceGroup) when the backend supports it (see azureScopedSites) so a
+// site created in one resource group is never returned through another.
+// Backends without site-scope support fall back to the unscoped lookup.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) getFunction(ctx context.Context, rp azurearm.ResourcePath) (*sdrv.FunctionInfo, error) {
+	if scoped, ok := h.fn.(azureScopedSites); ok {
+		return scoped.GetFunctionScoped(ctx, rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	}
+
+	return h.fn.GetFunction(ctx, rp.ResourceName)
+}
+
+// siteMeta fetches the stored Azure metadata for a site scoped to rp's
+// (subscription, resourceGroup), or nil when absent or out of scope.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) siteMeta(r *http.Request, rp azurearm.ResourcePath) *azfunctions.SiteMeta {
+	store, ok := h.siteStore()
+	if !ok {
+		return nil
+	}
+
+	meta, err := store.GetSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		return nil
+	}
+
+	return meta
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if store, ok := h.siteStore(); ok {
+		h.listFromMeta(w, r, rp, store)
+
+		return
+	}
+
 	infos, err := h.fn.ListFunctions(r.Context())
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -222,7 +474,40 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = infos[i].Name
-		out = append(out, toSiteResource(scope, &infos[i], createSiteRequest{}))
+		out = append(out, toSiteResource(scope, &infos[i], nil))
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, siteListResponse{Value: out})
+}
+
+// listFromMeta lists sites filtered by the request scope (resource group, or the
+// whole subscription for a sub-wide list), building each id from the site's true
+// scope so a sub-wide list never emits an empty resourceGroups segment.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) listFromMeta(
+	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps,
+) {
+	metas, err := store.ListSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := make([]siteResource, 0, len(metas))
+
+	for i := range metas {
+		info, gerr := h.fn.GetFunction(r.Context(), metas[i].Name)
+		if gerr != nil {
+			continue
+		}
+
+		scope := azurearm.ResourcePath{
+			Subscription:  metas[i].Subscription,
+			ResourceGroup: metas[i].ResourceGroup,
+			ResourceName:  metas[i].Name,
+		}
+		out = append(out, toSiteResource(scope, info, &metas[i]))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, siteListResponse{Value: out})
@@ -230,9 +515,28 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if scoped, ok := h.fn.(azureScopedSites); ok {
+		// DeleteFunctionScoped atomically checks the site's (subscription,
+		// resourceGroup) and removes both the function and its site metadata,
+		// so a DELETE against the wrong resourceGroups segment 404s instead
+		// of deleting another resource group's site.
+		if err := scoped.DeleteFunctionScoped(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+
+		return
+	}
+
 	if err := h.fn.DeleteFunction(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
+	}
+
+	if store, ok := h.siteStore(); ok {
+		_ = store.DeleteSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -272,6 +576,10 @@ func (h *Handler) zipDeploy(w http.ResponseWriter, r *http.Request, rp azurearm.
 	w.WriteHeader(http.StatusOK)
 }
 
+// servePlanSitesSubResource is the SubResource value of
+// GET .../serverfarms/{name}/sites — Plans.ListWebApps.
+const servePlanSitesSubResource = "sites"
+
 // servePlan routes Microsoft.Web/serverfarms (App Service plan) requests. Only
 // backends that model plans (the Azure provider Mock) are served; others 501.
 //
@@ -285,8 +593,22 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 	}
 
 	if rp.ResourceName == "" {
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
-			"serverfarms collection operations are not supported")
+		if r.Method == http.MethodGet {
+			listPlans(w, r, rp, store)
+		} else {
+			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		}
+
+		return
+	}
+
+	if strings.EqualFold(rp.SubResource, servePlanSitesSubResource) {
+		if r.Method == http.MethodGet {
+			h.listPlanWebApps(w, r, rp, store)
+		} else {
+			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		}
+
 		return
 	}
 
@@ -295,9 +617,36 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 		createPlan(w, r, rp, store)
 	case http.MethodGet:
 		getPlan(w, r, rp, store)
+	case http.MethodDelete:
+		deletePlan(w, r, rp, store)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// listPlans serves the serverfarms collection GET — Plans.List /
+// ListByResourceGroup. rp.ResourceGroup empty means the whole subscription;
+// each row's scope is built from the plan's own stored resource group so a
+// subscription-wide list never emits an empty resourceGroups segment.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func listPlans(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+	plans, err := store.ListAppServicePlans(r.Context(), rp.Subscription, rp.ResourceGroup)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := make([]serverFarmResource, 0, len(plans))
+
+	for i := range plans {
+		scope := azurearm.ResourcePath{
+			Subscription: rp.Subscription, ResourceGroup: plans[i].ResourceGroup, ResourceName: plans[i].Name,
+		}
+		out = append(out, toServerFarmResource(scope, &plans[i]))
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, serverFarmListResponse{Value: out})
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
@@ -316,12 +665,15 @@ func createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath
 	}
 
 	plan, err := store.CreateAppServicePlan(r.Context(), azfunctions.AppServicePlan{
-		Name:     rp.ResourceName,
-		SKUName:  req.SKU.Name,
-		SKUTier:  req.SKU.Tier,
-		Kind:     req.Kind,
-		Capacity: req.SKU.Capacity,
-		Tags:     req.Tags,
+		Name:          rp.ResourceName,
+		Subscription:  rp.Subscription,
+		ResourceGroup: rp.ResourceGroup,
+		Location:      req.Location,
+		SKUName:       req.SKU.Name,
+		SKUTier:       req.SKU.Tier,
+		Kind:          req.Kind,
+		Capacity:      req.SKU.Capacity,
+		Tags:          req.Tags,
 	})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -331,23 +683,79 @@ func createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath
 	azurearm.WriteJSON(w, http.StatusOK, toServerFarmResource(rp, plan))
 }
 
+// deletePlan serves DELETE .../serverfarms/{name} — Plans.Delete. Real Azure
+// answers 200 or 204 on success; this mock always answers 200, matching the
+// site DELETE above.
+//
 //nolint:gocritic // rp travels the dispatch chain once per request.
-func getPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
-	plans, err := store.ListAppServicePlans(r.Context())
+func deletePlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+	if err := store.DeleteAppServicePlan(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// listPlanWebApps serves GET .../serverfarms/{name}/sites — Plans.ListWebApps.
+// It joins on the site's stored ServerFarmID (set at site create/update time
+// from properties.serverFarmId) rather than keeping a reverse index on the
+// plan, so the plan and its apps can never drift out of sync.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) listPlanWebApps(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+	if _, err := store.GetAppServicePlan(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	siteStore, ok := h.siteStore()
+	if !ok {
+		azurearm.WriteJSON(w, http.StatusOK, siteListResponse{Value: []siteResource{}})
+		return
+	}
+
+	planID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, serverFarmsType, rp.ResourceName)
+
+	// A site's plan can live in a different resource group than the site
+	// itself, so every site in the subscription is a candidate — not just
+	// this resource group's.
+	metas, err := siteStore.ListSiteMeta(r.Context(), rp.Subscription, "")
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	for i := range plans {
-		if plans[i].Name == rp.ResourceName {
-			azurearm.WriteJSON(w, http.StatusOK, toServerFarmResource(rp, &plans[i]))
-			return
+	out := make([]siteResource, 0, len(metas))
+
+	for i := range metas {
+		if !strings.EqualFold(metas[i].ServerFarmID, planID) {
+			continue
 		}
+
+		info, gerr := h.fn.GetFunction(r.Context(), metas[i].Name)
+		if gerr != nil {
+			continue
+		}
+
+		scope := azurearm.ResourcePath{
+			Subscription: metas[i].Subscription, ResourceGroup: metas[i].ResourceGroup, ResourceName: metas[i].Name,
+		}
+		out = append(out, toSiteResource(scope, info, &metas[i]))
 	}
 
-	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-		"app service plan "+rp.ResourceName+" not found")
+	azurearm.WriteJSON(w, http.StatusOK, siteListResponse{Value: out})
+}
+
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func getPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+	plan, err := store.GetAppServicePlan(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toServerFarmResource(rp, plan))
 }
 
 //nolint:gocritic // rp is request-scoped.
@@ -440,11 +848,41 @@ func upsertFunction(r *http.Request, fn sdrv.Serverless, cfg sdrv.FunctionConfig
 	return fn.UpdateFunction(r.Context(), cfg.Name, cfg)
 }
 
+// toSiteResource renders the ARM site resource. meta carries the Azure-only
+// fields (region, provisioning state, plan flags); it is nil for backends
+// without the site surface, in which case the region defaults and the plan flags
+// are zero. App-setting values are never echoed here — real Azure returns them
+// only via the config/appsettings/list POST — so a plain GET does not leak
+// secrets.
+//
 //nolint:gocritic // rp is request-scoped.
-func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, req createSiteRequest) siteResource {
-	location := req.Location
-	if location == "" {
-		location = defaultLocation
+func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azfunctions.SiteMeta) siteResource {
+	location := defaultLocation
+	provisioningState := "Succeeded"
+	kind := functionAppKind
+	state := siteStateRunning
+
+	var serverFarmID string
+
+	var httpsOnly, reserved bool
+
+	var identity *siteIdentity
+
+	if meta != nil {
+		location = meta.Location
+		provisioningState = meta.ProvisioningState
+		serverFarmID = meta.ServerFarmID
+		httpsOnly = meta.HTTPSOnly
+		reserved = meta.Reserved
+		identity = fromSiteMetaIdentity(meta.Identity)
+
+		if meta.Kind != "" {
+			kind = meta.Kind
+		}
+
+		if meta.State != "" {
+			state = meta.State
+		}
 	}
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
@@ -452,29 +890,29 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, req creat
 
 	hostName := info.Name + ".azurewebsites.net"
 
-	settings := req.Properties.SiteConfig.AppSettings
-	if len(settings) == 0 {
-		settings = mapToAppSettings(info.Environment)
-	}
-
 	return siteResource{
 		ID:       id,
 		Name:     info.Name,
 		Type:     providerName + "/" + resourceType,
-		Kind:     functionAppKind,
+		Kind:     kind,
 		Location: location,
+		Identity: identity,
 		Tags:     info.Tags,
 		Properties: siteProperties{
-			State:           "Running",
-			HostNames:       []string{hostName},
-			DefaultHostName: hostName,
+			State:             state,
+			ProvisioningState: provisioningState,
+			HostNames:         []string{hostName},
+			DefaultHostName:   hostName,
+			// AppSettings is deliberately emitted (as null) so the server's
+			// unmodeled-property echo treats it as owned and never reflects the
+			// request's app settings — including secret values — back onto a plain
+			// GET. The values are read only via config/appsettings/list.
 			SiteConfig: siteConfig{
 				LinuxFxVersion: info.Runtime,
-				AppSettings:    settings,
 			},
-			ServerFarmID:        req.Properties.ServerFarmID,
-			HTTPSOnly:           req.Properties.HTTPSOnly,
-			Reserved:            req.Properties.Reserved,
+			ServerFarmID:        serverFarmID,
+			HTTPSOnly:           httpsOnly,
+			Reserved:            reserved,
 			LastModifiedTimeUtc: time.Now().UTC().Format(time.RFC3339),
 		},
 	}
@@ -502,6 +940,48 @@ func extractHandlerSetting(settings []nameValue) (handler string, remaining []na
 	return handler, remaining
 }
 
+// toSiteMetaIdentity maps an inbound ARM identity block onto the provider shape.
+// Only Type and the UserAssignedIdentities keys (the identity resource IDs to
+// attach) are meaningful on input; principalId/tenantId/clientId are read-only
+// and discarded. Returns nil when the request omitted the identity block.
+func toSiteMetaIdentity(in *siteIdentity) *azfunctions.SiteIdentity {
+	if in == nil {
+		return nil
+	}
+
+	out := &azfunctions.SiteIdentity{Type: in.Type}
+
+	if len(in.UserAssignedIdentities) > 0 {
+		out.UserAssigned = make(map[string]azfunctions.UserAssignedIdentity, len(in.UserAssignedIdentities))
+		for id := range in.UserAssignedIdentities {
+			out.UserAssigned[id] = azfunctions.UserAssignedIdentity{}
+		}
+	}
+
+	return out
+}
+
+// fromSiteMetaIdentity builds the ARM identity response block from the resolved
+// provider shape, echoing each user-assigned identity's synthesized
+// principalId/clientId. Returns nil when the site has no identity attached, so
+// the response omits the field entirely (matching real Azure).
+func fromSiteMetaIdentity(in *azfunctions.SiteIdentity) *siteIdentity {
+	if in == nil {
+		return nil
+	}
+
+	out := &siteIdentity{Type: in.Type, PrincipalID: in.PrincipalID, TenantID: in.TenantID}
+
+	if len(in.UserAssigned) > 0 {
+		out.UserAssignedIdentities = make(map[string]*siteUserAssignedIdentity, len(in.UserAssigned))
+		for id, u := range in.UserAssigned {
+			out.UserAssignedIdentities[id] = &siteUserAssignedIdentity{PrincipalID: u.PrincipalID, ClientID: u.ClientID}
+		}
+	}
+
+	return out
+}
+
 func appSettingsToMap(settings []nameValue) map[string]string {
 	if len(settings) == 0 {
 		return nil
@@ -510,19 +990,6 @@ func appSettingsToMap(settings []nameValue) map[string]string {
 	out := make(map[string]string, len(settings))
 	for _, kv := range settings {
 		out[kv.Name] = kv.Value
-	}
-
-	return out
-}
-
-func mapToAppSettings(env map[string]string) []nameValue {
-	if len(env) == 0 {
-		return nil
-	}
-
-	out := make([]nameValue, 0, len(env))
-	for k, v := range env {
-		out = append(out, nameValue{Name: k, Value: v})
 	}
 
 	return out

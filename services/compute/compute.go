@@ -362,6 +362,8 @@ func (c *Compute) ListLaunchTemplates(ctx context.Context) ([]driver.LaunchTempl
 }
 
 // CreateVolume creates a new block storage volume.
+//
+//nolint:gocritic // hugeParam: config passed by value to match driver.Compute interface pattern
 func (c *Compute) CreateVolume(ctx context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	out, err := c.do(ctx, "CreateVolume", cfg, func() (any, error) { return c.driver.CreateVolume(ctx, cfg) })
 	if err != nil {
@@ -396,9 +398,13 @@ func (c *Compute) AttachVolume(ctx context.Context, volumeID, instanceID, device
 	return err
 }
 
-// DetachVolume detaches a volume.
-func (c *Compute) DetachVolume(ctx context.Context, volumeID string) error {
-	_, err := c.do(ctx, "DetachVolume", volumeID, func() (any, error) { return nil, c.driver.DetachVolume(ctx, volumeID) })
+// DetachVolume detaches a volume. A non-empty instanceID or device must match
+// the volume's current attachment.
+func (c *Compute) DetachVolume(ctx context.Context, volumeID, instanceID, device string) error {
+	_, err := c.do(ctx, "DetachVolume", volumeID, func() (any, error) {
+		return nil, c.driver.DetachVolume(ctx, volumeID, instanceID, device)
+	})
+
 	return err
 }
 

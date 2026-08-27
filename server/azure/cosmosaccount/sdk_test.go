@@ -33,6 +33,17 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 func newDatabaseAccountsClient(t *testing.T) *armcosmos.DatabaseAccountsClient {
 	t.Helper()
 
+	client, _ := newDatabaseAccountsClientURL(t)
+
+	return client
+}
+
+// newDatabaseAccountsClientURL is newDatabaseAccountsClient but also returns the
+// emulator's base URL, so endpoint assertions can compare against the live host
+// the handler now derives documentEndpoint from.
+func newDatabaseAccountsClientURL(t *testing.T) (*armcosmos.DatabaseAccountsClient, string) {
+	t.Helper()
+
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{CosmosDB: cloudP.CosmosDB})
 
@@ -60,7 +71,7 @@ func newDatabaseAccountsClient(t *testing.T) *armcosmos.DatabaseAccountsClient {
 	client, err := armcosmos.NewDatabaseAccountsClient("sub-1", fakeCred{}, opts)
 	require.NoError(t, err)
 
-	return client
+	return client, ts.URL
 }
 
 func TestSDKDatabaseAccountCreateGet(t *testing.T) {
@@ -123,4 +134,156 @@ func TestSDKDatabaseAccountGetMissing(t *testing.T) {
 
 	_, err := client.Get(ctx, "rg-1", "nope", nil)
 	require.Error(t, err)
+}
+
+// createAccount is a helper that provisions an account and returns its client.
+func createAccount(t *testing.T, client *armcosmos.DatabaseAccountsClient, rg, name, region string) {
+	t.Helper()
+
+	poller, err := client.BeginCreateOrUpdate(context.Background(), rg, name, armcosmos.DatabaseAccountCreateUpdateParameters{
+		Location: to.Ptr(region),
+		Kind:     to.Ptr(armcosmos.DatabaseAccountKindGlobalDocumentDB),
+		Properties: &armcosmos.DatabaseAccountCreateUpdateProperties{
+			DatabaseAccountOfferType: to.Ptr("Standard"),
+			Locations: []*armcosmos.Location{
+				{LocationName: to.Ptr(region), FailoverPriority: to.Ptr[int32](0)},
+			},
+		},
+		Tags: map[string]*string{"team": to.Ptr("data")},
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(context.Background(), nil)
+	require.NoError(t, err)
+}
+
+// TestSDKDatabaseAccountGetEndpointAndTags asserts the Get response carries the
+// creation region, tags, the global documentEndpoint, and the read/write/
+// location arrays a real account exposes.
+func TestSDKDatabaseAccountGetEndpointAndTags(t *testing.T) {
+	ctx := context.Background()
+	client, baseURL := newDatabaseAccountsClientURL(t)
+	createAccount(t, client, "rg-1", "cosmos-ep", "westeurope")
+
+	got, err := client.Get(ctx, "rg-1", "cosmos-ep", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, got.Location)
+	assert.Equal(t, "westeurope", *got.Location)
+
+	require.NotNil(t, got.Tags["team"])
+	assert.Equal(t, "data", *got.Tags["team"])
+
+	require.NotNil(t, got.Properties)
+	require.NotNil(t, got.Properties.DocumentEndpoint)
+	// The endpoint now resolves back to the emulator (host-derived) and carries
+	// the account as a path segment, so a client using it reaches this account.
+	assert.Equal(t, baseURL+"/cosmos-ep/", *got.Properties.DocumentEndpoint)
+
+	require.Len(t, got.Properties.WriteLocations, 1)
+	require.NotNil(t, got.Properties.WriteLocations[0].LocationName)
+	assert.Equal(t, "westeurope", *got.Properties.WriteLocations[0].LocationName)
+
+	require.Len(t, got.Properties.ReadLocations, 1)
+	require.Len(t, got.Properties.Locations, 1)
+	require.Len(t, got.Properties.FailoverPolicies, 1)
+}
+
+// TestSDKDatabaseAccountListKeys drives ListKeys and the read-only keys.
+func TestSDKDatabaseAccountListKeys(t *testing.T) {
+	ctx := context.Background()
+	client := newDatabaseAccountsClient(t)
+	createAccount(t, client, "rg-1", "cosmos-keys", "eastus")
+
+	keys, err := client.ListKeys(ctx, "rg-1", "cosmos-keys", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, keys.PrimaryMasterKey)
+	require.NotNil(t, keys.SecondaryMasterKey)
+	require.NotNil(t, keys.PrimaryReadonlyMasterKey)
+	require.NotNil(t, keys.SecondaryReadonlyMasterKey)
+
+	assert.NotEmpty(t, *keys.PrimaryMasterKey)
+	assert.NotEqual(t, *keys.PrimaryMasterKey, *keys.SecondaryMasterKey)
+	assert.NotEqual(t, *keys.PrimaryMasterKey, *keys.PrimaryReadonlyMasterKey)
+
+	ro, err := client.ListReadOnlyKeys(ctx, "rg-1", "cosmos-keys", nil)
+	require.NoError(t, err)
+	require.NotNil(t, ro.PrimaryReadonlyMasterKey)
+	assert.Equal(t, *keys.PrimaryReadonlyMasterKey, *ro.PrimaryReadonlyMasterKey)
+}
+
+// TestSDKDatabaseAccountListConnectionStrings drives ListConnectionStrings.
+func TestSDKDatabaseAccountListConnectionStrings(t *testing.T) {
+	ctx := context.Background()
+	client, baseURL := newDatabaseAccountsClientURL(t)
+	createAccount(t, client, "rg-1", "cosmos-conn", "eastus")
+
+	res, err := client.ListConnectionStrings(ctx, "rg-1", "cosmos-conn", nil)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, res.ConnectionStrings)
+	first := res.ConnectionStrings[0]
+	require.NotNil(t, first.ConnectionString)
+	assert.Contains(t, *first.ConnectionString, "AccountEndpoint="+baseURL+"/cosmos-conn/")
+	require.NotNil(t, first.KeyKind)
+	assert.Equal(t, armcosmos.KindPrimary, *first.KeyKind)
+	require.NotNil(t, first.Type)
+	assert.Equal(t, armcosmos.TypeSQL, *first.Type)
+}
+
+// TestSDKDatabaseAccountRegenerateKey drives the BeginRegenerateKey LRO.
+func TestSDKDatabaseAccountRegenerateKey(t *testing.T) {
+	ctx := context.Background()
+	client := newDatabaseAccountsClient(t)
+	createAccount(t, client, "rg-1", "cosmos-regen", "eastus")
+
+	poller, err := client.BeginRegenerateKey(ctx, "rg-1", "cosmos-regen", armcosmos.DatabaseAccountRegenerateKeyParameters{
+		KeyKind: to.Ptr(armcosmos.KeyKindPrimary),
+	}, nil)
+	require.NoError(t, err)
+
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+}
+
+// TestSDKDatabaseAccountList drives List (subscription) and ListByResourceGroup.
+func TestSDKDatabaseAccountList(t *testing.T) {
+	ctx := context.Background()
+	client := newDatabaseAccountsClient(t)
+
+	createAccount(t, client, "rg-a", "acct-a1", "eastus")
+	createAccount(t, client, "rg-a", "acct-a2", "eastus")
+	createAccount(t, client, "rg-b", "acct-b1", "westus")
+
+	names := map[string]bool{}
+	pager := client.NewListPager(nil)
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+
+		for _, acc := range page.Value {
+			require.NotNil(t, acc.Name)
+			names[*acc.Name] = true
+		}
+	}
+
+	assert.True(t, names["acct-a1"] && names["acct-a2"] && names["acct-b1"],
+		"subscription list should return all three accounts, got %v", names)
+
+	// ListByResourceGroup filters to rg-a only.
+	rgNames := map[string]bool{}
+	rgPager := client.NewListByResourceGroupPager("rg-a", nil)
+
+	for rgPager.More() {
+		page, err := rgPager.NextPage(ctx)
+		require.NoError(t, err)
+
+		for _, acc := range page.Value {
+			rgNames[*acc.Name] = true
+		}
+	}
+
+	assert.True(t, rgNames["acct-a1"] && rgNames["acct-a2"], "rg-a list missing accounts: %v", rgNames)
+	assert.False(t, rgNames["acct-b1"], "rg-a list must not include rg-b's account")
 }

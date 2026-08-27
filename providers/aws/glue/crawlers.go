@@ -16,7 +16,7 @@ type crawlerData struct {
 // CreateCrawler creates a crawler in the READY state, atomically.
 //
 //nolint:gocritic // hugeParam: taken by value to match the driver interface / copy semantics
-func (m *Mock) CreateCrawler(_ context.Context, c driver.Crawler) error {
+func (m *Mock) CreateCrawler(ctx context.Context, c driver.Crawler) error {
 	if !validName(c.Name) {
 		return invalidInput("crawler name %q is invalid", c.Name)
 	}
@@ -25,10 +25,18 @@ func (m *Mock) CreateCrawler(_ context.Context, c driver.Crawler) error {
 	c.State = driver.CrawlerReady
 	c.CreationTime = now
 	c.LastUpdated = now
+	tags := c.Tags
+	c.Tags = nil
 	stored := copyCrawler(c)
 
 	if !m.crawlers.SetIfAbsent(c.Name, &crawlerData{crawler: stored}) {
 		return alreadyExists("Crawler already exists: %s", c.Name)
+	}
+
+	if len(tags) > 0 {
+		// Tags on a crawler live in the tag store under its ARN, so GetTags (what
+		// Terraform reads) returns them; GetCrawler intentionally omits tags.
+		_ = m.TagResource(ctx, m.arn("crawler/"+c.Name), tags)
 	}
 
 	return nil

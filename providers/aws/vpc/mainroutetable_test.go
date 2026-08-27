@@ -156,8 +156,9 @@ func TestDeleteRefusedWhileAnInterfaceIsAttached(t *testing.T) {
 		t.Fatalf("CreateSubnet: %v", err)
 	}
 
-	// A NAT gateway holds an interface for as long as it lives.
-	if _, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: sub.ID}); err != nil {
+	// A NAT gateway holds an interface for as long as it lives. A private one
+	// needs no Elastic IP, keeping this teardown check focused on the ENI it holds.
+	if _, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: sub.ID, ConnectivityType: "private"}); err != nil {
 		t.Fatalf("CreateNATGateway: %v", err)
 	}
 

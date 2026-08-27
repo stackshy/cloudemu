@@ -49,6 +49,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createFirewallPolicy(w, r)
 	case "DescribeFirewallPolicy":
 		h.describeFirewallPolicy(w, r)
+	case "UpdateFirewallPolicy":
+		h.updateFirewallPolicy(w, r)
 	case "DeleteFirewallPolicy":
 		h.deleteFirewallPolicy(w, r)
 	case "ListFirewallPolicies":
@@ -57,6 +59,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createRuleGroup(w, r)
 	case "DescribeRuleGroup":
 		h.describeRuleGroup(w, r)
+	case "UpdateRuleGroup":
+		h.updateRuleGroup(w, r)
 	case "DeleteRuleGroup":
 		h.deleteRuleGroup(w, r)
 	case "ListRuleGroups":
@@ -77,6 +81,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.tagResource(w, r)
 	case "UntagResource":
 		h.untagResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", "unknown operation: "+op)
 	}
@@ -85,7 +91,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 const updateToken = "00000000-0000-0000-0000-000000000000"
 
 func writeErr(w http.ResponseWriter, err error) {
-	msg := err.Error()
+	msg := cerrors.Message(err)
 
 	switch {
 	case cerrors.IsNotFound(err):

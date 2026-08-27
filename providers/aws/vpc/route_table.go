@@ -3,6 +3,7 @@ package vpc
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -12,6 +13,16 @@ import (
 // Route target type constants.
 const (
 	RouteTargetLocal = "local"
+)
+
+// Route-target not-found markers. A CreateRoute pointing at a gateway / NAT /
+// peering that does not exist carries the matching marker so the wire layer can
+// emit the resource-specific EC2 error code rather than a generic route-table
+// not-found.
+const (
+	routeTargetIGWNotFound     = "InvalidInternetGatewayID.NotFound"
+	routeTargetNATNotFound     = "InvalidNatGatewayID.NotFound"
+	routeTargetPeeringNotFound = "InvalidVpcPeeringConnectionID.NotFound"
 )
 
 type routeTableData struct {
@@ -70,8 +81,17 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 	}
 
 	if rt.IsMain {
-		return errors.Newf(errors.InvalidArgument,
+		return errors.Newf(errors.FailedPrecondition,
 			"cannot delete the main route table %q of vpc %q", id, rt.VPCID)
+	}
+
+	// Real EC2 refuses to delete a route table still associated with a subnet;
+	// the caller must DisassociateRouteTable first.
+	for _, a := range m.rtAssocs.All() {
+		if a.RouteTableID == id && !a.Main {
+			return errors.Newf(errors.FailedPrecondition,
+				"route table %q has a subnet association %q and cannot be deleted", id, a.ID)
+		}
 	}
 
 	m.routeTables.Delete(id)
@@ -87,6 +107,15 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 // association ID — which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
 	m.mu.RLock()
+
+	for _, id := range ids {
+		if !m.routeTables.Has(id) {
+			m.mu.RUnlock()
+
+			return nil, errors.Newf(errors.NotFound, "route table %q not found", id)
+		}
+	}
+
 	tables := describeResources(m.routeTables, ids, toRouteTableInfo)
 	m.mu.RUnlock()
 
@@ -127,12 +156,43 @@ func (m *Mock) CreateRoute(
 		}
 	}
 
+	if err := m.validateRouteTarget(targetID); err != nil {
+		return err
+	}
+
 	rt.Routes = append(rt.Routes, driver.Route{
 		DestinationCIDR: destinationCIDR,
 		TargetID:        targetID,
 		TargetType:      targetType,
 		State:           "active",
 	})
+
+	return nil
+}
+
+// validateRouteTarget rejects a route pointing at a gateway / NAT / peering that
+// does not exist, matching real EC2 (silently storing a dangling target is the
+// bug this closes). Targets are keyed by id prefix so the rarer target types
+// (virtual gateways, egress-only IGWs, transit gateways) pass through
+// unvalidated rather than being wrongly rejected. The caller holds m.mu.
+func (m *Mock) validateRouteTarget(targetID string) error {
+	switch {
+	case strings.HasPrefix(targetID, "igw-"):
+		if !m.igws.Has(targetID) {
+			return errors.Newf(errors.NotFound,
+				"%s: internet gateway %q does not exist", routeTargetIGWNotFound, targetID)
+		}
+	case strings.HasPrefix(targetID, "nat-"):
+		if !m.natGateways.Has(targetID) {
+			return errors.Newf(errors.NotFound,
+				"%s: NAT gateway %q does not exist", routeTargetNATNotFound, targetID)
+		}
+	case strings.HasPrefix(targetID, "pcx-"):
+		if !m.peerings.Has(targetID) {
+			return errors.Newf(errors.NotFound,
+				"%s: peering connection %q does not exist", routeTargetPeeringNotFound, targetID)
+		}
+	}
 
 	return nil
 }

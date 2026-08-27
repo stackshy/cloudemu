@@ -63,8 +63,12 @@ type listHealthChecksResponse struct {
 	XMLName      xml.Name         `xml:"ListHealthChecksResponse"`
 	Xmlns        string           `xml:"xmlns,attr"`
 	HealthChecks []healthCheckXML `xml:"HealthChecks>HealthCheck"`
-	IsTruncated  bool             `xml:"IsTruncated"`
-	MaxItems     int              `xml:"MaxItems"`
+	// Marker echoes the request marker; NextMarker is present only on a truncated
+	// page and carries the health-check id the caller passes back as Marker.
+	Marker      string `xml:"Marker,omitempty"`
+	IsTruncated bool   `xml:"IsTruncated"`
+	NextMarker  string `xml:"NextMarker,omitempty"`
+	MaxItems    int    `xml:"MaxItems"`
 }
 
 type updateHealthCheckRequest struct {
@@ -153,6 +157,9 @@ func (h *Handler) getHealthCheck(w http.ResponseWriter, r *http.Request, id stri
 	wire.WriteXML(w, http.StatusOK, getHealthCheckResponse{Xmlns: xmlns, HealthCheck: toHealthCheckXML(info)})
 }
 
+// listHealthChecks answers ListHealthChecks. Health checks are returned in a
+// stable id order and paginated Route 53 Marker-style: maxitems bounds the page
+// and NextMarker (echoed back as the next marker) resumes at the following id.
 func (h *Handler) listHealthChecks(w http.ResponseWriter, r *http.Request) {
 	infos, err := h.dns.ListHealthChecks(r.Context())
 	if err != nil {
@@ -165,11 +172,17 @@ func (h *Handler) listHealthChecks(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, toHealthCheckXML(&infos[i]))
 	}
 
+	marker := r.URL.Query().Get("marker")
+	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
+	page, next := markerPage(checks, marker, maxItems, func(c healthCheckXML) string { return c.ID })
+
 	wire.WriteXML(w, http.StatusOK, listHealthChecksResponse{
 		Xmlns:        xmlns,
-		HealthChecks: checks,
-		IsTruncated:  false,
-		MaxItems:     listMaxItems,
+		HealthChecks: page,
+		Marker:       marker,
+		IsTruncated:  next != "",
+		NextMarker:   next,
+		MaxItems:     maxItems,
 	})
 }
 

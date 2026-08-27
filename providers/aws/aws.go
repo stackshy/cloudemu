@@ -9,6 +9,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -251,21 +252,68 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
+	// RunInstances materializes the instance's primary (eth0) ENI in the VPC, and
+	// TerminateInstances releases it — so a running instance's interface blocks
+	// DeleteSubnet / DeleteSecurityGroup the way real EC2 does.
+	p.EC2.SetNetworking(p.VPC)
+	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
+	p.ELB.SetSubnetResolver(p.VPC)
+	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
+	// targets of a file system share a VpcId and each reflects its subnet's zone.
+	p.EFS.SetSubnetResolver(p.VPC)
+	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
+	// role->profile->instance chain reads back on DescribeInstances.
+	p.EC2.SetInstanceProfileResolver(p.IAM)
 	p.SSM.SetInstanceResolver(p.EC2)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
 	p.ECS.SetManagedInstanceLauncher(p.EC2)
 	// Engine-backed ECS tasks push their awslogs container output to CloudWatch Logs.
 	p.ECS.SetLogSink(p.CloudWatchLogs)
+	// A service's loadBalancers[] register/deregister RUNNING tasks with their
+	// ELBv2 target group as the scheduler converges/drains the service.
+	p.ECS.SetTargetRegistrar(p.ELB)
 	p.Redshift.SetMonitoring(p.CloudWatch)
+	// A Redshift cluster subnet group derives its VpcId and per-subnet AZs from
+	// the member subnets, matching RDS/ElastiCache DB subnet groups.
+	p.Redshift.SetSubnetResolver(p.VPC)
 	p.EKS.SetMonitoring(p.CloudWatch)
+	// An EKS cluster's resourcesVpcConfig.vpcId is derived from its subnets,
+	// matching real EKS (which auto-creates the cluster SG and infers the VPC).
+	p.EKS.SetSubnetResolver(p.VPC)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
+	// CloudWatch alarm -> SNS: an alarm state transition fires its configured
+	// SNS-topic actions, fanning a notification out to the topic's subscribers.
+	p.CloudWatch.SetSNSPublisher(p.SNS)
 	// SNS -> SQS fan-out: publishes deliver to SQS-protocol subscriptions.
 	p.SNS.SetSQSDeliverer(p.SQS)
-	// EventBridge -> SQS: matched rules deliver events to SQS targets.
+	// SNS -> Lambda fan-out: publishes invoke lambda-protocol subscriptions with
+	// the SNS Records event (reuses the shared InvokeExternal choke point).
+	p.SNS.SetLambdaInvoker(p.Lambda)
+	// EventBridge -> targets: matched rules deliver events to their first-class
+	// target types — SQS queues, Lambda functions (ASYNC), SNS topics, and Step
+	// Functions state machines (ASYNC). Lambda reuses the shared InvokeExternal
+	// choke point so its recursion guard bounds re-entrant event loops.
 	p.EventBridge.SetSQSDeliverer(p.SQS)
-	// S3 -> SQS: object-create events deliver to bucket notification targets.
+	p.EventBridge.SetLambdaInvoker(p.Lambda)
+	p.EventBridge.SetSNSPublisher(p.SNS)
+	p.EventBridge.SetStepFunctionsStarter(p.SFN)
+	// S3 event notifications deliver to their configured targets: SQS queues,
+	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
+	p.S3.SetSNSPublisher(p.SNS)
+	p.S3.SetLambdaInvoker(p.Lambda)
+	// DynamoDB Streams -> Lambda: writes to a stream-enabled table invoke the
+	// stream's event-source-mapping targets (mirrors the S3 -> Lambda wiring).
+	p.DynamoDB.SetStreamInvoker(p.Lambda)
+	// SQS -> Lambda: a message sent to a queue invokes the queue's
+	// event-source-mapping target(s), deleting the message on success or
+	// leaving it for DLQ redrive on failure (mirrors the DynamoDB Streams wiring).
+	p.SQS.SetEventSourceInvoker(p.Lambda)
+	// CloudWatch Logs subscription filters -> Lambda: log events matching a
+	// subscription filter's pattern are delivered (gzipped awslogs payload) to
+	// the filter's Lambda destination on PutLogEvents.
+	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
@@ -316,4 +364,13 @@ func (p *Provider) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// SnapshotServices returns the provider's services that support identity-
+// preserving snapshotting, keyed by a stable lowercased field-name service key
+// (e.g. "s3", "dynamodb", "ec2"). persist iterates this map, so the persisted
+// surface automatically tracks whichever services implement
+// snapshot.Snapshottable — no hand-kept registry to drift.
+func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
+	return snapshot.Discover(p)
 }

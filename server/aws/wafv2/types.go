@@ -186,7 +186,9 @@ type refRequest struct {
 }
 
 type listRequest struct {
-	Scope string `json:"Scope"`
+	Scope      string `json:"Scope"`
+	Limit      int    `json:"Limit"`
+	NextMarker string `json:"NextMarker"`
 }
 
 type createIPSetRequest struct {

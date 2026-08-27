@@ -214,6 +214,10 @@ func TestARNShapes(t *testing.T) {
 		case TypeFunction:
 			// Lambda mock builds its own ARN; we just require non-empty.
 			assert.NotEmpty(t, r.ARN)
+		case TypeSecurityGroup:
+			// Every VPC surfaces its auto-created default security group.
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:security-group/"),
+				"unexpected security group ARN: %s", r.ARN)
 		case TypeRouteTable:
 			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:route-table/"),
 				"unexpected route table ARN: %s", r.ARN)

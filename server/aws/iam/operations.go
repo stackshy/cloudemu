@@ -2,16 +2,48 @@ package iam
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
+// codeMalformedPolicy is the error code IAM returns when a supplied policy or
+// trust-policy document is not a valid JSON object.
+const codeMalformedPolicy = "MalformedPolicyDocument"
+
+// validPolicyDocument reports whether doc is acceptable as an IAM policy or
+// trust-policy document. An empty document is left to the driver's required-field
+// checks; a non-empty one must parse as a JSON object.
+func validPolicyDocument(doc string) bool {
+	if doc == "" {
+		return true
+	}
+
+	var obj map[string]any
+
+	return json.Unmarshal([]byte(doc), &obj) == nil
+}
+
+// writeMalformedPolicy emits the IAM MalformedPolicyDocument error (HTTP 400).
+func writeMalformedPolicy(w http.ResponseWriter, message string) {
+	awsquery.WriteXMLError(w, http.StatusBadRequest, codeMalformedPolicy, message)
+}
+
 // defaultPolicyVersionID is the version a freshly created policy starts with.
 const defaultPolicyVersionID = "v1"
+
+// formValueTrue is the string a boolean query-protocol parameter carries when set.
+const formValueTrue = "true"
+
+// callerUserName is the synthetic IAM user name reported for the calling
+// principal (GetUser with no UserName). Matches STS GetCallerIdentity.
+const callerUserName = "cloudemu"
 
 // parseIAMTags parses Tags.member.N.{Key,Value} pairs (the shape the
 // aws-sdk-go-v2/service/iam client emits for tagged-create requests).
@@ -48,9 +80,21 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if boundary := r.Form.Get("PermissionsBoundary"); boundary != "" {
+		if mgr := h.boundaryManager(); mgr != nil {
+			if err := mgr.PutUserPermissionsBoundary(r.Context(), u.Name, boundary); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+
+	out := toUserXML(u)
+	out.PermissionsBoundary = h.userBoundaryXML(r.Context(), u.Name)
+
 	awsquery.WriteXMLResponse(w, createUserResponse{
 		Xmlns:    Namespace,
-		Result:   createUserResult{User: toUserXML(u)},
+		Result:   createUserResult{User: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -68,17 +112,46 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
-	u, err := h.iam.GetUser(r.Context(), r.Form.Get("UserName"))
+	userName := r.Form.Get("UserName")
+
+	// Real IAM GetUser with no UserName returns the calling principal's own
+	// user. cloudemu accepts any credentials, so there is no stored caller to
+	// look up; synthesize the same identity STS GetCallerIdentity reports.
+	if userName == "" {
+		awsquery.WriteXMLResponse(w, getUserResponse{
+			Xmlns:    Namespace,
+			Result:   getUserResult{User: h.callerUserXML()},
+			Metadata: responseMetadata{RequestID: awsquery.RequestID},
+		})
+
+		return
+	}
+
+	u, err := h.iam.GetUser(r.Context(), userName)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	out := toUserXML(u)
+	out.PermissionsBoundary = h.userBoundaryXML(r.Context(), u.Name)
+
 	awsquery.WriteXMLResponse(w, getUserResponse{
 		Xmlns:    Namespace,
-		Result:   getUserResult{User: toUserXML(u)},
+		Result:   getUserResult{User: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// callerUserXML builds the synthetic calling-user record returned by GetUser
+// when no UserName is supplied. It mirrors STS GetCallerIdentity's identity.
+func (h *Handler) callerUserXML() userXML {
+	return userXML{
+		UserName: callerUserName,
+		UserID:   "AIDACLOUDEMU0000000000",
+		Arn:      "arn:aws:iam::" + h.accountID + ":user/" + callerUserName,
+		Path:     "/",
+	}
 }
 
 //nolint:dupl // list handlers share shape but operate on different driver types and response envelopes.
@@ -89,14 +162,21 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := usersListXML{Member: make([]userXML, 0, len(users))}
-	for i := range users {
-		out.Member = append(out.Member, toUserXML(&users[i]))
+	users = filterByPathPrefix(users, r.Form.Get("PathPrefix"), func(u *iamdriver.UserInfo) string { return u.Path })
+
+	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(users), r.Form)
+	page := users[start:end]
+
+	out := usersListXML{Member: make([]userXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toUserXML(&page[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, listUsersResponse{
 		Xmlns:    Namespace,
-		Result:   listUsersResult{Users: out, IsTruncated: false},
+		Result:   listUsersResult{Users: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -104,10 +184,17 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 // --- Roles ---
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
+	assumeRolePolicy := r.Form.Get("AssumeRolePolicyDocument")
+	if !validPolicyDocument(assumeRolePolicy) {
+		writeMalformedPolicy(w, "The trust policy is not a valid JSON document")
+		return
+	}
+
 	cfg := iamdriver.RoleConfig{
 		Name:                r.Form.Get("RoleName"),
 		Path:                r.Form.Get("Path"),
-		AssumeRolePolicyDoc: r.Form.Get("AssumeRolePolicyDocument"),
+		Description:         r.Form.Get("Description"),
+		AssumeRolePolicyDoc: assumeRolePolicy,
 		Tags:                parseIAMTags(r.Form),
 	}
 
@@ -121,9 +208,21 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if boundary := r.Form.Get("PermissionsBoundary"); boundary != "" {
+		if mgr := h.boundaryManager(); mgr != nil {
+			if err := mgr.PutRolePermissionsBoundary(r.Context(), role.Name, boundary); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+
+	out := toRoleXML(role)
+	out.PermissionsBoundary = h.roleBoundaryXML(r.Context(), role.Name)
+
 	awsquery.WriteXMLResponse(w, createRoleResponse{
 		Xmlns:    Namespace,
-		Result:   createRoleResult{Role: toRoleXML(role)},
+		Result:   createRoleResult{Role: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -147,9 +246,12 @@ func (h *Handler) getRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out := toRoleXML(role)
+	out.PermissionsBoundary = h.roleBoundaryXML(r.Context(), role.Name)
+
 	awsquery.WriteXMLResponse(w, getRoleResponse{
 		Xmlns:    Namespace,
-		Result:   getRoleResult{Role: toRoleXML(role)},
+		Result:   getRoleResult{Role: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -162,14 +264,21 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := rolesListXML{Member: make([]roleXML, 0, len(roles))}
-	for i := range roles {
-		out.Member = append(out.Member, toRoleXML(&roles[i]))
+	roles = filterByPathPrefix(roles, r.Form.Get("PathPrefix"), func(role *iamdriver.RoleInfo) string { return role.Path })
+
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Name < roles[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(roles), r.Form)
+	page := roles[start:end]
+
+	out := rolesListXML{Member: make([]roleXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toRoleXML(&page[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, listRolesResponse{
 		Xmlns:    Namespace,
-		Result:   listRolesResult{Roles: out, IsTruncated: false},
+		Result:   listRolesResult{Roles: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -177,6 +286,11 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 // --- Policies ---
 
 func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request) {
+	if !validPolicyDocument(r.Form.Get("PolicyDocument")) {
+		writeMalformedPolicy(w, "Syntax errors in policy")
+		return
+	}
+
 	cfg := iamdriver.PolicyConfig{
 		Name:           r.Form.Get("PolicyName"),
 		Path:           r.Form.Get("Path"),
@@ -192,7 +306,7 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, createPolicyResponse{
 		Xmlns:    Namespace,
-		Result:   createPolicyResult{Policy: toPolicyXML(p, defaultPolicyVersionID)},
+		Result:   createPolicyResult{Policy: toPolicyXML(p, h.policyMetaFor(r.Context(), p.ARN))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -218,7 +332,7 @@ func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, getPolicyResponse{
 		Xmlns:    Namespace,
-		Result:   getPolicyResult{Policy: toPolicyXML(p, h.defaultVersionID(r.Context(), p.ARN))},
+		Result:   getPolicyResult{Policy: toPolicyXML(p, h.policyMetaFor(r.Context(), p.ARN))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -230,40 +344,143 @@ func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := policiesListXML{Member: make([]policyXML, 0, len(policies))}
-	for i := range policies {
-		out.Member = append(out.Member, toPolicyXML(&policies[i], h.defaultVersionID(r.Context(), policies[i].ARN)))
+	policies = h.filterPolicies(r, policies)
+
+	sort.Slice(policies, func(i, j int) bool { return policies[i].ARN < policies[j].ARN })
+
+	start, end, marker, truncated := pageWindow(len(policies), r.Form)
+	page := policies[start:end]
+
+	out := policiesListXML{Member: make([]policyXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toPolicyXML(&page[i], h.policyMetaFor(r.Context(), page[i].ARN)))
 	}
 
 	awsquery.WriteXMLResponse(w, listPoliciesResponse{
 		Xmlns:    Namespace,
-		Result:   listPoliciesResult{Policies: out, IsTruncated: false},
+		Result:   listPoliciesResult{Policies: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
-// defaultVersionID returns the version ID currently marked default for the
-// policy, falling back to "v1" if the versions cannot be read.
-func (h *Handler) defaultVersionID(ctx context.Context, policyARN string) string {
-	versions, err := h.iam.ListPolicyVersions(ctx, policyARN)
-	if err != nil {
-		return defaultPolicyVersionID
+// filterByPathPrefix returns only the entities whose path begins with prefix,
+// implementing the PathPrefix request parameter shared by ListUsers, ListRoles,
+// and ListGroups. An empty prefix (the default) returns everything unchanged.
+func filterByPathPrefix[T any](items []T, prefix string, path func(*T) string) []T {
+	if prefix == "" {
+		return items
 	}
 
-	for i := range versions {
-		if versions[i].IsDefaultVersion {
-			return versions[i].VersionID
+	out := items[:0]
+
+	for i := range items {
+		if strings.HasPrefix(path(&items[i]), prefix) {
+			out = append(out, items[i])
 		}
 	}
 
-	return defaultPolicyVersionID
+	return out
+}
+
+// awsManagedPolicyPrefix is the ARN prefix AWS-published (managed) policies
+// carry. Everything else is a customer-managed (Local) policy.
+const awsManagedPolicyPrefix = "arn:aws:iam::aws:policy/"
+
+// filterPolicies applies the ListPolicies Scope, PathPrefix, and OnlyAttached
+// filters. Real IAM defaults Scope to All and OnlyAttached to false.
+func (h *Handler) filterPolicies(r *http.Request, policies []iamdriver.PolicyInfo) []iamdriver.PolicyInfo {
+	scope := r.Form.Get("Scope")
+	pathPrefix := r.Form.Get("PathPrefix")
+	onlyAttached := r.Form.Get("OnlyAttached") == formValueTrue
+
+	out := policies[:0]
+
+	for i := range policies {
+		p := policies[i]
+
+		isAWS := strings.HasPrefix(p.ARN, awsManagedPolicyPrefix)
+		if scope == "AWS" && !isAWS {
+			continue
+		}
+
+		if scope == "Local" && isAWS {
+			continue
+		}
+
+		if pathPrefix != "" && !strings.HasPrefix(p.Path, pathPrefix) {
+			continue
+		}
+
+		if onlyAttached && h.attachmentCount(r.Context(), p.ARN) == 0 {
+			continue
+		}
+
+		out = append(out, p)
+	}
+
+	return out
+}
+
+// policyMetaFor derives the wire-only policy fields (default version, its
+// create/update timestamps, and the live attachment count) for a policy ARN.
+// It falls back to sensible defaults when the version list cannot be read.
+func (h *Handler) policyMetaFor(ctx context.Context, policyARN string) policyMeta {
+	meta := policyMeta{
+		defaultVersionID: defaultPolicyVersionID,
+		attachmentCount:  h.attachmentCount(ctx, policyARN),
+	}
+
+	versions, err := h.iam.ListPolicyVersions(ctx, policyARN)
+	if err != nil {
+		return meta
+	}
+
+	for i := range versions {
+		if versions[i].VersionID == defaultPolicyVersionID {
+			meta.createDate = versions[i].CreatedAt
+		}
+
+		if versions[i].IsDefaultVersion {
+			meta.defaultVersionID = versions[i].VersionID
+			meta.updateDate = versions[i].CreatedAt
+		}
+	}
+
+	if meta.updateDate == "" {
+		meta.updateDate = meta.createDate
+	}
+
+	return meta
+}
+
+// policyAttachmentCounter is the AWS-specific surface for the live count of
+// principals a managed policy is attached to. It's not part of the portable
+// driver, so the handler type-asserts for it.
+type policyAttachmentCounter interface {
+	PolicyAttachmentCount(ctx context.Context, policyARN string) (int, error)
+}
+
+// attachmentCount returns the live attachment count, or 0 when the driver does
+// not expose the counter.
+func (h *Handler) attachmentCount(ctx context.Context, policyARN string) int {
+	counter, ok := h.iam.(policyAttachmentCounter)
+	if !ok {
+		return 0
+	}
+
+	n, err := counter.PolicyAttachmentCount(ctx, policyARN)
+	if err != nil {
+		return 0
+	}
+
+	return n
 }
 
 func (h *Handler) createPolicyVersion(w http.ResponseWriter, r *http.Request) {
 	cfg := iamdriver.PolicyVersionConfig{
 		PolicyARN:      r.Form.Get("PolicyArn"),
 		PolicyDocument: r.Form.Get("PolicyDocument"),
-		SetAsDefault:   r.Form.Get("SetAsDefault") == "true",
+		SetAsDefault:   r.Form.Get("SetAsDefault") == formValueTrue,
 	}
 
 	v, err := h.iam.CreatePolicyVersion(r.Context(), cfg)
@@ -488,15 +705,54 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	members, marker, truncated := h.groupMembersXML(r.Context(), g.Name, r.Form)
+
 	awsquery.WriteXMLResponse(w, getGroupResponse{
 		Xmlns: Namespace,
 		Result: getGroupResult{
 			Group:       toGroupXML(g),
-			Users:       usersListXML{},
-			IsTruncated: false,
+			Users:       members,
+			IsTruncated: truncated,
+			Marker:      marker,
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// groupMemberLister is the AWS-specific surface for a group's membership. It's
+// not part of the portable driver, so the handler type-asserts for it.
+type groupMemberLister interface {
+	ListGroupMembers(ctx context.Context, groupName string) ([]iamdriver.UserInfo, error)
+}
+
+// groupMembersXML returns a page of the users in a group as the wire shape
+// GetGroup expects, along with the next Marker and truncation flag. It returns
+// an empty list when the driver does not track membership. Real IAM paginates a
+// group's members via Marker/MaxItems.
+func (h *Handler) groupMembersXML(
+	ctx context.Context, groupName string, form url.Values,
+) (users usersListXML, nextMarker string, truncated bool) {
+	lister, ok := h.iam.(groupMemberLister)
+	if !ok {
+		return usersListXML{}, "", false
+	}
+
+	members, err := lister.ListGroupMembers(ctx, groupName)
+	if err != nil {
+		return usersListXML{}, "", false
+	}
+
+	sort.Slice(members, func(i, j int) bool { return members[i].Name < members[j].Name })
+
+	start, end, marker, isTruncated := pageWindow(len(members), form)
+	page := members[start:end]
+
+	out := usersListXML{Member: make([]userXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toUserXML(&page[i]))
+	}
+
+	return out, marker, isTruncated
 }
 
 //nolint:dupl // list handlers share shape but operate on different driver types and response envelopes.
@@ -507,14 +763,21 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := groupsListXML{Member: make([]groupXML, 0, len(groups))}
-	for i := range groups {
-		out.Member = append(out.Member, toGroupXML(&groups[i]))
+	groups = filterByPathPrefix(groups, r.Form.Get("PathPrefix"), func(g *iamdriver.GroupInfo) string { return g.Path })
+
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(groups), r.Form)
+	page := groups[start:end]
+
+	out := groupsListXML{Member: make([]groupXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toGroupXML(&page[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, listGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   listGroupsResult{Groups: out, IsTruncated: false},
+		Result:   listGroupsResult{Groups: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -625,6 +888,7 @@ func (h *Handler) listAccessKeys(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createInstanceProfile(w http.ResponseWriter, r *http.Request) {
 	cfg := iamdriver.InstanceProfileConfig{
 		Name: r.Form.Get("InstanceProfileName"),
+		Path: r.Form.Get("Path"),
 		Tags: parseIAMTags(r.Form),
 	}
 
@@ -674,14 +938,19 @@ func (h *Handler) listInstanceProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := instanceProfilesListXML{Member: make([]instanceProfileXML, 0, len(profiles))}
-	for i := range profiles {
-		out.Member = append(out.Member, toInstanceProfileXML(&profiles[i], h.lookupRole(r, profiles[i].RoleName)))
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(profiles), r.Form)
+	page := profiles[start:end]
+
+	out := instanceProfilesListXML{Member: make([]instanceProfileXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toInstanceProfileXML(&page[i], h.lookupRole(r, page[i].RoleName)))
 	}
 
 	awsquery.WriteXMLResponse(w, listInstanceProfilesResponse{
 		Xmlns:    Namespace,
-		Result:   listInstanceProfilesResult{InstanceProfiles: out, IsTruncated: false},
+		Result:   listInstanceProfilesResult{InstanceProfiles: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -733,14 +1002,32 @@ func (h *Handler) lookupRole(r *http.Request, name string) *iamdriver.RoleInfo {
 	return role
 }
 
-// listInstanceProfilesForRole returns an empty list. CloudEmu does not track
-// role→instance-profile membership; this exists so `terraform destroy` (which
-// lists a role's instance profiles before deleting it) succeeds.
-func (*Handler) listInstanceProfilesForRole(w http.ResponseWriter, _ *http.Request) {
+// listInstanceProfilesForRole returns the instance profiles that reference the
+// given role. It filters the full profile list by RoleName, which is how the
+// association is stored (AddRoleToInstanceProfile sets the profile's role).
+func (h *Handler) listInstanceProfilesForRole(w http.ResponseWriter, r *http.Request) {
+	roleName := r.Form.Get("RoleName")
+
+	profiles, err := h.iam.ListInstanceProfiles(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := instanceProfilesListXML{Member: []instanceProfileXML{}}
+
+	for i := range profiles {
+		if profiles[i].RoleName != roleName {
+			continue
+		}
+
+		out.Member = append(out.Member, toInstanceProfileXML(&profiles[i], h.lookupRole(r, profiles[i].RoleName)))
+	}
+
 	awsquery.WriteXMLResponse(w, listInstanceProfilesForRoleResponse{
 		Xmlns: Namespace,
 		Result: listInstanceProfilesForRoleResult{
-			InstanceProfiles: instanceProfilesListXML{Member: []instanceProfileXML{}},
+			InstanceProfiles: out,
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})

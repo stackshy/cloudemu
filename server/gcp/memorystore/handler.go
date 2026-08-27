@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -46,7 +47,17 @@ const (
 // Handler serves redis.googleapis.com v1 requests against a cache driver.
 type Handler struct {
 	cache cachedriver.Cache
+
+	// ops records created operations with the shared poller so a client that
+	// polls the returned operation name gets the typed response (and unknown
+	// names 404). Nil in a standalone package server, where this handler serves
+	// its own /operations/ poll.
+	ops *lro.Registry
 }
+
+// SetOperationRegistry wires the shared LRO poller so created operations are
+// resolvable (with their response) through the full server's operations host.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 
 // New returns a Memorystore handler backed by c.
 func New(c cachedriver.Cache) *Handler {
@@ -158,7 +169,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt.project, rt.location, rt.name, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt.project, rt.location, rt.name, nil))
 }
 
 func writeUnsupported(w http.ResponseWriter) {

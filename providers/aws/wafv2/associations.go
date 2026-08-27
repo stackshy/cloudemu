@@ -1,11 +1,48 @@
 package wafv2
 
 import (
+	"bytes"
 	"context"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
+
+// webACLAssociated reports whether any protected resource is still associated
+// with the given web ACL ARN. Deleting an associated web ACL is rejected with
+// WAFAssociatedItemException, matching real WAFv2.
+func (m *Mock) webACLAssociated(webACLARN string) bool {
+	m.assocMu.RLock()
+	defer m.assocMu.RUnlock()
+
+	for _, aclARN := range m.assoc {
+		if aclARN == webACLARN {
+			return true
+		}
+	}
+
+	return false
+}
+
+// itemReferencedByWebACL reports whether any web ACL's rules reference the given
+// resource ARN. IPSet/RuleGroup/RegexPatternSet reference statements embed the
+// referenced ARN verbatim in the rule JSON, so a substring scan of each web
+// ACL's stored rules detects an in-use set/group.
+func (m *Mock) itemReferencedByWebACL(arn string) bool {
+	needle := []byte(arn)
+
+	for _, wd := range m.webACLs.All() {
+		wd.mu.RLock()
+		referenced := bytes.Contains(wd.acl.Rules, needle)
+		wd.mu.RUnlock()
+
+		if referenced {
+			return true
+		}
+	}
+
+	return false
+}
 
 // webACLByARN finds a stored web ACL by its ARN.
 func (m *Mock) webACLByARN(arn string) (*webACLData, bool) {

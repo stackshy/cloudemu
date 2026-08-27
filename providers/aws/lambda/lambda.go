@@ -2,9 +2,13 @@ package lambda
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +16,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
@@ -27,13 +32,37 @@ const (
 	stateEnabled     = "Enabled"
 	stateDisabled    = "Disabled"
 	timeFormat       = "2006-01-02T15:04:05Z"
+	// tracingModePassThrough is the AWS Lambda default X-Ray tracing mode.
+	tracingModePassThrough = "PassThrough"
+)
+
+// AWS Lambda create-time defaults applied when the client omits the field:
+// MemorySize defaults to 128 MB and Timeout to 3 seconds. See
+// https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+const (
+	defaultMemoryMB    = 128
+	defaultTimeoutSecs = 3
+)
+
+// AWS Lambda create-time range limits. MemorySize must be 128–10240 MB and
+// Timeout must be 1–900 seconds; an out-of-range value is rejected with
+// InvalidParameterValueException. The 10240 MB ceiling is the value the Lambda
+// service actually enforces — the API reference's 32768 is only the wire-schema
+// bound. See
+// https://docs.aws.amazon.com/lambda/latest/dg/configuration-function-common.html
+const (
+	minMemoryMB    = 128
+	maxMemoryMB    = 10240
+	minTimeoutSecs = 1
+	maxTimeoutSecs = 900
 )
 
 type versionData struct {
-	config    driver.FunctionConfig
-	version   string
-	codeSHA   string
-	createdAt string
+	config     driver.FunctionConfig
+	version    string
+	codeSHA    string
+	revisionID string
+	createdAt  string
 }
 
 type aliasData struct {
@@ -53,7 +82,14 @@ type funcData struct {
 	nextVersion  int
 	aliases      *memstore.Store[*aliasData]
 	concurrency  *driver.ConcurrencyConfig
-	policy       map[string]driver.PermissionStatement
+	// policies is the resource-based policy keyed by qualifier (normalized via
+	// policyKey: "" and "$LATEST" collapse to the unqualified function policy),
+	// then by statement id. AWS keeps a separate policy per version/alias.
+	policies  map[string]map[string]driver.PermissionStatement
+	urlConfig *driver.FunctionURLConfig // Lambda Function URL, nil until created
+	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
+	// TracingConfig) applied through the AWSConfigurable optional interface.
+	awsConfig driver.AWSFunctionConfig
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -102,12 +138,30 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
 	}
 
+	// AWS applies documented create-time defaults when the client omits these:
+	// MemorySize -> 128 MB, Timeout -> 3 s. Terraform/CDK read these back and see
+	// a perpetual diff if the response reports 0.
+	if cfg.Memory == 0 {
+		cfg.Memory = defaultMemoryMB
+	}
+
+	if cfg.Timeout == 0 {
+		cfg.Timeout = defaultTimeoutSecs
+	}
+
+	if err := validateFunctionLimits(cfg.Memory, cfg.Timeout); err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
+		Role: cfg.Role, Description: cfg.Description,
 		Memory: cfg.Memory, Timeout: cfg.Timeout, State: "Active",
 		Environment: maps.Clone(cfg.Environment), Tags: maps.Clone(cfg.Tags),
 		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		CodeSHA256:   codeHash(cfg.Code), CodeSize: int64(len(cfg.Code)),
+		Version: latestVersion, RevisionID: newRevisionID(),
 	}
 
 	m.handlersMu.RLock()
@@ -123,11 +177,31 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		info: info, handler: h, engineBacked: engineBacked,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
+		// AWS always reports a TracingConfig, defaulting to PassThrough when the
+		// client omits it.
+		awsConfig: driver.AWSFunctionConfig{TracingConfig: &driver.TracingConfig{Mode: tracingModePassThrough}},
 	})
 
 	result := info
 
 	return &result, nil
+}
+
+// validateFunctionLimits enforces the AWS MemorySize (128–10240 MB) and Timeout
+// (1–900 s) create-time ranges, returning an InvalidArgument error the wire
+// layer maps to InvalidParameterValueException / HTTP 400.
+func validateFunctionLimits(memory, timeout int) error {
+	if memory < minMemoryMB || memory > maxMemoryMB {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"'memorySize' value %d must be >= %d and <= %d", memory, minMemoryMB, maxMemoryMB)
+	}
+
+	if timeout < minTimeoutSecs || timeout > maxTimeoutSecs {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"'timeout' value %d must be >= %d and <= %d", timeout, minTimeoutSecs, maxTimeoutSecs)
+	}
+
+	return nil
 }
 
 func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
@@ -181,6 +255,15 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	info := fd.info
 	applyConfigUpdates(&info, cfg)
 	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	// Every update — configuration or code — mints a new revision, matching the
+	// RevisionId Terraform reads to detect drift.
+	info.RevisionID = newRevisionID()
+
+	if len(cfg.Code) > 0 {
+		info.CodeSHA256 = codeHash(cfg.Code)
+		info.CodeSize = int64(len(cfg.Code))
+	}
+
 	fd.info = info
 
 	// A code update re-deploys to the engine using the post-merge runtime/handler
@@ -210,6 +293,11 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", input.FunctionName)
 	}
 
+	executedVersion, err := m.resolveQualifier(&fd, input.Qualifier)
+	if err != nil {
+		return nil, err
+	}
+
 	dims := map[string]string{"FunctionName": input.FunctionName}
 
 	h := fd.handler
@@ -220,7 +308,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	}
 
 	if h == nil && fd.engineBacked {
-		return m.invokeEngine(ctx, input, dims)
+		return m.invokeEngine(ctx, input, dims, executedVersion)
 	}
 
 	if h == nil {
@@ -238,7 +326,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 			payload = []byte("{}")
 		}
 
-		return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+		return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
 	}
 
 	payload, err := h(ctx, input.Payload)
@@ -246,25 +334,119 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Errors", 1, dims)
 
-		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error()}, nil
+		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error(), ExecutedVersion: executedVersion}, nil
 	}
 
 	m.emitMetric(ctx, "Invocations", 1, dims)
 	m.emitMetric(ctx, "Duration", 1.0, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
 
-	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+	return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
+}
+
+// resolveQualifier resolves an Invoke Qualifier (empty, "$LATEST", a numeric
+// published version, or an alias name) to the concrete version that should be
+// reported as ExecutedVersion, matching real Lambda's alias-resolution
+// semantics: an alias resolves one hop to its target FunctionVersion (aliases
+// can't point to other aliases); a version qualifier must name a version that
+// was actually published. An unknown qualifier is a ResourceNotFoundException,
+// the same error AWS returns for an alias or version that doesn't exist.
+func (m *Mock) resolveQualifier(fd *funcData, qualifier string) (string, error) {
+	if qualifier == "" || qualifier == latestVersion {
+		return latestVersion, nil
+	}
+
+	if ad, ok := fd.aliases.Get(qualifier); ok {
+		return ad.alias.FunctionVersion, nil
+	}
+
+	if m.versionExists(fd, qualifier) {
+		return qualifier, nil
+	}
+
+	return "", cerrors.Newf(cerrors.NotFound, "function version/alias not found for %s", qualifier)
+}
+
+// InvokeExternal asynchronously invokes the function identified by its ARN with
+// the given event payload. It backs cross-service event delivery (e.g. S3 ->
+// Lambda notifications, DynamoDB Streams / SQS event source mappings). An
+// unknown function is a no-op so a stale target never fails the caller. A
+// handler that runs but raises (StatusCode 500 / a non-empty FunctionError,
+// exactly as Invoke reports it — see invoke's X-Amz-Function-Error semantics)
+// is surfaced here as a genuine error, unlike Invoke itself: callers that only
+// care whether delivery succeeded (S3, DynamoDB Streams) already discard
+// InvokeExternal's error, while a caller that must react to handler failure
+// (SQS: delete the message on success, leave it for redrive on failure) can.
+//
+// It is also the single choke point every such delivery path funnels through,
+// so it carries the recursive-loop guard: a mapped/notified handler commonly
+// writes back into its own event source (mark-processed, audit-append,
+// status-bump), which re-enters here through the same synchronous call chain
+// (write -> deliver -> Invoke -> handler -> write -> ...). Left unbounded that
+// recurses the process into an unrecoverable "fatal error: stack overflow".
+// ctx carries the re-entrant delivery depth (see internal/recursionguard);
+// once it reaches recursionguard.MaxDepth — matching AWS Lambda's own
+// recursive-loop detection, which stops invoking a function after ~16
+// invocations within one chain of requests (see
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-recursion.html) —
+// further delivery is dropped instead of recursing.
+func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload []byte) error {
+	name := functionNameFromARN(functionARN)
+	if _, ok := m.funcs.Get(name); !ok {
+		return nil
+	}
+
+	depth := recursionguard.Depth(ctx)
+	if depth >= recursionguard.MaxDepth {
+		return nil
+	}
+
+	ctx = recursionguard.WithDepth(ctx, depth+1)
+
+	out, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: name, Payload: payload, InvokeType: "Event"})
+	if err != nil {
+		return err
+	}
+
+	if out != nil && out.Error != "" {
+		return cerrors.Newf(cerrors.Internal, "function %s returned an error: %s", name, out.Error)
+	}
+
+	return nil
+}
+
+// functionNameFromARN extracts the function name from a Lambda ARN
+// (arn:aws:lambda:region:account:function:name[:qualifier]); a bare name is
+// returned unchanged.
+func functionNameFromARN(arn string) string {
+	const marker = ":function:"
+
+	i := strings.Index(arn, marker)
+	if i < 0 {
+		return arn
+	}
+
+	name := arn[i+len(marker):]
+	if j := strings.IndexByte(name, ':'); j >= 0 { // strip a version/alias qualifier
+		name = name[:j]
+	}
+
+	return name
 }
 
 // invokeEngine runs a function whose code was deployed to the configured
 // FunctionEngine and records the same metrics as a real handler invocation. A
 // handler that raised is reported via out.Error (HTTP stays 200), matching real
 // Lambda's X-Amz-Function-Error semantics.
-func (m *Mock) invokeEngine(ctx context.Context, input driver.InvokeInput, dims map[string]string) (*driver.InvokeOutput, error) {
+func (m *Mock) invokeEngine(
+	ctx context.Context, input driver.InvokeInput, dims map[string]string, executedVersion string,
+) (*driver.InvokeOutput, error) {
 	out, err := funcengine.Invoke(ctx, m.opts.FunctionEngine, input.FunctionName, input.Payload)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.Internal, "invoke function %s: %v", input.FunctionName, err)
 	}
+
+	out.ExecutedVersion = executedVersion
 
 	m.emitMetric(ctx, "Invocations", 1, dims)
 
@@ -303,6 +485,14 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 		info.Handler = cfg.Handler
 	}
 
+	if cfg.Role != "" {
+		info.Role = cfg.Role
+	}
+
+	if cfg.Description != "" {
+		info.Description = cfg.Description
+	}
+
 	if cfg.Memory != 0 {
 		info.Memory = cfg.Memory
 	}
@@ -320,9 +510,97 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 	}
 }
 
-func codeSHA(info *driver.FunctionInfo) string {
-	data := fmt.Sprintf("%s:%s:%s", info.Name, info.Handler, info.Runtime)
-	hash := sha256.Sum256([]byte(data))
+func cloneVPCConfig(v *driver.VPCConfig) *driver.VPCConfig {
+	if v == nil {
+		return nil
+	}
 
-	return fmt.Sprintf("%x", hash)
+	out := &driver.VPCConfig{VpcID: v.VpcID}
+	out.SubnetIDs = append([]string(nil), v.SubnetIDs...)
+	out.SecurityGroupIDs = append([]string(nil), v.SecurityGroupIDs...)
+
+	return out
+}
+
+func cloneDeadLetterConfig(d *driver.DeadLetterConfig) *driver.DeadLetterConfig {
+	if d == nil {
+		return nil
+	}
+
+	out := *d
+
+	return &out
+}
+
+func cloneTracingConfig(t *driver.TracingConfig) *driver.TracingConfig {
+	if t == nil {
+		return nil
+	}
+
+	out := *t
+
+	return &out
+}
+
+func cloneArchitectures(a []string) []string {
+	if a == nil {
+		return nil
+	}
+
+	return append([]string(nil), a...)
+}
+
+func cloneEphemeralStorage(e *driver.EphemeralStorage) *driver.EphemeralStorage {
+	if e == nil {
+		return nil
+	}
+
+	out := *e
+
+	return &out
+}
+
+func cloneLayers(l []driver.FunctionLayer) []driver.FunctionLayer {
+	if l == nil {
+		return nil
+	}
+
+	return append([]driver.FunctionLayer(nil), l...)
+}
+
+// tracingConfigOrDefault returns a copy of t, or the AWS default
+// {Mode: "PassThrough"} when the client supplied no tracing configuration.
+func tracingConfigOrDefault(t *driver.TracingConfig) *driver.TracingConfig {
+	if t == nil || t.Mode == "" {
+		return &driver.TracingConfig{Mode: tracingModePassThrough}
+	}
+
+	return cloneTracingConfig(t)
+}
+
+// codeHash returns the base64-encoded SHA-256 of the deployment package, the
+// same CodeSha256 shape real Lambda returns and Terraform compares against its
+// locally computed source_code_hash.
+func codeHash(code []byte) string {
+	hash := sha256.Sum256(code)
+
+	return base64.StdEncoding.EncodeToString(hash[:])
+}
+
+// newRevisionID mints a random UUID-shaped revision identifier. Lambda changes
+// the RevisionId on every configuration or code mutation.
+func newRevisionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failure is not expected; fall back to a zero-value UUID so
+		// callers still get a well-formed (if non-unique) revision id.
+		return "00000000-0000-4000-8000-000000000000"
+	}
+
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+
+	h := hex.EncodeToString(b[:])
+
+	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
 }

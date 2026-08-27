@@ -138,12 +138,10 @@ func TestSDKRoute53RecordSets(t *testing.T) {
 		t.Fatalf("ListResourceRecordSets: %v", err)
 	}
 
-	if len(sets.ResourceRecordSets) != 1 {
-		t.Fatalf("got %d record sets, want 1: %+v", len(sets.ResourceRecordSets), sets.ResourceRecordSets)
-	}
-
-	rr := sets.ResourceRecordSets[0]
-	if aws.ToString(rr.Name) != "www.records.com." || rr.Type != r53types.RRTypeA || aws.ToInt64(rr.TTL) != 300 {
+	// The zone is born with its SOA and NS records (like real Route 53), so
+	// filter to the A record under test rather than expecting a single set.
+	rr := findRecordSet(t, sets.ResourceRecordSets, "www.records.com.", r53types.RRTypeA)
+	if aws.ToInt64(rr.TTL) != 300 {
 		t.Fatalf("record set = %+v, want www.records.com. A 300", rr)
 	}
 
@@ -177,8 +175,8 @@ func TestSDKRoute53RecordSets(t *testing.T) {
 		t.Fatalf("ListResourceRecordSets after upsert: %v", err)
 	}
 
-	if len(sets.ResourceRecordSets) != 1 || aws.ToInt64(sets.ResourceRecordSets[0].TTL) != 600 {
-		t.Fatalf("after upsert = %+v, want single record TTL 600", sets.ResourceRecordSets)
+	if up := findRecordSet(t, sets.ResourceRecordSets, "www.records.com.", r53types.RRTypeA); aws.ToInt64(up.TTL) != 600 {
+		t.Fatalf("after upsert = %+v, want record TTL 600", up)
 	}
 
 	// DELETE removes the record.
@@ -207,9 +205,31 @@ func TestSDKRoute53RecordSets(t *testing.T) {
 		t.Fatalf("ListResourceRecordSets after delete: %v", err)
 	}
 
-	if len(sets.ResourceRecordSets) != 0 {
-		t.Fatalf("got %d record sets after delete, want 0: %+v", len(sets.ResourceRecordSets), sets.ResourceRecordSets)
+	// The A record is gone; the zone's own SOA and NS records remain.
+	for i := range sets.ResourceRecordSets {
+		if aws.ToString(sets.ResourceRecordSets[i].Name) == "www.records.com." &&
+			sets.ResourceRecordSets[i].Type == r53types.RRTypeA {
+			t.Fatalf("A record still present after delete: %+v", sets.ResourceRecordSets[i])
+		}
 	}
+}
+
+// findRecordSet returns the record set with the given name and type, failing the
+// test if it is absent.
+func findRecordSet(
+	t *testing.T, sets []r53types.ResourceRecordSet, name string, rtype r53types.RRType,
+) r53types.ResourceRecordSet {
+	t.Helper()
+
+	for i := range sets {
+		if aws.ToString(sets[i].Name) == name && sets[i].Type == rtype {
+			return sets[i]
+		}
+	}
+
+	t.Fatalf("record set %s %s not found in %+v", name, rtype, sets)
+
+	return r53types.ResourceRecordSet{}
 }
 
 func TestSDKRoute53Errors(t *testing.T) {
@@ -237,8 +257,12 @@ func TestSDKRoute53Errors(t *testing.T) {
 			}},
 		},
 	})
-	if err == nil {
-		t.Fatal("ChangeResourceRecordSets(missing zone): want error, got nil")
+
+	// A change against a missing zone is NoSuchHostedZone (404), not the
+	// batch-level InvalidChangeBatch (400) — asserting only err != nil would mask
+	// the wrong code.
+	if !errors.As(err, &notFound) {
+		t.Fatalf("ChangeResourceRecordSets(missing zone): got %v, want NoSuchHostedZone", err)
 	}
 
 	// A record-level conflict on an existing zone must surface as

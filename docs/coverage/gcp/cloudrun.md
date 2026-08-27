@@ -3,16 +3,26 @@
 
 GCP's `cloudrun` service · portable interface `driver.CloudRun` · [GCP index](./README.md)
 
-## Operations (6)
+## Operations (16)
 
 | Operation | Description |
 | --- | --- |
 | `CreateJob` | CreateJob stores a job spec. It does not run anything — RunJob does. |
+| `CreateService` | CreateService stores a service spec and materializes its first Revision, |
 | `DeleteJob` | DeleteJob removes a job and stops any container workloads its executions |
+| `DeleteRevision` | DeleteRevision removes a single revision of a service. |
+| `DeleteService` | DeleteService removes a service and its revisions. |
 | `GetExecution` | GetExecution returns an execution by name (bare execution id or a fully |
 | `GetJob` | GetJob returns a job by name. name may be the bare job id or a fully |
+| `GetRevision` | GetRevision returns a revision by name (bare revision id or a fully |
+| `GetService` | GetService returns a service by name (bare service id or a fully |
+| `ListExecutions` | ListExecutions returns every stored execution of the named job. |
 | `ListJobs` | ListJobs returns every stored job. |
+| `ListRevisions` | ListRevisions returns every stored revision of the named service. |
+| `ListServices` | ListServices returns every stored service. |
 | `RunJob` | RunJob creates and runs one Execution of the named job, blocking until |
+| `UpdateJob` | UpdateJob applies an in-place update to an existing job, bumping its |
+| `UpdateService` | UpdateService applies an in-place update, materializing a new Revision |
 
 ## Not in scope
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -23,6 +24,19 @@ func createTestVPC(m *Mock) *driver.VPCInfo {
 	return info
 }
 
+// attachTestIGW creates an internet gateway attached to vpcID and returns its id,
+// for tests that need a real route target (CreateRoute validates target existence).
+func attachTestIGW(t *testing.T, m *Mock, vpcID string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	requireNoError(t, err)
+	requireNoError(t, m.AttachInternetGateway(ctx, igw.ID, vpcID))
+
+	return igw.ID
+}
+
 func TestCreateVPC(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -30,7 +44,13 @@ func TestCreateVPC(t *testing.T) {
 		expectErr bool
 	}{
 		{name: "success", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/16"}},
+		{name: "smallest valid /28", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/28"}},
 		{name: "empty CIDR", cfg: driver.VPCConfig{}, expectErr: true},
+		{name: "malformed CIDR", cfg: driver.VPCConfig{CIDRBlock: "not-a-cidr"}, expectErr: true},
+		{name: "octet out of range", cfg: driver.VPCConfig{CIDRBlock: "300.0.0.0/16"}, expectErr: true},
+		{name: "prefix out of range", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/33"}, expectErr: true},
+		{name: "netmask too broad", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/8"}, expectErr: true},
+		{name: "netmask too narrow", cfg: driver.VPCConfig{CIDRBlock: "10.0.0.0/29"}, expectErr: true},
 	}
 
 	for _, tc := range tests {
@@ -44,8 +64,46 @@ func TestCreateVPC(t *testing.T) {
 			}
 
 			assertNotEmpty(t, info.ID)
-			assertEqual(t, "10.0.0.0/16", info.CIDRBlock)
+			assertEqual(t, tc.cfg.CIDRBlock, info.CIDRBlock)
 			assertEqual(t, "available", info.State)
+		})
+	}
+}
+
+func TestCreateVPCInstanceTenancy(t *testing.T) {
+	tests := []struct {
+		name      string
+		tenancy   string
+		want      string
+		expectErr bool
+	}{
+		{name: "unset defaults to default", tenancy: "", want: "default"},
+		{name: "explicit default", tenancy: "default", want: "default"},
+		{name: "dedicated round-trips", tenancy: "dedicated", want: "dedicated"},
+		{name: "host rejected on create", tenancy: "host", expectErr: true},
+		{name: "bogus rejected", tenancy: "bogus", expectErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestMock()
+			ctx := context.Background()
+
+			info, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16", InstanceTenancy: tc.tenancy})
+			assertError(t, err, tc.expectErr)
+
+			if tc.expectErr {
+				if !cerrors.IsInvalidArgument(err) {
+					t.Fatalf("error = %v, want InvalidArgument", err)
+				}
+				return
+			}
+
+			assertEqual(t, tc.want, info.InstanceTenancy)
+
+			vpcs, derr := m.DescribeVPCs(ctx, []string{info.ID})
+			requireNoError(t, derr)
+			assertEqual(t, tc.want, vpcs[0].InstanceTenancy)
 		})
 	}
 }
@@ -156,6 +214,11 @@ func TestDescribeSubnets(t *testing.T) {
 		requireNoError(t, err)
 		assertEqual(t, 1, len(subnets))
 	})
+
+	t.Run("unknown ID", func(t *testing.T) {
+		_, err := m.DescribeSubnets(ctx, []string{"subnet-nope"})
+		assertError(t, err, true)
+	})
 }
 
 func TestCreateSecurityGroup(t *testing.T) {
@@ -207,6 +270,185 @@ func TestDeleteSecurityGroup(t *testing.T) {
 	assertError(t, m.DeleteSecurityGroup(context.Background(), "sg-nope"), true)
 }
 
+// defaultSG returns the auto-created "default" security group for a VPC.
+func defaultSG(t *testing.T, m *Mock, vpcID string) driver.SecurityGroupInfo {
+	t.Helper()
+
+	sgs, err := m.DescribeSecurityGroups(context.Background(), nil)
+	requireNoError(t, err)
+
+	for _, sg := range sgs {
+		if sg.VPCID == vpcID && sg.Name == defaultSGName {
+			return sg
+		}
+	}
+
+	t.Fatalf("vpc %s has no default security group: %+v", vpcID, sgs)
+
+	return driver.SecurityGroupInfo{}
+}
+
+// TestCreateVPCCreatesDefaultSecurityGroup pins the group EC2 auto-creates with
+// every VPC: name "default", allow-all egress, and a self-referencing ingress
+// rule permitting all traffic between members of the group (no CIDR ingress).
+func TestCreateVPCCreatesDefaultSecurityGroup(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	sgs, err := m.DescribeSecurityGroups(ctx, nil)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(sgs))
+
+	sg := defaultSG(t, m, v.ID)
+	assertEqual(t, defaultSGName, sg.Name)
+	assertEqual(t, "default VPC security group", sg.Description)
+	assertEqual(t, v.ID, sg.VPCID)
+
+	assertEqual(t, 1, len(sg.EgressRules))
+	assertEqual(t, "-1", sg.EgressRules[0].Protocol)
+	assertEqual(t, "0.0.0.0/0", sg.EgressRules[0].CIDR)
+
+	assertEqual(t, 1, len(sg.IngressRules))
+	assertEqual(t, "-1", sg.IngressRules[0].Protocol)
+	assertEqual(t, "", sg.IngressRules[0].CIDR)
+	assertEqual(t, sg.ID, sg.IngressRules[0].ReferencedGroupID)
+}
+
+// TestDefaultSecurityGroupCannotBeDeleted pins Client.CannotDelete semantics:
+// the default group refuses a direct delete with FailedPrecondition.
+func TestDefaultSecurityGroupCannotBeDeleted(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	sg := defaultSG(t, m, v.ID)
+
+	err := m.DeleteSecurityGroup(ctx, sg.ID)
+	assertError(t, err, true)
+
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("want FailedPrecondition, got %v", err)
+	}
+}
+
+// TestDeleteVPCRemovesDefaultSecurityGroup pins the cascade: the default group
+// disappears with the VPC rather than stranding an undeletable row.
+func TestDeleteVPCRemovesDefaultSecurityGroup(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	requireNoError(t, m.DeleteVPC(ctx, v.ID))
+
+	sgs, err := m.DescribeSecurityGroups(ctx, nil)
+	requireNoError(t, err)
+	assertEqual(t, 0, len(sgs))
+}
+
+// TestDeleteVPCBlocksOnDependencies walks the resource types real EC2 refuses to
+// delete a VPC around: each one blocks with DependencyViolation, and removing it
+// lets the delete proceed. The auto-created default SG never blocks.
+func TestDeleteVPCBlocksOnDependencies(t *testing.T) {
+	ctx := context.Background()
+
+	assertBlocks := func(t *testing.T, m *Mock, vpcID string) {
+		t.Helper()
+
+		err := m.DeleteVPC(ctx, vpcID)
+		assertError(t, err, true)
+
+		if !cerrors.IsFailedPrecondition(err) {
+			t.Fatalf("want FailedPrecondition (DependencyViolation), got %v", err)
+		}
+	}
+
+	t.Run("subnet", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		sub, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteSubnet(ctx, sub.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("non-default security group", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		sg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "app", VPCID: v.ID})
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteSecurityGroup(ctx, sg.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("non-main route table", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		rt, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteRouteTable(ctx, rt.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("network ACL", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		acl, err := m.CreateNetworkACL(ctx, v.ID, nil)
+		requireNoError(t, err)
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DeleteNetworkACL(ctx, acl.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+
+	t.Run("attached internet gateway", func(t *testing.T) {
+		m := newTestMock()
+		v := createTestVPC(m)
+
+		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+		requireNoError(t, err)
+		requireNoError(t, m.AttachInternetGateway(ctx, igw.ID, v.ID))
+
+		assertBlocks(t, m, v.ID)
+		requireNoError(t, m.DetachInternetGateway(ctx, igw.ID, v.ID))
+		requireNoError(t, m.DeleteVPC(ctx, v.ID))
+	})
+}
+
+// TestDeleteVPCNotBlockedByActivePeering pins the real-EC2 rule that an active
+// peering connection is deleted alongside the VPC and never blocks the delete.
+func TestDeleteVPCNotBlockedByActivePeering(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	a := createTestVPC(m)
+
+	b, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.1.0.0/16"})
+	requireNoError(t, err)
+
+	p, err := m.CreatePeeringConnection(ctx, driver.PeeringConfig{RequesterVPC: a.ID, AccepterVPC: b.ID})
+	requireNoError(t, err)
+	requireNoError(t, m.AcceptPeeringConnection(ctx, p.ID))
+
+	// The active peering does not block the delete; it transitions to deleted.
+	requireNoError(t, m.DeleteVPC(ctx, a.ID))
+
+	peers, err := m.DescribePeeringConnections(ctx, []string{p.ID})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(peers))
+	assertEqual(t, PeeringStatusDeleted, peers[0].Status)
+}
+
 func TestDescribeSecurityGroups(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -217,7 +459,8 @@ func TestDescribeSecurityGroups(t *testing.T) {
 	t.Run("all", func(t *testing.T) {
 		sgs, err := m.DescribeSecurityGroups(ctx, nil)
 		requireNoError(t, err)
-		assertEqual(t, 2, len(sgs))
+		// sg1 + sg2 + the VPC's auto-created default security group.
+		assertEqual(t, 3, len(sgs))
 	})
 
 	t.Run("by ID", func(t *testing.T) {
@@ -462,13 +705,47 @@ func TestCreateNATGateway(t *testing.T) {
 	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
 
 	t.Run("success", func(t *testing.T) {
-		nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		requireNoError(t, err)
+
+		nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, AllocationID: eip.AllocationID})
 		requireNoError(t, err)
 		assertNotEmpty(t, nat.ID)
 		assertEqual(t, s.ID, nat.SubnetID)
 		assertEqual(t, v.ID, nat.VPCID)
 		assertEqual(t, "available", nat.State)
-		assertNotEmpty(t, nat.PublicIP)
+		// A public NAT gateway reflects its Elastic IP's public address, not a
+		// fabricated one.
+		assertEqual(t, eip.PublicIP, nat.PublicIP)
+		assertEqual(t, eip.AllocationID, nat.AllocationID)
+	})
+
+	t.Run("public without allocation rejected", func(t *testing.T) {
+		_, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+		assertError(t, err, true)
+	})
+
+	t.Run("public with unknown allocation rejected", func(t *testing.T) {
+		_, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, AllocationID: "eipalloc-nope"})
+		assertError(t, err, true)
+	})
+
+	t.Run("private without allocation succeeds", func(t *testing.T) {
+		nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
+		requireNoError(t, err)
+		assertEqual(t, "private", nat.ConnectivityType)
+		// A private NAT gateway has no public IP.
+		assertEqual(t, "", nat.PublicIP)
+	})
+
+	t.Run("private with allocation rejected", func(t *testing.T) {
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		requireNoError(t, err)
+
+		_, err = m.CreateNATGateway(ctx, driver.NATGatewayConfig{
+			SubnetID: s.ID, ConnectivityType: "private", AllocationID: eip.AllocationID,
+		})
+		assertError(t, err, true)
 	})
 
 	t.Run("empty subnet ID", func(t *testing.T) {
@@ -487,7 +764,7 @@ func TestDeleteNATGateway(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
-	nat, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+	nat, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
 
 	t.Run("success", func(t *testing.T) {
 		err := m.DeleteNATGateway(ctx, nat.ID)
@@ -505,8 +782,8 @@ func TestDescribeNATGateways(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
-	nat1, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
-	_, _ = m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID})
+	nat1, _ := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
+	_, _ = m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s.ID, ConnectivityType: "private"})
 
 	t.Run("all", func(t *testing.T) {
 		nats, err := m.DescribeNATGateways(ctx, nil)
@@ -519,6 +796,11 @@ func TestDescribeNATGateways(t *testing.T) {
 		requireNoError(t, err)
 		assertEqual(t, 1, len(nats))
 		assertEqual(t, nat1.ID, nats[0].ID)
+	})
+
+	t.Run("unknown ID", func(t *testing.T) {
+		_, err := m.DescribeNATGateways(ctx, []string{"nat-nope"})
+		assertError(t, err, true)
 	})
 }
 
@@ -660,6 +942,11 @@ func TestCreateRouteTable(t *testing.T) {
 		_, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: "vpc-nope"})
 		assertError(t, err, true)
 	})
+
+	t.Run("describe unknown ID", func(t *testing.T) {
+		_, err := m.DescribeRouteTables(ctx, []string{"rtb-nope"})
+		assertError(t, err, true)
+	})
 }
 
 func TestCreateRoute(t *testing.T) {
@@ -667,9 +954,10 @@ func TestCreateRoute(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	rt, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+	igwID := attachTestIGW(t, m, v.ID)
 
 	t.Run("add route", func(t *testing.T) {
-		err := m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+		err := m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igwID, "gateway")
 		requireNoError(t, err)
 
 		rts, _ := m.DescribeRouteTables(ctx, []string{rt.ID})
@@ -692,7 +980,8 @@ func TestDeleteRoute(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	rt, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
-	_ = m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+	igwID := attachTestIGW(t, m, v.ID)
+	requireNoError(t, m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igwID, "gateway"))
 
 	t.Run("delete existing route", func(t *testing.T) {
 		err := m.DeleteRoute(ctx, rt.ID, "0.0.0.0/0")
@@ -741,8 +1030,15 @@ func TestCreateNetworkACL(t *testing.T) {
 		assertNotEmpty(t, acl.ID)
 		assertEqual(t, v.ID, acl.VPCID)
 		assertEqual(t, false, acl.IsDefault)
-		// Should have 2 default rules (ingress + egress allow-all).
+		// A fresh custom ACL carries only the two unmodifiable catch-all '*'
+		// DENY entries (rule 32767, ingress + egress) — it denies all traffic
+		// until the caller adds a numbered allow rule, matching real EC2.
 		assertEqual(t, 2, len(acl.Rules))
+		for _, r := range acl.Rules {
+			assertEqual(t, defaultDenyRuleNumber, r.RuleNumber)
+			assertEqual(t, actionDeny, r.Action)
+			assertEqual(t, allTrafficCIDR, r.CIDR)
+		}
 	})
 
 	t.Run("empty VPC ID", func(t *testing.T) {
@@ -763,7 +1059,8 @@ func TestAddNetworkACLRule(t *testing.T) {
 	acl, _ := m.CreateNetworkACL(ctx, v.ID, nil)
 
 	t.Run("add rule and verify ordering", func(t *testing.T) {
-		// Add a rule with lower number than default (100).
+		// A fresh custom ACL has the two '*' deny rules; adding rule 50 makes
+		// three, and 50 sorts ahead of the 32767 catch-alls.
 		err := m.AddNetworkACLRule(ctx, acl.ID, &driver.NetworkACLRule{
 			RuleNumber: 50,
 			Protocol:   "tcp",
@@ -795,14 +1092,23 @@ func TestRemoveNetworkACLRule(t *testing.T) {
 	v := createTestVPC(m)
 	acl, _ := m.CreateNetworkACL(ctx, v.ID, nil)
 
-	t.Run("remove default ingress rule", func(t *testing.T) {
-		err := m.RemoveNetworkACLRule(ctx, acl.ID, 100, false)
+	t.Run("remove an added rule", func(t *testing.T) {
+		// A fresh custom ACL has only the two '*' deny rules, so add a numbered
+		// ingress rule and then remove it, leaving the two catch-alls.
+		err := m.AddNetworkACLRule(ctx, acl.ID, &driver.NetworkACLRule{
+			RuleNumber: 100, Protocol: "-1", Action: "allow", CIDR: "0.0.0.0/0", Egress: false,
+		})
+		requireNoError(t, err)
+
+		err = m.RemoveNetworkACLRule(ctx, acl.ID, 100, false)
 		requireNoError(t, err)
 
 		acls, _ := m.DescribeNetworkACLs(ctx, []string{acl.ID})
-		assertEqual(t, 1, len(acls[0].Rules))
-		// Only egress rule remains.
-		assertEqual(t, true, acls[0].Rules[0].Egress)
+		assertEqual(t, 2, len(acls[0].Rules))
+		// The two unmodifiable 32767 '*' deny entries remain.
+		for _, r := range acls[0].Rules {
+			assertEqual(t, defaultDenyRuleNumber, r.RuleNumber)
+		}
 	})
 
 	t.Run("remove nonexistent rule", func(t *testing.T) {
@@ -914,9 +1220,8 @@ func TestInternetGateway(t *testing.T) {
 	})
 
 	t.Run("describe nonexistent ID", func(t *testing.T) {
-		igws, err := m.DescribeInternetGateways(ctx, []string{"igw-nope"})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(igws))
+		_, err := m.DescribeInternetGateways(ctx, []string{"igw-nope"})
+		assertError(t, err, true)
 	})
 }
 
@@ -941,7 +1246,7 @@ func TestElasticIP(t *testing.T) {
 
 	t.Run("associate address", func(t *testing.T) {
 		eips, _ := m.DescribeAddresses(ctx, nil)
-		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, driver.AssociateAddressInput{InstanceID: "i-12345"})
 		requireNoError(t, err)
 		assertNotEmpty(t, assocID)
 
@@ -976,7 +1281,7 @@ func TestElasticIP(t *testing.T) {
 	})
 
 	t.Run("associate nonexistent allocation", func(t *testing.T) {
-		_, err := m.AssociateAddress(ctx, "eipalloc-nope", "i-12345")
+		_, err := m.AssociateAddress(ctx, "eipalloc-nope", driver.AssociateAddressInput{InstanceID: "i-12345"})
 		assertError(t, err, true)
 	})
 
@@ -997,6 +1302,47 @@ func TestElasticIP(t *testing.T) {
 		eips, err := m.DescribeAddresses(ctx, []string{"eipalloc-nope"})
 		requireNoError(t, err)
 		assertEqual(t, 0, len(eips))
+	})
+}
+
+func TestAssociateAddressNetworkInterface(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+	sub, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+	eni, _ := m.CreateNetworkInterface(ctx, sub.ID, "test", nil, nil)
+	eip, _ := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+
+	t.Run("bind to ENI with private IP", func(t *testing.T) {
+		assocID, err := m.AssociateAddress(ctx, eip.AllocationID, driver.AssociateAddressInput{
+			NetworkInterfaceID: eni.ID,
+			PrivateIP:          "10.0.1.55",
+		})
+		requireNoError(t, err)
+		assertNotEmpty(t, assocID)
+
+		eips, _ := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		assertEqual(t, 1, len(eips))
+		assertEqual(t, eni.ID, eips[0].NetworkInterfaceID)
+		assertEqual(t, "10.0.1.55", eips[0].PrivateIP)
+	})
+
+	t.Run("disassociate clears ENI fields", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		err := m.DisassociateAddress(ctx, eips[0].AssociationID)
+		requireNoError(t, err)
+
+		eips, _ = m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		assertEqual(t, "", eips[0].NetworkInterfaceID)
+		assertEqual(t, "", eips[0].PrivateIP)
+	})
+
+	t.Run("unknown ENI is not found", func(t *testing.T) {
+		eip2, _ := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		_, err := m.AssociateAddress(ctx, eip2.AllocationID, driver.AssociateAddressInput{
+			NetworkInterfaceID: "eni-nope",
+		})
+		assertError(t, err, true)
 	})
 }
 

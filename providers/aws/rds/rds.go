@@ -9,13 +9,17 @@ package rds
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -32,6 +36,21 @@ const (
 	cpuMetricRunning     = 25.0
 	connectionsRunning   = 5.0
 	cpuMetricStopped     = 0.0
+)
+
+// Defaults RDS applies to a new DBInstance/DBCluster that real AWS reports on
+// read even when the caller did not set them.
+const (
+	defaultBackupRetention   = 1
+	defaultCACertIdentifier  = "rds-ca-rsa2048-g1"
+	defaultBackupWindow      = "07:00-07:30" //nolint:gosec // a maintenance-window time range, not a credential.
+	defaultMaintenanceWindow = "sun:05:00-sun:05:30"
+	defaultEngineMode        = "provisioned"
+	auroraAllocatedStorage   = 1
+	resourceIDLen            = 20
+	// defaultKMSKeyAlias is the account-default RDS KMS key real AWS fills in
+	// when StorageEncrypted is set but no KmsKeyId is supplied.
+	defaultKMSKeyAlias = "alias/aws/rds"
 )
 
 // Metric namespaces for engines that share the RDS wire protocol but emit
@@ -83,12 +102,26 @@ type Mock struct {
 	// mu) so its member instances can provision the cluster's shared database.
 	clusterCreds map[string]clusterCred
 
+	// groupTags holds the tags for parameter/option/subnet groups, keyed by ARN
+	// (guarded by mu). Those resources are taggable in real AWS but carry no tag
+	// field on their records, so the tagging layer tracks them here rather than
+	// answering 404 for a valid group ARN.
+	groupTags map[string]map[string]string
+
 	// rootPasswords remembers each standalone instance's master password (guarded
 	// by mu) so a snapshot restore can re-provision a reachable database with the
 	// original credentials, and a password rotation can be replayed. The emulator
 	// enforces no auth, so this is local state, not a secret store; it is never
 	// logged.
 	rootPasswords map[string]string
+
+	// instSettle / snapSettle overlay a "creating"/"rebooting" window over an
+	// instance's or snapshot's stored (available) State on the Describe surface,
+	// keyed by id and guarded by mu. They live beside the stores rather than on
+	// the shared rdsdriver structs (which Azure flexible-server/SQL also use),
+	// keeping settling AWS-internal. Absent = report the stored State directly.
+	instSettle map[string]settle.Window
+	snapSettle map[string]settle.Window
 
 	opts           *config.Options
 	subnetResolver SubnetResolver
@@ -111,9 +144,32 @@ func New(opts *config.Options) *Mock {
 		clusterEndpoints:   memstore.New[rdsdriver.ClusterEndpoint](),
 		globalClusters:     memstore.New[rdsdriver.GlobalCluster](),
 		clusterCreds:       map[string]clusterCred{},
+		groupTags:          map[string]map[string]string{},
 		rootPasswords:      map[string]string{},
+		instSettle:         map[string]settle.Window{},
+		snapSettle:         map[string]settle.Window{},
 		opts:               opts,
 	}
+}
+
+// settleInstanceState overlays the instance's settle window (if any) onto its
+// stored final state. The caller must hold at least m.mu.RLock.
+func (m *Mock) settleInstanceState(id, final string) string {
+	if w, ok := m.instSettle[id]; ok {
+		return w.Observe(m.opts.Clock.Now(), final)
+	}
+
+	return final
+}
+
+// settleSnapshotState overlays the snapshot's settle window (if any) onto its
+// stored final state. The caller must hold at least m.mu.RLock.
+func (m *Mock) settleSnapshotState(id, final string) string {
+	if w, ok := m.snapSettle[id]; ok {
+		return w.Observe(m.opts.Clock.Now(), final)
+	}
+
+	return final
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.
@@ -189,8 +245,28 @@ func instanceARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "db:"+id)
 }
 
+// resourceID derives a stable, region-unique RDS resource id (e.g.
+// "db-ABCDEF...", "cluster-ABCDEF...") from a prefix and the resource id. Real
+// AWS assigns an opaque immutable id; a deterministic hash keeps it stable
+// across Describe calls without persisting a random value.
+func resourceID(prefix, id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return prefix + strings.ToUpper(hex.EncodeToString(sum[:])[:resourceIDLen])
+}
+
 func clusterARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "cluster:"+id)
+}
+
+// availabilityZones synthesizes the three AZ names AWS spreads an Aurora
+// cluster across (region + a/b/c), matching the DBCluster AvailabilityZones
+// array real RDS returns.
+func availabilityZones(region string) []string {
+	if region == "" {
+		return nil
+	}
+
+	return []string{region + "a", region + "b", region + "c"}
 }
 
 func snapshotARN(region, accountID, id string) string {
@@ -229,6 +305,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Tags = copyTags(c.Tags)
 	c.Members = cloneSlice(c.Members)
 	c.VPCSecurityGroups = cloneSlice(c.VPCSecurityGroups)
+	c.AvailabilityZones = cloneSlice(c.AvailabilityZones)
 
 	return c
 }
@@ -273,6 +350,14 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		return nil, cerrors.New(cerrors.InvalidArgument, "Engine is required")
 	}
 
+	if err := validateEngine(cfg.Engine); err != nil {
+		return nil, err
+	}
+
+	if err := validateInstanceClass(cfg.InstanceClass); err != nil {
+		return nil, err
+	}
+
 	inst, plan, err := m.reserveInstance(cfg)
 	if err != nil {
 		return nil, err
@@ -286,6 +371,10 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 	out := m.finalizeInstance(cfg.ID, cfg.ClusterID, inst, plan)
 
 	m.emitInstanceMetrics(cfg.ID, cfg.Engine, cpuMetricRunning, connectionsRunning)
+
+	m.mu.RLock()
+	out.State = m.settleInstanceState(cfg.ID, out.State)
+	m.mu.RUnlock()
 
 	return &out, nil
 }
@@ -311,6 +400,8 @@ func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance
 
 	inst := m.newInstance(cfg)
 	m.instances.Set(cfg.ID, inst)
+	m.instSettle[cfg.ID] = settle.Pending(rdsdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBInstanceSettle))
 	m.rootPasswords[cfg.ID] = cfg.MasterUserPassword
 
 	if cfg.ClusterID != "" {
@@ -347,30 +438,58 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		instanceClass = defaultInstanceClass
 	}
 
-	return rdsdriver.Instance{
-		ID:                   cfg.ID,
-		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:               cfg.Engine,
-		EngineVersion:        cfg.EngineVersion,
-		InstanceClass:        instanceClass,
-		AllocatedStorage:     storage,
-		StorageType:          storageType,
-		MasterUsername:       cfg.MasterUsername,
-		DBName:               cfg.DBName,
-		Endpoint:             endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
-		Port:                 port,
-		State:                rdsdriver.StateAvailable,
-		MultiAZ:              cfg.MultiAZ,
-		PubliclyAccessible:   cfg.PubliclyAccessible,
-		VPCSecurityGroups:    append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:      cfg.SubnetGroupName,
-		DBParameterGroupName: cfg.DBParameterGroupName,
-		OptionGroupName:      cfg.OptionGroupName,
-		ClusterID:            cfg.ClusterID,
-		AvailabilityZone:     cfg.AvailabilityZone,
-		CreatedAt:            m.opts.Clock.Now().UTC(),
-		Tags:                 copyTags(cfg.Tags),
+	engineVersion := cfg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(cfg.Engine)
 	}
+
+	return rdsdriver.Instance{
+		ID:                         cfg.ID,
+		ARN:                        instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:                     cfg.Engine,
+		EngineVersion:              engineVersion,
+		InstanceClass:              instanceClass,
+		AllocatedStorage:           storage,
+		StorageType:                storageType,
+		MasterUsername:             cfg.MasterUsername,
+		DBName:                     cfg.DBName,
+		Endpoint:                   endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
+		Port:                       port,
+		State:                      rdsdriver.StateAvailable,
+		MultiAZ:                    cfg.MultiAZ,
+		PubliclyAccessible:         cfg.PubliclyAccessible,
+		VPCSecurityGroups:          append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:            cfg.SubnetGroupName,
+		DBParameterGroupName:       cfg.DBParameterGroupName,
+		OptionGroupName:            cfg.OptionGroupName,
+		ClusterID:                  cfg.ClusterID,
+		AvailabilityZone:           cfg.AvailabilityZone,
+		DbiResourceID:              resourceID("db-", cfg.ID),
+		BackupRetentionPeriod:      defaultBackupRetention,
+		PreferredBackupWindow:      defaultBackupWindow,
+		PreferredMaintenanceWindow: defaultMaintenanceWindow,
+		CACertificateIdentifier:    defaultCACertIdentifier,
+		StorageEncrypted:           cfg.StorageEncrypted,
+		KmsKeyID:                   resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
+		DeletionProtection:         cfg.DeletionProtection,
+		CreatedAt:                  m.opts.Clock.Now().UTC(),
+		Tags:                       copyTags(cfg.Tags),
+	}
+}
+
+// resolveKMSKeyID mirrors real RDS: when storage is encrypted and the caller
+// supplied no KmsKeyId, the account's default RDS key is filled in; an explicit
+// key always wins, and an unencrypted resource carries no key.
+func resolveKMSKeyID(encrypted bool, kmsKeyID string) string {
+	if !encrypted {
+		return ""
+	}
+
+	if kmsKeyID == "" {
+		return defaultKMSKeyAlias
+	}
+
+	return kmsKeyID
 }
 
 // planProvision snapshots, under the caller's lock, what runCreateProvision needs
@@ -468,8 +587,6 @@ func (m *Mock) rollbackReserved(id, clusterID string) {
 }
 
 // DescribeInstances returns all instances if ids is empty, else only matching ones.
-//
-//nolint:dupl // structurally similar to DescribeClusters but operates on a different store/type.
 func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.Instance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -480,7 +597,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
-			out = append(out, cloneInstance(v))
+			c := cloneInstance(v)
+			c.State = m.settleInstanceState(c.ID, c.State)
+			out = append(out, c)
 		}
 
 		return out, nil
@@ -494,7 +613,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 		}
 
-		out = append(out, cloneInstance(inst))
+		c := cloneInstance(inst)
+		c.State = m.settleInstanceState(c.ID, c.State)
+		out = append(out, c)
 	}
 
 	return out, nil
@@ -514,12 +635,55 @@ func (m *Mock) ModifyInstance(
 		return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 	}
 
-	// Rotate the master password on the backing engine so the new credential
-	// actually authenticates.
-	if err := m.rotateEnginePassword(ctx, &inst, input.MasterUserPassword); err != nil {
+	// Reject an invalid DBInstanceClass before applying it, mirroring
+	// CreateInstance. An empty class leaves the current one untouched.
+	if err := validateInstanceClass(input.InstanceClass); err != nil {
 		return nil, err
 	}
 
+	// ApplyImmediately (default false) governs the deferrable resize/version/
+	// password/storage changes. When set they take effect now and clear any
+	// pending changes; otherwise they are recorded in PendingModifiedValues and
+	// the instance keeps its current values until the maintenance window.
+	if input.ApplyImmediately {
+		// Rotate the master password on the backing engine so the new credential
+		// actually authenticates.
+		if err := m.rotateEnginePassword(ctx, &inst, input.MasterUserPassword); err != nil {
+			return nil, err
+		}
+
+		applyDeferrableMods(&inst, &input)
+		inst.PendingModifiedValues = nil
+	} else {
+		inst.PendingModifiedValues = pendingModifiedValues(&inst, &input)
+	}
+
+	// Parameter/option groups, tags, backup/maintenance windows and deletion
+	// protection always apply immediately in real RDS, regardless of the flag.
+	applyImmediateMods(&inst, &input)
+
+	// A rename re-keys the store and rewrites the ARN + any replica references.
+	// Apply the scalar changes first so the renamed row carries them.
+	if renameRequested(id, &input) {
+		return m.renameInstance(id, input.NewInstanceID, inst)
+	}
+
+	m.instances.Set(id, inst)
+
+	out := inst
+
+	return &out, nil
+}
+
+// renameRequested reports whether the input asks to rename the instance to a
+// different identifier.
+func renameRequested(id string, input *rdsdriver.ModifyInstanceInput) bool {
+	return input.NewInstanceID != "" && input.NewInstanceID != id
+}
+
+// applyDeferrableMods applies the class/storage/version/MultiAZ changes real RDS
+// defers to the maintenance window unless ApplyImmediately is set.
+func applyDeferrableMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
 	if input.InstanceClass != "" {
 		inst.InstanceClass = input.InstanceClass
 	}
@@ -536,6 +700,23 @@ func (m *Mock) ModifyInstance(
 		inst.MultiAZ = *input.MultiAZ
 	}
 
+	if input.StorageType != "" {
+		inst.StorageType = input.StorageType
+	}
+
+	if input.BackupRetentionPeriod > 0 {
+		inst.BackupRetentionPeriod = input.BackupRetentionPeriod
+	}
+
+	if input.Iops > 0 {
+		inst.Iops = input.Iops
+	}
+}
+
+// applyImmediateMods applies the attributes real RDS honors right away on
+// ModifyDBInstance regardless of ApplyImmediately: parameter/option groups,
+// backup/maintenance windows, deletion protection and tags.
+func applyImmediateMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
 	if input.DBParameterGroupName != "" {
 		inst.DBParameterGroupName = input.DBParameterGroupName
 	}
@@ -544,11 +725,122 @@ func (m *Mock) ModifyInstance(
 		inst.OptionGroupName = input.OptionGroupName
 	}
 
+	if input.PreferredBackupWindow != "" {
+		inst.PreferredBackupWindow = input.PreferredBackupWindow
+	}
+
+	if input.PreferredMaintenanceWindow != "" {
+		inst.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
+	}
+
+	if input.DeletionProtection != nil {
+		inst.DeletionProtection = *input.DeletionProtection
+	}
+
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
 	}
+}
 
-	m.instances.Set(id, inst)
+// pendingModifiedValues computes the deferrable changes that differ from the
+// instance's current values, returning nil when nothing is pending. A pending
+// password change is recorded masked — the plaintext is never stored here.
+func pendingModifiedValues(
+	inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput,
+) *rdsdriver.PendingModifiedValues {
+	p := &rdsdriver.PendingModifiedValues{
+		InstanceClass:         pendingStr(inst.InstanceClass, input.InstanceClass),
+		AllocatedStorage:      pendingInt(inst.AllocatedStorage, input.AllocatedStorage),
+		EngineVersion:         pendingStr(inst.EngineVersion, input.EngineVersion),
+		BackupRetentionPeriod: pendingInt(inst.BackupRetentionPeriod, input.BackupRetentionPeriod),
+		MultiAZ:               pendingBool(inst.MultiAZ, input.MultiAZ),
+		Iops:                  pendingInt(inst.Iops, input.Iops),
+		StorageType:           pendingStr(inst.StorageType, input.StorageType),
+	}
+
+	if input.MasterUserPassword != "" {
+		p.MasterUserPassword = rdsdriver.MaskedPassword
+	}
+
+	if p.IsEmpty() {
+		return nil
+	}
+
+	return p
+}
+
+// pendingStr/pendingInt/pendingBool return the requested value only when it is
+// set and differs from the current one, so a no-op change is omitted from
+// PendingModifiedValues (matching real RDS).
+func pendingStr(cur, req string) string {
+	if req != "" && req != cur {
+		return req
+	}
+
+	return ""
+}
+
+func pendingInt(cur, req int) int {
+	if req > 0 && req != cur {
+		return req
+	}
+
+	return 0
+}
+
+func pendingBool(cur bool, req *bool) *bool {
+	if req != nil && *req != cur {
+		v := *req
+
+		return &v
+	}
+
+	return nil
+}
+
+// renameInstance re-keys an instance to newID under the caller's write lock:
+// it rewrites the ARN, moves the remembered root password, updates the
+// membership in any owning cluster, and fixes any replica source/target
+// back-references so nothing dangles. It returns AlreadyExists if newID is
+// taken.
+//
+//nolint:gocritic // inst is finalized and returned by value on purpose.
+func (m *Mock) renameInstance(oldID, newID string, inst rdsdriver.Instance) (*rdsdriver.Instance, error) {
+	if _, ok := m.instances.Get(newID); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB instance %q already exists", newID)
+	}
+
+	inst.ID = newID
+	inst.ARN = instanceARN(m.opts.Region, m.opts.AccountID, newID)
+
+	m.instances.Delete(oldID)
+	m.instances.Set(newID, inst)
+
+	if pw, ok := m.rootPasswords[oldID]; ok {
+		delete(m.rootPasswords, oldID)
+		m.rootPasswords[newID] = pw
+	}
+
+	if inst.ClusterID != "" {
+		if cluster, ok := m.clusters.Get(inst.ClusterID); ok {
+			cluster.Members = renameString(cluster.Members, oldID, newID)
+			m.clusters.Set(inst.ClusterID, cluster)
+		}
+	}
+
+	if inst.ReadReplicaSource != "" {
+		if src, ok := m.instances.Get(inst.ReadReplicaSource); ok {
+			src.ReadReplicaTargets = renameString(src.ReadReplicaTargets, oldID, newID)
+			m.instances.Set(src.ID, src)
+		}
+	}
+
+	for _, target := range inst.ReadReplicaTargets {
+		if rep, ok := m.instances.Get(target); ok {
+			rep.ReadReplicaSource = newID
+			m.instances.Set(target, rep)
+		}
+	}
 
 	out := inst
 
@@ -619,6 +911,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 	m.instances.Delete(id)
 	delete(m.rootPasswords, id)
+	delete(m.instSettle, id)
 
 	return nil
 }
@@ -650,6 +943,10 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 
 	inst.State = rdsdriver.StateAvailable
 	m.instances.Set(id, inst)
+	// The logical state stays available; a fresh "rebooting" window makes Describe
+	// report the available->rebooting->available transient dip under AsyncSettle.
+	m.instSettle[id] = settle.Pending(rdsdriver.StateRebooting, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBRebootSettle))
 
 	m.emitInstanceMetrics(id, inst.Engine, cpuMetricRunning, connectionsRunning)
 
@@ -676,6 +973,9 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 
 	inst.State = to
 	m.instances.Set(id, inst)
+	// A lifecycle transition (start/stop) supersedes any post-create settle
+	// window so the instance reports its new state, not a stale "creating".
+	delete(m.instSettle, id)
 
 	m.emitInstanceMetrics(id, inst.Engine, cpu, conns)
 
@@ -706,6 +1006,16 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		port = defaultPortFor(cfg.Engine)
 	}
 
+	engineMode := cfg.EngineMode
+	if engineMode == "" {
+		engineMode = defaultEngineMode
+	}
+
+	allocatedStorage := cfg.AllocatedStorage
+	if allocatedStorage == 0 {
+		allocatedStorage = auroraAllocatedStorage
+	}
+
 	cluster := rdsdriver.Cluster{
 		ID:                          cfg.ID,
 		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
@@ -720,6 +1030,13 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:             cfg.SubnetGroupName,
 		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		EngineMode:                  engineMode,
+		DBClusterResourceID:         resourceID("cluster-", cfg.ID),
+		AllocatedStorage:            allocatedStorage,
+		StorageEncrypted:            cfg.StorageEncrypted,
+		KmsKeyID:                    resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
+		DeletionProtection:          cfg.DeletionProtection,
+		AvailabilityZones:           availabilityZones(m.opts.Region),
 		CreatedAt:                   m.opts.Clock.Now().UTC(),
 		Tags:                        copyTags(cfg.Tags),
 	}
@@ -733,8 +1050,6 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 }
 
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
-//
-//nolint:dupl // structurally similar to DescribeInstances but operates on a different store/type.
 func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cluster, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -792,6 +1107,10 @@ func (m *Mock) ModifyCluster(
 
 	if input.DBClusterParameterGroupName != "" {
 		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
+	}
+
+	if input.DeletionProtection != nil {
+		cluster.DeletionProtection = *input.DeletionProtection
 	}
 
 	if input.Tags != nil {
@@ -915,18 +1234,29 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		State:            rdsdriver.SnapshotAvailable,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
+		// Captured so the snapshot is a self-contained restore point that
+		// survives the source instance being deleted.
+		MasterUsername: inst.MasterUsername,
+		DBName:         inst.DBName,
+		Port:           inst.Port,
 	}
 
+	now := m.opts.Clock.Now()
 	m.snapshots.Set(cfg.ID, snap)
+	m.snapSettle[cfg.ID] = settle.Pending(rdsdriver.SnapshotCreating, now,
+		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
+	// The source instance briefly reports "backing-up" while the snapshot settles,
+	// matching real RDS; its logical state stays available.
+	m.instSettle[cfg.InstanceID] = settle.Pending(rdsdriver.StateBackingUp, now,
+		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
 
 	out := snap
+	out.State = m.settleSnapshotState(cfg.ID, out.State)
 
 	return &out, nil
 }
 
 // DescribeSnapshots returns snapshots filtered by ids and/or instance.
-//
-//nolint:dupl // structurally similar to DescribeClusterSnapshots but operates on a different store/type.
 func (m *Mock) DescribeSnapshots(
 	_ context.Context, ids []string, instanceID string,
 ) ([]rdsdriver.Snapshot, error) {
@@ -951,6 +1281,7 @@ func (m *Mock) DescribeSnapshots(
 		}
 
 		snap.Tags = copyTags(snap.Tags)
+		snap.State = m.settleSnapshotState(snap.ID, snap.State)
 		out = append(out, snap)
 	}
 
@@ -965,6 +1296,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	if !m.snapshots.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "DB snapshot %q not found", id)
 	}
+
+	delete(m.snapSettle, id)
 
 	return nil
 }
@@ -996,13 +1329,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		instanceClass = defaultInstanceClass
 	}
 
-	// Inherit the source instance's master login so the restored database is
-	// reachable with the same credentials; fall back to engine defaults when the
-	// source is gone. The password is remembered under the snapshot's source id.
-	var username string
-	if src, ok := m.instances.Get(snap.InstanceID); ok {
-		username = src.MasterUsername
-	}
+	username, dbName, port := m.restoreAttrsFromSnapshot(&snap, input.Port)
 
 	password := m.rootPasswords[snap.InstanceID]
 
@@ -1015,8 +1342,9 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		AllocatedStorage: snap.AllocatedStorage,
 		StorageType:      defaultStorageType,
 		MasterUsername:   username,
+		DBName:           dbName,
 		Endpoint:         endpointFor(input.NewInstanceID, m.opts.Region, "abcd1234"),
-		Port:             defaultPortFor(snap.Engine),
+		Port:             port,
 		State:            rdsdriver.StateAvailable,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(input.Tags),
@@ -1042,6 +1370,60 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	out := inst
 
 	return &out, nil
+}
+
+// restoreAttrsFromSnapshot resolves the master login, DBName, and port for an
+// instance being restored from snap, preferring the snapshot's own captured
+// metadata over a live source-instance lookup. This matches real RDS: a
+// snapshot is a self-contained point-in-time image, so a restore reflects the
+// source's shape AT SNAPSHOT TIME even if the source instance has since been
+// deleted or modified. Older snapshots taken before these fields were
+// captured fall back to a live source-instance lookup, then engine defaults.
+// requestedPort is the caller-supplied Port input, which always wins when set.
+func (m *Mock) restoreAttrsFromSnapshot(snap *rdsdriver.Snapshot, requestedPort int) (username, dbName string, port int) {
+	username = snap.MasterUsername
+	dbName = snap.DBName
+	port = requestedPort
+
+	if port == 0 {
+		port = snap.Port
+	}
+
+	if username == "" || dbName == "" || port == 0 {
+		username, dbName, port = m.fallbackRestoreAttrsFromSource(snap.InstanceID, username, dbName, port)
+	}
+
+	if port == 0 {
+		port = defaultPortFor(snap.Engine)
+	}
+
+	return username, dbName, port
+}
+
+// fallbackRestoreAttrsFromSource fills in any still-missing username/dbName/port
+// from a live lookup of the snapshot's source instance, for snapshots taken
+// before that metadata was captured on the snapshot itself.
+func (m *Mock) fallbackRestoreAttrsFromSource(
+	sourceID, username, dbName string, port int,
+) (resolvedUsername, resolvedDBName string, resolvedPort int) {
+	src, ok := m.instances.Get(sourceID)
+	if !ok {
+		return username, dbName, port
+	}
+
+	if username == "" {
+		username = src.MasterUsername
+	}
+
+	if dbName == "" {
+		dbName = src.DBName
+	}
+
+	if port == 0 {
+		port = src.Port
+	}
+
+	return username, dbName, port
 }
 
 // CreateClusterSnapshot snapshots a cluster.
@@ -1083,8 +1465,6 @@ func (m *Mock) CreateClusterSnapshot(
 }
 
 // DescribeClusterSnapshots returns cluster snapshots filtered by ids and/or cluster.
-//
-//nolint:dupl // structurally similar to DescribeSnapshots but operates on a different store/type.
 func (m *Mock) DescribeClusterSnapshots(
 	_ context.Context, ids []string, clusterID string,
 ) ([]rdsdriver.ClusterSnapshot, error) {
@@ -1207,6 +1587,22 @@ func removeString(slice []string, target string) []string {
 	for _, v := range slice {
 		if v != target {
 			out = append(out, v)
+		}
+	}
+
+	return out
+}
+
+// renameString returns a NEW slice with every occurrence of oldVal replaced by
+// newVal, never mutating the input's backing array.
+func renameString(slice []string, oldVal, newVal string) []string {
+	out := make([]string, len(slice))
+
+	for i, v := range slice {
+		if v == oldVal {
+			out[i] = newVal
+		} else {
+			out[i] = v
 		}
 	}
 

@@ -95,7 +95,6 @@ func writeUnsupported(w http.ResponseWriter, what string) {
 
 // ---- Databases ----
 
-//nolint:dupl // mirrors the sibling sub-resource route by design.
 func (h *Handler) serveDatabasesRoute(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	db, ok := h.databasesCap()
 	if !ok {
@@ -119,20 +118,48 @@ func (h *Handler) serveDatabasesRoute(w http.ResponseWriter, r *http.Request, p 
 	switch r.Method {
 	case http.MethodGet:
 		h.getDatabase(w, r, p, db)
+	case http.MethodPut, http.MethodPatch:
+		h.updateDatabase(w, r, p)
 	case http.MethodDelete:
 		if err := db.DeleteDatabase(r.Context(), p.name, p.subName); err != nil {
 			writeErr(w, err)
 			return
 		}
 
-		writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "delete-db", "DELETE_DATABASE", "instances", p.name))
+		h.completeOp(w, p.project, "delete-db", "DELETE_DATABASE", "instances", p.name)
 	default:
 		writeMethodNotAllowed(w)
 	}
 }
 
+// updateDatabase applies a databases.update / databases.patch, updating the
+// logical database's charset/collation. It requires the DatabaseUpdater
+// capability, which the Databases interface does not mandate.
+func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+	upd, ok := h.db.(rdsdriver.DatabaseUpdater)
+	if !ok {
+		writeUnsupported(w, "databases.update")
+		return
+	}
+
+	var body database
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	_, err := upd.UpdateDatabase(r.Context(), rdsdriver.DatabaseConfig{
+		Server: p.name, Name: p.subName, Charset: body.Charset, Collation: body.Collation,
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	h.completeOp(w, p.project, "update-db", "UPDATE_DATABASE", "instances", p.name)
+}
+
 //nolint:dupl // mirrors the sibling insert handler by design.
-func (*Handler) insertDatabase(w http.ResponseWriter, r *http.Request, p *sqlPath, db rdsdriver.Databases) {
+func (h *Handler) insertDatabase(w http.ResponseWriter, r *http.Request, p *sqlPath, db rdsdriver.Databases) {
 	var body database
 	if !decodeJSON(w, r, &body) {
 		return
@@ -146,7 +173,7 @@ func (*Handler) insertDatabase(w http.ResponseWriter, r *http.Request, p *sqlPat
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "insert-db", "CREATE_DATABASE", "instances", p.name))
+	h.completeOp(w, p.project, "insert-db", "CREATE_DATABASE", "instances", p.name)
 }
 
 func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, p *sqlPath, db rdsdriver.Databases) {
@@ -182,7 +209,7 @@ func toWireDatabase(d *rdsdriver.Database, project string) database {
 		Project:   project,
 		Charset:   d.Charset,
 		Collation: d.Collation,
-		SelfLink:  "/sql/v1beta4/projects/" + project + "/instances/" + d.Server + "/databases/" + d.Name,
+		SelfLink:  selfLinkBase + project + "/instances/" + d.Server + "/databases/" + d.Name,
 	}
 }
 
@@ -224,7 +251,7 @@ func (h *Handler) serveUsersRoute(w http.ResponseWriter, r *http.Request, p *sql
 }
 
 //nolint:dupl // mirrors the sibling insert handler by design.
-func (*Handler) insertUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
+func (h *Handler) insertUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
 	var body user
 	if !decodeJSON(w, r, &body) {
 		return
@@ -238,7 +265,7 @@ func (*Handler) insertUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "insert-user", "CREATE_USER", "instances", p.name))
+	h.completeOp(w, p.project, "insert-user", "CREATE_USER", "instances", p.name)
 }
 
 func (*Handler) getUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
@@ -266,7 +293,7 @@ func (*Handler) listUsers(w http.ResponseWriter, r *http.Request, p *sqlPath, u 
 	writeJSON(w, http.StatusOK, usersList{Kind: "sql#usersList", Items: out})
 }
 
-func (*Handler) updateUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
+func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
 	var body user
 	if !decodeJSON(w, r, &body) {
 		return
@@ -282,10 +309,10 @@ func (*Handler) updateUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "update-user", "UPDATE_USER", "instances", p.name))
+	h.completeOp(w, p.project, "update-user", "UPDATE_USER", "instances", p.name)
 }
 
-func (*Handler) deleteUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
+func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u rdsdriver.Users) {
 	name := r.URL.Query().Get("name")
 
 	if err := u.DeleteUser(r.Context(), p.name, name); err != nil {
@@ -293,7 +320,7 @@ func (*Handler) deleteUser(w http.ResponseWriter, r *http.Request, p *sqlPath, u
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "delete-user", "DELETE_USER", "instances", p.name))
+	h.completeOp(w, p.project, "delete-user", "DELETE_USER", "instances", p.name)
 }
 
 func toWireUser(u *rdsdriver.User, project string) user {
@@ -302,7 +329,6 @@ func toWireUser(u *rdsdriver.User, project string) user {
 
 // ---- SSL certs ----
 
-//nolint:dupl // mirrors the sibling sub-resource route by design.
 func (h *Handler) serveSslCertsRoute(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	sc, ok := h.sslCertsCap()
 	if !ok {
@@ -332,13 +358,13 @@ func (h *Handler) serveSslCertsRoute(w http.ResponseWriter, r *http.Request, p *
 			return
 		}
 
-		writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "delete-cert", "DELETE_SSL_CERT", "instances", p.name))
+		h.completeOp(w, p.project, "delete-cert", "DELETE_SSL_CERT", "instances", p.name)
 	default:
 		writeMethodNotAllowed(w)
 	}
 }
 
-func (*Handler) insertSslCert(w http.ResponseWriter, r *http.Request, p *sqlPath, sc rdsdriver.SslCerts) {
+func (h *Handler) insertSslCert(w http.ResponseWriter, r *http.Request, p *sqlPath, sc rdsdriver.SslCerts) {
 	var body struct {
 		CommonName string `json:"commonName"`
 	}
@@ -356,7 +382,7 @@ func (*Handler) insertSslCert(w http.ResponseWriter, r *http.Request, p *sqlPath
 	writeJSON(w, http.StatusOK, sslCertInsertResponse{
 		Kind:       "sql#sslCertsInsert",
 		ClientCert: clientCert{CertInfo: toWireSslCert(out), CertPrivateKey: mockKeyPEM},
-		Operation:  doneOperationWithTarget(p.project, "insert-cert", "CREATE_SSL_CERT", "instances", p.name),
+		Operation:  h.buildOp(p.project, "insert-cert", "CREATE_SSL_CERT", "instances", p.name),
 	})
 }
 
@@ -415,8 +441,7 @@ func (h *Handler) cloneInstance(w http.ResponseWriter, r *http.Request, p *sqlPa
 		return
 	}
 
-	writeJSON(w, http.StatusOK,
-		doneOperationWithTarget(p.project, "clone", "CLONE", "instances", body.CloneContext.DestinationInstanceName))
+	h.completeOp(w, p.project, "clone", "CLONE", "instances", body.CloneContext.DestinationInstanceName)
 }
 
 func (h *Handler) failoverInstance(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -431,7 +456,7 @@ func (h *Handler) failoverInstance(w http.ResponseWriter, r *http.Request, p *sq
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "failover", "FAILOVER", "instances", p.name))
+	h.completeOp(w, p.project, "failover", "FAILOVER", "instances", p.name)
 }
 
 func (h *Handler) promoteReplica(w http.ResponseWriter, r *http.Request, p *sqlPath) {
@@ -446,7 +471,7 @@ func (h *Handler) promoteReplica(w http.ResponseWriter, r *http.Request, p *sqlP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "promote", "PROMOTE_REPLICA", "instances", p.name))
+	h.completeOp(w, p.project, "promote", "PROMOTE_REPLICA", "instances", p.name)
 }
 
 // startReplica / stopReplica start and stop replication on a read replica.
@@ -458,7 +483,7 @@ func (h *Handler) startReplica(w http.ResponseWriter, r *http.Request, p *sqlPat
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "start-replica", "START_REPLICA", "instances", p.name))
+	h.completeOp(w, p.project, "start-replica", "START_REPLICA", "instances", p.name)
 }
 
 // requireReplica writes an error and returns false unless p.name is an existing
@@ -483,5 +508,5 @@ func (h *Handler) stopReplica(w http.ResponseWriter, r *http.Request, p *sqlPath
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "stop-replica", "STOP_REPLICA", "instances", p.name))
+	h.completeOp(w, p.project, "stop-replica", "STOP_REPLICA", "instances", p.name)
 }

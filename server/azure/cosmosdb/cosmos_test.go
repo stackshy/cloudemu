@@ -48,7 +48,7 @@ func TestSDKCosmosRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create database (virtual — handler always succeeds).
+	// Create database (tracked; addressable via the {db} path segment).
 	if _, err := client.CreateDatabase(ctx, azcosmos.DatabaseProperties{ID: "appdb"}, nil); err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}

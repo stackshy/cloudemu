@@ -11,28 +11,32 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
-| [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 14 |
+| [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
 | [Config](./config.md) | `configservice` | 102 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
 | [EC2](./ec2.md) | `compute` | 37 |
-| [ECR](./ecr.md) | `containerregistry` | 14 |
+| [ECR](./ecr.md) | `containerregistry` | 15 |
 | [ECS](./ecs.md) | `ecs` | 37 |
 | [EFS](./efs.md) | `efs` | 27 |
+| [EKS](./eks.md) | — (provider-native) | 29 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |
 | [EventBridge](./eventbridge.md) | `eventbus` | 16 |
 | [Glue](./glue.md) | `glue` | 299 |
 | [GuardDuty](./guardduty.md) | `guardduty` | 87 |
 | [IAM](./iam.md) | `iam` | 40 |
-| [KMS](./kms.md) | `kms` | 45 |
+| [KMS](./kms.md) | `kms` | 46 |
 | [Kafka](./kafka.md) | `kafka` | 59 |
 | [Keyspaces](./keyspaces.md) | `keyspaces` | 18 |
 | [Kinesis](./kinesis.md) | `kinesis` | 39 |
 | [Lambda](./lambda.md) | `serverless` | 27 |
 | [MemoryDB](./memorydb.md) | `memorydb` | 33 |
-| [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 20 |
+| [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 23 |
 | [OpenSearch](./opensearch.md) | `opensearch` | 96 |
+| [RDS](./rds.md) | — (provider-native) | 21 |
 | [Redshift](./redshift.md) | `relationaldb` | 21 |
+| [Resourceexplorer2](./resourceexplorer2.md) | — (provider-native) | 0 |
+| [Resourcegroupstaggingapi](./resourcegroupstaggingapi.md) | — (provider-native) | 0 |
 | [Route53](./route53.md) | `dns` | 16 |
 | [Route53Resolver](./route53resolver.md) | `route53resolver` | 72 |
 | [S3](./s3.md) | `storage` | 35 |
@@ -41,6 +45,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [SNS](./sns.md) | `notification` | 9 |
 | [SQS](./sqs.md) | `messagequeue` | 14 |
 | [SSM](./ssm.md) | `parameterstore` | 9 |
+| [STS](./sts.md) | — (provider-native) | 0 |
 | [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
 | [VPC](./vpc.md) | `networking` | 57 |

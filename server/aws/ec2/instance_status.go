@@ -8,12 +8,22 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
+// Detailed-monitoring wire states (Instance.Monitoring.State enum). MonitorInstances
+// transitions to "pending" and UnmonitorInstances to "disabling"; a settled
+// instance reports "enabled" or "disabled".
+const (
+	monitorStateDisabled  = "disabled"
+	monitorStateDisabling = "disabling"
+	monitorStateEnabled   = "enabled"
+	monitorStatePending   = "pending"
+)
+
 func (h *Handler) routeInstanceStatus(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "MonitorInstances":
-		h.monitorInstances(w, r, "enabled")
+		h.monitorInstances(w, r, true)
 	case "UnmonitorInstances":
-		h.monitorInstances(w, r, "disabled")
+		h.monitorInstances(w, r, false)
 	case "DescribeInstanceStatus":
 		h.describeInstanceStatus(w, r)
 	default:
@@ -36,9 +46,10 @@ type monitorInstancesResponseXML struct {
 }
 
 // monitorInstances answers Monitor/UnmonitorInstances. It validates each
-// requested instance exists (InvalidInstanceID.NotFound otherwise) and echoes
-// the resulting monitoring state.
-func (h *Handler) monitorInstances(w http.ResponseWriter, r *http.Request, state string) {
+// requested instance exists (InvalidInstanceID.NotFound otherwise), persists the
+// new monitoring state, and echoes the transitional wire state: MonitorInstances
+// returns "pending" and UnmonitorInstances "disabling" (not the settled value).
+func (h *Handler) monitorInstances(w http.ResponseWriter, r *http.Request, enable bool) {
 	ids := awsquery.ListStrings(r.Form, "InstanceId")
 
 	if _, err := h.compute.DescribeInstances(r.Context(), ids, nil); err != nil {
@@ -46,9 +57,23 @@ func (h *Handler) monitorInstances(w http.ResponseWriter, r *http.Request, state
 		return
 	}
 
+	stored, echo := monitorStateDisabled, monitorStateDisabling
+	if enable {
+		stored, echo = monitorStateEnabled, monitorStatePending
+	}
+
+	if attributer, ok := h.compute.(instanceAttributer); ok {
+		for _, id := range ids {
+			if err := attributer.SetInstanceAttribute(r.Context(), id, attrMonitoring, stored); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+
 	items := make([]monitorItemXML, 0, len(ids))
 	for _, id := range ids {
-		items = append(items, monitorItemXML{InstanceID: id, State: state})
+		items = append(items, monitorItemXML{InstanceID: id, State: echo})
 	}
 
 	awsquery.WriteXMLResponse(w, monitorInstancesResponseXML{
@@ -56,8 +81,16 @@ func (h *Handler) monitorInstances(w http.ResponseWriter, r *http.Request, state
 	})
 }
 
-type statusDetailXML struct {
+// statusCheckDetailXML is one <details><item> entry (e.g. the reachability
+// check) inside a system/instance status summary.
+type statusCheckDetailXML struct {
+	Name   string `xml:"name"`
 	Status string `xml:"status"`
+}
+
+type statusDetailXML struct {
+	Status  string                 `xml:"status"`
+	Details []statusCheckDetailXML `xml:"details>item,omitempty"`
 }
 
 type instanceStatusItemXML struct {
@@ -105,11 +138,18 @@ func (h *Handler) describeInstanceStatus(w http.ResponseWriter, r *http.Request)
 }
 
 func statusItem(inst *computedriver.Instance) instanceStatusItemXML {
-	// Checks are "ok" only once the instance is running; otherwise
+	// Checks are "ok"/"passed" only once the instance is running; otherwise
 	// "not-applicable", matching real EC2's status-check semantics.
-	check := "not-applicable"
+	notApplicable := "not-applicable"
+	summary, reachability := notApplicable, notApplicable
+
 	if inst.State == stateRunning {
-		check = "ok"
+		summary, reachability = "ok", "passed"
+	}
+
+	detail := statusDetailXML{
+		Status:  summary,
+		Details: []statusCheckDetailXML{{Name: "reachability", Status: reachability}},
 	}
 
 	az := ""
@@ -121,7 +161,7 @@ func statusItem(inst *computedriver.Instance) instanceStatusItemXML {
 		InstanceID:     inst.ID,
 		AvailZone:      az,
 		InstanceState:  instanceState{Code: stateCode(inst.State), Name: inst.State},
-		SystemStatus:   statusDetailXML{Status: check},
-		InstanceStatus: statusDetailXML{Status: check},
+		SystemStatus:   detail,
+		InstanceStatus: detail,
 	}
 }

@@ -52,6 +52,12 @@ type Mock struct {
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// registries holds the ARM management-plane registry resources, keyed by
+	// "{rg}/{name}". Distinct from repos (the data-plane catalog).
+	registries   *memstore.Store[*registryData]
+	webhooks     *memstore.Store[*driver.AzureWebhook]
+	replications *memstore.Store[*driver.AzureReplication]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -84,8 +90,11 @@ func (m *Mock) emitMetric(repoName string, metrics map[string]float64) {
 // New creates a new ACR mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		repos: memstore.New[*repoData](),
-		opts:  opts,
+		repos:        memstore.New[*repoData](),
+		opts:         opts,
+		registries:   memstore.New[*registryData](),
+		webhooks:     memstore.New[*driver.AzureWebhook](),
+		replications: memstore.New[*driver.AzureReplication](),
 	}
 }
 
@@ -194,11 +203,22 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 	mediaType := resolveMediaType(manifest.MediaType)
 
+	tags := []string{}
+	if manifest.Tag != "" {
+		tags = append(tags, manifest.Tag)
+	}
+
+	// Content-addressing parity: re-pushing the same digest under a new tag must
+	// preserve the pre-existing tags on that manifest rather than clobbering them.
+	if existing, ok := rd.images.Get(digest); ok {
+		tags = unionTags(existing.detail.Tags, manifest.Tag)
+	}
+
 	detail := driver.ImageDetail{
 		RegistryID: registryName,
 		Repository: manifest.Repository,
 		Digest:     digest,
-		Tags:       []string{manifest.Tag},
+		Tags:       tags,
 		SizeBytes:  manifest.SizeBytes,
 		PushedAt:   now,
 		MediaType:  mediaType,
@@ -311,6 +331,38 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 	return nil
 }
 
+// DeleteTag removes a single tag from a repository, leaving the underlying
+// manifest and any other tags on it intact. This mirrors ACR's data-plane
+// DELETE /acr/v1/{repo}/_tags/{tag}, which untags rather than deleting the
+// manifest.
+func (m *Mock) DeleteTag(_ context.Context, repository, tag string) error {
+	if tag == "" {
+		return errors.New(errors.InvalidArgument, "tag cannot be empty")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	all := rd.images.All()
+	for d, img := range all {
+		if !hasTag(img.detail.Tags, tag) {
+			continue
+		}
+
+		img.detail.Tags = removeTag(img.detail.Tags, tag)
+		rd.images.Set(d, img)
+
+		return nil
+	}
+
+	return errors.Newf(errors.NotFound, "tag %q not found in repository %q", tag, repository)
+}
+
 // PutLifecyclePolicy sets a lifecycle policy on an ACR repository.
 func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy driver.LifecyclePolicy) error {
 	rd, ok := m.repos.Get(repository)
@@ -336,6 +388,24 @@ func (m *Mock) GetLifecyclePolicy(_ context.Context, repository string) (*driver
 	}
 
 	result := copyLifecyclePolicy(*rd.policy)
+
+	return &result, nil
+}
+
+// DeleteLifecyclePolicy removes the lifecycle policy from an ACR repository and
+// returns the policy that was deleted.
+func (m *Mock) DeleteLifecyclePolicy(_ context.Context, repository string) (*driver.LifecyclePolicy, error) {
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	if rd.policy == nil {
+		return nil, errors.Newf(errors.NotFound, "no lifecycle policy for repository %q", repository)
+	}
+
+	result := copyLifecyclePolicy(*rd.policy)
+	rd.policy = nil
 
 	return &result, nil
 }
@@ -652,6 +722,19 @@ func removeTag(tags []string, tag string) []string {
 		if t != tag {
 			result = append(result, t)
 		}
+	}
+
+	return result
+}
+
+// unionTags returns existing tags with tag appended if not already present,
+// preserving order and de-duplicating.
+func unionTags(existing []string, tag string) []string {
+	result := make([]string, len(existing))
+	copy(result, existing)
+
+	if tag != "" && !hasTag(result, tag) {
+		result = append(result, tag)
 	}
 
 	return result

@@ -68,6 +68,15 @@ func (m *Mock) DeleteInternetGateway(
 func (m *Mock) DescribeInternetGateways(
 	_ context.Context, ids []string,
 ) ([]driver.InternetGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.igws.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "internet gateway %q not found", id)
+		}
+	}
+
 	return describeResources(m.igws, ids, toIGWInfo), nil
 }
 
@@ -83,10 +92,13 @@ func (m *Mock) AttachInternetGateway(
 		)
 	}
 
+	// An internet gateway attaches to exactly one VPC; re-attaching an
+	// already-attached gateway is Resource.AlreadyAssociated, not a dependency
+	// violation.
 	if igw.State == IGWStateAttached {
 		return errors.Newf(
-			errors.FailedPrecondition,
-			"internet gateway %q is already attached", igwID,
+			errors.AlreadyExists,
+			"internet gateway %q is already attached to vpc %q", igwID, igw.VpcID,
 		)
 	}
 
@@ -96,10 +108,32 @@ func (m *Mock) AttachInternetGateway(
 		)
 	}
 
+	// One internet gateway per VPC: reject if the target VPC already has one
+	// attached. Real EC2 answers Resource.AlreadyAssociated ("Network vpc-…
+	// already has an internet gateway attached").
+	if existing := m.vpcAttachedIGW(vpcID); existing != "" {
+		return errors.Newf(
+			errors.AlreadyExists,
+			"vpc %q already has internet gateway %q attached", vpcID, existing,
+		)
+	}
+
 	igw.VpcID = vpcID
 	igw.State = IGWStateAttached
 
 	return nil
+}
+
+// vpcAttachedIGW returns the id of the internet gateway already attached to the
+// VPC, or "" if none is. Enforces the one-IGW-per-VPC invariant.
+func (m *Mock) vpcAttachedIGW(vpcID string) string {
+	for _, igw := range m.igws.All() {
+		if igw.State == IGWStateAttached && igw.VpcID == vpcID {
+			return igw.ID
+		}
+	}
+
+	return ""
 }
 
 // DetachInternetGateway detaches an internet gateway from a VPC.

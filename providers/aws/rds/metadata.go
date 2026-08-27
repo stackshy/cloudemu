@@ -15,11 +15,15 @@ var (
 
 // ARN resource-kind segments and the fixed RDS ARN field count.
 const (
-	arnKindInstance        = "db"
-	arnKindCluster         = "cluster"
-	arnKindSnapshot        = "snapshot"
-	arnKindClusterSnapshot = "cluster-snapshot"
-	arnFieldCount          = 7
+	arnKindInstance          = "db"
+	arnKindCluster           = "cluster"
+	arnKindSnapshot          = "snapshot"
+	arnKindClusterSnapshot   = "cluster-snapshot"
+	arnKindParamGroup        = "pg"
+	arnKindClusterParamGroup = "cluster-pg"
+	arnKindOptionGroup       = "og"
+	arnKindSubnetGroup       = "subgrp"
+	arnFieldCount            = 7
 )
 
 // engineVersionCatalog is a representative set of supported versions per
@@ -57,6 +61,18 @@ var engineFamily = map[string]string{
 var orderableInstanceClasses = []string{
 	"db.t3.micro", "db.t3.small", "db.t3.medium",
 	"db.r5.large", "db.r5.xlarge", "db.m5.large",
+}
+
+// defaultEngineVersion returns the version real RDS assigns when a caller omits
+// EngineVersion — the first (lowest) version the emulator lists for the engine.
+// Returns "" for an unknown engine, leaving the field unset.
+func defaultEngineVersion(engine string) string {
+	versions := engineVersionCatalog[engine]
+	if len(versions) == 0 {
+		return ""
+	}
+
+	return versions[0]
 }
 
 func (*Mock) DescribeDBEngineVersions(_ context.Context, engine, engineVersion string) ([]rdsdriver.DBEngineVersion, error) {
@@ -174,26 +190,67 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[s
 
 	kind, id := arnResourceKindID(resourceARN)
 
-	switch kind {
-	case arnKindInstance:
-		if r, ok := m.instances.Get(id); ok {
-			return copyTags(r.Tags), nil
-		}
-	case arnKindCluster:
-		if r, ok := m.clusters.Get(id); ok {
-			return copyTags(r.Tags), nil
-		}
-	case arnKindSnapshot:
-		if r, ok := m.snapshots.Get(id); ok {
-			return copyTags(r.Tags), nil
-		}
-	case arnKindClusterSnapshot:
-		if r, ok := m.clusterSnapshots.Get(id); ok {
-			return copyTags(r.Tags), nil
-		}
+	if tags, ok := m.recordTags(kind, id); ok {
+		return tags, nil
+	}
+
+	if isGroupKind(kind) && m.groupExists(kind, id) {
+		return copyTags(m.groupTags[resourceARN]), nil
 	}
 
 	return nil, errUntaggable(resourceARN)
+}
+
+// recordTags returns a copy of the tags on the record named by kind+id, and
+// whether that record exists. Group kinds (parameter/option/subnet groups) are
+// not records and always report false — their tags live in groupTags.
+func (m *Mock) recordTags(kind, id string) (map[string]string, bool) {
+	switch kind {
+	case arnKindInstance:
+		if r, ok := m.instances.Get(id); ok {
+			return copyTags(r.Tags), true
+		}
+	case arnKindCluster:
+		if r, ok := m.clusters.Get(id); ok {
+			return copyTags(r.Tags), true
+		}
+	case arnKindSnapshot:
+		if r, ok := m.snapshots.Get(id); ok {
+			return copyTags(r.Tags), true
+		}
+	case arnKindClusterSnapshot:
+		if r, ok := m.clusterSnapshots.Get(id); ok {
+			return copyTags(r.Tags), true
+		}
+	}
+
+	return nil, false
+}
+
+// isGroupKind reports whether an ARN kind is a parameter/option/subnet group.
+func isGroupKind(kind string) bool {
+	switch kind {
+	case arnKindParamGroup, arnKindClusterParamGroup, arnKindOptionGroup, arnKindSubnetGroup:
+		return true
+	default:
+		return false
+	}
+}
+
+// groupExists reports whether a parameter/option/subnet group named id exists.
+func (m *Mock) groupExists(kind, id string) bool {
+	switch kind {
+	case arnKindParamGroup:
+		return m.paramGroups.Has(id)
+	case arnKindClusterParamGroup:
+		return m.clusterParamGroups.Has(id)
+	case arnKindOptionGroup:
+		return m.optionGroups.Has(id)
+	case arnKindSubnetGroup:
+		return m.subnetGroups.Has(id)
+	default:
+		return false
+	}
 }
 
 // withResourceTags loads the tag map of the resource named by arn, applies fn,
@@ -202,11 +259,31 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[s
 func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[string]string) error {
 	kind, id := arnResourceKindID(arn)
 
+	if isGroupKind(kind) {
+		if !m.groupExists(kind, id) {
+			return errUntaggable(arn)
+		}
+
+		m.setGroupTags(arn, fn(m.groupTags[arn]))
+
+		return nil
+	}
+
+	if !m.setRecordTags(kind, id, fn) {
+		return errUntaggable(arn)
+	}
+
+	return nil
+}
+
+// setRecordTags applies fn to the record named by kind+id and stores it,
+// returning whether the record kind was recognized and the record existed.
+func (m *Mock) setRecordTags(kind, id string, fn func(map[string]string) map[string]string) bool {
 	switch kind {
 	case arnKindInstance:
 		r, ok := m.instances.Get(id)
 		if !ok {
-			return errUntaggable(arn)
+			return false
 		}
 
 		r.Tags = fn(r.Tags)
@@ -214,7 +291,7 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 	case arnKindCluster:
 		r, ok := m.clusters.Get(id)
 		if !ok {
-			return errUntaggable(arn)
+			return false
 		}
 
 		r.Tags = fn(r.Tags)
@@ -222,7 +299,7 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 	case arnKindSnapshot:
 		r, ok := m.snapshots.Get(id)
 		if !ok {
-			return errUntaggable(arn)
+			return false
 		}
 
 		r.Tags = fn(r.Tags)
@@ -230,16 +307,26 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 	case arnKindClusterSnapshot:
 		r, ok := m.clusterSnapshots.Get(id)
 		if !ok {
-			return errUntaggable(arn)
+			return false
 		}
 
 		r.Tags = fn(r.Tags)
 		m.clusterSnapshots.Set(id, r)
 	default:
-		return errUntaggable(arn)
+		return false
 	}
 
-	return nil
+	return true
+}
+
+// setGroupTags stores (or clears) the tags for a group ARN.
+func (m *Mock) setGroupTags(arn string, tags map[string]string) {
+	if len(tags) == 0 {
+		delete(m.groupTags, arn)
+		return
+	}
+
+	m.groupTags[arn] = tags
 }
 
 func errUntaggable(arn string) error {

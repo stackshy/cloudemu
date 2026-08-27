@@ -23,8 +23,18 @@ type snsDestinationJSON struct {
 	TopicArn string `json:"TopicArn"`
 }
 
+type pinpointDestinationJSON struct {
+	ApplicationArn string `json:"ApplicationArn"`
+}
+
+type cloudWatchDimensionConfigJSON struct {
+	DimensionName         string `json:"DimensionName"`
+	DimensionValueSource  string `json:"DimensionValueSource"`
+	DefaultDimensionValue string `json:"DefaultDimensionValue"`
+}
+
 type cloudWatchDestinationJSON struct {
-	DimensionConfigurations []map[string]string `json:"DimensionConfigurations"`
+	DimensionConfigurations []cloudWatchDimensionConfigJSON `json:"DimensionConfigurations"`
 }
 
 type eventDestinationDefJSON struct {
@@ -33,6 +43,7 @@ type eventDestinationDefJSON struct {
 	KinesisFirehoseDestination *kinesisFirehoseDestinationJSON `json:"KinesisFirehoseDestination"`
 	SnsDestination             *snsDestinationJSON             `json:"SnsDestination"`
 	CloudWatchDestination      *cloudWatchDestinationJSON      `json:"CloudWatchDestination"`
+	PinpointDestination        *pinpointDestinationJSON        `json:"PinpointDestination"`
 }
 
 type createEventDestinationRequest struct {
@@ -45,9 +56,13 @@ type updateEventDestinationRequest struct {
 }
 
 type eventDestinationJSON struct {
-	Name               string   `json:"Name"`
-	Enabled            bool     `json:"Enabled"`
-	MatchingEventTypes []string `json:"MatchingEventTypes"`
+	Name                       string                          `json:"Name"`
+	Enabled                    bool                            `json:"Enabled"`
+	MatchingEventTypes         []string                        `json:"MatchingEventTypes"`
+	KinesisFirehoseDestination *kinesisFirehoseDestinationJSON `json:"KinesisFirehoseDestination,omitempty"`
+	SnsDestination             *snsDestinationJSON             `json:"SnsDestination,omitempty"`
+	CloudWatchDestination      *cloudWatchDestinationJSON      `json:"CloudWatchDestination,omitempty"`
+	PinpointDestination        *pinpointDestinationJSON        `json:"PinpointDestination,omitempty"`
 }
 
 type getEventDestinationsResponse struct {

@@ -65,13 +65,13 @@ func (m *Mock) DeleteConfigurationSetEventDestination(_ context.Context, configS
 	err := m.withConfigSet(configSet, func(cs *driver.ConfigurationSet) {
 		kept := cs.EventDestinations[:0]
 
-		for _, ed := range cs.EventDestinations {
-			if ed.Name == name {
+		for i := range cs.EventDestinations {
+			if cs.EventDestinations[i].Name == name {
 				found = true
 				continue
 			}
 
-			kept = append(kept, ed)
+			kept = append(kept, cs.EventDestinations[i])
 		}
 
 		cs.EventDestinations = kept
@@ -102,12 +102,15 @@ func (m *Mock) GetConfigurationSetEventDestinations(_ context.Context, configSet
 
 func eventDestinationFromInput(in *driver.EventDestinationInput) driver.EventDestination {
 	return driver.EventDestination{
-		Name:                in.EventDestinationName,
-		Enabled:             in.Enabled,
-		MatchingEventTypes:  append([]string(nil), in.MatchingEventTypes...),
-		KinesisFirehoseARN:  in.KinesisFirehoseARN,
-		SNSTopicARN:         in.SNSTopicARN,
-		CloudWatchNamespace: in.CloudWatchNamespace,
+		Name:                   in.EventDestinationName,
+		Enabled:                in.Enabled,
+		MatchingEventTypes:     append([]string(nil), in.MatchingEventTypes...),
+		KinesisFirehoseARN:     in.KinesisFirehoseARN,
+		KinesisFirehoseRoleARN: in.KinesisFirehoseRoleARN,
+		SNSTopicARN:            in.SNSTopicARN,
+		CloudWatchNamespace:    in.CloudWatchNamespace,
+		CloudWatchDimensions:   append([]driver.CloudWatchDimension(nil), in.CloudWatchDimensions...),
+		PinpointApplicationARN: in.PinpointApplicationARN,
 	}
 }
 

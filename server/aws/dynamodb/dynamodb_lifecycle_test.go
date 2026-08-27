@@ -881,26 +881,44 @@ func TestDDBTypedErrors(t *testing.T) {
 		require.NoError(t, err, "DeleteItem is idempotent like real DynamoDB")
 	})
 
-	t.Run("UpdateItem on missing item is ResourceNotFoundException", func(t *testing.T) {
-		// Documented emulator divergence: real DynamoDB upserts here.
-		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+	t.Run("UpdateItem on missing item upserts (creates it)", func(t *testing.T) {
+		// Real DynamoDB UpdateItem adds a new item when the key does not exist.
+		if _, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 			TableName:        aws.String("errs"),
-			Key:              map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")},
+			Key:              map[string]ddbtypes.AttributeValue{"pk": sAttr("upserted")},
 			UpdateExpression: aws.String("SET v = :v"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
 				":v": nAttr("1"),
 			},
+		}); err != nil {
+			t.Fatalf("UpdateItem upsert: %v", err)
+		}
+
+		got, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName: aws.String("errs"),
+			Key:       map[string]ddbtypes.AttributeValue{"pk": sAttr("upserted")},
+		})
+		if err != nil || got.Item == nil {
+			t.Fatalf("UpdateItem should have created the item, got item=%v err=%v", got.Item, err)
+		}
+	})
+
+	t.Run("GetItem on missing table is ResourceNotFoundException", func(t *testing.T) {
+		// A GetItem against a table that does not exist is a
+		// ResourceNotFoundException in real DynamoDB — distinct from a missing
+		// item (which returns an empty 200). The two must not conflate.
+		_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName: aws.String("ghost"),
+			Key:       map[string]ddbtypes.AttributeValue{"pk": sAttr("x")},
 		})
 		require.ErrorAs(t, err, &rnf)
 	})
 
-	t.Run("GetItem on missing table flattens to empty response", func(t *testing.T) {
-		// Documented emulator quirk: the handler converts ANY driver NotFound
-		// (missing item OR missing table) into an empty 200, so the SDK sees
-		// Item == nil instead of ResourceNotFoundException.
+	t.Run("GetItem on missing item returns empty response", func(t *testing.T) {
+		// A missing item in an existing table is still an empty 200, not an error.
 		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
-			TableName: aws.String("ghost"),
-			Key:       map[string]ddbtypes.AttributeValue{"pk": sAttr("x")},
+			TableName: aws.String("errs"),
+			Key:       map[string]ddbtypes.AttributeValue{"pk": sAttr("nope")},
 		})
 		require.NoError(t, err)
 		assert.Nil(t, out.Item)
@@ -1076,12 +1094,13 @@ func TestDDBStreams(t *testing.T) {
 	assert.Equal(t, []string{"INSERT", "MODIFY", "MODIFY", "REMOVE"}, types)
 	assert.Equal(t, []string{"1", "2", "3", "4"}, seqs)
 
-	// NEW_AND_OLD_IMAGES captures both sides. Wire N values decode to float64.
+	// NEW_AND_OLD_IMAGES captures both sides. Wire N values are preserved as
+	// their exact decimal string (expr.Number) so large numbers round-trip.
 	assert.Nil(t, it.Records[0].OldImage, "INSERT has no old image")
-	assert.EqualValues(t, 1, it.Records[0].NewImage["v"])
-	assert.EqualValues(t, 1, it.Records[1].OldImage["v"])
-	assert.EqualValues(t, 2, it.Records[1].NewImage["v"])
-	assert.EqualValues(t, 3, it.Records[3].OldImage["v"], "REMOVE carries the old image")
+	assert.Equal(t, "1", fmt.Sprintf("%v", it.Records[0].NewImage["v"]))
+	assert.Equal(t, "1", fmt.Sprintf("%v", it.Records[1].OldImage["v"]))
+	assert.Equal(t, "2", fmt.Sprintf("%v", it.Records[1].NewImage["v"]))
+	assert.Equal(t, "3", fmt.Sprintf("%v", it.Records[3].OldImage["v"]), "REMOVE carries the old image")
 	assert.Nil(t, it.Records[3].NewImage, "REMOVE has no new image")
 
 	// Token-based continuation: limit 2, then resume from the returned token.
@@ -1596,4 +1615,438 @@ func TestDDBSetTypesRoundTrip(t *testing.T) {
 	bin, ok := out.Item["bin"].(*ddbtypes.AttributeValueMemberB)
 	require.True(t, ok, "binary scalar should round-trip as B, got %T", out.Item["bin"])
 	assert.Equal(t, []byte{0xDE, 0xAD}, bin.Value)
+}
+
+// TestGSIRoundTripAndQuery covers the blocker: a GSI declared at CreateTable is
+// echoed by DescribeTable and is queryable via Query(IndexName=...).
+func TestGSIRoundTripAndQuery(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String("gsitab"),
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("email"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{{
+			IndexName:  aws.String("by-email"),
+			KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("email"), KeyType: ddbtypes.KeyTypeHash}},
+			Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+		}},
+	})
+	require.NoError(t, err)
+
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("gsitab")})
+	require.NoError(t, err)
+	require.Len(t, d.Table.GlobalSecondaryIndexes, 1)
+	require.Equal(t, "by-email", aws.ToString(d.Table.GlobalSecondaryIndexes[0].IndexName))
+
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String("gsitab"), Item: map[string]ddbtypes.AttributeValue{
+		"id":    &ddbtypes.AttributeValueMemberS{Value: "u1"},
+		"email": &ddbtypes.AttributeValueMemberS{Value: "a@x.com"},
+	}})
+	require.NoError(t, err)
+
+	q, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:                 aws.String("gsitab"),
+		IndexName:                 aws.String("by-email"),
+		KeyConditionExpression:    aws.String("email = :e"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":e": &ddbtypes.AttributeValueMemberS{Value: "a@x.com"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, q.Items, 1)
+}
+
+// TestDDBLocalSecondaryIndexRoundTrip covers finding: a LocalSecondaryIndex
+// declared at CreateTable must be echoed by DescribeTable (previously dropped).
+func TestDDBLocalSecondaryIndexRoundTrip(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String("lsitab"),
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("sk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("alt"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+			{AttributeName: aws.String("sk"), KeyType: ddbtypes.KeyTypeRange},
+		},
+		LocalSecondaryIndexes: []ddbtypes.LocalSecondaryIndex{{
+			IndexName: aws.String("by-alt"),
+			KeySchema: []ddbtypes.KeySchemaElement{
+				{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+				{AttributeName: aws.String("alt"), KeyType: ddbtypes.KeyTypeRange},
+			},
+			Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+		}},
+	})
+	require.NoError(t, err)
+
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("lsitab")})
+	require.NoError(t, err)
+	require.Len(t, d.Table.LocalSecondaryIndexes, 1)
+	lsi := d.Table.LocalSecondaryIndexes[0]
+	assert.Equal(t, "by-alt", aws.ToString(lsi.IndexName))
+	require.Len(t, lsi.KeySchema, 2)
+	assert.Equal(t, "alt", aws.ToString(lsi.KeySchema[1].AttributeName))
+}
+
+// TestDDBStreamSpecificationRoundTrip covers finding: a StreamSpecification set
+// at CreateTable must be echoed with a populated LatestStreamArn/Label.
+func TestDDBStreamSpecificationRoundTrip(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String("streamtab"),
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+		StreamSpecification: &ddbtypes.StreamSpecification{
+			StreamEnabled:  aws.Bool(true),
+			StreamViewType: ddbtypes.StreamViewTypeNewAndOldImages,
+		},
+	})
+	require.NoError(t, err)
+
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("streamtab")})
+	require.NoError(t, err)
+	require.NotNil(t, d.Table.StreamSpecification)
+	assert.True(t, aws.ToBool(d.Table.StreamSpecification.StreamEnabled))
+	assert.Equal(t, ddbtypes.StreamViewTypeNewAndOldImages, d.Table.StreamSpecification.StreamViewType)
+	assert.NotEmpty(t, aws.ToString(d.Table.LatestStreamArn))
+	assert.NotEmpty(t, aws.ToString(d.Table.LatestStreamLabel))
+}
+
+// TestDDBTagsAtCreate covers finding: Tags supplied at CreateTable must be
+// readable via ListTagsOfResource (previously dropped).
+func TestDDBTagsAtCreate(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	out, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String("tagtab"),
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+		Tags: []ddbtypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("prod")},
+			{Key: aws.String("team"), Value: aws.String("core")},
+		},
+	})
+	require.NoError(t, err)
+
+	tags, err := client.ListTagsOfResource(ctx, &dynamodb.ListTagsOfResourceInput{
+		ResourceArn: out.TableDescription.TableArn,
+	})
+	require.NoError(t, err)
+	got := map[string]string{}
+	for _, tg := range tags.Tags {
+		got[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+	}
+	assert.Equal(t, map[string]string{"env": "prod", "team": "core"}, got)
+}
+
+// TestDDBTableIdAssigned covers finding: a table must carry a TableId (UUID).
+func TestDDBTableIdAssigned(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "idtab", "pk", "")
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("idtab")})
+	require.NoError(t, err)
+	id := aws.ToString(d.Table.TableId)
+	assert.Len(t, id, 36, "TableId should be a UUID: %q", id)
+}
+
+// TestDDBUpdateTable covers finding: UpdateTable must be dispatched and apply
+// throughput/billing and stream changes.
+func TestDDBUpdateTable(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String("uptab"),
+		BillingMode: ddbtypes.BillingModeProvisioned,
+		ProvisionedThroughput: &ddbtypes.ProvisionedThroughput{
+			ReadCapacityUnits: aws.Int64(1), WriteCapacityUnits: aws.Int64(1),
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+	})
+	require.NoError(t, err)
+
+	upd, err := client.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+		TableName: aws.String("uptab"),
+		ProvisionedThroughput: &ddbtypes.ProvisionedThroughput{
+			ReadCapacityUnits: aws.Int64(25), WriteCapacityUnits: aws.Int64(10),
+		},
+		StreamSpecification: &ddbtypes.StreamSpecification{
+			StreamEnabled:  aws.Bool(true),
+			StreamViewType: ddbtypes.StreamViewTypeNewImage,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, upd.TableDescription)
+
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("uptab")})
+	require.NoError(t, err)
+	require.NotNil(t, d.Table.ProvisionedThroughput)
+	assert.Equal(t, int64(25), aws.ToInt64(d.Table.ProvisionedThroughput.ReadCapacityUnits))
+	assert.Equal(t, int64(10), aws.ToInt64(d.Table.ProvisionedThroughput.WriteCapacityUnits))
+	require.NotNil(t, d.Table.StreamSpecification)
+	assert.True(t, aws.ToBool(d.Table.StreamSpecification.StreamEnabled))
+	assert.NotEmpty(t, aws.ToString(d.Table.LatestStreamArn))
+}
+
+// TestDDBUpdateTableAddGSI covers a GlobalSecondaryIndexUpdates.Create on
+// UpdateTable being applied and then queryable.
+func TestDDBUpdateTableAddGSI(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	// Real AWS rejects an AttributeDefinition not used by any key at CreateTable,
+	// so the GSI key attribute (email) is declared on the UpdateTable request
+	// that adds the index — not up front here.
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String("gsiadd"),
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+		TableName: aws.String("gsiadd"),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("email"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexUpdates: []ddbtypes.GlobalSecondaryIndexUpdate{{
+			Create: &ddbtypes.CreateGlobalSecondaryIndexAction{
+				IndexName:  aws.String("by-email"),
+				KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("email"), KeyType: ddbtypes.KeyTypeHash}},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("gsiadd")})
+	require.NoError(t, err)
+	require.Len(t, d.Table.GlobalSecondaryIndexes, 1)
+	assert.Equal(t, "by-email", aws.ToString(d.Table.GlobalSecondaryIndexes[0].IndexName))
+}
+
+// TestDDBTransactGetItems covers finding: TransactGetItems must be dispatched
+// (previously UnknownOperationException) and return items in request order.
+func TestDDBTransactGetItems(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "tg1", "pk", "")
+	suiteDDBCreateTable(t, client, "tg2", "pk", "")
+	suiteDDBPut(t, client, "tg1", map[string]ddbtypes.AttributeValue{"pk": sAttr("a"), "v": nAttr("1")})
+	suiteDDBPut(t, client, "tg2", map[string]ddbtypes.AttributeValue{"pk": sAttr("b"), "v": nAttr("2")})
+
+	out, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+		TransactItems: []ddbtypes.TransactGetItem{
+			{Get: &ddbtypes.Get{TableName: aws.String("tg1"), Key: map[string]ddbtypes.AttributeValue{"pk": sAttr("a")}}},
+			{Get: &ddbtypes.Get{TableName: aws.String("tg2"), Key: map[string]ddbtypes.AttributeValue{"pk": sAttr("b")}}},
+			{Get: &ddbtypes.Get{TableName: aws.String("tg1"), Key: map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")}}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Responses, 3)
+
+	first, ok := out.Responses[0].Item["v"].(*ddbtypes.AttributeValueMemberN)
+	require.True(t, ok)
+	assert.Equal(t, "1", first.Value)
+	second := out.Responses[1].Item["v"].(*ddbtypes.AttributeValueMemberN)
+	assert.Equal(t, "2", second.Value)
+	assert.Nil(t, out.Responses[2].Item, "missing item yields an empty response entry")
+}
+
+// TestDDBReturnValues covers finding: Put/Delete ALL_OLD and Update
+// ALL_OLD/UPDATED_OLD/UPDATED_NEW must return the corresponding Attributes.
+func TestDDBReturnValues(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "rv", "pk", "")
+	suiteDDBPut(t, client, "rv", map[string]ddbtypes.AttributeValue{"pk": sAttr("k"), "n": nAttr("1"), "s": sAttr("old")})
+
+	t.Run("PutItem ALL_OLD returns prior image", func(t *testing.T) {
+		out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:    aws.String("rv"),
+			Item:         map[string]ddbtypes.AttributeValue{"pk": sAttr("k"), "n": nAttr("2")},
+			ReturnValues: ddbtypes.ReturnValueAllOld,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, out.Attributes)
+		assert.Equal(t, "old", out.Attributes["s"].(*ddbtypes.AttributeValueMemberS).Value)
+		assert.Equal(t, "1", out.Attributes["n"].(*ddbtypes.AttributeValueMemberN).Value)
+	})
+
+	t.Run("UpdateItem UPDATED_NEW returns only changed attrs", func(t *testing.T) {
+		out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("rv"),
+			Key:                       map[string]ddbtypes.AttributeValue{"pk": sAttr("k")},
+			UpdateExpression:          aws.String("SET n = :n"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": nAttr("9")},
+			ReturnValues:              ddbtypes.ReturnValueUpdatedNew,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, out.Attributes)
+		assert.Equal(t, "9", out.Attributes["n"].(*ddbtypes.AttributeValueMemberN).Value)
+		_, hasPK := out.Attributes["pk"]
+		assert.False(t, hasPK, "UPDATED_NEW returns only changed attributes")
+	})
+
+	t.Run("UpdateItem UPDATED_OLD returns prior value of changed attrs", func(t *testing.T) {
+		out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("rv"),
+			Key:                       map[string]ddbtypes.AttributeValue{"pk": sAttr("k")},
+			UpdateExpression:          aws.String("SET n = :n"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": nAttr("11")},
+			ReturnValues:              ddbtypes.ReturnValueUpdatedOld,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, out.Attributes)
+		assert.Equal(t, "9", out.Attributes["n"].(*ddbtypes.AttributeValueMemberN).Value)
+	})
+
+	t.Run("DeleteItem ALL_OLD returns deleted image", func(t *testing.T) {
+		out, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName:    aws.String("rv"),
+			Key:          map[string]ddbtypes.AttributeValue{"pk": sAttr("k")},
+			ReturnValues: ddbtypes.ReturnValueAllOld,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, out.Attributes)
+		assert.Equal(t, "k", out.Attributes["pk"].(*ddbtypes.AttributeValueMemberS).Value)
+	})
+}
+
+// TestDDBScannedCount covers finding: Query must report ScannedCount, and Scan's
+// ScannedCount must count items examined before the filter (not post-filter).
+func TestDDBScannedCount(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "sc", "pk", "sk")
+	for i, sk := range []string{"a", "b", "c"} {
+		suiteDDBPut(t, client, "sc", map[string]ddbtypes.AttributeValue{
+			"pk": sAttr("p"), "sk": sAttr(sk), "n": nAttr(fmt.Sprintf("%d", i)),
+		})
+	}
+
+	q, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:                 aws.String("sc"),
+		KeyConditionExpression:    aws.String("pk = :p"),
+		FilterExpression:          aws.String("n > :z"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":p": sAttr("p"), ":z": nAttr("0")},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), q.Count, "n>0 keeps b,c")
+	assert.Equal(t, int32(3), q.ScannedCount, "all 3 key-matched items were scanned")
+
+	s, err := client.Scan(ctx, &dynamodb.ScanInput{
+		TableName:                 aws.String("sc"),
+		FilterExpression:          aws.String("n > :z"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":z": nAttr("0")},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), s.Count)
+	assert.Equal(t, int32(3), s.ScannedCount, "Scan examines all items before filtering")
+}
+
+// TestDDBDeleteTableDescription covers finding: DeleteTable must return the full
+// TableDescription (ARN + key schema), not a name-only stub.
+func TestDDBDeleteTableDescription(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "deltab", "pk", "sk")
+	out, err := client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String("deltab")})
+	require.NoError(t, err)
+	require.NotNil(t, out.TableDescription)
+	assert.NotEmpty(t, aws.ToString(out.TableDescription.TableArn))
+	assert.Len(t, out.TableDescription.KeySchema, 2)
+	assert.Equal(t, ddbtypes.TableStatusDeleting, out.TableDescription.TableStatus)
+}
+
+// TestDDBContinuousBackups covers finding: UpdateContinuousBackups must enable
+// PITR and DescribeContinuousBackups must reflect it.
+func TestDDBContinuousBackups(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "pitr", "pk", "")
+
+	d0, err := client.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{TableName: aws.String("pitr")})
+	require.NoError(t, err)
+	assert.Equal(t, ddbtypes.PointInTimeRecoveryStatusDisabled,
+		d0.ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus)
+
+	_, err = client.UpdateContinuousBackups(ctx, &dynamodb.UpdateContinuousBackupsInput{
+		TableName: aws.String("pitr"),
+		PointInTimeRecoverySpecification: &ddbtypes.PointInTimeRecoverySpecification{
+			PointInTimeRecoveryEnabled: aws.Bool(true),
+		},
+	})
+	require.NoError(t, err)
+
+	d1, err := client.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{TableName: aws.String("pitr")})
+	require.NoError(t, err)
+	assert.Equal(t, ddbtypes.PointInTimeRecoveryStatusEnabled,
+		d1.ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus)
+}
+
+// TestDDBConsumedCapacity covers finding: ReturnConsumedCapacity=TOTAL must
+// populate ConsumedCapacity (previously always nil).
+func TestDDBConsumedCapacity(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "cc", "pk", "")
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:              aws.String("cc"),
+		Item:                   map[string]ddbtypes.AttributeValue{"pk": sAttr("k")},
+		ReturnConsumedCapacity: ddbtypes.ReturnConsumedCapacityTotal,
+	})
+	require.NoError(t, err)
+
+	g, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:              aws.String("cc"),
+		Key:                    map[string]ddbtypes.AttributeValue{"pk": sAttr("k")},
+		ReturnConsumedCapacity: ddbtypes.ReturnConsumedCapacityTotal,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, g.ConsumedCapacity)
+	assert.Equal(t, "cc", aws.ToString(g.ConsumedCapacity.TableName))
+	assert.Positive(t, aws.ToFloat64(g.ConsumedCapacity.CapacityUnits))
+}
+
+// TestDDBErrorMessageNoInternalPrefix covers finding: error messages must not
+// leak the internal "NotFound: " code prefix.
+func TestDDBErrorMessageNoInternalPrefix(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String("ghost")})
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr))
+	assert.NotContains(t, apiErr.ErrorMessage(), "NotFound:")
+	assert.Contains(t, apiErr.ErrorMessage(), "ghost")
 }

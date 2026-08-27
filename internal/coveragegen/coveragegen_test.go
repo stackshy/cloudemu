@@ -32,6 +32,104 @@ func loadServices(t *testing.T) map[string]*Service {
 	return services
 }
 
+// loadAllServices runs the read-only generator including provider-native
+// synthesis, matching what render() serializes.
+func loadAllServices(t *testing.T) map[string]*Service {
+	t.Helper()
+
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+
+	services := loadServices(t)
+
+	if err := synthesizeNativeServices(root, services); err != nil {
+		t.Fatalf("synthesizeNativeServices: %v", err)
+	}
+
+	return services
+}
+
+// TestProviderNativeServicesSynthesized is the guarantee behind this whole
+// generator step: services implemented only as a wire handler plus a provider
+// mock (no services/<name>/driver interface) still surface in coverage, so
+// llms.txt readers don't wrongly conclude they are unsupported. The Kubernetes
+// trio (EKS/AKS/GKE) is the canonical case.
+func TestProviderNativeServicesSynthesized(t *testing.T) {
+	services := loadAllServices(t)
+
+	cases := map[string]struct {
+		prov, native string
+		wantOps      bool
+	}{
+		"eks":         {"aws", "EKS", true},
+		"aks":         {"azure", "AKS", true},
+		"gke":         {"gcp", "GKE", true},
+		"sts":         {"aws", "STS", false},
+		"rds":         {"aws", "RDS", true},
+		"redshift":    {"", "", false}, // Redshift is the relationaldb native, not a synth service
+		"resourcegroups": {"azure", "Resourcegroups", false},
+		"workrequest": {"oci", "Workrequest", false},
+	}
+
+	for name, want := range cases {
+		svc, ok := services[name]
+
+		if want.prov == "" {
+			if ok {
+				t.Errorf("service %q unexpectedly present as its own entry", name)
+			}
+
+			continue
+		}
+
+		if !ok {
+			t.Fatalf("provider-native service %q not synthesized", name)
+		}
+
+		if svc.Interface != providerNativeInterface {
+			t.Errorf("%s interface = %q, want %q", name, svc.Interface, providerNativeInterface)
+		}
+
+		if got := svc.Providers[want.prov]; got != want.native {
+			t.Errorf("%s providers[%s] = %q, want %q", name, want.prov, got, want.native)
+		}
+
+		if want.wantOps && len(svc.Operations) == 0 {
+			t.Errorf("%s has 0 operations; expected the backing mock's surface", name)
+		}
+	}
+}
+
+// TestProviderNativeDoesNotClobberPortable makes sure synthesis adds services
+// without disturbing the portable ones the earlier stages resolved.
+func TestProviderNativeDoesNotClobberPortable(t *testing.T) {
+	portable := loadServices(t)
+	all := loadAllServices(t)
+
+	if len(all) <= len(portable) {
+		t.Fatalf("synthesis added no services: %d portable, %d total", len(portable), len(all))
+	}
+
+	for name, svc := range portable {
+		got, ok := all[name]
+		if !ok {
+			t.Errorf("portable service %q lost after synthesis", name)
+			continue
+		}
+
+		if got.Interface == providerNativeInterface {
+			t.Errorf("portable service %q was overwritten by a provider-native entry", name)
+		}
+
+		if len(got.Operations) != len(svc.Operations) {
+			t.Errorf("portable service %q operation count changed: %d -> %d",
+				name, len(svc.Operations), len(got.Operations))
+		}
+	}
+}
+
 func TestProviderNativeNamesResolve(t *testing.T) {
 	services := loadServices(t)
 
@@ -160,6 +258,31 @@ func constructed(provider any) map[string]bool {
 	}
 
 	return out
+}
+
+// TestNoDeadWireHandlers guards against a service the provider factory fully
+// implements (driver + a populated Provider field, i.e. Service.Providers is
+// set) but that server/<cloud>/<cloud>.go never wires up: a Drivers field
+// backing it is either absent or declared-but-unread in New(). Such a service
+// is reachable through the Go library and the in-process SDK-compat server,
+// but never through the standalone wire-protocol server for that cloud — a
+// silent capability gap.
+func TestNoDeadWireHandlers(t *testing.T) {
+	services := loadServices(t)
+
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+
+	warnings, err := checkRegistrations(root, sortedServices(services))
+	if err != nil {
+		t.Fatalf("checkRegistrations: %v", err)
+	}
+
+	for _, w := range warnings {
+		t.Error(w)
+	}
 }
 
 // TestFullyImplementedProvidersHaveServices makes sure the constructed-field

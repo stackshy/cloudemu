@@ -26,10 +26,17 @@ const (
 	providerName        = "Microsoft.ContainerInstance"
 	typeContainerGroups = "containerGroups"
 
-	// subResourceContainers and subActionLogs identify the per-container logs
-	// sub-path .../containerGroups/{cg}/containers/{c}/logs.
+	// subResourceContainers identifies the per-container sub-path
+	// .../containerGroups/{cg}/containers/{c}/{action}; subActionLogs and
+	// subActionExec are the actions served on it.
 	subResourceContainers = "containers"
 	subActionLogs         = "logs"
+	subActionExec         = "exec"
+
+	// Container-group lifecycle POST verbs .../containerGroups/{cg}/{verb}.
+	subActionStart   = "start"
+	subActionStop    = "stop"
+	subActionRestart = "restart"
 )
 
 // Handler serves Microsoft.ContainerInstance/containerGroups ARM requests
@@ -64,9 +71,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-container logs: .../containerGroups/{cg}/containers/{c}/logs
-	if rp.SubResource == subResourceContainers && rp.SubResourceAction == subActionLogs {
-		h.containerLogs(w, r, &rp)
+	// Per-container sub-paths: .../containers/{c}/logs and .../containers/{c}/exec.
+	if rp.SubResource == subResourceContainers {
+		h.serveContainerAction(w, r, &rp)
+
+		return
+	}
+
+	// Group lifecycle verbs: .../containerGroups/{cg}/{start|stop|restart}.
+	if rp.ResourceName != "" && rp.SubResource != "" {
+		h.serveGroupAction(w, r, &rp)
 
 		return
 	}
@@ -84,13 +98,48 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.serveNamedGroup(w, r, &rp)
+}
+
+// serveNamedGroup dispatches the method verbs on a single named container group.
+func (h *Handler) serveNamedGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch r.Method {
 	case http.MethodPut:
-		h.createOrUpdateGroup(w, r, &rp)
+		h.createOrUpdateGroup(w, r, rp)
+	case http.MethodPatch:
+		h.updateGroup(w, r, rp)
 	case http.MethodGet:
-		h.getGroup(w, r, &rp)
+		h.getGroup(w, r, rp)
 	case http.MethodDelete:
-		h.deleteGroup(w, r, &rp)
+		h.deleteGroup(w, r, rp)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveContainerAction routes the per-container sub-paths (logs, exec).
+func (h *Handler) serveContainerAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	switch rp.SubResourceAction {
+	case subActionLogs:
+		h.containerLogs(w, r, rp)
+	case subActionExec:
+		h.execContainer(w, r, rp)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveGroupAction routes the container-group lifecycle POST verbs.
+func (h *Handler) serveGroupAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+
+		return
+	}
+
+	switch rp.SubResource {
+	case subActionStart, subActionStop, subActionRestart:
+		h.lifecycleGroup(w, r, rp)
 	default:
 		writeMethodNotAllowed(w)
 	}

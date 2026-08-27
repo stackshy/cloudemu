@@ -3,7 +3,10 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
+	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -33,11 +36,14 @@ type releaseAddressResponseXML struct {
 }
 
 type addressXML struct {
-	PublicIP      string `xml:"publicIp"`
-	AllocationID  string `xml:"allocationId"`
-	AssociationID string `xml:"associationId,omitempty"`
-	InstanceID    string `xml:"instanceId,omitempty"`
-	Domain        string `xml:"domain"`
+	PublicIP                string `xml:"publicIp"`
+	AllocationID            string `xml:"allocationId"`
+	AssociationID           string `xml:"associationId,omitempty"`
+	InstanceID              string `xml:"instanceId,omitempty"`
+	NetworkInterfaceID      string `xml:"networkInterfaceId,omitempty"`
+	NetworkInterfaceOwnerID string `xml:"networkInterfaceOwnerId,omitempty"`
+	PrivateIPAddress        string `xml:"privateIpAddress,omitempty"`
+	Domain                  string `xml:"domain"`
 }
 
 type describeAddressesResponseXML struct {
@@ -82,7 +88,11 @@ func (h *Handler) releaseAddress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.vpc.ReleaseAddress(r.Context(), id); err != nil {
-		writeVPCErr(w, err)
+		// An Elastic IP still associated (e.g. held by a NAT gateway) can't be
+		// released; real EC2 answers InvalidIPAddress.InUse. An unknown allocation
+		// id is InvalidAllocationID.NotFound — not the VPC code the generic mapper
+		// would emit.
+		writeErrWithNotFound(w, err, "InvalidAllocationID.NotFound", "InvalidIPAddress.InUse")
 
 		return
 	}
@@ -102,20 +112,63 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, addressFilterMatch); err != nil {
+		writeVPCErr(w, err)
+
+		return
+	}
+
 	out := make([]addressXML, 0, len(eips))
+
 	for i := range eips {
-		out = append(out, addressXML{
-			PublicIP:      eips[i].PublicIP,
-			AllocationID:  eips[i].AllocationID,
-			AssociationID: eips[i].AssociationID,
-			InstanceID:    eips[i].InstanceID,
-			Domain:        domainVPC,
-		})
+		if !matchNetworkingFilters(&eips[i], filters, addressFilterMatch) {
+			continue
+		}
+
+		addr := addressXML{
+			PublicIP:           eips[i].PublicIP,
+			AllocationID:       eips[i].AllocationID,
+			AssociationID:      eips[i].AssociationID,
+			InstanceID:         eips[i].InstanceID,
+			NetworkInterfaceID: eips[i].NetworkInterfaceID,
+			PrivateIPAddress:   eips[i].PrivateIP,
+			Domain:             domainVPC,
+		}
+
+		// networkInterfaceOwnerId only surfaces for an ENI-bound EIP; it is the
+		// account that owns the interface, which in the emulator is the single
+		// default account.
+		if addr.NetworkInterfaceID != "" {
+			addr.NetworkInterfaceOwnerID = h.accountID
+		}
+
+		out = append(out, addr)
 	}
 
 	awsquery.WriteXMLResponse(w, describeAddressesResponseXML{
 		Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, AddressSet: out,
 	})
+}
+
+// addressFilterMatch reports whether e satisfies filter f and whether f is a
+// filter DescribeAddresses recognizes. Every allocation is a VPC domain address
+// (EC2-Classic is retired), so a domain filter only matches "vpc".
+func addressFilterMatch(e *netdriver.ElasticIP, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "allocation-id":
+		return containsString(f.Values, e.AllocationID), true
+	case "public-ip":
+		return containsString(f.Values, e.PublicIP), true
+	case "association-id":
+		return containsString(f.Values, e.AssociationID), true
+	case "instance-id":
+		return containsString(f.Values, e.InstanceID), true
+	case "domain":
+		return containsString(f.Values, domainVPC), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, e.Tags)
+	}
 }
 
 // allocationIDForPublicIP resolves a public address back to its allocation id.
@@ -154,11 +207,15 @@ type disassociateAddressResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
-// associateAddress binds an allocated EIP to an instance.
+// associateAddress binds an allocated EIP to an instance or a network
+// interface.
 //
-// AWS accepts the EIP by AllocationId and, for callers that never held one,
-// by PublicIp; the allocation ID is resolved from the public IP so both spell
-// the same association.
+// AWS accepts the EIP by AllocationId and, for callers that never held one, by
+// PublicIp; the allocation ID is resolved from the public IP so both spell the
+// same association. InstanceId and NetworkInterfaceId are mutually exclusive —
+// supplying both is InvalidParameterCombination. An unknown InstanceId answers
+// InvalidInstanceID.NotFound; the networking driver validates an unknown
+// NetworkInterfaceId as InvalidNetworkInterfaceID.NotFound.
 func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 	allocationID := r.Form.Get("AllocationId")
 
@@ -166,9 +223,36 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 		allocationID = h.allocationIDForPublicIP(r, r.Form.Get("PublicIp"))
 	}
 
-	assocID, err := h.vpc.AssociateAddress(r.Context(), allocationID, r.Form.Get("InstanceId"))
+	instanceID := r.Form.Get("InstanceId")
+	networkInterfaceID := r.Form.Get("NetworkInterfaceId")
+
+	if instanceID != "" && networkInterfaceID != "" {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			"You may specify an instance ID or a network interface ID, but not both")
+
+		return
+	}
+
+	// The networking driver does not model instances, so an unknown instance is
+	// caught here against the compute driver — matching AttachNetworkInterface.
+	if instanceID != "" && h.compute != nil {
+		insts, err := h.compute.DescribeInstances(r.Context(), []string{instanceID}, nil)
+		if err != nil || len(insts) == 0 {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidInstanceID,
+				"instance "+instanceID+" not found")
+
+			return
+		}
+	}
+
+	assocID, err := h.vpc.AssociateAddress(r.Context(), allocationID, netdriver.AssociateAddressInput{
+		InstanceID:         instanceID,
+		NetworkInterfaceID: networkInterfaceID,
+		PrivateIP:          r.Form.Get("PrivateIpAddress"),
+		AllowReassociation: parseOptionalBool(r.Form.Get("AllowReassociation")),
+	})
 	if err != nil {
-		writeVPCErr(w, err)
+		writeAssociateAddressErr(w, err)
 		return
 	}
 
@@ -177,6 +261,39 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 		RequestID:     awsquery.RequestID,
 		AssociationID: assocID,
 	})
+}
+
+// writeAssociateAddressErr maps the driver's not-found cases to the exact EC2
+// codes: an unknown network interface -> InvalidNetworkInterfaceID.NotFound, an
+// unknown allocation -> InvalidAllocationID.NotFound.
+func writeAssociateAddressErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "network interface") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterfaceID.NotFound", err.Error())
+		return
+	}
+
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "Resource.AlreadyAssociated", err.Error())
+		return
+	}
+
+	writeErrWithNotFound(w, err, "InvalidAllocationID.NotFound", "DependencyViolation")
+}
+
+// parseOptionalBool returns nil when the query field is absent and otherwise the
+// parsed boolean, so an omitted AllowReassociation keeps AWS's default (remap)
+// while an explicit false enforces the strict, fail-if-associated behavior.
+func parseOptionalBool(raw string) *bool {
+	if raw == "" {
+		return nil
+	}
+
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &v
 }
 
 // disassociateAddress releases an association, addressed either by

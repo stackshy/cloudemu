@@ -1,10 +1,53 @@
 package sfn
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strconv"
 	"time"
 
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
+
+// pageWindow computes the [start,end) slice bounds and the next-page token for a
+// Step Functions list operation. The token is the base64 of the next start
+// offset; an empty returned token means the last page was reached.
+func pageWindow(total int, token string, maxResults int32) (start, end int, next string) {
+	start = decodeOffset(token)
+	if start > total {
+		start = total
+	}
+
+	end = total
+	if maxResults > 0 && start+int(maxResults) < total {
+		end = start + int(maxResults)
+		next = encodeOffset(end)
+	}
+
+	return start, end, next
+}
+
+func decodeOffset(token string) int {
+	if token == "" {
+		return 0
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.Atoi(string(raw))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
+func encodeOffset(n int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(n)))
+}
 
 // epoch renders a time as AWS JSON 1.0 epoch seconds (fractional). A zero time
 // serializes as nil so optional timestamps are omitted.
@@ -86,6 +129,18 @@ type stopExecutionRequest struct {
 type listExecutionsRequest struct {
 	StateMachineArn string `json:"stateMachineArn"`
 	StatusFilter    string `json:"statusFilter"`
+	MaxResults      int32  `json:"maxResults"`
+	NextToken       string `json:"nextToken"`
+}
+
+type listStateMachinesRequest struct {
+	MaxResults int32  `json:"maxResults"`
+	NextToken  string `json:"nextToken"`
+}
+
+type listActivitiesRequest struct {
+	MaxResults int32  `json:"maxResults"`
+	NextToken  string `json:"nextToken"`
 }
 
 type getExecutionHistoryRequest struct {
@@ -211,16 +266,36 @@ type createStateMachineResponse struct {
 }
 
 type describeStateMachineResponse struct {
-	StateMachineArn string   `json:"stateMachineArn"`
-	Name            string   `json:"name"`
-	Definition      string   `json:"definition"`
-	RoleArn         string   `json:"roleArn"`
-	Type            string   `json:"type"`
-	Status          string   `json:"status"`
-	Description     string   `json:"description,omitempty"`
-	RevisionID      string   `json:"revisionId,omitempty"`
-	CreationDate    *float64 `json:"creationDate"`
-	Label           string   `json:"label,omitempty"`
+	StateMachineArn      string          `json:"stateMachineArn"`
+	Name                 string          `json:"name"`
+	Definition           string          `json:"definition"`
+	RoleArn              string          `json:"roleArn"`
+	Type                 string          `json:"type"`
+	Status               string          `json:"status"`
+	Description          string          `json:"description,omitempty"`
+	RevisionID           string          `json:"revisionId,omitempty"`
+	CreationDate         *float64        `json:"creationDate"`
+	Label                string          `json:"label,omitempty"`
+	LoggingConfiguration json.RawMessage `json:"loggingConfiguration"`
+	TracingConfiguration json.RawMessage `json:"tracingConfiguration"`
+}
+
+// defaultLoggingConfig / defaultTracingConfig are the values real
+// DescribeStateMachine returns when none was configured at create time.
+func loggingConfigOrDefault(raw string) json.RawMessage {
+	if raw != "" {
+		return json.RawMessage(raw)
+	}
+
+	return json.RawMessage(`{"level":"OFF","includeExecutionData":false}`)
+}
+
+func tracingConfigOrDefault(raw string) json.RawMessage {
+	if raw != "" {
+		return json.RawMessage(raw)
+	}
+
+	return json.RawMessage(`{"enabled":false}`)
 }
 
 type updateStateMachineResponse struct {
@@ -298,6 +373,16 @@ type executionSucceededDetails struct {
 	Output string `json:"output,omitempty"`
 }
 
+type stateEnteredDetails struct {
+	Name  string `json:"name"`
+	Input string `json:"input,omitempty"`
+}
+
+type stateExitedDetails struct {
+	Name   string `json:"name"`
+	Output string `json:"output,omitempty"`
+}
+
 type historyEvent struct {
 	ID                        int64                      `json:"id"`
 	PreviousEventID           int64                      `json:"previousEventId"`
@@ -305,6 +390,8 @@ type historyEvent struct {
 	Timestamp                 *float64                   `json:"timestamp"`
 	ExecutionStartedDetails   *executionStartedDetails   `json:"executionStartedEventDetails,omitempty"`
 	ExecutionSucceededDetails *executionSucceededDetails `json:"executionSucceededEventDetails,omitempty"`
+	StateEnteredDetails       *stateEnteredDetails       `json:"stateEnteredEventDetails,omitempty"`
+	StateExitedDetails        *stateExitedDetails        `json:"stateExitedEventDetails,omitempty"`
 }
 
 type getExecutionHistoryResponse struct {

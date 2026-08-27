@@ -59,6 +59,7 @@ import (
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
+	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
@@ -171,7 +172,14 @@ type Drivers struct {
 	// check on incoming queries.
 	ResourceDiscovery *resourcediscovery.Engine
 	SubscriptionID    string
+	// TenantID is the Azure AD tenant reported by the subscriptions Get/List and
+	// the global tenants list. Empty falls back to defaultTenantID.
+	TenantID string
 }
+
+// defaultTenantID is reported when Drivers.TenantID is unset, so a caller
+// verifying an account always sees a well-formed tenant GUID.
+const defaultTenantID = "11111111-1111-1111-1111-111111111111"
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
 // non-nil driver in d. Routing is path-based on
@@ -190,13 +198,78 @@ type Drivers struct {
 func New(d Drivers) http.Handler {
 	srv := server.New()
 
-	// The subscriptions collection has no driver behind it — see the package
-	// doc for why the list is empty rather than invented.
-	srv.Register(subscriptions.New())
+	tenantID := d.TenantID
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
 
-	// Resource groups have no driver: they are containers, and the emulator
-	// tracks membership by the ids resources already carry.
-	srv.Register(resourcegroups.New())
+	// The subscriptions endpoints (list / get / locations) have no driver: the
+	// emulator serves a single estate under one subscription and echoes it back.
+	srv.Register(subscriptions.New(d.SubscriptionID, tenantID))
+
+	// The global tenants list is a non-/subscriptions ARM path; register it
+	// before the permissive blob fallback so it isn't swallowed as a blob call.
+	srv.Register(tenants.New(tenantID))
+
+	// Build the per-service handlers that own resource-group-scoped resources up
+	// front so they can be handed to the resource-group cascade below and then
+	// registered at their normal positions. A resource group is a pure
+	// container, so deleting it must delete the resources created under it;
+	// each of these handlers implements ResourceGroupPurger to tear its own
+	// resources down. Other resource types are not cascaded yet.
+	var (
+		vnetHandler    *vnet.Handler
+		vmHandler      *virtualmachines.Handler
+		storageHandler *storageaccountsrv.Handler
+		lbHandler      *lbsrv.Handler
+		rgPurgers      []resourcegroups.ResourceGroupPurger
+	)
+
+	// Virtual machines are purged before the networking resources they consume
+	// (NICs, subnets): tearing a VM down first clears its NICs' virtualMachine
+	// back-reference, so the vnet purger's NIC delete is not blocked by the
+	// attached-NIC guard.
+	if d.VirtualMachines != nil {
+		vmHandler = virtualmachines.New(d.VirtualMachines, d.Network)
+		rgPurgers = append(rgPurgers, vmHandler)
+	}
+
+	if d.Network != nil {
+		vnetHandler = vnet.New(d.Network)
+		rgPurgers = append(rgPurgers, vnetHandler)
+	}
+
+	if d.LB != nil {
+		lbHandler = lbsrv.New(d.LB)
+
+		// Project a backend address pool's read-only backendIPConfigurations from
+		// the NIC side of the association, so NIC↔LB pool membership reflects on
+		// both sides. Only wired when the networking driver exposes NICs.
+		if nics, ok := d.Network.(netdriver.AzureNetworkInterfaces); ok {
+			lbHandler.SetNICResolver(nics)
+		}
+
+		rgPurgers = append(rgPurgers, lbHandler)
+	}
+
+	if d.BlobStorage != nil {
+		storageHandler = storageaccountsrv.New(d.BlobStorage)
+		rgPurgers = append(rgPurgers, storageHandler)
+	}
+
+	// Resource groups have no driver of their own: they are containers, and the
+	// emulator tracks membership by the ids resources already carry. The
+	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
+	// the purgers cascade a group delete into its resources.
+	srv.Register(resourcegroups.New(d.ResourceDiscovery, rgPurgers...))
+
+	// microsoft.insights extension resources (metrics, metricDefinitions,
+	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
+	// those paths before the underlying resource's own handler. Registered first.
+	if d.Monitor != nil {
+		srv.Register(monitor.NewMetricsHandler(d.Monitor))
+		srv.Register(monitor.NewDiagnosticSettingsHandler())
+	}
 
 	// Register more-specific compute resource handlers first so their
 	// resourceType match wins over virtualMachines (which also accepts the
@@ -220,12 +293,15 @@ func New(d Drivers) http.Handler {
 	// Cosmos DB matches on /dbs/* paths — register before the catch-all
 	// blob handler.
 	if d.CosmosDB != nil {
-		srv.Register(cosmosdb.New(d.CosmosDB))
+		cosmosDataPlane := cosmosdb.New(d.CosmosDB)
+		srv.Register(cosmosDataPlane)
 		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
 		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
 		// management path — disjoint from the /dbs data plane above and from
-		// managedcassandra (cassandraClusters), so order is unconstrained.
-		srv.Register(cosmosaccount.New(d.CosmosDB))
+		// managedcassandra (cassandraClusters), so order is unconstrained. Account
+		// DELETE is delegated to the data-plane handler so the account is torn
+		// down fully (tables, attributes and data-plane bookkeeping).
+		srv.Register(cosmosaccount.New(d.CosmosDB, cosmosDataPlane))
 	}
 
 	// Managed Cassandra matches ARM Microsoft.DocumentDB/cassandraClusters paths
@@ -238,8 +314,8 @@ func New(d Drivers) http.Handler {
 		srv.Register(cosmospostgresql.New(d.CosmosPostgreSQL))
 	}
 
-	if d.Network != nil {
-		srv.Register(vnet.New(d.Network))
+	if vnetHandler != nil {
+		srv.Register(vnetHandler)
 	}
 
 	// Azure DNS shares the Microsoft.Network ARM provider with the network
@@ -256,8 +332,8 @@ func New(d Drivers) http.Handler {
 	// type (loadBalancers vs virtualNetworks / networkSecurityGroups /
 	// locations / dnsZones), so registration order relative to them is
 	// unconstrained. Registered before the BlobStorage fallback.
-	if d.LB != nil {
-		srv.Register(lbsrv.New(d.LB))
+	if lbHandler != nil {
+		srv.Register(lbHandler)
 	}
 
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
@@ -265,6 +341,9 @@ func New(d Drivers) http.Handler {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.EventGrid != nil {
 		srv.Register(eventgridsrv.New(d.EventGrid))
+		// Data-plane publish endpoint (POST /api/events, topic taken from the
+		// request Host). Registered before the BlobStorage fallback.
+		srv.Register(eventgridsrv.NewPublishHandler(d.EventGrid))
 	}
 
 	// Log Analytics matches on Microsoft.OperationalInsights/workspaces — a
@@ -287,6 +366,10 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if d.NotificationHubs != nil {
 		srv.Register(notificationhubssrv.New(d.NotificationHubs))
+		// Data-plane device registration API on
+		// {namespace}.servicebus.windows.net. Registered before the BlobStorage
+		// fallback.
+		srv.Register(notificationhubssrv.NewRegistrationHandler(d.NotificationHubs))
 	}
 
 	if d.Monitor != nil {
@@ -363,8 +446,8 @@ func New(d Drivers) http.Handler {
 		srv.Register(azuresearchserver.NewDataPlane(d.SearchDataPlane))
 	}
 
-	if d.VirtualMachines != nil {
-		srv.Register(virtualmachines.New(d.VirtualMachines))
+	if vmHandler != nil {
+		srv.Register(vmHandler)
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
@@ -378,6 +461,9 @@ func New(d Drivers) http.Handler {
 	// unconstrained relative to the resource handlers above.
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourcegraph.New(d.ResourceDiscovery, d.SubscriptionID))
+		// Generic Microsoft.Resources listing (az resource list) at subscription
+		// and resource-group scope, backed by the same discovery engine.
+		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
 	}
 
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
@@ -391,6 +477,13 @@ func New(d Drivers) http.Handler {
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
 		srv.Register(acr.New(d.ACR))
+
+		// ACR ARM management plane (Microsoft.ContainerRegistry/registries) is
+		// an Azure-specific optional capability; register it when the driver
+		// implements the manager surface.
+		if mgr, ok := d.ACR.(crdriver.AzureRegistryManager); ok {
+			srv.Register(acr.NewARM(mgr))
+		}
 	}
 
 	// Azure Container Instances claims a unique ARM provider
@@ -405,6 +498,20 @@ func New(d Drivers) http.Handler {
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
 		srv.Register(keyvaultsrv.New(d.KeyVault))
+		// Keys data-plane matches /keys and /deletedkeys — disjoint from the
+		// /secrets surface above and from ARM. Registered only when the backend
+		// implements the KeyVaultKeys surface.
+		if _, ok := d.KeyVault.(secretsdriver.KeyVaultKeys); ok {
+			srv.Register(keyvaultsrv.NewKeys(d.KeyVault))
+		}
+		// Certificates data-plane matches /certificates and /deletedcertificates.
+		// Registering here — before the permissive Table/Blob storage fallbacks
+		// below — is the routing fix: without it certificate requests fall
+		// through to storage and return an odata error instead of a Key Vault
+		// response. Registered only when the backend implements the surface.
+		if _, ok := d.KeyVault.(secretsdriver.KeyVaultCertificates); ok {
+			srv.Register(keyvaultsrv.NewCerts(d.KeyVault))
+		}
 	}
 
 	// Table Storage matches the OData table surface (/Tables, /Tables('name'),
@@ -429,8 +536,8 @@ func New(d Drivers) http.Handler {
 	// Claims only the /providers/Microsoft.Storage/storageAccounts/ management
 	// path (which starts with /subscriptions/), disjoint from the blob
 	// data-plane fallback below, so it must register before that fallback.
-	if d.BlobStorage != nil {
-		srv.Register(storageaccountsrv.New(d.BlobStorage))
+	if storageHandler != nil {
+		srv.Register(storageHandler)
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

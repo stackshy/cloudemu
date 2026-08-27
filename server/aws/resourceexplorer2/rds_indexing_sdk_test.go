@@ -60,7 +60,7 @@ func TestSDKResourceExplorer2_RDSIndexing(t *testing.T) {
 			t.Fatalf("Search: %v", err)
 		}
 
-		for _, want := range []string{"relationaldb:dbinstance", "relationaldb:dbcluster", "relationaldb:dbsnapshot"} {
+		for _, want := range []string{"rds:dbinstance", "rds:dbcluster", "rds:dbsnapshot"} {
 			if !rexHasResourceType(out.Resources, want) {
 				t.Errorf("resource type %q not surfaced", want)
 			}
@@ -92,7 +92,7 @@ func TestSDKResourceExplorer2_RDSIndexing(t *testing.T) {
 
 		var instanceARN string
 		for _, r := range out.Resources {
-			if aws.ToString(r.ResourceType) == "relationaldb:dbinstance" {
+			if aws.ToString(r.ResourceType) == "rds:dbinstance" {
 				instanceARN = aws.ToString(r.Arn)
 			}
 		}

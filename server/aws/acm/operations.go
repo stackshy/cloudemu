@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
 
@@ -21,6 +22,7 @@ func (h *Handler) requestCertificate(w http.ResponseWriter, r *http.Request) {
 			DomainName:              req.DomainName,
 			SubjectAlternativeNames: req.SubjectAlternativeNames,
 			ValidationMethod:        req.ValidationMethod,
+			DomainValidationOptions: req.validationOptions(),
 			KeyAlgorithm:            req.KeyAlgorithm,
 			IdempotencyToken:        req.IdempotencyToken,
 			CTLoggingPreference:     ctPref(req.Options),
@@ -64,12 +66,29 @@ func (h *Handler) describeCertificate(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listCertificates(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listCertificatesRequest) (any, error) {
-		certs, err := h.acm.ListCertificates(ctx, acmdriver.ListFilter{Statuses: req.CertificateStatuses})
+		certs, err := h.acm.ListCertificates(ctx,
+			acmdriver.ListFilter{Statuses: req.CertificateStatuses, KeyTypes: req.keyTypes()})
 		if err != nil {
 			return nil, err
 		}
 
-		return listCertificatesResponse{CertificateSummaryList: summaries(certs)}, nil
+		// Paginate over a stable ARN ordering so MaxItems/NextToken tokens stay
+		// meaningful across calls (the driver's map iteration is unordered).
+		limit := 0
+		if req.MaxItems != nil {
+			limit = int(*req.MaxItems)
+		}
+
+		page, err := pagination.PaginateSorted(certs,
+			func(a, b acmdriver.Certificate) bool { return a.ARN < b.ARN }, req.NextToken, limit)
+		if err != nil {
+			return nil, err
+		}
+
+		return listCertificatesResponse{
+			CertificateSummaryList: summaries(page.Items),
+			NextToken:              page.NextPageToken,
+		}, nil
 	})
 }
 
@@ -158,7 +177,8 @@ func (h *Handler) revokeCertificate(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) searchCertificates(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listCertificatesRequest) (any, error) {
-		certs, err := h.acm.SearchCertificates(ctx, acmdriver.ListFilter{Statuses: req.CertificateStatuses})
+		certs, err := h.acm.SearchCertificates(ctx,
+			acmdriver.ListFilter{Statuses: req.CertificateStatuses, KeyTypes: req.keyTypes()})
 		if err != nil {
 			return nil, err
 		}

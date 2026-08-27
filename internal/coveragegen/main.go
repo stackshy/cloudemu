@@ -71,12 +71,25 @@ func run() error {
 		return err
 	}
 
+	if err := synthesizeNativeServices(root, services); err != nil {
+		return err
+	}
+
 	ordered := sortedServices(services)
 	if err := render(root, ordered); err != nil {
 		return err
 	}
 
 	fmt.Printf("coveragegen: wrote coverage for %d services\n", len(ordered))
+
+	warnings, checkErr := checkRegistrations(root, ordered)
+	if checkErr != nil {
+		return checkErr
+	}
+
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
 
 	return nil
 }

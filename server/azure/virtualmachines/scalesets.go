@@ -3,6 +3,7 @@ package virtualmachines
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	providervm "github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
@@ -15,6 +16,7 @@ import (
 type scaleSetStore interface {
 	CreateScaleSet(ctx context.Context, s providervm.ScaleSet) (*providervm.ScaleSet, error)
 	ListScaleSets(ctx context.Context) ([]providervm.ScaleSet, error)
+	DeleteScaleSet(ctx context.Context, name string) error
 }
 
 // serveScaleSet dispatches PUT/GET on Microsoft.Compute/virtualMachineScaleSets.
@@ -48,9 +50,26 @@ func (h *Handler) serveScaleSet(w http.ResponseWriter, r *http.Request, rp azure
 		createScaleSet(w, r, rp, store)
 	case http.MethodGet:
 		getScaleSet(w, r, rp, store)
+	case http.MethodDelete:
+		deleteScaleSet(w, r, rp, store)
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
+}
+
+// deleteScaleSet handles DELETE virtualMachineScaleSets/{name}. Real Azure
+// returns 202 Accepted with the async-operation polling headers; the SDK's
+// poller then observes the operation Succeeded and a follow-up GET reports
+// NotFound.
+//
+//nolint:gocritic // rp is a request-scoped value
+func deleteScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
+	if err := store.DeleteScaleSet(r.Context(), rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, "vmss-delete-"+rp.ResourceName)
 }
 
 // createScaleSet handles PUT virtualMachineScaleSets/{name}.
@@ -69,16 +88,21 @@ func createScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 	}
 
 	set := providervm.ScaleSet{
-		Name:     rp.ResourceName,
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceTypeScaleSets, rp.ResourceName),
-		Location: req.Location,
-		Tags:     req.Tags,
+		Name:          rp.ResourceName,
+		ID:            azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceTypeScaleSets, rp.ResourceName),
+		Location:      req.Location,
+		Tags:          req.Tags,
+		ResourceGroup: rp.ResourceGroup,
 	}
 
 	if req.SKU != nil {
 		set.SKUName = req.SKU.Name
 		set.SKUTier = req.SKU.Tier
-		set.Capacity = req.SKU.Capacity
+
+		if req.SKU.Capacity != nil {
+			set.Capacity = int(*req.SKU.Capacity)
+			set.CapacityZero = *req.SKU.Capacity == 0
+		}
 	}
 
 	if p := req.Properties.VirtualMachineProfile; p != nil {
@@ -107,7 +131,9 @@ func getScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePat
 	}
 
 	for i := range sets {
-		if sets[i].Name == rp.ResourceName {
+		// ARM resource names are case-insensitive, so a GET with a
+		// differently-cased scale-set name must still resolve it.
+		if strings.EqualFold(sets[i].Name, rp.ResourceName) {
 			azurearm.WriteJSON(w, http.StatusOK, toVMSSResponse(&sets[i], rp))
 			return
 		}
@@ -147,7 +173,7 @@ func toVMSSResponse(s *providervm.ScaleSet, rp azurearm.ResourcePath) vmssRespon
 		Type:     providerName + "/" + resourceTypeScaleSets,
 		Location: defaultIfEmpty(s.Location, "eastus"),
 		Tags:     s.Tags,
-		SKU:      &vmssSKU{Name: s.SKUName, Tier: s.SKUTier, Capacity: s.Capacity},
+		SKU:      &vmssSKU{Name: s.SKUName, Tier: s.SKUTier, Capacity: capacityPtr(s.Capacity)},
 		Properties: vmssResponseProps{
 			ProvisioningState: "Succeeded",
 			VirtualMachineProfile: &vmssVMProfile{
@@ -157,4 +183,11 @@ func toVMSSResponse(s *providervm.ScaleSet, rp azurearm.ResourcePath) vmssRespon
 			},
 		},
 	}
+}
+
+// capacityPtr converts the stored capacity (always a concrete value after
+// CreateScaleSet defaulting) to the pointer form the ARM wire shape uses.
+func capacityPtr(capacity int) *int64 {
+	c := int64(capacity)
+	return &c
 }

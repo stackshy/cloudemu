@@ -10,6 +10,16 @@ type FunctionVersion struct {
 	Description  string
 	CodeSHA256   string
 	CreatedAt    string
+	// RevisionID is the revision the version was published from.
+	RevisionID string
+	// Config fields snapshotted at publish time. A published version is
+	// immutable, so these reflect the function state when it was cut, not the
+	// current $LATEST configuration.
+	Runtime string
+	Handler string
+	Memory  int
+	Timeout int
+	Role    string
 }
 
 // PermissionStatement is one statement of a function's resource-based policy,
@@ -19,6 +29,32 @@ type PermissionStatement struct {
 	Action      string
 	Principal   string
 	SourceARN   string
+}
+
+// FunctionURLConfig is a Lambda Function URL configuration. Function URLs are
+// an AWS-specific concept (not part of the portable Serverless interface), so
+// providers expose them through an optional type assertion rather than the
+// shared driver.
+type FunctionURLConfig struct {
+	FunctionName string
+	Qualifier    string
+	FunctionArn  string
+	FunctionURL  string
+	AuthType     string // "NONE" or "AWS_IAM"
+	InvokeMode   string // "BUFFERED" or "RESPONSE_STREAM"
+	Cors         *FunctionURLCors
+	CreationTime string
+	LastModified string
+}
+
+// FunctionURLCors is the CORS configuration of a Function URL.
+type FunctionURLCors struct {
+	AllowCredentials bool
+	AllowHeaders     []string
+	AllowMethods     []string
+	AllowOrigins     []string
+	ExposeHeaders    []string
+	MaxAge           int
 }
 
 // AliasConfig configures a function alias.
@@ -45,6 +81,8 @@ type Alias struct {
 	RoutingConfig   *AliasRoutingConfig
 	AliasARN        string
 	CreatedAt       string
+	// RevisionID changes on every alias mutation (create/update).
+	RevisionID string
 }
 
 // LayerConfig configures a new layer version.
@@ -80,6 +118,61 @@ type ProvisionedConcurrencyConfig struct {
 	Provisioned  int
 }
 
+// VPCConfig is a function's networking configuration (AWS Lambda VpcConfig).
+type VPCConfig struct {
+	SubnetIDs        []string
+	SecurityGroupIDs []string
+	// VpcID is the VPC that AWS resolves from the configured subnets and echoes
+	// back in VpcConfigResponse. This emulator does not model the EC2 subnet->VPC
+	// mapping, so it is left empty unless a caller sets it.
+	VpcID string
+}
+
+// DeadLetterConfig is a function's dead-letter queue target (AWS Lambda).
+type DeadLetterConfig struct {
+	TargetArn string
+}
+
+// TracingConfig is a function's AWS X-Ray tracing configuration. Mode is
+// "Active" or "PassThrough" (the create-time default).
+type TracingConfig struct {
+	Mode string
+}
+
+// EphemeralStorage is a function's /tmp size in MB (AWS Lambda EphemeralStorage).
+// Real Lambda accepts 512–10240 and defaults to 512 when the client omits it.
+type EphemeralStorage struct {
+	Size int
+}
+
+// FunctionLayer is one layer version imported by a function, echoed back in the
+// function configuration's Layers list (AWS Lambda Layer). CodeSize is the layer
+// version's deployment-package size.
+type FunctionLayer struct {
+	ARN      string
+	CodeSize int64
+}
+
+// AWSFunctionConfig bundles the AWS Lambda-only function settings — VpcConfig,
+// DeadLetterConfig, TracingConfig, Architectures, EphemeralStorage and the
+// imported Layers. These have no Azure Functions or GCP Cloud Functions
+// equivalent, so they are kept off the shared FunctionConfig/FunctionInfo structs
+// and applied/read back through an AWS-only optional interface (type-asserted by
+// the AWS Lambda server handler), the same way Function URLs are exposed.
+type AWSFunctionConfig struct {
+	VPCConfig        *VPCConfig
+	DeadLetterConfig *DeadLetterConfig
+	TracingConfig    *TracingConfig
+	// Architectures is the instruction-set list (["x86_64"] or ["arm64"]). Empty
+	// means the handler emits the AWS default ["x86_64"].
+	Architectures []string
+	// EphemeralStorage is the /tmp size; nil means the handler emits the default 512.
+	EphemeralStorage *EphemeralStorage
+	// Layers is the ordered list of imported layer versions echoed back on the
+	// function configuration.
+	Layers []FunctionLayer
+}
+
 // FunctionConfig describes a serverless function to create.
 type FunctionConfig struct {
 	Name        string
@@ -87,6 +180,8 @@ type FunctionConfig struct {
 	Handler     string
 	Memory      int // MB
 	Timeout     int // seconds
+	Role        string
+	Description string
 	Environment map[string]string
 	Tags        map[string]string
 	Code        []byte // deployment package (.zip); deployed to a FunctionEngine (if configured) on create/update to run real code
@@ -103,12 +198,24 @@ type FunctionInfo struct {
 	ARN          string
 	Runtime      string
 	Handler      string
+	Role         string
+	Description  string
 	Memory       int
 	Timeout      int
 	State        string
 	Environment  map[string]string
 	Tags         map[string]string
 	LastModified string
+	// CodeSHA256 is the base64-encoded SHA-256 of the deployment package, the
+	// value Terraform compares against its locally computed source_code_hash.
+	CodeSHA256 string
+	// CodeSize is the deployment package size in bytes.
+	CodeSize int64
+	// Version is the function's published version ("$LATEST" for the mutable
+	// current code).
+	Version string
+	// RevisionID changes on every configuration or code update.
+	RevisionID string
 }
 
 // InvokeInput configures a function invocation.
@@ -116,6 +223,10 @@ type InvokeInput struct {
 	FunctionName string
 	Payload      []byte
 	InvokeType   string // "RequestResponse" or "Event"
+	// Qualifier selects a published version (a numeric version string) or
+	// alias to invoke instead of the mutable $LATEST code. Empty invokes
+	// $LATEST, matching the AWS Lambda Invoke Qualifier parameter.
+	Qualifier string
 }
 
 // InvokeOutput is the result of a function invocation.
@@ -123,6 +234,11 @@ type InvokeOutput struct {
 	StatusCode int
 	Payload    []byte
 	Error      string
+	// ExecutedVersion is the version that actually ran: the alias's target
+	// version when Qualifier names an alias, the Qualifier itself when it
+	// names a version, or "$LATEST" for an unqualified invoke. Mirrors the
+	// AWS Lambda Invoke ExecutedVersion response field.
+	ExecutedVersion string
 }
 
 // HandlerFunc is a function handler that processes invocations.
@@ -139,9 +255,12 @@ type EventSourceMappingConfig struct {
 
 // EventSourceMappingInfo describes an event source mapping.
 type EventSourceMappingInfo struct {
-	UUID             string
-	EventSourceArn   string
-	FunctionName     string
+	UUID           string
+	EventSourceArn string
+	FunctionName   string
+	// FunctionArn is the full ARN of the target function, resolved at create
+	// time. The Lambda wire protocol returns the ARN, not the bare name.
+	FunctionArn      string
 	BatchSize        int
 	Enabled          bool
 	StartingPosition string

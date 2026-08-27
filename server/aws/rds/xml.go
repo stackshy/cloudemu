@@ -8,6 +8,21 @@ import (
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
+// snapshotProgressComplete is the PercentProgress an available snapshot reports.
+const snapshotProgressComplete = 100
+
+// rdsHostedZoneID is the Route 53 hosted-zone id RDS reports for a DB
+// instance endpoint. Real AWS uses a per-region constant; this stand-in keeps
+// the Endpoint.HostedZoneId element populated for SDK consumers.
+const rdsHostedZoneID = "Z2R2ITUGPM61AM"
+
+// parameterApplyInSync / optionStatusInSync are the statuses RDS reports for a
+// DB parameter group / option group membership that is fully applied.
+const (
+	parameterApplyInSync = "in-sync"
+	optionStatusInSync   = "in-sync"
+)
+
 // All RDS query-protocol responses are wrapped in <FooResponse> with a
 // <FooResult> child and a trailing <ResponseMetadata>. The structures below
 // mirror the AWS-published XML closely enough that aws-sdk-go-v2's RDS
@@ -18,8 +33,31 @@ type responseMetadata struct {
 }
 
 type endpointXML struct {
-	Address string `xml:"Address,omitempty"`
-	Port    int    `xml:"Port,omitempty"`
+	Address      string `xml:"Address,omitempty"`
+	Port         int    `xml:"Port,omitempty"`
+	HostedZoneID string `xml:"HostedZoneId,omitempty"`
+}
+
+type dbParameterGroupMembershipXML struct {
+	DBParameterGroupName string `xml:"DBParameterGroupName"`
+	ParameterApplyStatus string `xml:"ParameterApplyStatus"`
+}
+
+type dbParameterGroupsXML struct {
+	DBParameterGroup []dbParameterGroupMembershipXML `xml:"DBParameterGroup,omitempty"`
+}
+
+type optionGroupMembershipXML struct {
+	OptionGroupName string `xml:"OptionGroupName"`
+	Status          string `xml:"Status"`
+}
+
+type optionGroupMembershipsXML struct {
+	OptionGroupMembership []optionGroupMembershipXML `xml:"OptionGroupMembership,omitempty"`
+}
+
+type availabilityZonesXML struct {
+	AvailabilityZone []string `xml:"AvailabilityZone,omitempty"`
 }
 
 type tagXML struct {
@@ -41,27 +79,53 @@ type vpcSecurityGroupsXML struct {
 }
 
 type dbInstanceXML struct {
-	DBInstanceIdentifier                  string                `xml:"DBInstanceIdentifier"`
-	DBInstanceArn                         string                `xml:"DBInstanceArn"`
-	Engine                                string                `xml:"Engine,omitempty"`
-	EngineVersion                         string                `xml:"EngineVersion,omitempty"`
-	DBInstanceClass                       string                `xml:"DBInstanceClass,omitempty"`
-	DBInstanceStatus                      string                `xml:"DBInstanceStatus"`
-	MasterUsername                        string                `xml:"MasterUsername,omitempty"`
-	DBName                                string                `xml:"DBName,omitempty"`
-	AllocatedStorage                      int                   `xml:"AllocatedStorage,omitempty"`
-	StorageType                           string                `xml:"StorageType,omitempty"`
-	Endpoint                              *endpointXML          `xml:"Endpoint,omitempty"`
-	MultiAZ                               bool                  `xml:"MultiAZ"`
-	PubliclyAccessible                    bool                  `xml:"PubliclyAccessible"`
-	AvailabilityZone                      string                `xml:"AvailabilityZone,omitempty"`
-	DBClusterIdentifier                   string                `xml:"DBClusterIdentifier,omitempty"`
-	DBSubnetGroupName                     string                `xml:"DBSubnetGroupName,omitempty"`
-	InstanceCreateTime                    string                `xml:"InstanceCreateTime,omitempty"`
-	VpcSecurityGroups                     *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
-	TagList                               *tagListXML           `xml:"TagList,omitempty"`
-	ReadReplicaSourceDBInstanceIdentifier string                `xml:"ReadReplicaSourceDBInstanceIdentifier,omitempty"`
-	ReadReplicaDBInstanceIdentifiers      *readReplicaIDsXML    `xml:"ReadReplicaDBInstanceIdentifiers,omitempty"`
+	DBInstanceIdentifier                  string                     `xml:"DBInstanceIdentifier"`
+	DBInstanceArn                         string                     `xml:"DBInstanceArn"`
+	Engine                                string                     `xml:"Engine,omitempty"`
+	EngineVersion                         string                     `xml:"EngineVersion,omitempty"`
+	DBInstanceClass                       string                     `xml:"DBInstanceClass,omitempty"`
+	DBInstanceStatus                      string                     `xml:"DBInstanceStatus"`
+	MasterUsername                        string                     `xml:"MasterUsername,omitempty"`
+	DBName                                string                     `xml:"DBName,omitempty"`
+	AllocatedStorage                      int                        `xml:"AllocatedStorage,omitempty"`
+	StorageType                           string                     `xml:"StorageType,omitempty"`
+	Endpoint                              *endpointXML               `xml:"Endpoint,omitempty"`
+	MultiAZ                               bool                       `xml:"MultiAZ"`
+	PubliclyAccessible                    bool                       `xml:"PubliclyAccessible"`
+	AvailabilityZone                      string                     `xml:"AvailabilityZone,omitempty"`
+	DBClusterIdentifier                   string                     `xml:"DBClusterIdentifier,omitempty"`
+	DBSubnetGroup                         *dbSubnetGroupXML          `xml:"DBSubnetGroup,omitempty"`
+	InstanceCreateTime                    string                     `xml:"InstanceCreateTime,omitempty"`
+	DbiResourceID                         string                     `xml:"DbiResourceId,omitempty"`
+	BackupRetentionPeriod                 int                        `xml:"BackupRetentionPeriod,omitempty"`
+	PreferredBackupWindow                 string                     `xml:"PreferredBackupWindow,omitempty"`
+	PreferredMaintenanceWindow            string                     `xml:"PreferredMaintenanceWindow,omitempty"`
+	CACertificateIdentifier               string                     `xml:"CACertificateIdentifier,omitempty"`
+	Iops                                  int                        `xml:"Iops,omitempty"`
+	StorageEncrypted                      bool                       `xml:"StorageEncrypted"`
+	KmsKeyID                              string                     `xml:"KmsKeyId,omitempty"`
+	DeletionProtection                    bool                       `xml:"DeletionProtection"`
+	DBParameterGroups                     *dbParameterGroupsXML      `xml:"DBParameterGroups,omitempty"`
+	OptionGroupMemberships                *optionGroupMembershipsXML `xml:"OptionGroupMemberships,omitempty"`
+	VpcSecurityGroups                     *vpcSecurityGroupsXML      `xml:"VpcSecurityGroups,omitempty"`
+	TagList                               *tagListXML                `xml:"TagList,omitempty"`
+	ReadReplicaSourceDBInstanceIdentifier string                     `xml:"ReadReplicaSourceDBInstanceIdentifier,omitempty"`
+	ReadReplicaDBInstanceIdentifiers      *readReplicaIDsXML         `xml:"ReadReplicaDBInstanceIdentifiers,omitempty"`
+	PendingModifiedValues                 *pendingModifiedValuesXML  `xml:"PendingModifiedValues,omitempty"`
+}
+
+// pendingModifiedValuesXML is the nested DBInstance element listing the
+// deferrable ModifyDBInstance changes requested with ApplyImmediately=false but
+// not yet applied. MasterUserPassword is echoed masked ("****"), never in clear.
+type pendingModifiedValuesXML struct {
+	DBInstanceClass       string `xml:"DBInstanceClass,omitempty"`
+	AllocatedStorage      int    `xml:"AllocatedStorage,omitempty"`
+	EngineVersion         string `xml:"EngineVersion,omitempty"`
+	MasterUserPassword    string `xml:"MasterUserPassword,omitempty"`
+	BackupRetentionPeriod int    `xml:"BackupRetentionPeriod,omitempty"`
+	MultiAZ               *bool  `xml:"MultiAZ,omitempty"`
+	Iops                  int    `xml:"Iops,omitempty"`
+	StorageType           string `xml:"StorageType,omitempty"`
 }
 
 type readReplicaIDsXML struct {
@@ -89,6 +153,13 @@ type dbClusterXML struct {
 	ReaderEndpoint      string                `xml:"ReaderEndpoint,omitempty"`
 	Port                int                   `xml:"Port,omitempty"`
 	DBSubnetGroup       string                `xml:"DBSubnetGroup,omitempty"`
+	EngineMode          string                `xml:"EngineMode,omitempty"`
+	DBClusterResourceID string                `xml:"DbClusterResourceId,omitempty"`
+	AllocatedStorage    int                   `xml:"AllocatedStorage,omitempty"`
+	StorageEncrypted    bool                  `xml:"StorageEncrypted"`
+	KmsKeyID            string                `xml:"KmsKeyId,omitempty"`
+	DeletionProtection  bool                  `xml:"DeletionProtection"`
+	AvailabilityZones   *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
 	ClusterCreateTime   string                `xml:"ClusterCreateTime,omitempty"`
 	DBClusterMembers    *dbClusterMembersXML  `xml:"DBClusterMembers,omitempty"`
 	VpcSecurityGroups   *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
@@ -103,6 +174,7 @@ type dbSnapshotXML struct {
 	EngineVersion        string      `xml:"EngineVersion,omitempty"`
 	AllocatedStorage     int         `xml:"AllocatedStorage,omitempty"`
 	Status               string      `xml:"Status"`
+	PercentProgress      int         `xml:"PercentProgress"`
 	SnapshotCreateTime   string      `xml:"SnapshotCreateTime,omitempty"`
 	TagList              *tagListXML `xml:"TagList,omitempty"`
 }
@@ -114,6 +186,7 @@ type dbClusterSnapshotXML struct {
 	Engine                      string      `xml:"Engine,omitempty"`
 	EngineVersion               string      `xml:"EngineVersion,omitempty"`
 	Status                      string      `xml:"Status"`
+	PercentProgress             int         `xml:"PercentProgress"`
 	SnapshotCreateTime          string      `xml:"SnapshotCreateTime,omitempty"`
 	TagList                     *tagListXML `xml:"TagList,omitempty"`
 }
@@ -175,6 +248,7 @@ type dbInstanceResult struct {
 }
 
 type dbInstancesResult struct {
+	Marker      string         `xml:"Marker,omitempty"`
 	DBInstances dbInstancesXML `xml:"DBInstances"`
 }
 
@@ -236,6 +310,7 @@ type dbClusterResult struct {
 }
 
 type dbClustersResult struct {
+	Marker     string        `xml:"Marker,omitempty"`
 	DBClusters dbClustersXML `xml:"DBClusters"`
 }
 
@@ -269,6 +344,7 @@ type dbSnapshotResult struct {
 }
 
 type dbSnapshotsResult struct {
+	Marker      string         `xml:"Marker,omitempty"`
 	DBSnapshots dbSnapshotsXML `xml:"DBSnapshots"`
 }
 
@@ -317,8 +393,14 @@ type describeDBClusterSnapshotsResponse struct {
 }
 
 // toInstanceXML converts a driver Instance to its XML representation.
-func toInstanceXML(inst *rdsdriver.Instance) dbInstanceXML {
-	return dbInstanceXML{
+//
+// resolvedSubnetGroup, when non-nil, is the fully resolved DB subnet group the
+// instance is placed in. Real RDS reports the association as a nested complex
+// <DBSubnetGroup> element (name, description, VpcId, status, Subnets) — not a
+// scalar <DBSubnetGroupName> — so the aws-sdk-go-v2 DBInstance.DBSubnetGroup
+// field (and Terraform's db_subnet_group_name off it) has something to bind.
+func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupXML) dbInstanceXML {
+	x := dbInstanceXML{
 		DBInstanceIdentifier: inst.ID,
 		DBInstanceArn:        inst.ARN,
 		Engine:               inst.Engine,
@@ -330,19 +412,79 @@ func toInstanceXML(inst *rdsdriver.Instance) dbInstanceXML {
 		AllocatedStorage:     inst.AllocatedStorage,
 		StorageType:          inst.StorageType,
 		Endpoint: &endpointXML{
-			Address: inst.Endpoint,
-			Port:    inst.Port,
+			Address:      inst.Endpoint,
+			Port:         inst.Port,
+			HostedZoneID: rdsHostedZoneID,
 		},
 		MultiAZ:                               inst.MultiAZ,
 		PubliclyAccessible:                    inst.PubliclyAccessible,
 		AvailabilityZone:                      inst.AvailabilityZone,
 		DBClusterIdentifier:                   inst.ClusterID,
-		DBSubnetGroupName:                     inst.SubnetGroupName,
+		DBSubnetGroup:                         resolvedSubnetGroup,
 		InstanceCreateTime:                    inst.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		DbiResourceID:                         inst.DbiResourceID,
+		BackupRetentionPeriod:                 inst.BackupRetentionPeriod,
+		PreferredBackupWindow:                 inst.PreferredBackupWindow,
+		PreferredMaintenanceWindow:            inst.PreferredMaintenanceWindow,
+		CACertificateIdentifier:               inst.CACertificateIdentifier,
+		Iops:                                  inst.Iops,
+		StorageEncrypted:                      inst.StorageEncrypted,
+		KmsKeyID:                              inst.KmsKeyID,
+		DeletionProtection:                    inst.DeletionProtection,
+		DBParameterGroups:                     toDBParameterGroupsXML(inst.DBParameterGroupName),
+		OptionGroupMemberships:                toOptionGroupMembershipsXML(inst.OptionGroupName),
 		VpcSecurityGroups:                     toVpcSGsXML(inst.VPCSecurityGroups),
 		TagList:                               toTagListXML(inst.Tags),
 		ReadReplicaSourceDBInstanceIdentifier: inst.ReadReplicaSource,
 		ReadReplicaDBInstanceIdentifiers:      toReadReplicaIDsXML(inst.ReadReplicaTargets),
+		PendingModifiedValues:                 toPendingModifiedValuesXML(inst.PendingModifiedValues),
+	}
+
+	return x
+}
+
+// toPendingModifiedValuesXML maps the driver's PendingModifiedValues onto its
+// nested wire element, returning nil (an omitted element) when nothing is pending.
+func toPendingModifiedValuesXML(p *rdsdriver.PendingModifiedValues) *pendingModifiedValuesXML {
+	if p == nil {
+		return nil
+	}
+
+	return &pendingModifiedValuesXML{
+		DBInstanceClass:       p.InstanceClass,
+		AllocatedStorage:      p.AllocatedStorage,
+		EngineVersion:         p.EngineVersion,
+		MasterUserPassword:    p.MasterUserPassword,
+		BackupRetentionPeriod: p.BackupRetentionPeriod,
+		MultiAZ:               p.MultiAZ,
+		Iops:                  p.Iops,
+		StorageType:           p.StorageType,
+	}
+}
+
+func toDBParameterGroupsXML(name string) *dbParameterGroupsXML {
+	if name == "" {
+		return nil
+	}
+
+	return &dbParameterGroupsXML{
+		DBParameterGroup: []dbParameterGroupMembershipXML{{
+			DBParameterGroupName: name,
+			ParameterApplyStatus: parameterApplyInSync,
+		}},
+	}
+}
+
+func toOptionGroupMembershipsXML(name string) *optionGroupMembershipsXML {
+	if name == "" {
+		return nil
+	}
+
+	return &optionGroupMembershipsXML{
+		OptionGroupMembership: []optionGroupMembershipXML{{
+			OptionGroupName: name,
+			Status:          optionStatusInSync,
+		}},
 	}
 }
 
@@ -378,11 +520,26 @@ func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {
 		ReaderEndpoint:      cluster.ReaderEndpoint,
 		Port:                cluster.Port,
 		DBSubnetGroup:       cluster.SubnetGroupName,
+		EngineMode:          cluster.EngineMode,
+		DBClusterResourceID: cluster.DBClusterResourceID,
+		AllocatedStorage:    cluster.AllocatedStorage,
+		StorageEncrypted:    cluster.StorageEncrypted,
+		KmsKeyID:            cluster.KmsKeyID,
+		DeletionProtection:  cluster.DeletionProtection,
+		AvailabilityZones:   toAvailabilityZonesXML(cluster.AvailabilityZones),
 		ClusterCreateTime:   cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		DBClusterMembers:    &members,
 		VpcSecurityGroups:   toVpcSGsXML(cluster.VPCSecurityGroups),
 		TagList:             toTagListXML(cluster.Tags),
 	}
+}
+
+func toAvailabilityZonesXML(azs []string) *availabilityZonesXML {
+	if len(azs) == 0 {
+		return nil
+	}
+
+	return &availabilityZonesXML{AvailabilityZone: azs}
 }
 
 func toSnapshotXML(snap *rdsdriver.Snapshot) dbSnapshotXML {
@@ -394,9 +551,22 @@ func toSnapshotXML(snap *rdsdriver.Snapshot) dbSnapshotXML {
 		EngineVersion:        snap.EngineVersion,
 		AllocatedStorage:     snap.AllocatedStorage,
 		Status:               snap.State,
+		PercentProgress:      percentProgressForState(snap.State),
 		SnapshotCreateTime:   snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		TagList:              toTagListXML(snap.Tags),
 	}
+}
+
+// percentProgressForState reports a snapshot's backup progress: an available
+// snapshot is fully backed up (100), anything still creating is 0. Real AWS
+// reports 100 for an available snapshot, so a caller polling PercentProgress
+// alongside Status sees them agree.
+func percentProgressForState(state string) int {
+	if state == rdsdriver.SnapshotAvailable {
+		return snapshotProgressComplete
+	}
+
+	return 0
 }
 
 func toClusterSnapshotXML(snap *rdsdriver.ClusterSnapshot) dbClusterSnapshotXML {
@@ -407,6 +577,7 @@ func toClusterSnapshotXML(snap *rdsdriver.ClusterSnapshot) dbClusterSnapshotXML 
 		Engine:                      snap.Engine,
 		EngineVersion:               snap.EngineVersion,
 		Status:                      snap.State,
+		PercentProgress:             percentProgressForState(snap.State),
 		SnapshotCreateTime:          snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		TagList:                     toTagListXML(snap.Tags),
 	}

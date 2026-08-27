@@ -336,6 +336,83 @@ func TestSDKAlloyDBUserPatchAndGuards(t *testing.T) {
 	assertStatus(t, err, 400)
 }
 
+// TestSDKAlloyDBClusterMetadata pins the three metadata findings: labels
+// round-trip, createTime/updateTime are populated, and uid/displayName are the
+// server-assigned UID and the caller's display name (never the cluster id).
+func TestSDKAlloyDBClusterMetadata(t *testing.T) {
+	svc := newSDKClient(t)
+	ctx := context.Background()
+
+	// Cluster WITH labels and a display name.
+	if _, err := svc.Projects.Locations.Clusters.Create(parent(), &alloydb.Cluster{
+		DatabaseVersion: "POSTGRES_15",
+		DisplayName:     "Orders Prod",
+		Labels:          map[string]string{"env": "prod", "team": "payments"},
+	}).ClusterId("c1").Context(ctx).Do(); err != nil {
+		t.Fatalf("Clusters.Create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Clusters.Get(parent() + "/clusters/c1").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Clusters.Get: %v", err)
+	}
+
+	// Finding 1: labels round-trip.
+	if got.Labels["env"] != "prod" || got.Labels["team"] != "payments" {
+		t.Errorf("labels: got %v, want env=prod team=payments", got.Labels)
+	}
+
+	// Finding 2: createTime/updateTime populated.
+	if got.CreateTime == "" || got.UpdateTime == "" {
+		t.Errorf("timestamps: createTime=%q updateTime=%q, want both set", got.CreateTime, got.UpdateTime)
+	}
+
+	// Finding 3: uid is a server UID (not the id) and displayName is echoed.
+	if got.Uid == "" || got.Uid == "c1" {
+		t.Errorf("uid: got %q, want a server-assigned UID distinct from the id", got.Uid)
+	}
+
+	if got.DisplayName != "Orders Prod" {
+		t.Errorf("displayName: got %q, want %q", got.DisplayName, "Orders Prod")
+	}
+
+	// Cluster WITHOUT a display name must not fabricate one from the id.
+	if _, err := svc.Projects.Locations.Clusters.Create(parent(), &alloydb.Cluster{DatabaseVersion: "POSTGRES_15"}).
+		ClusterId("c2").Context(ctx).Do(); err != nil {
+		t.Fatalf("Clusters.Create c2: %v", err)
+	}
+
+	got2, err := svc.Projects.Locations.Clusters.Get(parent() + "/clusters/c2").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Clusters.Get c2: %v", err)
+	}
+
+	if got2.DisplayName != "" {
+		t.Errorf("displayName without a caller value: got %q, want empty", got2.DisplayName)
+	}
+
+	if got2.Uid == got.Uid {
+		t.Errorf("uid: c1 and c2 share uid %q, want distinct", got2.Uid)
+	}
+
+	// Instance createTime/updateTime are populated too (finding 2, instances).
+	if _, err := svc.Projects.Locations.Clusters.Instances.Create(parent()+"/clusters/c1", &alloydb.Instance{
+		InstanceType:  "PRIMARY",
+		MachineConfig: &alloydb.MachineConfig{CpuCount: 2},
+	}).InstanceId("i1").Context(ctx).Do(); err != nil {
+		t.Fatalf("Instances.Create: %v", err)
+	}
+
+	inst, err := svc.Projects.Locations.Clusters.Instances.Get(parent() + "/clusters/c1/instances/i1").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Instances.Get: %v", err)
+	}
+
+	if inst.CreateTime == "" || inst.UpdateTime == "" {
+		t.Errorf("instance timestamps: createTime=%q updateTime=%q, want both set", inst.CreateTime, inst.UpdateTime)
+	}
+}
+
 func TestAlloyDBRawGetPromoteRejected(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion(testLocation), config.WithProjectID(testProject))

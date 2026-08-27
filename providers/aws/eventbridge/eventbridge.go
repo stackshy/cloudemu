@@ -13,8 +13,10 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/eventmatch"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -40,11 +42,35 @@ type busData struct {
 	rules  *memstore.Store[*ruleData]
 	mu     sync.RWMutex
 	events []driver.Event
+	// policyStmts holds the event bus's resource-policy statements in insertion
+	// order, keyed for removal by each statement's "Sid". Guarded by mu.
+	policyStmts []map[string]any
 }
 
 // SQSDeliverer delivers an event to an SQS queue identified by its ARN.
 type SQSDeliverer interface {
 	DeliverExternal(ctx context.Context, queueARN, body string) error
+}
+
+// LambdaInvoker asynchronously invokes a Lambda function target by ARN with the
+// event envelope. The Lambda mock satisfies this, enabling EventBridge -> Lambda
+// (ASYNC) delivery.
+type LambdaInvoker interface {
+	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+}
+
+// SNSPublisher publishes the event envelope to an SNS topic target by ARN. The
+// SNS mock satisfies this, enabling EventBridge -> SNS delivery.
+type SNSPublisher interface {
+	PublishExternal(ctx context.Context, topicARN, message string) error
+}
+
+// StepFunctionsStarter starts a Step Functions state-machine execution for a
+// state-machine target by ARN, passing the event envelope as the execution
+// input. The Step Functions mock satisfies this, enabling EventBridge -> Step
+// Functions (ASYNC) delivery.
+type StepFunctionsStarter interface {
+	StartExternal(ctx context.Context, stateMachineARN, input string) error
 }
 
 // Mock is an in-memory mock implementation of AWS EventBridge.
@@ -53,6 +79,9 @@ type Mock struct {
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	sqs        SQSDeliverer
+	lambda     LambdaInvoker
+	sns        SNSPublisher
+	sfn        StepFunctionsStarter
 	tagsByARN  tagStore
 }
 
@@ -64,6 +93,22 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 // SetSQSDeliverer wires the SQS backend so PutEvents delivers to SQS targets.
 func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
 	m.sqs = d
+}
+
+// SetLambdaInvoker wires the Lambda backend so PutEvents invokes Lambda targets.
+func (m *Mock) SetLambdaInvoker(i LambdaInvoker) {
+	m.lambda = i
+}
+
+// SetSNSPublisher wires the SNS backend so PutEvents publishes to SNS targets.
+func (m *Mock) SetSNSPublisher(p SNSPublisher) {
+	m.sns = p
+}
+
+// SetStepFunctionsStarter wires the Step Functions backend so PutEvents starts
+// state-machine targets.
+func (m *Mock) SetStepFunctionsStarter(s StepFunctionsStarter) {
+	m.sfn = s
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
@@ -136,6 +181,12 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 
 	m.buses.Set(cfg.Name, bd)
 
+	// Seed the ARN-keyed tag store so create-time tags are visible to
+	// ListTagsForResource, matching real EventBridge.
+	if len(tags) > 0 {
+		m.tagsByARN.tag(busARN, tags)
+	}
+
 	result := info
 
 	return &result, nil
@@ -161,7 +212,11 @@ func (m *Mock) GetEventBus(_ context.Context, name string) (*driver.EventBusInfo
 		return nil, errors.Newf(errors.NotFound, "event bus %q not found", name)
 	}
 
+	bd.mu.RLock()
+	defer bd.mu.RUnlock()
+
 	result := bd.info
+	result.Policy = renderPolicy(bd.policyStmts)
 
 	return &result, nil
 }
@@ -197,19 +252,31 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 		return nil, errors.Newf(errors.NotFound, "event bus %q not found", busName)
 	}
 
+	// Reject a structurally invalid event pattern at deploy time. Without this a
+	// typo'd pattern (e.g. a non-array leaf) would store "successfully" and then
+	// silently match nothing, so targets never fire — the worst failure mode for
+	// an event-driven app.
+	if cfg.EventPattern != "" {
+		if err := eventmatch.ValidatePattern(cfg.EventPattern); err != nil {
+			return nil, errors.New(errors.InvalidArgument, err.Error())
+		}
+	}
+
 	state := cfg.State
 	if state == "" {
 		state = defaultRuleState
 	}
 
 	rule := driver.Rule{
-		Name:         cfg.Name,
-		EventBus:     busName,
-		Description:  cfg.Description,
-		EventPattern: cfg.EventPattern,
-		State:        state,
-		Targets:      []driver.Target{},
-		CreatedAt:    m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Name:               cfg.Name,
+		EventBus:           busName,
+		Description:        cfg.Description,
+		EventPattern:       cfg.EventPattern,
+		ScheduleExpression: cfg.ScheduleExpression,
+		RoleARN:            cfg.RoleARN,
+		State:              state,
+		Targets:            []driver.Target{},
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
 	}
 
 	// Preserve existing targets if updating.
@@ -246,9 +313,20 @@ func (m *Mock) DeleteRule(_ context.Context, eventBus, ruleName string) error {
 		return errors.Newf(errors.NotFound, "event bus %q not found", busName)
 	}
 
-	if !bd.rules.Delete(ruleName) {
+	rd, ok := bd.rules.Get(ruleName)
+	if !ok {
 		return errors.Newf(errors.NotFound, "rule %q not found on event bus %q", ruleName, busName)
 	}
+
+	// Real EventBridge refuses to delete a rule that still has targets: the
+	// caller must RemoveTargets first. (Force applies only to managed rules,
+	// which this mock does not model, so it never bypasses this guard.)
+	if rd.targets.Len() > 0 {
+		//nolint:revive // exact AWS ValidationException wording, surfaced verbatim to the SDK
+		return errors.New(errors.InvalidArgument, "Rule can't be deleted since it has targets.")
+	}
+
+	bd.rules.Delete(ruleName)
 
 	return nil
 }
@@ -444,42 +522,141 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 	return result, nil
 }
 
-// deliverToTargets delivers an event to the SQS targets of matched rules,
-// wrapping it in the standard EventBridge event envelope.
+// deliverToTargets delivers an event to the targets of matched rules, dispatched
+// by the target ARN's service: SQS queue, Lambda function (ASYNC), SNS topic, and
+// Step Functions state machine (ASYNC) are all first-class EventBridge targets.
+// The body delivered to each target is the event envelope by default, but is
+// replaced by the target's Input (constant), InputPath (selected subtree), or
+// InputTransformer (templated) when one is configured — matching how real
+// EventBridge shapes each target's payload independently.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
-	if m.sqs == nil {
-		return
-	}
+	// Decouple delivery from the caller's cancellation/deadline (real EventBridge
+	// delivery is asynchronous) while carrying forward the re-entrant delivery
+	// depth so a Lambda target that re-publishes an event stays bounded (the guard
+	// lives in lambda.InvokeExternal).
+	dctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(ctx))
+
+	envelope := m.eventEnvelope(event)
 
 	for i := range matched {
+		reserved := m.reservedVars(&matched[i], event, envelope)
+
 		for _, t := range matched[i].Targets {
-			if t.ARN == "" || !strings.Contains(t.ARN, ":sqs:") {
+			if t.ARN == "" {
 				continue
 			}
 
-			detail := json.RawMessage(event.Detail)
-			if len(detail) == 0 {
-				detail = json.RawMessage("{}")
-			}
-
-			body, err := json.Marshal(map[string]any{
-				"version":     "0",
-				"id":          event.ID,
-				"detail-type": event.DetailType,
-				"source":      event.Source,
-				"account":     m.opts.AccountID,
-				"time":        event.Time.UTC().Format(time.RFC3339),
-				"region":      m.opts.Region,
-				"resources":   event.Resources,
-				"detail":      detail,
-			})
-			if err != nil {
-				continue
-			}
-
-			_ = m.sqs.DeliverExternal(ctx, t.ARN, string(body))
+			m.dispatchTarget(dctx, t.ARN, targetBody(&t, envelope, reserved))
 		}
 	}
+}
+
+// dispatchTarget routes a rendered payload to a single target by the service in
+// its ARN. Unknown/unsupported target services are silently ignored (matching
+// EventBridge accepting the target but this emulator not modeling that sink).
+func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) {
+	switch {
+	case strings.Contains(arn, ":sqs:"):
+		if m.sqs != nil {
+			_ = m.sqs.DeliverExternal(ctx, arn, body)
+		}
+	case strings.Contains(arn, ":lambda:"):
+		if m.lambda != nil {
+			_ = m.lambda.InvokeExternal(ctx, arn, []byte(body))
+		}
+	case strings.Contains(arn, ":sns:"):
+		if m.sns != nil {
+			_ = m.sns.PublishExternal(ctx, arn, body)
+		}
+	case strings.Contains(arn, ":states:"):
+		if m.sfn != nil {
+			_ = m.sfn.StartExternal(ctx, arn, body)
+		}
+	}
+}
+
+// reservedVars builds the predefined <aws.events.*> transformer variables for a
+// rule/event pair. <aws.events.event.json> is the full envelope; <aws.events.event>
+// is the envelope without its detail field; the rest are string values.
+func (m *Mock) reservedVars(rule *driver.Rule, event *driver.Event, envelope []byte) map[string]json.RawMessage {
+	quote := func(s string) json.RawMessage {
+		b, err := json.Marshal(s)
+		if err != nil {
+			return json.RawMessage(`""`)
+		}
+
+		return b
+	}
+
+	vars := map[string]json.RawMessage{
+		"aws.events.event.json":           envelope,
+		"aws.events.event":                envelopeWithoutDetail(envelope),
+		"aws.events.rule-arn":             quote(m.ruleARN(rule.EventBus, rule.Name)),
+		"aws.events.rule-name":            quote(rule.Name),
+		"aws.events.event.ingestion-time": quote(event.Time.UTC().Format(time.RFC3339)),
+	}
+
+	return vars
+}
+
+// ruleARN builds the EventBridge rule ARN, matching the wire handler's format.
+func (m *Mock) ruleARN(bus, rule string) string {
+	if bus == "" {
+		bus = defaultBusName
+	}
+
+	return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + bus + "/" + rule
+}
+
+// envelopeWithoutDetail returns the event envelope with its "detail" field
+// removed, which is what the <aws.events.event> reserved variable substitutes.
+func envelopeWithoutDetail(envelope []byte) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(envelope, &obj); err != nil {
+		return envelope
+	}
+
+	delete(obj, "detail")
+
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return envelope
+	}
+
+	return out
+}
+
+// eventEnvelope renders the standard EventBridge delivery envelope for an event.
+func (m *Mock) eventEnvelope(event *driver.Event) []byte {
+	detail := json.RawMessage(event.Detail)
+	if len(detail) == 0 {
+		detail = json.RawMessage("{}")
+	}
+
+	// The EventBridge envelope always carries "resources" as an array; when the
+	// event has none it is delivered as [] (never null), so consumers can iterate
+	// without a nil check.
+	resources := event.Resources
+	if resources == nil {
+		resources = []string{}
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"version":     "0",
+		"id":          event.ID,
+		"detail-type": event.DetailType,
+		"source":      event.Source,
+		"account":     m.opts.AccountID,
+		"time":        event.Time.UTC().Format(time.RFC3339),
+		"region":      m.opts.Region,
+		"resources":   resources,
+		"detail":      detail,
+	})
+	if err != nil {
+		return []byte("{}")
+	}
+
+	return body
 }
 
 // GetEventHistory retrieves event history for an event bus.
@@ -542,44 +719,50 @@ func generateEventID(event *driver.Event, now time.Time, index int) string {
 	return fmt.Sprintf("%x", hash[:16])
 }
 
+// matchesPattern reports whether an event satisfies an EventBridge event
+// pattern. An empty pattern matches everything (schedule-only rules). The
+// pattern is evaluated against the full event envelope — source, detail-type,
+// resources, and the nested detail object — using the shared content-filtering
+// engine (exact, nested, prefix/suffix/anything-but/exists/numeric/cidr/wildcard).
 func matchesPattern(event *driver.Event, pattern string) bool {
 	if pattern == "" {
 		return true
 	}
 
-	var p map[string]any
-	if err := json.Unmarshal([]byte(pattern), &p); err != nil {
-		return false
-	}
-
-	if sources, ok := p["source"]; ok {
-		if !matchesField(event.Source, sources) {
-			return false
-		}
-	}
-
-	if detailTypes, ok := p["detail-type"]; ok {
-		if !matchesField(event.DetailType, detailTypes) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func matchesField(value string, allowed any) bool {
-	arr, ok := allowed.([]any)
+	p, ok := eventmatch.ParsePattern(pattern)
 	if !ok {
 		return false
 	}
 
-	for _, v := range arr {
-		if fmt.Sprintf("%v", v) == value {
-			return true
+	return eventmatch.MatchEvent(p, eventObject(event))
+}
+
+// eventObject renders an event into the JSON object shape EventBridge patterns
+// match against. The detail body is parsed so nested "detail" constraints can
+// reach into it; an unparsable detail is treated as an empty object.
+func eventObject(event *driver.Event) map[string]any {
+	obj := map[string]any{
+		"source":      event.Source,
+		"detail-type": event.DetailType,
+	}
+
+	if len(event.Resources) > 0 {
+		res := make([]any, len(event.Resources))
+		for i, r := range event.Resources {
+			res[i] = r
+		}
+
+		obj["resources"] = res
+	}
+
+	if event.Detail != "" {
+		var detail any
+		if err := json.Unmarshal([]byte(event.Detail), &detail); err == nil {
+			obj["detail"] = detail
 		}
 	}
 
-	return false
+	return obj
 }
 
 // UpdateEventBus replaces the mutable fields of an existing event bus —
@@ -605,21 +788,30 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	return &result, nil
 }
 
-// MatchedRules returns all rules that match the given event (exported for testing).
+// MatchedRules returns the rules on the event's own bus that match it (exported
+// for testing). Matching is scoped to event.EventBus (empty resolves to the
+// default bus) so a rule on one bus never fires for an event published to a
+// different bus — real EventBridge isolates buses from each other.
 func (m *Mock) MatchedRules(event *driver.Event) []driver.Rule {
+	busName := event.EventBus
+	if busName == "" {
+		busName = defaultBusName
+	}
+
+	bd, ok := m.buses.Get(busName)
+	if !ok {
+		return nil
+	}
+
 	var matched []driver.Rule
 
-	all := m.buses.All()
-	for _, bd := range all {
-		rules := bd.rules.All()
-		for _, rd := range rules {
-			if rd.rule.State != defaultRuleState {
-				continue
-			}
+	for _, rd := range bd.rules.All() {
+		if rd.rule.State != defaultRuleState {
+			continue
+		}
 
-			if matchesPattern(event, rd.rule.EventPattern) {
-				matched = append(matched, rd.rule)
-			}
+		if matchesPattern(event, rd.rule.EventPattern) {
+			matched = append(matched, rd.rule)
 		}
 	}
 

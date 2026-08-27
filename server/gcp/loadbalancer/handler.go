@@ -44,15 +44,34 @@ const (
 	resourceForwardingRules = "forwardingRules"
 )
 
+// actionGetHealth is the POST action on a named backend service that returns the
+// health of its backends (compute.backendServices.getHealth).
+const actionGetHealth = "getHealth"
+
+// reasonResourceInUse is the GCP error reason returned when a delete is rejected
+// because another resource still references the target. Real GCP answers such a
+// delete with HTTP 400 and this reason, so dependents are never orphaned.
+const reasonResourceInUse = "resourceInUseByAnotherResource"
+
 // Handler serves the GCP load-balancing REST surface.
 type Handler struct {
 	lb lbdriver.LoadBalancer
+	// ops records the compute#operation names this handler mints so the compute
+	// handler's shared /operations route (which serves LB operation polls)
+	// resolves a real operation and 404s a bogus one. Nil in a package-level
+	// server (every operation poll answered DONE, legacy behavior).
+	ops *gcprest.OperationRegistry
 }
 
 // New returns a GCP load balancer handler backed by lb.
 func New(lb lbdriver.LoadBalancer) *Handler {
 	return &Handler{lb: lb}
 }
+
+// SetOperationRegistry wires the shared compute-operation registry so the
+// operations this handler mints are resolvable (and unknown names 404) through
+// the compute handler's /operations poll route.
+func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
 // Matches returns true for /compute/v1/.../backendServices|forwardingRules
 // URLs. Disjoint from the compute (instances/operations/disks/…) and networks
@@ -64,8 +83,16 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
+	// Aggregated-scope requests (aggregatedList) are not implemented for these
+	// load-balancer resources; leave them unmatched so the dispatcher's default
+	// applies rather than mis-serving them as a scoped list.
+	if rp.Scope == gcprest.ScopeAggregated {
+		return false
+	}
+
 	switch rp.ResourceType {
-	case resourceBackendServices, resourceForwardingRules:
+	case resourceBackendServices, resourceForwardingRules,
+		resourceHealthChecks, resourceTargetPools, resourceURLMaps:
 		return true
 	}
 
@@ -85,12 +112,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeBackendServices(w, r, rp)
 	case resourceForwardingRules:
 		h.routeForwardingRules(w, r, rp)
+	case resourceHealthChecks, resourceTargetPools, resourceURLMaps:
+		h.routeGCPResource(w, r, rp)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unknown resource type")
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
@@ -105,9 +134,18 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	// getHealth is a POST action on a named backend service, distinct from the
+	// resource-level verbs below.
+	if r.Method == http.MethodPost && rp.Action == actionGetHealth {
+		h.getBackendServiceHealth(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getBackendService(w, r, rp)
+	case http.MethodPatch, http.MethodPut:
+		h.patchBackendService(w, r, rp)
 	case http.MethodDelete:
 		h.deleteBackendService(w, r, rp)
 	default:
@@ -115,7 +153,7 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeForwardingRules(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {

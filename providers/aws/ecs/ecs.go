@@ -6,6 +6,7 @@ package ecs
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -50,6 +51,12 @@ type Mock struct {
 	engineHandles *memstore.Store[string]
 
 	logs logdriver.Logging // optional: awslogs surfacing target (CloudWatch Logs)
+
+	registrar TargetRegistrar // optional: ELBv2 target group the service scheduler registers RUNNING tasks with
+
+	// portCounter draws successive dynamic host ports for bridge-mode container
+	// port mappings that leave hostPort unset.
+	portCounter atomic.Uint32
 }
 
 // ManagedInstanceLauncher provisions the managed EC2 instance that backs an ECS
@@ -96,8 +103,23 @@ func (m *Mock) now() string {
 	return m.opts.Clock.Now().UTC().Format(time.RFC3339)
 }
 
+// nextEphemeralPort returns the next synthetic dynamic host port for a
+// bridge-mode container port mapping that left hostPort unset, drawn from the
+// ephemeral range real ECS agents assign from.
+func (m *Mock) nextEphemeralPort() int {
+	n := m.portCounter.Add(1)
+
+	return ephemeralPortBase + int(n%ephemeralPortSpan)
+}
+
 func (m *Mock) arn(resource string) string {
 	return idgen.AWSARN("ecs", m.opts.Region, m.opts.AccountID, resource)
+}
+
+// rootPrincipalARN is the account-root IAM principal ECS records as a service's
+// createdBy when the request carries no more specific caller identity.
+func (m *Mock) rootPrincipalARN() string {
+	return "arn:aws:iam::" + m.opts.AccountID + ":root"
 }
 
 // hexID returns a 32-character hex id with no dashes, matching the ECS

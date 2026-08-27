@@ -30,6 +30,22 @@ type messageXML struct {
 	MessageText     string `xml:"MessageText,omitempty"`
 }
 
+// peekMessagesList is the QueueMessagesList body returned by Peek Messages. It
+// omits PopReceipt and TimeNextVisible (a peek is non-destructive) and always
+// renders DequeueCount, matching the real service.
+type peekMessagesList struct {
+	XMLName  xml.Name         `xml:"QueueMessagesList"`
+	Messages []peekMessageXML `xml:"QueueMessage"`
+}
+
+type peekMessageXML struct {
+	MessageID      string `xml:"MessageId"`
+	InsertionTime  string `xml:"InsertionTime"`
+	ExpirationTime string `xml:"ExpirationTime"`
+	DequeueCount   int64  `xml:"DequeueCount"`
+	MessageText    string `xml:"MessageText"`
+}
+
 // listQueuesResult is the EnumerationResults body for GET /?comp=list.
 type listQueuesResult struct {
 	XMLName    xml.Name   `xml:"EnumerationResults"`
@@ -53,4 +69,18 @@ type errorXML struct {
 	XMLName xml.Name `xml:"Error"`
 	Code    string   `xml:"Code"`
 	Message string   `xml:"Message"`
+}
+
+// queryParamRangeErrorXML is the Azure Storage error envelope for an
+// out-of-range query parameter. It extends the base error with the offending
+// parameter's name and value plus the permitted bounds, matching the body real
+// Queue Storage returns for OutOfRangeQueryParameterValue.
+type queryParamRangeErrorXML struct {
+	XMLName             xml.Name `xml:"Error"`
+	Code                string   `xml:"Code"`
+	Message             string   `xml:"Message"`
+	QueryParameterName  string   `xml:"QueryParameterName"`
+	QueryParameterValue string   `xml:"QueryParameterValue"`
+	MinimumAllowed      string   `xml:"MinimumAllowed"`
+	MaximumAllowed      string   `xml:"MaximumAllowed"`
 }

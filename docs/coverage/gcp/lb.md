@@ -31,6 +31,41 @@ GCP's `loadbalancer` service · portable interface `driver.LoadBalancer` · [GCP
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureLoadBalancers
+
+AzureLoadBalancers is an OPTIONAL, type-asserted capability. The Azure
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateAzureLoadBalancer` |  |
+| `DeleteAzureLBBackendPool` | DeleteAzureLBBackendPool removes a single backend pool by name, leaving |
+| `DeleteAzureLBNatRule` | DeleteAzureLBNatRule removes a single inbound NAT rule by name, leaving |
+| `DeleteAzureLoadBalancer` |  |
+| `GetAzureLoadBalancer` |  |
+| `ListAzureLoadBalancers` |  |
+| `UpsertAzureLBBackendPool` | UpsertAzureLBBackendPool adds poolName to the load balancer's backend |
+| `UpsertAzureLBNatRule` | UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by |
+
+### GCPBackendServicePatcher
+
+GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `PatchGCPBackendService` | PatchGCPBackendService looks up the target group by its GCP name and |
+
+### GCPComputeResourceStore
+
+GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `DeleteGCPResource` | DeleteGCPResource removes the resource, returning NotFound when absent. |
+| `GetGCPResource` | GetGCPResource returns the stored resource, or NotFound. |
+| `ListGCPResources` | ListGCPResources returns every resource in a (collection, scope) bucket. |
+| `PutGCPResource` | PutGCPResource stores res, returning AlreadyExists when a resource with |
+| `UpdateGCPResource` | UpdateGCPResource applies mutate to the stored resource in place under the |
+
 ### LBAttributeUpdater
 
 LBAttributeUpdater is implemented by drivers that can apply a partial
@@ -38,6 +73,49 @@ LBAttributeUpdater is implemented by drivers that can apply a partial
 | Operation | Description |
 | --- | --- |
 | `UpdateLBAttributes` |  |
+
+### LBNetworkModifier
+
+LBNetworkModifier is implemented by drivers that can replace the security
+
+| Operation | Description |
+| --- | --- |
+| `SetSecurityGroups` |  |
+| `SetSubnets` |  |
+
+### ListenerGetter
+
+ListenerGetter is implemented by drivers that can fetch a single listener by
+
+| Operation | Description |
+| --- | --- |
+| `GetListener` |  |
+
+### RuleModifier
+
+RuleModifier is implemented by drivers that can modify a listener rule's
+
+| Operation | Description |
+| --- | --- |
+| `ModifyRule` |  |
+| `SetRulePriorities` |  |
+
+### TargetGroupAttributeStore
+
+TargetGroupAttributeStore is implemented by drivers that store per-target-group
+
+| Operation | Description |
+| --- | --- |
+| `GetTargetGroupAttributes` |  |
+| `ModifyTargetGroupAttributes` |  |
+
+### TargetGroupModifier
+
+TargetGroupModifier is implemented by drivers that can apply a partial
+
+| Operation | Description |
+| --- | --- |
+| `ModifyTargetGroup` |  |
 
 ## Not in scope
 

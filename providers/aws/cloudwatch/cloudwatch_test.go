@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -316,7 +317,7 @@ func TestAlarmEvaluationOperators(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := evaluateComparison(tc.value, tc.operator, tc.thresh)
+			result := alarmeval.EvaluateComparison(tc.value, tc.operator, tc.thresh)
 			assertEqual(t, tc.expect, result)
 		})
 	}

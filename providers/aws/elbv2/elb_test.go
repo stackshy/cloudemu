@@ -64,6 +64,8 @@ func TestCreateLoadBalancer(t *testing.T) {
 			assertNotEmpty(t, info.ARN)
 			assertNotEmpty(t, info.DNSName)
 			assertEqual(t, "my-lb", info.Name)
+			// Async settling is opt-in; with the default options a new load
+			// balancer reports its terminal state immediately.
 			assertEqual(t, "active", info.State)
 		})
 	}
@@ -74,7 +76,11 @@ func TestDeleteLoadBalancer(t *testing.T) {
 	lb := createTestLB(m)
 
 	requireNoError(t, m.DeleteLoadBalancer(context.Background(), lb.ARN))
-	assertError(t, m.DeleteLoadBalancer(context.Background(), "arn:nope"), true)
+
+	// DeleteLoadBalancer is idempotent: deleting an already-deleted or
+	// never-existent load balancer succeeds.
+	requireNoError(t, m.DeleteLoadBalancer(context.Background(), lb.ARN))
+	requireNoError(t, m.DeleteLoadBalancer(context.Background(), "arn:nope"))
 }
 
 func TestDescribeLoadBalancers(t *testing.T) {
@@ -142,7 +148,10 @@ func TestDeleteTargetGroup(t *testing.T) {
 	tg := createTestTG(m)
 
 	requireNoError(t, m.DeleteTargetGroup(context.Background(), tg.ARN))
-	assertError(t, m.DeleteTargetGroup(context.Background(), "arn:nope"), true)
+	// DeleteTargetGroup is idempotent: deleting again, and deleting an ARN that
+	// never existed, both succeed (real ELBv2's only delete error is ResourceInUse).
+	requireNoError(t, m.DeleteTargetGroup(context.Background(), tg.ARN))
+	requireNoError(t, m.DeleteTargetGroup(context.Background(), "arn:nope"))
 }
 
 func TestDescribeTargetGroups(t *testing.T) {
@@ -174,7 +183,7 @@ func TestCreateListener(t *testing.T) {
 			LBARN:          lb.ARN,
 			Protocol:       "HTTP",
 			Port:           80,
-			TargetGroupARN: tg.ARN,
+			DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 		})
 		requireNoError(t, err)
 		assertNotEmpty(t, li.ARN)
@@ -241,6 +250,53 @@ func TestDeleteLoadBalancerCascadesListeners(t *testing.T) {
 	assertEqual(t, 0, len(lbs))
 }
 
+func TestDeleteLoadBalancerDeletionProtection(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+
+	requireNoError(t, m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{DeletionProtection: true}))
+
+	// A protected load balancer cannot be deleted.
+	assertError(t, m.DeleteLoadBalancer(ctx, lb.ARN), true)
+
+	lbs, _ := m.DescribeLoadBalancers(ctx, []string{lb.ARN})
+	assertEqual(t, 1, len(lbs))
+
+	// Clearing the flag lets the delete through.
+	requireNoError(t, m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{DeletionProtection: false}))
+	requireNoError(t, m.DeleteLoadBalancer(ctx, lb.ARN))
+}
+
+func TestDeleteLoadBalancerCascadesRulesAndAttributes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	tg := createTestTG(m)
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
+	requireNoError(t, err)
+
+	_, err = m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/*"}}},
+		Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	requireNoError(t, err)
+
+	requireNoError(t, m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{IdleTimeout: 120}))
+	requireNoError(t, m.DeleteLoadBalancer(ctx, lb.ARN))
+
+	// The rule under the deleted listener must be gone (no orphan leak); the
+	// listener no longer exists, so DescribeRules reports ListenerNotFound.
+	_, err = m.DescribeRules(ctx, li.ARN)
+	assertError(t, err, true)
+
+	// Deleting the target group must now succeed: no rule still references it.
+	requireNoError(t, m.DeleteTargetGroup(ctx, tg.ARN))
+}
+
 func TestRegisterTargets(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -270,12 +326,37 @@ func TestDeregisterTargets(t *testing.T) {
 	tg := createTestTG(m)
 	_ = m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}, {ID: "i-2", Port: 80}})
 
-	t.Run("success", func(t *testing.T) {
-		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1"}})
+	t.Run("success by exact (id, port)", func(t *testing.T) {
+		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}})
 		requireNoError(t, err)
 
 		health, _ := m.DescribeTargetHealth(ctx, tg.ARN)
 		assertEqual(t, 1, len(health))
+	})
+
+	t.Run("success by id alone when unambiguous", func(t *testing.T) {
+		// A caller that omits Port (the common case — RegisterTargets docs
+		// Example 1 registers and deregisters by ID alone) can still
+		// deregister as long as that ID has exactly one registered port.
+		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-2"}})
+		requireNoError(t, err)
+
+		health, _ := m.DescribeTargetHealth(ctx, tg.ARN)
+		assertEqual(t, 0, len(health))
+	})
+
+	t.Run("id alone is a no-op when ambiguous across ports", func(t *testing.T) {
+		// DeregisterTargets docs: "If you specified a port override when you
+		// registered a target, you must specify both the target ID and the
+		// port when you deregister it." Two ports for the same ID must not
+		// be collapsed by an unqualified ID.
+		_ = m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-3", Port: 80}, {ID: "i-3", Port: 766}})
+
+		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-3"}})
+		requireNoError(t, err)
+
+		health, _ := m.DescribeTargetHealth(ctx, tg.ARN)
+		assertEqual(t, 2, len(health))
 	})
 
 	t.Run("TG not found", func(t *testing.T) {
@@ -290,17 +371,47 @@ func TestDescribeTargetHealth(t *testing.T) {
 	tg := createTestTG(m)
 	_ = m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}})
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("unused until a listener forwards to the TG", func(t *testing.T) {
+		// The TG here is attached to no load balancer, so real ELBv2 reports
+		// every target as unused / Target.NotInUse rather than advancing.
 		health, err := m.DescribeTargetHealth(ctx, tg.ARN)
 		requireNoError(t, err)
 		assertEqual(t, 1, len(health))
-		assertEqual(t, "initial", health[0].State)
+		assertEqual(t, "unused", health[0].State)
+		assertEqual(t, "Target.NotInUse", health[0].Reason)
 	})
 
 	t.Run("TG not found", func(t *testing.T) {
 		_, err := m.DescribeTargetHealth(ctx, "arn:nope")
 		assertError(t, err, true)
 	})
+}
+
+// TestCreateLoadBalancerSettlesProvisioningToActive verifies the AWS-realistic
+// provisioning->active transition when async settling is enabled: a new load
+// balancer is observed as "provisioning" until the settle window elapses, then
+// "active". The transition is driven purely by the clock — no wall-clock sleep.
+func TestCreateLoadBalancerSettlesProvisioningToActive(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithAsyncSettle(),
+		config.WithRegion("us-east-1"), config.WithAccountID("123456789012"))
+	m := New(opts)
+	ctx := context.Background()
+
+	lb, err := m.CreateLoadBalancer(ctx, driver.LBConfig{Name: "my-lb", Type: "application"})
+	requireNoError(t, err)
+	assertEqual(t, "provisioning", lb.State)
+
+	// Still provisioning before the window elapses.
+	got, err := m.DescribeLoadBalancers(ctx, []string{lb.ARN})
+	requireNoError(t, err)
+	assertEqual(t, "provisioning", got[0].State)
+
+	// Advancing the clock past the settle window transitions it to active.
+	fc.Advance(5 * time.Second)
+	got, err = m.DescribeLoadBalancers(ctx, []string{lb.ARN})
+	requireNoError(t, err)
+	assertEqual(t, "active", got[0].State)
 }
 
 func TestSetTargetHealth(t *testing.T) {
@@ -328,13 +439,54 @@ func TestSetTargetHealth(t *testing.T) {
 	})
 }
 
+// TestRegisterTargetsSamePortOverride is the regression case for the
+// target-health store overwriting a same-instance registration: AWS lets one
+// instance ID be registered multiple times under different port overrides
+// (RegisterTargets docs, "Register targets by instance ID using port
+// overrides": the same instance is registered as Port=80 and Port=766 in one
+// call), and both must coexist and be independently deregisterable.
+func TestRegisterTargetsSamePortOverride(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	tg := createTestTG(m)
+
+	err := m.RegisterTargets(ctx, tg.ARN, []driver.Target{
+		{ID: "i-shared", Port: 80},
+		{ID: "i-shared", Port: 766},
+	})
+	requireNoError(t, err)
+
+	health, err := m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(health))
+
+	ports := map[int]bool{}
+	for _, th := range health {
+		assertEqual(t, "i-shared", th.Target.ID)
+		ports[th.Target.Port] = true
+	}
+
+	assertEqual(t, true, ports[80])
+	assertEqual(t, true, ports[766])
+
+	// Deregistering one port must leave the other target registered.
+	err = m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-shared", Port: 80}})
+	requireNoError(t, err)
+
+	health, err = m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(health))
+	assertEqual(t, 766, health[0].Target.Port)
+}
+
 func TestCreateRule(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 	lb := createTestLB(m)
 	tg := createTestTG(m)
 	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -378,7 +530,8 @@ func TestDescribeRules(t *testing.T) {
 	lb := createTestLB(m)
 	tg := createTestTG(m)
 	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 	})
 
 	_, _ = m.CreateRule(ctx, driver.RuleConfig{
@@ -404,13 +557,47 @@ func TestDescribeRules(t *testing.T) {
 	})
 }
 
+func TestSetRulePrioritiesUniqueness(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	li, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
+
+	r1, _ := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: li.ARN, Priority: 10})
+	r2, _ := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: li.ARN, Priority: 20})
+
+	// Moving r2 onto r1's priority collides.
+	_, err := m.SetRulePriorities(ctx, []driver.RulePriorityPair{{RuleARN: r2.ARN, Priority: 10}})
+	assertError(t, err, true)
+
+	// The rejected reorder left both priorities intact.
+	rules, _ := m.DescribeRules(ctx, li.ARN)
+	for _, r := range rules {
+		switch r.ARN {
+		case r1.ARN:
+			assertEqual(t, 10, r.Priority)
+		case r2.ARN:
+			assertEqual(t, 20, r.Priority)
+		}
+	}
+
+	// Swapping both at once (10<->20) is allowed: neither target is held by a
+	// rule outside the batch.
+	_, err = m.SetRulePriorities(ctx, []driver.RulePriorityPair{
+		{RuleARN: r1.ARN, Priority: 20},
+		{RuleARN: r2.ARN, Priority: 10},
+	})
+	requireNoError(t, err)
+}
+
 func TestModifyListener(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 	lb := createTestLB(m)
 	tg := createTestTG(m)
 	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
 	})
 
 	t.Run("modify port", func(t *testing.T) {

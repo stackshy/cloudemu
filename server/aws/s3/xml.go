@@ -13,6 +13,7 @@ type errorXML struct {
 type listAllMyBucketsResult struct {
 	XMLName xml.Name    `xml:"ListAllMyBucketsResult"`
 	Xmlns   string      `xml:"xmlns,attr"`
+	Owner   aclOwnerXML `xml:"Owner"`
 	Buckets []bucketXML `xml:"Buckets>Bucket"`
 }
 
@@ -35,6 +36,7 @@ type listBucketResult struct {
 	KeyCount              int         `xml:"KeyCount"`
 	ContinuationToken     string      `xml:"ContinuationToken,omitempty"`
 	NextContinuationToken string      `xml:"NextContinuationToken,omitempty"`
+	StartAfter            string      `xml:"StartAfter,omitempty"`
 }
 
 type objectXML struct {
@@ -43,6 +45,9 @@ type objectXML struct {
 	ETag         string `xml:"ETag"`
 	Size         int    `xml:"Size"`
 	StorageClass string `xml:"StorageClass"`
+	// Owner is emitted only for a ListObjectsV2 request with fetch-owner=true
+	// (ListObjects v1 always includes it); nil otherwise so it is omitted.
+	Owner *aclOwnerXML `xml:"Owner,omitempty"`
 }
 
 type prefixXML struct {
@@ -55,6 +60,33 @@ type copyObjectResult struct {
 	Xmlns        string   `xml:"xmlns,attr"`
 	ETag         string   `xml:"ETag"`
 	LastModified string   `xml:"LastModified"`
+}
+
+// getObjectAttributesOutput is the XML response for GetObjectAttributes. The SDK
+// deserializes children by name regardless of the root element, and reads
+// LastModified/VersionId from response headers, so only the selected attributes
+// appear here. ObjectSize is a pointer so a zero-size object still emits the tag.
+type getObjectAttributesOutput struct {
+	XMLName      xml.Name `xml:"GetObjectAttributesOutput"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	ETag         string   `xml:"ETag,omitempty"`
+	StorageClass string   `xml:"StorageClass,omitempty"`
+	ObjectSize   *int64   `xml:"ObjectSize,omitempty"`
+}
+
+// copyPartResult is the XML response for UploadPartCopy.
+type copyPartResult struct {
+	XMLName      xml.Name `xml:"CopyPartResult"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	ETag         string   `xml:"ETag"`
+	LastModified string   `xml:"LastModified"`
+}
+
+// createBucketConfiguration is the XML request body for CreateBucket, carrying
+// the region in LocationConstraint (empty/absent denotes us-east-1).
+type createBucketConfiguration struct {
+	XMLName            xml.Name `xml:"CreateBucketConfiguration"`
+	LocationConstraint string   `xml:"LocationConstraint"`
 }
 
 // initiateMultipartUploadResult is the XML response for CreateMultipartUpload.
@@ -89,13 +121,16 @@ type completeMultipartUploadResult struct {
 
 // listPartsResult is the XML response for ListParts.
 type listPartsResult struct {
-	XMLName     xml.Name  `xml:"ListPartsResult"`
-	Xmlns       string    `xml:"xmlns,attr"`
-	Bucket      string    `xml:"Bucket"`
-	Key         string    `xml:"Key"`
-	UploadID    string    `xml:"UploadId"`
-	IsTruncated bool      `xml:"IsTruncated"`
-	Parts       []partXML `xml:"Part"`
+	XMLName              xml.Name  `xml:"ListPartsResult"`
+	Xmlns                string    `xml:"xmlns,attr"`
+	Bucket               string    `xml:"Bucket"`
+	Key                  string    `xml:"Key"`
+	UploadID             string    `xml:"UploadId"`
+	PartNumberMarker     int       `xml:"PartNumberMarker"`
+	NextPartNumberMarker int       `xml:"NextPartNumberMarker,omitempty"`
+	MaxParts             int       `xml:"MaxParts"`
+	IsTruncated          bool      `xml:"IsTruncated"`
+	Parts                []partXML `xml:"Part"`
 }
 
 type partXML struct {
@@ -106,11 +141,19 @@ type partXML struct {
 
 // listMultipartUploadsResult is the XML response for ListMultipartUploads.
 type listMultipartUploadsResult struct {
-	XMLName     xml.Name             `xml:"ListMultipartUploadsResult"`
-	Xmlns       string               `xml:"xmlns,attr"`
-	Bucket      string               `xml:"Bucket"`
-	IsTruncated bool                 `xml:"IsTruncated"`
-	Uploads     []multipartUploadXML `xml:"Upload"`
+	XMLName            xml.Name             `xml:"ListMultipartUploadsResult"`
+	Xmlns              string               `xml:"xmlns,attr"`
+	Bucket             string               `xml:"Bucket"`
+	KeyMarker          string               `xml:"KeyMarker"`
+	UploadIDMarker     string               `xml:"UploadIdMarker"`
+	NextKeyMarker      string               `xml:"NextKeyMarker,omitempty"`
+	NextUploadIDMarker string               `xml:"NextUploadIdMarker,omitempty"`
+	Prefix             string               `xml:"Prefix,omitempty"`
+	Delimiter          string               `xml:"Delimiter,omitempty"`
+	MaxUploads         int                  `xml:"MaxUploads"`
+	IsTruncated        bool                 `xml:"IsTruncated"`
+	Uploads            []multipartUploadXML `xml:"Upload"`
+	CommonPrefixes     []prefixXML          `xml:"CommonPrefixes,omitempty"`
 }
 
 type multipartUploadXML struct {
@@ -133,16 +176,20 @@ type tagXML struct {
 
 // listVersionsResult is the XML response for ListObjectVersions.
 type listVersionsResult struct {
-	XMLName        xml.Name           `xml:"ListVersionsResult"`
-	Xmlns          string             `xml:"xmlns,attr"`
-	Name           string             `xml:"Name"`
-	Prefix         string             `xml:"Prefix"`
-	Delimiter      string             `xml:"Delimiter,omitempty"`
-	MaxKeys        int                `xml:"MaxKeys"`
-	IsTruncated    bool               `xml:"IsTruncated"`
-	Versions       []objectVersionXML `xml:"Version"`
-	DeleteMarkers  []deleteMarkerXML  `xml:"DeleteMarker"`
-	CommonPrefixes []prefixXML        `xml:"CommonPrefixes,omitempty"`
+	XMLName             xml.Name           `xml:"ListVersionsResult"`
+	Xmlns               string             `xml:"xmlns,attr"`
+	Name                string             `xml:"Name"`
+	Prefix              string             `xml:"Prefix"`
+	KeyMarker           string             `xml:"KeyMarker"`
+	VersionIDMarker     string             `xml:"VersionIdMarker"`
+	NextKeyMarker       string             `xml:"NextKeyMarker,omitempty"`
+	NextVersionIDMarker string             `xml:"NextVersionIdMarker,omitempty"`
+	Delimiter           string             `xml:"Delimiter,omitempty"`
+	MaxKeys             int                `xml:"MaxKeys"`
+	IsTruncated         bool               `xml:"IsTruncated"`
+	Versions            []objectVersionXML `xml:"Version"`
+	DeleteMarkers       []deleteMarkerXML  `xml:"DeleteMarker"`
+	CommonPrefixes      []prefixXML        `xml:"CommonPrefixes,omitempty"`
 }
 
 type objectVersionXML struct {

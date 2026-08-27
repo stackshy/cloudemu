@@ -45,6 +45,10 @@ const (
 
 	actionFailover      = "failover"
 	actionForceFailover = "forceFailoverAllowDataLoss"
+
+	// defaultServerVersion is the logical-server version Azure SQL synthesizes
+	// when a server create omits properties.version.
+	defaultServerVersion = "12.0"
 )
 
 // Handler serves Microsoft.Sql ARM requests against a relationaldb driver.

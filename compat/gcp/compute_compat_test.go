@@ -318,3 +318,77 @@ func (e notFoundError) Error() string { return string(e) }
 func errNotFound(msg string) error {
 	return notFoundError(strings.TrimSpace(msg))
 }
+
+// TestComputeOperationsGetUnknown404 proves a GET for an operation name that was
+// never issued returns 404 NOT_FOUND, rather than a fabricated DONE. A genuine
+// operation (minted by an instance delete) still resolves, so op.Wait succeeds.
+func TestComputeOperationsGetUnknown404(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	sess := compat.BootGCP(t, gcpserver.Drivers{Compute: cloudP.GCE})
+	ctx := context.Background()
+
+	opts := []option.ClientOption{
+		option.WithEndpoint(sess.Endpoint()),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(sess.Transport()),
+	}
+
+	zoneOps, err := gcpcompute.NewZoneOperationsRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewZoneOperationsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = zoneOps.Close() })
+
+	globalOps, err := gcpcompute.NewGlobalOperationsRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewGlobalOperationsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = globalOps.Close() })
+
+	if _, err := zoneOps.Get(ctx, &computepb.GetZoneOperationRequest{
+		Project: compat.GCPProject, Zone: testZone, Operation: "operation-does-not-exist",
+	}); err == nil {
+		t.Fatal("zoneOperations.get of a bogus operation returned success, want 404")
+	}
+
+	if _, err := globalOps.Get(ctx, &computepb.GetGlobalOperationRequest{
+		Project: compat.GCPProject, Operation: "operation-bogus-global",
+	}); err == nil {
+		t.Fatal("globalOperations.get of a bogus operation returned success, want 404")
+	}
+
+	// A genuine operation (from an instance insert) must still resolve: op.Wait
+	// polls zoneOperations.get and succeeds.
+	instances, err := gcpcompute.NewInstancesRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewInstancesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = instances.Close() })
+
+	op, err := instances.Insert(ctx, &computepb.InsertInstanceRequest{
+		Project: compat.GCPProject,
+		Zone:    testZone,
+		InstanceResource: &computepb.Instance{
+			Name:        strPtr("op-vm"),
+			MachineType: strPtr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+			Disks: []*computepb.AttachedDisk{{
+				Boot:       boolPtr(true),
+				AutoDelete: boolPtr(true),
+				InitializeParams: &computepb.AttachedDiskInitializeParams{
+					SourceImage: strPtr("projects/debian-cloud/global/images/family/debian-12"),
+				},
+			}},
+			NetworkInterfaces: []*computepb.NetworkInterface{{Network: strPtr("global/networks/default")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert instance: %v", err)
+	}
+
+	if werr := op.Wait(ctx); werr != nil {
+		t.Fatalf("wait on genuine operation: %v", werr)
+	}
+}

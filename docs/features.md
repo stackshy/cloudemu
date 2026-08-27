@@ -504,3 +504,50 @@ For the standalone server, the batteries-included `cloudemu-server` binary
 (`contrib/server`) turns engines on with flags (`--db`, `--cache`, `--functions`,
 `--compute`, `--containers`, `--all-real`) — see
 [standalone-server.md — Real engines](standalone-server.md#real-engines).
+
+## 12. Persistence (snapshot & restore, opt-in)
+
+State lives in `memstore`, so CloudEmu is **ephemeral by default** — everything is
+lost on process exit, and `/_cloudemu/reset` wipes it to empty. When you want state
+to survive a restart, the `persist` package captures the **whole emulator** as one
+JSON document and restores it into a fresh instance. It is strictly opt-in;
+CloudEmu never touches disk unless asked.
+
+Two properties distinguish it from a naive dump:
+
+- **Full-surface.** Every stateful service (one holding an in-memory
+  `memstore.Store`) across **AWS, Azure, GCP, and OCI** is captured — not a
+  hand-picked subset. A completeness guard (`persist/completeness_test.go`) fails
+  the build if a new stateful service is added without persistence, so coverage
+  can't silently drift.
+- **Identity-preserving.** Resource IDs and the ID-string cross-references between
+  resources are serialized as-is, so a snapshot → restore round-trip is transparent
+  to clients: a restored EC2 instance keeps its original `i-…` ID.
+
+Services are auto-discovered by reflection (`internal/snapshot.Discover`, exposed
+per provider as `SnapshotServices()`), and each mock serializes/restores itself via
+the `internal/snapshot.Snapshottable` interface. The on-disk file is one
+human-readable, `git`-diffable JSON document spanning every provider (schema
+version 3).
+
+```go
+import (
+    cloudemu "github.com/stackshy/cloudemu/v2"
+    "github.com/stackshy/cloudemu/v2/persist"
+)
+
+aws := cloudemu.NewAWS()
+targets := map[string]persist.Services{"aws": aws.SnapshotServices()}
+
+snap, _ := persist.ExportAll(ctx, targets, persist.Options{IncludeAssets: true})
+_ = snap.WriteFile("state.json")
+
+fresh := cloudemu.NewAWS()
+loaded, _ := persist.ReadFile("state.json")
+_ = persist.RestoreAll(ctx, &loaded, map[string]persist.Services{"aws": fresh.SnapshotServices()})
+```
+
+`Options{IncludeAssets: false}` (the default) yields a metadata-only snapshot
+(no large object bodies). On the standalone server the same capability is exposed
+as `cloudemu serve --persist`, the `cloudemu snapshot save`/`load` commands, and the
+`GET`/`POST /_cloudemu/snapshot` endpoint. Full guide: [persistence.md](persistence.md).

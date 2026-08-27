@@ -131,6 +131,7 @@ func (lb *LB) DescribeTargetGroups(ctx context.Context, arns []string) ([]driver
 	return out.([]driver.TargetGroupInfo), nil
 }
 
+//nolint:gocritic // config passed by value to match driver.LoadBalancer interface pattern
 func (lb *LB) CreateListener(ctx context.Context, config driver.ListenerConfig) (*driver.ListenerInfo, error) {
 	out, err := lb.do(ctx, "CreateListener", config, func() (any, error) { return lb.driver.CreateListener(ctx, config) })
 	if err != nil {
@@ -177,6 +178,7 @@ func (lb *LB) DescribeRules(ctx context.Context, listenerARN string) ([]driver.R
 	return out.([]driver.RuleInfo), nil
 }
 
+//nolint:gocritic // input passed by value to match driver.LoadBalancer interface pattern
 func (lb *LB) ModifyListener(ctx context.Context, input driver.ModifyListenerInput) error {
 	_, err := lb.do(ctx, "ModifyListener", input, func() (any, error) { return nil, lb.driver.ModifyListener(ctx, input) })
 	return err

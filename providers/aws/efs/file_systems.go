@@ -41,14 +41,24 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 	id := "fs-" + idgen.GenerateID("")
 
 	// Atomically claim the creation token. If another call already owns it, this
-	// is a duplicate — reject without creating.
+	// is a duplicate — reject without creating, echoing the existing file
+	// system's id so an idempotent retry can recover it (real EFS behavior).
 	if !m.tokenIndex.SetIfAbsent(in.CreationToken, id) {
-		return nil, conflict(driver.KindFileSystem,
+		existingID, _ := m.tokenIndex.Get(in.CreationToken)
+
+		return nil, conflictWithID(driver.KindFileSystem, existingID,
 			"file system with creation token %q already exists", in.CreationToken)
 	}
 
 	now := m.opts.Clock.Now().UTC()
 	name := in.Tags[nameTag]
+
+	// An encrypted file system with no explicit key uses the account's
+	// AWS-managed aws/elasticfilesystem CMK.
+	kmsKeyID := in.KMSKeyID
+	if in.Encrypted && kmsKeyID == "" {
+		kmsKeyID = m.defaultKMSKeyARN()
+	}
 
 	fs := driver.FileSystem{
 		OwnerID:                      m.opts.AccountID,
@@ -62,10 +72,11 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 		SizeInBytes:                  driver.FileSystemSize{Timestamp: now},
 		PerformanceMode:              perf,
 		Encrypted:                    in.Encrypted,
-		KMSKeyID:                     in.KMSKeyID,
+		KMSKeyID:                     kmsKeyID,
 		ThroughputMode:               tput,
 		ProvisionedThroughputInMibps: in.ProvisionedThroughputInMibps,
 		AvailabilityZoneName:         in.AvailabilityZoneName,
+		AvailabilityZoneID:           azIDFromName(in.AvailabilityZoneName),
 		Tags:                         copyTags(in.Tags),
 		Protection:                   driver.FileSystemProtection{ReplicationOverwriteProtection: "ENABLED"},
 	}
@@ -74,12 +85,23 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 		fs:        fs,
 		mountTgts: map[string]*driver.MountTarget{},
 		accessPts: map[string]*driver.AccessPoint{},
-		backup:    driver.BackupDisabled,
+		backup:    backupOnCreate(in.Backup, in.AvailabilityZoneName),
 	})
 
 	out := fs
 
 	return &out, nil
+}
+
+// backupOnCreate reports the initial automatic-backup status. Backups default to
+// DISABLED, honoring the Backup flag; One Zone file systems (AvailabilityZoneName
+// set) default to ENABLED per real EFS. A later PutBackupPolicy still overrides.
+func backupOnCreate(backup bool, availabilityZoneName string) string {
+	if backup || availabilityZoneName != "" {
+		return driver.BackupEnabled
+	}
+
+	return driver.BackupDisabled
 }
 
 // DeleteFileSystem deletes a file system. It must have no mount targets or

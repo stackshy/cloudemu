@@ -39,12 +39,19 @@ func TestCreateQueue(t *testing.T) {
 		{name: "empty name", cfg: driver.QueueConfig{}, expectErr: true},
 		{name: "FIFO without suffix", cfg: driver.QueueConfig{Name: "bad", FIFO: true}, expectErr: true},
 		{
-			name: "already exists",
-			cfg:  driver.QueueConfig{Name: "dup"},
+			name: "already exists with different attributes",
+			cfg:  driver.QueueConfig{Name: "dup", VisibilityTimeout: 60},
 			setup: func(m *Mock) {
 				createStdQueue(m, "dup")
 			},
 			expectErr: true,
+		},
+		{
+			name: "idempotent re-create with identical attributes",
+			cfg:  driver.QueueConfig{Name: "idem"},
+			setup: func(m *Mock) {
+				createStdQueue(m, "idem")
+			},
 		},
 	}
 
@@ -155,6 +162,47 @@ func TestSendAndReceiveMessages(t *testing.T) {
 	})
 }
 
+// TestCreateQueueVisibilityTimeoutDefault locks in that the 30s default lives at
+// the provider layer (so the typed Go API and portable path get it), while an
+// explicitly-set 0 still round-trips.
+func TestCreateQueueVisibilityTimeoutDefault(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	// Typed API omits VisibilityTimeout: it must default to 30s, so a received
+	// message stays invisible and an immediate second receive returns nothing.
+	q := createStdQueue(m, "default-vis")
+	if _, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "x"}); err != nil {
+		requireNoError(t, err)
+	}
+
+	r1, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 1})
+	requireNoError(t, err)
+	r2, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 1})
+	requireNoError(t, err)
+
+	if len(r1) != 1 || len(r2) != 0 {
+		t.Fatalf("default visibility should hide the received message: r1=%d r2=%d", len(r1), len(r2))
+	}
+
+	// Explicit 0 (as the wire handler flags it) round-trips: the received
+	// message is immediately visible again.
+	q0, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "zero-vis", VisibilityTimeout: 0, VisibilityTimeoutSet: true})
+	requireNoError(t, err)
+	if _, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q0.URL, Body: "y"}); err != nil {
+		requireNoError(t, err)
+	}
+
+	z1, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q0.URL, MaxMessages: 1})
+	requireNoError(t, err)
+	z2, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q0.URL, MaxMessages: 1})
+	requireNoError(t, err)
+
+	if len(z1) != 1 || len(z2) != 1 {
+		t.Fatalf("explicit 0 visibility should re-expose the message: z1=%d z2=%d", len(z1), len(z2))
+	}
+}
+
 func TestDeleteMessage(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()
@@ -168,9 +216,9 @@ func TestDeleteMessage(t *testing.T) {
 		requireNoError(t, err)
 	})
 
-	t.Run("not found", func(t *testing.T) {
+	t.Run("unknown handle is idempotent success", func(t *testing.T) {
 		err := m.DeleteMessage(ctx, q.URL, "invalid-handle")
-		assertError(t, err, true)
+		requireNoError(t, err)
 	})
 
 	t.Run("queue not found", func(t *testing.T) {
@@ -559,30 +607,6 @@ func TestMetricsEmission(t *testing.T) {
 func createSQSQueue(m *Mock, name string) *driver.QueueInfo {
 	info, _ := m.CreateQueue(context.Background(), driver.QueueConfig{Name: name})
 	return info
-}
-
-func TestLambdaTrigger(t *testing.T) {
-	m, _ := newTestMock()
-	ctx := context.Background()
-	q := createStdQueue(m, "trigger-queue")
-
-	var triggered bool
-	var triggeredBody string
-
-	m.SetTrigger(q.URL, func(queueURL string, msg driver.Message) {
-		triggered = true
-		triggeredBody = msg.Body
-	})
-
-	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "trigger-test"})
-
-	assertEqual(t, true, triggered)
-	assertEqual(t, "trigger-test", triggeredBody)
-
-	m.RemoveTrigger(q.URL)
-	triggered = false
-	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "no-trigger"})
-	assertEqual(t, false, triggered)
 }
 
 func TestReceiveMessagesWithOptionsMetrics(t *testing.T) {

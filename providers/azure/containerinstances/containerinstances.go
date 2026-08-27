@@ -39,6 +39,7 @@ const (
 	groupStateRunning   = "Running"
 	groupStateSucceeded = "Succeeded"
 	groupStateFailed    = "Failed"
+	groupStateStopped   = "Stopped"
 
 	// Per-container instanceView.currentState states (ACI vocabulary).
 	containerStateRunning    = "Running"
@@ -73,17 +74,32 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
+// groupKey builds the composite key container groups are stored under. A
+// container group's ARM identity is {subscription, resourceGroup, name} — see
+// the CreateOrUpdate URI parameters at
+// https://learn.microsoft.com/en-us/rest/api/container-instances/container-groups/create-or-update
+// (subscriptionId, resourceGroupName, and containerGroupName are all required
+// path segments) — so a group named "cg1" in one resource group must never
+// collide with (or be overwritten/leaked to) a same-named group in another
+// resource group or subscription.
+func groupKey(subscription, resourceGroup, name string) string {
+	return subscription + "/" + resourceGroup + "/" + name
+}
+
 // CreateContainerGroup creates the group, replacing any existing group of the
-// same name (ARM PUT is create-or-update). When an engine is wired the
-// containers run for real and their observed state is reflected back.
+// same name within the same subscription/resource group (ARM PUT is
+// create-or-update). When an engine is wired the containers run for real and
+// their observed state is reflected back.
 //
 //nolint:gocritic // cfg is the by-value config defined by the driver interface.
 func (m *Mock) CreateContainerGroup(ctx context.Context, cfg driver.ContainerGroupConfig) (*driver.ContainerGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	key := groupKey(cfg.Scope.Subscription, cfg.Scope.ResourceGroup, cfg.Name)
+
 	// Replacing an existing group tears down its prior engine workload first.
-	if prev, ok := m.groups.Get(cfg.Name); ok {
+	if prev, ok := m.groups.Get(key); ok {
 		m.stopWorkload(ctx, prev)
 	}
 
@@ -95,6 +111,7 @@ func (m *Mock) CreateContainerGroup(ctx context.Context, cfg driver.ContainerGro
 		ProvisioningState: provisioningStateSucceeded,
 		State:             groupStateRunning,
 		Containers:        synthContainers(cfg.Containers),
+		IPAddress:         assignIPAddress(cfg.IPAddress, cfg.Location),
 		Tags:              cfg.Tags,
 		Scope:             cfg.Scope,
 	}
@@ -104,7 +121,7 @@ func (m *Mock) CreateContainerGroup(ctx context.Context, cfg driver.ContainerGro
 		return nil, err
 	}
 
-	m.groups.Set(cfg.Name, data)
+	m.groups.Set(key, data)
 
 	out := data.group
 
@@ -171,9 +188,43 @@ func (m *Mock) restartOnFailure(
 	return handle, statuses, nil
 }
 
-// GetContainerGroup returns the recorded group.
-func (m *Mock) GetContainerGroup(_ context.Context, name string) (*driver.ContainerGroup, error) {
-	data, ok := m.groups.Get(name)
+// UpdateContainerGroupTags merges tags into an existing group and returns it,
+// leaving the running workload untouched (ARM "Container Groups - Update" is a
+// PATCH that updates a group's tags).
+func (m *Mock) UpdateContainerGroupTags(
+	_ context.Context, subscription, resourceGroup, name string, tags map[string]string,
+) (*driver.ContainerGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := groupKey(subscription, resourceGroup, name)
+
+	data, ok := m.groups.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
+	}
+
+	merged := make(map[string]string, len(data.group.Tags)+len(tags))
+	for k, v := range data.group.Tags {
+		merged[k] = v
+	}
+
+	for k, v := range tags {
+		merged[k] = v
+	}
+
+	data.group.Tags = merged
+	m.groups.Set(key, data)
+
+	out := data.group
+
+	return &out, nil
+}
+
+// GetContainerGroup returns the recorded group scoped to subscription and
+// resourceGroup.
+func (m *Mock) GetContainerGroup(_ context.Context, subscription, resourceGroup, name string) (*driver.ContainerGroup, error) {
+	data, ok := m.groups.Get(groupKey(subscription, resourceGroup, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
 	}
@@ -183,28 +234,33 @@ func (m *Mock) GetContainerGroup(_ context.Context, name string) (*driver.Contai
 	return &out, nil
 }
 
-// DeleteContainerGroup removes the group, tearing down any engine workload.
-func (m *Mock) DeleteContainerGroup(ctx context.Context, name string) error {
+// DeleteContainerGroup removes the group scoped to subscription and
+// resourceGroup, tearing down any engine workload.
+func (m *Mock) DeleteContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, ok := m.groups.Get(name)
+	key := groupKey(subscription, resourceGroup, name)
+
+	data, ok := m.groups.Get(key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
 	}
 
 	m.stopWorkload(ctx, data)
-	m.groups.Delete(name)
+	m.groups.Delete(key)
 
 	return nil
 }
 
-// ListContainerGroups returns the groups visible under filter.
+// ListContainerGroups returns the groups visible under filter: a zero filter
+// lists every group in the store (subscription-wide when only Subscription is
+// set, matching the ARM ListByResourceGroup/List distinction).
 func (m *Mock) ListContainerGroups(_ context.Context, filter scope.Scope) ([]driver.ContainerGroup, error) {
-	all := m.groups.All()
-	out := make([]driver.ContainerGroup, 0, len(all))
+	stored := m.groups.SortedValues()
+	out := make([]driver.ContainerGroup, 0, len(stored))
 
-	for _, data := range all {
+	for _, data := range stored {
 		if data.group.Scope.Matches(filter) {
 			out = append(out, data.group)
 		}
@@ -213,10 +269,11 @@ func (m *Mock) ListContainerGroups(_ context.Context, filter scope.Scope) ([]dri
 	return out, nil
 }
 
-// ContainerLogs returns the engine-captured output for one container. It is
-// empty for a group that never ran on an engine.
-func (m *Mock) ContainerLogs(ctx context.Context, group, container string, tail int) (string, error) {
-	data, ok := m.groups.Get(group)
+// ContainerLogs returns the engine-captured output for one container in the
+// group scoped to subscription and resourceGroup. It is empty for a group
+// that never ran on an engine.
+func (m *Mock) ContainerLogs(ctx context.Context, subscription, resourceGroup, group, container string, tail int) (string, error) {
+	data, ok := m.groups.Get(groupKey(subscription, resourceGroup, group))
 	if !ok {
 		return "", cerrors.Newf(cerrors.NotFound, "container group %q not found", group)
 	}

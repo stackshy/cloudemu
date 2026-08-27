@@ -225,36 +225,46 @@ func domainStatusToWire(s *driver.DomainStatus) map[string]json.RawMessage {
 }
 
 // statusEnvelope wraps a value in the {Options, Status} shape DescribeDomainConfig
-// uses for each option block.
-func statusEnvelope(options any) map[string]any {
+// uses for each option block. The Status is an AWS OptionStatus, whose State,
+// CreationDate, and UpdateDate are required; timestamps are epoch seconds.
+func statusEnvelope(options any, created, updated int64) map[string]any {
 	return map[string]any{
 		"Options": options,
 		"Status": map[string]any{
 			"State":           "Active",
 			"PendingDeletion": false,
+			"CreationDate":    created,
+			"UpdateDate":      updated,
+			"UpdateVersion":   1,
 		},
 	}
 }
 
 // domainConfigToWire renders a driver domain config as the DomainConfig wire
-// shape, wrapping each modeled block in a status envelope.
+// shape, wrapping every block — modeled and raw-passthrough alike — in the
+// {Options, Status} envelope the DescribeDomainConfig/UpdateDomainConfig API
+// requires. (DomainStatus, in contrast, emits the raw blocks flat; see
+// domainStatusToWire.)
 func domainConfigToWire(c *driver.DomainConfig) map[string]json.RawMessage {
+	created := c.CreatedAt.Unix()
+	updated := c.UpdatedAt.Unix()
+
 	base := map[string]any{
-		"EngineVersion":   statusEnvelope(c.EngineVersion),
-		"ClusterConfig":   statusEnvelope(clusterConfigToWire(c.ClusterConfig)),
-		"AccessPolicies":  statusEnvelope(c.AccessPolicies),
-		"AdvancedOptions": statusEnvelope(c.AdvancedOptions),
-		"IPAddressType":   statusEnvelope(c.IPAddressType),
+		"EngineVersion":   statusEnvelope(c.EngineVersion, created, updated),
+		"ClusterConfig":   statusEnvelope(clusterConfigToWire(c.ClusterConfig), created, updated),
+		"AccessPolicies":  statusEnvelope(c.AccessPolicies, created, updated),
+		"AdvancedOptions": statusEnvelope(c.AdvancedOptions, created, updated),
+		"IPAddressType":   statusEnvelope(c.IPAddressType, created, updated),
+	}
+
+	for k, v := range c.RawOptions {
+		base[k] = statusEnvelope(v, created, updated)
 	}
 
 	raw, _ := json.Marshal(base)
 
 	var out map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &out)
-
-	for k, v := range c.RawOptions {
-		out[k] = v
-	}
 
 	return out
 }

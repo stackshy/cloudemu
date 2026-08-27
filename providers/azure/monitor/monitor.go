@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,8 +14,12 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
+
+// historyStateUpdate is the HistoryItemType stamped on a recorded state change.
+const historyStateUpdate = "StateUpdate"
 
 // Compile-time check that Mock implements driver.Monitoring.
 var _ driver.Monitoring = (*Mock)(nil)
@@ -35,9 +40,14 @@ type alarmData struct {
 	Threshold               float64
 	Period                  int
 	EvaluationPeriods       int
+	DatapointsToAlarm       int
 	Stat                    string
+	ExtendedStatistic       string
+	Unit                    string
+	TreatMissingData        string
 	State                   string
 	StateReason             string
+	StateUpdatedTimestamp   time.Time
 	AlarmActions            []string
 	OKActions               []string
 	InsufficientDataActions []string
@@ -45,21 +55,30 @@ type alarmData struct {
 
 // Mock is an in-memory mock implementation of the Azure Monitor service.
 type Mock struct {
-	mu       sync.RWMutex
-	metrics  map[metricKey][]driver.MetricDatum
-	alarms   *memstore.Store[*alarmData]
-	channels *memstore.Store[*driver.NotificationChannelInfo]
-	history  []driver.AlarmHistoryEntry
-	opts     *config.Options
+	mu               sync.RWMutex
+	metrics          map[metricKey][]driver.MetricDatum
+	alarms           *memstore.Store[*alarmData]
+	channels         *memstore.Store[*driver.NotificationChannelInfo]
+	actionGroups     *memstore.Store[*actionGroupData]
+	deliveries       []ActionGroupDelivery
+	webhookDeliverer WebhookDeliverer
+	history          []driver.AlarmHistoryEntry
+	opts             *config.Options
 }
 
 // New creates a new Azure Monitor mock with the given configuration options.
+// It installs a real-HTTP webhook deliverer by default so an alert breach that
+// fires an action group with webhook receivers actually POSTs to them in
+// production (mirroring eventgrid.New wiring a real httpClient). Tests may swap
+// it via SetWebhookDeliverer.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:  make(map[metricKey][]driver.MetricDatum),
-		alarms:   memstore.New[*alarmData](),
-		channels: memstore.New[*driver.NotificationChannelInfo](),
-		opts:     opts,
+		metrics:          make(map[metricKey][]driver.MetricDatum),
+		alarms:           memstore.New[*alarmData](),
+		channels:         memstore.New[*driver.NotificationChannelInfo](),
+		actionGroups:     memstore.New[*actionGroupData](),
+		webhookDeliverer: newHTTPWebhookDeliverer(),
+		opts:             opts,
 	}
 }
 
@@ -70,43 +89,28 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 	}
 
 	m.mu.Lock()
-	for _, d := range data {
+	for i := range data {
 		key := metricKey{
-			Namespace:  d.Namespace,
-			MetricName: d.MetricName,
+			Namespace:  data[i].Namespace,
+			MetricName: data[i].MetricName,
 		}
-		m.metrics[key] = append(m.metrics[key], d)
+		m.metrics[key] = append(m.metrics[key], data[i])
 	}
 	m.mu.Unlock()
 
 	// Evaluate alarms for each unique namespace/metric pair that was updated.
 	seen := make(map[metricKey]bool)
 
-	for _, d := range data {
-		mk := metricKey{Namespace: d.Namespace, MetricName: d.MetricName}
+	for i := range data {
+		mk := metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}
 		if !seen[mk] {
 			seen[mk] = true
 
-			m.evaluateAlarms(d.Namespace, d.MetricName)
+			m.evaluateAlarms(data[i].Namespace, data[i].MetricName)
 		}
 	}
 
 	return nil
-}
-
-func evaluateComparison(value float64, operator string, threshold float64) bool {
-	switch operator {
-	case "GreaterThanThreshold":
-		return value > threshold
-	case "GreaterThanOrEqualToThreshold":
-		return value >= threshold
-	case "LessThanThreshold":
-		return value < threshold
-	case "LessThanOrEqualToThreshold":
-		return value <= threshold
-	default:
-		return false
-	}
 }
 
 func (m *Mock) evaluateAlarms(namespace, metricName string) {
@@ -121,73 +125,95 @@ func (m *Mock) evaluateAlarms(namespace, metricName string) {
 	}
 }
 
+// alarmParams projects an alert rule's thresholds onto the shared evaluator's Params.
+func alarmParams(alarm *alarmData) alarmeval.Params {
+	return alarmeval.Params{
+		Period:             alarm.Period,
+		EvaluationPeriods:  alarm.EvaluationPeriods,
+		DatapointsToAlarm:  alarm.DatapointsToAlarm,
+		Stat:               alarm.Stat,
+		ComparisonOperator: alarm.ComparisonOperator,
+		Threshold:          alarm.Threshold,
+		TreatMissingData:   alarm.TreatMissingData,
+	}
+}
+
 func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
-	period := alarm.Period
-	if period <= 0 {
-		period = 60
-	}
-
-	evalPeriods := alarm.EvaluationPeriods
-	if evalPeriods <= 0 {
-		evalPeriods = 1
-	}
-
 	now := m.opts.Clock.Now()
-	windowDur := time.Duration(period*evalPeriods) * time.Second
-	windowStart := now.Add(-windowDur)
+	params := alarmParams(alarm)
 
-	filtered := m.collectFilteredValues(namespace, metricName, alarm.Dimensions, windowStart, now)
-
+	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, params.WindowStart(now), now)
 	if len(filtered) == 0 {
 		return
 	}
 
-	stat := computeStat(filtered, alarm.Stat)
-
-	var newState, reason string
-	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
-		newState = "ALARM"
-		reason = "Threshold crossed"
-	} else {
-		newState = "OK"
-		reason = "Threshold not crossed"
+	newState, reason, ok := alarmeval.EvaluateWindow(filtered, &params, now)
+	if !ok {
+		return
 	}
 
-	if alarm.State != newState {
-		m.mu.Lock()
-		m.history = append(m.history, driver.AlarmHistoryEntry{
-			AlarmName: alarm.Name,
-			Timestamp: now,
-			OldState:  alarm.State,
-			NewState:  newState,
-			Reason:    fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
-		})
-		m.mu.Unlock()
+	m.transitionAlarm(alarm, newState, reason, now)
+}
+
+// transitionAlarm sets an alert rule's state and, only on a state change, records
+// a history entry — mirroring CloudWatch, where the history entry happens on a
+// state change whether it came from metric evaluation or a manual SetAlarmState.
+// On a transition into ALARM it also fires the alert's action groups, resolving
+// each AlarmActions id against the registered action groups and delivering to
+// their receivers (mirroring the AWS alarm -> SNS action wiring).
+func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
+	oldState := alarm.State
+
+	if oldState != newState {
+		m.appendHistory(alarm.Name, oldState, newState, reason, now)
+		alarm.StateUpdatedTimestamp = now
 	}
 
 	alarm.State = newState
 	alarm.StateReason = reason
+
+	if oldState != newState && newState == alarmeval.StateAlarm {
+		m.fireActionGroups(alarm, newState, now)
+	}
 }
 
-func (m *Mock) collectFilteredValues(namespace, metricName string, dims map[string]string, windowStart, now time.Time) []float64 {
+// appendHistory records one alert rule state transition in the history log.
+func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.history = append(m.history, driver.AlarmHistoryEntry{
+		AlarmName:       name,
+		Timestamp:       now,
+		OldState:        oldState,
+		NewState:        newState,
+		HistoryItemType: historyStateUpdate,
+		Reason:          fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
+	})
+}
+
+func (m *Mock) collectFilteredDatums(
+	namespace, metricName string, dims map[string]string, windowStart, now time.Time,
+) []driver.MetricDatum {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	key := metricKey{Namespace: namespace, MetricName: metricName}
 	dataPoints := m.metrics[key]
 
-	var filtered []float64
+	var filtered []driver.MetricDatum
 
-	for _, d := range dataPoints {
+	for i := range dataPoints {
+		d := &dataPoints[i]
 		if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
 			continue
 		}
 
-		if !matchDimensions(d.Dimensions, dims) {
+		if !matchAlarmDimensions(d.Dimensions, dims) {
 			continue
 		}
 
-		filtered = append(filtered, d.Value)
+		filtered = append(filtered, *d)
 	}
 
 	return filtered
@@ -225,7 +251,8 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
 	var filtered []driver.MetricDatum
 
-	for _, d := range dataPoints {
+	for i := range dataPoints {
+		d := &dataPoints[i]
 		if d.Timestamp.Before(startTime) || !d.Timestamp.Before(endTime) {
 			continue
 		}
@@ -234,7 +261,7 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 			continue
 		}
 
-		filtered = append(filtered, d)
+		filtered = append(filtered, *d)
 	}
 
 	return filtered
@@ -278,9 +305,9 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 func collectPeriodValues(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []float64 {
 	var values []float64
 
-	for _, d := range filtered {
-		if !d.Timestamp.Before(periodStart) && d.Timestamp.Before(periodEnd) {
-			values = append(values, d.Value)
+	for i := range filtered {
+		if !filtered[i].Timestamp.Before(periodStart) && filtered[i].Timestamp.Before(periodEnd) {
+			values = append(values, filtered[i].Value)
 		}
 	}
 
@@ -332,7 +359,11 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		Threshold:               cfg.Threshold,
 		Period:                  cfg.Period,
 		EvaluationPeriods:       cfg.EvaluationPeriods,
+		DatapointsToAlarm:       cfg.DatapointsToAlarm,
 		Stat:                    cfg.Stat,
+		ExtendedStatistic:       cfg.ExtendedStatistic,
+		Unit:                    cfg.Unit,
+		TreatMissingData:        cfg.TreatMissingData,
 		State:                   "INSUFFICIENT_DATA",
 		AlarmActions:            append([]string{}, cfg.AlarmActions...),
 		OKActions:               append([]string{}, cfg.OKActions...),
@@ -380,15 +411,15 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 	return result, nil
 }
 
-// SetAlarmState manually sets the state of a metric alert rule.
+// SetAlarmState manually sets the state of a metric alert rule. Like a
+// metric-driven transition, a state change records a history entry.
 func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "alarm %q not found", name)
 	}
 
-	a.State = state
-	a.StateReason = reason
+	m.transitionAlarm(a, state, reason, m.opts.Clock.Now())
 
 	return nil
 }
@@ -450,36 +481,107 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 	return result, nil
 }
 
-// GetAlarmHistory returns alarm history entries filtered by alarm name, limited by limit.
+// GetAlarmHistory returns an alert rule's history entries newest-first (matching
+// CloudWatch's default TimestampDescending order); when limit > 0 it keeps the
+// newest limit entries.
 func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var filtered []driver.AlarmHistoryEntry
 
-	for _, entry := range m.history {
-		if entry.AlarmName == alarmName {
-			filtered = append(filtered, entry)
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].AlarmName == alarmName {
+			filtered = append(filtered, m.history[i])
 		}
 	}
 
 	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
+		filtered = filtered[:limit]
 	}
 
 	return filtered, nil
 }
 
-// matchDimensions returns true if the data point dimensions contain all of the
-// requested filter dimensions.
+// matchDimensions reports whether a datum belongs to the exact metric series a
+// Metrics-List read query identifies. Reading a specific timeseries treats each
+// unique dimension combination as a distinct series, so the sets must match
+// exactly: a query with fewer (or no) dimensions does not match a datum
+// published with a superset. The "resourceId" dimension is compared with
+// resourceIDMatch rather than exact equality: cloudemu does not enforce a
+// single subscription across a deployment (the wire layer accepts requests
+// under any subscription id), so the subscription segment of an ARM resource
+// id can legitimately differ between how a resource was minted and how a
+// caller's request path addresses it.
 func matchDimensions(dataDims, filterDims map[string]string) bool {
+	if len(dataDims) != len(filterDims) {
+		return false
+	}
+
+	return dimensionsContain(dataDims, filterDims)
+}
+
+// matchAlarmDimensions reports whether a datum contributes to a metric alert's
+// evaluation. Azure Monitor metric-alert semantics differ from a raw metric read
+// (and from CloudWatch's exact-series alarms): a criterion with no dimension
+// filter aggregates across ALL timeseries of the metric/namespace, so a
+// dimensionless alert matches every datum (including ones published with a
+// resourceId or other dimensions). When dimension filters are present, a datum
+// matches if its dimensions CONTAIN all of the filters (a superset is allowed);
+// only a missing or mismatched filter dimension rejects it.
+func matchAlarmDimensions(dataDims, filterDims map[string]string) bool {
+	if len(filterDims) == 0 {
+		return true
+	}
+
+	return dimensionsContain(dataDims, filterDims)
+}
+
+// dimensionsContain reports whether dataDims satisfies every (k,v) in filterDims,
+// comparing the "resourceId" dimension subscription-agnostically per
+// resourceIDMatch and all others by exact equality.
+func dimensionsContain(dataDims, filterDims map[string]string) bool {
 	for k, v := range filterDims {
+		if k == "resourceId" {
+			if !resourceIDMatch(dataDims[k], v) {
+				return false
+			}
+
+			continue
+		}
+
 		if dataDims[k] != v {
 			return false
 		}
 	}
 
 	return true
+}
+
+// resourceIDMatch compares two Azure ARM resource ids by their
+// "resourceGroups/..." tail (case-insensitive), ignoring the leading
+// "/subscriptions/{id}" segment and any case difference in between.
+func resourceIDMatch(a, b string) bool {
+	if a == "" || b == "" {
+		return a == b
+	}
+
+	return strings.EqualFold(resourceScope(a), resourceScope(b))
+}
+
+// resourceScope returns the portion of an ARM resource id starting at
+// "resourceGroups/...", or the id unchanged when that marker isn't found
+// (e.g. a bare internal instance id from a caller that bypassed the ARM
+// wire layer).
+func resourceScope(id string) string {
+	const marker = "/resourcegroups/"
+
+	idx := strings.Index(strings.ToLower(id), marker)
+	if idx < 0 {
+		return id
+	}
+
+	return id[idx+1:]
 }
 
 // computeStat computes the requested statistic over a slice of values.
@@ -537,12 +639,30 @@ func maxValue(values []float64) float64 {
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {
+	dims := make(map[string]string, len(a.Dimensions))
+	for k, v := range a.Dimensions {
+		dims[k] = v
+	}
+
 	return driver.AlarmInfo{
-		Name:               a.Name,
-		Namespace:          a.Namespace,
-		MetricName:         a.MetricName,
-		State:              a.State,
-		ComparisonOperator: a.ComparisonOperator,
-		Threshold:          a.Threshold,
+		Name:                    a.Name,
+		Namespace:               a.Namespace,
+		MetricName:              a.MetricName,
+		State:                   a.State,
+		ComparisonOperator:      a.ComparisonOperator,
+		Threshold:               a.Threshold,
+		StateReason:             a.StateReason,
+		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
+		Period:                  a.Period,
+		EvaluationPeriods:       a.EvaluationPeriods,
+		DatapointsToAlarm:       a.DatapointsToAlarm,
+		Statistic:               a.Stat,
+		ExtendedStatistic:       a.ExtendedStatistic,
+		Unit:                    a.Unit,
+		TreatMissingData:        a.TreatMissingData,
+		AlarmActions:            append([]string{}, a.AlarmActions...),
+		OKActions:               append([]string{}, a.OKActions...),
+		InsufficientDataActions: append([]string{}, a.InsufficientDataActions...),
+		Dimensions:              dims,
 	}
 }

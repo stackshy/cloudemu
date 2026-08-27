@@ -78,7 +78,7 @@ func (s *routerStore) delete(project, region, name string) bool {
 	return true
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value; CRUD route shape is duplicate-by-design across resource types
 func (h *Handler) routeRouters(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
@@ -133,7 +133,7 @@ func (h *Handler) insertRouter(w http.ResponseWriter, r *http.Request, rp gcpres
 
 	h.routers.put(rp.Project, rp.ScopeName, req.Name, body)
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		resourceRouters, req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -182,7 +182,7 @@ func (h *Handler) patchRouter(w http.ResponseWriter, r *http.Request, rp gcprest
 
 	h.routers.put(rp.Project, rp.ScopeName, rp.ResourceName, body)
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		resourceRouters, rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -197,7 +197,7 @@ func (h *Handler) deleteRouter(w http.ResponseWriter, r *http.Request, rp gcpres
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		resourceRouters, rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

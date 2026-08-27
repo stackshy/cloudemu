@@ -38,12 +38,13 @@ func toTagsXML(tags map[string]string) *tagsXML {
 }
 
 type userXML struct {
-	UserName   string   `xml:"UserName"`
-	UserID     string   `xml:"UserId"`
-	Arn        string   `xml:"Arn"`
-	Path       string   `xml:"Path,omitempty"`
-	CreateDate string   `xml:"CreateDate,omitempty"`
-	Tags       *tagsXML `xml:"Tags,omitempty"`
+	UserName            string                  `xml:"UserName"`
+	UserID              string                  `xml:"UserId"`
+	Arn                 string                  `xml:"Arn"`
+	Path                string                  `xml:"Path,omitempty"`
+	CreateDate          string                  `xml:"CreateDate,omitempty"`
+	PermissionsBoundary *permissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+	Tags                *tagsXML                `xml:"Tags,omitempty"`
 }
 
 func toUserXML(u *iamdriver.UserInfo) userXML {
@@ -58,14 +59,16 @@ func toUserXML(u *iamdriver.UserInfo) userXML {
 }
 
 type roleXML struct {
-	RoleName                 string   `xml:"RoleName"`
-	RoleID                   string   `xml:"RoleId"`
-	Arn                      string   `xml:"Arn"`
-	Path                     string   `xml:"Path,omitempty"`
-	CreateDate               string   `xml:"CreateDate,omitempty"`
-	MaxSessionDuration       int      `xml:"MaxSessionDuration,omitempty"`
-	AssumeRolePolicyDocument string   `xml:"AssumeRolePolicyDocument,omitempty"`
-	Tags                     *tagsXML `xml:"Tags,omitempty"`
+	RoleName                 string                  `xml:"RoleName"`
+	RoleID                   string                  `xml:"RoleId"`
+	Arn                      string                  `xml:"Arn"`
+	Path                     string                  `xml:"Path,omitempty"`
+	Description              string                  `xml:"Description,omitempty"`
+	CreateDate               string                  `xml:"CreateDate,omitempty"`
+	MaxSessionDuration       int                     `xml:"MaxSessionDuration,omitempty"`
+	AssumeRolePolicyDocument string                  `xml:"AssumeRolePolicyDocument,omitempty"`
+	PermissionsBoundary      *permissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+	Tags                     *tagsXML                `xml:"Tags,omitempty"`
 }
 
 func toRoleXML(r *iamdriver.RoleInfo) roleXML {
@@ -74,6 +77,7 @@ func toRoleXML(r *iamdriver.RoleInfo) roleXML {
 		RoleID:                   r.ID,
 		Arn:                      r.ARN,
 		Path:                     r.Path,
+		Description:              r.Description,
 		CreateDate:               r.CreatedAt,
 		MaxSessionDuration:       r.MaxSessionDuration,
 		AssumeRolePolicyDocument: r.AssumeRolePolicyDoc,
@@ -90,28 +94,35 @@ type policyXML struct {
 	AttachmentCount  int    `xml:"AttachmentCount"`
 	IsAttachable     bool   `xml:"IsAttachable"`
 	Description      string `xml:"Description,omitempty"`
+	CreateDate       string `xml:"CreateDate,omitempty"`
+	UpdateDate       string `xml:"UpdateDate,omitempty"`
 }
 
-// toPolicyXML emits the wire shape the SDK expects. Two fields are fixed
-// constants rather than driver-derived because the in-memory PolicyInfo
-// doesn't carry them:
-//
-//   - AttachmentCount is always 0. The driver does not track the live
-//     count, and recomputing it would mean walking every user/role on
-//     every read. The SDK accepts the field at zero.
-//   - IsAttachable is always true. Real AWS distinguishes
-//     customer-managed (attachable) from AWS-managed policies; we only
-//     emit customer-managed, so true is correct.
-func toPolicyXML(p *iamdriver.PolicyInfo, defaultVersionID string) policyXML {
+// policyMeta carries the per-policy fields the driver's PolicyInfo doesn't hold
+// directly: the current default version, its create/update timestamps (derived
+// from the policy's version list), and the live attachment count.
+type policyMeta struct {
+	defaultVersionID string
+	createDate       string
+	updateDate       string
+	attachmentCount  int
+}
+
+// toPolicyXML emits the wire shape the SDK expects. IsAttachable is always true:
+// real AWS distinguishes customer-managed (attachable) from AWS-managed
+// policies, and both kinds this emulator serves are attachable.
+func toPolicyXML(p *iamdriver.PolicyInfo, meta policyMeta) policyXML {
 	return policyXML{
 		PolicyName:       p.Name,
 		PolicyID:         p.ID,
 		Arn:              p.ARN,
 		Path:             p.Path,
-		DefaultVersionID: defaultVersionID,
-		AttachmentCount:  0,
+		DefaultVersionID: meta.defaultVersionID,
+		AttachmentCount:  meta.attachmentCount,
 		IsAttachable:     true,
 		Description:      p.Description,
+		CreateDate:       meta.createDate,
+		UpdateDate:       meta.updateDate,
 	}
 }
 
@@ -151,12 +162,11 @@ type groupXML struct {
 	CreateDate string `xml:"CreateDate,omitempty"`
 }
 
-// toGroupXML emits the wire shape the SDK expects. GroupId is omitted
-// because the driver's GroupInfo doesn't carry one; the SDK tolerates the
-// missing field (it's modeled as optional on the response).
+// toGroupXML emits the wire shape the SDK expects.
 func toGroupXML(g *iamdriver.GroupInfo) groupXML {
 	return groupXML{
 		GroupName:  g.Name,
+		GroupID:    g.ID,
 		Arn:        g.ARN,
 		Path:       g.Path,
 		CreateDate: g.CreatedAt,
@@ -216,6 +226,7 @@ func toInstanceProfileXML(p *iamdriver.InstanceProfileInfo, role *iamdriver.Role
 		InstanceProfileName: p.Name,
 		InstanceProfileID:   p.ID,
 		Arn:                 p.ARN,
+		Path:                p.Path,
 		CreateDate:          p.CreatedAt,
 		Tags:                toTagsXML(p.Tags),
 	}
@@ -303,6 +314,7 @@ type listUsersResponse struct {
 type listUsersResult struct {
 	Users       usersListXML `xml:"Users"`
 	IsTruncated bool         `xml:"IsTruncated"`
+	Marker      string       `xml:"Marker,omitempty"`
 }
 
 type createRoleResponse struct {
@@ -343,6 +355,7 @@ type listRolesResponse struct {
 type listRolesResult struct {
 	Roles       rolesListXML `xml:"Roles"`
 	IsTruncated bool         `xml:"IsTruncated"`
+	Marker      string       `xml:"Marker,omitempty"`
 }
 
 type createPolicyResponse struct {
@@ -383,6 +396,7 @@ type listPoliciesResponse struct {
 type listPoliciesResult struct {
 	Policies    policiesListXML `xml:"Policies"`
 	IsTruncated bool            `xml:"IsTruncated"`
+	Marker      string          `xml:"Marker,omitempty"`
 }
 
 type createPolicyVersionResponse struct {
@@ -507,6 +521,7 @@ type getGroupResult struct {
 	Group       groupXML     `xml:"Group"`
 	Users       usersListXML `xml:"Users"`
 	IsTruncated bool         `xml:"IsTruncated"`
+	Marker      string       `xml:"Marker,omitempty"`
 }
 
 type listGroupsResponse struct {
@@ -519,6 +534,7 @@ type listGroupsResponse struct {
 type listGroupsResult struct {
 	Groups      groupsListXML `xml:"Groups"`
 	IsTruncated bool          `xml:"IsTruncated"`
+	Marker      string        `xml:"Marker,omitempty"`
 }
 
 type addUserToGroupResponse struct {
@@ -613,6 +629,7 @@ type listInstanceProfilesResponse struct {
 type listInstanceProfilesResult struct {
 	InstanceProfiles instanceProfilesListXML `xml:"InstanceProfiles"`
 	IsTruncated      bool                    `xml:"IsTruncated"`
+	Marker           string                  `xml:"Marker,omitempty"`
 }
 
 type addRoleToInstanceProfileResponse struct {

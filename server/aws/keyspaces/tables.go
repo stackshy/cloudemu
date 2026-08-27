@@ -116,9 +116,9 @@ func (h *Handler) getTable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, tableOutput(t))
 }
 
-// tableOutput builds the GetTable response. CreationTimestamp is omitted: AWS
-// JSON 1.0 encodes timestamps as epoch numbers, which encoding/json cannot emit
-// for a time.Time.
+// tableOutput builds the GetTable response. CreationTimestamp is emitted as a
+// *time.Time; writeJSON rewrites it to the epoch-number form the AWS JSON 1.0
+// deserializer expects (see wirejson.go).
 func tableOutput(t *ksdriver.Table) keyspaces.GetTableOutput {
 	out := keyspaces.GetTableOutput{
 		KeyspaceName:            aws.String(t.KeyspaceName),
@@ -136,6 +136,10 @@ func tableOutput(t *ksdriver.Table) keyspaces.GetTableOutput {
 	}
 	if t.Comment != "" {
 		out.Comment = &types.Comment{Message: aws.String(t.Comment)}
+	}
+
+	if !t.CreationTimestamp.IsZero() {
+		out.CreationTimestamp = aws.Time(t.CreationTimestamp)
 	}
 
 	return out

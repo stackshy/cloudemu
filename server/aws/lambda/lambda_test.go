@@ -139,7 +139,7 @@ func TestListFunctions(t *testing.T) {
 	srv, _ := newServer(t)
 
 	for _, name := range []string{"a", "b", "c"} {
-		body := `{"FunctionName":"` + name + `","Runtime":"go1.x"}`
+		body := `{"FunctionName":"` + name + `","Runtime":"go1.x","Handler":"main"}`
 
 		resp := postJSON(t, srv.URL+"/2015-03-31/functions", body)
 		if resp.StatusCode != http.StatusCreated {
@@ -170,7 +170,7 @@ func TestListFunctions(t *testing.T) {
 func TestDeleteFunction(t *testing.T) {
 	srv, _ := newServer(t)
 
-	body := `{"FunctionName":"goner","Runtime":"go1.x"}`
+	body := `{"FunctionName":"goner","Runtime":"go1.x","Handler":"main"}`
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions", body); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", r.StatusCode)
 	}
@@ -204,7 +204,7 @@ func TestDeleteFunction(t *testing.T) {
 func TestInvokeReturnsHandlerPayload(t *testing.T) {
 	srv, cloud := newServer(t)
 
-	body := `{"FunctionName":"echo","Runtime":"go1.x"}`
+	body := `{"FunctionName":"echo","Runtime":"go1.x","Handler":"main"}`
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions", body); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", r.StatusCode)
 	}
@@ -243,7 +243,7 @@ func TestInvokeNoHandlerEchoesStub(t *testing.T) {
 	srv, _ := newServer(t)
 
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions",
-		`{"FunctionName":"nohandler","Runtime":"go1.x"}`); r.StatusCode != http.StatusCreated {
+		`{"FunctionName":"nohandler","Runtime":"go1.x","Handler":"main"}`); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", r.StatusCode)
 	}
 
@@ -275,7 +275,7 @@ func TestEventSourceMappings(t *testing.T) {
 	srv, _ := newServer(t)
 
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions",
-		`{"FunctionName":"fx","Runtime":"go1.x"}`); r.StatusCode != http.StatusCreated {
+		`{"FunctionName":"fx","Runtime":"go1.x","Handler":"main"}`); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create fn: %d", r.StatusCode)
 	}
 
@@ -303,9 +303,25 @@ func TestEventSourceMappings(t *testing.T) {
 		t.Fatalf("get ESM status = %d", got.StatusCode)
 	}
 
-	// DELETE by UUID.
-	if del := doJSON(t, http.MethodDelete, esmURL+"/"+esm.UUID, ""); del.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete ESM status = %d", del.StatusCode)
+	// DELETE by UUID returns 202 with the full config in a Deleting state.
+	del := doJSON(t, http.MethodDelete, esmURL+"/"+esm.UUID, "")
+	if del.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete ESM status = %d, want 202", del.StatusCode)
+	}
+
+	var deleted struct {
+		UUID  string `json:"UUID"`
+		State string `json:"State"`
+	}
+
+	decode(t, del, &deleted)
+
+	if deleted.UUID != esm.UUID {
+		t.Fatalf("delete ESM UUID = %q, want %q", deleted.UUID, esm.UUID)
+	}
+
+	if deleted.State != "Deleting" {
+		t.Fatalf("delete ESM State = %q, want Deleting", deleted.State)
 	}
 }
 
@@ -330,7 +346,7 @@ func TestInvokeOnMissingFunctionReturns404(t *testing.T) {
 func TestEnvironmentRoundTrip(t *testing.T) {
 	srv, _ := newServer(t)
 
-	body := `{"FunctionName":"envfn","Runtime":"go1.x","Environment":{"Variables":{"K":"V"}}}`
+	body := `{"FunctionName":"envfn","Runtime":"go1.x","Handler":"main","Environment":{"Variables":{"K":"V"}}}`
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions", body); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", r.StatusCode)
 	}

@@ -4,55 +4,111 @@ package elbv2
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
-// Compile-time check that Mock implements driver.LoadBalancer.
-var _ driver.LoadBalancer = (*Mock)(nil)
+// Compile-time checks that Mock implements driver.LoadBalancer and the optional
+// modifier extensions the ELBv2 wire handler dispatches to.
+var (
+	_ driver.LoadBalancer              = (*Mock)(nil)
+	_ driver.TargetGroupModifier       = (*Mock)(nil)
+	_ driver.RuleModifier              = (*Mock)(nil)
+	_ driver.LBNetworkModifier         = (*Mock)(nil)
+	_ driver.ListenerGetter            = (*Mock)(nil)
+	_ driver.TargetGroupAttributeStore = (*Mock)(nil)
+)
 
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
 const defaultIdleTimeoutSec = 60
 
+// Load balancer provisioning states. A new load balancer starts in
+// provisioning and settles to active after a short window.
+const (
+	lbStateProvisioning = "provisioning"
+	lbStateActive       = "active"
+)
+
+// targetStateInitial is the health state a target holds between registration and
+// its first successful health check.
+const targetStateInitial = "initial"
+
+// targetKey is the identity of a registered target within a target group.
+// AWS lets the same instance ID or IP be registered multiple times with
+// different port overrides (RegisterTargets docs, "Register targets by
+// instance ID using port overrides": the same instance ID is registered
+// twice with Port=80 and Port=766, and both remain distinct targets) — so
+// the health store must key on (ID, Port), not ID alone.
+type targetKey struct {
+	id   string
+	port int
+}
+
+func keyFor(t driver.Target) targetKey {
+	return targetKey{id: t.ID, port: t.Port}
+}
+
 // Mock is an in-memory mock implementation of the AWS ELB service.
 type Mock struct {
 	lbs       *memstore.Store[driver.LBInfo]
+	lbSettle  *memstore.Store[settle.Window] // lbARN -> provisioning->active window
 	tgs       *memstore.Store[driver.TargetGroupInfo]
 	listeners *memstore.Store[driver.ListenerInfo]
 	rules     *memstore.Store[driver.RuleInfo]
 	opts      *config.Options
 
 	healthMu sync.RWMutex
-	health   map[string]map[string]*driver.TargetHealth // tgARN -> targetID -> health
+	health   map[string]map[targetKey]*driver.TargetHealth // tgARN -> (id,port) -> health
 
 	attrsMu sync.RWMutex
 	attrs   map[string]driver.LBAttributes // lbARN -> attributes
+
+	tgAttrsMu sync.RWMutex
+	tgAttrs   map[string]map[string]string // tgARN -> attribute overrides
+
+	// subnetResolver derives a load balancer's VpcId from its subnets. Real
+	// ELBv2 infers VpcId rather than taking it as input; without the resolver
+	// wired in the field is simply left empty.
+	subnetResolver SubnetResolver
 }
 
 // New creates a new ELB mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		lbs:       memstore.New[driver.LBInfo](),
+		lbSettle:  memstore.New[settle.Window](),
 		tgs:       memstore.New[driver.TargetGroupInfo](),
 		listeners: memstore.New[driver.ListenerInfo](),
 		rules:     memstore.New[driver.RuleInfo](),
 		opts:      opts,
-		health:    make(map[string]map[string]*driver.TargetHealth),
+		health:    make(map[string]map[targetKey]*driver.TargetHealth),
 		attrs:     make(map[string]driver.LBAttributes),
+		tgAttrs:   make(map[string]map[string]string),
 	}
 }
 
 // CreateLoadBalancer creates a new load balancer.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
+func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "load balancer name is required")
+	}
+
+	// Real ELBv2 rejects a second load balancer with the same name in the
+	// account/region with DuplicateLoadBalancerName.
+	for _, existing := range m.lbs.All() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"load balancer %q already exists", cfg.Name)
+		}
 	}
 
 	id := idgen.GenerateID("lb-")
@@ -62,43 +118,134 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 	subnets := make([]string, len(cfg.Subnets))
 	copy(subnets, cfg.Subnets)
 
+	sgs := make([]string, len(cfg.SecurityGroups))
+	copy(sgs, cfg.SecurityGroups)
+
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
 		tags[k] = v
 	}
 
+	ipType := cfg.IPAddressType
+	if ipType == "" {
+		ipType = "ipv4"
+	}
+
+	now := m.opts.Clock.Now().UTC()
+
 	lb := driver.LBInfo{
-		ID:      id,
-		ARN:     arn,
-		Name:    cfg.Name,
-		Type:    cfg.Type,
-		Scheme:  cfg.Scheme,
-		State:   "active",
-		DNSName: dnsName,
-		Subnets: subnets,
-		Tags:    tags,
+		ID:                    id,
+		ARN:                   arn,
+		Name:                  cfg.Name,
+		Type:                  cfg.Type,
+		Scheme:                cfg.Scheme,
+		State:                 lbStateActive,
+		DNSName:               dnsName,
+		Subnets:               subnets,
+		SecurityGroups:        sgs,
+		IPAddressType:         ipType,
+		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
+		VPCID:                 m.resolveVPCID(ctx, cfg.Subnets),
+		CreatedTime:           now,
+		Tags:                  tags,
 	}
 
 	m.lbs.Set(arn, lb)
 
+	// Real ELBv2 returns a new load balancer in "provisioning" and settles it to
+	// "active" a short time later. The window overlays the observed State at read
+	// time; the stored final State stays "active".
+	window := settle.Pending(lbStateProvisioning, now, m.opts.SettleDuration(settle.DefaultLBSettle))
+	m.lbSettle.Set(arn, window)
+
 	result := lb
+	result.State = window.Observe(now, result.State)
 
 	return &result, nil
 }
 
-// DeleteLoadBalancer deletes a load balancer by ARN.
-func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
-	if !m.lbs.Delete(arn) {
-		return errors.Newf(errors.NotFound, "load balancer %q not found", arn)
+// elbHostedZones maps a region to the canonical hosted-zone id an application
+// load balancer exposes for Route 53 alias records. Values match the real AWS
+// ELB service; regions outside the table fall back to us-east-1's id so an
+// alias record can still be constructed.
+//
+//nolint:gochecknoglobals // static lookup table of AWS-published constants.
+var elbHostedZones = map[string]string{
+	"us-east-1":      "Z35SXDOTRQ7X7K",
+	"us-east-2":      "Z3AADJGX6KTTL2",
+	"us-west-1":      "Z368ELLRRE2KJ0",
+	"us-west-2":      "Z1H1FL5HABSF5",
+	"eu-west-1":      "Z32O12XQLNTSW2",
+	"eu-central-1":   "Z215JYRZR1TBD5",
+	"ap-south-1":     "ZP97RAFLXTNZK",
+	"ap-southeast-1": "Z1LMS91P8CMLE5",
+	"ap-southeast-2": "Z1GM3OXH4ZPM65",
+	"ap-northeast-1": "Z14GRHDCWA56QT",
+}
+
+// canonicalHostedZoneID returns the ELB canonical hosted-zone id for region.
+func canonicalHostedZoneID(region string) string {
+	if z, ok := elbHostedZones[region]; ok {
+		return z
 	}
 
-	// Delete all listeners associated with this load balancer.
-	all := m.listeners.All()
-	for key, li := range all {
-		if li.LBARN == arn {
-			m.listeners.Delete(key)
+	return elbHostedZones["us-east-1"]
+}
+
+// DeleteLoadBalancer deletes a load balancer by ARN.
+//
+// ELBv2 DeleteLoadBalancer is idempotent: per the API reference, "if the load
+// balancer does not exist or has already been deleted, the call succeeds." So a
+// second delete (or a delete of an ARN that never existed) returns no error,
+// which keeps idempotent teardown flows (terraform destroy retries) working.
+//
+// A load balancer with deletion_protection.enabled=true cannot be deleted: real
+// ELBv2 rejects the call with OperationNotPermitted. This is the exact scenario
+// deletion protection exists to prevent, so honoring it stops an errant delete
+// (or a terraform destroy) from wiping a load balancer the user protected.
+func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
+	// Only an existing load balancer can be protected; a missing ARN stays
+	// idempotent (no error), matching the API reference.
+	if _, ok := m.lbs.Get(arn); ok {
+		m.attrsMu.RLock()
+		protected := m.attrs[arn].DeletionProtection
+		m.attrsMu.RUnlock()
+
+		if protected {
+			return errors.Newf(errors.FailedPrecondition,
+				"load balancer %q cannot be deleted because deletion protection is enabled", arn)
 		}
 	}
+
+	m.lbs.Delete(arn)
+	m.lbSettle.Delete(arn)
+
+	// Delete listeners for this load balancer and, with them, the rules under
+	// those listeners. Leaving the rules behind would leak them for the life of
+	// the process (their parent listener is gone, so nothing ever reaches them).
+	// Range over keys and index the map for field access so the large
+	// ListenerInfo value is never copied per iteration.
+	listeners := m.listeners.All()
+	for key := range listeners {
+		if listeners[key].LBARN != arn {
+			continue
+		}
+
+		listenerARN := listeners[key].ARN
+		for rkey, r := range m.rules.All() {
+			if r.ListenerARN == listenerARN {
+				m.rules.Delete(rkey)
+			}
+		}
+
+		m.listeners.Delete(key)
+	}
+
+	// Drop the stored load-balancer attributes so a recreated ARN does not
+	// inherit a prior deletion-protection flag.
+	m.attrsMu.Lock()
+	delete(m.attrs, arn)
+	m.attrsMu.Unlock()
 
 	return nil
 }
@@ -118,7 +265,17 @@ func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver
 		}
 	}
 
-	return describeResources(m.lbs, arns), nil
+	out := describeResources(m.lbs, arns)
+
+	now := m.opts.Clock.Now()
+
+	for i := range out {
+		if w, ok := m.lbSettle.Get(out[i].ARN); ok {
+			out[i].State = w.Observe(now, out[i].State)
+		}
+	}
+
+	return out, nil
 }
 
 // CreateTargetGroup creates a new target group.
@@ -129,6 +286,15 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 		return nil, errors.New(errors.InvalidArgument, "target group name is required")
 	}
 
+	// Real ELBv2 rejects a second target group with the same name in the
+	// account/region with DuplicateTargetGroupName.
+	for _, existing := range m.tgs.All() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"target group %q already exists", cfg.Name)
+		}
+	}
+
 	id := idgen.GenerateID("tg-")
 	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID, "targetgroup/"+cfg.Name)
 
@@ -137,22 +303,31 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 		tags[k] = v
 	}
 
+	targetType := cfg.TargetType
+	if targetType == "" {
+		targetType = "instance"
+	}
+
+	hc := defaultHealthCheck(cfg)
+
 	tg := driver.TargetGroupInfo{
-		ID:         id,
-		ARN:        arn,
-		Name:       cfg.Name,
-		Protocol:   cfg.Protocol,
-		Port:       cfg.Port,
-		VPCID:      cfg.VPCID,
-		HealthPath: cfg.HealthPath,
-		Tags:       tags,
+		ID:          id,
+		ARN:         arn,
+		Name:        cfg.Name,
+		Protocol:    cfg.Protocol,
+		Port:        cfg.Port,
+		VPCID:       cfg.VPCID,
+		TargetType:  targetType,
+		HealthPath:  hc.Path,
+		HealthCheck: hc,
+		Tags:        tags,
 	}
 
 	m.tgs.Set(arn, tg)
 
 	// Initialize health map for this target group.
 	m.healthMu.Lock()
-	m.health[arn] = make(map[string]*driver.TargetHealth)
+	m.health[arn] = make(map[targetKey]*driver.TargetHealth)
 	m.healthMu.Unlock()
 
 	result := tg
@@ -160,18 +335,157 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 	return &result, nil
 }
 
-// DeleteTargetGroup deletes a target group by ARN.
-func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
-	if !m.tgs.Delete(arn) {
-		return errors.Newf(errors.NotFound, "target group %q not found", arn)
+// Health-check defaults ELBv2 applies when a create request leaves a field
+// unset.
+const (
+	defaultHCIntervalSec   = 30
+	defaultHCTimeoutSec    = 5
+	defaultHCHealthyCount  = 5
+	defaultHCUnhealthyCoun = 2
+	defaultHCMatcher       = "200"
+	defaultHCPort          = "traffic-port"
+	defaultHCPath          = "/"
+)
+
+// isHTTPProtocol reports whether p is an HTTP-family protocol (which carries a
+// path and an HTTP matcher on its health check).
+func isHTTPProtocol(p string) bool {
+	return p == "HTTP" || p == "HTTPS"
+}
+
+// defaultHealthCheck fills a target group's health-check settings, applying the
+// ELBv2 protocol-derived defaults for any field the caller left unset.
+//
+//nolint:gocritic // hugeParam: called once per create, copy cost is irrelevant.
+func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
+	hc := cfg.HealthCheck
+
+	if hc.Protocol == "" {
+		hc.Protocol = cfg.Protocol
 	}
+
+	if hc.Port == "" {
+		hc.Port = defaultHCPort
+	}
+
+	if hc.Path == "" && isHTTPProtocol(hc.Protocol) {
+		hc.Path = cfg.HealthPath
+		if hc.Path == "" {
+			hc.Path = defaultHCPath
+		}
+	}
+
+	if hc.IntervalSeconds == 0 {
+		hc.IntervalSeconds = defaultHCIntervalSec
+	}
+
+	if hc.TimeoutSeconds == 0 {
+		hc.TimeoutSeconds = defaultHCTimeoutSec
+	}
+
+	if hc.HealthyThreshold == 0 {
+		hc.HealthyThreshold = defaultHCHealthyCount
+	}
+
+	if hc.UnhealthyThreshold == 0 {
+		hc.UnhealthyThreshold = defaultHCUnhealthyCoun
+	}
+
+	if hc.Matcher == "" && isHTTPProtocol(hc.Protocol) {
+		hc.Matcher = defaultHCMatcher
+	}
+
+	return hc
+}
+
+// DeleteTargetGroup deletes a target group by ARN.
+//
+// Per the API reference, a target group can be deleted only if it is not
+// referenced by any actions. A target group that is still the forward target of
+// a listener default action or a rule action fails with ResourceInUse.
+// DeleteTargetGroup is otherwise idempotent — its only documented error is
+// ResourceInUse, so deleting a missing/already-deleted target group succeeds,
+// mirroring DeleteLoadBalancer and keeping teardown-retry flows working.
+func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
+	if !m.tgs.Has(arn) {
+		return nil
+	}
+
+	if err := m.checkTargetGroupNotInUse(arn); err != nil {
+		return err
+	}
+
+	m.tgs.Delete(arn)
 
 	// Clean up health data.
 	m.healthMu.Lock()
 	delete(m.health, arn)
 	m.healthMu.Unlock()
 
+	// Clean up any stored attribute overrides.
+	m.tgAttrsMu.Lock()
+	delete(m.tgAttrs, arn)
+	m.tgAttrsMu.Unlock()
+
 	return nil
+}
+
+// checkTargetGroupNotInUse reports ResourceInUse (via FailedPrecondition) when a
+// target group is still referenced by a listener default action or a rule
+// action, so a delete cannot silently orphan a forward target.
+func (m *Mock) checkTargetGroupNotInUse(arn string) error {
+	// Range over keys and index the map so the large ListenerInfo value is not
+	// copied per iteration.
+	listeners := m.listeners.All()
+	for key := range listeners {
+		if actionsReferenceTG(listeners[key].DefaultActions, arn) {
+			return errors.Newf(errors.FailedPrecondition,
+				"target group %q is currently in use by a listener", arn)
+		}
+	}
+
+	for _, r := range m.rules.All() {
+		if actionsReferenceTG(r.Actions, arn) {
+			return errors.Newf(errors.FailedPrecondition,
+				"target group %q is currently in use by a rule", arn)
+		}
+	}
+
+	return nil
+}
+
+// actionsReferenceTG reports whether any action forwards to the given target
+// group, checking both the scalar TargetGroupARN and every weighted group in a
+// ForwardConfig so a secondary weighted group is not treated as unreferenced.
+func actionsReferenceTG(actions []driver.RuleAction, arn string) bool {
+	for i := range actions {
+		for _, ref := range actionTargetGroups(&actions[i]) {
+			if ref == arn {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// targetGroupReferenced reports whether any listener default action or rule
+// action across all listeners/rules forwards to the given target group.
+func (m *Mock) targetGroupReferenced(arn string) bool {
+	listeners := m.listeners.All()
+	for key := range listeners {
+		if actionsReferenceTG(listeners[key].DefaultActions, arn) {
+			return true
+		}
+	}
+
+	for _, r := range m.rules.All() {
+		if actionsReferenceTG(r.Actions, arn) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DescribeTargetGroups returns target groups matching the given ARNs.
@@ -232,20 +546,35 @@ func filterToSlice[T any](store *memstore.Store[T], pred func(string, T) bool) [
 }
 
 // CreateListener creates a new listener on a load balancer.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
-	if _, ok := m.lbs.Get(cfg.LBARN); !ok {
+	lb, ok := m.lbs.Get(cfg.LBARN)
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
+	// Any forward default action must reference a target group that exists;
+	// real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
+	if err := m.validateForwardActions(cfg.DefaultActions); err != nil {
+		return nil, err
+	}
+
+	// A listener ARN embeds the load balancer's resource path plus a unique
+	// listener id, never the full load balancer ARN (which would nest a second
+	// "arn:" inside the value and break ARN parsers).
+	listenerID := idgen.GenerateID("")
 	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID,
-		fmt.Sprintf("listener/%s/%08x", cfg.LBARN, cfg.Port))
+		fmt.Sprintf("listener/%s/%s", lb.Name, listenerID))
 
 	li := driver.ListenerInfo{
 		ARN:            arn,
 		LBARN:          cfg.LBARN,
 		Protocol:       cfg.Protocol,
 		Port:           cfg.Port,
-		TargetGroupARN: cfg.TargetGroupARN,
+		DefaultActions: cloneActions(cfg.DefaultActions),
+		SslPolicy:      cfg.SslPolicy,
+		Certificates:   cloneCertificates(cfg.Certificates),
 	}
 
 	m.listeners.Set(arn, li)
@@ -255,6 +584,72 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 	return &result, nil
 }
 
+// cloneCertificates returns an independent copy of a certificate slice.
+func cloneCertificates(certs []driver.Certificate) []driver.Certificate {
+	if len(certs) == 0 {
+		return nil
+	}
+
+	return append([]driver.Certificate(nil), certs...)
+}
+
+// actionTargetGroups returns every target-group ARN a forward action references:
+// the scalar TargetGroupARN (single-target case) plus each weighted group in a
+// multi-target ForwardConfig. It is the single source of truth for both
+// validation and in-use protection so a weighted secondary group is never missed.
+func actionTargetGroups(a *driver.RuleAction) []string {
+	arns := make([]string, 0, len(a.ForwardConfig)+1)
+	seen := make(map[string]struct{}, len(a.ForwardConfig)+1)
+
+	add := func(arn string) {
+		if arn == "" {
+			return
+		}
+
+		if _, ok := seen[arn]; ok {
+			return
+		}
+
+		seen[arn] = struct{}{}
+
+		arns = append(arns, arn)
+	}
+
+	add(a.TargetGroupARN)
+
+	for i := range a.ForwardConfig {
+		add(a.ForwardConfig[i].TargetGroupARN)
+	}
+
+	return arns
+}
+
+// validateForwardActions reports TargetGroupNotFound when any forward action
+// references a target group that does not exist. Every group in a weighted
+// ForwardConfig is checked, not just the primary, so a bogus secondary group is
+// rejected the way real ELBv2 rejects it.
+func (m *Mock) validateForwardActions(actions []driver.RuleAction) error {
+	for i := range actions {
+		for _, arn := range actionTargetGroups(&actions[i]) {
+			if !m.tgs.Has(arn) {
+				return errors.Newf(errors.NotFound, "target group %q not found", arn)
+			}
+		}
+	}
+
+	return nil
+}
+
+// cloneActions returns an independent copy of an action slice so stored state
+// never aliases the caller's input.
+func cloneActions(actions []driver.RuleAction) []driver.RuleAction {
+	if len(actions) == 0 {
+		return nil
+	}
+
+	return append([]driver.RuleAction(nil), actions...)
+}
+
 // DeleteListener deletes a listener by ARN.
 func (m *Mock) DeleteListener(_ context.Context, arn string) error {
 	if !m.listeners.Delete(arn) {
@@ -262,6 +657,18 @@ func (m *Mock) DeleteListener(_ context.Context, arn string) error {
 	}
 
 	return nil
+}
+
+// GetListener returns a single listener by ARN.
+func (m *Mock) GetListener(_ context.Context, listenerARN string) (*driver.ListenerInfo, error) {
+	li, ok := m.listeners.Get(listenerARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	result := li
+
+	return &result, nil
 }
 
 // DescribeListeners returns all listeners for the specified load balancer.
@@ -281,8 +688,25 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 		return nil, errors.Newf(errors.NotFound, "listener %q not found", cfg.ListenerARN)
 	}
 
-	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID,
-		fmt.Sprintf("rule/%s/%s", cfg.ListenerARN, idgen.GenerateID("rule-")))
+	// A forward action must reference existing target groups; real ELBv2 rejects
+	// a bogus TargetGroupArn (primary or weighted secondary) with
+	// TargetGroupNotFound.
+	if err := m.validateForwardActions(cfg.Actions); err != nil {
+		return nil, err
+	}
+
+	// A listener can't have two rules with the same priority; a reused priority
+	// fails with PriorityInUse.
+	if cfg.Priority != 0 {
+		for _, r := range m.rules.All() {
+			if r.ListenerARN == cfg.ListenerARN && r.Priority == cfg.Priority {
+				return nil, errors.Newf(errors.FailedPrecondition,
+					"priority %d is currently in use", cfg.Priority)
+			}
+		}
+	}
+
+	arn := m.ruleARN(cfg.ListenerARN)
 
 	conditions := make([]driver.RuleCondition, len(cfg.Conditions))
 	copy(conditions, cfg.Conditions)
@@ -306,6 +730,22 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 	return &result, nil
 }
 
+// ruleARN builds a rule ARN from the listener's resource path so it reads
+// arn:aws:elasticloadbalancing:REGION:ACCT:listener-rule/<lb>/<listener-id>/<rule-id>
+// — resource type "listener-rule" with a single "arn:" prefix, never nesting the
+// full listener ARN inside the value (which breaks ARN parsers).
+func (m *Mock) ruleARN(listenerARN string) string {
+	ruleID := idgen.GenerateID("")
+	resource := "listener-rule/" + ruleID
+
+	if idx := strings.Index(listenerARN, ":listener/"); idx != -1 {
+		path := listenerARN[idx+len(":listener/"):]
+		resource = "listener-rule/" + path + "/" + ruleID
+	}
+
+	return idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID, resource)
+}
+
 // DeleteRule deletes a listener rule by ARN.
 func (m *Mock) DeleteRule(_ context.Context, ruleARN string) error {
 	if !m.rules.Delete(ruleARN) {
@@ -327,10 +767,16 @@ func (m *Mock) DescribeRules(_ context.Context, listenerARN string) ([]driver.Ru
 }
 
 // ModifyListener modifies an existing listener's port, protocol, or default actions.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInput) error {
 	li, ok := m.listeners.Get(input.ListenerARN)
 	if !ok {
 		return errors.Newf(errors.NotFound, "listener %q not found", input.ListenerARN)
+	}
+
+	if err := m.validateForwardActions(input.DefaultActions); err != nil {
+		return err
 	}
 
 	if input.Port != 0 {
@@ -342,12 +788,219 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 	}
 
 	if len(input.DefaultActions) > 0 {
-		li.TargetGroupARN = input.DefaultActions[0].TargetGroupARN
+		li.DefaultActions = cloneActions(input.DefaultActions)
+	}
+
+	if input.SslPolicy != "" {
+		li.SslPolicy = input.SslPolicy
+	}
+
+	if len(input.Certificates) > 0 {
+		li.Certificates = cloneCertificates(input.Certificates)
 	}
 
 	m.listeners.Set(input.ListenerARN, li)
 
 	return nil
+}
+
+// ModifyTargetGroup applies a partial health-check update to an existing target
+// group, leaving any field the caller omitted unchanged.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (m *Mock) ModifyTargetGroup(
+	_ context.Context, input driver.ModifyTargetGroupInput,
+) (*driver.TargetGroupInfo, error) {
+	tg, ok := m.tgs.Get(input.TargetGroupARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", input.TargetGroupARN)
+	}
+
+	applyHealthCheckUpdate(&tg.HealthCheck, input)
+	tg.HealthPath = tg.HealthCheck.Path
+
+	m.tgs.Set(input.TargetGroupARN, tg)
+
+	result := tg
+
+	return &result, nil
+}
+
+// applyHealthCheckUpdate overlays the set fields of a ModifyTargetGroup request
+// onto an existing health check.
+//
+//nolint:gocritic // hugeParam: called once per modify, copy cost is irrelevant.
+func applyHealthCheckUpdate(hc *driver.HealthCheck, input driver.ModifyTargetGroupInput) {
+	if input.HealthCheckProto != "" {
+		hc.Protocol = input.HealthCheckProto
+	}
+
+	if input.HealthCheckPort != "" {
+		hc.Port = input.HealthCheckPort
+	}
+
+	if input.HealthCheckPath != "" {
+		hc.Path = input.HealthCheckPath
+	}
+
+	if input.IntervalSeconds != 0 {
+		hc.IntervalSeconds = input.IntervalSeconds
+	}
+
+	if input.TimeoutSeconds != 0 {
+		hc.TimeoutSeconds = input.TimeoutSeconds
+	}
+
+	if input.HealthyThreshold != 0 {
+		hc.HealthyThreshold = input.HealthyThreshold
+	}
+
+	if input.UnhealthyThreshold != 0 {
+		hc.UnhealthyThreshold = input.UnhealthyThreshold
+	}
+
+	if input.Matcher != "" {
+		hc.Matcher = input.Matcher
+	}
+}
+
+// ModifyRule replaces the conditions and/or actions of an existing rule.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (m *Mock) ModifyRule(_ context.Context, input driver.ModifyRuleInput) (*driver.RuleInfo, error) {
+	rule, ok := m.rules.Get(input.RuleARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "rule %q not found", input.RuleARN)
+	}
+
+	if len(input.Conditions) > 0 {
+		rule.Conditions = append([]driver.RuleCondition(nil), input.Conditions...)
+	}
+
+	if len(input.Actions) > 0 {
+		rule.Actions = append([]driver.RuleAction(nil), input.Actions...)
+	}
+
+	m.rules.Set(input.RuleARN, rule)
+
+	result := rule
+
+	return &result, nil
+}
+
+// SetRulePriorities reassigns the priorities of the named rules and returns the
+// updated rules.
+//
+// A listener can't have two rules with the same priority, and the reorder path
+// must enforce that just as the create path does: real ELBv2 rejects a target
+// priority already held by another rule on the same listener with PriorityInUse.
+// Every rule is resolved and validated before any write, so a conflict leaves
+// the existing priorities untouched rather than half-applied.
+func (m *Mock) SetRulePriorities(
+	_ context.Context, pairs []driver.RulePriorityPair,
+) ([]driver.RuleInfo, error) {
+	moving := make(map[string]driver.RuleInfo, len(pairs))
+
+	for _, p := range pairs {
+		rule, ok := m.rules.Get(p.RuleARN)
+		if !ok {
+			return nil, errors.Newf(errors.NotFound, "rule %q not found", p.RuleARN)
+		}
+
+		moving[p.RuleARN] = rule
+	}
+
+	if err := m.checkPriorityConflicts(pairs, moving); err != nil {
+		return nil, err
+	}
+
+	out := make([]driver.RuleInfo, 0, len(pairs))
+
+	for _, p := range pairs {
+		rule := moving[p.RuleARN]
+		rule.Priority = p.Priority
+		m.rules.Set(p.RuleARN, rule)
+		out = append(out, rule)
+	}
+
+	return out, nil
+}
+
+// prioritySlot identifies a priority within one listener.
+type prioritySlot struct {
+	listener string
+	priority int
+}
+
+// checkPriorityConflicts reports FailedPrecondition (mapped to PriorityInUse)
+// when a requested priority collides with another rule on the same listener —
+// either a rule outside the batch or a second rule inside it.
+func (m *Mock) checkPriorityConflicts(
+	pairs []driver.RulePriorityPair, moving map[string]driver.RuleInfo,
+) error {
+	claimed := make(map[prioritySlot]struct{}, len(pairs))
+
+	for _, p := range pairs {
+		rule := moving[p.RuleARN]
+		slot := prioritySlot{listener: rule.ListenerARN, priority: p.Priority}
+
+		if _, dup := claimed[slot]; dup {
+			return errors.Newf(errors.FailedPrecondition, "priority %d is currently in use", p.Priority)
+		}
+
+		claimed[slot] = struct{}{}
+
+		if m.priorityHeldByOther(slot, moving) {
+			return errors.Newf(errors.FailedPrecondition, "priority %d is currently in use", p.Priority)
+		}
+	}
+
+	return nil
+}
+
+// priorityHeldByOther reports whether a rule not in the batch already holds the
+// given priority on the same listener. Default rules (priority 0) are ignored.
+func (m *Mock) priorityHeldByOther(slot prioritySlot, moving map[string]driver.RuleInfo) bool {
+	for _, other := range m.rules.All() {
+		if other.IsDefault || other.ListenerARN != slot.listener || other.Priority != slot.priority {
+			continue
+		}
+
+		if _, isMoving := moving[other.ARN]; isMoving {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
+// SetSecurityGroups replaces the security groups attached to a load balancer.
+func (m *Mock) SetSecurityGroups(_ context.Context, lbARN string, securityGroups []string) error {
+	lb, ok := m.lbs.Get(lbARN)
+	if !ok {
+		return errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	lb.SecurityGroups = append([]string(nil), securityGroups...)
+	m.lbs.Set(lbARN, lb)
+
+	return nil
+}
+
+// SetSubnets replaces the subnets a load balancer is attached to and returns
+// the resulting subnet list.
+func (m *Mock) SetSubnets(_ context.Context, lbARN string, subnets []string) ([]string, error) {
+	lb, ok := m.lbs.Get(lbARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	lb.Subnets = append([]string(nil), subnets...)
+	m.lbs.Set(lbARN, lb)
+
+	return lb.Subnets, nil
 }
 
 // GetLBAttributes returns the attributes for a load balancer.
@@ -442,6 +1095,73 @@ func (m *Mock) UpdateLBAttributes(
 	return &out, nil
 }
 
+// defaultTargetGroupAttributes are the attributes real ELBv2 reports for a
+// freshly created target group before any ModifyTargetGroupAttributes call.
+// Modifications overlay these; a Describe returns the merged set.
+//
+//nolint:gochecknoglobals // static table of AWS-published default attribute values.
+var defaultTargetGroupAttributes = map[string]string{
+	"deregistration_delay.timeout_seconds": "300",
+	"stickiness.enabled":                   "false",
+	"stickiness.type":                      "lb_cookie",
+	"load_balancing.algorithm.type":        "round_robin",
+	"slow_start.duration_seconds":          "0",
+}
+
+// GetTargetGroupAttributes returns the full attribute set for a target group:
+// the ELBv2 defaults overlaid with any stored overrides.
+func (m *Mock) GetTargetGroupAttributes(_ context.Context, targetGroupARN string) (map[string]string, error) {
+	if _, ok := m.tgs.Get(targetGroupARN); !ok {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
+	}
+
+	m.tgAttrsMu.RLock()
+	defer m.tgAttrsMu.RUnlock()
+
+	return mergedTargetGroupAttributes(m.tgAttrs[targetGroupARN]), nil
+}
+
+// ModifyTargetGroupAttributes merges updates into the target group's stored
+// overrides and returns the resulting full attribute set.
+func (m *Mock) ModifyTargetGroupAttributes(
+	_ context.Context, targetGroupARN string, updates map[string]string,
+) (map[string]string, error) {
+	if _, ok := m.tgs.Get(targetGroupARN); !ok {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
+	}
+
+	m.tgAttrsMu.Lock()
+	defer m.tgAttrsMu.Unlock()
+
+	overrides := m.tgAttrs[targetGroupARN]
+	if overrides == nil {
+		overrides = make(map[string]string, len(updates))
+	}
+
+	for k, v := range updates {
+		overrides[k] = v
+	}
+
+	m.tgAttrs[targetGroupARN] = overrides
+
+	return mergedTargetGroupAttributes(overrides), nil
+}
+
+// mergedTargetGroupAttributes returns a fresh map of the defaults overlaid with
+// overrides, so the caller never aliases stored state.
+func mergedTargetGroupAttributes(overrides map[string]string) map[string]string {
+	out := make(map[string]string, len(defaultTargetGroupAttributes)+len(overrides))
+	for k, v := range defaultTargetGroupAttributes {
+		out[k] = v
+	}
+
+	for k, v := range overrides {
+		out[k] = v
+	}
+
+	return out
+}
+
 // RegisterTargets registers targets with a target group.
 func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
@@ -453,18 +1173,19 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 
 	tgHealth, ok := m.health[targetGroupARN]
 	if !ok {
-		tgHealth = make(map[string]*driver.TargetHealth)
+		tgHealth = make(map[targetKey]*driver.TargetHealth)
 		m.health[targetGroupARN] = tgHealth
 	}
 
 	for _, t := range targets {
-		tgHealth[t.ID] = &driver.TargetHealth{
+		tgHealth[keyFor(t)] = &driver.TargetHealth{
 			Target: driver.Target{
 				ID:   t.ID,
 				Port: t.Port,
 			},
-			State:  "initial",
-			Reason: "Target registration is in progress",
+			State:       targetStateInitial,
+			Reason:      "Elb.RegistrationInProgress",
+			Description: "Target registration is in progress",
 		}
 	}
 
@@ -486,29 +1207,101 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 	}
 
 	for _, t := range targets {
-		delete(tgHealth, t.ID)
+		key := keyFor(t)
+		if _, ok := tgHealth[key]; ok {
+			delete(tgHealth, key)
+			continue
+		}
+
+		// No exact (ID, Port) match. Per the DeregisterTargets docs, a port
+		// is only required when the target was registered with a port
+		// override; a caller that omits Port (t.Port == 0, the common case —
+		// RegisterTargets docs Example 1 registers and deregisters by ID
+		// alone) still identifies a target unambiguously as long as that ID
+		// is registered under exactly one port. Deregistering an unknown
+		// target is a no-op ("If the specified target does not exist, the
+		// action returns successfully").
+		if t.Port == 0 {
+			deleteSolePortMatch(tgHealth, t.ID)
+		}
 	}
 
 	return nil
 }
 
-// DescribeTargetHealth returns the health status of all targets in a target group.
+// deleteSolePortMatch removes the single entry registered under id, when
+// exactly one exists. Two or more entries for the same id (different port
+// overrides) are left untouched — disambiguating them requires the caller to
+// specify the port, matching real ELBv2 semantics.
+func deleteSolePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string) {
+	var match targetKey
+
+	count := 0
+
+	for k := range tgHealth {
+		if k.id != id {
+			continue
+		}
+
+		match = k
+		count++
+
+		if count > 1 {
+			return
+		}
+	}
+
+	if count == 1 {
+		delete(tgHealth, match)
+	}
+}
+
+// DescribeTargetHealth returns the health status of all targets in a target
+// group. A freshly registered target reports "initial" on its first describe
+// and then advances to "healthy", mirroring real ELBv2's registration
+// transition so target-health waiters make progress instead of hanging on a
+// permanently "initial" state.
 func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([]driver.TargetHealth, error) {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
 	}
 
-	m.healthMu.RLock()
-	defer m.healthMu.RUnlock()
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
 
 	tgHealth, ok := m.health[targetGroupARN]
 	if !ok {
 		return []driver.TargetHealth{}, nil
 	}
 
+	// A target group not forwarded to by any listener (default action or rule)
+	// on a load balancer reports every target as "unused" / Target.NotInUse and
+	// does not advance — real ELBv2 only begins health checks once a listener
+	// routes to the group. An explicitly set state (e.g. ECS SetTargetHealth) is
+	// left untouched; only the automatic initial->healthy progression is gated.
+	referenced := m.targetGroupReferenced(targetGroupARN)
+
 	results := make([]driver.TargetHealth, 0, len(tgHealth))
 	for _, th := range tgHealth {
+		if !referenced && th.State == targetStateInitial {
+			unused := *th
+			unused.State = "unused"
+			unused.Reason = "Target.NotInUse"
+			unused.Description = "Target group is not configured to receive traffic from the load balancer"
+			results = append(results, unused)
+
+			continue
+		}
+
 		results = append(results, *th)
+
+		// Advance after the state is captured so the caller sees "initial"
+		// once and "healthy" on the next poll.
+		if th.State == targetStateInitial {
+			th.State = "healthy"
+			th.Reason = ""
+			th.Description = ""
+		}
 	}
 
 	return results, nil
@@ -528,13 +1321,24 @@ func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN, targetID, stat
 		return errors.Newf(errors.NotFound, "no targets registered in target group %q", targetGroupARN)
 	}
 
-	th, ok := tgHealth[targetID]
-	if !ok {
-		return errors.Newf(errors.NotFound, "target %q not found in target group %q", targetID, targetGroupARN)
+	// targetID alone is ambiguous when the same ID is registered under
+	// multiple ports (see targetKey); set every port registered for it,
+	// matching the common case of a single port per ID.
+	found := false
+
+	for k, th := range tgHealth {
+		if k.id != targetID {
+			continue
+		}
+
+		th.State = state
+		th.Reason = ""
+		found = true
 	}
 
-	th.State = state
-	th.Reason = ""
+	if !found {
+		return errors.Newf(errors.NotFound, "target %q not found in target group %q", targetID, targetGroupARN)
+	}
 
 	return nil
 }

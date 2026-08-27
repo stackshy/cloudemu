@@ -93,9 +93,21 @@ func New(clock config.Clock) *Engine {
 	}
 }
 
+// clockBinder is implemented by scenarios whose active window is anchored to
+// the engine clock. Apply binds them at registration time so that time-bounded
+// scenarios start "now" on the engine's clock — including a FakeClock — rather
+// than on wall-clock at construction.
+type clockBinder interface {
+	bind(now time.Time)
+}
+
 // Apply registers a scenario. The returned Active can be used to stop it
 // before it expires.
 func (e *Engine) Apply(s Scenario) *Active {
+	if b, ok := s.(clockBinder); ok {
+		b.bind(e.clock.Now())
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

@@ -38,7 +38,17 @@ func TestEndpointCreateGetUpdateDeleteAndIPs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, ep.ID, "rslvr-in-")
 	assert.Equal(t, int32(2), ep.IPAddressCount)
-	assert.Equal(t, statusOperational, ep.Status)
+	// A new endpoint is born CREATING with the VPC its subnets belong to.
+	assert.Equal(t, statusCreating, ep.Status)
+	assert.NotEmpty(t, ep.HostVPCID)
+	// The same subnet always maps to the same host VPC.
+	assert.Equal(t, hostVPCFor([]driver.IPAddress{{SubnetID: "subnet-a"}}), ep.HostVPCID)
+
+	// Reading the endpoint advances it to OPERATIONAL (the create waiter's exit).
+	got, err := m.GetResolverEndpoint(ctx, ep.ID)
+	require.NoError(t, err)
+	assert.Equal(t, statusOperational, got.Status)
+	assert.Equal(t, ep.HostVPCID, got.HostVPCID)
 
 	// Tags stored on create are retrievable by ARN.
 	tags, err := m.ListTagsForResource(ctx, ep.ARN)

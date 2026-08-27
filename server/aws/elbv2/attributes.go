@@ -112,6 +112,76 @@ func (h *Handler) describeLoadBalancerAttributes(w http.ResponseWriter, r *http.
 	})
 }
 
+type describeTargetGroupAttributesResponse struct {
+	XMLName  xml.Name           `xml:"DescribeTargetGroupAttributesResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   lbAttributesResult `xml:"DescribeTargetGroupAttributesResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
+type modifyTargetGroupAttributesResponse struct {
+	XMLName  xml.Name           `xml:"ModifyTargetGroupAttributesResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   lbAttributesResult `xml:"ModifyTargetGroupAttributesResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
+// describeTargetGroupAttributes returns the target group's attribute set (ELBv2
+// defaults overlaid with any prior modifications).
+func (h *Handler) describeTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.lb.(lbdriver.TargetGroupAttributeStore)
+	if !ok {
+		writeUnsupported(w, "DescribeTargetGroupAttributes")
+		return
+	}
+
+	attrs, err := store.GetTargetGroupAttributes(r.Context(), r.Form.Get("TargetGroupArn"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, describeTargetGroupAttributesResponse{
+		Xmlns:    Namespace,
+		Result:   lbAttributesResult{Attributes: attributeMapToXML(attrs)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// modifyTargetGroupAttributes merges the supplied attributes into the target
+// group's set and echoes the merged result, matching ELBv2's partial-update
+// semantics.
+func (h *Handler) modifyTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.lb.(lbdriver.TargetGroupAttributeStore)
+	if !ok {
+		writeUnsupported(w, "ModifyTargetGroupAttributes")
+		return
+	}
+
+	merged, err := store.ModifyTargetGroupAttributes(
+		r.Context(), r.Form.Get("TargetGroupArn"), parseAttributeMembers(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyTargetGroupAttributesResponse{
+		Xmlns:    Namespace,
+		Result:   lbAttributesResult{Attributes: attributeMapToXML(merged)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// attributeMapToXML renders a flat attribute map as ELBv2 Key/Value members.
+func attributeMapToXML(attrs map[string]string) []lbAttributeXML {
+	out := make([]lbAttributeXML, 0, len(attrs))
+	for k, v := range attrs {
+		out = append(out, lbAttributeXML{Key: k, Value: v})
+	}
+
+	return out
+}
+
 // parseAttributeMembers reads the Attributes.member.N.Key/Value pairs the SDK
 // serializes.
 func parseAttributeMembers(r *http.Request) map[string]string {

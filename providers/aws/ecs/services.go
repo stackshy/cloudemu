@@ -83,6 +83,12 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 		return nil, err
 	}
 
+	// Real ECS normalizes the service's taskDefinition to the full ARN regardless
+	// of how the caller referenced it (bare family or family:revision), so echo the
+	// resolved ARN rather than the caller's short form. This is what lets Terraform
+	// diff-suppress family:revision against the ARN AWS always returns.
+	in.TaskDefinition = td.ARN
+
 	// A DAEMON service runs exactly one task per container instance, so AWS
 	// rejects a caller-supplied desiredCount rather than overriding it.
 	if in.SchedulingStrategy == schedDaemon && in.DesiredCount > 0 {
@@ -90,7 +96,7 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 			"desiredCount must not be specified for a DAEMON service")
 	}
 
-	svc := serviceFromInput(&in, m.arn, cluster, m.now())
+	svc := serviceFromInput(&in, m.arn, cluster, m.now(), m.rootPrincipalARN())
 
 	if err := m.reserveServiceName(serviceKey(cluster, in.ServiceName), svc); err != nil {
 		return nil, err
@@ -107,7 +113,10 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 
 // serviceFromInput builds the service record (without convergence) from the
 // create input, defaulting the scheduling strategy and deployment controller.
-func serviceFromInput(in *driver.CreateServiceInput, arn func(string) string, cluster, now string) *driver.Service {
+// createdBy is the creating principal ECS records on the service.
+func serviceFromInput(
+	in *driver.CreateServiceInput, arn func(string) string, cluster, now, createdBy string,
+) *driver.Service {
 	sched := in.SchedulingStrategy
 	if sched == "" {
 		sched = schedReplica
@@ -123,6 +132,8 @@ func serviceFromInput(in *driver.CreateServiceInput, arn func(string) string, cl
 		Name:                          in.ServiceName,
 		ClusterARN:                    arn("cluster/" + cluster),
 		TaskDefinition:                in.TaskDefinition,
+		RoleARN:                       in.Role,
+		CreatedBy:                     createdBy,
 		DesiredCount:                  in.DesiredCount,
 		Status:                        statusActive,
 		LaunchType:                    in.LaunchType,
@@ -223,6 +234,8 @@ func (m *Mock) converge(
 
 		if task.LastStatus == statusRunning {
 			running++
+
+			m.registerTaskTargets(ctx, svc, td, task)
 		} else {
 			pending++
 		}
@@ -260,6 +273,7 @@ func (m *Mock) drainService(ctx context.Context, svc *driver.Service) {
 			continue
 		}
 
+		m.deregisterTaskTargets(ctx, svc, t)
 		_, _ = m.StopTask(ctx, cluster, t.ARN, serviceStoppedReason)
 	}
 }
@@ -352,15 +366,24 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 // unset) task definition is a no-op. A deregistered (INACTIVE) definition can't
 // back a new deployment, same as CreateService/RunTask, so it is rejected.
 func (m *Mock) applyTaskDefChange(updated, svc *driver.Service, in *driver.UpdateServiceInput) (bool, error) {
-	if in.TaskDefinition == "" || in.TaskDefinition == svc.TaskDefinition {
+	if in.TaskDefinition == "" {
 		return false, nil
 	}
 
-	if _, err := m.resolveLaunchableTaskDef(in.TaskDefinition); err != nil {
+	td, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
+	if err != nil {
 		return false, err
 	}
 
-	updated.TaskDefinition = in.TaskDefinition
+	// The stored taskDefinition is always the full ARN, so compare the resolved ARN
+	// (not the caller's possibly-short reference) to detect a real change. A caller
+	// re-supplying the same revision as "family:revision" must remain a no-op.
+	if td.ARN == svc.TaskDefinition {
+		return false, nil
+	}
+
+	// Normalize to the full task-definition ARN, matching real ECS (and CreateService).
+	updated.TaskDefinition = td.ARN
 
 	return true, nil
 }
@@ -449,6 +472,9 @@ func applyServiceRefs(svc *driver.Service, in *driver.UpdateServiceInput) {
 // ListServices returns services in a cluster in deterministic order.
 func (m *Mock) ListServices(_ context.Context, cluster string) ([]driver.Service, error) {
 	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
 
 	all := m.services.SortedValues()
 
@@ -469,6 +495,9 @@ func (m *Mock) ListServices(_ context.Context, cluster string) ([]driver.Service
 // DescribeServices resolves services by name or ARN; unresolved ids become failures.
 func (m *Mock) DescribeServices(_ context.Context, cluster string, ids []string) ([]driver.Service, []driver.Failure, error) {
 	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
 
 	found := make([]driver.Service, 0, len(ids))
 	failures := make([]driver.Failure, 0, len(ids))

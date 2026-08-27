@@ -97,8 +97,8 @@ Azure's `azureai` service · portable interface `driver.AzureAI` · [Azure index
 | `ScoreOnlineEndpoint` | AML online-endpoint scoring. |
 | `StartCompute` |  |
 | `StopCompute` |  |
-| `UpdateAccountTags` |  |
-| `UpdateMLWorkspaceTags` |  |
+| `UpdateAccount` |  |
+| `UpdateMLWorkspace` |  |
 
 ## Optional capabilities
 
@@ -140,7 +140,7 @@ CognitiveServices is the Microsoft.CognitiveServices control-plane surface.
 | `ListRaiPolicies` |  |
 | `PutPrivateEndpointConnection` | Private-endpoint connections (accounts/privateEndpointConnections). |
 | `RegenerateAccountKey` |  |
-| `UpdateAccountTags` |  |
+| `UpdateAccount` |  |
 
 ### DataPlane
 
@@ -215,7 +215,7 @@ MachineLearning is the Microsoft.MachineLearningServices control-plane
 | `RestartCompute` |  |
 | `StartCompute` |  |
 | `StopCompute` |  |
-| `UpdateMLWorkspaceTags` |  |
+| `UpdateMLWorkspace` |  |
 
 ## Not in scope
 

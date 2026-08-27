@@ -77,15 +77,6 @@ func (m *Mock) DeregisterOrganizationDelegatedAdmin(_ context.Context, delegated
 	return nil
 }
 
-// LookupEvents returns management events for the account. The emulator records
-// no real event stream, so this returns an empty page (documented). The
-// requested filters are accepted and ignored.
-//
-//nolint:gocritic // in matches the driver LookupEvents signature (taken by value)
-func (*Mock) LookupEvents(_ context.Context, _ driver.LookupInput) ([]driver.Event, string, error) {
-	return []driver.Event{}, "", nil
-}
-
 // ListPublicKeys returns the digest-signing public keys for a time range. The
 // emulator does not sign digest files, so this returns an empty list
 // (documented).

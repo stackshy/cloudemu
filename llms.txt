@@ -1,6 +1,6 @@
 # cloudemu
 
-> Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. Run it as a standalone server (binary or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go (SDK-compat HTTP server, or typed mocks driven directly) — no accounts, no network, no bill. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, enforce quotas, or persist across restarts.
+> Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. Run it as a standalone server (binary or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go (SDK-compat HTTP server, or typed mocks driven directly) — no accounts, no network, no bill. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, or enforce quotas. State lives in memory and is resettable — ephemeral by default, so it is lost on process exit unless you save it — but the whole emulator's state can be snapshotted to a single JSON file and restored into a fresh instance (opt-in, identity-preserving across all providers), so resources survive a restart when you ask them to.
 
 ## Capabilities (start here)
 
@@ -22,3 +22,4 @@
 - [Features](docs/features.md): auto-metrics, alarm evaluation, IAM policy evaluation, FIFO dedup, error injection, fake clock.
 - [Chaos](docs/chaos.md): deliberately fail or slow services to test retry/timeout paths.
 - [Topology](docs/topology.md): network connectivity simulation across VPC, peering, security groups, ACLs.
+- [Persistence](docs/persistence.md): snapshot the whole emulator's state to JSON and restore it (opt-in `--persist`, named `snapshot save`/`load`, the `/_cloudemu/snapshot` endpoint, and the `persist` Go API).

@@ -99,21 +99,58 @@ func key(scope, id string) string {
 	return scope + "/" + id
 }
 
+// deleteGuarded enforces the WAFv2 delete preconditions shared by every resource
+// type, holding mu across the whole check: the optimistic-lock token must match
+// (WAFOptimisticLockException otherwise), then the item must not be in use
+// (WAFAssociatedItemException otherwise). Only after both pass does it call del.
+// kind names the resource in error messages; storedToken points at the item's
+// current lock token (read under mu) and arn is its immutable ARN; inUse reports
+// whether the item is still associated with or referenced by another resource.
+func deleteGuarded(
+	mu *sync.RWMutex, id, kind, lockToken string,
+	storedToken *string, arn string,
+	inUse func(string) bool, del func(),
+) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if *storedToken != lockToken {
+		return staleLock("stale lock token for %s %q", kind, id)
+	}
+
+	if inUse(arn) {
+		return associated("%s %q is still in use by another resource", kind, id)
+	}
+
+	del()
+
+	return nil
+}
+
 // newLockToken returns a fresh optimistic-lock token.
 func newLockToken() string {
 	return idgen.GenerateID("")
 }
 
-// arn builds a WAFv2 ARN. WAFv2 uses region "global" for CLOUDFRONT scope and
-// the configured region for REGIONAL scope, with a resource segment of the form
-// <kind>/<name>/<id>.
+// cloudFrontARNRegion is the region segment of a CLOUDFRONT-scope WAFv2 ARN.
+// WAFv2 manages CloudFront-scoped resources in us-east-1, so their ARNs are
+// always anchored there regardless of the client's configured region.
+const cloudFrontARNRegion = "us-east-1"
+
+// arn builds a WAFv2 ARN. The resource segment carries the lowercase scope word
+// ("regional" for REGIONAL, "global" for CLOUDFRONT) followed by <kind>/<name>/
+// <id>. REGIONAL ARNs use the configured region; CLOUDFRONT ARNs are anchored in
+// us-east-1 (where WAFv2 manages CloudFront), never the literal word "global".
 func (m *Mock) arn(scope, kind, name, id string) string {
 	region := m.opts.Region
+	scopePath := "regional"
+
 	if scope == driver.ScopeCloudFront {
-		region = "global"
+		region = cloudFrontARNRegion
+		scopePath = "global"
 	}
 
-	return idgen.AWSARN("wafv2", region, m.opts.AccountID, scope+"/"+kind+"/"+name+"/"+id)
+	return idgen.AWSARN("wafv2", region, m.opts.AccountID, scopePath+"/"+kind+"/"+name+"/"+id)
 }
 
 func copyTags(in map[string]string) map[string]string {

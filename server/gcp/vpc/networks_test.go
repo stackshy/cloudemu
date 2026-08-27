@@ -106,6 +106,109 @@ func TestSDKNetworkRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKNetworkRoutingModeMtuDescription covers the HIGH finding that a
+// network's description, routingConfig.routingMode and mtu were dropped on
+// insert (Terraform google_compute_network sees a perpetual plan diff).
+func TestSDKNetworkRoutingModeMtuDescription(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+
+	client, err := gcpcompute.NewNetworksRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewNetworksRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	op, err := client.Insert(ctx, &computepb.InsertNetworkRequest{
+		Project: testProject,
+		NetworkResource: &computepb.Network{
+			Name:                  ptrStr("net-cfg"),
+			Description:           ptrStr("app network"),
+			AutoCreateSubnetworks: func() *bool { b := false; return &b }(),
+			RoutingConfig:         &computepb.NetworkRoutingConfig{RoutingMode: ptrStr("GLOBAL")},
+			Mtu:                   ptrInt32(1500),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := op.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetNetworkRequest{Project: testProject, Network: "net-cfg"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetDescription() != "app network" {
+		t.Errorf("description=%q want %q", got.GetDescription(), "app network")
+	}
+
+	if got.GetRoutingConfig().GetRoutingMode() != "GLOBAL" {
+		t.Errorf("routingMode=%q want GLOBAL", got.GetRoutingConfig().GetRoutingMode())
+	}
+
+	if got.GetMtu() != 1500 {
+		t.Errorf("mtu=%d want 1500", got.GetMtu())
+	}
+}
+
+// TestSDKFirewallMissingNetworkRejected covers the MED finding that a firewall
+// referencing an unknown network fabricated a phantom VPC that then leaked into
+// networks.list. Real GCP rejects the insert with 404; no VPC is created.
+func TestSDKFirewallMissingNetworkRejected(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+
+	fwClient, err := gcpcompute.NewFirewallsRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewFirewallsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = fwClient.Close() })
+
+	_, err = fwClient.Insert(ctx, &computepb.InsertFirewallRequest{
+		Project: testProject,
+		FirewallResource: &computepb.Firewall{
+			Name:    ptrStr("fw-bad"),
+			Network: ptrStr("projects/" + testProject + "/global/networks/does-not-exist"),
+			Allowed: []*computepb.Allowed{{IPProtocol: ptrStr("tcp"), Ports: []string{"22"}}},
+		},
+	})
+	if err == nil {
+		t.Fatal("firewall Insert with missing network succeeded, want 404")
+	}
+
+	// No phantom network must have leaked into networks.list.
+	netClient, err := gcpcompute.NewNetworksRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewNetworksRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = netClient.Close() })
+
+	it := netClient.List(ctx, &computepb.ListNetworksRequest{Project: testProject})
+
+	count := 0
+	for {
+		if _, err := it.Next(); err != nil {
+			break
+		}
+
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("networks.list returned %d networks, want 0 (phantom VPC leaked)", count)
+	}
+}
+
 func TestSDKFirewallRoundTrip(t *testing.T) {
 	ts := newGCPNetServer(t)
 	ctx := context.Background()

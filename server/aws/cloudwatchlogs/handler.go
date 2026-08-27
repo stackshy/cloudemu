@@ -14,6 +14,8 @@
 //	CreateLogGroup      DescribeLogGroups   DeleteLogGroup
 //	CreateLogStream     DescribeLogStreams  DeleteLogStream
 //	PutLogEvents        GetLogEvents        FilterLogEvents
+//	PutMetricFilter     DescribeMetricFilters DeleteMetricFilter
+//	PutSubscriptionFilter DescribeSubscriptionFilters DeleteSubscriptionFilter
 package cloudwatchlogs
 
 import (
@@ -47,7 +49,10 @@ func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 }
 
-// ServeHTTP dispatches CloudWatch Logs operations based on X-Amz-Target.
+// ServeHTTP dispatches CloudWatch Logs operations based on X-Amz-Target. Core
+// log-group / log-stream / log-event operations are handled here; retention,
+// metric-filter, and tagging operations route through dispatchManagement to
+// keep either switch within the complexity budget.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
@@ -70,8 +75,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getLogEvents(w, r)
 	case "FilterLogEvents":
 		h.filterLogEvents(w, r)
+	default:
+		h.dispatchManagement(w, r, op)
+	}
+}
+
+// dispatchManagement handles the retention, metric-filter, and
+// subscription-filter operations, delegating tagging (and the
+// unknown-operation error) to dispatchTags.
+func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
 	case "PutRetentionPolicy":
 		h.putRetentionPolicy(w, r)
+	case "PutMetricFilter":
+		h.putMetricFilter(w, r)
+	case "DescribeMetricFilters":
+		h.describeMetricFilters(w, r)
+	case "DeleteMetricFilter":
+		h.deleteMetricFilter(w, r)
+	case "PutSubscriptionFilter":
+		h.putSubscriptionFilter(w, r)
+	case "DescribeSubscriptionFilters":
+		h.describeSubscriptionFilters(w, r)
+	case "DeleteSubscriptionFilter":
+		h.deleteSubscriptionFilter(w, r)
+	default:
+		h.dispatchTags(w, r, op)
+	}
+}
+
+// dispatchTags handles the tagging operations, reporting the unknown-operation
+// error for anything unmatched. Split out of dispatchManagement to keep each
+// switch within the cyclomatic-complexity budget.
+func (h *Handler) dispatchTags(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
 	case "TagResource", "TagLogGroup":
 		h.tagLogGroup(w, r)
 	case "UntagResource", "UntagLogGroup":
@@ -96,6 +133,12 @@ func (h *Handler) putRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validRetentionInDays[req.RetentionInDays] {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
+			"retentionInDays is not a valid value")
+		return
+	}
+
 	if _, err := h.logs.UpdateLogGroup(r.Context(), logdriver.LogGroupConfig{
 		Name: req.LogGroupName, RetentionDays: req.RetentionInDays,
 	}); err != nil {
@@ -106,22 +149,34 @@ func (h *Handler) putRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, struct{}{})
 }
 
+// validRetentionInDays is the closed set of retentionInDays values CloudWatch
+// Logs accepts; any other value is rejected with InvalidParameterException.
+//
+//nolint:gochecknoglobals // fixed lookup table for a closed enum.
+var validRetentionInDays = map[int]bool{
+	1: true, 3: true, 5: true, 7: true, 14: true, 30: true, 60: true, 90: true,
+	120: true, 150: true, 180: true, 365: true, 400: true, 545: true, 731: true,
+	1096: true, 1827: true, 2192: true, 2557: true, 2922: true, 3288: true, 3653: true,
+}
+
 // writeErr maps canonical cloudemu errors to CloudWatch Logs JSON error
 // responses. Like the other AWS JSON 1.1 services, errors are HTTP 400 with a
 // "__type" body the SDK maps to a typed exception.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidOperationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidOperationException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "ServiceUnavailableException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "ServiceUnavailableException", msg)
 	}
 }

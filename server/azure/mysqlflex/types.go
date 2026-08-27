@@ -51,6 +51,16 @@ type armHighAvailability struct {
 	State                   string `json:"state,omitempty"`
 }
 
+// armServerRestartParameter is the ServerRestartParameter request body for
+// POST .../restart. RestartWithFailover is the EnableStatusEnum
+// "Enabled"/"Disabled"; MaxFailoverSeconds bounds how long the SDK's poller is
+// willing to wait for that failover — the mock's failover is synchronous, so
+// it is accepted but not otherwise consulted.
+type armServerRestartParameter struct {
+	RestartWithFailover string `json:"restartWithFailover,omitempty"`
+	MaxFailoverSeconds  int    `json:"maxFailoverSeconds,omitempty"`
+}
+
 type armStorage struct {
 	StorageSizeGB int    `json:"storageSizeGB,omitempty"`
 	StorageSKU    string `json:"storageSku,omitempty"`
@@ -70,7 +80,7 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		ID:       armServerID(subscription, resourceGroup, inst.ID),
 		Name:     inst.ID,
 		Type:     providerName + "/" + resourceFlexServers,
-		Location: inst.AvailabilityZone,
+		Location: inst.Location,
 		Tags:     inst.Tags,
 		SKU: &armSKU{
 			Name: inst.InstanceClass,

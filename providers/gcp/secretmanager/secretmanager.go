@@ -3,6 +3,7 @@ package secretmanager
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,10 +18,94 @@ import (
 var _ driver.Secrets = (*Mock)(nil)
 
 type secretData struct {
-	info      driver.SecretInfo
-	versions  []driver.SecretVersion
-	deletedAt time.Time
-	mu        sync.RWMutex
+	info       driver.SecretInfo
+	versions   []driver.SecretVersion
+	verCounter int                  // monotonic version-number allocator (GCP numbers versions 1,2,3…)
+	iam        *driver.GCPIAMPolicy // stored IAM policy; nil until first set
+	mu         sync.RWMutex
+}
+
+// newEtag returns a fresh opaque optimistic-concurrency tag.
+func newEtag() string {
+	return idgen.GenerateID("etag-")
+}
+
+// resolveExpiry derives the RFC3339 expireTime from a ttl duration (e.g.
+// "3600s") relative to now, or echoes an explicit expireTime. ttl takes
+// precedence; an unparseable ttl is an invalid argument.
+func resolveExpiry(now time.Time, ttl, expireTime string) (string, error) {
+	if ttl != "" {
+		d, err := time.ParseDuration(ttl)
+		if err != nil {
+			return "", errors.Newf(errors.InvalidArgument, "invalid ttl %q", ttl)
+		}
+
+		return now.Add(d).Format(time.RFC3339), nil
+	}
+
+	return expireTime, nil
+}
+
+func copyMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+
+	return out
+}
+
+func copySlice(s []string) []string {
+	if s == nil {
+		return nil
+	}
+
+	out := make([]string, len(s))
+	copy(out, s)
+
+	return out
+}
+
+func cloneReplication(rep *driver.GCPReplication) *driver.GCPReplication {
+	if rep == nil {
+		return nil
+	}
+
+	out := &driver.GCPReplication{Automatic: rep.Automatic, AutomaticKMSKeyName: rep.AutomaticKMSKeyName}
+	if len(rep.UserManaged) > 0 {
+		out.UserManaged = make([]driver.GCPReplica, len(rep.UserManaged))
+		copy(out.UserManaged, rep.UserManaged)
+	}
+
+	return out
+}
+
+func cloneRotation(rot *driver.GCPRotation) *driver.GCPRotation {
+	if rot == nil {
+		return nil
+	}
+
+	clone := *rot
+
+	return &clone
+}
+
+// resolveAlias maps a version alias to its target version id, leaving numeric
+// ids and "" (current) untouched. Caller holds sd.mu.
+func resolveAlias(sd *secretData, versionID string) string {
+	if versionID == "" {
+		return versionID
+	}
+
+	if target, ok := sd.info.VersionAliases[versionID]; ok {
+		return target
+	}
+
+	return versionID
 }
 
 // Mock is an in-memory mock implementation of GCP Secret Manager.
@@ -55,14 +140,26 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		tags[k] = v
 	}
 
+	expireTime, err := resolveExpiry(m.opts.Clock.Now().UTC(), cfg.TTL, cfg.ExpireTime)
+	if err != nil {
+		return nil, err
+	}
+
 	info := driver.SecretInfo{
-		ID:          idgen.GenerateID("secret-"),
-		Name:        cfg.Name,
-		ResourceID:  selfLink,
-		Description: cfg.Description,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Tags:        tags,
+		ID:             idgen.GenerateID("secret-"),
+		Name:           cfg.Name,
+		ResourceID:     selfLink,
+		Description:    cfg.Description,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Tags:           tags,
+		Etag:           newEtag(),
+		Replication:    cloneReplication(cfg.Replication),
+		Annotations:    copyMap(cfg.Annotations),
+		ExpireTime:     expireTime,
+		Rotation:       cloneRotation(cfg.Rotation),
+		Topics:         copySlice(cfg.Topics),
+		VersionAliases: copyMap(cfg.VersionAliases),
 	}
 
 	sd := &secretData{info: info}
@@ -75,11 +172,14 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		data := make([]byte, len(value))
 		copy(data, value)
 
+		sd.verCounter++
 		sd.versions = []driver.SecretVersion{{
-			VersionID: idgen.GenerateID("ver-"),
+			VersionID: strconv.Itoa(sd.verCounter),
 			Value:     data,
 			CreatedAt: now,
 			Current:   true,
+			State:     driver.VersionEnabled,
+			Etag:      newEtag(),
 		}}
 	}
 
@@ -90,21 +190,15 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	return &result, nil
 }
 
-// DeleteSecret soft-deletes a secret by name, scheduling it for deletion after a recovery window.
+// DeleteSecret permanently removes a secret and all its versions. GCP Secret
+// Manager's secrets.delete is a hard delete with no recovery window, so the same
+// secretId is creatable again immediately.
 func (m *Mock) DeleteSecret(_ context.Context, name string) error {
-	sd, ok := m.secrets.Get(name)
-	if !ok {
+	if !m.secrets.Has(name) {
 		return errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
-
-	if !sd.deletedAt.IsZero() {
-		return errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
-	sd.deletedAt = m.opts.Clock.Now().UTC()
+	m.secrets.Delete(name)
 
 	return nil
 }
@@ -119,16 +213,12 @@ func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, er
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
 	result := sd.info
 
 	return &result, nil
 }
 
-// ListSecrets lists all secrets, excluding soft-deleted ones.
+// ListSecrets lists all secrets.
 func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 	all := m.secrets.All()
 
@@ -136,9 +226,7 @@ func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 
 	for _, sd := range all {
 		sd.mu.RLock()
-		if sd.deletedAt.IsZero() {
-			secrets = append(secrets, sd.info)
-		}
+		secrets = append(secrets, sd.info)
 		sd.mu.RUnlock()
 	}
 
@@ -155,10 +243,6 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 
 	for i := range sd.versions {
@@ -168,12 +252,14 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 	data := make([]byte, len(value))
 	copy(data, value)
 
-	versionID := idgen.GenerateID("ver-")
+	sd.verCounter++
 	version := driver.SecretVersion{
-		VersionID: versionID,
+		VersionID: strconv.Itoa(sd.verCounter),
 		Value:     data,
 		CreatedAt: now,
 		Current:   true,
+		State:     driver.VersionEnabled,
+		Etag:      newEtag(),
 	}
 
 	sd.versions = append(sd.versions, version)
@@ -194,9 +280,7 @@ func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*drive
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
+	versionID = resolveAlias(sd, versionID)
 
 	for _, v := range sd.versions {
 		if versionID == "" && v.Current {
@@ -233,16 +317,16 @@ func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.Secr
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
-	}
-
 	versions := make([]driver.SecretVersion, len(sd.versions))
 	for i, v := range sd.versions {
+		// Project metadata only — the payload is omitted from list results.
 		versions[i] = driver.SecretVersion{
-			VersionID: v.VersionID,
-			CreatedAt: v.CreatedAt,
-			Current:   v.Current,
+			VersionID:   v.VersionID,
+			CreatedAt:   v.CreatedAt,
+			Current:     v.Current,
+			State:       v.State,
+			DestroyTime: v.DestroyTime,
+			Etag:        v.Etag,
 		}
 	}
 

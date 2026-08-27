@@ -60,6 +60,63 @@
     }
   },
   {
+    "service": "aks",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAgentPool"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "CreateOrUpdateMaintenanceConfig"
+      },
+      {
+        "name": "DeleteAgentPool"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteMaintenanceConfig"
+      },
+      {
+        "name": "GetAgentPool"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetMaintenanceConfig"
+      },
+      {
+        "name": "Kubeconfig"
+      },
+      {
+        "name": "ListAgentPools"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListMaintenanceConfigs"
+      },
+      {
+        "name": "RotateClusterCertificates"
+      },
+      {
+        "name": "UpdateClusterTags"
+      }
+    ],
+    "providers": {
+      "azure": "AKS"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [
@@ -352,10 +409,10 @@
         "name": "StopCompute"
       },
       {
-        "name": "UpdateAccountTags"
+        "name": "UpdateAccount"
       },
       {
-        "name": "UpdateMLWorkspaceTags"
+        "name": "UpdateMLWorkspace"
       }
     ],
     "optionalCapabilities": [
@@ -460,7 +517,7 @@
             "name": "RegenerateAccountKey"
           },
           {
-            "name": "UpdateAccountTags"
+            "name": "UpdateAccount"
           }
         ]
       },
@@ -667,7 +724,7 @@
             "name": "StopCompute"
           },
           {
-            "name": "UpdateMLWorkspaceTags"
+            "name": "UpdateMLWorkspace"
           }
         ]
       }
@@ -1535,6 +1592,20 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccessKeys",
+        "doc": "AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure",
+        "operations": [
+          {
+            "name": "ListCacheKeys",
+            "doc": "ListCacheKeys returns the cache's current primary and secondary access"
+          },
+          {
+            "name": "RegenerateCacheKey",
+            "doc": "RegenerateCacheKey rotates the requested key (\"Primary\" or \"Secondary\")"
+          }
+        ]
+      },
+      {
         "name": "ReplicationGroups",
         "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
@@ -1549,6 +1620,18 @@
           },
           {
             "name": "ModifyReplicationGroup"
+          }
+        ]
+      },
+      {
+        "name": "Snapshots",
+        "doc": "Snapshots is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateSnapshot"
+          },
+          {
+            "name": "DescribeSnapshots"
           }
         ]
       },
@@ -1575,6 +1658,14 @@
     }
   },
   {
+    "service": "cloudasset",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "gcp": "Cloudasset"
+    }
+  },
+  {
     "service": "cloudrun",
     "interface": "CloudRun",
     "operations": [
@@ -1583,8 +1674,20 @@
         "doc": "CreateJob stores a job spec. It does not run anything — RunJob does."
       },
       {
+        "name": "CreateService",
+        "doc": "CreateService stores a service spec and materializes its first Revision,"
+      },
+      {
         "name": "DeleteJob",
         "doc": "DeleteJob removes a job and stops any container workloads its executions"
+      },
+      {
+        "name": "DeleteRevision",
+        "doc": "DeleteRevision removes a single revision of a service."
+      },
+      {
+        "name": "DeleteService",
+        "doc": "DeleteService removes a service and its revisions."
       },
       {
         "name": "GetExecution",
@@ -1595,16 +1698,120 @@
         "doc": "GetJob returns a job by name. name may be the bare job id or a fully"
       },
       {
+        "name": "GetRevision",
+        "doc": "GetRevision returns a revision by name (bare revision id or a fully"
+      },
+      {
+        "name": "GetService",
+        "doc": "GetService returns a service by name (bare service id or a fully"
+      },
+      {
+        "name": "ListExecutions",
+        "doc": "ListExecutions returns every stored execution of the named job."
+      },
+      {
         "name": "ListJobs",
         "doc": "ListJobs returns every stored job."
       },
       {
+        "name": "ListRevisions",
+        "doc": "ListRevisions returns every stored revision of the named service."
+      },
+      {
+        "name": "ListServices",
+        "doc": "ListServices returns every stored service."
+      },
+      {
         "name": "RunJob",
         "doc": "RunJob creates and runs one Execution of the named job, blocking until"
+      },
+      {
+        "name": "UpdateJob",
+        "doc": "UpdateJob applies an in-place update to an existing job, bumping its"
+      },
+      {
+        "name": "UpdateService",
+        "doc": "UpdateService applies an in-place update, materializing a new Revision"
       }
     ],
     "providers": {
       "gcp": "CloudRun"
+    }
+  },
+  {
+    "service": "cloudsql",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudSQL"
     }
   },
   {
@@ -1805,6 +2012,17 @@
         "name": "UpdateTrail"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "EventRecorder",
+        "doc": "EventRecorder is an OPTIONAL capability, discovered by type assertion. The",
+        "operations": [
+          {
+            "name": "RecordEvent"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "CloudTrail"
     }
@@ -1883,7 +2101,8 @@
         "name": "DescribeVolumes"
       },
       {
-        "name": "DetachVolume"
+        "name": "DetachVolume",
+        "doc": "DetachVolume detaches a volume. When instanceID or device is non-empty it"
       },
       {
         "name": "ExecuteScalingPolicy"
@@ -1935,11 +2154,218 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureDiskAccessor",
+        "doc": "AzureDiskAccessor is an optional Azure-only capability for the managed-disk",
+        "operations": [
+          {
+            "name": "GrantDiskAccess",
+            "doc": "GrantDiskAccess issues a time-bounded SAS URI granting the requested"
+          },
+          {
+            "name": "RevokeDiskAccess",
+            "doc": "RevokeDiskAccess revokes any SAS access previously granted to the disk."
+          }
+        ]
+      },
+      {
+        "name": "AzureDiskUpdater",
+        "doc": "AzureDiskUpdater is an optional Azure-only capability for an in-place managed",
+        "operations": [
+          {
+            "name": "UpdateVolume",
+            "doc": "UpdateVolume mutates the existing volume id in place from cfg (size, sku/"
+          }
+        ]
+      },
+      {
+        "name": "AzureSSHKeyUpdater",
+        "doc": "AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys",
+        "operations": [
+          {
+            "name": "UpdateKeyPair",
+            "doc": "UpdateKeyPair updates the public key and/or tags of an existing key pair."
+          }
+        ]
+      },
+      {
+        "name": "AzureVMController",
+        "doc": "AzureVMController is an optional Azure-only capability supporting the ARM",
+        "operations": [
+          {
+            "name": "Deallocate",
+            "doc": "Deallocate stops the guest and releases the allocated compute"
+          },
+          {
+            "name": "GeneralizeInstance",
+            "doc": "GeneralizeInstance marks an instance as generalized (Azure Generalize"
+          },
+          {
+            "name": "PatchInstance",
+            "doc": "PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an"
+          },
+          {
+            "name": "PowerOff",
+            "doc": "PowerOff stops the guest OS while keeping the VM allocated"
+          },
+          {
+            "name": "UpdateInstance",
+            "doc": "UpdateInstance overwrites the mutable configuration of an existing"
+          }
+        ]
+      },
+      {
         "name": "ConsoleReader",
         "doc": "ConsoleReader is an optional capability a Compute implementation may provide",
         "operations": [
           {
             "name": "GetConsoleOutput"
+          }
+        ]
+      },
+      {
+        "name": "IamInstanceProfileAssociator",
+        "doc": "IamInstanceProfileAssociator is an optional AWS-only capability for attaching",
+        "operations": [
+          {
+            "name": "AssociateIamInstanceProfile"
+          },
+          {
+            "name": "DescribeIamInstanceProfileAssociations"
+          },
+          {
+            "name": "DisassociateIamInstanceProfile"
+          },
+          {
+            "name": "ReplaceIamInstanceProfileAssociation"
+          }
+        ]
+      },
+      {
+        "name": "ImageAttributeModifier",
+        "doc": "ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI",
+        "operations": [
+          {
+            "name": "DescribeImageLaunchPermissions"
+          },
+          {
+            "name": "ModifyImageAttribute"
+          }
+        ]
+      },
+      {
+        "name": "ImageCopier",
+        "doc": "ImageCopier is an optional AWS-only capability for EC2 CopyImage (aws_ami_copy).",
+        "operations": [
+          {
+            "name": "CopyImage"
+          }
+        ]
+      },
+      {
+        "name": "ImageRegistrar",
+        "doc": "ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage",
+        "operations": [
+          {
+            "name": "RegisterImage"
+          }
+        ]
+      },
+      {
+        "name": "InstanceMetadataModifier",
+        "doc": "InstanceMetadataModifier is an optional AWS-only capability for",
+        "operations": [
+          {
+            "name": "ModifyInstanceMetadataOptions"
+          }
+        ]
+      },
+      {
+        "name": "KeyPairGenerator",
+        "doc": "KeyPairGenerator is an optional Azure-only capability for the ARM",
+        "operations": [
+          {
+            "name": "GenerateKeyPair"
+          }
+        ]
+      },
+      {
+        "name": "KeyPairImporter",
+        "doc": "KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair",
+        "operations": [
+          {
+            "name": "ImportKeyPair"
+          }
+        ]
+      },
+      {
+        "name": "LaunchTemplateModifier",
+        "doc": "LaunchTemplateModifier is an AWS-only optional capability implementing",
+        "operations": [
+          {
+            "name": "ModifyLaunchTemplate"
+          }
+        ]
+      },
+      {
+        "name": "LaunchTemplateVersioner",
+        "doc": "LaunchTemplateVersioner is an AWS-only optional capability implementing launch",
+        "operations": [
+          {
+            "name": "CreateLaunchTemplateVersion",
+            "doc": "CreateLaunchTemplateVersion appends a new immutable version to a template."
+          },
+          {
+            "name": "DescribeLaunchTemplateVersions",
+            "doc": "DescribeLaunchTemplateVersions returns a template's versions (filtered,"
+          },
+          {
+            "name": "GetLaunchTemplateData",
+            "doc": "GetLaunchTemplateData synthesizes launch-template data from a running"
+          }
+        ]
+      },
+      {
+        "name": "PlacementGroups",
+        "doc": "PlacementGroups is an optional AWS-only capability for EC2 placement groups",
+        "operations": [
+          {
+            "name": "CreatePlacementGroup"
+          },
+          {
+            "name": "DeletePlacementGroup"
+          },
+          {
+            "name": "DescribePlacementGroups"
+          }
+        ]
+      },
+      {
+        "name": "SnapshotAttributeModifier",
+        "doc": "SnapshotAttributeModifier is an optional AWS-only capability for the EC2",
+        "operations": [
+          {
+            "name": "DescribeSnapshotVolumePermissions"
+          },
+          {
+            "name": "ModifySnapshotAttribute"
+          }
+        ]
+      },
+      {
+        "name": "SnapshotCopier",
+        "doc": "SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is",
+        "operations": [
+          {
+            "name": "CopySnapshot"
+          }
+        ]
+      },
+      {
+        "name": "VolumeModifier",
+        "doc": "VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume",
+        "operations": [
+          {
+            "name": "ModifyVolume"
           }
         ]
       }
@@ -2295,15 +2721,35 @@
       },
       {
         "name": "DeleteContainerGroup",
-        "doc": "DeleteContainerGroup removes the group, tearing down any engine-backed"
+        "doc": "DeleteContainerGroup removes the group scoped to subscription and"
+      },
+      {
+        "name": "ExecContainer",
+        "doc": "ExecContainer opens an exec session on one container in the group and"
       },
       {
         "name": "GetContainerGroup",
-        "doc": "GetContainerGroup returns the recorded group, or a NotFound error."
+        "doc": "GetContainerGroup returns the recorded group scoped to subscription and"
       },
       {
         "name": "ListContainerGroups",
         "doc": "ListContainerGroups returns the groups visible under filter."
+      },
+      {
+        "name": "RestartContainerGroup",
+        "doc": "RestartContainerGroup restarts all containers in the group. Returns NotFound"
+      },
+      {
+        "name": "StartContainerGroup",
+        "doc": "StartContainerGroup starts all containers in a stopped group, allocating"
+      },
+      {
+        "name": "StopContainerGroup",
+        "doc": "StopContainerGroup stops all containers in the group and deallocates"
+      },
+      {
+        "name": "UpdateContainerGroupTags",
+        "doc": "UpdateContainerGroupTags merges tags into an existing group and returns it,"
       }
     ],
     "providers": {
@@ -2320,6 +2766,10 @@
       },
       {
         "name": "DeleteImage"
+      },
+      {
+        "name": "DeleteLifecyclePolicy",
+        "doc": "DeleteLifecyclePolicy removes the repository's lifecycle policy and returns"
       },
       {
         "name": "DeleteRepository"
@@ -2361,10 +2811,91 @@
         "name": "TagImage"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureRegistryManager",
+        "doc": "AzureRegistryManager is the Azure-specific ACR management-plane surface,",
+        "operations": [
+          {
+            "name": "CreateOrUpdateRegistry",
+            "doc": "CreateOrUpdateRegistry is the ARM PUT (full create-or-replace). It reports"
+          },
+          {
+            "name": "CreateOrUpdateReplication"
+          },
+          {
+            "name": "CreateOrUpdateWebhook"
+          },
+          {
+            "name": "DeleteRegistry"
+          },
+          {
+            "name": "DeleteReplication"
+          },
+          {
+            "name": "DeleteWebhook"
+          },
+          {
+            "name": "GetRegistry"
+          },
+          {
+            "name": "GetReplication"
+          },
+          {
+            "name": "GetWebhook"
+          },
+          {
+            "name": "ListRegistries"
+          },
+          {
+            "name": "ListRegistryCredentials"
+          },
+          {
+            "name": "ListRegistryUsages"
+          },
+          {
+            "name": "ListReplications"
+          },
+          {
+            "name": "ListWebhooks"
+          },
+          {
+            "name": "RegenerateRegistryCredential"
+          },
+          {
+            "name": "UpdateRegistry",
+            "doc": "UpdateRegistry is the ARM PATCH (partial update). It merges upd onto the"
+          },
+          {
+            "name": "UpdateReplication"
+          },
+          {
+            "name": "UpdateWebhook"
+          }
+        ]
+      },
+      {
+        "name": "AzureRepositoryWriter",
+        "doc": "AzureRepositoryWriter is the Azure-specific ACR data-plane surface for",
+        "operations": [
+          {
+            "name": "DeleteTag"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "ECR",
       "azure": "ACR",
       "gcp": "ArtifactRegistry"
+    }
+  },
+  {
+    "service": "cosmosaccount",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Cosmosaccount"
     }
   },
   {
@@ -2883,6 +3414,14 @@
     }
   },
   {
+    "service": "disks",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Disks"
+    }
+  },
+  {
     "service": "dns",
     "interface": "DNS",
     "operations": [
@@ -3228,6 +3767,102 @@
     }
   },
   {
+    "service": "eks",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateAddon"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateFargateProfile"
+      },
+      {
+        "name": "CreateNodegroup"
+      },
+      {
+        "name": "DeleteAddon"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteFargateProfile"
+      },
+      {
+        "name": "DeleteNodegroup"
+      },
+      {
+        "name": "DescribeAddon"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeFargateProfile"
+      },
+      {
+        "name": "DescribeNodegroup"
+      },
+      {
+        "name": "DescribeUpdate"
+      },
+      {
+        "name": "EKSException"
+      },
+      {
+        "name": "Error"
+      },
+      {
+        "name": "ListAddons"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListFargateProfiles"
+      },
+      {
+        "name": "ListNodegroups"
+      },
+      {
+        "name": "ListResourceTags"
+      },
+      {
+        "name": "ListUpdates"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "Unwrap"
+      },
+      {
+        "name": "UpdateAddon"
+      },
+      {
+        "name": "UpdateClusterConfig"
+      },
+      {
+        "name": "UpdateClusterVersion"
+      },
+      {
+        "name": "UpdateNodegroupConfig"
+      },
+      {
+        "name": "UpdateNodegroupVersion"
+      }
+    ],
+    "providers": {
+      "aws": "EKS"
+    }
+  },
+  {
     "service": "eventbus",
     "interface": "EventBus",
     "operations": [
@@ -3290,6 +3925,69 @@
       "aws": "EventBridge",
       "azure": "EventGrid",
       "gcp": "Eventarc"
+    }
+  },
+  {
+    "service": "gke",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CancelOperation"
+      },
+      {
+        "name": "CompleteIPRotation"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateNodePool"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteNodePool"
+      },
+      {
+        "name": "Endpoint"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetNodePool"
+      },
+      {
+        "name": "GetOperation"
+      },
+      {
+        "name": "HasOperation"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListNodePools"
+      },
+      {
+        "name": "ListOperations"
+      },
+      {
+        "name": "RollbackNodePool"
+      },
+      {
+        "name": "StartIPRotation"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateNodePool"
+      }
+    ],
+    "providers": {
+      "gcp": "GKE"
     }
   },
   {
@@ -4624,6 +5322,14 @@
     }
   },
   {
+    "service": "images",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Images"
+    }
+  },
+  {
     "service": "kafka",
     "interface": "Kafka",
     "operations": [
@@ -5104,6 +5810,9 @@
         "name": "GetParametersForImport"
       },
       {
+        "name": "GetPublicKey"
+      },
+      {
         "name": "ImportKeyMaterial"
       },
       {
@@ -5202,6 +5911,9 @@
           },
           {
             "name": "GenerateRandom"
+          },
+          {
+            "name": "GetPublicKey"
           },
           {
             "name": "ReEncrypt"
@@ -5355,11 +6067,135 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureLoadBalancers",
+        "doc": "AzureLoadBalancers is an OPTIONAL, type-asserted capability. The Azure",
+        "operations": [
+          {
+            "name": "CreateOrUpdateAzureLoadBalancer"
+          },
+          {
+            "name": "DeleteAzureLBBackendPool",
+            "doc": "DeleteAzureLBBackendPool removes a single backend pool by name, leaving"
+          },
+          {
+            "name": "DeleteAzureLBNatRule",
+            "doc": "DeleteAzureLBNatRule removes a single inbound NAT rule by name, leaving"
+          },
+          {
+            "name": "DeleteAzureLoadBalancer"
+          },
+          {
+            "name": "GetAzureLoadBalancer"
+          },
+          {
+            "name": "ListAzureLoadBalancers"
+          },
+          {
+            "name": "UpsertAzureLBBackendPool",
+            "doc": "UpsertAzureLBBackendPool adds poolName to the load balancer's backend"
+          },
+          {
+            "name": "UpsertAzureLBNatRule",
+            "doc": "UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by"
+          }
+        ]
+      },
+      {
+        "name": "GCPBackendServicePatcher",
+        "doc": "GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "PatchGCPBackendService",
+            "doc": "PatchGCPBackendService looks up the target group by its GCP name and"
+          }
+        ]
+      },
+      {
+        "name": "GCPComputeResourceStore",
+        "doc": "GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "DeleteGCPResource",
+            "doc": "DeleteGCPResource removes the resource, returning NotFound when absent."
+          },
+          {
+            "name": "GetGCPResource",
+            "doc": "GetGCPResource returns the stored resource, or NotFound."
+          },
+          {
+            "name": "ListGCPResources",
+            "doc": "ListGCPResources returns every resource in a (collection, scope) bucket."
+          },
+          {
+            "name": "PutGCPResource",
+            "doc": "PutGCPResource stores res, returning AlreadyExists when a resource with"
+          },
+          {
+            "name": "UpdateGCPResource",
+            "doc": "UpdateGCPResource applies mutate to the stored resource in place under the"
+          }
+        ]
+      },
+      {
         "name": "LBAttributeUpdater",
         "doc": "LBAttributeUpdater is implemented by drivers that can apply a partial",
         "operations": [
           {
             "name": "UpdateLBAttributes"
+          }
+        ]
+      },
+      {
+        "name": "LBNetworkModifier",
+        "doc": "LBNetworkModifier is implemented by drivers that can replace the security",
+        "operations": [
+          {
+            "name": "SetSecurityGroups"
+          },
+          {
+            "name": "SetSubnets"
+          }
+        ]
+      },
+      {
+        "name": "ListenerGetter",
+        "doc": "ListenerGetter is implemented by drivers that can fetch a single listener by",
+        "operations": [
+          {
+            "name": "GetListener"
+          }
+        ]
+      },
+      {
+        "name": "RuleModifier",
+        "doc": "RuleModifier is implemented by drivers that can modify a listener rule's",
+        "operations": [
+          {
+            "name": "ModifyRule"
+          },
+          {
+            "name": "SetRulePriorities"
+          }
+        ]
+      },
+      {
+        "name": "TargetGroupAttributeStore",
+        "doc": "TargetGroupAttributeStore is implemented by drivers that store per-target-group",
+        "operations": [
+          {
+            "name": "GetTargetGroupAttributes"
+          },
+          {
+            "name": "ModifyTargetGroupAttributes"
+          }
+        ]
+      },
+      {
+        "name": "TargetGroupModifier",
+        "doc": "TargetGroupModifier is implemented by drivers that can apply a partial",
+        "operations": [
+          {
+            "name": "ModifyTargetGroup"
           }
         ]
       }
@@ -5390,7 +6226,13 @@
         "name": "DeleteMetricFilter"
       },
       {
+        "name": "DeleteSubscriptionFilter"
+      },
+      {
         "name": "DescribeMetricFilters"
+      },
+      {
+        "name": "DescribeSubscriptionFilters"
       },
       {
         "name": "FilterLogEvents"
@@ -5414,14 +6256,63 @@
         "name": "PutMetricFilter"
       },
       {
+        "name": "PutSubscriptionFilter"
+      },
+      {
         "name": "UpdateLogGroup",
         "doc": "UpdateLogGroup replaces the mutable fields (retention, tags) of an"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "GCPLogging",
+        "doc": "GCPLogging is an optional interface implemented by the GCP logging backend for",
+        "operations": [
+          {
+            "name": "CreateLogMetric"
+          },
+          {
+            "name": "CreateSink"
+          },
+          {
+            "name": "DeleteLogMetric"
+          },
+          {
+            "name": "DeleteSink"
+          },
+          {
+            "name": "GetLogMetric"
+          },
+          {
+            "name": "GetSink"
+          },
+          {
+            "name": "ListLogMetrics"
+          },
+          {
+            "name": "ListSinks"
+          },
+          {
+            "name": "UpdateLogMetric"
+          },
+          {
+            "name": "UpdateSink"
+          }
+        ]
       }
     ],
     "providers": {
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
       "gcp": "CloudLogging"
+    }
+  },
+  {
+    "service": "lro",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "gcp": "LRO"
     }
   },
   {
@@ -5701,6 +6592,34 @@
         "name": "SetQueueAttributes"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureQueueStorage",
+        "doc": "AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,",
+        "operations": [
+          {
+            "name": "DequeueMessages",
+            "doc": "DequeueMessages retrieves up to maxMessages visible messages, hiding them"
+          },
+          {
+            "name": "GetQueueMetadata",
+            "doc": "GetQueueMetadata reports the approximate message count and user metadata."
+          },
+          {
+            "name": "PeekMessages",
+            "doc": "PeekMessages returns up to maxMessages visible messages without altering"
+          },
+          {
+            "name": "SetQueueMetadata",
+            "doc": "SetQueueMetadata replaces the queue's user metadata."
+          },
+          {
+            "name": "UpdateMessage",
+            "doc": "UpdateMessage updates a message's content (when body is non-nil) and its"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "SQS",
       "azure": "QueueStorage",
@@ -5810,6 +6729,9 @@
         "name": "ListRuleGroups"
       },
       {
+        "name": "ListTagsForResource"
+      },
+      {
         "name": "TagResource"
       },
       {
@@ -5819,7 +6741,13 @@
         "name": "UpdateFirewallDeleteProtection"
       },
       {
+        "name": "UpdateFirewallPolicy"
+      },
+      {
         "name": "UpdateLoggingConfiguration"
+      },
+      {
+        "name": "UpdateRuleGroup"
       }
     ],
     "providers": {
@@ -6013,6 +6941,96 @@
       }
     ],
     "optionalCapabilities": [
+      {
+        "name": "AzureNetworkInterfaces",
+        "doc": "AzureNetworkInterfaces is the Azure-specific network-interface surface,",
+        "operations": [
+          {
+            "name": "CreateOrUpdateNetworkInterface"
+          },
+          {
+            "name": "DeleteNetworkInterface"
+          },
+          {
+            "name": "GetNetworkInterface"
+          },
+          {
+            "name": "ListNetworkInterfaces"
+          }
+        ]
+      },
+      {
+        "name": "AzureNetworkMetadata",
+        "doc": "AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure",
+        "operations": [
+          {
+            "name": "DeleteAzureNSGMetadata"
+          },
+          {
+            "name": "DeleteAzureNSGRule",
+            "doc": "DeleteAzureNSGRule removes a single custom security rule by name, leaving"
+          },
+          {
+            "name": "DeleteAzureRouteTableMetadata",
+            "doc": "DeleteAzureRouteTableMetadata drops the stored metadata for id (called when"
+          },
+          {
+            "name": "DeleteAzureVNetMetadata"
+          },
+          {
+            "name": "DeleteAzureVNetPeering",
+            "doc": "DeleteAzureVNetPeering removes a single peering by name, leaving every"
+          },
+          {
+            "name": "GetAzureNSGMetadata"
+          },
+          {
+            "name": "GetAzureRouteTableMetadata",
+            "doc": "GetAzureRouteTableMetadata returns the stored Azure route-table metadata for"
+          },
+          {
+            "name": "GetAzureVNetMetadata"
+          },
+          {
+            "name": "GetAzureVNetPeering",
+            "doc": "GetAzureVNetPeering returns one stored peering by name."
+          },
+          {
+            "name": "ListAzureVNetPeerings",
+            "doc": "ListAzureVNetPeerings returns every peering stored for a VNet, ordered by"
+          },
+          {
+            "name": "PutAzureNSGMetadata"
+          },
+          {
+            "name": "PutAzureRouteTableMetadata",
+            "doc": "PutAzureRouteTableMetadata stores the Azure-only route-table fields (region,"
+          },
+          {
+            "name": "PutAzureVNetMetadata"
+          },
+          {
+            "name": "SetAzureVNetPeeringState",
+            "doc": "SetAzureVNetPeeringState atomically updates just the peeringState field of"
+          },
+          {
+            "name": "UpdateAzureNATGateway",
+            "doc": "UpdateAzureNATGateway re-applies the mutable fields of an existing NAT"
+          },
+          {
+            "name": "UpdateAzurePublicIP",
+            "doc": "UpdateAzurePublicIP overwrites the mutable fields of an existing public IP"
+          },
+          {
+            "name": "UpsertAzureNSGRule",
+            "doc": "UpsertAzureNSGRule creates or replaces a single custom security rule by"
+          },
+          {
+            "name": "UpsertAzureVNetPeering",
+            "doc": "UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings"
+          }
+        ]
+      },
       {
         "name": "ClientVPN",
         "doc": "ClientVPN is an OPTIONAL AWS capability (type-asserted).",
@@ -6350,6 +7368,15 @@
         ]
       },
       {
+        "name": "NetworkACLAssociator",
+        "doc": "NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "ReplaceNetworkACLAssociation"
+          }
+        ]
+      },
+      {
         "name": "NetworkInsights",
         "doc": "NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both",
         "operations": [
@@ -6398,11 +7425,29 @@
         ]
       },
       {
+        "name": "NetworkInterfaceAttacher",
+        "doc": "NetworkInterfaceAttacher is the AWS-specific ENI attach surface",
+        "operations": [
+          {
+            "name": "AttachNetworkInterface"
+          }
+        ]
+      },
+      {
         "name": "NetworkInterfaceCreator",
         "doc": "NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept",
         "operations": [
           {
             "name": "CreateNetworkInterface"
+          }
+        ]
+      },
+      {
+        "name": "NetworkInterfaceModifier",
+        "doc": "NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface",
+        "operations": [
+          {
+            "name": "ModifyNetworkInterfaceAttribute"
           }
         ]
       },
@@ -6418,6 +7463,18 @@
           },
           {
             "name": "DetachNetworkInterface"
+          }
+        ]
+      },
+      {
+        "name": "NetworkResourceTagger",
+        "doc": "NetworkResourceTagger is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "RemoveResourceTags"
+          },
+          {
+            "name": "UpdateResourceTags"
           }
         ]
       },
@@ -6439,6 +7496,24 @@
           },
           {
             "name": "ModifyManagedPrefixList"
+          }
+        ]
+      },
+      {
+        "name": "SubnetAttributes",
+        "doc": "SubnetAttributes is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "ModifySubnetAttribute"
+          }
+        ]
+      },
+      {
+        "name": "SubnetCIDRUpdater",
+        "doc": "SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It",
+        "operations": [
+          {
+            "name": "UpdateSubnetCIDR"
           }
         ]
       },
@@ -6685,6 +7760,55 @@
       {
         "name": "UpdateTopic",
         "doc": "UpdateTopic replaces the mutable fields (display name, tags) of an"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureNotificationHubs",
+        "doc": "AzureNotificationHubs is the Azure-only Notification Hubs surface: namespace",
+        "operations": [
+          {
+            "name": "CreateRegistration"
+          },
+          {
+            "name": "DeleteRegistration"
+          },
+          {
+            "name": "DeleteSASRule"
+          },
+          {
+            "name": "GetNamespaceMeta"
+          },
+          {
+            "name": "GetPnsCredentials"
+          },
+          {
+            "name": "GetRegistration"
+          },
+          {
+            "name": "GetSASRule"
+          },
+          {
+            "name": "ListRegistrations"
+          },
+          {
+            "name": "ListSASRules"
+          },
+          {
+            "name": "PutSASRule"
+          },
+          {
+            "name": "RegenerateSASKey",
+            "doc": "RegenerateSASKey rotates the primary or secondary key of a rule (policyKey"
+          },
+          {
+            "name": "SetNamespaceMeta"
+          },
+          {
+            "name": "SetPnsCredentials",
+            "doc": "SetPnsCredentials stores a hub's Platform Notification Service credentials"
+          }
+        ]
       }
     ],
     "providers": {
@@ -7062,6 +8186,166 @@
     }
   },
   {
+    "service": "postgresflex",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "azure": "PostgresFlex"
+    }
+  },
+  {
+    "service": "queue",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Queue"
+    }
+  },
+  {
+    "service": "rds",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "aws": "RDS"
+    }
+  },
+  {
     "service": "relationaldb",
     "interface": "RelationalDB",
     "operations": [
@@ -7296,6 +8580,15 @@
           },
           {
             "name": "RegisterDBProxyTargets"
+          }
+        ]
+      },
+      {
+        "name": "DatabaseUpdater",
+        "doc": "DatabaseUpdater is an OPTIONAL capability for updating a logical database's",
+        "operations": [
+          {
+            "name": "UpdateDatabase"
           }
         ]
       },
@@ -7582,6 +8875,15 @@
         ]
       },
       {
+        "name": "ScopedDelete",
+        "doc": "ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets",
+        "operations": [
+          {
+            "name": "DeleteInstanceInScope"
+          }
+        ]
+      },
+      {
         "name": "SslCerts",
         "doc": "SslCerts is an OPTIONAL capability for managing client SSL certificates,",
         "operations": [
@@ -7673,6 +8975,38 @@
       "aws": "Redshift",
       "azure": "MySQLFlex",
       "gcp": "AlloyDB"
+    }
+  },
+  {
+    "service": "resourceexplorer2",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "aws": "Resourceexplorer2"
+    }
+  },
+  {
+    "service": "resourcegraph",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Resourcegraph"
+    }
+  },
+  {
+    "service": "resourcegroups",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Resourcegroups"
+    }
+  },
+  {
+    "service": "resourcegroupstaggingapi",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "aws": "Resourcegroupstaggingapi"
     }
   },
   {
@@ -8953,6 +10287,183 @@
         "name": "PutSecretValue"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "GCPSecrets",
+        "doc": "GCPSecrets is the GCP Secret Manager-specific surface kept off the shared",
+        "operations": [
+          {
+            "name": "DestroySecretVersion",
+            "doc": "DestroySecretVersion moves a version to DESTROYED, wipes its payload, and"
+          },
+          {
+            "name": "DisableSecretVersion",
+            "doc": "DisableSecretVersion moves a version to DISABLED. It fails on a DESTROYED"
+          },
+          {
+            "name": "EnableSecretVersion",
+            "doc": "EnableSecretVersion moves a version to ENABLED. It is idempotent on an"
+          },
+          {
+            "name": "GetSecretIAMPolicy",
+            "doc": "GetSecretIAMPolicy returns the secret's stored IAM policy (an empty"
+          },
+          {
+            "name": "PatchSecret",
+            "doc": "PatchSecret applies a partial update (labels, annotations, topics, version"
+          },
+          {
+            "name": "SetSecretIAMPolicy",
+            "doc": "SetSecretIAMPolicy stores the secret's IAM policy and returns it with a"
+          },
+          {
+            "name": "TestSecretIAMPermissions",
+            "doc": "TestSecretIAMPermissions returns the subset of permissions the caller"
+          }
+        ]
+      },
+      {
+        "name": "KeyVaultCertificates",
+        "doc": "KeyVaultCertificates is the Azure Key Vault-specific certificate data-plane",
+        "operations": [
+          {
+            "name": "CreateCertificate"
+          },
+          {
+            "name": "DeleteCertificate"
+          },
+          {
+            "name": "GetCertificate"
+          },
+          {
+            "name": "GetDeletedCertificate"
+          },
+          {
+            "name": "ListCertificateVersions"
+          },
+          {
+            "name": "ListCertificates"
+          },
+          {
+            "name": "ListDeletedCertificates"
+          },
+          {
+            "name": "PurgeDeletedCertificate"
+          },
+          {
+            "name": "RecoverDeletedCertificate"
+          }
+        ]
+      },
+      {
+        "name": "KeyVaultKeys",
+        "doc": "KeyVaultKeys is the Azure Key Vault keys data-plane surface: key lifecycle",
+        "operations": [
+          {
+            "name": "CreateKey"
+          },
+          {
+            "name": "DecryptKey"
+          },
+          {
+            "name": "DeleteKey"
+          },
+          {
+            "name": "EncryptKey"
+          },
+          {
+            "name": "GetDeletedKey"
+          },
+          {
+            "name": "GetKey"
+          },
+          {
+            "name": "GetKeyRotationPolicy"
+          },
+          {
+            "name": "ImportKey"
+          },
+          {
+            "name": "ListDeletedKeys"
+          },
+          {
+            "name": "ListKeyVersions"
+          },
+          {
+            "name": "ListKeys"
+          },
+          {
+            "name": "PurgeDeletedKey"
+          },
+          {
+            "name": "RecoverDeletedKey"
+          },
+          {
+            "name": "RotateKey"
+          },
+          {
+            "name": "SignKey"
+          },
+          {
+            "name": "UnwrapKey"
+          },
+          {
+            "name": "UpdateKey"
+          },
+          {
+            "name": "UpdateKeyRotationPolicy"
+          },
+          {
+            "name": "VerifyKey"
+          },
+          {
+            "name": "WrapKey"
+          }
+        ]
+      },
+      {
+        "name": "KeyVaultSecrets",
+        "doc": "KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version",
+        "operations": [
+          {
+            "name": "BackupKeyVaultSecret"
+          },
+          {
+            "name": "DeleteKeyVaultSecret"
+          },
+          {
+            "name": "GetDeletedKeyVaultSecret"
+          },
+          {
+            "name": "GetKeyVaultSecret"
+          },
+          {
+            "name": "ListDeletedKeyVaultSecrets"
+          },
+          {
+            "name": "ListKeyVaultSecretVersions"
+          },
+          {
+            "name": "ListKeyVaultSecrets"
+          },
+          {
+            "name": "PurgeDeletedKeyVaultSecret"
+          },
+          {
+            "name": "RecoverDeletedKeyVaultSecret"
+          },
+          {
+            "name": "RestoreKeyVaultSecret"
+          },
+          {
+            "name": "SetKeyVaultSecret"
+          },
+          {
+            "name": "UpdateKeyVaultSecret"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "SecretsManager",
       "azure": "KeyVault",
@@ -9054,6 +10565,14 @@
       "aws": "Lambda",
       "azure": "Functions",
       "gcp": "CloudFunctions"
+    }
+  },
+  {
+    "service": "servicenetworking",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "gcp": "Servicenetworking"
     }
   },
   {
@@ -9554,6 +11073,98 @@
     }
   },
   {
+    "service": "snapshots",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Snapshots"
+    }
+  },
+  {
+    "service": "sql",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "azure": "SQL"
+    }
+  },
+  {
+    "service": "sshpublickeys",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Sshpublickeys"
+    }
+  },
+  {
     "service": "storage",
     "interface": "Bucket",
     "operations": [
@@ -9675,11 +11286,266 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccountEncryptionConfig",
+        "doc": "AccountEncryptionConfig is an OPTIONAL Azure-specific capability,",
+        "operations": [
+          {
+            "name": "AccountEncryption"
+          },
+          {
+            "name": "SetAccountEncryption"
+          }
+        ]
+      },
+      {
+        "name": "AzureBlobExtensions",
+        "doc": "AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,",
+        "operations": [
+          {
+            "name": "AcquireLease",
+            "doc": "AcquireLease acquires a lease on a blob (Lease Blob, ?comp=lease,"
+          },
+          {
+            "name": "AppendBlock",
+            "doc": "AppendBlock appends a block to the end of an append blob (Append Block,"
+          },
+          {
+            "name": "BreakLease",
+            "doc": "BreakLease breaks the blob's current lease. breakPeriod is nil when the"
+          },
+          {
+            "name": "ChangeLease",
+            "doc": "ChangeLease changes the blob's lease ID."
+          },
+          {
+            "name": "CheckBlobLease",
+            "doc": "CheckBlobLease validates a write/delete request's x-ms-lease-id header"
+          },
+          {
+            "name": "CommitBlockList",
+            "doc": "CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist)"
+          },
+          {
+            "name": "ContainerAccessPolicy",
+            "doc": "ContainerAccessPolicy returns a container's public access level and"
+          },
+          {
+            "name": "ContainerMetadata",
+            "doc": "ContainerMetadata returns a container's metadata (Get Container Properties /"
+          },
+          {
+            "name": "CreateAppendBlob",
+            "doc": "CreateAppendBlob creates an empty append blob (Put Blob with"
+          },
+          {
+            "name": "CreateBlobSnapshot",
+            "doc": "CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob,"
+          },
+          {
+            "name": "DeleteBlobSnapshots",
+            "doc": "DeleteBlobSnapshots applies the Azure delete-snapshots directive"
+          },
+          {
+            "name": "GetBlobSnapshot",
+            "doc": "GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…)."
+          },
+          {
+            "name": "GetBlockList",
+            "doc": "GetBlockList returns the blob's committed and uncommitted blocks (Get"
+          },
+          {
+            "name": "PutBlockBlob",
+            "doc": "PutBlockBlob writes a block blob's content together with its system content"
+          },
+          {
+            "name": "ReleaseLease",
+            "doc": "ReleaseLease releases the blob's current lease."
+          },
+          {
+            "name": "RenewLease",
+            "doc": "RenewLease renews the blob's current lease."
+          },
+          {
+            "name": "SetBlobMetadata",
+            "doc": "SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata,"
+          },
+          {
+            "name": "SetBlobProperties",
+            "doc": "SetBlobProperties replaces only a blob's system properties (Set Blob"
+          },
+          {
+            "name": "SetBlobTier",
+            "doc": "SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier),"
+          },
+          {
+            "name": "SetContainerAccessPolicy",
+            "doc": "SetContainerAccessPolicy sets a container's public access level and"
+          },
+          {
+            "name": "SetContainerMetadata",
+            "doc": "SetContainerMetadata replaces a container's metadata (Set Container"
+          },
+          {
+            "name": "StageBlock",
+            "doc": "StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob"
+          }
+        ]
+      },
+      {
+        "name": "BlobServiceConfig",
+        "doc": "BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "BlobServiceProperties"
+          },
+          {
+            "name": "SetBlobServiceProperties"
+          }
+        ]
+      },
+      {
         "name": "BucketAttributes",
         "doc": "BucketAttributes is an OPTIONAL capability, discovered by type assertion (like",
         "operations": [
           {
             "name": "BucketAttributes"
+          }
+        ]
+      },
+      {
+        "name": "ConditionalBucket",
+        "doc": "ConditionalBucket is an OPTIONAL capability (discovered by type assertion like",
+        "operations": [
+          {
+            "name": "PutObjectConditional"
+          }
+        ]
+      },
+      {
+        "name": "GCSExtensions",
+        "doc": "GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type",
+        "operations": [
+          {
+            "name": "BucketAttrsGCS",
+            "doc": "BucketAttrsGCS returns the bucket's GCS-specific attributes."
+          },
+          {
+            "name": "BucketIAMPolicy"
+          },
+          {
+            "name": "ComposeObjectGCS",
+            "doc": "ComposeObjectGCS concatenates the source objects' bytes (in order) into"
+          },
+          {
+            "name": "CreateNotificationConfig",
+            "doc": "CreateNotificationConfig registers a Pub/Sub notification config on a"
+          },
+          {
+            "name": "DeleteNotificationConfig",
+            "doc": "DeleteNotificationConfig removes a bucket's notification config by id"
+          },
+          {
+            "name": "DeleteObjectGCS",
+            "doc": "DeleteObjectGCS deletes an object honoring pre and optional generation"
+          },
+          {
+            "name": "GetNotificationConfig",
+            "doc": "GetNotificationConfig returns a bucket's notification config by id"
+          },
+          {
+            "name": "GetObjectGCS",
+            "doc": "GetObjectGCS returns an object's bytes+info, selecting a specific"
+          },
+          {
+            "name": "HeadObjectGCS",
+            "doc": "HeadObjectGCS returns an object's info, selecting a specific generation"
+          },
+          {
+            "name": "ListNotificationConfigs",
+            "doc": "ListNotificationConfigs returns every notification config on a bucket"
+          },
+          {
+            "name": "ListObjectGenerations",
+            "doc": "ListObjectGenerations returns every generation (current + archived) of the"
+          },
+          {
+            "name": "PutObjectGCS",
+            "doc": "PutObjectGCS writes an object honoring pre (a failed condition returns a"
+          },
+          {
+            "name": "SetBucketAttrsGCS",
+            "doc": "SetBucketAttrsGCS records the bucket's location and default storage class"
+          },
+          {
+            "name": "SetBucketIAMPolicy",
+            "doc": "SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM"
+          },
+          {
+            "name": "TouchBucket",
+            "doc": "TouchBucket bumps the bucket's metageneration and updated timestamp,"
+          },
+          {
+            "name": "UpdateObjectGCS",
+            "doc": "UpdateObjectGCS mutates an existing object's system properties and/or"
+          }
+        ]
+      },
+      {
+        "name": "ObjectCopier",
+        "doc": "ObjectCopier is an OPTIONAL capability (discovered by type assertion, like",
+        "operations": [
+          {
+            "name": "CopyObjectV2"
+          }
+        ]
+      },
+      {
+        "name": "RawBucketConfig",
+        "doc": "RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like",
+        "operations": [
+          {
+            "name": "DeleteBucketConfig",
+            "doc": "DeleteBucketConfig removes the stored document (idempotent)."
+          },
+          {
+            "name": "GetBucketConfig",
+            "doc": "GetBucketConfig returns the stored document, or NotFound when none was set."
+          },
+          {
+            "name": "PutBucketConfig",
+            "doc": "PutBucketConfig stores document body under the sub-resource name (e.g."
+          }
+        ]
+      },
+      {
+        "name": "RegionalBucket",
+        "doc": "RegionalBucket is an OPTIONAL capability a storage provider implements to",
+        "operations": [
+          {
+            "name": "CreateBucketInRegion"
+          }
+        ]
+      },
+      {
+        "name": "StorageAccountKeys",
+        "doc": "StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "ListStorageAccountKeys",
+            "doc": "ListStorageAccountKeys returns the account's access keys, generating a"
+          },
+          {
+            "name": "RegenerateStorageAccountKey",
+            "doc": "RegenerateStorageAccountKey rotates the value of the named key (key1/key2)"
+          }
+        ]
+      },
+      {
+        "name": "SystemPropsBucket",
+        "doc": "SystemPropsBucket is an OPTIONAL capability (discovered by type assertion like",
+        "operations": [
+          {
+            "name": "PutObjectWithSystemProps"
           }
         ]
       },
@@ -9834,9 +11700,37 @@
     }
   },
   {
+    "service": "storageaccount",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Storageaccount"
+    }
+  },
+  {
+    "service": "sts",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "aws": "STS"
+    }
+  },
+  {
+    "service": "subscriptions",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Subscriptions"
+    }
+  },
+  {
     "service": "tablestorage",
     "interface": "TableStorage",
     "operations": [
+      {
+        "name": "ApplyBatch",
+        "doc": "ApplyBatch atomically applies an entity group transaction: either every"
+      },
       {
         "name": "CreateTable"
       },
@@ -9864,6 +11758,14 @@
     ],
     "providers": {
       "azure": "TableStorage"
+    }
+  },
+  {
+    "service": "tenants",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Tenants"
     }
   },
   {
@@ -10902,6 +12804,14 @@
     ],
     "providers": {
       "aws": "WAFv2"
+    }
+  },
+  {
+    "service": "workrequest",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "oci": "Workrequest"
     }
   }
 ]

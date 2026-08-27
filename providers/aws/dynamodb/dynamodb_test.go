@@ -887,17 +887,29 @@ func TestUpdateItemTableNotFound(t *testing.T) {
 	assertError(t, err, true)
 }
 
-func TestUpdateItemItemNotFound(t *testing.T) {
+// TestUpdateItemUpsertsMissing pins that UpdateItem on a missing item CREATES it
+// (real DynamoDB UpdateItem upserts — "adds a new item to the table if it does
+// not already exist"), rather than erroring.
+func TestUpdateItemUpsertsMissing(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 	createTestTable(m, "tbl")
 
-	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+	out, err := m.UpdateItem(ctx, driver.UpdateItemInput{
 		Table:   "tbl",
-		Key:     map[string]any{"pk": "missing", "sk": "missing"},
+		Key:     map[string]any{"pk": "new", "sk": "new"},
 		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 1}},
 	})
-	assertError(t, err, true)
+	assertError(t, err, false)
+	if out["pk"] != "new" || out["v"] == nil {
+		t.Fatalf("upsert result missing key/attr: %#v", out)
+	}
+
+	got, err := m.GetItem(ctx, "tbl", map[string]any{"pk": "new", "sk": "new"})
+	assertError(t, err, false)
+	if got == nil {
+		t.Fatal("UpdateItem on a missing item should have created it")
+	}
 }
 
 func TestUpdateItemInvalidAction(t *testing.T) {
@@ -975,4 +987,58 @@ func TestUpdateItemEmitsMetrics(t *testing.T) {
 	})
 	requireNoError(t, err)
 	assertEqual(t, true, len(result.Values) > 0)
+}
+
+// TestScanIndexProjectionAndSparse covers a Scan targeting a secondary index:
+// items lacking the index partition key are skipped (sparse index), and a
+// KEYS_ONLY / INCLUDE projection trims each returned item to its projected
+// attribute set.
+func TestScanIndexProjectionAndSparse(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	err := m.CreateTable(ctx, driver.TableConfig{
+		Name:         "t",
+		PartitionKey: "pk",
+		SortKey:      "sk",
+		GSIs: []driver.GSIConfig{
+			{Name: "keys", PartitionKey: "cat", Projection: "KEYS_ONLY"},
+			{Name: "inc", PartitionKey: "cat", Projection: "INCLUDE", NonKeyAttributes: []string{"price"}},
+		},
+	})
+	requireNoError(t, err)
+
+	requireNoError(t, m.PutItem(ctx, "t", map[string]any{
+		"pk": "u1", "sk": "s1", "cat": "books", "price": "10", "title": "x",
+	}))
+	// This item lacks "cat", so it is not projected into either index.
+	requireNoError(t, m.PutItem(ctx, "t", map[string]any{"pk": "u2", "sk": "s2", "title": "y"}))
+
+	keysRes, err := m.Scan(ctx, driver.ScanInput{Table: "t", IndexName: "keys"})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(keysRes.Items))
+	assertEqual(t, 3, len(keysRes.Items[0])) // pk, sk, cat only
+
+	if _, ok := keysRes.Items[0]["price"]; ok {
+		t.Fatal("KEYS_ONLY scan must not surface a non-projected attribute")
+	}
+
+	incRes, err := m.Scan(ctx, driver.ScanInput{Table: "t", IndexName: "inc"})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(incRes.Items))
+	assertEqual(t, 4, len(incRes.Items[0])) // pk, sk, cat, price
+
+	if _, ok := incRes.Items[0]["title"]; ok {
+		t.Fatal("INCLUDE scan must not surface an attribute outside NonKeyAttributes")
+	}
+}
+
+// TestScanUnknownIndex covers that a Scan against a non-existent index errors.
+func TestScanUnknownIndex(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "t")
+
+	_, err := m.Scan(ctx, driver.ScanInput{Table: "t", IndexName: "nope"})
+	assertError(t, err, true)
 }

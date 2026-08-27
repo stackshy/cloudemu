@@ -1,7 +1,9 @@
 package secretsmanager
 
 import (
+	"context"
 	"net/http"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -14,9 +16,11 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := h.secrets.CreateSecret(r.Context(), secretsdriver.SecretConfig{
-		Name:        req.Name,
-		Description: req.Description,
-		Tags:        tagsToMap(req.Tags),
+		Name:               req.Name,
+		Description:        req.Description,
+		Tags:               tagsToMap(req.Tags),
+		KMSKeyID:           req.KmsKeyID,
+		ClientRequestToken: req.ClientRequestToken,
 	}, secretValue(req.SecretString, req.SecretBinary))
 	if err != nil {
 		writeErr(w, err)
@@ -28,21 +32,46 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 	out := createSecretResponse{ARN: info.ResourceID, Name: info.Name}
 	if ver, verr := h.secrets.GetSecretValue(r.Context(), info.Name, ""); verr == nil {
 		out.VersionID = ver.VersionID
+
+		if isBinary(req.SecretString, req.SecretBinary) {
+			if st, ok := h.secrets.(secretStager); ok {
+				_ = st.MarkVersionBinary(r.Context(), info.Name, ver.VersionID)
+			}
+		}
 	}
 
 	wire.WriteJSON(w, out)
 }
 
 func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request) {
-	var req secretIDRequest
+	var req deleteSecretRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
 	name := resolveSecretID(req.SecretID)
 
-	// Secrets Manager echoes the deleted secret's ARN and name, so capture
-	// them before removal.
+	// The AWS provider honors RecoveryWindowInDays / ForceDeleteWithoutRecovery
+	// and validates them; drivers without the stager surface fall back to a
+	// plain soft delete.
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		h.deleteSecretFallback(w, r, name)
+		return
+	}
+
+	info, date, err := st.DeleteSecretWithOptions(r.Context(), name, req.RecoveryWindowInDays, req.ForceDeleteWithoutRecovery)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, deleteSecretResponse{ARN: info.ResourceID, Name: info.Name, DeletionDate: epochSeconds(date)})
+}
+
+// deleteSecretFallback handles DeleteSecret for drivers that don't implement the
+// AWS stager surface (Azure/GCP), using the portable soft delete.
+func (h *Handler) deleteSecretFallback(w http.ResponseWriter, r *http.Request, name string) {
 	info, err := h.secrets.GetSecret(r.Context(), name)
 	if err != nil {
 		writeErr(w, err)
@@ -63,28 +92,154 @@ func (h *Handler) describeSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := h.secrets.GetSecret(r.Context(), resolveSecretID(req.SecretID))
+	name := resolveSecretID(req.SecretID)
+
+	// DescribeSecret keeps working for a secret scheduled for deletion (returning
+	// a DeletedDate); only a missing secret is ResourceNotFoundException. Use the
+	// stager's metadata read, which does not error on the soft-deleted state.
+	st, isStager := h.secrets.(secretStager)
+
+	var (
+		info *secretsdriver.SecretInfo
+		err  error
+	)
+
+	if isStager {
+		info, err = st.SecretMetadata(r.Context(), name)
+	} else {
+		info, err = h.secrets.GetSecret(r.Context(), name)
+	}
+
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, toSecretListEntry(info))
+	out := toSecretListEntry(info)
+
+	if isStager {
+		if stages, serr := st.SecretVersionStages(r.Context(), name); serr == nil {
+			out.VersionIDsToStages = stages
+		}
+
+		if date, deleted := st.SecretDeletionDate(r.Context(), name); deleted {
+			out.DeletedDate = epochSeconds(date)
+		}
+	}
+
+	wire.WriteJSON(w, out)
+}
+
+func (h *Handler) restoreSecret(w http.ResponseWriter, r *http.Request) {
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	respondSecretRef(w, r, st.RestoreSecret)
+}
+
+// respondSecretRef decodes a SecretId request, runs op against the resolved
+// secret name, and writes the shared {ARN, Name} envelope. It is the common
+// shape of RestoreSecret and DeleteResourcePolicy.
+func respondSecretRef(
+	w http.ResponseWriter, r *http.Request,
+	op func(ctx context.Context, name string) (*secretsdriver.SecretInfo, error),
+) {
+	var req secretIDRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	info, err := op(r.Context(), resolveSecretID(req.SecretID))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, secretRefResponse{ARN: info.ResourceID, Name: info.Name})
+}
+
+func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req secretIDRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	name := resolveSecretID(req.SecretID)
+
+	info, err := h.secrets.GetSecret(r.Context(), name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	ver, err := st.RotateSecret(r.Context(), name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, rotateSecretResponse{ARN: info.ResourceID, Name: info.Name, VersionID: ver.VersionID})
+}
+
+func (*Handler) getRandomPassword(w http.ResponseWriter, r *http.Request) {
+	var req getRandomPasswordRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	pw, err := randomPassword(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, getRandomPasswordResponse{RandomPassword: pw})
 }
 
 func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
+	var req listSecretsRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	infos, err := h.secrets.ListSecrets(r.Context())
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	entries := make([]secretListEntryJSON, 0, len(infos))
+	// A stable order (by name) keeps the offset-based NextToken valid across pages.
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+
+	filtered := infos[:0:0]
+
 	for i := range infos {
-		entries = append(entries, toSecretListEntry(&infos[i]))
+		if matchesSecretFilters(&infos[i], req.Filters) {
+			filtered = append(filtered, infos[i])
+		}
 	}
 
-	wire.WriteJSON(w, listSecretsResponse{SecretList: entries})
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, len(filtered))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	entries := make([]secretListEntryJSON, 0, end-start)
+	for i := start; i < end; i++ {
+		entries = append(entries, toSecretListEntry(&filtered[i]))
+	}
+
+	wire.WriteJSON(w, listSecretsResponse{SecretList: entries, NextToken: next})
 }
 
 func (h *Handler) getSecretValue(w http.ResponseWriter, r *http.Request) {
@@ -101,20 +256,68 @@ func (h *Handler) getSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ver, err := h.secrets.GetSecretValue(r.Context(), name, req.VersionID)
+	ver, err := h.getVersion(r, name, req.VersionID, req.VersionStage)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, getSecretValueResponse{
+	out := getSecretValueResponse{
 		ARN:           info.ResourceID,
 		Name:          info.Name,
 		VersionID:     ver.VersionID,
-		SecretString:  string(ver.Value),
-		VersionStages: stagesFor(ver.Current),
+		VersionStages: stagesForVersion(h.versionStages(r, name), ver),
 		CreatedDate:   epochSeconds(ver.CreatedAt),
-	})
+	}
+
+	// Binary secrets round-trip through SecretBinary; string secrets through
+	// SecretString. AWS keeps the two fields mutually exclusive.
+	if ver.Binary {
+		out.SecretBinary = ver.Value
+	} else {
+		out.SecretString = string(ver.Value)
+	}
+
+	wire.WriteJSON(w, out)
+}
+
+// getVersion resolves a secret version by ID or stage, using the AWS staging
+// surface when available (so AWSPREVIOUS and binary flags resolve) and falling
+// back to the portable driver otherwise.
+func (h *Handler) getVersion(
+	r *http.Request, name, versionID, stage string,
+) (*secretsdriver.SecretVersion, error) {
+	if st, ok := h.secrets.(secretStager); ok {
+		return st.GetSecretValueStage(r.Context(), name, versionID, stage)
+	}
+
+	return h.secrets.GetSecretValue(r.Context(), name, versionID)
+}
+
+// versionStages returns the per-version staging labels for a secret when the
+// AWS staging surface is available, so callers report the exact AWSCURRENT/
+// AWSPREVIOUS assignment (and no label at all for deprecated versions). It
+// returns nil for providers without the staging surface, letting callers fall
+// back to the coarse current/previous heuristic.
+func (h *Handler) versionStages(r *http.Request, name string) map[string][]string {
+	if st, ok := h.secrets.(secretStager); ok {
+		if m, err := st.SecretVersionStages(r.Context(), name); err == nil {
+			return m
+		}
+	}
+
+	return nil
+}
+
+// stagesForVersion resolves the staging labels for one version, preferring the
+// exact per-version map when present and falling back to the current/previous
+// heuristic otherwise.
+func stagesForVersion(m map[string][]string, ver *secretsdriver.SecretVersion) []string {
+	if m != nil {
+		return m[ver.VersionID]
+	}
+
+	return stagesFor(ver.Current)
 }
 
 func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
@@ -131,22 +334,43 @@ func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ver, err := h.secrets.PutSecretValue(r.Context(), name, secretValue(req.SecretString, req.SecretBinary))
+	ver, err := h.putSecretVersion(r, name, &req)
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+
+	if isBinary(req.SecretString, req.SecretBinary) {
+		if st, ok := h.secrets.(secretStager); ok {
+			_ = st.MarkVersionBinary(r.Context(), name, ver.VersionID)
+		}
 	}
 
 	wire.WriteJSON(w, putSecretValueResponse{
 		ARN:           info.ResourceID,
 		Name:          info.Name,
 		VersionID:     ver.VersionID,
-		VersionStages: stagesFor(ver.Current),
+		VersionStages: stagesForVersion(h.versionStages(r, name), ver),
 	})
 }
 
+// putSecretVersion appends a new version. When the AWS staging surface is
+// available it honors ClientRequestToken (idempotency + version id) and
+// VersionStages; otherwise it falls back to the portable append-a-version path.
+func (h *Handler) putSecretVersion(
+	r *http.Request, name string, req *putSecretValueRequest,
+) (*secretsdriver.SecretVersion, error) {
+	value := secretValue(req.SecretString, req.SecretBinary)
+
+	if st, ok := h.secrets.(secretStager); ok {
+		return st.PutSecretValueStaged(r.Context(), name, value, req.ClientRequestToken, req.VersionStages)
+	}
+
+	return h.secrets.PutSecretValue(r.Context(), name, value)
+}
+
 func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
-	var req secretIDRequest
+	var req listSecretVersionIDsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -165,16 +389,45 @@ func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]versionJSON, 0, len(versions))
+	// Only the current version carries AWSCURRENT and only the immediately
+	// superseded one carries AWSPREVIOUS; older versions are deprecated (no
+	// staging labels) and are omitted unless IncludeDeprecated is set.
+	stageMap := h.versionStages(r, name)
+
+	all := make([]versionJSON, 0, len(versions))
+
 	for _, v := range versions {
-		out = append(out, versionJSON{
+		stages := stagesForVersion(stageMap, &v)
+		if len(stages) == 0 && !req.IncludeDeprecated {
+			continue
+		}
+
+		all = append(all, versionJSON{
 			VersionID:     v.VersionID,
-			VersionStages: stagesFor(v.Current),
+			VersionStages: stages,
 			CreatedDate:   epochSeconds(v.CreatedAt),
 		})
 	}
 
-	wire.WriteJSON(w, listSecretVersionIDsResponse{ARN: info.ResourceID, Name: info.Name, Versions: out})
+	// Newest first, VersionId as the tiebreaker so the offset NextToken stays
+	// stable across pages when two versions share a CreatedDate.
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedDate != all[j].CreatedDate {
+			return all[i].CreatedDate > all[j].CreatedDate
+		}
+
+		return all[i].VersionID < all[j].VersionID
+	})
+
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, len(all))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, listSecretVersionIDsResponse{
+		ARN: info.ResourceID, Name: info.Name, Versions: all[start:end], NextToken: next,
+	})
 }
 
 func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request) {
@@ -189,14 +442,39 @@ func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := mut.UpdateSecret(r.Context(), resolveSecretID(req.SecretID),
+	info, versionID, err := mut.UpdateSecret(r.Context(), resolveSecretID(req.SecretID),
 		req.Description, secretValue(req.SecretString, req.SecretBinary))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, updateSecretResponse{ARN: info.ResourceID, Name: info.Name})
+	wire.WriteJSON(w, updateSecretResponse{ARN: info.ResourceID, Name: info.Name, VersionID: versionID})
+}
+
+// updateSecretVersionStage moves a staging label between versions (the
+// finishSecret step of the AWS rotation contract). It requires the AWS staging
+// surface; providers without it report the operation as unsupported.
+func (h *Handler) updateSecretVersionStage(w http.ResponseWriter, r *http.Request) {
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req updateSecretVersionStageRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	info, err := st.UpdateSecretVersionStage(r.Context(), resolveSecretID(req.SecretID),
+		req.VersionStage, req.RemoveFromVersionID, req.MoveToVersionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, updateSecretVersionStageResponse{ARN: info.ResourceID, Name: info.Name})
 }
 
 func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {

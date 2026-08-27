@@ -2,6 +2,7 @@ package vertexai
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
@@ -63,8 +64,21 @@ func (m *Mock) DeployModel(_ context.Context, endpoint string, dm driver.Deploye
 		return nil, nil, errors.Newf(errors.NotFound, "endpoint %q not found", endpoint)
 	}
 
+	// The model being deployed must exist. Real Vertex AI rejects an unknown
+	// model resource with NOT_FOUND rather than deploying a dangling reference.
+	if dm.Model != "" {
+		base, _, _ := strings.Cut(dm.Model, "@")
+		if !m.models.Has(base) {
+			return nil, nil, errors.Newf(errors.NotFound, "model %q not found", dm.Model)
+		}
+	}
+
 	if dm.ID == "" {
 		dm.ID = m.newID()
+	}
+
+	if dm.CreateTime == "" {
+		dm.CreateTime = m.now()
 	}
 
 	// Deep-copy working set so the stored endpoint is never mutated in place.
@@ -138,13 +152,20 @@ func (m *Mock) Predict(_ context.Context, req driver.PredictRequest) (*driver.Pr
 		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", req.Endpoint)
 	}
 
+	// Prediction requires at least one deployed model. Real Vertex AI returns
+	// FAILED_PRECONDITION when the endpoint has none.
+	if len(ep.DeployedModels) == 0 {
+		return nil, errors.Newf(errors.FailedPrecondition,
+			"Endpoint %q does not have any deployed models", req.Endpoint)
+	}
+
 	m.emitMetric("prediction/count", float64(len(req.Instances)), map[string]string{"endpoint": req.Endpoint})
 
-	resp := &driver.PredictResponse{Predictions: append([]any{}, req.Instances...)}
-	if len(ep.DeployedModels) > 0 {
-		resp.DeployedModelID = ep.DeployedModels[0].ID
-		resp.Model = ep.DeployedModels[0].Model
-		resp.ModelDisplayName = ep.DeployedModels[0].DisplayName
+	resp := &driver.PredictResponse{
+		Predictions:      append([]any{}, req.Instances...),
+		DeployedModelID:  ep.DeployedModels[0].ID,
+		Model:            ep.DeployedModels[0].Model,
+		ModelDisplayName: ep.DeployedModels[0].DisplayName,
 	}
 
 	return resp, nil

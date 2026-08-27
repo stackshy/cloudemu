@@ -65,3 +65,87 @@ type getSessionTokenResponse struct {
 type getSessionTokenResult struct {
 	Credentials credentials `xml:"Credentials"`
 }
+
+// AssumeRoleWithWebIdentity -------------------------------------------------
+
+type assumeRoleWithWebIdentityResponse struct {
+	XMLName  xml.Name                        `xml:"AssumeRoleWithWebIdentityResponse"`
+	Xmlns    string                          `xml:"xmlns,attr"`
+	Result   assumeRoleWithWebIdentityResult `xml:"AssumeRoleWithWebIdentityResult"`
+	Metadata responseMetadata                `xml:"ResponseMetadata"`
+}
+
+type assumeRoleWithWebIdentityResult struct {
+	Credentials                 credentials     `xml:"Credentials"`
+	AssumedRoleUser             assumedRoleUser `xml:"AssumedRoleUser"`
+	SubjectFromWebIdentityToken string          `xml:"SubjectFromWebIdentityToken"`
+	Provider                    string          `xml:"Provider"`
+	Audience                    string          `xml:"Audience"`
+	PackedPolicySize            int             `xml:"PackedPolicySize"`
+}
+
+// AssumeRoleWithSAML --------------------------------------------------------
+
+type assumeRoleWithSAMLResponse struct {
+	XMLName  xml.Name                 `xml:"AssumeRoleWithSAMLResponse"`
+	Xmlns    string                   `xml:"xmlns,attr"`
+	Result   assumeRoleWithSAMLResult `xml:"AssumeRoleWithSAMLResult"`
+	Metadata responseMetadata         `xml:"ResponseMetadata"`
+}
+
+type assumeRoleWithSAMLResult struct {
+	Credentials      credentials     `xml:"Credentials"`
+	AssumedRoleUser  assumedRoleUser `xml:"AssumedRoleUser"`
+	Subject          string          `xml:"Subject"`
+	SubjectType      string          `xml:"SubjectType"`
+	Issuer           string          `xml:"Issuer"`
+	Audience         string          `xml:"Audience"`
+	NameQualifier    string          `xml:"NameQualifier"`
+	PackedPolicySize int             `xml:"PackedPolicySize"`
+}
+
+// GetFederationToken --------------------------------------------------------
+
+type getFederationTokenResponse struct {
+	XMLName  xml.Name                 `xml:"GetFederationTokenResponse"`
+	Xmlns    string                   `xml:"xmlns,attr"`
+	Result   getFederationTokenResult `xml:"GetFederationTokenResult"`
+	Metadata responseMetadata         `xml:"ResponseMetadata"`
+}
+
+type getFederationTokenResult struct {
+	Credentials      credentials   `xml:"Credentials"`
+	FederatedUser    federatedUser `xml:"FederatedUser"`
+	PackedPolicySize int           `xml:"PackedPolicySize"`
+}
+
+type federatedUser struct {
+	FederatedUserID string `xml:"FederatedUserId"`
+	Arn             string `xml:"Arn"`
+}
+
+// GetAccessKeyInfo ----------------------------------------------------------
+
+type getAccessKeyInfoResponse struct {
+	XMLName  xml.Name               `xml:"GetAccessKeyInfoResponse"`
+	Xmlns    string                 `xml:"xmlns,attr"`
+	Result   getAccessKeyInfoResult `xml:"GetAccessKeyInfoResult"`
+	Metadata responseMetadata       `xml:"ResponseMetadata"`
+}
+
+type getAccessKeyInfoResult struct {
+	Account string `xml:"Account"`
+}
+
+// DecodeAuthorizationMessage ------------------------------------------------
+
+type decodeAuthorizationMessageResponse struct {
+	XMLName  xml.Name                         `xml:"DecodeAuthorizationMessageResponse"`
+	Xmlns    string                           `xml:"xmlns,attr"`
+	Result   decodeAuthorizationMessageResult `xml:"DecodeAuthorizationMessageResult"`
+	Metadata responseMetadata                 `xml:"ResponseMetadata"`
+}
+
+type decodeAuthorizationMessageResult struct {
+	DecodedMessage string `xml:"DecodedMessage"`
+}

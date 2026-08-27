@@ -8,10 +8,11 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
-// docName is the field carrying the document id, addressable in a query as the
-// special __name__ path.
+// docName is the reserved item key carrying the document id, addressable in a
+// query as the special __name__ path. It aliases fieldID so the two stay in
+// lockstep with the handler's storage model.
 const (
-	docName    = "id"
+	docName    = fieldID
 	fieldName  = "__name__"
 	descending = "DESCENDING"
 )
@@ -27,6 +28,8 @@ type sortKey struct {
 // select projection.
 func shapeResults(items []map[string]any, q *structuredQuery) []map[string]any {
 	keys := effectiveSortKeys(q.OrderBy)
+
+	items = filterOrderByPresent(items, q.OrderBy)
 
 	applyOrderBy(items, keys)
 
@@ -66,6 +69,74 @@ func effectiveSortKeys(orderBy []orderByClause) []sortKey {
 }
 
 func isDescending(dir direction) bool { return strings.EqualFold(string(dir), descending) }
+
+// filterOrderByPresent drops documents that lack any explicit orderBy field.
+// Firestore only returns documents that have a value for every ordered field
+// (the implicit __name__ tiebreaker is always present and never filters), so a
+// document missing an ordered field is excluded rather than sorted first.
+func filterOrderByPresent(items []map[string]any, orderBy []orderByClause) []map[string]any {
+	if len(orderBy) == 0 {
+		return items
+	}
+
+	out := make([]map[string]any, 0, len(items))
+
+	for _, item := range items {
+		if orderByFieldsPresent(item, orderBy) {
+			out = append(out, item)
+		}
+	}
+
+	return out
+}
+
+// orderByFieldsPresent reports whether item has a value for every explicit
+// orderBy field path (the __name__ pseudo-field is always considered present).
+func orderByFieldsPresent(item map[string]any, orderBy []orderByClause) bool {
+	for _, ob := range orderBy {
+		if ob.Field.FieldPath == fieldName {
+			continue
+		}
+
+		if !fieldPresent(item, ob.Field.FieldPath) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// fieldPresent reports whether the dotted field path exists in item, walking
+// nested maps. Unlike resolveField it distinguishes an absent field from one
+// explicitly set to null: a present-but-null field is present.
+func fieldPresent(item map[string]any, path string) bool {
+	if path == fieldName {
+		return true
+	}
+
+	cur := item
+
+	segs := strings.Split(path, ".")
+	for i, seg := range segs {
+		v, ok := cur[seg]
+		if !ok {
+			return false
+		}
+
+		if i == len(segs)-1 {
+			return true
+		}
+
+		next, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+
+		cur = next
+	}
+
+	return true
+}
 
 func applyOrderBy(items []map[string]any, keys []sortKey) {
 	sort.SliceStable(items, func(i, j int) bool {
@@ -198,6 +269,14 @@ func selectDoc(item map[string]any, paths []*expr.PathOperand) map[string]any {
 
 	if id, ok := item[docName]; ok {
 		projected[docName] = id
+	}
+
+	// Carry the reserved commit-timestamp keys through the projection so a
+	// selected document still reports stable createTime/updateTime.
+	for _, k := range []string{fieldCreateTime, fieldUpdateTime} {
+		if v, ok := item[k]; ok {
+			projected[k] = v
+		}
 	}
 
 	return projected

@@ -1269,11 +1269,13 @@ func TestEC2AuthorizeEgress(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// A new SG already carries the default allow-all egress rule, so add a
+	// distinct rule (real AWS rejects re-adding the default as a duplicate).
 	_, err = client.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
 		GroupId: sg.GroupId,
 		IpPermissions: []ec2types.IpPermission{{
-			IpProtocol: aws.String("-1"), FromPort: aws.Int32(0), ToPort: aws.Int32(0),
-			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+			IpProtocol: aws.String("tcp"), FromPort: aws.Int32(443), ToPort: aws.Int32(443),
+			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("10.0.0.0/16")}},
 		}},
 	})
 	require.NoError(t, err)
@@ -1282,7 +1284,7 @@ func TestEC2AuthorizeEgress(t *testing.T) {
 		GroupIds: []string{aws.ToString(sg.GroupId)},
 	})
 	require.NoError(t, err)
-	assert.Len(t, desc.SecurityGroups[0].IpPermissionsEgress, 1)
+	assert.Len(t, desc.SecurityGroups[0].IpPermissionsEgress, 2)
 }
 
 func TestEC2DeleteSecurityGroup(t *testing.T) {
@@ -1594,6 +1596,132 @@ func TestEC2VolumeAttachDetach(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestEC2TerminateDetachesAttachedVolume reproduces the HIGH data-loss bug
+// (audit #1): terminating an instance must release its attached EBS volumes
+// back to `available` so they can be deleted, instead of stranding them
+// in-use against a dead instance forever.
+func TestEC2TerminateDetachesAttachedVolume(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-term-vol"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(20),
+	})
+	require.NoError(t, err)
+	volID := aws.ToString(vol.VolumeId)
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		InstanceIds: []string{instID},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volID}})
+	require.NoError(t, err)
+	require.Len(t, desc.Volumes, 1)
+	assert.Equal(t, ec2types.VolumeStateAvailable, desc.Volumes[0].State,
+		"terminating the instance must detach the volume back to available")
+	assert.Empty(t, desc.Volumes[0].Attachments, "detached volume must report no attachments")
+
+	// The freed volume must now be deletable (was stuck VolumeInUse forever).
+	_, err = client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volID)})
+	require.NoError(t, err, "detached volume must be deletable after terminate")
+}
+
+// TestEC2AttachVolumeToTerminatedInstanceRejected reproduces audit #2: a volume
+// can only attach to a running or stopped instance; attaching to a terminated
+// instance is IncorrectInstanceState, not a silent success.
+func TestEC2AttachVolumeToTerminatedInstanceRejected(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-term"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instID}})
+	require.NoError(t, err)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(10),
+	})
+	require.NoError(t, err)
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId: vol.VolumeId, InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "IncorrectInstanceState", apiErr.ErrorCode())
+}
+
+// TestEC2DetachVolumeWrongInstanceRejected reproduces audit #3: detaching a
+// volume while naming an instance it is not attached to must fail with
+// InvalidAttachment.NotFound rather than silently detaching.
+func TestEC2DetachVolumeWrongInstanceRejected(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-detach"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(10),
+	})
+	require.NoError(t, err)
+	volID := aws.ToString(vol.VolumeId)
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String("i-someotherinstance"),
+	})
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "InvalidAttachment.NotFound", apiErr.ErrorCode())
+
+	// The mismatched detach must not have altered the real attachment.
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volID}})
+	require.NoError(t, err)
+	require.Len(t, desc.Volumes, 1)
+	assert.Equal(t, ec2types.VolumeStateInUse, desc.Volumes[0].State)
+	require.Len(t, desc.Volumes[0].Attachments, 1)
+	assert.Equal(t, instID, aws.ToString(desc.Volumes[0].Attachments[0].InstanceId))
+
+	// A correctly-targeted detach still succeeds and echoes the real attachment.
+	detach, err := client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId: aws.String(volID), InstanceId: aws.String(instID), Device: aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, instID, aws.ToString(detach.InstanceId))
+	assert.Equal(t, "/dev/sdf", aws.ToString(detach.Device))
+}
+
 func TestEC2DeleteVolumeUnknownReturnsError(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()
@@ -1678,11 +1806,12 @@ func TestASGLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	_, err = asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
-		AutoScalingGroupName: aws.String("web-asg"),
-		MinSize:              aws.Int32(1),
-		MaxSize:              aws.Int32(5),
-		DesiredCapacity:      aws.Int32(2),
-		AvailabilityZones:    []string{"us-east-1a", "us-east-1b"},
+		AutoScalingGroupName:    aws.String("web-asg"),
+		MinSize:                 aws.Int32(1),
+		MaxSize:                 aws.Int32(5),
+		DesiredCapacity:         aws.Int32(2),
+		AvailabilityZones:       []string{"us-east-1a", "us-east-1b"},
+		LaunchConfigurationName: aws.String("web-lc"),
 	})
 	require.NoError(t, err)
 
@@ -1732,8 +1861,9 @@ func TestASGScalingPolicy(t *testing.T) {
 	_, err := asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
 		AutoScalingGroupName: aws.String("scale-asg"),
 		MinSize:              aws.Int32(1), MaxSize: aws.Int32(3),
-		DesiredCapacity:   aws.Int32(1),
-		AvailabilityZones: []string{"us-east-1a"},
+		DesiredCapacity:         aws.Int32(1),
+		AvailabilityZones:       []string{"us-east-1a"},
+		LaunchConfigurationName: aws.String("scale-lc"),
 	})
 	require.NoError(t, err)
 
@@ -1914,7 +2044,8 @@ func TestNatGatewayLifecycle(t *testing.T) {
 	require.NoError(t, err)
 
 	nat, err := client.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
-		SubnetId: sub.Subnet.SubnetId,
+		SubnetId:         sub.Subnet.SubnetId,
+		ConnectivityType: ec2types.ConnectivityTypePrivate,
 	})
 	require.NoError(t, err)
 	natID := aws.ToString(nat.NatGateway.NatGatewayId)
@@ -2079,7 +2210,7 @@ func TestCloudWatchMetricsFlow(t *testing.T) {
 		Statistics: []cwtypes.Statistic{cwtypes.StatisticAverage},
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, out.Datapoints, "CPUUtilization should have datapoints after RunInstances")
+	require.NotEmpty(t, out.Datapoints, "CPUUtilization should have datapoints after RunInstances")
 	assert.Greater(t, aws.ToFloat64(out.Datapoints[0].Average), 0.0)
 }
 

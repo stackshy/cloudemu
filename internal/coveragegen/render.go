@@ -93,8 +93,9 @@ func renderMatrix(services []*Service) string {
 	fmt.Fprintln(&b, "Every service cloudemu emulates and the native name each provider exposes it under.")
 	fmt.Fprintln(&b, "Each cell links to that provider's operation-level page; per-provider indexes are in")
 	fmt.Fprintln(&b, "[aws/](./aws/), [azure/](./azure/), [gcp/](./gcp/), and [oci/](./oci/). This page is")
-	fmt.Fprintln(&b, "generated from the driver interfaces in `services/*/driver`, so it cannot promise a")
-	fmt.Fprintln(&b, "capability the code does not implement. Machine-readable: [`coverage.json`](./coverage.json).")
+	fmt.Fprintln(&b, "generated from the driver interfaces in `services/*/driver` plus the provider-native")
+	fmt.Fprintln(&b, "wire handlers each provider's server registers, so it cannot promise a capability the")
+	fmt.Fprintln(&b, "code does not implement. Machine-readable: [`coverage.json`](./coverage.json).")
 	fmt.Fprintln(&b)
 
 	header := append([]string{"Service"}, providerTitles()...)
@@ -164,9 +165,15 @@ func renderProviderIndex(prov string, owned []*Service) string {
 
 	for _, svc := range owned {
 		native := svc.Providers[prov]
+
+		portable := "`" + svc.Name + "`"
+		if svc.Interface == providerNativeInterface {
+			portable = "— (provider-native)"
+		}
+
 		fmt.Fprintln(&b, tableRow([]string{
 			fmt.Sprintf("[%s](./%s.md)", native, pageBase(native)),
-			"`" + svc.Name + "`",
+			portable,
 			fmt.Sprintf("%d", len(svc.Operations)),
 		}))
 	}
@@ -179,8 +186,15 @@ func renderProviderPage(outDir, prov, native string, svc *Service) string {
 
 	fmt.Fprintln(&b, genNotice)
 	fmt.Fprintf(&b, "# %s\n\n", native)
-	fmt.Fprintf(&b, "%s's %s service · portable interface `driver.%s` · [%s index](./README.md)\n\n",
-		providerTitle(prov), "`"+svc.Name+"`", svc.Interface, providerTitle(prov))
+
+	if svc.Interface == providerNativeInterface {
+		fmt.Fprintf(&b, "provider-native %s wire service (%s-only) · no portable driver · [%s index](./README.md)\n\n",
+			"`"+svc.Name+"`", providerTitle(prov), providerTitle(prov))
+	} else {
+		fmt.Fprintf(&b, "%s's %s service · portable interface `driver.%s` · [%s index](./README.md)\n\n",
+			providerTitle(prov), "`"+svc.Name+"`", svc.Interface, providerTitle(prov))
+	}
+
 	fmt.Fprintf(&b, "## Operations (%d)\n\n", len(svc.Operations))
 	renderOpTable(&b, svc.Operations)
 

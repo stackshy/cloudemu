@@ -298,3 +298,59 @@ func TestCompositeEmptyIsSafe(t *testing.T) {
 		t.Errorf("empty composite should produce zero effect, got %+v", eff)
 	}
 }
+
+// TestServiceOutageFakeClockActivatesAndRecovers proves the documented
+// deterministic-chaos path: a time-bounded scenario applied against a FakeClock
+// activates at the fake "now", stays active as the clock advances inside the
+// window, and auto-recovers once the clock advances past the window. Before the
+// window was bound to the engine clock at Apply time, the scenario's start was
+// stamped from wall-clock and this scenario never activated under a FakeClock.
+func TestServiceOutageFakeClockActivatesAndRecovers(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	e := chaos.New(fc)
+	defer e.Stop()
+
+	e.Apply(chaos.ServiceOutage("storage", 5*time.Minute))
+
+	// Active immediately at fake now.
+	if eff := e.Check("storage", "PutObject"); eff.Error == nil {
+		t.Fatal("expected outage to be active at fake now")
+	}
+
+	// Still active while advancing within the window.
+	fc.Advance(4 * time.Minute)
+
+	if eff := e.Check("storage", "PutObject"); eff.Error == nil {
+		t.Fatal("expected outage to remain active inside the window")
+	}
+
+	// Auto-recovers after advancing past the window.
+	fc.Advance(2 * time.Minute)
+
+	if eff := e.Check("storage", "PutObject"); eff.Error != nil {
+		t.Errorf("expected auto-recovery past the window, got %v", eff.Error)
+	}
+}
+
+// TestCompositeFakeClockBindsChildren ensures a composite anchors its children
+// to the engine clock too, so nested time-bounded scenarios activate under a
+// FakeClock.
+func TestCompositeFakeClockBindsChildren(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	e := chaos.New(fc)
+	defer e.Stop()
+
+	e.Apply(chaos.Composite(
+		chaos.LatencySpike("storage", 10*time.Millisecond, 5*time.Minute),
+	))
+
+	if eff := e.Check("storage", "Op"); eff.Latency != 10*time.Millisecond {
+		t.Fatalf("expected composite child active under FakeClock, got %v", eff.Latency)
+	}
+
+	fc.Advance(6 * time.Minute)
+
+	if eff := e.Check("storage", "Op"); eff.Latency != 0 {
+		t.Errorf("expected composite child to expire past the window, got %v", eff.Latency)
+	}
+}

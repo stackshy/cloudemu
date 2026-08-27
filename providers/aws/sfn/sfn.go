@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -29,6 +30,8 @@ const (
 	arnScheme = "arn"
 	// statesService is the SFN service segment of a states ARN.
 	statesService = "states"
+	// iamService is the IAM service segment of a role ARN.
+	iamService = "iam"
 	// emptyJSON is the default output/input payload when none is supplied.
 	emptyJSON = "{}"
 )
@@ -56,7 +59,11 @@ type smData struct {
 // execData is an execution plus its own lock.
 type execData struct {
 	exec driver.Execution
-	mu   sync.RWMutex
+	// settle overlays a RUNNING window over the stored (terminal) status on the
+	// Describe surface under AsyncSettle; zero-value reports the stored status
+	// immediately. A running execution has no stop date or output yet.
+	settle settle.Window
+	mu     sync.RWMutex
 }
 
 // actData is an activity plus its own lock.
@@ -153,6 +160,20 @@ func validActivityARN(arn string) bool {
 // validMapRunARN reports whether arn has the SFN Map Run ARN shape.
 func validMapRunARN(arn string) bool {
 	return statesResourcePrefix(arn, "mapRun:")
+}
+
+// validRoleARN reports whether arn has the IAM role ARN shape
+// (arn:<partition>:iam::<account>:role/<name>). Step Functions requires a
+// valid IAM role ARN on CreateStateMachine and rejects anything else as
+// InvalidArn.
+func validRoleARN(arn string) bool {
+	seg := strings.SplitN(arn, ":", arnParts)
+	if len(seg) != arnParts {
+		return false
+	}
+
+	return seg[0] == arnScheme && seg[2] == iamService &&
+		strings.HasPrefix(seg[5], "role/") && len(seg[5]) > len("role/")
 }
 
 func copyTags(in map[string]string) map[string]string {

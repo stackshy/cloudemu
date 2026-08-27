@@ -29,6 +29,14 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 		ResourceLabels:    body.Cluster.ResourceLabels,
 	}
 
+	if nc := body.Cluster.NodeConfig; nc != nil {
+		in.NodeConfig = &gke.NodeConfigSpec{
+			MachineType: nc.MachineType,
+			DiskSizeGB:  nc.DiskSizeGb,
+			OauthScopes: nc.OauthScopes,
+		}
+	}
+
 	for i := range body.Cluster.NodePools {
 		in.NodePools = append(in.NodePools, nodePoolSpecFromWire(&body.Cluster.NodePools[i]))
 	}
@@ -52,12 +60,20 @@ func nodePoolSpecFromWire(np *gkeNodePool) gke.NodePoolSpec {
 	if np.Config != nil {
 		spec.MachineType = np.Config.MachineType
 		spec.DiskSizeGB = np.Config.DiskSizeGb
+		spec.OauthScopes = np.Config.OauthScopes
 	}
 
 	if np.Autoscaling != nil {
 		spec.AutoscalingOn = np.Autoscaling.Enabled
 		spec.AutoscalingMin = np.Autoscaling.MinNodeCount
 		spec.AutoscalingMax = np.Autoscaling.MaxNodeCount
+	}
+
+	if np.Management != nil {
+		spec.Management = &gke.NodePoolManagement{
+			AutoUpgrade: np.Management.AutoUpgrade,
+			AutoRepair:  np.Management.AutoRepair,
+		}
 	}
 
 	return spec
@@ -103,6 +119,7 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 
 	if body.Update != nil {
 		in.NodeVersion = body.Update.DesiredNodeVersion
+		in.NodePoolID = body.Update.DesiredNodePoolID
 		in.MasterVersion = body.Update.DesiredMasterVersion
 		in.LoggingService = body.Update.DesiredLoggingService
 		in.MonitoringService = body.Update.DesiredMonitoringService
@@ -272,7 +289,7 @@ func (h *Handler) setResourceLabels(w http.ResponseWriter, r *http.Request, p *g
 		return
 	}
 
-	op, err := h.gke.SetResourceLabels(r.Context(), p.location, p.name, body.ResourceLabels)
+	op, err := h.gke.SetResourceLabels(r.Context(), p.location, p.name, body.ResourceLabels, body.LabelFingerprint)
 	if err != nil {
 		writeErr(w, err)
 		return

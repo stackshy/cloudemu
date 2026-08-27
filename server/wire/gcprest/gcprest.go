@@ -18,10 +18,74 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
+
+// OperationRegistry records the compute#operation names the compute-family
+// handlers (compute, networks/vpc, load balancing) mint, so a subsequent
+// zone/region/global Operations.get resolves a real operation and 404s a name
+// that was never issued — matching real GCP, instead of fabricating DONE for any
+// name. A nil *OperationRegistry records nothing and reports every name as
+// present, preserving the legacy allow-all behavior for a handler constructed
+// without a shared registry (e.g. a package-level test).
+type OperationRegistry struct {
+	mu   sync.RWMutex
+	seen map[string]struct{}
+}
+
+// NewOperationRegistry returns an empty operation registry.
+func NewOperationRegistry() *OperationRegistry {
+	return &OperationRegistry{seen: map[string]struct{}{}}
+}
+
+// opKey scopes an operation name by the URL scope it is polled under, so a
+// zonal, regional, and global operation of the same name stay distinct.
+func opKey(scope, scopeName, name string) string {
+	return scope + "\x00" + scopeName + "\x00" + name
+}
+
+// Record notes that operation name exists at scope/scopeName. Nil-safe: a nil
+// registry is a no-op.
+func (reg *OperationRegistry) Record(scope, scopeName, name string) {
+	if reg == nil {
+		return
+	}
+
+	reg.mu.Lock()
+	reg.seen[opKey(scope, scopeName, name)] = struct{}{}
+	reg.mu.Unlock()
+}
+
+// Has reports whether operation name was recorded at scope/scopeName. A nil
+// registry reports true (not enforcing), so a handler without a shared registry
+// keeps answering every operation poll as it did before.
+func (reg *OperationRegistry) Has(scope, scopeName, name string) bool {
+	if reg == nil {
+		return true
+	}
+
+	reg.mu.RLock()
+	_, ok := reg.seen[opKey(scope, scopeName, name)]
+	reg.mu.RUnlock()
+
+	return ok
+}
+
+// RecordDone builds a DONE operation for a mutation (via NewDoneOperation) and
+// records its name so a later poll resolves it. It replaces a bare
+// NewDoneOperation call at a handler's mint sites; a nil registry still returns
+// the operation but records nothing.
+func (reg *OperationRegistry) RecordDone(
+	host, project, scope, scopeName, resourceType, name, opType string,
+) Operation {
+	op := NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType)
+	reg.Record(scope, scopeName, op.Name)
+
+	return op
+}
 
 // ContentType is the JSON content type used by all REST responses.
 const ContentType = "application/json"
@@ -35,9 +99,10 @@ const BasePrefix = "/compute/v1/"
 
 // Scope values used in GCP REST URL paths.
 const (
-	ScopeZones   = "zones"
-	ScopeRegions = "regions"
-	ScopeGlobal  = "global"
+	ScopeZones      = "zones"
+	ScopeRegions    = "regions"
+	ScopeGlobal     = "global"
+	ScopeAggregated = "aggregated"
 )
 
 // scopePairLen is the number of path segments consumed by a scope/{name} pair
@@ -99,6 +164,10 @@ func parseScope(parts []string, i int, rp *ResourcePath) (int, bool) {
 		return i + scopePairLen, true
 	case ScopeGlobal:
 		rp.Scope = ScopeGlobal
+
+		return i + 1, true
+	case ScopeAggregated:
+		rp.Scope = ScopeAggregated
 
 		return i + 1, true
 	default:
@@ -217,6 +286,7 @@ type Operation struct {
 	EndTime       string `json:"endTime"`
 	SelfLink      string `json:"selfLink"`
 	Zone          string `json:"zone,omitempty"`
+	Region        string `json:"region,omitempty"`
 }
 
 // NewDoneOperation builds an Operation in DONE state for opType targeting the
@@ -247,5 +317,58 @@ func NewDoneOperation(host, project, scope, scopeName, resourceType, name, opTyp
 		op.Zone = strings.TrimSuffix(host, "/") + "/compute/v1/projects/" + project + "/zones/" + scopeName
 	}
 
+	if scope == ScopeRegions {
+		op.Region = strings.TrimSuffix(host, "/") + "/compute/v1/projects/" + project + "/regions/" + scopeName
+	}
+
 	return op
+}
+
+// DefaultListMax is GCP's default list page size when maxResults is absent.
+const DefaultListMax = 500
+
+// NameMatches reports whether name satisfies a GCP list filter. Only the common
+// single-clause "name (=|!=|eq|ne) value" form is supported; any other filter
+// (or none) matches everything, matching real GCP's lenient behavior for the
+// filter shapes the emulator does not model.
+func NameMatches(filter, name string) bool {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return true
+	}
+
+	for _, cand := range []string{"!=", "=", " ne ", " eq "} {
+		idx := strings.Index(filter, cand)
+		if idx < 0 {
+			continue
+		}
+
+		field := strings.TrimSpace(filter[:idx])
+		if field != "name" {
+			return true
+		}
+
+		value := strings.Trim(strings.TrimSpace(filter[idx+len(cand):]), `"'`)
+		op := strings.TrimSpace(cand)
+		negate := op == "!=" || op == "ne"
+
+		return (name == value) != negate
+	}
+
+	return true
+}
+
+// MaxResults parses the maxResults query param, defaulting to DefaultListMax
+// when absent, non-numeric, or non-positive.
+func MaxResults(raw string) int {
+	if raw == "" {
+		return DefaultListMax
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return DefaultListMax
+	}
+
+	return n
 }

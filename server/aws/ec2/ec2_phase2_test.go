@@ -16,7 +16,7 @@ import (
 func newFullHandler() *Handler {
 	opts := config.NewOptions()
 
-	return New(awsec2.New(opts), awsvpc.New(opts))
+	return New(awsec2.New(opts), awsvpc.New(opts), opts.AccountID)
 }
 
 func TestRouteVPCDispatchesAllActions(t *testing.T) {
@@ -80,12 +80,17 @@ func TestRouteVPCDispatchesAllActions(t *testing.T) {
 		t.Errorf("AuthorizeSecurityGroupIngress = %d: %s", rr.Code, rr.Body.String())
 	}
 
-	// Egress, Revoke variants use the same parser path.
+	// Egress, Revoke variants use the same parser path. Use a distinct rule
+	// (not protocol -1 to 0.0.0.0/0, which the SG already carries as its
+	// seeded default egress rule) so this exercises the parser rather than
+	// tripping InvalidPermission.Duplicate.
 	rr = do(t, h, http.MethodPost, "/", url.Values{
 		"Action":                            {"AuthorizeSecurityGroupEgress"},
 		"GroupId":                           {sgID},
-		"IpPermissions.1.IpProtocol":        {"-1"},
-		"IpPermissions.1.IpRanges.1.CidrIp": {"0.0.0.0/0"},
+		"IpPermissions.1.IpProtocol":        {"tcp"},
+		"IpPermissions.1.FromPort":          {"443"},
+		"IpPermissions.1.ToPort":            {"443"},
+		"IpPermissions.1.IpRanges.1.CidrIp": {"10.0.0.0/16"},
 	})
 	if rr.Code != http.StatusOK {
 		t.Errorf("AuthorizeSecurityGroupEgress = %d", rr.Code)
@@ -349,15 +354,16 @@ func TestResolveRouteTarget(t *testing.T) {
 }
 
 func TestToVpcXMLStateDefaults(t *testing.T) {
+	h := newFullHandler()
 	in := &netdriver.VPCInfo{ID: "vpc-x", CIDRBlock: "10.0.0.0/16"} // no State
 
-	got := toVpcXML(in)
+	got := h.toVpcXML(in)
 	if got.State != "available" {
 		t.Errorf("default state should be 'available', got %q", got.State)
 	}
 
 	in.State = "pending"
-	got = toVpcXML(in)
+	got = h.toVpcXML(in)
 
 	if got.State != "pending" {
 		t.Errorf("explicit state preserved: %q", got.State)
@@ -365,33 +371,41 @@ func TestToVpcXMLStateDefaults(t *testing.T) {
 }
 
 func TestToSubnetXMLStateDefaults(t *testing.T) {
-	in := &netdriver.SubnetInfo{ID: "subnet-x", VPCID: "vpc-x"}
+	const usableIPs = 251
 
-	got := toSubnetXML(in)
+	h := newFullHandler()
+	in := &netdriver.SubnetInfo{ID: "subnet-x", VPCID: "vpc-x", AvailableIPAddressCount: usableIPs}
+
+	got := h.toSubnetXML(in, "us-east-1")
 	if got.State != "available" {
 		t.Errorf("default state: %q", got.State)
 	}
 
-	if got.AvailableIPCount != subnetAvailableIPs {
-		t.Errorf("AvailableIPCount = %d, want %d",
-			got.AvailableIPCount, subnetAvailableIPs)
+	// toSubnetXML reflects the provider-computed usable-address count verbatim;
+	// the provider derives it from the CIDR minus reserved and consumed addresses.
+	if got.AvailableIPCount != usableIPs {
+		t.Errorf("AvailableIPCount = %d, want %d", got.AvailableIPCount, usableIPs)
 	}
 }
 
 func TestToInternetGatewayXMLAttachment(t *testing.T) {
+	h := newFullHandler()
+
 	detached := &netdriver.InternetGateway{ID: "igw-1"}
-	if got := toInternetGatewayXML(detached); len(got.Attachments) != 0 {
+	if got := h.toInternetGatewayXML(detached); len(got.Attachments) != 0 {
 		t.Errorf("detached IGW should have 0 attachments, got %d", len(got.Attachments))
 	}
 
 	attached := &netdriver.InternetGateway{ID: "igw-2", VpcID: "vpc-1"}
-	got := toInternetGatewayXML(attached)
+	got := h.toInternetGatewayXML(attached)
 
 	if len(got.Attachments) != 1 {
 		t.Fatalf("attached IGW should have 1 attachment, got %d", len(got.Attachments))
 	}
 
-	if got.Attachments[0].VpcID != "vpc-1" || got.Attachments[0].State != "attached" {
+	// An attached internet gateway reports attachment state "available", the
+	// wire value AWS uses (not the driver's internal "attached" marker).
+	if got.Attachments[0].VpcID != "vpc-1" || got.Attachments[0].State != "available" {
 		t.Errorf("attachment wrong: %+v", got.Attachments[0])
 	}
 }
@@ -406,7 +420,7 @@ func TestToRouteTableXMLTargetMapping(t *testing.T) {
 		},
 	}
 
-	got := toRouteTableXML(rt)
+	got := newFullHandler().toRouteTableXML(rt)
 	if len(got.Routes) != 3 {
 		t.Fatalf("len=%d want 3", len(got.Routes))
 	}
@@ -462,7 +476,7 @@ func TestToIPPermissionXMLsGroupsByTuple(t *testing.T) {
 		{Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0"},
 	}
 
-	got := toIPPermissionXMLs(rules)
+	got := newFullHandler().toIPPermissionXMLs(rules)
 	if len(got) != 2 {
 		t.Fatalf("len=%d want 2 tuples", len(got))
 	}
@@ -474,7 +488,7 @@ func TestToIPPermissionXMLsGroupsByTuple(t *testing.T) {
 }
 
 func TestToIPPermissionXMLsEmpty(t *testing.T) {
-	if got := toIPPermissionXMLs(nil); got != nil {
+	if got := newFullHandler().toIPPermissionXMLs(nil); got != nil {
 		t.Errorf("empty rules should give nil, got %v", got)
 	}
 }
@@ -527,7 +541,8 @@ func TestCreateAndDeleteTags(t *testing.T) {
 		t.Fatalf("DeleteTags result wrong: %s", desc)
 	}
 
-	// Unknown ID -> InvalidID.NotFound.
+	// Unknown VPC ID -> generic InvalidID.NotFound (instance ids get the
+	// resource-specific InvalidInstanceID.NotFound; see tag_error_test.go).
 	bad := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"CreateTags"}, "ResourceId.1": {"vpc-deadbeef"},
 		"Tag.1.Key": {"a"}, "Tag.1.Value": {"b"},
@@ -568,7 +583,9 @@ func TestCreateNetworkInterfaceAndInstanceStatus(t *testing.T) {
 	mon := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"MonitorInstances"}, "InstanceId.1": {instID},
 	})
-	if mon.Code != http.StatusOK || !strings.Contains(mon.Body.String(), "<state>enabled</state>") {
+	// MonitorInstances echoes the transitional "pending" state (real EC2), not
+	// the settled "enabled".
+	if mon.Code != http.StatusOK || !strings.Contains(mon.Body.String(), "<state>pending</state>") {
 		t.Fatalf("MonitorInstances: code=%d body=%s", mon.Code, mon.Body.String())
 	}
 

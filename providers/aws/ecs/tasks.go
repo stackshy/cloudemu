@@ -206,7 +206,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		Group:             spec.group,
 		StartedBy:         spec.startedBy,
 		CreatedAt:         m.now(),
-		Containers:        containersFor(spec.td),
+		Containers:        m.containersFor(spec.td),
 		Tags:              copyTags(spec.tags),
 	}
 
@@ -241,10 +241,16 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 	return &clone, nil
 }
 
-// markContainers sets every container's last status.
+// markContainers sets every container's last status. A container marked
+// PENDING (EC2 capacity shortfall) never actually reserved a host port, so its
+// speculative network bindings are cleared rather than reporting a phantom one.
 func markContainers(task *driver.Task, status string) {
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = status
+
+		if status == statusPending {
+			task.Containers[i].NetworkBindings = nil
+		}
 	}
 }
 
@@ -319,12 +325,63 @@ func (m *Mock) placeOnInstance(
 	return failure
 }
 
-func containersFor(td *driver.TaskDefinition) []driver.Container {
+// containersFor builds the RUNNING containers for a newly launched task,
+// resolving each container's bridge/host network bindings (awsvpc/Fargate
+// tasks carry none — traffic reaches the container directly through its ENI).
+func (m *Mock) containersFor(td *driver.TaskDefinition) []driver.Container {
 	out := make([]driver.Container, 0, len(td.ContainerDefinitions))
 
 	for i := range td.ContainerDefinitions {
 		cd := &td.ContainerDefinitions[i]
-		out = append(out, driver.Container{Name: cd.Name, Image: cd.Image, LastStatus: statusRunning})
+		out = append(out, driver.Container{
+			Name:            cd.Name,
+			Image:           cd.Image,
+			LastStatus:      statusRunning,
+			NetworkBindings: m.networkBindingsFor(td.NetworkMode, cd.PortMappings),
+		})
+	}
+
+	return out
+}
+
+// defaultProtocol is the ECS network-binding protocol assumed when a port
+// mapping leaves Protocol unset, matching the AWS default.
+const defaultProtocol = "tcp"
+
+// networkBindingsFor resolves the host IP/port ECS binds for each container
+// port mapping under the task's network mode. Host mode always binds the host
+// port to the same value as the container port; bridge mode uses the caller's
+// explicit hostPort or, when left 0, a dynamically assigned one. awsvpc mode
+// (Fargate or EC2 trunking) carries no bindings — the container's ENI IP is
+// addressed directly.
+func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapping) []driver.NetworkBinding {
+	if networkMode == networkModeAwsvpc || len(mappings) == 0 {
+		return nil
+	}
+
+	out := make([]driver.NetworkBinding, 0, len(mappings))
+
+	for _, pm := range mappings {
+		hostPort := pm.HostPort
+
+		switch {
+		case networkMode == networkModeHost:
+			hostPort = pm.ContainerPort
+		case hostPort == 0:
+			hostPort = m.nextEphemeralPort()
+		}
+
+		protocol := pm.Protocol
+		if protocol == "" {
+			protocol = defaultProtocol
+		}
+
+		out = append(out, driver.NetworkBinding{
+			BindIP:        "0.0.0.0",
+			ContainerPort: pm.ContainerPort,
+			HostPort:      hostPort,
+			Protocol:      protocol,
+		})
 	}
 
 	return out
@@ -334,12 +391,22 @@ func containersFor(td *driver.TaskDefinition) []driver.Container {
 // reserved back to the instance. Releasing is guarded by placeMu (shared with
 // placement) and skipped for an already-stopped task, so a repeated StopTask can
 // never double-credit an instance.
-func (m *Mock) StopTask(ctx context.Context, _, task, reason string) (*driver.Task, error) {
+func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*driver.Task, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
+	// The cluster scopes the task lookup: a missing cluster is
+	// ClusterNotFoundException, matching real ECS (StopTask lists
+	// ClusterNotFoundException + InvalidParameterException).
+	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
+
+	// A task that resolves but lives in a different cluster is not visible to this
+	// StopTask, same as a task that does not exist at all: InvalidParameterException.
 	t, ok := m.resolveTask(task)
-	if !ok {
+	if !ok || clusterNameFromARN(t.ClusterARN) != want {
 		return nil, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
 	}
 
@@ -415,13 +482,23 @@ func (m *Mock) ListTasks(_ context.Context, cluster, family, desiredStatus, serv
 	return out, nil
 }
 
-// DescribeTasks resolves tasks by id or ARN; unresolved ids become failures.
-func (m *Mock) DescribeTasks(_ context.Context, _ string, ids []string) ([]driver.Task, []driver.Failure, error) {
+// DescribeTasks resolves tasks by id or ARN; unresolved ids become failures. A
+// nonexistent cluster is rejected up front with ClusterNotFoundException,
+// matching real ECS (the implicit "default" cluster always resolves).
+// DescribeTasks is cluster-scoped: a task that resolves but belongs to a
+// different cluster than the requested one is reported as a MISSING failure,
+// never as a found task, matching real ECS and the sibling StopTask/ListTasks.
+func (m *Mock) DescribeTasks(_ context.Context, cluster string, ids []string) ([]driver.Task, []driver.Failure, error) {
+	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
+
 	found := make([]driver.Task, 0, len(ids))
 	failures := make([]driver.Failure, 0, len(ids))
 
 	for _, id := range ids {
-		if t, ok := m.resolveTask(id); ok {
+		if t, ok := m.resolveTask(id); ok && clusterNameFromARN(t.ClusterARN) == want {
 			found = append(found, cloneTask(t))
 			continue
 		}

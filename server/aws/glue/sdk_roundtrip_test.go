@@ -171,6 +171,58 @@ func TestSDKJobRunLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKGetJobAppliesDefaults verifies GetJob reports GlueVersion and Timeout
+// defaults when the job was created without them, matching real AWS Glue.
+func TestSDKGetJobAppliesDefaults(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateJob(ctx, &awsglue.CreateJobInput{
+		Name: aws.String("defaults-job"), Role: aws.String("arn:aws:iam::123456789012:role/r"),
+		Command: &gluetypes.JobCommand{Name: aws.String("glueetl")},
+	}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	got, err := c.GetJob(ctx, &awsglue.GetJobInput{JobName: aws.String("defaults-job")})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	if aws.ToString(got.Job.GlueVersion) == "" {
+		t.Fatal("GlueVersion is empty, want a default")
+	}
+
+	if aws.ToInt32(got.Job.Timeout) != 2880 {
+		t.Fatalf("Timeout = %d, want default 2880", aws.ToInt32(got.Job.Timeout))
+	}
+}
+
+// TestSDKGetJobHonoursExplicitValues verifies caller-supplied GlueVersion and
+// Timeout are not overwritten by defaults.
+func TestSDKGetJobHonoursExplicitValues(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateJob(ctx, &awsglue.CreateJobInput{
+		Name: aws.String("explicit-job"), Role: aws.String("arn:aws:iam::123456789012:role/r"),
+		Command:     &gluetypes.JobCommand{Name: aws.String("glueetl")},
+		GlueVersion: aws.String("4.0"), Timeout: aws.Int32(60),
+	}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	got, err := c.GetJob(ctx, &awsglue.GetJobInput{JobName: aws.String("explicit-job")})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	if aws.ToString(got.Job.GlueVersion) != "4.0" || aws.ToInt32(got.Job.Timeout) != 60 {
+		t.Fatalf("GlueVersion=%q Timeout=%d, want 4.0/60",
+			aws.ToString(got.Job.GlueVersion), aws.ToInt32(got.Job.Timeout))
+	}
+}
+
 func TestSDKTags(t *testing.T) {
 	ctx := context.Background()
 	c := newGlueClient(t)
@@ -262,6 +314,223 @@ func TestSDKDeleteSchemaVersionsReportsFailingVersion(t *testing.T) {
 
 	if len(out.SchemaVersionErrors) != 1 || aws.ToInt64(out.SchemaVersionErrors[0].VersionNumber) != 5 {
 		t.Fatalf("SchemaVersionErrors = %+v, want one entry with VersionNumber==5", out.SchemaVersionErrors)
+	}
+}
+
+// seedPartitions creates a database + a two-partition-key table (country, dt)
+// and the given partition value pairs, for the GetPartitions filter tests.
+func seedPartitions(t *testing.T, c *awsglue.Client, values [][]string) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	if _, err := c.CreateDatabase(ctx, &awsglue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String("pf")},
+	}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if _, err := c.CreateTable(ctx, &awsglue.CreateTableInput{
+		DatabaseName: aws.String("pf"),
+		TableInput: &gluetypes.TableInput{
+			Name: aws.String("t"),
+			PartitionKeys: []gluetypes.Column{
+				{Name: aws.String("country"), Type: aws.String("string")},
+				{Name: aws.String("dt"), Type: aws.String("string")},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	for _, v := range values {
+		if _, err := c.CreatePartition(ctx, &awsglue.CreatePartitionInput{
+			DatabaseName: aws.String("pf"), TableName: aws.String("t"),
+			PartitionInput: &gluetypes.PartitionInput{Values: v},
+		}); err != nil {
+			t.Fatalf("CreatePartition %v: %v", v, err)
+		}
+	}
+}
+
+// TestSDKGetPartitionsExpressionFilter verifies GetPartitions honors the
+// Expression filter (single equality and AND of two keys) rather than returning
+// every partition.
+func TestSDKGetPartitionsExpressionFilter(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	seedPartitions(t, c, [][]string{
+		{"us", "2024-01-01"}, {"us", "2024-01-02"}, {"eu", "2024-01-01"},
+	})
+
+	single, err := c.GetPartitions(ctx, &awsglue.GetPartitionsInput{
+		DatabaseName: aws.String("pf"), TableName: aws.String("t"),
+		Expression: aws.String("country = 'us'"),
+	})
+	if err != nil {
+		t.Fatalf("GetPartitions single: %v", err)
+	}
+
+	if len(single.Partitions) != 2 {
+		t.Fatalf("country='us' returned %d partitions, want 2", len(single.Partitions))
+	}
+
+	for _, p := range single.Partitions {
+		if p.Values[0] != "us" {
+			t.Fatalf("filter leaked a non-us partition: %v", p.Values)
+		}
+	}
+
+	both, err := c.GetPartitions(ctx, &awsglue.GetPartitionsInput{
+		DatabaseName: aws.String("pf"), TableName: aws.String("t"),
+		Expression: aws.String("country = 'us' AND dt = '2024-01-01'"),
+	})
+	if err != nil {
+		t.Fatalf("GetPartitions AND: %v", err)
+	}
+
+	if len(both.Partitions) != 1 || both.Partitions[0].Values[1] != "2024-01-01" {
+		t.Fatalf("AND filter returned %d partitions (%v), want exactly [us 2024-01-01]",
+			len(both.Partitions), both.Partitions)
+	}
+}
+
+// TestSDKGetPartitionsNoExpressionReturnsAll verifies that omitting Expression
+// still returns every partition (unchanged behavior).
+func TestSDKGetPartitionsNoExpressionReturnsAll(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	seedPartitions(t, c, [][]string{{"us", "2024-01-01"}, {"eu", "2024-01-01"}})
+
+	out, err := c.GetPartitions(ctx, &awsglue.GetPartitionsInput{
+		DatabaseName: aws.String("pf"), TableName: aws.String("t"),
+	})
+	if err != nil {
+		t.Fatalf("GetPartitions: %v", err)
+	}
+
+	if len(out.Partitions) != 2 {
+		t.Fatalf("no-filter returned %d partitions, want 2", len(out.Partitions))
+	}
+}
+
+// TestSDKGetPartitionsBadExpression verifies a malformed filter is a typed
+// InvalidInputException rather than being silently ignored.
+func TestSDKGetPartitionsBadExpression(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	seedPartitions(t, c, [][]string{{"us", "2024-01-01"}})
+
+	_, err := c.GetPartitions(ctx, &awsglue.GetPartitionsInput{
+		DatabaseName: aws.String("pf"), TableName: aws.String("t"),
+		Expression: aws.String("country ="),
+	})
+
+	var invalid *gluetypes.InvalidInputException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("bad expression err = %v, want *InvalidInputException", err)
+	}
+}
+
+// TestSDKCrawlerFieldsRoundTrip verifies SchemaChangePolicy and RecrawlPolicy
+// survive CreateCrawler -> GetCrawler and that Tags are readable via GetTags,
+// matching real Glue (GetCrawler omits tags).
+func TestSDKCrawlerFieldsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateCrawler(ctx, &awsglue.CreateCrawlerInput{
+		Name: aws.String("cw"), Role: aws.String("r"), DatabaseName: aws.String("db"),
+		Targets: &gluetypes.CrawlerTargets{
+			S3Targets: []gluetypes.S3Target{{Path: aws.String("s3://bucket/prefix")}},
+		},
+		SchemaChangePolicy: &gluetypes.SchemaChangePolicy{
+			UpdateBehavior: gluetypes.UpdateBehaviorLog, DeleteBehavior: gluetypes.DeleteBehaviorLog,
+		},
+		RecrawlPolicy: &gluetypes.RecrawlPolicy{RecrawlBehavior: gluetypes.RecrawlBehaviorCrawlEverything},
+		Tags:          map[string]string{"env": "prod"},
+	}); err != nil {
+		t.Fatalf("CreateCrawler: %v", err)
+	}
+
+	got, err := c.GetCrawler(ctx, &awsglue.GetCrawlerInput{Name: aws.String("cw")})
+	if err != nil {
+		t.Fatalf("GetCrawler: %v", err)
+	}
+
+	scp := got.Crawler.SchemaChangePolicy
+	if scp == nil || scp.UpdateBehavior != gluetypes.UpdateBehaviorLog ||
+		scp.DeleteBehavior != gluetypes.DeleteBehaviorLog {
+		t.Fatalf("SchemaChangePolicy = %+v, want LOG/LOG", scp)
+	}
+
+	if got.Crawler.RecrawlPolicy == nil ||
+		got.Crawler.RecrawlPolicy.RecrawlBehavior != gluetypes.RecrawlBehaviorCrawlEverything {
+		t.Fatalf("RecrawlPolicy = %+v, want CRAWL_EVERYTHING", got.Crawler.RecrawlPolicy)
+	}
+
+	tags, err := c.GetTags(ctx, &awsglue.GetTagsInput{
+		ResourceArn: aws.String("arn:aws:glue:us-east-1:123456789012:crawler/cw"),
+	})
+	if err != nil {
+		t.Fatalf("GetTags: %v", err)
+	}
+
+	if tags.Tags["env"] != "prod" {
+		t.Fatalf("crawler tags = %v, want env=prod", tags.Tags)
+	}
+}
+
+// TestSDKJobFieldsRoundTrip verifies ExecutionProperty, Connections and
+// NotificationProperty survive CreateJob -> GetJob, and Tags are readable via
+// GetTags.
+func TestSDKJobFieldsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateJob(ctx, &awsglue.CreateJobInput{
+		Name: aws.String("j"), Role: aws.String("arn:aws:iam::123456789012:role/r"),
+		Command:           &gluetypes.JobCommand{Name: aws.String("glueetl")},
+		ExecutionProperty: &gluetypes.ExecutionProperty{MaxConcurrentRuns: 3},
+		Connections:       &gluetypes.ConnectionsList{Connections: []string{"conn-a"}},
+		NotificationProperty: &gluetypes.NotificationProperty{
+			NotifyDelayAfter: aws.Int32(10),
+		},
+		Tags: map[string]string{"team": "data"},
+	}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	got, err := c.GetJob(ctx, &awsglue.GetJobInput{JobName: aws.String("j")})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	if got.Job.ExecutionProperty == nil || got.Job.ExecutionProperty.MaxConcurrentRuns != 3 {
+		t.Fatalf("ExecutionProperty = %+v, want MaxConcurrentRuns=3", got.Job.ExecutionProperty)
+	}
+
+	if got.Job.Connections == nil || len(got.Job.Connections.Connections) != 1 ||
+		got.Job.Connections.Connections[0] != "conn-a" {
+		t.Fatalf("Connections = %+v, want [conn-a]", got.Job.Connections)
+	}
+
+	if got.Job.NotificationProperty == nil || aws.ToInt32(got.Job.NotificationProperty.NotifyDelayAfter) != 10 {
+		t.Fatalf("NotificationProperty = %+v, want NotifyDelayAfter=10", got.Job.NotificationProperty)
+	}
+
+	tags, err := c.GetTags(ctx, &awsglue.GetTagsInput{
+		ResourceArn: aws.String("arn:aws:glue:us-east-1:123456789012:job/j"),
+	})
+	if err != nil {
+		t.Fatalf("GetTags: %v", err)
+	}
+
+	if tags.Tags["team"] != "data" {
+		t.Fatalf("job tags = %v, want team=data", tags.Tags)
 	}
 }
 

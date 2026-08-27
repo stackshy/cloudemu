@@ -7,11 +7,24 @@ import (
 
 // Repository represents a container repository.
 type Repository struct {
-	Name       string
-	URI        string
-	CreatedAt  string
+	Name      string
+	URI       string
+	CreatedAt string
+	// UpdatedAt is the last-modified timestamp. Providers that support in-place
+	// updates (GCP Artifact Registry patch) advance it; others leave it equal to
+	// CreatedAt.
+	UpdatedAt  string
 	Tags       map[string]string
 	ImageCount int
+	// Arn is the provider-native resource identifier (AWS ECR ARN). Optional
+	// for providers that do not model ARNs.
+	Arn string
+	// RegistryID is the owning registry/account identifier (AWS ECR registryId).
+	RegistryID string
+	// ImageTagMutability is "MUTABLE" or "IMMUTABLE" (AWS ECR).
+	ImageTagMutability string
+	// ScanOnPush reflects the repository's scan-on-push configuration.
+	ScanOnPush bool
 }
 
 // RepositoryConfig describes a repository to create.
@@ -32,6 +45,9 @@ type ImageDetail struct {
 	PushedAt     string
 	LastPulledAt string
 	MediaType    string
+	// Manifest is the raw image manifest document, preserved so operations like
+	// BatchGetImage can return it verbatim.
+	Manifest string
 }
 
 // ImageManifest represents an image manifest for pushing.
@@ -42,6 +58,9 @@ type ImageManifest struct {
 	MediaType  string
 	SizeBytes  int64
 	Layers     []LayerInfo
+	// Manifest is the raw manifest document as submitted (AWS ECR PutImage
+	// imageManifest). Preserved so it can be returned by BatchGetImage.
+	Manifest string
 }
 
 // LayerInfo describes a layer in an image.
@@ -65,6 +84,11 @@ type LifecycleRule struct {
 // LifecyclePolicy is a set of lifecycle rules.
 type LifecyclePolicy struct {
 	Rules []LifecycleRule
+	// Document is the original policy document text, preserved verbatim so it can
+	// be returned byte-faithfully on read (AWS ECR lifecyclePolicyText round-trips
+	// without drift). Optional; providers that model policies purely structurally
+	// leave it empty and callers fall back to serializing Rules.
+	Document string
 }
 
 // ScanResult represents an image vulnerability scan result.
@@ -94,6 +118,11 @@ type ContainerRegistry interface {
 	// Lifecycle policies
 	PutLifecyclePolicy(ctx context.Context, repository string, policy LifecyclePolicy) error
 	GetLifecyclePolicy(ctx context.Context, repository string) (*LifecyclePolicy, error)
+	// DeleteLifecyclePolicy removes the repository's lifecycle policy and returns
+	// the policy that was deleted. It is NotFound both when the repository does
+	// not exist and when the repository has no policy set; callers distinguish
+	// the two by re-checking GetRepository.
+	DeleteLifecyclePolicy(ctx context.Context, repository string) (*LifecyclePolicy, error)
 	EvaluateLifecyclePolicy(ctx context.Context, repository string) ([]string, error)
 
 	// Image scanning

@@ -23,6 +23,9 @@ const (
 	defaultVisibilityTimeout = 30
 	maxReceiveMessages       = 10
 	deduplicationWindow      = 5 * time.Minute
+	// defaultDupDetectionWindow is Service Bus' default duplicate-detection
+	// history window when RequiresDuplicateDetection is set without a window.
+	defaultDupDetectionWindow = 10 * time.Minute
 )
 
 // sbMessage represents an internal message stored in a queue.
@@ -32,10 +35,18 @@ type sbMessage struct {
 	GroupID         string
 	DeduplicationID string
 	Attributes      map[string]string
-	ReceiptHandle   string
-	VisibleAt       time.Time
-	SentAt          time.Time
-	ReceiveCount    int
+	// SystemProps carries Azure Service Bus brokered-message system properties
+	// (MessageId, CorrelationId, Label, SessionId, ...) preserved from the send.
+	SystemProps   map[string]string
+	ReceiptHandle string
+	VisibleAt     time.Time
+	SentAt        time.Time
+	ReceiveCount  int
+	// ExpiresAt is the message's absolute expiration time. The zero value
+	// means the message never expires — the default for Service Bus queues
+	// (which never set SendMessageInput.MessageTTLSeconds) and for Azure
+	// Queue Storage messages sent with messagettl=-1. See isMessageExpired.
+	ExpiresAt time.Time
 }
 
 // queueData holds the internal state of a single Service Bus queue.
@@ -51,7 +62,17 @@ type queueData struct {
 	createdAt          time.Time
 	lastModifiedAt     time.Time
 	deduplicationIndex map[string]time.Time
-	dlqConfig          *driver.DeadLetterConfig
+	// requiresDupDetection enables Azure Service Bus MessageId-based duplicate
+	// detection; dedupByMessageID tracks the last-seen time per MessageId and
+	// dupDetectionWindow is the look-back window.
+	requiresDupDetection bool
+	dupDetectionWindow   time.Duration
+	dedupByMessageID     map[string]time.Time
+	dlqConfig            *driver.DeadLetterConfig
+	// deadLetterOnExpiration routes an expired message to the dead-letter queue
+	// instead of dropping it (Service Bus deadLetteringOnMessageExpiration).
+	deadLetterOnExpiration bool
+	metadata               map[string]string
 }
 
 // FunctionTrigger is a function that gets called when a message is sent to a queue.
@@ -118,7 +139,34 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 	delete(m.triggers, queueURL)
 }
 
+// DeliverExternal enqueues body into the queue or topic whose name matches the
+// given name. It is used for cross-service delivery such as Event Grid ->
+// ServiceBusQueue/ServiceBusTopic, where the source only knows the destination's
+// ARM leaf name. A topic is modeled as a queue in this mock, so both resolve the
+// same way. Returns NotFound if no queue matches, which callers may ignore for a
+// best-effort sink.
+func (m *Mock) DeliverExternal(ctx context.Context, name, body string) error {
+	var url string
+
+	for _, qd := range m.queues.SortedValues() {
+		if qd.info.Name == name {
+			url = qd.info.URL
+			break
+		}
+	}
+
+	if url == "" {
+		return cerrors.Newf(cerrors.NotFound, "no queue found for name %q", name)
+	}
+
+	_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: body})
+
+	return err
+}
+
 // CreateQueue creates a new Service Bus queue.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "queue name is required")
@@ -140,6 +188,11 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		tags[k] = v
 	}
 
+	metadata := make(map[string]string, len(cfg.Metadata))
+	for k, v := range cfg.Metadata {
+		metadata[k] = v
+	}
+
 	visibilityTimeout := cfg.VisibilityTimeout
 	if visibilityTimeout == 0 {
 		visibilityTimeout = defaultVisibilityTimeout
@@ -156,17 +209,27 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 
 	now := m.opts.Clock.Now()
 
+	dupWindow := cfg.DuplicateDetectionWindow
+	if dupWindow <= 0 {
+		dupWindow = defaultDupDetectionWindow
+	}
+
 	qd := &queueData{
-		info:               info,
-		messages:           make([]*sbMessage, 0),
-		delaySeconds:       cfg.DelaySeconds,
-		visibilityTimeout:  visibilityTimeout,
-		maxMessageSize:     cfg.MaxMessageSize,
-		messageRetention:   cfg.MessageRetention,
-		createdAt:          now,
-		lastModifiedAt:     now,
-		deduplicationIndex: make(map[string]time.Time),
-		dlqConfig:          cfg.DeadLetterQueue,
+		info:                   info,
+		messages:               make([]*sbMessage, 0),
+		delaySeconds:           cfg.DelaySeconds,
+		visibilityTimeout:      visibilityTimeout,
+		maxMessageSize:         cfg.MaxMessageSize,
+		messageRetention:       cfg.MessageRetention,
+		createdAt:              now,
+		lastModifiedAt:         now,
+		deduplicationIndex:     make(map[string]time.Time),
+		requiresDupDetection:   cfg.RequiresDuplicateDetection,
+		dupDetectionWindow:     dupWindow,
+		dedupByMessageID:       make(map[string]time.Time),
+		dlqConfig:              cfg.DeadLetterQueue,
+		deadLetterOnExpiration: cfg.DeadLetterOnExpiration,
+		metadata:               metadata,
 	}
 
 	m.queues.Set(url, qd)
@@ -250,11 +313,22 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		return &driver.SendMessageOutput{MessageID: existingID}, nil
 	}
 
+	// Service Bus duplicate detection: a repeat MessageId inside the configured
+	// window is silently accepted but not re-enqueued.
+	if existingID, found := findMessageIDDuplicate(qd, &input, now); found {
+		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	}
+
 	msgID := idgen.GenerateID("sb-msg-")
 
 	attrs := make(map[string]string, len(input.Attributes))
 	for k, v := range input.Attributes {
 		attrs[k] = v
+	}
+
+	sysProps := make(map[string]string, len(input.SystemProperties))
+	for k, v := range input.SystemProperties {
+		sysProps[k] = v
 	}
 
 	delaySeconds := input.DelaySeconds
@@ -263,6 +337,19 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
+	// TimeToLive is measured from when the message becomes active (its enqueue
+	// time), not from submit. For a scheduled message (ScheduledEnqueueTimeUtc in
+	// the future, carried here as a delivery delay) the effective enqueue time is
+	// visibleAt, so a message scheduled for T+delay with a TTL shorter than the
+	// delay still survives until at least T+delay and then lives for its full TTL.
+	// For a non-scheduled send visibleAt == now, so this is unchanged.
+	expiresAt := computeExpiry(visibleAt, input.MessageTTLSeconds)
+
+	// Mint a pop receipt at enqueue time so the message can be deleted or updated
+	// with the Put Message-returned receipt before its first dequeue, as Azure
+	// Queue Storage allows. A subsequent dequeue issues a fresh receipt that
+	// supersedes this one.
+	receiptHandle := idgen.GenerateID("sb-lock-")
 
 	msg := &sbMessage{
 		ID:              msgID,
@@ -270,14 +357,23 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		GroupID:         input.GroupID,
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
+		SystemProps:     sysProps,
+		ReceiptHandle:   receiptHandle,
 		VisibleAt:       visibleAt,
 		SentAt:          now,
+		ExpiresAt:       expiresAt,
 	}
 
 	qd.messages = append(qd.messages, msg)
 
 	if qd.info.FIFO && input.DeduplicationID != "" {
 		qd.deduplicationIndex[input.DeduplicationID] = now
+	}
+
+	if qd.requiresDupDetection {
+		if mid := messageIDOf(&input); mid != "" {
+			qd.dedupByMessageID[mid] = now
+		}
 	}
 
 	// Fire Function trigger if registered.
@@ -301,7 +397,9 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	})
 
 	return &driver.SendMessageOutput{
-		MessageID: msgID,
+		MessageID:  msgID,
+		ExpiresAt:  expiresAt,
+		PopReceipt: receiptHandle,
 	}, nil
 }
 
@@ -319,6 +417,45 @@ func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) err
 	}
 
 	return nil
+}
+
+// messageIDOf returns the Azure Service Bus MessageId a send carried, or "" when
+// none was set (an empty MessageId is never deduplicated, matching real SB).
+func messageIDOf(input *driver.SendMessageInput) string {
+	if input.SystemProperties == nil {
+		return ""
+	}
+
+	return input.SystemProperties["MessageId"]
+}
+
+// findMessageIDDuplicate reports whether a send repeats a MessageId already seen
+// within the duplicate-detection window on a RequiresDuplicateDetection queue,
+// returning the driver id of the surviving message when it is still enqueued.
+func findMessageIDDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
+	if !qd.requiresDupDetection {
+		return "", false
+	}
+
+	mid := messageIDOf(input)
+	if mid == "" {
+		return "", false
+	}
+
+	seenAt, ok := qd.dedupByMessageID[mid]
+	if !ok || now.Sub(seenAt) >= qd.dupDetectionWindow {
+		return "", false
+	}
+
+	for _, existing := range qd.messages {
+		if existing.SystemProps["MessageId"] == mid {
+			return existing.ID, true
+		}
+	}
+
+	// The original was already consumed but the MessageId is still within the
+	// detection window, so the duplicate is still dropped.
+	return mid, true
 }
 
 func findDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
@@ -365,7 +502,7 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	now := m.opts.Clock.Now()
 	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now)
 
-	// Remove DLQ-moved messages in reverse order.
+	// Remove DLQ-moved and expired messages in reverse order.
 	for i := len(toRemove) - 1; i >= 0; i-- {
 		idx := toRemove[i]
 		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
@@ -407,17 +544,21 @@ func (m *Mock) collectVisibleMessages(
 			break
 		}
 
+		if m.reapExpired(qd, msg, now) {
+			toRemove = append(toRemove, i)
+			continue
+		}
+
 		if msg.VisibleAt.After(now) {
 			continue
 		}
 
 		msg.ReceiveCount++
 
-		// Check if message exceeded max receive count -- move to DLQ.
-		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount {
-			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
-
-			toRemove = append(toRemove, i)
+		if exceeded, moved := m.deadLetterExhausted(qd, msg); exceeded {
+			if moved {
+				toRemove = append(toRemove, i)
+			}
 
 			continue
 		}
@@ -426,6 +567,35 @@ func (m *Mock) collectVisibleMessages(
 	}
 
 	return results, toRemove
+}
+
+// reapExpired handles an expired message (Azure Queue Storage's per-message
+// messagettl / Service Bus defaultMessageTimeToLive), mirroring the Cosmos DB
+// mock's on-read TTL check: it routes the message to the DLQ when
+// dead-lettering-on-expiration is enabled and reports whether it was reaped so
+// the caller drops it.
+func (m *Mock) reapExpired(qd *queueData, msg *sbMessage, now time.Time) bool {
+	if !isMessageExpired(msg, now) {
+		return false
+	}
+
+	if qd.deadLetterOnExpiration && qd.dlqConfig != nil {
+		m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
+	}
+
+	return true
+}
+
+// deadLetterExhausted reports whether msg has exhausted its delivery attempts,
+// and whether it was successfully moved to the DLQ. Only when moved may the
+// caller drop it from the main queue -- a missing DLQ store must not silently
+// lose the message.
+func (m *Mock) deadLetterExhausted(qd *queueData, msg *sbMessage) (exceeded, moved bool) {
+	if qd.dlqConfig == nil || qd.dlqConfig.MaxReceiveCount <= 0 || msg.ReceiveCount <= qd.dlqConfig.MaxReceiveCount {
+		return false, false
+	}
+
+	return true, m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
 }
 
 func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) driver.Message {
@@ -439,35 +609,51 @@ func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) 
 		attrs[k] = v
 	}
 
+	sysProps := make(map[string]string, len(msg.SystemProps))
+	for k, v := range msg.SystemProps {
+		sysProps[k] = v
+	}
+
 	return driver.Message{
-		MessageID:     msg.ID,
-		ReceiptHandle: receiptHandle,
-		Body:          msg.Body,
-		Attributes:    attrs,
-		GroupID:       msg.GroupID,
+		MessageID:        msg.ID,
+		ReceiptHandle:    receiptHandle,
+		Body:             msg.Body,
+		Attributes:       attrs,
+		SystemProperties: sysProps,
+		GroupID:          msg.GroupID,
+		ReceiveCount:     msg.ReceiveCount,
+		ExpiresAt:        msg.ExpiresAt,
+		InsertedAt:       msg.SentAt,
 	}
 }
 
-// moveToDLQ moves a message to the dead-letter queue.
-func (m *Mock) moveToDLQ(dlqURL string, msg *sbMessage) {
+// moveToDLQ copies a message into the dead-letter queue, reporting whether the
+// move succeeded. A missing DLQ store yields false so the caller can keep the
+// message on the main queue rather than dropping (and losing) it. Dead-lettered
+// messages do not carry the source TTL (ExpiresAt stays zero), matching Service
+// Bus, where the DLQ has its own retention.
+func (m *Mock) moveToDLQ(dlqURL string, msg *sbMessage) bool {
 	dlq, ok := m.queues.Get(dlqURL)
 	if !ok {
-		return
+		return false
 	}
+
+	now := m.opts.Clock.Now()
 
 	dlq.mu.Lock()
 	defer dlq.mu.Unlock()
 
-	dlqMsg := &sbMessage{
-		ID:         msg.ID,
-		Body:       msg.Body,
-		GroupID:    msg.GroupID,
-		Attributes: msg.Attributes,
-		VisibleAt:  m.opts.Clock.Now(),
-		SentAt:     m.opts.Clock.Now(),
-	}
+	dlq.messages = append(dlq.messages, &sbMessage{
+		ID:          msg.ID,
+		Body:        msg.Body,
+		GroupID:     msg.GroupID,
+		Attributes:  msg.Attributes,
+		SystemProps: msg.SystemProps,
+		VisibleAt:   now,
+		SentAt:      now,
+	})
 
-	dlq.messages = append(dlq.messages, dlqMsg)
+	return true
 }
 
 // DeleteMessage deletes (completes) a message from the specified queue using its receipt handle (lock token).
@@ -683,6 +869,19 @@ func applyQueueAttributes(qd *queueData, attrs map[string]int) {
 
 	if v, ok := attrs["MessageRetentionPeriod"]; ok {
 		qd.messageRetention = v
+	}
+
+	// MaxDeliveryCount reconfigures the dead-letter threshold (Service Bus
+	// maxDeliveryCount): lowering it dead-letters already-enqueued messages at the
+	// new threshold on their next delivery attempt.
+	if v, ok := attrs["MaxDeliveryCount"]; ok && qd.dlqConfig != nil {
+		qd.dlqConfig.MaxReceiveCount = v
+	}
+
+	// DeadLetterOnExpiration toggles Service Bus'
+	// deadLetteringOnMessageExpiration (encoded 0/1 over the int-only map).
+	if v, ok := attrs["DeadLetterOnExpiration"]; ok {
+		qd.deadLetterOnExpiration = v != 0
 	}
 }
 

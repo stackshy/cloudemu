@@ -21,7 +21,8 @@ import (
 // unit tests only need the compute driver; Phase-2 tests in security_group_test.go
 // and siblings construct their own Handler with both drivers.
 func newHandler() *Handler {
-	return New(awsec2.New(config.NewOptions()), nil)
+	opts := config.NewOptions()
+	return New(awsec2.New(opts), nil, opts.AccountID)
 }
 
 // do runs a request through the handler and returns the recorded response.
@@ -202,20 +203,35 @@ func TestInstanceCount(t *testing.T) {
 	cases := []struct {
 		minS, maxS string
 		want       int
+		wantErr    bool
 	}{
-		{"1", "5", 5},   // MaxCount wins
-		{"1", "1", 1},   // equal
-		{"", "3", 3},    // min missing
-		{"2", "", 2},    // max missing — falls back to min
-		{"", "", 1},     // both missing — default 1
-		{"0", "0", 1},   // both zero — default 1
-		{"bad", "2", 2}, // unparsable min, valid max
-		{"2", "bad", 2}, // valid min, unparsable max → min
-		{"10", "3", 3},  // max still wins even if smaller than min
+		{minS: "1", maxS: "5", want: 5},         // MaxCount wins
+		{minS: "1", maxS: "1", want: 1},         // equal
+		{minS: "", maxS: "3", want: 3},          // min missing → defaults to 1
+		{minS: "2", maxS: "", want: 2},          // max missing → falls back to min
+		{minS: "", maxS: "", want: 1},           // both missing → default 1
+		{minS: "0", maxS: "0", wantErr: true},   // min below 1
+		{minS: "5", maxS: "2", wantErr: true},   // min greater than max
+		{minS: "bad", maxS: "2", wantErr: true}, // unparsable min
+		{minS: "2", maxS: "bad", wantErr: true}, // unparsable max
 	}
 
 	for _, tc := range cases {
-		if got := instanceCount(tc.minS, tc.maxS); got != tc.want {
+		got, err := instanceCount(tc.minS, tc.maxS)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("instanceCount(%q,%q) err = nil, want error", tc.minS, tc.maxS)
+			}
+
+			continue
+		}
+
+		if err != nil {
+			t.Errorf("instanceCount(%q,%q) unexpected err: %v", tc.minS, tc.maxS, err)
+			continue
+		}
+
+		if got != tc.want {
 			t.Errorf("instanceCount(%q,%q)=%d want %d", tc.minS, tc.maxS, got, tc.want)
 		}
 	}
@@ -275,7 +291,7 @@ func TestToInstanceXMLs(t *testing.T) {
 		Tags:           map[string]string{"k": "v"},
 	}}
 
-	got := toInstanceXMLs(in)
+	got := New(nil, nil, "").toInstanceXMLs(context.Background(), in)
 
 	if len(got) != 1 {
 		t.Fatalf("len=%d want 1", len(got))
@@ -292,7 +308,7 @@ func TestToInstanceXMLs(t *testing.T) {
 }
 
 func TestToInstanceXMLsEmpty(t *testing.T) {
-	got := toInstanceXMLs(nil)
+	got := New(nil, nil, "").toInstanceXMLs(context.Background(), nil)
 	if len(got) != 0 {
 		t.Errorf("empty input should give empty result, got %v", got)
 	}
@@ -325,21 +341,24 @@ func TestToDriverFiltersNilForEmpty(t *testing.T) {
 	}
 }
 
-func TestStateChanges(t *testing.T) {
+func TestStateChangesFrom(t *testing.T) {
 	cur := instanceState{Code: stateCodeStopping, Name: "stopping"}
-	prev := instanceState{Code: stateCodeRunning, Name: "running"}
+	prev := map[string]instanceState{
+		"i-1": {Code: stateCodeRunning, Name: "running"},
+		"i-2": {Code: stateCodeStopped, Name: "stopped"},
+	}
 
-	got := stateChanges([]string{"i-1", "i-2"}, cur, prev)
+	got := stateChangesFrom([]string{"i-1", "i-2"}, prev, cur)
 
 	if len(got) != 2 {
 		t.Fatalf("len=%d want 2", len(got))
 	}
 
-	if got[0].InstanceID != "i-1" || got[0].CurrentState != cur || got[0].PreviousState != prev {
+	if got[0].InstanceID != "i-1" || got[0].CurrentState != cur || got[0].PreviousState != prev["i-1"] {
 		t.Errorf("i-1 wrong: %+v", got[0])
 	}
 
-	if got[1].InstanceID != "i-2" {
+	if got[1].InstanceID != "i-2" || got[1].PreviousState != prev["i-2"] {
 		t.Errorf("i-2 wrong: %+v", got[1])
 	}
 }

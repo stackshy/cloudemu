@@ -13,11 +13,14 @@ const (
 	ExResourceNotFound          = "ResourceNotFound"
 	ExInvalidArn                = "InvalidArn"
 	ExInvalidName               = "InvalidName"
+	ExInvalidExecutionInput     = "InvalidExecutionInput"
+	ExInvalidDefinition         = "InvalidDefinition"
 	ExInvalidToken              = "InvalidToken"
 	ExTaskDoesNotExist          = "TaskDoesNotExist"
 	ExTooManyTags               = "TooManyTags"
 	ExConflict                  = "ConflictException"
 	ExValidation                = "ValidationException"
+	ExMissingRequiredParameter  = "MissingRequiredParameter"
 )
 
 // APIError tags a canonical cloudemu error with the SFN exception name it

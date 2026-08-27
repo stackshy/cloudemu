@@ -48,30 +48,25 @@ func (h *Handler) setRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
-	mgr, ok := h.repoPolicyMgr()
-	if !ok {
-		writeErr(w, cerrors.New(cerrors.Unimplemented, "repository policies not supported"))
-		return
-	}
-
-	var req struct {
-		RepositoryName string `json:"repositoryName"`
-	}
-
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	policy, err := mgr.GetRepositoryPolicy(r.Context(), req.RepositoryName)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	wire.WriteJSON(w, map[string]any{"repositoryName": req.RepositoryName, "policyText": policy})
+	// The provider tags a missing repository (RepositoryNotFoundException) and a
+	// repository with no policy (RepositoryPolicyNotFoundException) with the
+	// precise exception name, which writeErr surfaces.
+	h.runRepoPolicyOp(w, r, repoPolicyManager.GetRepositoryPolicy)
 }
 
 func (h *Handler) deleteRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
+	// A repository with no policy is RepositoryPolicyNotFoundException, a missing
+	// repository is RepositoryNotFoundException — both carried by the provider's
+	// tagged error and surfaced by writeErr.
+	h.runRepoPolicyOp(w, r, repoPolicyManager.DeleteRepositoryPolicy)
+}
+
+// runRepoPolicyOp runs a repository-name-only policy operation (get or delete)
+// and writes the resulting policyText, sharing the manager guard, request
+// decode, and error mapping between the two handlers.
+func (h *Handler) runRepoPolicyOp(
+	w http.ResponseWriter, r *http.Request, op func(repoPolicyManager, context.Context, string) (string, error),
+) {
 	mgr, ok := h.repoPolicyMgr()
 	if !ok {
 		writeErr(w, cerrors.New(cerrors.Unimplemented, "repository policies not supported"))
@@ -86,7 +81,7 @@ func (h *Handler) deleteRepositoryPolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	policy, err := mgr.DeleteRepositoryPolicy(r.Context(), req.RepositoryName)
+	policy, err := op(mgr, r.Context(), req.RepositoryName)
 	if err != nil {
 		writeErr(w, err)
 		return

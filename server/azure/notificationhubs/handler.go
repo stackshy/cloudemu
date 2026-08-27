@@ -10,20 +10,20 @@
 //   - a namespace          → a topic keyed by the namespace name
 //   - a notification hub   → a topic keyed by "{namespace}/{hub}"
 //
-// Both lifecycles (CreateOrUpdate / Get / List / Delete) run against the same
-// driver. Publish/subscribe are not part of the ARM control plane and so are
-// not exposed here.
+// Namespace SKU, Shared Access authorization rules (+ ListKeys) and data-plane
+// device registrations have no cross-cloud analog and are served through the
+// notification driver's AzureNotificationHubs optional capability.
 //
 // Coverage:
 //
-//	PUT    .../namespaces/{ns}                          — Namespaces.CreateOrUpdate
-//	GET    .../namespaces/{ns}                          — Namespaces.Get
-//	DELETE .../namespaces/{ns}                          — Namespaces.BeginDelete (completes inline)
-//	GET    .../namespaces                               — Namespaces.List (RG-scoped)
-//	PUT    .../namespaces/{ns}/notificationHubs/{h}     — Client.CreateOrUpdate (hub)
-//	GET    .../namespaces/{ns}/notificationHubs/{h}     — Client.Get (hub)
-//	DELETE .../namespaces/{ns}/notificationHubs/{h}     — Client.Delete (hub)
-//	GET    .../namespaces/{ns}/notificationHubs         — Client.List (hubs)
+//	PUT/GET/DELETE .../namespaces/{ns}                                     — Namespaces CRUD
+//	GET            .../namespaces                                          — Namespaces List / ListAll
+//	POST           .../checkNamespaceAvailability                          — Namespaces.CheckAvailability
+//	PUT/GET/DELETE .../namespaces/{ns}/AuthorizationRules/{rule}           — namespace SAS rules
+//	POST           .../namespaces/{ns}/AuthorizationRules/{rule}/listKeys  — namespace SAS keys
+//	PUT/GET/DELETE .../namespaces/{ns}/notificationHubs/{h}                — hubs CRUD
+//	PUT/GET/DELETE .../namespaces/{ns}/notificationHubs/{h}/AuthorizationRules/{rule}
+//	POST           .../namespaces/{ns}/notificationHubs/{h}/AuthorizationRules/{rule}/listKeys
 package notificationhubs
 
 import (
@@ -40,6 +40,15 @@ const (
 	subHubs        = "notificationHubs"
 )
 
+// Trailing-segment counts for the hub sub-resource tree, named so the routing
+// table reads without bare magic numbers (mirrors the segment-count constants
+// in the Cosmos handler).
+const (
+	segHubOneSub   = 4 // .../notificationHubs/{hub}/{debugsend|pnsCredentials|AuthorizationRules}
+	segHubTwoSub   = 5 // .../notificationHubs/{hub}/AuthorizationRules/{rule}
+	segHubThreeSub = 6 // .../AuthorizationRules/{rule}/{listKeys|regenerateKeys}
+)
+
 // Handler serves Microsoft.NotificationHubs ARM requests against a notification
 // driver.
 type Handler struct {
@@ -51,19 +60,19 @@ func New(n notifdriver.Notification) *Handler {
 	return &Handler{notif: n}
 }
 
-// Matches claims ARM URLs targeting Microsoft.NotificationHubs/namespaces. A
-// distinct ARM provider name from every other Azure handler, so registration
-// order is unconstrained; registered before the BlobStorage fallback.
+// Matches claims ARM URLs targeting Microsoft.NotificationHubs namespaces and
+// the subscription-scoped checkNamespaceAvailability action.
 func (*Handler) Matches(r *http.Request) bool {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
-	if !ok {
+	if !ok || rp.Provider != providerName {
 		return false
 	}
 
-	return rp.Provider == providerName && strings.EqualFold(rp.ResourceType, typeNamespaces)
+	return strings.EqualFold(rp.ResourceType, typeNamespaces) ||
+		strings.EqualFold(rp.ResourceType, typeCheckNSAvail)
 }
 
-// ServeHTTP routes on the parsed path shape and method.
+// ServeHTTP routes on the path segments trailing the provider.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
@@ -71,23 +80,92 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.EqualFold(rp.ResourceType, typeCheckNSAvail) {
+		h.checkNamespaceAvailability(w, r, &rp)
+		return
+	}
+
+	// Segments trailing ".../namespaces": [ns, sub..., subName, action].
+	seg := namespaceTail(r.URL.Path)
+	h.route(w, r, &rp, seg)
+}
+
+// namespaceTail returns the path segments that follow the "namespaces"
+// collection segment.
+func namespaceTail(path string) []string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i := range parts {
+		if strings.EqualFold(parts[i], typeNamespaces) {
+			return parts[i+1:]
+		}
+	}
+
+	return nil
+}
+
+// route dispatches on the trailing segments after ".../namespaces".
+//
+//nolint:cyclop,gocyclo // flat routing table over path shapes
+func (h *Handler) route(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, seg []string) {
 	switch {
-	case rp.ResourceName == "":
-		// .../namespaces (RG-scoped namespace list)
-		h.serveNamespaceCollection(w, r, &rp)
-	case rp.SubResource == "":
-		// .../namespaces/{ns}
-		h.serveNamespace(w, r, &rp)
-	case strings.EqualFold(rp.SubResource, subHubs) && rp.SubResourceName == "":
-		// .../namespaces/{ns}/notificationHubs (hub list)
-		h.serveHubCollection(w, r, &rp)
-	case strings.EqualFold(rp.SubResource, subHubs):
-		// .../namespaces/{ns}/notificationHubs/{hub}
-		h.serveHub(w, r, &rp)
+	case len(seg) == 0:
+		h.serveNamespaceCollection(w, r, rp)
+	case len(seg) == 1:
+		h.serveNamespace(w, r, rp)
+	case len(seg) == 2 && eq(seg[1], subAuthorizationRules):
+		h.listNamespaceAuthRules(w, r, rp)
+	case len(seg) == 3 && eq(seg[1], subAuthorizationRules):
+		h.serveNamespaceAuthRule(w, r, rp, seg[2])
+	case len(seg) == 4 && eq(seg[1], subAuthorizationRules) && eq(seg[3], actionListKeys):
+		h.namespaceAuthRuleKeys(w, r, rp, seg[2])
+	case len(seg) == 4 && eq(seg[1], subAuthorizationRules) && eq(seg[3], actionRegenerateKeys):
+		h.namespaceAuthRuleRegenerate(w, r, rp, seg[2])
+	case len(seg) == 2 && eq(seg[1], subNotificationHubs):
+		h.serveHubCollection(w, r, rp)
+	case len(seg) == 3 && eq(seg[1], subNotificationHubs):
+		h.serveHub(w, r, rp)
+	case eq(seg[1], subNotificationHubs):
+		h.routeHubSub(w, r, rp, seg)
 	default:
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Notification Hubs path")
 	}
 }
+
+// routeHubSub dispatches hub sub-resources: debugsend, pnsCredentials and the
+// AuthorizationRules tree (delegated to routeHubAuthRule).
+func (h *Handler) routeHubSub(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, seg []string) {
+	hub := seg[2]
+
+	switch {
+	case len(seg) == segHubOneSub && eq(seg[3], subDebugSend):
+		h.debugSend(w, r, rp, hub)
+	case len(seg) == segHubOneSub && eq(seg[3], subPnsCredentials):
+		h.getPnsCredentials(w, r, rp, hub)
+	case eq(seg[3], subAuthorizationRules):
+		h.routeHubAuthRule(w, r, rp, hub, seg)
+	default:
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Notification Hubs path")
+	}
+}
+
+// routeHubAuthRule dispatches the .../notificationHubs/{hub}/AuthorizationRules
+// tree: list, per-rule CRUD, listKeys and regenerateKeys.
+func (h *Handler) routeHubAuthRule(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, hub string, seg []string) {
+	switch {
+	case len(seg) == segHubOneSub:
+		h.listHubAuthRules(w, r, rp, hub)
+	case len(seg) == segHubTwoSub:
+		h.serveHubAuthRule(w, r, rp, hub, seg[4])
+	case len(seg) == segHubThreeSub && eq(seg[5], actionListKeys):
+		h.hubAuthRuleKeys(w, r, rp, hub, seg[4])
+	case len(seg) == segHubThreeSub && eq(seg[5], actionRegenerateKeys):
+		h.hubAuthRuleRegenerate(w, r, rp, hub, seg[4])
+	default:
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Notification Hubs path")
+	}
+}
+
+func eq(a, b string) bool { return strings.EqualFold(a, b) }
 
 func (h *Handler) serveNamespaceCollection(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if r.Method != http.MethodGet {

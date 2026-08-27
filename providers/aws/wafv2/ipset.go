@@ -126,16 +126,9 @@ func (m *Mock) DeleteIPSet(_ context.Context, ref driver.Ref, lockToken string) 
 		return err
 	}
 
-	sd.mu.Lock()
-	defer sd.mu.Unlock()
-
-	if sd.set.LockToken != lockToken {
-		return staleLock("stale lock token for IP set %q", ref.ID)
-	}
-
-	m.ipSets.Delete(key(ref.Scope, ref.ID))
-
-	return nil
+	return deleteGuarded(&sd.mu, ref.ID, "IP set", lockToken,
+		&sd.set.LockToken, sd.set.ARN, m.itemReferencedByWebACL,
+		func() { m.ipSets.Delete(key(ref.Scope, ref.ID)) })
 }
 
 // ListIPSets returns all IP sets in a scope.

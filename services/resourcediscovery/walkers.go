@@ -765,6 +765,17 @@ func (e *Engine) walkAppServicePlans(ctx context.Context) ([]Resource, error) {
 	return out, nil
 }
 
+// firstNonEmpty returns a if it is non-empty, otherwise b. Used by the walkers
+// to pick a resource's tag-operation ARN with a fallback for providers that
+// model no ARN.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+
+	return b
+}
+
 func copyTags(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return nil
@@ -906,7 +917,10 @@ func (e *Engine) walkContainerRegistry(ctx context.Context) ([]Resource, error) 
 
 	return e.emitSimple(ServiceContainer, TypeRepository, len(repos),
 		func(i int) (string, string, map[string]string) {
-			return repos[i].Name, repos[i].URI, repos[i].Tags
+			// Prefer the provider-native ARN (AWS ECR) as the tag-operation handle;
+			// fall back to the registry URI for providers that model no ARN (GCP
+			// Artifact Registry, ACR).
+			return repos[i].Name, firstNonEmpty(repos[i].Arn, repos[i].URI), repos[i].Tags
 		}), nil
 }
 
@@ -986,7 +1000,9 @@ func (e *Engine) walkCache(ctx context.Context) ([]Resource, error) {
 
 	return e.emitSimple(ServiceCache, TypeCacheCluster, len(caches),
 		func(i int) (string, string, map[string]string) {
-			return caches[i].Name, caches[i].Endpoint, caches[i].Tags
+			// The ARN is the tag-operation handle (AWS ElastiCache). Fall back to
+			// the endpoint for providers that model no ARN.
+			return caches[i].Name, firstNonEmpty(caches[i].ARN, caches[i].Endpoint), caches[i].Tags
 		}), nil
 }
 

@@ -1,11 +1,47 @@
 package eks
 
 import (
+	"crypto/sha1" //nolint:gosec // used only for a deterministic, non-security id
+	"encoding/hex"
 	"math"
 	"net/http"
+	"strconv"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 )
+
+// parseMaxResults reads the EKS maxResults query param (0 = server default).
+func parseMaxResults(r *http.Request) int {
+	v := r.URL.Query().Get("maxResults")
+	if v == "" {
+		return 0
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
+// paginateNames applies EKS maxResults/nextToken over a name list, stable-sorted
+// so offset tokens stay meaningful. Returns ok=false after writing an error.
+func paginateNames(
+	w http.ResponseWriter, r *http.Request, names []string,
+) (items []string, next string, ok bool) {
+	page, err := pagination.PaginateSorted(names,
+		func(a, b string) bool { return a < b },
+		r.URL.Query().Get("nextToken"), parseMaxResults(r))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+
+		return nil, "", false
+	}
+
+	return page.Items, page.NextPageToken, true
+}
 
 // safeInt32 narrows an int to int32, clamping at math.MaxInt32 / math.MinInt32.
 // EKS scaling and disk-size fields are int32 on the wire; the driver uses int
@@ -41,6 +77,18 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		cfg.VPCConfig = vpcRequestToDriver(body.ResourcesVpcConfig)
 	}
 
+	if body.KubernetesNetworkConfig != nil {
+		cfg.NetworkConfig = networkConfigRequestToDriver(body.KubernetesNetworkConfig)
+	}
+
+	if body.Logging != nil {
+		cfg.Logging = loggingRequestToDriver(body.Logging)
+	}
+
+	if body.AccessConfig != nil {
+		cfg.AccessConfig = accessConfigRequestToDriver(body.AccessConfig)
+	}
+
 	cluster, err := h.eks.CreateCluster(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
@@ -70,7 +118,12 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, listClustersResponse{Clusters: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listClustersResponse{Clusters: items, NextToken: next})
 }
 
 func (h *Handler) updateClusterConfig(w http.ResponseWriter, r *http.Request, name string) {
@@ -121,6 +174,37 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, name str
 	writeJSON(w, clusterEnvelope{Cluster: toClusterJSON(cluster)})
 }
 
+// Update operations.
+
+func (h *Handler) describeUpdate(w http.ResponseWriter, r *http.Request, clusterName, updateID string) {
+	upd, err := h.eks.DescribeUpdate(r.Context(), clusterName, updateID)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, updateEnvelope{Update: toUpdateJSON(upd)})
+}
+
+func (h *Handler) listUpdates(w http.ResponseWriter, r *http.Request, clusterName string) {
+	q := r.URL.Query()
+
+	ids, err := h.eks.ListUpdates(r.Context(), clusterName, q.Get("nodegroupName"), q.Get("addonName"))
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	items, next, ok := paginateNames(w, r, ids)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listUpdatesResponse{UpdateIDs: items, NextToken: next})
+}
+
 // Nodegroup operations.
 
 func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, clusterName string) {
@@ -140,6 +224,7 @@ func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, cluste
 		Version:        body.Version,
 		ReleaseVersion: body.ReleaseVersion,
 		Labels:         body.Labels,
+		Taints:         taintsToDriver(body.Taints),
 		Tags:           body.Tags,
 	}
 
@@ -180,7 +265,12 @@ func (h *Handler) listNodegroups(w http.ResponseWriter, r *http.Request, cluster
 		return
 	}
 
-	writeJSON(w, listNodegroupsResponse{Nodegroups: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listNodegroupsResponse{Nodegroups: items, NextToken: next})
 }
 
 func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, clusterName, ngName string) {
@@ -189,21 +279,35 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	var (
-		scaling *eksdriver.NodegroupScalingConfig
-		labels  map[string]string
-	)
+	update := eksdriver.NodegroupConfigUpdate{}
 
 	if body.ScalingConfig != nil {
-		s := scalingFromJSON(body.ScalingConfig)
-		scaling = &s
+		// Real EKS applies only the sizes present in the request; the driver
+		// replaces ScalingConfig wholesale, so merge onto the current config
+		// here to avoid zeroing MinSize/MaxSize/DesiredSize that were omitted.
+		cur, err := h.eks.DescribeNodegroup(r.Context(), clusterName, ngName)
+		if err != nil {
+			writeErr(w, err)
+
+			return
+		}
+
+		merged := cur.ScalingConfig
+		mergeScaling(&merged, body.ScalingConfig)
+		update.Scaling = &merged
 	}
 
 	if body.Labels != nil {
-		labels = body.Labels.AddOrUpdateLabels
+		update.AddOrUpdateLabels = body.Labels.AddOrUpdateLabels
+		update.RemoveLabels = body.Labels.RemoveLabels
 	}
 
-	upd, err := h.eks.UpdateNodegroupConfig(r.Context(), clusterName, ngName, scaling, labels)
+	if body.Taints != nil {
+		update.AddOrUpdateTaints = taintsToDriver(body.Taints.AddOrUpdateTaints)
+		update.RemoveTaints = taintsToDriver(body.Taints.RemoveTaints)
+	}
+
+	upd, err := h.eks.UpdateNodegroupConfig(r.Context(), clusterName, ngName, update)
 	if err != nil {
 		writeErr(w, err)
 
@@ -292,7 +396,12 @@ func (h *Handler) listFargateProfiles(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 
-	writeJSON(w, listFargateProfilesResponse{FargateProfileNames: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listFargateProfilesResponse{FargateProfileNames: items, NextToken: next})
 }
 
 func (h *Handler) deleteFargateProfile(w http.ResponseWriter, r *http.Request, clusterName, profileName string) {
@@ -352,7 +461,12 @@ func (h *Handler) listAddons(w http.ResponseWriter, r *http.Request, clusterName
 		return
 	}
 
-	writeJSON(w, listAddonsResponse{Addons: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listAddonsResponse{Addons: items, NextToken: next})
 }
 
 func (h *Handler) updateAddon(w http.ResponseWriter, r *http.Request, clusterName, addonName string) {
@@ -410,6 +524,82 @@ func vpcRequestToDriver(v *vpcConfigRequest) eksdriver.VPCConfig {
 	return out
 }
 
+// networkConfigRequestToDriver converts the wire kubernetesNetworkConfig to the
+// driver shape. serviceIpv6Cidr is provider-assigned, not a caller input.
+func networkConfigRequestToDriver(n *kubernetesNetworkConfigRequest) eksdriver.NetworkConfig {
+	return eksdriver.NetworkConfig{
+		ServiceIPv4CIDR: n.ServiceIPv4CIDR,
+		IPFamily:        n.IPFamily,
+	}
+}
+
+// loggingRequestToDriver converts the wire logging block to driver logging.
+func loggingRequestToDriver(l *loggingJSON) []eksdriver.ClusterLogging {
+	if len(l.ClusterLogging) == 0 {
+		return nil
+	}
+
+	out := make([]eksdriver.ClusterLogging, 0, len(l.ClusterLogging))
+	for _, e := range l.ClusterLogging {
+		out = append(out, eksdriver.ClusterLogging{Types: e.Types, Enabled: e.Enabled})
+	}
+
+	return out
+}
+
+// accessConfigRequestToDriver converts the wire accessConfig to the driver
+// request shape, preserving the omitted/false distinction on the bootstrap flag.
+func accessConfigRequestToDriver(a *accessConfigRequest) eksdriver.AccessConfigRequest {
+	return eksdriver.AccessConfigRequest{
+		AuthenticationMode:                      a.AuthenticationMode,
+		BootstrapClusterCreatorAdminPermissions: a.BootstrapClusterCreatorAdminPermissions,
+	}
+}
+
+// mergeScaling overlays only the sizes present in s onto dst, leaving omitted
+// fields untouched. This is the partial-update semantics real EKS applies.
+func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConfigJSON) {
+	if s.MinSize != nil {
+		dst.MinSize = int(*s.MinSize)
+	}
+
+	if s.MaxSize != nil {
+		dst.MaxSize = int(*s.MaxSize)
+	}
+
+	if s.DesiredSize != nil {
+		dst.DesiredSize = int(*s.DesiredSize)
+	}
+}
+
+// taintsToDriver converts wire taints to driver taints.
+func taintsToDriver(in []taintJSON) []eksdriver.Taint {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]eksdriver.Taint, 0, len(in))
+	for _, t := range in {
+		out = append(out, eksdriver.Taint{Key: t.Key, Value: t.Value, Effect: t.Effect})
+	}
+
+	return out
+}
+
+// taintsToJSON converts driver taints to their wire shape.
+func taintsToJSON(in []eksdriver.Taint) []taintJSON {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]taintJSON, 0, len(in))
+	for _, t := range in {
+		out = append(out, taintJSON{Key: t.Key, Value: t.Value, Effect: t.Effect})
+	}
+
+	return out
+}
+
 func scalingFromJSON(s *nodegroupScalingConfigJSON) eksdriver.NodegroupScalingConfig {
 	out := eksdriver.NodegroupScalingConfig{}
 
@@ -440,11 +630,13 @@ func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
 		PlatformVersion: c.PlatformVersion,
 		Tags:            c.Tags,
 		ResourcesVpcConfig: &vpcConfigResponse{
-			SubnetIDs:             c.VPCConfig.SubnetIDs,
-			SecurityGroupIDs:      c.VPCConfig.SecurityGroupIDs,
-			EndpointPublicAccess:  c.VPCConfig.EndpointPublicAccess,
-			EndpointPrivateAccess: c.VPCConfig.EndpointPrivateAccess,
-			PublicAccessCidrs:     c.VPCConfig.PublicAccessCidrs,
+			SubnetIDs:              c.VPCConfig.SubnetIDs,
+			SecurityGroupIDs:       c.VPCConfig.SecurityGroupIDs,
+			ClusterSecurityGroupID: c.VPCConfig.ClusterSecurityGroupID,
+			VpcID:                  c.VPCConfig.VpcID,
+			EndpointPublicAccess:   c.VPCConfig.EndpointPublicAccess,
+			EndpointPrivateAccess:  c.VPCConfig.EndpointPrivateAccess,
+			PublicAccessCidrs:      c.VPCConfig.PublicAccessCidrs,
 		},
 	}
 
@@ -452,7 +644,56 @@ func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
 		out.CertificateAuthority = &certificate{Data: c.CertificateAuthority}
 	}
 
+	if c.OIDCIssuer != "" {
+		out.Identity = &identityJSON{OIDC: oidcJSON{Issuer: c.OIDCIssuer}}
+	}
+
+	out.KubernetesNetworkConfig = networkConfigToJSON(c.NetworkConfig)
+	out.Logging = loggingToJSON(c.Logging)
+	out.AccessConfig = accessConfigToJSON(c.AccessConfig)
+
 	return out
+}
+
+// networkConfigToJSON renders driver networking to the wire response shape,
+// returning nil when nothing is set so the field is omitted.
+func networkConfigToJSON(n eksdriver.NetworkConfig) *kubernetesNetworkConfigResponse {
+	if n.IPFamily == "" && n.ServiceIPv4CIDR == "" && n.ServiceIPv6CIDR == "" {
+		return nil
+	}
+
+	return &kubernetesNetworkConfigResponse{
+		ServiceIPv4CIDR: n.ServiceIPv4CIDR,
+		ServiceIPv6CIDR: n.ServiceIPv6CIDR,
+		IPFamily:        n.IPFamily,
+	}
+}
+
+// loggingToJSON renders driver logging to the wire response shape.
+func loggingToJSON(in []eksdriver.ClusterLogging) *loggingJSON {
+	if len(in) == 0 {
+		return nil
+	}
+
+	entries := make([]logSetupJSON, 0, len(in))
+	for _, l := range in {
+		entries = append(entries, logSetupJSON{Types: l.Types, Enabled: l.Enabled})
+	}
+
+	return &loggingJSON{ClusterLogging: entries}
+}
+
+// accessConfigToJSON renders driver access config to the wire response shape,
+// returning nil when unset so the field is omitted.
+func accessConfigToJSON(a eksdriver.AccessConfig) *accessConfigResponse {
+	if a.AuthenticationMode == "" {
+		return nil
+	}
+
+	return &accessConfigResponse{
+		AuthenticationMode:                      a.AuthenticationMode,
+		BootstrapClusterCreatorAdminPermissions: a.BootstrapClusterCreatorAdminPermissions,
+	}
 }
 
 func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
@@ -468,7 +709,7 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 		Version:        n.Version,
 		ReleaseVersion: n.ReleaseVersion,
 		CreatedAt:      epochSeconds(n.CreatedAt),
-		ModifiedAt:     epochSeconds(n.CreatedAt),
+		ModifiedAt:     epochSeconds(n.ModifiedAt),
 		Status:         n.Status,
 		CapacityType:   n.CapacityType,
 		ScalingConfig: &nodegroupScalingConfigJSON{
@@ -481,6 +722,7 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 		AmiType:       n.AmiType,
 		NodeRole:      n.NodeRole,
 		Labels:        n.Labels,
+		Taints:        taintsToJSON(n.Taints),
 		Tags:          n.Tags,
 	}
 
@@ -488,7 +730,28 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 		out.DiskSize = &disk
 	}
 
+	// Real EKS always reports a health block (empty issues when healthy) and a
+	// resources block naming at least one managed Auto Scaling group. The mock
+	// synthesizes both deterministically so Describe is stable across calls.
+	out.Health = &nodegroupHealthJSON{Issues: []nodegroupIssueJSON{}}
+	out.Resources = &nodegroupResourcesJSON{
+		AutoScalingGroups: []autoScalingGroupJSON{{Name: syntheticNodegroupASG(n.ClusterName, n.NodegroupName)}},
+	}
+
 	return out
+}
+
+// syntheticNodegroupASG builds the deterministic Auto Scaling group name EKS
+// provisions for a managed nodegroup ("eks-<nodegroup>-<uuid>"). The uuid-shaped
+// suffix is derived from the cluster+nodegroup so it stays stable across
+// Describe calls without any provider state.
+func syntheticNodegroupASG(clusterName, nodegroupName string) string {
+	sum := sha1.Sum([]byte(clusterName + "/" + nodegroupName)) //nolint:gosec // non-cryptographic deterministic id
+	h := hex.EncodeToString(sum[:])
+
+	uuid := h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+
+	return "eks-" + nodegroupName + "-" + uuid
 }
 
 func toFargateProfileJSON(fp *eksdriver.FargateProfile) fargateProfileJSON {

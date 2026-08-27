@@ -7,6 +7,10 @@ import "context"
 type VPCConfig struct {
 	CIDRBlock string
 	Tags      map[string]string
+	// InstanceTenancy is the default tenancy of instances launched into the VPC
+	// ("default" or "dedicated"). An AWS concept; empty means "default". Azure and
+	// GCP do not model per-network tenancy and leave it unset.
+	InstanceTenancy string
 }
 
 // VPCInfo describes a VPC.
@@ -19,6 +23,12 @@ type VPCInfo struct {
 	// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
 	EnableDNSSupport   bool
 	EnableDNSHostnames bool
+	// DhcpOptionsID is the DHCP option set associated with the VPC. Empty means
+	// the Amazon-provided default set; AssociateDhcpOptions changes it.
+	DhcpOptionsID string
+	// InstanceTenancy is the default tenancy of instances launched into the VPC
+	// ("default" or "dedicated"). An AWS concept; Azure and GCP leave it empty.
+	InstanceTenancy string
 }
 
 // SubnetConfig describes a subnet to create.
@@ -37,6 +47,18 @@ type SubnetInfo struct {
 	AvailabilityZone string
 	State            string
 	Tags             map[string]string
+	// MapPublicIPOnLaunch reports whether instances launched into the subnet
+	// receive a public IPv4 address by default. Real EC2 defaults it off for a
+	// non-default subnet and lets ModifySubnetAttribute flip it — the only way
+	// to turn a subnet public.
+	MapPublicIPOnLaunch bool
+	// AvailableIPAddressCount is the number of usable IPv4 addresses left in the
+	// subnet: the CIDR's host space minus the five addresses AWS reserves in
+	// every subnet, minus the addresses already consumed by resident network
+	// interfaces (instance primary ENIs, standalone ENIs, NAT gateways, interface
+	// endpoints). Populated by the provider on Create/Describe; DescribeSubnets
+	// returns it as availableIpAddressCount, which IaC tools read for drift.
+	AvailableIPAddressCount int
 }
 
 // SecurityGroupConfig describes a security group to create.
@@ -64,6 +86,53 @@ type SecurityRule struct {
 	FromPort int
 	ToPort   int
 	CIDR     string
+	// IPv6CIDR is an IPv6 source/destination range (Ipv6Ranges.CidrIpv6),
+	// PrefixListID references a managed prefix list (PrefixListIds.PrefixListId),
+	// and ReferencedGroupID / ReferencedGroupOwnerID capture a source-group
+	// reference (UserIdGroupPairs). Exactly one of CIDR, IPv6CIDR, PrefixListID
+	// or ReferencedGroupID identifies a single rule's target on the AWS wire.
+	IPv6CIDR               string
+	PrefixListID           string
+	ReferencedGroupID      string
+	ReferencedGroupOwnerID string
+	// Description is the optional free-text note attached to a rule. It is not
+	// part of a rule's identity — AWS ignores it when revoking or deduplicating.
+	Description string
+	// RuleID is the service-assigned "sgr-" identifier for the rule. It is empty
+	// for rules created outside the AWS wire layer (Azure/GCP, portable API).
+	RuleID string
+	// Tags are the service-assigned tags applied to the rule. They are populated
+	// only via the AWS wire layer (AuthorizeSecurityGroup* TagSpecifications /
+	// CreateTags on the sgr- id) and are nil for Azure/GCP/OCI and the portable
+	// API. Tags are not part of a rule's identity — Matches() ignores them, the
+	// same as RuleID and Description.
+	Tags map[string]string
+}
+
+// Matches reports whether two rules describe the same permission, ignoring the
+// service-assigned RuleID and the free-text Description — the fields AWS does
+// not treat as part of a rule's identity when revoking or deduplicating.
+func (r *SecurityRule) Matches(o *SecurityRule) bool {
+	return r.Protocol == o.Protocol &&
+		r.FromPort == o.FromPort &&
+		r.ToPort == o.ToPort &&
+		r.CIDR == o.CIDR &&
+		r.IPv6CIDR == o.IPv6CIDR &&
+		r.PrefixListID == o.PrefixListID &&
+		r.ReferencedGroupID == o.ReferencedGroupID
+}
+
+// Equal reports whether two rules are identical in every field except the
+// service-assigned Tags map. Tags is a map (not comparable with ==) and is not
+// part of a rule's identity, so it is excluded. Equal preserves the exact
+// full-struct equality that Azure/GCP/OCI relied on before Tags was added,
+// which — unlike Matches — also distinguishes RuleID, Description and the
+// referenced-group owner.
+func (r *SecurityRule) Equal(o *SecurityRule) bool {
+	return r.Matches(o) &&
+		r.ReferencedGroupOwnerID == o.ReferencedGroupOwnerID &&
+		r.Description == o.Description &&
+		r.RuleID == o.RuleID
 }
 
 // PeeringConnection represents a VPC peering connection.
@@ -92,12 +161,24 @@ type NATGateway struct {
 	State     string // "pending", "available", "deleting", "deleted", "failed"
 	CreatedAt string
 	Tags      map[string]string
+	// AllocationID is the Elastic IP allocation bound to a public NAT gateway;
+	// PrivateIP and NetworkInterfaceID describe the ENI it occupies. These
+	// populate the NatGatewayAddress set AWS returns. ConnectivityType is
+	// "public" or "private".
+	AllocationID       string
+	PrivateIP          string
+	NetworkInterfaceID string
+	ConnectivityType   string
 }
 
 // NATGatewayConfig configures a NAT gateway.
 type NATGatewayConfig struct {
 	SubnetID string
 	Tags     map[string]string
+	// AllocationID echoes the Elastic IP the caller bound to a public NAT
+	// gateway; ConnectivityType selects "public" (default) or "private".
+	AllocationID     string
+	ConnectivityType string
 }
 
 // FlowLog represents a VPC flow log configuration.
@@ -161,11 +242,23 @@ type RouteTableConfig struct {
 
 // NetworkACL represents a network ACL.
 type NetworkACL struct {
-	ID        string
-	VPCID     string
-	Rules     []NetworkACLRule
-	Tags      map[string]string
-	IsDefault bool
+	ID    string
+	VPCID string
+	Rules []NetworkACLRule
+	Tags  map[string]string
+	// Associations lists the subnets this ACL is associated with. It is an AWS
+	// concept the AWS backend populates; other clouds leave it empty.
+	Associations []NetworkACLAssociation
+	IsDefault    bool
+}
+
+// NetworkACLAssociation binds a subnet to a network ACL. Replacing the ACL for a
+// subnet yields a new association ID. This is an AWS concept (see
+// NetworkACLAssociator); other clouds do not populate it.
+type NetworkACLAssociation struct {
+	ID           string
+	NetworkACLID string
+	SubnetID     string
 }
 
 // NetworkACLRule represents a rule in a network ACL.
@@ -196,9 +289,15 @@ type InternetGateway struct {
 type ElasticIPConfig struct {
 	Tags map[string]string
 	// SKU (Azure public IP: Basic/Standard) and AllocationMethod (Static/
-	// Dynamic) are cost/behaviour inputs a discoverer reads; optional.
+	// Dynamic) are cost/behavior inputs a discoverer reads; optional.
 	SKU              string
 	AllocationMethod string
+	// Zones, IdleTimeoutMinutes and DNSDomainNameLabel are Azure public-IP-only
+	// fields (availability zones, TCP idle timeout, DNS label) the AWS-shaped
+	// fields above cannot represent; empty/zero for AWS and GCP.
+	Zones              []string
+	IdleTimeoutMinutes int
+	DNSDomainNameLabel string
 }
 
 // ElasticIP represents an elastic IP address.
@@ -208,10 +307,38 @@ type ElasticIP struct {
 	AssociationID string
 	InstanceID    string
 	Tags          map[string]string
+	// NetworkInterfaceID / PrivateIP describe the ENI target of an AWS
+	// association: AssociateAddress can bind an EIP to a network interface
+	// (and an optional secondary private address) rather than an instance, and
+	// DescribeAddresses reports both back. Empty for Azure/GCP.
+	NetworkInterfaceID string
+	PrivateIP          string
 	// SKU is the Azure public-IP SKU (Basic/Standard), echoed as sku.name.
 	SKU string
 	// AllocationMethod is Static/Dynamic (Azure publicIPAllocationMethod).
 	AllocationMethod string
+	// Zones, IdleTimeoutMinutes, DNSDomainNameLabel and DNSFQDN round-trip the
+	// Azure-only public-IP fields set in ElasticIPConfig; DNSFQDN is derived by
+	// the provider from DNSDomainNameLabel. Empty/zero for AWS and GCP.
+	Zones              []string
+	IdleTimeoutMinutes int
+	DNSDomainNameLabel string
+	DNSFQDN            string
+}
+
+// AssociateAddressInput carries the target of an AssociateAddress call. Exactly
+// one of InstanceID or NetworkInterfaceID identifies the target; PrivateIP
+// optionally pins the association to a specific private address on the
+// interface. The ENI form (NetworkInterfaceID/PrivateIP) is an AWS concept —
+// Azure/GCP read only InstanceID.
+type AssociateAddressInput struct {
+	InstanceID         string
+	NetworkInterfaceID string
+	PrivateIP          string
+	// AllowReassociation mirrors the AWS request parameter: reassociation is
+	// automatic by default (nil), but an explicit false makes the call fail with
+	// Resource.AlreadyAssociated when the EIP is already bound to another target.
+	AllowReassociation *bool
 }
 
 // RouteTableAssociation represents an association between
@@ -242,6 +369,84 @@ type NetworkInterface struct {
 	AttachmentID string
 	Description  string
 	Tags         map[string]string
+	// InstanceID and DeviceIndex describe the attachment when the interface is
+	// attached to an instance (ec2:AttachNetworkInterface); both are empty/zero
+	// for an available interface.
+	InstanceID  string
+	DeviceIndex int
+	// PrivateIP is the primary private IPv4 address the interface holds inside
+	// its subnet, MacAddress its hardware address, and SourceDestCheck the
+	// source/destination check flag. Real EC2 auto-assigns a private IP and MAC
+	// on create and defaults SourceDestCheck to true — the flag a NAT-instance /
+	// firewall / router VM disables via ModifyNetworkInterfaceAttribute.
+	PrivateIP       string
+	MacAddress      string
+	SourceDestCheck bool
+}
+
+// Azure network interface (Microsoft.Network/networkInterfaces) is an
+// Azure-specific optional capability, kept out of the cross-cloud Networking
+// interface (Azure NICs carry ipConfigurations, a location, and per-config
+// private-IP allocation that the AWS-shaped ENI model does not). A provider
+// exposes it by implementing AzureNetworkInterfaces; the wire handler reaches
+// it by type assertion, mirroring the AWS-specific NetworkInterfaceCreator
+// surface below.
+
+// AzureIPConfig is one ipConfiguration on an Azure network interface.
+type AzureIPConfig struct {
+	Name             string
+	SubnetID         string // ARM resource id of the referenced subnet
+	SubnetCIDR       string // resolved address prefix, used to allocate a dynamic private IP
+	PrivateIP        string // set for Static; assigned by the mock for Dynamic
+	AllocationMethod string // "Dynamic" (default) or "Static"
+	PublicIPID       string // ARM resource id of an associated public IP, optional
+	Primary          bool
+	// LBBackendPoolIDs are the ARM resource ids of the load-balancer backend
+	// address pools this ipConfiguration has joined
+	// (properties.loadBalancerBackendAddressPools). This is the single source of
+	// truth for NIC↔LB backend-pool membership: the NIC echoes these back on
+	// GET, and a load balancer projects each backend pool's read-only
+	// backendIPConfigurations by reverse-lookup against this field, so both
+	// sides of the association resolve consistently from one stored reference.
+	LBBackendPoolIDs []string
+}
+
+// AzureNICConfig is the create-or-update payload for an Azure network interface.
+type AzureNICConfig struct {
+	Location     string
+	Tags         map[string]string
+	IPConfigs    []AzureIPConfig
+	IPForwarding bool
+	// NetworkSecurityGroupID is the ARM resource id of the NSG associated with
+	// the whole interface (properties.networkSecurityGroup) — an Azure NIC
+	// binds its NSG at this top level, not per ipConfiguration.
+	NetworkSecurityGroupID string
+}
+
+// AzureNIC is the stored/returned Azure network interface.
+type AzureNIC struct {
+	Name                   string
+	ResourceGroup          string
+	Location               string
+	Tags                   map[string]string
+	IPConfigs              []AzureIPConfig
+	IPForwarding           bool
+	NetworkSecurityGroupID string
+	MACAddress             string
+	ResourceGUID           string
+	ProvisioningState      string
+	ETag                   string
+	VirtualMachineID       string // set while attached to a VM
+}
+
+// AzureNetworkInterfaces is the Azure-specific network-interface surface,
+// keyed by (resourceGroup, name) to match ARM's addressing and give idempotent
+// createOrUpdate. Nil resource group on List means subscription-wide.
+type AzureNetworkInterfaces interface {
+	CreateOrUpdateNetworkInterface(ctx context.Context, resourceGroup, name string, cfg AzureNICConfig) (*AzureNIC, error)
+	GetNetworkInterface(ctx context.Context, resourceGroup, name string) (*AzureNIC, error)
+	DeleteNetworkInterface(ctx context.Context, resourceGroup, name string) error
+	ListNetworkInterfaces(ctx context.Context, resourceGroup string) ([]AzureNIC, error)
 }
 
 // VPCEndpointConfig describes a VPC endpoint to create.
@@ -267,6 +472,10 @@ type VPCEndpoint struct {
 	RouteTableIDs    []string
 	Tags             map[string]string
 	CreatedAt        string
+	// NetworkInterfaceIDs holds the ENIs an Interface-type endpoint provisions,
+	// one per subnet. Gateway-type endpoints hold none. DescribeVpcEndpoints
+	// returns these as networkInterfaceIdSet.
+	NetworkInterfaceIDs []string
 }
 
 // Networking is the interface that networking provider
@@ -332,7 +541,7 @@ type Networking interface {
 	AllocateAddress(ctx context.Context, cfg ElasticIPConfig) (*ElasticIP, error)
 	ReleaseAddress(ctx context.Context, allocationID string) error
 	DescribeAddresses(ctx context.Context, ids []string) ([]ElasticIP, error)
-	AssociateAddress(ctx context.Context, allocationID, instanceID string) (string, error)
+	AssociateAddress(ctx context.Context, allocationID string, in AssociateAddressInput) (string, error)
 	DisassociateAddress(ctx context.Context, associationID string) error
 
 	// Route Table Associations
@@ -376,6 +585,38 @@ type VPCAttributes interface {
 	ModifyVPCAttribute(ctx context.Context, id string, update VPCAttributeUpdate) error
 }
 
+// NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.
+// Moving a subnet from one network ACL to another (yielding a new association
+// ID) is an AWS concept; other clouds model network security differently, so it
+// is kept out of the Networking interface rather than forcing a mirror.
+type NetworkACLAssociator interface {
+	ReplaceNetworkACLAssociation(ctx context.Context, associationID, newACLID string) (*NetworkACLAssociation, error)
+}
+
+// SubnetAttributeUpdate carries the subnet attributes a caller wants changed. A
+// nil pointer leaves that attribute alone, matching an API that accepts one
+// attribute per ModifySubnetAttribute call.
+type SubnetAttributeUpdate struct {
+	MapPublicIPOnLaunch *bool
+}
+
+// SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
+// Per-subnet launch attributes (map-public-ip-on-launch) are an AWS concept;
+// kept out of the Networking interface so providers that do not model them are
+// not forced to carry an implementation.
+type SubnetAttributes interface {
+	ModifySubnetAttribute(ctx context.Context, id string, update SubnetAttributeUpdate) error
+}
+
+// SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
+// changes a subnet's address prefix in place — the Azure ARM
+// Subnets.CreateOrUpdate re-PUT path allows editing a subnet's addressPrefix,
+// unlike AWS where a subnet CIDR is immutable. Providers that model an
+// immutable subnet CIDR do not implement it.
+type SubnetCIDRUpdater interface {
+	UpdateSubnetCIDR(ctx context.Context, id, cidr string) error
+}
+
 // NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
 //
 // Kept out of the Networking interface for the same reason as VPCAttributes:
@@ -392,5 +633,31 @@ type NetworkInterfaces interface {
 // out of NetworkInterfaces so that adding it doesn't break subset assertions
 // (e.g. resourcediscovery's read-only walker, which only needs Describe).
 type NetworkInterfaceCreator interface {
-	CreateNetworkInterface(ctx context.Context, subnetID, description string, tags map[string]string) (*NetworkInterface, error)
+	CreateNetworkInterface(ctx context.Context, subnetID, description string, groups []string, tags map[string]string) (*NetworkInterface, error)
+}
+
+// NetworkInterfaceAttributeUpdate carries the ENI attributes a caller wants
+// changed via ec2:ModifyNetworkInterfaceAttribute. A nil pointer (or nil Groups)
+// leaves that attribute untouched, matching an API that accepts one attribute
+// per call.
+type NetworkInterfaceAttributeUpdate struct {
+	SourceDestCheck *bool
+	Description     *string
+	Groups          []string
+}
+
+// NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface
+// (ec2:ModifyNetworkInterfaceAttribute). It is kept out of NetworkInterfaces so
+// adding it doesn't break subset assertions, mirroring NetworkInterfaceCreator.
+type NetworkInterfaceModifier interface {
+	ModifyNetworkInterfaceAttribute(ctx context.Context, id string, update NetworkInterfaceAttributeUpdate) error
+}
+
+// NetworkInterfaceAttacher is the AWS-specific ENI attach surface
+// (ec2:AttachNetworkInterface), completing the ENI attach/detach lifecycle. It
+// returns the new attachment id. The instance's existence is verified by the
+// wire layer (which holds the compute driver); the networking provider only
+// records the attachment.
+type NetworkInterfaceAttacher interface {
+	AttachNetworkInterface(ctx context.Context, networkInterfaceID, instanceID string, deviceIndex int) (string, error)
 }

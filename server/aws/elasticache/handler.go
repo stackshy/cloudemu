@@ -39,18 +39,55 @@ const (
 // elastiCacheActions is the set of Action values this handler recognizes.
 // Matches uses it to decide whether to claim a request.
 var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCacheSubnetGroup":    {},
-	"DescribeCacheSubnetGroups": {},
-	"DeleteCacheSubnetGroup":    {},
-	"CreateCacheCluster":        {},
-	"DescribeCacheClusters":     {},
-	"ModifyCacheCluster":        {},
-	"DeleteCacheCluster":        {},
-	"CreateReplicationGroup":    {},
-	"DescribeReplicationGroups": {},
-	"ModifyReplicationGroup":    {},
-	"DeleteReplicationGroup":    {},
+	"CreateCacheSubnetGroup":       {},
+	"DescribeCacheSubnetGroups":    {},
+	"DeleteCacheSubnetGroup":       {},
+	"CreateCacheCluster":           {},
+	"DescribeCacheClusters":        {},
+	"ModifyCacheCluster":           {},
+	"DeleteCacheCluster":           {},
+	"RebootCacheCluster":           {},
+	"AddTagsToResource":            {},
+	"ListTagsForResource":          {},
+	"RemoveTagsFromResource":       {},
+	"CreateCacheParameterGroup":    {},
+	"DescribeCacheParameterGroups": {},
+	"ModifyCacheParameterGroup":    {},
+	"ResetCacheParameterGroup":     {},
+	"DeleteCacheParameterGroup":    {},
+	"DescribeCacheParameters":      {},
+	"DescribeCacheEngineVersions":  {},
+	"CreateReplicationGroup":       {},
+	"DescribeReplicationGroups":    {},
+	"ModifyReplicationGroup":       {},
+	"DeleteReplicationGroup":       {},
+	"CreateSnapshot":               {},
+	"DescribeSnapshots":            {},
 }
+
+// sharedTagActions are the generic tag verbs ElastiCache shares with other
+// query-protocol services on the same wire (RDS for all three; SNS also uses
+// ListTagsForResource). Matches claims them only when the SigV4 credential
+// scope names "elasticache", otherwise they fall through to the owning handler.
+var sharedTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"AddTagsToResource":      {},
+	"ListTagsForResource":    {},
+	"RemoveTagsFromResource": {},
+}
+
+// sharedSnapshotActions are the snapshot verbs whose Action names collide with
+// EC2's EBS snapshots (CreateSnapshot / DescribeSnapshots) on the same query
+// wire. ElastiCache registers before EC2 (first-match-wins), so without a scope
+// gate this handler would steal every EBS snapshot call. Matches claims them
+// only when the SigV4 credential scope names "elasticache"; otherwise they fall
+// through to the EC2 EBS handler.
+var sharedSnapshotActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateSnapshot":    {},
+	"DescribeSnapshots": {},
+}
+
+// scopeElastiCache is the SigV4 credential-scope service name for ElastiCache.
+const scopeElastiCache = "elasticache"
 
 // Handler serves ElastiCache query-protocol requests against a cache driver.
 type Handler struct {
@@ -84,12 +121,33 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := elastiCacheActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
 
-	return ok
+	_, ok := elastiCacheActions[action]
+	if !ok {
+		return false
+	}
+
+	// The tag verbs are shared with RDS/SNS on the same query wire. Claim them
+	// only when the SigV4 credential scope names "elasticache"; otherwise let
+	// them fall through to the owning handler.
+	if _, shared := sharedTagActions[action]; shared {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
+	}
+
+	// The snapshot verbs collide with EC2's EBS snapshots. Claim them only when
+	// the SigV4 credential scope names "elasticache"; an EC2-scoped call falls
+	// through to the EC2 EBS handler.
+	if _, shared := sharedSnapshotActions[action]; shared {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
+//
+//nolint:gocyclo,funlen // one case per action; the flat dispatch switch grows with the surface and reads clearer than sub-routers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Form.Get("Action") {
 	case "CreateCacheSubnetGroup":
@@ -114,6 +172,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteReplicationGroup(w, r)
 	case "DeleteCacheCluster":
 		h.deleteCacheCluster(w, r)
+	case "RebootCacheCluster":
+		h.rebootCacheCluster(w, r)
+	case "AddTagsToResource":
+		h.addTagsToResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
+	case "RemoveTagsFromResource":
+		h.removeTagsFromResource(w, r)
+	case "CreateCacheParameterGroup":
+		h.createCacheParameterGroup(w, r)
+	case "DescribeCacheParameterGroups":
+		h.describeCacheParameterGroups(w, r)
+	case "ModifyCacheParameterGroup":
+		h.modifyCacheParameterGroup(w, r)
+	case "ResetCacheParameterGroup":
+		h.resetCacheParameterGroup(w, r)
+	case "DescribeCacheParameters":
+		h.describeCacheParameters(w, r)
+	case "DeleteCacheParameterGroup":
+		h.deleteCacheParameterGroup(w, r)
+	case "DescribeCacheEngineVersions":
+		h.describeCacheEngineVersions(w, r)
+	case "CreateSnapshot":
+		h.createSnapshot(w, r)
+	case "DescribeSnapshots":
+		h.describeSnapshots(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))
@@ -122,17 +206,37 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // writeErr maps cloudemu errors to ElastiCache XML error responses.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidCacheClusterState", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
+	}
+}
+
+// failedPreconditionCode picks the AWS-shaped error code for a failed
+// precondition. The driver encodes the intended fault as a prefix on the
+// message (a subnet group still in use, or an unsupported snapshot); a caller
+// matching the SDK's typed errors sees the code, not the message, so it has to
+// be surfaced as the wire Code. Anything else is a cache-cluster state error.
+func failedPreconditionCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "CacheSubnetGroupInUse"):
+		return "CacheSubnetGroupInUse"
+	case strings.Contains(msg, "SnapshotFeatureNotSupportedFault"):
+		return "SnapshotFeatureNotSupportedFault"
+	default:
+		return "InvalidCacheClusterState"
 	}
 }
 
@@ -147,10 +251,14 @@ func notFoundCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "snapshot"):
+		return "SnapshotNotFoundFault"
 	case strings.Contains(msg, "replication group"):
 		return "ReplicationGroupNotFoundFault"
 	case strings.Contains(msg, "cache subnet group"):
 		return "CacheSubnetGroupNotFoundFault"
+	case strings.Contains(msg, "parameter group"):
+		return "CacheParameterGroupNotFound"
 	default:
 		return "CacheClusterNotFound"
 	}
@@ -163,6 +271,8 @@ func alreadyExistsCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "snapshot"):
+		return "SnapshotAlreadyExistsFault"
 	case strings.Contains(msg, "replication group"):
 		return "ReplicationGroupAlreadyExists"
 	case strings.Contains(msg, "cache subnet group"):

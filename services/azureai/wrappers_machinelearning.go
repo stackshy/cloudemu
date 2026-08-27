@@ -23,9 +23,11 @@ func (a *AzureAI) DeleteMLWorkspace(ctx context.Context, rg, name string) error 
 	return a.act(ctx, "DeleteMLWorkspace", name, func() error { return a.drv.DeleteMLWorkspace(ctx, rg, name) })
 }
 
-func (a *AzureAI) UpdateMLWorkspaceTags(ctx context.Context, rg, name string, tags map[string]string) (*driver.MLWorkspace, error) {
-	return cast[*driver.MLWorkspace](a.do(ctx, "UpdateMLWorkspaceTags", name, func() (any, error) {
-		return a.drv.UpdateMLWorkspaceTags(ctx, rg, name, tags)
+func (a *AzureAI) UpdateMLWorkspace(
+	ctx context.Context, rg, name string, upd driver.MLWorkspaceUpdate,
+) (*driver.MLWorkspace, error) {
+	return cast[*driver.MLWorkspace](a.do(ctx, "UpdateMLWorkspace", name, func() (any, error) {
+		return a.drv.UpdateMLWorkspace(ctx, rg, name, upd)
 	}))
 }
 

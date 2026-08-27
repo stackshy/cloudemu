@@ -12,10 +12,9 @@
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/start — start
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/stop  — stop
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/reset — reset
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/{verb} — setLabels/setMetadata/setTags/setMachineType/attachDisk/detachDisk
+//	GET    /compute/v1/projects/{p}/aggregated/instances             — aggregatedList (grouped by zone)
 //	GET    /compute/v1/projects/{p}/zones/{z}/operations/{name}      — get operation (always DONE)
-//
-// Less-used surfaces (aggregated list, snapshots, disks, images) are not yet
-// wired and return 501 Not Implemented.
 package compute
 
 import (
@@ -24,6 +23,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Resource type names used in URL routing.
@@ -40,12 +40,30 @@ const (
 // operations.
 type Handler struct {
 	compute computedriver.Compute
+	// net resolves the subnetwork an instance references to its CIDR so a
+	// launched instance gets a networkIP inside that range. May be nil (no
+	// networking driver wired), in which case IP allocation falls back to the
+	// compute provider's synthetic allocator.
+	net netdriver.Networking
+	// ops records the compute#operation names this handler mints so a poll of an
+	// operation that was never issued returns 404 instead of a fabricated DONE.
+	// Shared with the networks and load-balancing handlers (which mint compute
+	// operations this handler's /operations route serves). Nil in a package-level
+	// server, where every operation poll is answered DONE (legacy behavior).
+	ops *gcprest.OperationRegistry
 }
 
-// New returns a Compute handler backed by c.
-func New(c computedriver.Compute) *Handler {
-	return &Handler{compute: c}
+// New returns a Compute handler backed by c. net (may be nil) lets insert
+// allocate an instance's private networkIP from the referenced subnetwork's
+// CIDR.
+func New(c computedriver.Compute, net netdriver.Networking) *Handler {
+	return &Handler{compute: c, net: net}
 }
+
+// SetOperationRegistry wires the shared compute-operation registry so this
+// handler records the operations it mints and 404s a poll for an operation name
+// that was never issued.
+func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
 // Matches returns true for /compute/v1/projects/... URLs targeting instances
 // or operations resources. Other resource types fall through so future
@@ -72,28 +90,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rp.ResourceType == resourceOperations {
-		serveOperations(w, r, rp)
+	if rp.Scope == gcprest.ScopeAggregated {
+		h.serveAggregated(w, r, rp)
 		return
 	}
 
-	if rp.ResourceType == resourceDisks {
-		h.serveDisksRoute(w, r, rp)
-		return
-	}
-
-	if rp.ResourceType == resourceSnapshots {
-		h.serveSnapshotsRoute(w, r, rp)
-		return
-	}
-
-	if rp.ResourceType == resourceImages {
-		h.serveImagesRoute(w, r, rp)
-		return
-	}
-
-	if rp.ResourceType == resourceMachineTyp {
-		serveMachineTypesRoute(w, r, rp)
+	if h.routeResource(w, r, rp) {
 		return
 	}
 
@@ -105,6 +107,48 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.serveInstanceCollection(w, r, rp)
 	}
+}
+
+// serveAggregated handles the /aggregated/{type} scope (currently only
+// instances, which gcloud uses when no zone is given).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if r.Method == http.MethodGet {
+		switch rp.ResourceType {
+		case resourceInstances:
+			h.aggregatedListInstances(w, r, rp)
+			return
+		case resourceDisks:
+			h.aggregatedListDisks(w, r, rp)
+			return
+		}
+	}
+
+	writeNotImplemented(w, r.Method+" "+r.URL.Path)
+}
+
+// routeResource dispatches the non-instance resource types (operations, disks,
+// snapshots, images, machineTypes), returning true when it handled the request.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) bool {
+	switch rp.ResourceType {
+	case resourceOperations:
+		h.serveOperations(w, r, rp)
+	case resourceDisks:
+		h.serveDisksRoute(w, r, rp)
+	case resourceSnapshots:
+		h.serveSnapshotsRoute(w, r, rp)
+	case resourceImages:
+		h.serveImagesRoute(w, r, rp)
+	case resourceMachineTyp:
+		serveMachineTypesRoute(w, r, rp)
+	default:
+		return false
+	}
+
+	return true
 }
 
 //nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
@@ -157,7 +201,7 @@ func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gc
 	}
 }
 
-//nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
+//nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
@@ -169,6 +213,11 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 			writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		}
 
+		return
+	}
+
+	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "resize") {
+		h.resizeDisk(w, r, rp)
 		return
 	}
 
@@ -226,6 +275,14 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	h.dispatchInstanceVerb(w, r, rp)
+}
+
+// dispatchInstanceVerb routes the POST instance verbs (lifecycle + GCP-specific
+// mutations) to their handlers.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) dispatchInstanceVerb(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	switch strings.ToLower(rp.Action) {
 	case "start":
 		h.startInstance(w, r, rp)
@@ -233,16 +290,31 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, rp
 		h.stopInstance(w, r, rp)
 	case "reset":
 		h.resetInstance(w, r, rp)
+	case "setlabels":
+		h.setLabels(w, r, rp)
+	case "setmetadata":
+		h.setMetadata(w, r, rp)
+	case "settags":
+		h.setTags(w, r, rp)
+	case "setmachinetype":
+		h.setMachineType(w, r, rp)
+	case "attachdisk":
+		h.attachDisk(w, r, rp)
+	case "detachdisk":
+		h.detachDisk(w, r, rp)
 	default:
 		writeNotImplemented(w, "action: "+rp.Action)
 	}
 }
 
-// serveOperations handles GET on operations/{name}. Since our mock executes
-// synchronously, every operation lookup returns DONE.
+// serveOperations handles GET on operations/{name}. Since the mock executes
+// synchronously, a known operation always reads back DONE. An operation name
+// that was never minted (a bogus poll, `gcloud compute operations describe
+// <bogus>`) is 404, matching real GCP, rather than a fabricated DONE — provided
+// a shared registry is wired (a nil registry keeps the legacy allow-all).
 //
 //nolint:gocritic // rp is a request-scoped value
-func serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+func (h *Handler) serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if r.Method != http.MethodGet {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
@@ -258,6 +330,13 @@ func serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.Resource
 			"items":    []any{},
 			"selfLink": gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "operations", ""),
 		})
+
+		return
+	}
+
+	if !h.ops.Has(rp.Scope, rp.ScopeName, rp.ResourceName) {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound",
+			"The resource 'operations/"+rp.ResourceName+"' was not found")
 
 		return
 	}

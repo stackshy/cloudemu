@@ -105,9 +105,14 @@ func (h *Handler) listBackups(w http.ResponseWriter, r *http.Request, rt *route)
 		return
 	}
 
-	out := &bt.ListBackupsResponse{}
-	for i := range backups {
-		out.Backups = append(out.Backups, toWireBackup(&backups[i]))
+	page, next, ok := paginate(w, r, backups)
+	if !ok {
+		return
+	}
+
+	out := &bt.ListBackupsResponse{NextPageToken: next}
+	for i := range page {
+		out.Backups = append(out.Backups, toWireBackup(&page[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, out)

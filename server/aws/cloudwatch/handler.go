@@ -33,6 +33,22 @@ const (
 	maxBodyBytes    = 1 << 20
 )
 
+// Operation names shared by the rpc-v2-cbor and query dispatch switches.
+const (
+	opPutMetricData       = "PutMetricData"
+	opGetMetricStatistics = "GetMetricStatistics"
+	opListMetrics         = "ListMetrics"
+	opPutMetricAlarm      = "PutMetricAlarm"
+	opDescribeAlarms      = "DescribeAlarms"
+	opDeleteAlarms        = "DeleteAlarms"
+	opSetAlarmState       = "SetAlarmState"
+	opPutCompositeAlarm   = "PutCompositeAlarm"
+	opPutDashboard        = "PutDashboard"
+	opGetDashboard        = "GetDashboard"
+	opListDashboards      = "ListDashboards"
+	opDeleteDashboards    = "DeleteDashboards"
+)
+
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
 // An optional IPAM metrics source lets the handler surface derived AWS/IPAM
 // metrics that the monitoring store itself doesn't hold.
@@ -88,19 +104,54 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.dispatch(w, r, op, body)
+}
+
+// dispatch routes a decoded rpc-v2-cbor operation to its handler.
+//
+//nolint:gocyclo // first-match dispatch over many CloudWatch operations.
+func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, body []byte) {
 	switch op {
-	case "PutMetricData":
+	case opPutMetricData:
 		h.putMetricData(w, r, body)
-	case "GetMetricStatistics":
+	case opGetMetricStatistics:
 		h.getMetricStatistics(w, r, body)
-	case "ListMetrics":
+	case "GetMetricData":
+		h.getMetricData(w, r, body)
+	case opListMetrics:
 		h.listMetrics(w, r, body)
-	case "PutMetricAlarm":
+	case opPutMetricAlarm:
 		h.putMetricAlarm(w, r, body)
-	case "DescribeAlarms":
+	case opDescribeAlarms:
 		h.describeAlarms(w, r, body)
-	case "DeleteAlarms":
+	case "DescribeAlarmsForMetric":
+		h.describeAlarmsForMetric(w, r, body)
+	case "DescribeAlarmHistory":
+		h.describeAlarmHistory(w, r, body)
+	case opDeleteAlarms:
 		h.deleteAlarms(w, r, body)
+	case opSetAlarmState:
+		h.setAlarmState(w, r, body)
+	case opPutCompositeAlarm:
+		h.putCompositeAlarm(w, r, body)
+	case opPutDashboard:
+		h.putDashboard(w, r, body)
+	case opGetDashboard:
+		h.getDashboard(w, r, body)
+	case opListDashboards:
+		h.listDashboards(w, r, body)
+	case opDeleteDashboards:
+		h.deleteDashboards(w, r, body)
+	case "EnableAlarmActions":
+		h.setAlarmActionsEnabled(w, r, body, true)
+	case "DisableAlarmActions":
+		h.setAlarmActionsEnabled(w, r, body, false)
+	case "TagResource":
+		h.tagResource(w, r, body)
+	case "UntagResource":
+		h.untagResource(w, r, body)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r, body)
 	default:
 		writeCBORError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -121,7 +172,7 @@ func extractOperation(path string) string {
 func writeCBORError(w http.ResponseWriter, status int, errType, msg string) {
 	payload := map[string]any{
 		"__type":  errType,
-		"Message": msg,
+		"message": msg,
 	}
 
 	body, _ := cbor.Marshal(payload)

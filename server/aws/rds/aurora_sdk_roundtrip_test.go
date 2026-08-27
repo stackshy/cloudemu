@@ -2,11 +2,37 @@ package rds_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsrds "github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 )
+
+// TestSDKRDSFailoverEmptyCluster guards that failing a cluster over with no
+// member instances is rejected as InvalidDBClusterStateFault, not silently
+// accepted.
+func TestSDKRDSFailoverEmptyCluster(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBCluster(ctx, &awsrds.CreateDBClusterInput{
+		DBClusterIdentifier: aws.String("empty-cl"),
+		Engine:              aws.String("aurora-mysql"),
+	}); err != nil {
+		t.Fatalf("CreateDBCluster: %v", err)
+	}
+
+	_, err := client.FailoverDBCluster(ctx, &awsrds.FailoverDBClusterInput{
+		DBClusterIdentifier: aws.String("empty-cl"),
+	})
+
+	var state *rdstypes.InvalidDBClusterStateFault
+	if !errors.As(err, &state) {
+		t.Fatalf("failover empty cluster: got %v, want InvalidDBClusterStateFault", err)
+	}
+}
 
 func TestSDKRDSClusterEndpointsAndFailover(t *testing.T) {
 	client := newSDKClient(t)
@@ -40,8 +66,15 @@ func TestSDKRDSClusterEndpointsAndFailover(t *testing.T) {
 		t.Fatalf("DescribeDBClusterEndpoints: %v", err)
 	}
 
-	if len(desc.DBClusterEndpoints) != 1 {
-		t.Fatalf("got %d endpoints, want 1", len(desc.DBClusterEndpoints))
+	// The built-in WRITER + READER endpoints Aurora auto-provisions plus the one
+	// custom endpoint created above.
+	types := map[string]int{}
+	for i := range desc.DBClusterEndpoints {
+		types[aws.ToString(desc.DBClusterEndpoints[i].EndpointType)]++
+	}
+
+	if types["WRITER"] != 1 || types["READER"] != 1 || types["CUSTOM"] != 1 {
+		t.Fatalf("endpoint types = %v, want one each of WRITER/READER/CUSTOM", types)
 	}
 
 	if _, err := client.DeleteDBClusterEndpoint(ctx, &awsrds.DeleteDBClusterEndpointInput{

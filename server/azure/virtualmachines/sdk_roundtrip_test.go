@@ -26,11 +26,11 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-// newSDKClient builds an azure-sdk-for-go armcompute VirtualMachinesClient
-// configured to talk to the given httptest server.
-func newSDKClient(t *testing.T, ts *httptest.Server) *armcompute.VirtualMachinesClient {
-	t.Helper()
-
+// sdkClientOptions builds the arm.ClientOptions shared by every armcompute
+// client in these tests: point Cloud.ResourceManager at the httptest server
+// and disable retries so a test failure is visible immediately rather than
+// masked by the SDK's retry loop.
+func sdkClientOptions(ts *httptest.Server) *arm.ClientOptions {
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
@@ -41,17 +41,21 @@ func newSDKClient(t *testing.T, ts *httptest.Server) *armcompute.VirtualMachines
 		},
 	}
 
-	opts := &arm.ClientOptions{
+	return &arm.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Cloud:     myCloud,
 			Transport: ts.Client(),
-			// SDK wants TLS by default; we're on http httptest. Disable retries
-			// so test failures are visible immediately rather than masked.
-			Retry: policy.RetryOptions{MaxRetries: -1},
+			Retry:     policy.RetryOptions{MaxRetries: -1},
 		},
 	}
+}
 
-	client, err := armcompute.NewVirtualMachinesClient("sub-1", fakeCred{}, opts)
+// newSDKClient builds an azure-sdk-for-go armcompute VirtualMachinesClient
+// configured to talk to the given httptest server.
+func newSDKClient(t *testing.T, ts *httptest.Server) *armcompute.VirtualMachinesClient {
+	t.Helper()
+
+	client, err := armcompute.NewVirtualMachinesClient("sub-1", fakeCred{}, sdkClientOptions(ts))
 	if err != nil {
 		t.Fatal(err)
 	}

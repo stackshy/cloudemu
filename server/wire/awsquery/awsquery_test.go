@@ -231,3 +231,28 @@ func equalMaps(a, b map[string]string) bool {
 
 	return true
 }
+
+func TestCredentialScopeService(t *testing.T) {
+	const realHeader = "AWS4-HMAC-SHA256 Credential=AKID/20260101/us-east-1/sns/aws4_request, " +
+		"SignedHeaders=host;x-amz-date, Signature=abc123"
+
+	tests := map[string]struct {
+		auth string
+		want string
+	}{
+		"real sns header":    {realHeader, "sns"},
+		"rds scope":          {"AWS4-HMAC-SHA256 Credential=AKID/20260101/us-west-2/rds/aws4_request, Signature=x", "rds"},
+		"region independent": {"Credential=AKID/20260101/eu-central-1/monitoring/aws4_request", "monitoring"},
+		"missing credential": {"AWS4-HMAC-SHA256 SignedHeaders=host, Signature=x", ""},
+		"empty":              {"", ""},
+		"truncated scope":    {"Credential=AKID/20260101/us-east-1/sns", ""},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := awsquery.CredentialScopeService(tc.auth); got != tc.want {
+				t.Errorf("CredentialScopeService(%q) = %q, want %q", tc.auth, got, tc.want)
+			}
+		})
+	}
+}

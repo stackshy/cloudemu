@@ -43,9 +43,24 @@ func (h *Handler) writeEntries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Cloud Logging assigns a server-side insertId when the writer omits one;
+		// clients dedupe on it, so it must always be present on read-back.
+		if e.InsertID == "" {
+			e.InsertID = genInsertID()
+		}
+
+		// The MonitoredResource may be set per-entry or inherited from the
+		// request level, and request-level labels are merged into every entry.
+		if e.Resource == nil {
+			e.Resource = req.Resource
+		}
+
+		e.Labels = mergeLabels(req.Labels, e.Labels)
+
 		byLog[logID] = append(byLog[logID], logdriver.LogEvent{
-			Timestamp: parseTimestamp(e.Timestamp, now),
-			Message:   encodeEntryPayload(e),
+			Timestamp:     parseTimestamp(e.Timestamp, now),
+			IngestionTime: now,
+			Message:       encodeEntryPayload(e),
 		})
 	}
 
@@ -65,6 +80,26 @@ func (h *Handler) writeEntries(w http.ResponseWriter, r *http.Request) {
 	gcprest.WriteJSON(w, http.StatusOK, struct{}{})
 }
 
+// mergeLabels overlays entry-level labels onto request-level labels (entry wins),
+// returning nil when neither side has any so the field stays omitted on read.
+func mergeLabels(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(base)+len(override))
+
+	for k, v := range base {
+		out[k] = v
+	}
+
+	for k, v := range override {
+		out[k] = v
+	}
+
+	return out
+}
+
 // ensureLog creates the log group and its default stream if they do not already
 // exist. Both AlreadyExists results are benign — a log accreting more entries.
 func (h *Handler) ensureLog(ctx context.Context, logID string) error {
@@ -79,8 +114,25 @@ func (h *Handler) ensureLog(ctx context.Context, logID string) error {
 	return nil
 }
 
-// listEntries maps ListLogEntries onto GetLogEvents. The log to read is taken
-// from the filter's `logName=` clause; the project comes from resourceNames.
+// logEntry pairs a driver event with the log id it belongs to, so entries read
+// across many logs still carry their own logName.
+type logEntry struct {
+	logID string
+	event logdriver.LogEvent
+}
+
+// allEntriesLimit fetches every stored event from a log so the wire layer can
+// sort and page across the full set (the driver's Limit truncates by insertion
+// order, which would corrupt a timestamp-ordered page).
+const allEntriesLimit = 1 << 30
+
+// defaultEntriesPageSize bounds a page when the caller sets no pageSize.
+const defaultEntriesPageSize = 1000
+
+// listEntries maps ListLogEntries onto the driver. The log to read is taken from
+// the filter's `logName=` clause; when absent, entries are read across every log
+// in the project (matching `gcloud logging read` / read-all). Results are ordered
+// by timestamp and paged via pageSize/pageToken.
 func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 	var req listLogEntriesRequest
 	if !gcprest.DecodeJSON(w, r, &req) {
@@ -89,17 +141,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 
 	project := projectFromResourceNames(req.ResourceNames)
 
-	logID := logIDFromFilter(req.Filter)
-	if logID == "" {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalidArgument",
-			"a logName filter is required to list entries")
-		return
-	}
-
-	events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{
-		LogGroup: logID,
-		Limit:    req.PageSize,
-	})
+	entries, err := h.gatherEntries(r, project, logIDFromFilter(req.Filter))
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -110,22 +152,84 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 	// driver's insertion order matches (out-of-order writes must still sort).
 	desc := strings.Contains(strings.ToLower(req.OrderBy), "desc")
 
-	sorted := make([]logdriver.LogEvent, len(events))
-	copy(sorted, events)
-	sort.SliceStable(sorted, func(i, j int) bool {
+	sort.SliceStable(entries, func(i, j int) bool {
 		if desc {
-			return sorted[i].Timestamp.After(sorted[j].Timestamp)
+			return entries[i].event.Timestamp.After(entries[j].event.Timestamp)
 		}
 
-		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+		return entries[i].event.Timestamp.Before(entries[j].event.Timestamp)
 	})
 
-	out := make([]logEntryJSON, 0, len(sorted))
-	for i := range sorted {
-		out = append(out, toLogEntryJSON(project, logID, &sorted[i]))
+	page, next := pageEntries(entries, req.PageSize, req.PageToken)
+
+	out := make([]logEntryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toLogEntryJSON(project, page[i].logID, &page[i].event))
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, listLogEntriesResponse{Entries: out})
+	gcprest.WriteJSON(w, http.StatusOK, listLogEntriesResponse{Entries: out, NextPageToken: next})
+}
+
+// gatherEntries collects the events to list. When logID is set, only that log is
+// read (a missing log is a not-found, as real Cloud Logging surfaces for a
+// single-log filter); when logID is empty, every log in the project is read.
+func (h *Handler) gatherEntries(r *http.Request, project, logID string) ([]logEntry, error) {
+	if logID != "" {
+		events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{LogGroup: logID, Limit: allEntriesLimit})
+		if err != nil {
+			return nil, err
+		}
+
+		return tagEntries(logID, events), nil
+	}
+
+	groups, err := h.logs.ListLogGroups(r.Context(), scope.Scope{Project: project})
+	if err != nil {
+		return nil, err
+	}
+
+	var all []logEntry
+
+	for i := range groups {
+		events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{LogGroup: groups[i].Name, Limit: allEntriesLimit})
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, tagEntries(groups[i].Name, events)...)
+	}
+
+	return all, nil
+}
+
+func tagEntries(logID string, events []logdriver.LogEvent) []logEntry {
+	out := make([]logEntry, len(events))
+	for i := range events {
+		out[i] = logEntry{logID: logID, event: events[i]}
+	}
+
+	return out
+}
+
+// pageEntries returns the requested page of entries and the token for the next
+// page ("" when the page is the last).
+func pageEntries(entries []logEntry, pageSize int, pageToken string) (page []logEntry, next string) {
+	size := pageSize
+	if size <= 0 {
+		size = defaultEntriesPageSize
+	}
+
+	start := decodePageToken(pageToken)
+	if start > len(entries) {
+		start = len(entries)
+	}
+
+	end := start + size
+	if end >= len(entries) {
+		return entries[start:], ""
+	}
+
+	return entries[start:end], encodePageToken(end)
 }
 
 // listLogs maps ListLogs onto ListLogGroups, returning fully-qualified log

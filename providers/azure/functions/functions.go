@@ -13,6 +13,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
@@ -63,11 +64,13 @@ type Mock struct {
 	layers     *memstore.Store[*layerData]
 	mappings   *memstore.Store[*driver.EventSourceMappingInfo]
 	plans      *memstore.Store[*AppServicePlan]
+	sites      *memstore.Store[*SiteMeta]
 	opts       *config.Options
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
 	monitoring mondriver.Monitoring
-	mu         sync.Mutex // guards PublishVersion read-modify-write on funcData
+	mu         sync.Mutex   // guards PublishVersion read-modify-write on funcData
+	sitesMu    sync.RWMutex // guards SiteMeta read-modify-write
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -104,6 +107,7 @@ func New(opts *config.Options) *Mock {
 		layers:   memstore.New[*layerData](),
 		mappings: memstore.New[*driver.EventSourceMappingInfo](),
 		plans:    memstore.New[*AppServicePlan](),
+		sites:    memstore.New[*SiteMeta](),
 		opts:     opts,
 		handlers: make(map[string]driver.HandlerFunc),
 	}
@@ -274,6 +278,38 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	})
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+}
+
+// InvokeExternal asynchronously invokes the named function app with payload,
+// used for cross-service delivery such as Event Grid -> AzureFunction where the
+// source only knows the destination app. A missing function is a no-op (the
+// subscription may point at an app this emulator never created), mirroring
+// lambda.InvokeExternal. ctx carries the re-entrant delivery depth (see
+// internal/recursionguard): a function that re-publishes an event that routes
+// back to itself would otherwise recurse unbounded, so once the depth reaches
+// recursionguard.MaxDepth further invocation is dropped.
+func (m *Mock) InvokeExternal(ctx context.Context, name string, payload []byte) error {
+	if _, ok := m.funcs.Get(name); !ok {
+		return nil
+	}
+
+	depth := recursionguard.Depth(ctx)
+	if depth >= recursionguard.MaxDepth {
+		return nil
+	}
+
+	ctx = recursionguard.WithDepth(ctx, depth+1)
+
+	out, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: name, Payload: payload, InvokeType: "Event"})
+	if err != nil {
+		return err
+	}
+
+	if out != nil && out.Error != "" {
+		return cerrors.Newf(cerrors.Internal, "function %s returned an error: %s", name, out.Error)
+	}
+
+	return nil
 }
 
 // invokeEngine runs a function whose code was deployed to the configured

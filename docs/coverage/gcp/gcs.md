@@ -47,6 +47,53 @@ GCP's `storage` service · portable interface `driver.Bucket` · [GCP index](./R
 
 Discovered by type assertion; only some providers implement these.
 
+### AccountEncryptionConfig
+
+AccountEncryptionConfig is an OPTIONAL Azure-specific capability,
+
+| Operation | Description |
+| --- | --- |
+| `AccountEncryption` |  |
+| `SetAccountEncryption` |  |
+
+### AzureBlobExtensions
+
+AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
+
+| Operation | Description |
+| --- | --- |
+| `AcquireLease` | AcquireLease acquires a lease on a blob (Lease Blob, ?comp=lease, |
+| `AppendBlock` | AppendBlock appends a block to the end of an append blob (Append Block, |
+| `BreakLease` | BreakLease breaks the blob's current lease. breakPeriod is nil when the |
+| `ChangeLease` | ChangeLease changes the blob's lease ID. |
+| `CheckBlobLease` | CheckBlobLease validates a write/delete request's x-ms-lease-id header |
+| `CommitBlockList` | CommitBlockList assembles a block blob (Put Block List, ?comp=blocklist) |
+| `ContainerAccessPolicy` | ContainerAccessPolicy returns a container's public access level and |
+| `ContainerMetadata` | ContainerMetadata returns a container's metadata (Get Container Properties / |
+| `CreateAppendBlob` | CreateAppendBlob creates an empty append blob (Put Blob with |
+| `CreateBlobSnapshot` | CreateBlobSnapshot captures an immutable snapshot (Snapshot Blob, |
+| `DeleteBlobSnapshots` | DeleteBlobSnapshots applies the Azure delete-snapshots directive |
+| `GetBlobSnapshot` | GetBlobSnapshot reads a previously captured snapshot (GET ?snapshot=…). |
+| `GetBlockList` | GetBlockList returns the blob's committed and uncommitted blocks (Get |
+| `PutBlockBlob` | PutBlockBlob writes a block blob's content together with its system content |
+| `ReleaseLease` | ReleaseLease releases the blob's current lease. |
+| `RenewLease` | RenewLease renews the blob's current lease. |
+| `SetBlobMetadata` | SetBlobMetadata replaces only a blob's metadata (Set Blob Metadata, |
+| `SetBlobProperties` | SetBlobProperties replaces only a blob's system properties (Set Blob |
+| `SetBlobTier` | SetBlobTier sets a blob's access tier (Set Blob Tier, ?comp=tier), |
+| `SetContainerAccessPolicy` | SetContainerAccessPolicy sets a container's public access level and |
+| `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
+| `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
+
+### BlobServiceConfig
+
+BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `BlobServiceProperties` |  |
+| `SetBlobServiceProperties` |  |
+
 ### BucketAttributes
 
 BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
@@ -54,6 +101,80 @@ BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 | Operation | Description |
 | --- | --- |
 | `BucketAttributes` |  |
+
+### ConditionalBucket
+
+ConditionalBucket is an OPTIONAL capability (discovered by type assertion like
+
+| Operation | Description |
+| --- | --- |
+| `PutObjectConditional` |  |
+
+### GCSExtensions
+
+GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
+
+| Operation | Description |
+| --- | --- |
+| `BucketAttrsGCS` | BucketAttrsGCS returns the bucket's GCS-specific attributes. |
+| `BucketIAMPolicy` |  |
+| `ComposeObjectGCS` | ComposeObjectGCS concatenates the source objects' bytes (in order) into |
+| `CreateNotificationConfig` | CreateNotificationConfig registers a Pub/Sub notification config on a |
+| `DeleteNotificationConfig` | DeleteNotificationConfig removes a bucket's notification config by id |
+| `DeleteObjectGCS` | DeleteObjectGCS deletes an object honoring pre and optional generation |
+| `GetNotificationConfig` | GetNotificationConfig returns a bucket's notification config by id |
+| `GetObjectGCS` | GetObjectGCS returns an object's bytes+info, selecting a specific |
+| `HeadObjectGCS` | HeadObjectGCS returns an object's info, selecting a specific generation |
+| `ListNotificationConfigs` | ListNotificationConfigs returns every notification config on a bucket |
+| `ListObjectGenerations` | ListObjectGenerations returns every generation (current + archived) of the |
+| `PutObjectGCS` | PutObjectGCS writes an object honoring pre (a failed condition returns a |
+| `SetBucketAttrsGCS` | SetBucketAttrsGCS records the bucket's location and default storage class |
+| `SetBucketIAMPolicy` | SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM |
+| `TouchBucket` | TouchBucket bumps the bucket's metageneration and updated timestamp, |
+| `UpdateObjectGCS` | UpdateObjectGCS mutates an existing object's system properties and/or |
+
+### ObjectCopier
+
+ObjectCopier is an OPTIONAL capability (discovered by type assertion, like
+
+| Operation | Description |
+| --- | --- |
+| `CopyObjectV2` |  |
+
+### RawBucketConfig
+
+RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
+
+| Operation | Description |
+| --- | --- |
+| `DeleteBucketConfig` | DeleteBucketConfig removes the stored document (idempotent). |
+| `GetBucketConfig` | GetBucketConfig returns the stored document, or NotFound when none was set. |
+| `PutBucketConfig` | PutBucketConfig stores document body under the sub-resource name (e.g. |
+
+### RegionalBucket
+
+RegionalBucket is an OPTIONAL capability a storage provider implements to
+
+| Operation | Description |
+| --- | --- |
+| `CreateBucketInRegion` |  |
+
+### StorageAccountKeys
+
+StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `ListStorageAccountKeys` | ListStorageAccountKeys returns the account's access keys, generating a |
+| `RegenerateStorageAccountKey` | RegenerateStorageAccountKey rotates the value of the named key (key1/key2) |
+
+### SystemPropsBucket
+
+SystemPropsBucket is an OPTIONAL capability (discovered by type assertion like
+
+| Operation | Description |
+| --- | --- |
+| `PutObjectWithSystemProps` |  |
 
 ### VersionedBucket
 

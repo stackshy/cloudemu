@@ -157,6 +157,117 @@ func TestSDKEventDestinations(t *testing.T) {
 	}
 }
 
+func TestSDKEventDestinationSubBlocksRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newSESClient(t)
+
+	if _, err := c.CreateConfigurationSet(ctx, &awsses.CreateConfigurationSetInput{
+		ConfigurationSetName: aws.String("cs-ed"),
+	}); err != nil {
+		t.Fatalf("CreateConfigurationSet: %v", err)
+	}
+
+	createED := func(name string, def *sestypes.EventDestinationDefinition) {
+		t.Helper()
+		if _, err := c.CreateConfigurationSetEventDestination(ctx, &awsses.CreateConfigurationSetEventDestinationInput{
+			ConfigurationSetName: aws.String("cs-ed"),
+			EventDestinationName: aws.String(name),
+			EventDestination:     def,
+		}); err != nil {
+			t.Fatalf("CreateConfigurationSetEventDestination(%s): %v", name, err)
+		}
+	}
+
+	createED("to-sns", &sestypes.EventDestinationDefinition{
+		Enabled:            true,
+		MatchingEventTypes: []sestypes.EventType{sestypes.EventTypeBounce, sestypes.EventTypeComplaint},
+		SnsDestination:     &sestypes.SnsDestination{TopicArn: aws.String("arn:aws:sns:us-east-1:123456789012:ses-events")},
+	})
+	createED("to-cw", &sestypes.EventDestinationDefinition{
+		Enabled:            true,
+		MatchingEventTypes: []sestypes.EventType{sestypes.EventTypeDelivery},
+		CloudWatchDestination: &sestypes.CloudWatchDestination{
+			DimensionConfigurations: []sestypes.CloudWatchDimensionConfiguration{{
+				DimensionName:         aws.String("ses:configuration-set"),
+				DimensionValueSource:  sestypes.DimensionValueSourceMessageTag,
+				DefaultDimensionValue: aws.String("default"),
+			}},
+		},
+	})
+	createED("to-firehose", &sestypes.EventDestinationDefinition{
+		Enabled:            true,
+		MatchingEventTypes: []sestypes.EventType{sestypes.EventTypeSend},
+		KinesisFirehoseDestination: &sestypes.KinesisFirehoseDestination{
+			IamRoleArn:        aws.String("arn:aws:iam::123456789012:role/ses-firehose"),
+			DeliveryStreamArn: aws.String("arn:aws:firehose:us-east-1:123456789012:deliverystream/ses"),
+		},
+	})
+
+	got, err := c.GetConfigurationSetEventDestinations(ctx, &awsses.GetConfigurationSetEventDestinationsInput{
+		ConfigurationSetName: aws.String("cs-ed"),
+	})
+	if err != nil {
+		t.Fatalf("GetConfigurationSetEventDestinations: %v", err)
+	}
+
+	byName := make(map[string]sestypes.EventDestination, len(got.EventDestinations))
+	for i := range got.EventDestinations {
+		byName[aws.ToString(got.EventDestinations[i].Name)] = got.EventDestinations[i]
+	}
+
+	sns := byName["to-sns"].SnsDestination
+	if sns == nil || aws.ToString(sns.TopicArn) != "arn:aws:sns:us-east-1:123456789012:ses-events" {
+		t.Fatalf("SnsDestination not round-tripped: %+v", sns)
+	}
+
+	cw := byName["to-cw"].CloudWatchDestination
+	if cw == nil || len(cw.DimensionConfigurations) != 1 {
+		t.Fatalf("CloudWatchDestination not round-tripped: %+v", cw)
+	}
+	dim := cw.DimensionConfigurations[0]
+	if aws.ToString(dim.DimensionName) != "ses:configuration-set" ||
+		dim.DimensionValueSource != sestypes.DimensionValueSourceMessageTag ||
+		aws.ToString(dim.DefaultDimensionValue) != "default" {
+		t.Fatalf("CloudWatch dimension not round-tripped: %+v", dim)
+	}
+
+	fh := byName["to-firehose"].KinesisFirehoseDestination
+	if fh == nil ||
+		aws.ToString(fh.IamRoleArn) != "arn:aws:iam::123456789012:role/ses-firehose" ||
+		aws.ToString(fh.DeliveryStreamArn) != "arn:aws:firehose:us-east-1:123456789012:deliverystream/ses" {
+		t.Fatalf("KinesisFirehoseDestination not round-tripped: %+v", fh)
+	}
+}
+
+func TestSDKGetEmailIdentityIncludesPolicies(t *testing.T) {
+	ctx := context.Background()
+	c := newSESClient(t)
+
+	if _, err := c.CreateEmailIdentity(ctx, &awsses.CreateEmailIdentityInput{
+		EmailIdentity: aws.String("example.com"),
+	}); err != nil {
+		t.Fatalf("CreateEmailIdentity: %v", err)
+	}
+
+	if _, err := c.CreateEmailIdentityPolicy(ctx, &awsses.CreateEmailIdentityPolicyInput{
+		EmailIdentity: aws.String("example.com"),
+		PolicyName:    aws.String("p1"),
+		Policy:        aws.String(`{"Version":"2012-10-17"}`),
+	}); err != nil {
+		t.Fatalf("CreateEmailIdentityPolicy: %v", err)
+	}
+
+	got, err := c.GetEmailIdentity(ctx, &awsses.GetEmailIdentityInput{
+		EmailIdentity: aws.String("example.com"),
+	})
+	if err != nil {
+		t.Fatalf("GetEmailIdentity: %v", err)
+	}
+	if _, ok := got.Policies["p1"]; !ok {
+		t.Fatalf("GetEmailIdentity.Policies missing p1: %+v", got.Policies)
+	}
+}
+
 func TestSDKConfigSetPutOptions(t *testing.T) {
 	ctx := context.Background()
 	c := newSESClient(t)

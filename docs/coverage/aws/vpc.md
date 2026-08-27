@@ -69,6 +69,42 @@ AWS's `networking` service · portable interface `driver.Networking` · [AWS ind
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureNetworkInterfaces
+
+AzureNetworkInterfaces is the Azure-specific network-interface surface,
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateNetworkInterface` |  |
+| `DeleteNetworkInterface` |  |
+| `GetNetworkInterface` |  |
+| `ListNetworkInterfaces` |  |
+
+### AzureNetworkMetadata
+
+AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzureNSGMetadata` |  |
+| `DeleteAzureNSGRule` | DeleteAzureNSGRule removes a single custom security rule by name, leaving |
+| `DeleteAzureRouteTableMetadata` | DeleteAzureRouteTableMetadata drops the stored metadata for id (called when |
+| `DeleteAzureVNetMetadata` |  |
+| `DeleteAzureVNetPeering` | DeleteAzureVNetPeering removes a single peering by name, leaving every |
+| `GetAzureNSGMetadata` |  |
+| `GetAzureRouteTableMetadata` | GetAzureRouteTableMetadata returns the stored Azure route-table metadata for |
+| `GetAzureVNetMetadata` |  |
+| `GetAzureVNetPeering` | GetAzureVNetPeering returns one stored peering by name. |
+| `ListAzureVNetPeerings` | ListAzureVNetPeerings returns every peering stored for a VNet, ordered by |
+| `PutAzureNSGMetadata` |  |
+| `PutAzureRouteTableMetadata` | PutAzureRouteTableMetadata stores the Azure-only route-table fields (region, |
+| `PutAzureVNetMetadata` |  |
+| `SetAzureVNetPeeringState` | SetAzureVNetPeeringState atomically updates just the peeringState field of |
+| `UpdateAzureNATGateway` | UpdateAzureNATGateway re-applies the mutable fields of an existing NAT |
+| `UpdateAzurePublicIP` | UpdateAzurePublicIP overwrites the mutable fields of an existing public IP |
+| `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
+| `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
+
 ### ClientVPN
 
 ClientVPN is an OPTIONAL AWS capability (type-asserted).
@@ -241,6 +277,14 @@ IPAMResources is an OPTIONAL AWS capability exposing IPAM's view of the
 | `GetIpamResourceCidrs` |  |
 | `ModifyIpamResourceCidr` |  |
 
+### NetworkACLAssociator
+
+NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.
+
+| Operation | Description |
+| --- | --- |
+| `ReplaceNetworkACLAssociation` |  |
+
 ### NetworkInsights
 
 NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both
@@ -262,6 +306,14 @@ NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both
 | `StartNetworkInsightsAccessScopeAnalysis` |  |
 | `StartNetworkInsightsAnalysis` |  |
 
+### NetworkInterfaceAttacher
+
+NetworkInterfaceAttacher is the AWS-specific ENI attach surface
+
+| Operation | Description |
+| --- | --- |
+| `AttachNetworkInterface` |  |
+
 ### NetworkInterfaceCreator
 
 NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept
@@ -269,6 +321,14 @@ NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept
 | Operation | Description |
 | --- | --- |
 | `CreateNetworkInterface` |  |
+
+### NetworkInterfaceModifier
+
+NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface
+
+| Operation | Description |
+| --- | --- |
+| `ModifyNetworkInterfaceAttribute` |  |
 
 ### NetworkInterfaces
 
@@ -279,6 +339,15 @@ NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
 | `DeleteNetworkInterface` |  |
 | `DescribeNetworkInterfaces` |  |
 | `DetachNetworkInterface` |  |
+
+### NetworkResourceTagger
+
+NetworkResourceTagger is an OPTIONAL AWS capability (type-asserted).
+
+| Operation | Description |
+| --- | --- |
+| `RemoveResourceTags` |  |
+| `UpdateResourceTags` |  |
 
 ### PrefixLists
 
@@ -291,6 +360,22 @@ PrefixLists is an OPTIONAL AWS capability (type-asserted).
 | `DescribeManagedPrefixLists` |  |
 | `GetManagedPrefixListEntries` |  |
 | `ModifyManagedPrefixList` |  |
+
+### SubnetAttributes
+
+SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
+
+| Operation | Description |
+| --- | --- |
+| `ModifySubnetAttribute` |  |
+
+### SubnetCIDRUpdater
+
+SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
+
+| Operation | Description |
+| --- | --- |
+| `UpdateSubnetCIDR` |  |
 
 ### TrafficMirroring
 

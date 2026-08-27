@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -109,18 +110,66 @@ func TestQueryFilterActuallyFilters(t *testing.T) {
 	}
 }
 
-// TestQueryUnsupportedFilterRejected covers #266: an unsupported operator must
-// return 400 InvalidInput, not silently match everything.
-func TestQueryUnsupportedFilterRejected(t *testing.T) {
+// TestQueryRangeAndLogicalFilters covers the full OData grammar: comparison
+// operators (gt/ge/lt/le/ne), logical or/and/not, and parentheses.
+func TestQueryRangeAndLogicalFilters(t *testing.T) {
 	client, _ := newTableClient(t, "flt2")
-	addEntity(t, client, "org", "alice", map[string]any{"Age": int64(30)})
-	addEntity(t, client, "org", "bob", map[string]any{"Age": int64(20)})
+	addEntity(t, client, "org", "alice", map[string]any{"Age": 30})
+	addEntity(t, client, "org", "bob", map[string]any{"Age": 20})
+	addEntity(t, client, "org", "carol", map[string]any{"Age": 25})
 
-	if _, err := listRowKeys(t, client, "Age gt 25"); err == nil {
-		t.Fatal("unsupported $filter 'Age gt 25' returned no error (degraded to match-all)")
+	sorted := func(rks []string) []string { sort.Strings(rks); return rks }
+
+	cases := []struct {
+		filter string
+		want   []string
+	}{
+		{"Age gt 25", []string{"alice"}},
+		{"Age ge 25", []string{"alice", "carol"}},
+		{"Age lt 25", []string{"bob"}},
+		{"Age ne 25", []string{"alice", "bob"}},
+		{"Age gt 20 and Age lt 30", []string{"carol"}},
+		{"Age lt 25 or Age gt 25", []string{"alice", "bob"}},
+		{"not (Age eq 25)", []string{"alice", "bob"}},
+	}
+
+	for _, tc := range cases {
+		rks, err := listRowKeys(t, client, tc.filter)
+		if err != nil {
+			t.Fatalf("filter %q: %v", tc.filter, err)
+		}
+
+		if got := sorted(rks); !equalStrings(got, tc.want) {
+			t.Errorf("filter %q = %v, want %v", tc.filter, got, tc.want)
+		}
+	}
+}
+
+// TestQueryMalformedFilterRejected: a syntactically broken $filter is a 400,
+// not a silent match-all.
+func TestQueryMalformedFilterRejected(t *testing.T) {
+	client, _ := newTableClient(t, "flt3")
+	addEntity(t, client, "org", "alice", map[string]any{"Age": 30})
+
+	if _, err := listRowKeys(t, client, "Age gt"); err == nil {
+		t.Fatal("malformed $filter 'Age gt' returned no error")
 	} else if !strings.Contains(err.Error(), "InvalidInput") {
 		t.Fatalf("error = %v, want InvalidInput (400)", err)
 	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // TestGetEntitySingleKeyPredicateRejected covers #266: a key predicate that

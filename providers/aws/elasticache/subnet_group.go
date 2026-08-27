@@ -77,9 +77,17 @@ func (m *Mock) DescribeCacheSubnetGroups(
 
 // DeleteCacheSubnetGroup deletes a cache subnet group.
 func (m *Mock) DeleteCacheSubnetGroup(_ context.Context, name string) error {
-	// Real ElastiCache refuses while a replication group is still placed in
-	// the group; a teardown that skipped this would leave the group deleted
-	// and the replication group pointing at nothing.
+	// Real ElastiCache refuses to delete a subnet group associated with any
+	// clusters — standalone cache clusters count, not only replication groups.
+	// A teardown that skipped this would leave the group deleted and a live
+	// cluster pointing at nothing.
+	for _, cd := range m.caches.All() {
+		if cd.info.SubnetGroupName == name {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"CacheSubnetGroupInUse: cache subnet group %q is in use by %q", name, cd.info.Name)
+		}
+	}
+
 	for _, rg := range m.replicationGroups.All() {
 		if rg.SubnetGroupName == name {
 			return cerrors.Newf(cerrors.FailedPrecondition,

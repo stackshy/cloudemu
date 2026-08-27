@@ -4,15 +4,20 @@
 package s3
 
 import (
-	"crypto/sha256"
+	"context"
+	"crypto/md5" //nolint:gosec // S3 object ETags are defined as MD5 digests, not a security primitive
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -26,6 +31,12 @@ const (
 	maxPutObjectSize = 5 << 30
 	// maxUploadPartNumber is S3's upper bound on multipart part numbers.
 	maxUploadPartNumber = 10000
+	// minBucketNameLen / maxBucketNameLen bound a general-purpose bucket name.
+	minBucketNameLen = 3
+	maxBucketNameLen = 63
+	// storageClassStandard is S3's default storage class; it is never emitted in
+	// the x-amz-storage-class response header (real S3 omits it for STANDARD).
+	storageClassStandard = "STANDARD"
 )
 
 // Handler serves S3 REST requests against a storage.Bucket driver.
@@ -34,6 +45,25 @@ type Handler struct {
 	// versioned is set when the driver retains per-object version history; the
 	// handler then honors versioning status, ?versionId, and ListObjectVersions.
 	versioned driver.VersionedBucket
+	// rawConfig is set when the driver can persist opaque bucket-configuration
+	// sub-resource documents (policy, cors, encryption, lifecycle, website, …);
+	// the handler then round-trips PUT/GET/DELETE on them instead of treating a
+	// write as a no-op.
+	rawConfig driver.RawBucketConfig
+	// copier is set when the driver supports a full-fidelity server-side copy
+	// (versioned source, metadata directive, copy-source preconditions); the
+	// handler routes CopyObject/UploadPartCopy through it when present.
+	copier driver.ObjectCopier
+	// regional is set when the driver can create a bucket in a caller-specified
+	// region (CreateBucketConfiguration.LocationConstraint).
+	regional driver.RegionalBucket
+	// conditional is set when the driver can perform an atomic conditional
+	// PutObject; the handler then enforces If-None-Match/If-Match on writes.
+	conditional driver.ConditionalBucket
+	// sysProps is set when the driver persists the S3 system-defined object
+	// properties (Cache-Control, Content-Encoding, …) and storage class; the
+	// handler then records them on PutObject and reflects them on read.
+	sysProps driver.SystemPropsBucket
 }
 
 // New returns an S3 handler backed by b.
@@ -43,7 +73,33 @@ func New(b driver.Bucket) *Handler {
 		h.versioned = vb
 	}
 
+	if rc, ok := b.(driver.RawBucketConfig); ok {
+		h.rawConfig = rc
+	}
+
+	if oc, ok := b.(driver.ObjectCopier); ok {
+		h.copier = oc
+	}
+
+	if rb, ok := b.(driver.RegionalBucket); ok {
+		h.regional = rb
+	}
+
+	if cb, ok := b.(driver.ConditionalBucket); ok {
+		h.conditional = cb
+	}
+
+	if sp, ok := b.(driver.SystemPropsBucket); ok {
+		h.sysProps = sp
+	}
+
 	return h
+}
+
+// md5Sum returns the raw MD5 digest of data. S3 object ETags are MD5 digests.
+func md5Sum(data []byte) []byte {
+	sum := md5.Sum(data) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+	return sum[:]
 }
 
 // Matches returns true for requests that look like S3 REST calls: no
@@ -112,7 +168,10 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := listAllMyBucketsResult{Xmlns: xmlns}
+	result := listAllMyBucketsResult{
+		Xmlns: xmlns,
+		Owner: aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"},
+	}
 	for _, b := range buckets {
 		result.Buckets = append(result.Buckets, bucketXML{
 			Name: b.Name, CreationDate: b.CreatedAt,
@@ -153,13 +212,24 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 		}
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?versions")
 		return
+	case q.Has("delete"):
+		// POST /{bucket}?delete => DeleteObjects (batch delete). Without this the
+		// request falls through to the method switch and 405s, breaking
+		// `aws s3 rm --recursive`, SDK batch delete, and Terraform force_destroy.
+		h.deleteObjects(w, r, bucket)
+		return
+	case q.Has("acl"):
+		// GET returns a canned ACL; a PUT is a no-op so it does NOT fall through
+		// to createBucket (which 409s) — see aclOp.
+		h.aclOp(w, r)
+		return
 	}
 
 	// Read-only bucket configuration sub-resources (policy, cors, encryption,
 	// location, …) that IaC clients read after create; without these the request
 	// would fall through to ListObjects and the client fails to parse it.
 	if sub := configSubresourceKey(q); sub != "" {
-		h.bucketConfigOp(w, r, sub)
+		h.bucketConfigOp(w, r, bucket, sub)
 		return
 	}
 
@@ -188,6 +258,13 @@ func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket stri
 
 	for _, b := range buckets {
 		if b.Name == bucket {
+			region := b.Region
+			if region == "" {
+				region = usEast1
+			}
+			// Real S3 returns the bucket's region on a 200 HeadBucket; the SDK reads
+			// it into HeadBucketOutput.BucketRegion.
+			w.Header().Set("X-Amz-Bucket-Region", region)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -252,14 +329,144 @@ func (h *Handler) bucketTaggingOp(w http.ResponseWriter, r *http.Request, bucket
 	}
 }
 
+// usEast1 is the region where CreateBucket is idempotent for the owner.
+const usEast1 = "us-east-1"
+
+// validBucketName reports whether name satisfies S3's general-purpose bucket
+// naming rules: 3-63 chars; lowercase letters, digits, hyphens and dots only;
+// begins and ends with a letter or digit; no adjacent periods; not formatted as
+// an IP address. See
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+func validBucketName(name string) bool {
+	if len(name) < minBucketNameLen || len(name) > maxBucketNameLen {
+		return false
+	}
+
+	if net.ParseIP(name) != nil {
+		return false
+	}
+
+	for i := 0; i < len(name); i++ {
+		if !validBucketNameChar(name, i) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validBucketNameChar reports whether name[i] is legal at its position: an
+// interior-only hyphen/dot (no leading/trailing, no adjacent periods) or a
+// lowercase alphanumeric.
+func validBucketNameChar(name string, i int) bool {
+	c := name[i]
+
+	if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+		return true
+	}
+
+	if c != '-' && c != '.' {
+		return false
+	}
+
+	if i == 0 || i == len(name)-1 {
+		return false
+	}
+
+	return c != '.' || name[i-1] != '.'
+}
+
+// maxCreateBucketBody caps the CreateBucketConfiguration document.
+const maxCreateBucketBody = 1 << 16
+
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	if err := h.bucket.CreateBucket(r.Context(), bucket); err != nil {
+	if !validBucketName(bucket) {
+		writeError(w, http.StatusBadRequest, "InvalidBucketName", "The specified bucket is not valid.")
+		return
+	}
+
+	region := parseLocationConstraint(r)
+
+	if err := h.createBucketInRegion(r.Context(), bucket, region); err != nil {
+		// In us-east-1 (the global endpoint) re-creating a bucket you already own
+		// is idempotent and returns 200; every other region returns 409
+		// BucketAlreadyOwnedByYou. cloudemu models a single account, so an existing
+		// bucket is always same-owner — the region alone decides.
+		if cerrors.IsAlreadyExists(err) && h.bucketRegion(r.Context(), bucket) == usEast1 {
+			w.Header().Set("Location", "/"+bucket)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		writeErr(w, err)
 		return
 	}
 
 	w.Header().Set("Location", "/"+bucket)
 	w.WriteHeader(http.StatusOK)
+}
+
+// createBucketInRegion honors a CreateBucketConfiguration.LocationConstraint
+// when the driver supports RegionalBucket, so GetBucketLocation reports it back.
+func (h *Handler) createBucketInRegion(ctx context.Context, bucket, region string) error {
+	if region != "" && h.regional != nil {
+		return h.regional.CreateBucketInRegion(ctx, bucket, region)
+	}
+
+	return h.bucket.CreateBucket(ctx, bucket)
+}
+
+// parseLocationConstraint extracts CreateBucketConfiguration.LocationConstraint
+// from a CreateBucket body, or "" when absent/unparseable (which denotes
+// us-east-1).
+func parseLocationConstraint(r *http.Request) string {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxCreateBucketBody))
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+
+	var cfg createBucketConfiguration
+	if err := xml.Unmarshal(body, &cfg); err != nil {
+		return ""
+	}
+
+	return cfg.LocationConstraint
+}
+
+// bucketRegion returns the region of an existing bucket, or "" if it can't be
+// determined. An empty LocationConstraint is equivalent to us-east-1.
+func (h *Handler) bucketRegion(ctx context.Context, bucket string) string {
+	buckets, err := h.bucket.ListBuckets(ctx)
+	if err != nil {
+		return ""
+	}
+
+	for _, b := range buckets {
+		if b.Name == bucket {
+			if b.Region == "" {
+				return usEast1
+			}
+			return b.Region
+		}
+	}
+
+	return ""
+}
+
+// bucketExists reports whether a bucket with the given name exists. Used by
+// bucket-scoped sub-resources that must 404 NoSuchBucket for an absent bucket.
+func (h *Handler) bucketExists(ctx context.Context, bucket string) bool {
+	buckets, err := h.bucket.ListBuckets(ctx)
+	if err != nil {
+		return false
+	}
+
+	for _, b := range buckets {
+		if b.Name == bucket {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -269,6 +476,13 @@ func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket st
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// wantsOwner reports whether an <Owner> element belongs on each listed object.
+// ListObjects v1 always includes it; only ListObjectsV2 (list-type=2) gates it
+// behind fetch-owner=true, omitting it by default.
+func wantsOwner(q url.Values) bool {
+	return q.Get("list-type") != "2" || q.Get("fetch-owner") == "true"
 }
 
 func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -285,6 +499,8 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		Prefix:    q.Get("prefix"),
 		Delimiter: q.Get("delimiter"),
 		PageToken: pageToken,
+		// start-after (ListObjectsV2) begins the listing strictly after this key.
+		StartAfter: q.Get("start-after"),
 	}
 
 	// max-keys caps the page; an absent or unparseable value leaves the driver
@@ -310,20 +526,31 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		Delimiter:   opts.Delimiter,
 		MaxKeys:     maxKeys,
 		IsTruncated: result.IsTruncated,
-		KeyCount:    len(result.Objects),
+		// KeyCount counts returned keys AND rolled-up common prefixes, matching
+		// real S3 (a delimited listing reports both under KeyCount).
+		KeyCount: len(result.Objects) + len(result.CommonPrefixes),
+		// S3 echoes StartAfter in the response when it was sent with the request.
+		StartAfter: opts.StartAfter,
 	}
 
 	if result.NextPageToken != "" {
 		resp.NextContinuationToken = result.NextPageToken
 	}
 
-	for _, obj := range result.Objects {
+	var owner *aclOwnerXML
+	if wantsOwner(q) {
+		owner = &aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
+	}
+
+	for i := range result.Objects {
+		obj := &result.Objects[i]
 		resp.Contents = append(resp.Contents, objectXML{
 			Key:          obj.Key,
 			LastModified: obj.LastModified,
 			ETag:         fmt.Sprintf("%q", obj.ETag),
 			Size:         int(obj.Size),
-			StorageClass: "STANDARD",
+			StorageClass: storageClassOrDefault(obj.StorageClass),
+			Owner:        owner,
 		})
 	}
 
@@ -338,6 +565,12 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 	q := r.URL.Query()
 
 	switch {
+	case q.Has("attributes"):
+		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
+		// falls through to getObject and the SDK decodes an object body as the
+		// attributes response, reading zero-valued attributes.
+		h.getObjectAttributes(w, r, bucket, key)
+		return
 	case q.Has("tagging"):
 		h.objectTaggingOp(w, r, bucket, key)
 		return
@@ -352,6 +585,11 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 		return
 	case q.Has("uploadId"):
 		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
+		return
+	case q.Has("acl"):
+		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
+		// through to putObject and overwrite the object with the ACL body.
+		h.aclOp(w, r)
 		return
 	}
 
@@ -389,28 +627,117 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	metadata := extractMetadata(r.Header)
 
-	if err := h.bucket.PutObject(r.Context(), bucket, key, data, contentType, metadata); err != nil {
-		writeErr(w, err)
+	etag, versionID, ok := h.storePut(w, r, bucket, key, data, contentType, metadata)
+	if !ok {
+		return // error response already written
+	}
+
+	if sc := r.Header.Get("X-Amz-Storage-Class"); sc != "" && sc != storageClassStandard {
+		w.Header().Set("X-Amz-Storage-Class", sc)
+	}
+
+	// x-amz-tagging sets the object's tag set at upload time; apply it so
+	// GetObjectTagging returns it (real S3 stores it atomically with the object).
+	if !h.applyPutTagging(w, r, bucket, key) {
 		return
 	}
 
-	// Real S3 always returns the object's ETag on PutObject. Read it back
-	// from the driver so there is a single source of truth for the ETag
-	// algorithm; if a concurrent delete races the read-back, fall back to
-	// computing it from the body we just stored — a successful PUT must
-	// never answer 404.
-	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
 
-	var versionID string
+	if versionID != "" {
+		w.Header().Set("X-Amz-Version-Id", versionID)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// storePut writes the object, routing through the atomic conditional-write path
+// when an If-None-Match/If-Match header is present and the driver supports it.
+// On failure it writes the error response and returns ok=false; otherwise it
+// returns the stored object's ETag and version id.
+func (h *Handler) storePut(
+	w http.ResponseWriter, r *http.Request, bucket, key string,
+	data []byte, contentType string, metadata map[string]string,
+) (etag, versionID string, ok bool) {
+	ifNoneMatch := r.Header.Get("If-None-Match")
+	ifMatch := r.Header.Get("If-Match")
+
+	if (ifNoneMatch != "" || ifMatch != "") && h.conditional != nil {
+		return h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
+	}
+
+	if err := h.putObjectData(r, bucket, key, data, contentType, metadata); err != nil {
+		writeErr(w, err)
+		return "", "", false
+	}
+
+	// Real S3 always returns the object's ETag. Read it back from the driver so
+	// there is a single source of truth for the ETag algorithm; if a concurrent
+	// delete races the read-back, fall back to computing it from the body we
+	// just stored — a successful PUT must never answer 404.
+	etag = hex.EncodeToString(md5Sum(data))
 	if info, err := h.bucket.HeadObject(r.Context(), bucket, key); err == nil {
 		etag = info.ETag
 		versionID = info.VersionID
 	}
-	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
-	if versionID != "" {
-		w.Header().Set("x-amz-version-id", versionID)
+
+	return etag, versionID, true
+}
+
+// putObjectData writes the object, routing through the system-properties
+// capability (recording Cache-Control/Content-Encoding/… and storage class)
+// when the driver and the request supply them, and falling back to the plain
+// PutObject otherwise.
+func (h *Handler) putObjectData(
+	r *http.Request, bucket, key string, data []byte, contentType string, metadata map[string]string,
+) error {
+	props := extractSystemProps(r.Header)
+	if h.sysProps != nil && props != (driver.ObjectSystemProps{}) {
+		return h.sysProps.PutObjectWithSystemProps(r.Context(), bucket, key, data, contentType, metadata, &props)
 	}
-	w.WriteHeader(http.StatusOK)
+
+	return h.bucket.PutObject(r.Context(), bucket, key, data, contentType, metadata)
+}
+
+// storePutConditional performs an atomic If-None-Match/If-Match PutObject. A
+// failed precondition is answered 412 PreconditionFailed.
+func (h *Handler) storePutConditional(
+	w http.ResponseWriter, r *http.Request, bucket, key string,
+	data []byte, contentType string, metadata map[string]string, ifNoneMatch, ifMatch string,
+) (etag, versionID string, ok bool) {
+	pre := driver.S3PutPrecondition{IfNoneMatch: ifNoneMatch, IfMatch: ifMatch}
+
+	info, err := h.conditional.PutObjectConditional(r.Context(), bucket, key, data, contentType, metadata, pre)
+	if err != nil {
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
+				"At least one of the preconditions you specified did not hold.")
+
+			return "", "", false
+		}
+
+		writeErr(w, err)
+
+		return "", "", false
+	}
+
+	return info.ETag, info.VersionID, true
+}
+
+// applyPutTagging stores the x-amz-tagging tag set on the just-written object.
+// It returns false (after writing the error response) if the driver rejects it.
+func (h *Handler) applyPutTagging(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+	tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if len(tags) == 0 {
+		return true
+	}
+
+	if err := h.bucket.PutObjectTagging(r.Context(), bucket, key, tags); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -418,19 +745,144 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		obj *driver.Object
 		err error
 	)
-	if versionID := r.URL.Query().Get("versionId"); versionID != "" && h.versioned != nil {
+
+	versionID := r.URL.Query().Get("versionId")
+
+	if versionID != "" && h.versioned != nil {
 		obj, err = h.versioned.GetObjectVersion(r.Context(), bucket, key, versionID)
 	} else {
 		obj, err = h.bucket.GetObject(r.Context(), bucket, key)
 	}
+
 	if err != nil {
+		if writeDeleteMarker(w, err, versionID) {
+			return
+		}
 		writeErr(w, err)
 		return
 	}
 
+	if handleReadConditions(w, r.Header, &obj.Info) {
+		return
+	}
+
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		h.writeRangedObject(w, obj, rangeHeader)
+		return
+	}
+
 	writeObjectHeaders(w, &obj.Info, int64(len(obj.Data)))
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(obj.Data) //nolint:gosec // writing raw object bytes, not HTML
+}
+
+// rangeOutcome classifies a Range header against an object.
+type rangeOutcome int
+
+const (
+	rangeIgnore        rangeOutcome = iota // unparseable header → serve full body (200)
+	rangeUnsatisfiable                     // valid syntax but out of bounds → 416
+	rangeOK                                // satisfiable → 206
+)
+
+// writeRangedObject serves a GetObject carrying a Range header: 206 with a
+// Content-Range slice when satisfiable, 416 when the range is out of bounds, and
+// a full 200 body when the header is unparseable (matching real S3).
+func (*Handler) writeRangedObject(w http.ResponseWriter, obj *driver.Object, header string) {
+	total := int64(len(obj.Data))
+	start, end, outcome := parseByteRange(header, total)
+
+	switch outcome {
+	case rangeUnsatisfiable:
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", total))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+			"The requested range is not satisfiable")
+	case rangeOK:
+		writeObjectHeaders(w, &obj.Info, end-start+1)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, total))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(obj.Data[start : end+1]) //nolint:gosec // writing raw object bytes, not HTML
+	case rangeIgnore: // unparseable header → serve the full body
+		writeObjectHeaders(w, &obj.Info, total)
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(obj.Data) //nolint:gosec // writing raw object bytes, not HTML
+	}
+}
+
+// parseByteRange parses a single HTTP byte range ("bytes=0-4", "bytes=5-",
+// "bytes=-5") against an object of size total, returning the inclusive
+// [start,end] offsets and an outcome. Only the first range of a multi-range
+// header is honored (the common single-range download path).
+func parseByteRange(header string, total int64) (start, end int64, outcome rangeOutcome) {
+	const prefix = "bytes="
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, rangeIgnore
+	}
+
+	spec := strings.TrimPrefix(header, prefix)
+	if idx := strings.IndexByte(spec, ','); idx >= 0 {
+		spec = spec[:idx]
+	}
+
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, rangeIgnore
+	}
+
+	startStr, endStr := spec[:dash], spec[dash+1:]
+
+	if startStr == "" {
+		return suffixRange(endStr, total)
+	}
+
+	return boundedRange(startStr, endStr, total)
+}
+
+// suffixRange handles "bytes=-N": the last N bytes of the object.
+func suffixRange(endStr string, total int64) (start, end int64, outcome rangeOutcome) {
+	n, err := strconv.ParseInt(endStr, 10, 64)
+	if err != nil {
+		return 0, 0, rangeIgnore
+	}
+
+	if n <= 0 || total == 0 {
+		return 0, 0, rangeUnsatisfiable
+	}
+
+	if n > total {
+		n = total
+	}
+
+	return total - n, total - 1, rangeOK
+}
+
+// boundedRange handles "bytes=start-" and "bytes=start-end".
+func boundedRange(startStr, endStr string, total int64) (start, end int64, outcome rangeOutcome) {
+	start, err := strconv.ParseInt(startStr, 10, 64)
+	if err != nil {
+		return 0, 0, rangeIgnore
+	}
+
+	if start >= total {
+		return 0, 0, rangeUnsatisfiable
+	}
+
+	end = total - 1
+	if endStr != "" {
+		end, err = strconv.ParseInt(endStr, 10, 64)
+		if err != nil || start > end {
+			return 0, 0, rangeIgnore
+		}
+
+		if end >= total {
+			end = total - 1
+		}
+	}
+
+	return start, end, rangeOK
 }
 
 func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -438,18 +890,199 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 		info *driver.ObjectInfo
 		err  error
 	)
-	if versionID := r.URL.Query().Get("versionId"); versionID != "" && h.versioned != nil {
+
+	versionID := r.URL.Query().Get("versionId")
+
+	if versionID != "" && h.versioned != nil {
 		info, err = h.versioned.HeadObjectVersion(r.Context(), bucket, key, versionID)
 	} else {
 		info, err = h.bucket.HeadObject(r.Context(), bucket, key)
 	}
+
 	if err != nil {
+		if writeDeleteMarker(w, err, versionID) {
+			return
+		}
 		writeErr(w, err)
+		return
+	}
+
+	if handleReadConditions(w, r.Header, info) {
 		return
 	}
 
 	writeObjectHeaders(w, info, info.Size)
 	w.WriteHeader(http.StatusOK)
+}
+
+// getObjectAttributes answers GET /{bucket}/{key}?attributes (GetObjectAttributes):
+// it returns the object's ETag, size, and storage class as selected by the
+// x-amz-object-attributes header, plus the Last-Modified and version-id headers.
+// A missing object is NoSuchKey; a missing bucket is NoSuchBucket.
+func (h *Handler) getObjectAttributes(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	versionID := r.URL.Query().Get("versionId")
+
+	var (
+		info *driver.ObjectInfo
+		err  error
+	)
+
+	if versionID != "" && h.versioned != nil {
+		info, err = h.versioned.HeadObjectVersion(r.Context(), bucket, key, versionID)
+	} else {
+		info, err = h.bucket.HeadObject(r.Context(), bucket, key)
+	}
+
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if info.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
+	}
+
+	w.Header().Set("Last-Modified", wire.ToHTTPDate(info.LastModified))
+
+	wire.WriteXML(w, http.StatusOK, buildObjectAttributes(r.Header.Values("X-Amz-Object-Attributes"), info))
+}
+
+// buildObjectAttributes assembles the GetObjectAttributes response body, filling
+// only the attributes named in the x-amz-object-attributes header. The SDK sends
+// one header line per attribute, each of which may itself be comma-separated.
+// ObjectSize is a pointer so a zero-length object still emits <ObjectSize>0.
+func buildObjectAttributes(requested []string, info *driver.ObjectInfo) getObjectAttributesOutput {
+	want := make(map[string]bool)
+
+	for _, line := range requested {
+		for _, a := range strings.Split(line, ",") {
+			want[strings.TrimSpace(a)] = true
+		}
+	}
+
+	out := getObjectAttributesOutput{Xmlns: xmlns}
+
+	if want["ETag"] {
+		out.ETag = strings.Trim(info.ETag, `"`)
+	}
+
+	if want["ObjectSize"] {
+		size := info.Size
+		out.ObjectSize = &size
+	}
+
+	if want["StorageClass"] {
+		out.StorageClass = storageClassOrDefault(info.StorageClass)
+	}
+
+	return out
+}
+
+// condReadOutcome classifies a GET/HEAD conditional-header evaluation.
+type condReadOutcome int
+
+const (
+	condProceed            condReadOutcome = iota // serve the object (200/206)
+	condNotModified                               // 304 Not Modified
+	condPreconditionFailed                        // 412 Precondition Failed
+)
+
+// handleReadConditions evaluates the four conditional-read headers against the
+// object and, when they are not satisfied, writes the 304 or 412 response and
+// returns true (so the caller must stop). It returns false to serve normally.
+func handleReadConditions(w http.ResponseWriter, hdr http.Header, info *driver.ObjectInfo) bool {
+	switch evalReadConditions(hdr, info.ETag, info.LastModified) {
+	case condNotModified:
+		writeNotModified(w, info)
+		return true
+	case condPreconditionFailed:
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
+			"At least one of the preconditions you specified did not hold.")
+		return true
+	case condProceed:
+		return false
+	default:
+		return false
+	}
+}
+
+// evalReadConditions applies RFC 7232 §6 precedence for GET/HEAD: If-Match takes
+// precedence over If-Unmodified-Since (the match group → 412), and If-None-Match
+// takes precedence over If-Modified-Since (the modification group → 304); the
+// match group is evaluated before the modification group.
+func evalReadConditions(hdr http.Header, etag, lastModified string) condReadOutcome {
+	etag = strings.Trim(etag, `"`)
+	mod, modOK := parseObjectTime(lastModified)
+
+	if matchGroupFails(hdr, etag, mod, modOK) {
+		return condPreconditionFailed
+	}
+
+	if noneMatchGroupNotModified(hdr, etag, mod, modOK) {
+		return condNotModified
+	}
+
+	return condProceed
+}
+
+// matchGroupFails evaluates the 412 group: a present If-Match takes precedence
+// over If-Unmodified-Since, which is only considered when If-Match is absent.
+func matchGroupFails(hdr http.Header, etag string, mod time.Time, modOK bool) bool {
+	if ifMatch := hdr.Get("If-Match"); ifMatch != "" {
+		return !etagHeaderMatches(ifMatch, etag)
+	}
+
+	ifUnmodifiedSince := hdr.Get("If-Unmodified-Since")
+	if ifUnmodifiedSince == "" || !modOK {
+		return false
+	}
+
+	t, err := http.ParseTime(ifUnmodifiedSince)
+
+	return err == nil && mod.After(t)
+}
+
+// noneMatchGroupNotModified evaluates the 304 group: a present If-None-Match
+// takes precedence over If-Modified-Since, which is only considered when
+// If-None-Match is absent.
+func noneMatchGroupNotModified(hdr http.Header, etag string, mod time.Time, modOK bool) bool {
+	if ifNoneMatch := hdr.Get("If-None-Match"); ifNoneMatch != "" {
+		return etagHeaderMatches(ifNoneMatch, etag)
+	}
+
+	ifModifiedSince := hdr.Get("If-Modified-Since")
+	if ifModifiedSince == "" || !modOK {
+		return false
+	}
+
+	t, err := http.ParseTime(ifModifiedSince)
+
+	return err == nil && !mod.After(t)
+}
+
+// parseObjectTime parses a stored ObjectInfo.LastModified timestamp (RFC3339).
+func parseObjectTime(lastModified string) (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339, lastModified)
+
+	return t, err == nil
+}
+
+// writeNotModified answers a satisfied If-None-Match/If-Modified-Since read with
+// 304 and the validators (ETag/Last-Modified) but no body, per RFC 7232.
+func writeNotModified(w http.ResponseWriter, info *driver.ObjectInfo) {
+	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
+	w.Header().Set("Last-Modified", wire.ToHTTPDate(info.LastModified))
+
+	if info.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
+	}
+
+	w.WriteHeader(http.StatusNotModified)
 }
 
 func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int64) {
@@ -459,15 +1092,39 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 
 	if info.VersionID != "" {
-		w.Header().Set("x-amz-version-id", info.VersionID)
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
 	}
 
 	if info.DeleteMarker {
-		w.Header().Set("x-amz-delete-marker", "true")
+		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
+
+	writeSystemPropHeaders(w, info)
 
 	for k, v := range info.Metadata {
 		w.Header().Set("X-Amz-Meta-"+k, v)
+	}
+}
+
+// writeSystemPropHeaders emits the S3 system-defined object property response
+// headers that carry a stored value. x-amz-storage-class is emitted only for a
+// non-STANDARD class (real S3 omits it for STANDARD).
+func writeSystemPropHeaders(w http.ResponseWriter, info *driver.ObjectInfo) {
+	setIfNotEmpty(w, "Cache-Control", info.CacheControl)
+	setIfNotEmpty(w, "Content-Encoding", info.ContentEncoding)
+	setIfNotEmpty(w, "Content-Disposition", info.ContentDisposition)
+	setIfNotEmpty(w, "Content-Language", info.ContentLanguage)
+	setIfNotEmpty(w, "Expires", info.Expires)
+
+	if info.StorageClass != "" && info.StorageClass != storageClassStandard {
+		w.Header().Set("X-Amz-Storage-Class", info.StorageClass)
+	}
+}
+
+// setIfNotEmpty sets header k to v only when v is non-empty.
+func setIfNotEmpty(w http.ResponseWriter, k, v string) {
+	if v != "" {
+		w.Header().Set(k, v)
 	}
 }
 
@@ -483,10 +1140,10 @@ func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, k
 			return
 		}
 		if vid != "" {
-			w.Header().Set("x-amz-version-id", vid)
+			w.Header().Set("X-Amz-Version-Id", vid)
 		}
 		if marker {
-			w.Header().Set("x-amz-delete-marker", "true")
+			w.Header().Set("X-Amz-Delete-Marker", "true")
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -503,19 +1160,234 @@ func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, k
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	src := r.Header.Get("X-Amz-Copy-Source")
-	src = strings.TrimPrefix(src, "/")
+// maxDeleteBody caps a DeleteObjects request body. Real S3 allows up to 1000
+// keys per call; this is a generous ceiling on the XML that carries them.
+const maxDeleteBody = 2 << 20
 
-	srcBucket, srcKey := parsePath(src)
+type deleteObjectsRequest struct {
+	XMLName xml.Name `xml:"Delete"`
+	Quiet   bool     `xml:"Quiet"`
+	Objects []struct {
+		Key       string `xml:"Key"`
+		VersionID string `xml:"VersionId"`
+	} `xml:"Object"`
+}
+
+type deletedObjectXML struct {
+	Key          string `xml:"Key"`
+	VersionID    string `xml:"VersionId,omitempty"`
+	DeleteMarker bool   `xml:"DeleteMarker,omitempty"`
+}
+
+type deleteErrorXML struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
+type deleteResultXML struct {
+	XMLName xml.Name           `xml:"DeleteResult"`
+	Xmlns   string             `xml:"xmlns,attr"`
+	Deleted []deletedObjectXML `xml:"Deleted"`
+	Errors  []deleteErrorXML   `xml:"Error"`
+}
+
+// deleteObjects implements POST /{bucket}?delete (DeleteObjects). Per-key delete
+// is idempotent (a missing key still reports Deleted, matching real S3); a
+// missing bucket fails the whole request with NoSuchBucket.
+func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket string) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDeleteBody))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "could not read request body")
+		return
+	}
+
+	var req deleteObjectsRequest
+	if err := xml.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "malformed Delete request")
+		return
+	}
+
+	result := deleteResultXML{Xmlns: xmlns}
+
+	for _, obj := range req.Objects {
+		vid, marker, derr := h.deleteOneObject(r.Context(), bucket, obj.Key, obj.VersionID)
+		switch {
+		case derr != nil && bucketMissing(derr):
+			// A missing bucket aborts the whole batch, as in real S3.
+			writeErr(w, derr)
+			return
+		case derr != nil:
+			result.Errors = append(result.Errors, deleteErrorXML{
+				Key: obj.Key, Code: "InternalError", Message: cerrors.Message(derr),
+			})
+		case !req.Quiet:
+			result.Deleted = append(result.Deleted, deletedObjectXML{
+				Key: obj.Key, VersionID: vid, DeleteMarker: marker,
+			})
+		}
+	}
+
+	wire.WriteXML(w, http.StatusOK, result)
+}
+
+// cannedOwnerID is the fixed S3 canonical user id cloudemu reports as the owner
+// of every bucket/object (no per-account ACLs are modeled).
+const cannedOwnerID = "cloudemu00000000000000000000000000000000000000000000000000000000"
+
+type aclOwnerXML struct {
+	ID          string `xml:"ID"`
+	DisplayName string `xml:"DisplayName"`
+}
+
+type aclGranteeXML struct {
+	ID          string `xml:"ID"`
+	DisplayName string `xml:"DisplayName"`
+}
+
+type aclGrantXML struct {
+	Grantee    aclGranteeXML `xml:"Grantee"`
+	Permission string        `xml:"Permission"`
+}
+
+type accessControlPolicyXML struct {
+	XMLName xml.Name      `xml:"AccessControlPolicy"`
+	Xmlns   string        `xml:"xmlns,attr"`
+	Owner   aclOwnerXML   `xml:"Owner"`
+	Grants  []aclGrantXML `xml:"AccessControlList>Grant"`
+}
+
+// aclOp answers ?acl on a bucket or object. GET returns a canned
+// full-control-to-owner ACL; any write is accepted as a no-op. The point is to
+// stop a PUT ?acl from falling through and overwriting the object/bucket, and a
+// GET ?acl from returning object bytes instead of an ACL document.
+func (h *Handler) aclOp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	owner := aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
+	wire.WriteXML(w, http.StatusOK, accessControlPolicyXML{
+		Xmlns: xmlns,
+		Owner: owner,
+		Grants: []aclGrantXML{{
+			Grantee:    aclGranteeXML{ID: cannedOwnerID, DisplayName: "cloudemu"},
+			Permission: "FULL_CONTROL",
+		}},
+	})
+}
+
+// deleteOneObject deletes a single key for the batch path, honoring versioning
+// and treating a missing key as success (idempotent).
+func (h *Handler) deleteOneObject(ctx context.Context, bucket, key, versionID string) (vid string, marker bool, err error) {
+	if h.versioned != nil {
+		vid, marker, err = h.versioned.DeleteObjectVersion(ctx, bucket, key, versionID)
+	} else {
+		err = h.bucket.DeleteObject(ctx, bucket, key)
+	}
+
+	if err != nil && cerrors.IsNotFound(err) && !bucketMissing(err) {
+		err = nil // missing key is a successful (idempotent) delete
+	}
+
+	return vid, marker, err
+}
+
+func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	srcBucket, srcKey, srcVersionID := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
 	if srcBucket == "" || srcKey == "" {
 		writeError(w, http.StatusBadRequest, "InvalidArgument", "invalid copy source")
 		return
 	}
 
-	if err := h.bucket.CopyObject(r.Context(), bucket, key, driver.CopySource{
-		Bucket: srcBucket, Key: srcKey,
-	}); err != nil {
+	replace := strings.EqualFold(r.Header.Get("X-Amz-Metadata-Directive"), "REPLACE")
+
+	// Copying an object onto itself with the default COPY directive, the current
+	// version, and no metadata change is illegal — S3 answers 400 InvalidRequest.
+	if isIllegalSelfCopy(replace, srcVersionID, srcBucket, srcKey, bucket, key) {
+		writeError(w, http.StatusBadRequest, "InvalidRequest",
+			"This copy request is illegal because it is trying to copy an object to itself without "+
+				"changing the object's metadata, storage class, website redirect location or encryption attributes.")
+
+		return
+	}
+
+	if h.copier == nil {
+		h.copyObjectFallback(w, r, bucket, key, srcBucket, srcKey)
+		return
+	}
+
+	req := buildCopyRequest(r, bucket, key, driver.CopySource{Bucket: srcBucket, Key: srcKey}, srcVersionID, replace)
+
+	res, err := h.copier.CopyObjectV2(r.Context(), req)
+	if err != nil {
+		writeCopyErr(w, err)
+		return
+	}
+
+	writeCopyResult(w, res)
+}
+
+// isIllegalSelfCopy reports whether a copy is a no-op self-copy: same key, the
+// default COPY directive, and the current source version — which S3 rejects.
+func isIllegalSelfCopy(replace bool, srcVersionID, srcBucket, srcKey, dstBucket, dstKey string) bool {
+	return !replace && srcVersionID == "" && srcBucket == dstBucket && srcKey == dstKey
+}
+
+// buildCopyRequest assembles a CopyObjectRequest from the copy headers: the
+// metadata directive and (for REPLACE) the replacement metadata/content-type,
+// plus the copy-source preconditions.
+func buildCopyRequest(
+	r *http.Request, dstBucket, dstKey string, src driver.CopySource, srcVersionID string, replace bool,
+) *driver.CopyObjectRequest {
+	req := &driver.CopyObjectRequest{
+		DstBucket: dstBucket, DstKey: dstKey, Src: src,
+		SrcVersionID: srcVersionID, ReplaceMetadata: replace,
+	}
+
+	if replace {
+		req.Metadata = extractMetadata(r.Header)
+		req.ContentType = r.Header.Get("Content-Type")
+		req.SystemProps = extractSystemProps(r.Header)
+	}
+
+	// The destination storage class always comes from x-amz-storage-class (never
+	// inherited from the source), regardless of the metadata directive.
+	req.SystemProps.StorageClass = r.Header.Get("X-Amz-Storage-Class")
+
+	// x-amz-tagging-directive: REPLACE takes the destination tag set from the
+	// x-amz-tagging header; the default COPY inherits the source object's tags.
+	if strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE") {
+		req.ReplaceTags = true
+		req.Tags = parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	}
+
+	applyCopyConditions(req, r.Header)
+
+	return req
+}
+
+// writeCopyResult writes a CopyObject success: the version-id headers plus the
+// <CopyObjectResult> body.
+func writeCopyResult(w http.ResponseWriter, res *driver.CopyObjectResult) {
+	if res.SourceVersionID != "" {
+		w.Header().Set("X-Amz-Copy-Source-Version-Id", res.SourceVersionID)
+	}
+
+	if res.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", res.VersionID)
+	}
+
+	wire.WriteXML(w, http.StatusOK, copyObjectResult{
+		Xmlns: xmlns, ETag: fmt.Sprintf("%q", res.ETag), LastModified: res.LastModified,
+	})
+}
+
+// copyObjectFallback runs the basic copy (current version, COPY directive, no
+// preconditions) for drivers that don't implement ObjectCopier.
+func (h *Handler) copyObjectFallback(w http.ResponseWriter, r *http.Request, bucket, key, srcBucket, srcKey string) {
+	if err := h.bucket.CopyObject(r.Context(), bucket, key, driver.CopySource{Bucket: srcBucket, Key: srcKey}); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -527,10 +1399,242 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	wire.WriteXML(w, http.StatusOK, copyObjectResult{
-		Xmlns:        xmlns,
-		ETag:         fmt.Sprintf("%q", obj.ETag),
-		LastModified: obj.LastModified,
+		Xmlns: xmlns, ETag: fmt.Sprintf("%q", obj.ETag), LastModified: obj.LastModified,
 	})
+}
+
+// parseCopySource splits an x-amz-copy-source header into its source bucket,
+// key, and optional versionId. A leading slash is tolerated and the path is
+// URL-decoded, per the S3 contract; a "?versionId=<id>" suffix selects a
+// specific source version.
+func parseCopySource(header string) (bucket, key, versionID string) {
+	header = strings.TrimPrefix(header, "/")
+
+	if i := strings.IndexByte(header, '?'); i >= 0 {
+		if q, err := url.ParseQuery(header[i+1:]); err == nil {
+			versionID = q.Get("versionId")
+		}
+
+		header = header[:i]
+	}
+
+	if decoded, err := url.PathUnescape(header); err == nil {
+		header = decoded
+	}
+
+	bucket, key = parsePath(header)
+
+	return bucket, key, versionID
+}
+
+// applyCopyConditions maps the x-amz-copy-source-if-* request headers onto the
+// copy request's preconditions.
+func applyCopyConditions(req *driver.CopyObjectRequest, hdr http.Header) {
+	req.IfMatch = hdr.Get("X-Amz-Copy-Source-If-Match")
+	req.IfNoneMatch = hdr.Get("X-Amz-Copy-Source-If-None-Match")
+
+	if v := hdr.Get("X-Amz-Copy-Source-If-Modified-Since"); v != "" {
+		if t, err := http.ParseTime(v); err == nil {
+			req.IfModifiedSince = t
+		}
+	}
+
+	if v := hdr.Get("X-Amz-Copy-Source-If-Unmodified-Since"); v != "" {
+		if t, err := http.ParseTime(v); err == nil {
+			req.IfUnmodifiedSince = t
+		}
+	}
+}
+
+// evalCopySourceConditions evaluates the x-amz-copy-source-if-* request headers
+// against a resolved source object, returning a FailedPrecondition error (mapped
+// to 412 by writeCopyErr) when a precondition is not satisfied. UploadPartCopy
+// honors the same four copy-source conditions — and the same documented
+// combined-precedence override, where a true if-match overrides a false
+// if-unmodified-since — as CopyObject.
+func evalCopySourceConditions(hdr http.Header, etag, lastModified string) error {
+	etag = strings.Trim(etag, `"`)
+	ifMatch := hdr.Get("X-Amz-Copy-Source-If-Match")
+	ifNoneMatch := hdr.Get("X-Amz-Copy-Source-If-None-Match")
+
+	if ifMatch != "" && !copySourceETagMatches(ifMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-match precondition failed")
+	}
+
+	if ifNoneMatch != "" && copySourceETagMatches(ifNoneMatch, etag) {
+		return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-none-match precondition failed")
+	}
+
+	skipUnmodified := ifMatch != "" && copySourceETagMatches(ifMatch, etag)
+
+	return evalCopySourceTimeConditions(hdr, lastModified, skipUnmodified)
+}
+
+// evalCopySourceTimeConditions evaluates the two time-based copy-source headers.
+func evalCopySourceTimeConditions(hdr http.Header, lastModified string, skipUnmodified bool) error {
+	mod, err := time.Parse(time.RFC3339, lastModified)
+	if err != nil {
+		return nil // an unparseable timestamp can't be evaluated; don't block the copy
+	}
+
+	if v := hdr.Get("X-Amz-Copy-Source-If-Unmodified-Since"); v != "" && !skipUnmodified {
+		if t, perr := http.ParseTime(v); perr == nil && mod.After(t) {
+			return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-unmodified-since precondition failed")
+		}
+	}
+
+	if v := hdr.Get("X-Amz-Copy-Source-If-Modified-Since"); v != "" {
+		if t, perr := http.ParseTime(v); perr == nil && !mod.After(t) {
+			return cerrors.New(cerrors.FailedPrecondition, "x-amz-copy-source-if-modified-since precondition failed")
+		}
+	}
+
+	return nil
+}
+
+// copySourceETagMatches reports whether a copy-source-if-[none-]match header
+// value matches the source ETag.
+func copySourceETagMatches(header, etag string) bool {
+	return etagHeaderMatches(header, etag)
+}
+
+// etagHeaderMatches reports whether an If-[None-]Match header value matches the
+// object ETag: "*" matches any object; otherwise a quote-insensitive,
+// case-insensitive comparison. The caller must pass an unquoted etag.
+func etagHeaderMatches(header, etag string) bool {
+	header = strings.Trim(header, `"`)
+
+	return header == "*" || strings.EqualFold(header, etag)
+}
+
+// writeCopyErr maps a copy driver error: a failed copy-source precondition is
+// 412 PreconditionFailed; everything else follows the standard mapping.
+func writeCopyErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) {
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
+			"At least one of the preconditions you specified did not hold.")
+		return
+	}
+
+	writeErr(w, err)
+}
+
+// uploadPartCopy implements UploadPartCopy: PUT a part whose bytes are copied
+// from an existing object (optionally a byte range of it), returning a
+// <CopyPartResult> with the new part's ETag.
+func (h *Handler) uploadPartCopy(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	partNumber, ok := parsePartNumber(r.URL.Query())
+	if !ok {
+		writeError(w, http.StatusBadRequest, "InvalidArgument",
+			"Part number must be an integer between 1 and 10000, inclusive")
+		return
+	}
+
+	srcBucket, srcKey, srcVersionID := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	if srcBucket == "" || srcKey == "" {
+		writeError(w, http.StatusBadRequest, "InvalidArgument", "invalid copy source")
+		return
+	}
+
+	obj, err := h.copySourceObject(r.Context(), srcBucket, srcKey, srcVersionID)
+	if err != nil {
+		writeCopyErr(w, err)
+		return
+	}
+
+	if condErr := evalCopySourceConditions(r.Header, obj.Info.ETag, obj.Info.LastModified); condErr != nil {
+		writeCopyErr(w, condErr)
+		return
+	}
+
+	data, ok := sliceCopySourceRange(r.Header.Get("X-Amz-Copy-Source-Range"), obj.Data)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "InvalidArgument",
+			"The x-amz-copy-source-range value must be of the form bytes=first-last")
+		return
+	}
+
+	part, err := h.bucket.UploadPart(r.Context(), bucket, key, uploadID, partNumber, data)
+	if err != nil {
+		writeMultipartErr(w, err)
+		return
+	}
+
+	if obj.Info.VersionID != "" {
+		w.Header().Set("X-Amz-Copy-Source-Version-Id", obj.Info.VersionID)
+	}
+
+	wire.WriteXML(w, http.StatusOK, copyPartResult{
+		Xmlns: xmlns, ETag: fmt.Sprintf("%q", part.ETag), LastModified: obj.Info.LastModified,
+	})
+}
+
+// parsePartNumber reads and validates the partNumber query parameter (1–10000).
+func parsePartNumber(q url.Values) (int, bool) {
+	n, err := strconv.Atoi(q.Get("partNumber"))
+	if err != nil || n < 1 || n > maxUploadPartNumber {
+		return 0, false
+	}
+
+	return n, true
+}
+
+// sliceCopySourceRange returns the bytes an UploadPartCopy should copy: the full
+// object when no range header is present, otherwise the requested inclusive
+// byte range. ok is false when the range header is malformed or out of bounds.
+func sliceCopySourceRange(header string, data []byte) ([]byte, bool) {
+	if header == "" {
+		return data, true
+	}
+
+	start, end, ok := copySourceRange(header, int64(len(data)))
+	if !ok {
+		return nil, false
+	}
+
+	return data[start : end+1], true
+}
+
+// copySourceObject fetches the source object for a part copy: a specific
+// version when requested (a delete-marker version is an InvalidArgument), else
+// the current object.
+func (h *Handler) copySourceObject(ctx context.Context, srcBucket, srcKey, srcVersionID string) (*driver.Object, error) {
+	if srcVersionID != "" && h.versioned != nil {
+		obj, err := h.versioned.GetObjectVersion(ctx, srcBucket, srcKey, srcVersionID)
+		if errors.Is(err, driver.ErrDeleteMarker) {
+			return nil, cerrors.New(cerrors.InvalidArgument, "cannot specify a delete marker as a copy source version")
+		}
+
+		return obj, err
+	}
+
+	return h.bucket.GetObject(ctx, srcBucket, srcKey)
+}
+
+// copySourceRange parses an x-amz-copy-source-range header ("bytes=first-last",
+// zero-based inclusive). Both offsets are required and must fall within the
+// source; a malformed or out-of-bounds range returns ok=false.
+func copySourceRange(header string, total int64) (start, end int64, ok bool) {
+	const prefix = "bytes="
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, false
+	}
+
+	spec := strings.TrimPrefix(header, prefix)
+
+	dash := strings.IndexByte(spec, '-')
+	if dash <= 0 || dash == len(spec)-1 {
+		return 0, 0, false
+	}
+
+	start, err1 := strconv.ParseInt(spec[:dash], 10, 64)
+	end, err2 := strconv.ParseInt(spec[dash+1:], 10, 64)
+
+	if err1 != nil || err2 != nil || start < 0 || end < start || end >= total {
+		return 0, 0, false
+	}
+
+	return start, end, true
 }
 
 // multipartUploadOp dispatches operations on an in-progress multipart upload
@@ -538,7 +1642,11 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 func (h *Handler) multipartUploadOp(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	switch r.Method {
 	case http.MethodPut:
-		h.uploadPart(w, r, bucket, key, uploadID)
+		if r.Header.Get("X-Amz-Copy-Source") != "" {
+			h.uploadPartCopy(w, r, bucket, key, uploadID)
+		} else {
+			h.uploadPart(w, r, bucket, key, uploadID)
+		}
 	case http.MethodPost:
 		h.completeMultipartUpload(w, r, bucket, key, uploadID)
 	case http.MethodDelete:
@@ -550,13 +1658,23 @@ func (h *Handler) multipartUploadOp(w http.ResponseWriter, r *http.Request, buck
 	}
 }
 
+// multipartTagger is the AWS-specific capability to carry the create-time
+// x-amz-tagging tag set on a multipart upload (applied to the object on
+// completion). Type-asserted like bucketNotifier; drivers without it ignore
+// create-time multipart tags.
+type multipartTagger interface {
+	CreateMultipartUploadWithTagging(
+		ctx context.Context, bucket, key, contentType string, tags map[string]string,
+	) (*driver.MultipartUpload, error)
+}
+
 func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
-	mp, err := h.bucket.CreateMultipartUpload(r.Context(), bucket, key, contentType)
+	mp, err := h.beginMultipartUpload(r, bucket, key, contentType)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -568,6 +1686,20 @@ func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, 
 		Key:      key,
 		UploadID: mp.UploadID,
 	})
+}
+
+// beginMultipartUpload starts an upload, threading the x-amz-tagging tag set
+// through to a driver that supports create-time multipart tags and falling back
+// to the plain CreateMultipartUpload otherwise.
+func (h *Handler) beginMultipartUpload(r *http.Request, bucket, key, contentType string) (*driver.MultipartUpload, error) {
+	tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if len(tags) > 0 {
+		if tagger, ok := h.bucket.(multipartTagger); ok {
+			return tagger.CreateMultipartUploadWithTagging(r.Context(), bucket, key, contentType, tags)
+		}
+	}
+
+	return h.bucket.CreateMultipartUpload(r.Context(), bucket, key, contentType)
 }
 
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
@@ -617,7 +1749,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.bucket.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, parts); err != nil {
-		writeMultipartErr(w, err)
+		writeCompleteMultipartErr(w, err)
 		return
 	}
 
@@ -625,6 +1757,10 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+
+	if info.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
 	}
 
 	wire.WriteXML(w, http.StatusOK, completeMultipartUploadResult{
@@ -645,8 +1781,27 @@ func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, b
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// parseMaxItems reads a max-keys/max-parts/max-uploads value, falling back to
+// the S3 default page size of 1000 when it is absent, unparseable, or negative.
+func parseMaxItems(v string) int {
+	if v == "" {
+		return defaultMaxKeys
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return defaultMaxKeys
+	}
+
+	return n
+}
+
 // listParts lists the parts uploaded so far for a multipart upload, so
-// resumable-upload tooling can read back the parts it has already sent.
+// resumable-upload tooling can read back the parts it has already sent. It
+// honors max-parts and part-number-marker (parts are ordered ascending by
+// number; only parts numbered above the marker are listed), echoing MaxParts /
+// PartNumberMarker and setting IsTruncated / NextPartNumberMarker when a page is
+// cut short, as real S3 does.
 func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	parts, err := h.bucket.ListParts(r.Context(), bucket, key, uploadID)
 	if err != nil {
@@ -654,14 +1809,41 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key,
 		return
 	}
 
+	q := r.URL.Query()
+	maxParts := parseMaxItems(q.Get("max-parts"))
+	// part-number-marker: only parts strictly above it are listed. An absent or
+	// unparseable marker means 0 (list from the first part).
+	partNumberMarker, _ := strconv.Atoi(q.Get("part-number-marker"))
+
 	result := listPartsResult{
-		Xmlns:       xmlns,
-		Bucket:      bucket,
-		Key:         key,
-		UploadID:    uploadID,
-		IsTruncated: false,
+		Xmlns:            xmlns,
+		Bucket:           bucket,
+		Key:              key,
+		UploadID:         uploadID,
+		PartNumberMarker: partNumberMarker,
+		MaxParts:         maxParts,
 	}
+
 	for _, p := range parts {
+		if p.PartNumber <= partNumberMarker {
+			continue
+		}
+
+		if len(result.Parts) >= maxParts {
+			// A further matching part exists, so the page is truncated; the last
+			// part actually returned is the next request's part-number-marker. With
+			// max-parts=0 no parts are returned, so fall back to the incoming
+			// part-number-marker rather than indexing an empty slice.
+			result.IsTruncated = true
+			if len(result.Parts) > 0 {
+				result.NextPartNumberMarker = result.Parts[len(result.Parts)-1].PartNumber
+			} else {
+				result.NextPartNumberMarker = partNumberMarker
+			}
+
+			break
+		}
+
 		result.Parts = append(result.Parts, partXML{
 			PartNumber: p.PartNumber,
 			ETag:       fmt.Sprintf("%q", p.ETag),
@@ -672,6 +1854,12 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key,
 	wire.WriteXML(w, http.StatusOK, result)
 }
 
+// listMultipartUploads lists the in-progress multipart uploads in a bucket. It
+// honors prefix, max-uploads, key-marker and upload-id-marker: uploads are
+// filtered by prefix, ordered by key ascending and then by initiation time, and
+// the handler slices the requested page, echoing Prefix / MaxUploads / KeyMarker
+// / UploadIdMarker and setting IsTruncated / NextKeyMarker / NextUploadIdMarker
+// when more remain, as real S3 does.
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
 	uploads, err := h.bucket.ListMultipartUploads(r.Context(), bucket)
 	if err != nil {
@@ -679,7 +1867,43 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	resp := listMultipartUploadsResult{Xmlns: xmlns, Bucket: bucket}
+	q := r.URL.Query()
+	keyMarker := q.Get("key-marker")
+	uploadIDMarker := q.Get("upload-id-marker")
+	prefix := q.Get("prefix")
+
+	uploads = filterUploadsByPrefix(uploads, prefix)
+	sortMultipartUploads(uploads)
+	uploads = skipToUploadMarker(uploads, keyMarker, uploadIDMarker)
+
+	resp := listMultipartUploadsResult{
+		Xmlns:          xmlns,
+		Bucket:         bucket,
+		Prefix:         prefix,
+		KeyMarker:      keyMarker,
+		UploadIDMarker: uploadIDMarker,
+		MaxUploads:     parseMaxItems(q.Get("max-uploads")),
+	}
+
+	if len(uploads) > resp.MaxUploads {
+		resp.IsTruncated = true
+		// S3 reports the last upload returned as the next markers; the resumed
+		// request lists uploads strictly after that key/upload-id pair. Capture
+		// the resume position BEFORE slicing — with max-uploads=0 no uploads are
+		// returned, so fall back to the incoming markers rather than losing the
+		// caller's position (which would silently restart pagination).
+		if resp.MaxUploads > 0 {
+			last := uploads[resp.MaxUploads-1]
+			resp.NextKeyMarker = last.Key
+			resp.NextUploadIDMarker = last.UploadID
+		} else {
+			resp.NextKeyMarker = keyMarker
+			resp.NextUploadIDMarker = uploadIDMarker
+		}
+
+		uploads = uploads[:resp.MaxUploads]
+	}
+
 	for _, u := range uploads {
 		resp.Uploads = append(resp.Uploads, multipartUploadXML{
 			Key:       u.Key,
@@ -689,6 +1913,70 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 	}
 
 	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// filterUploadsByPrefix keeps only uploads whose key begins with prefix (an empty
+// prefix keeps them all), matching real S3's prefix parameter: the listing must
+// not include keys outside the prefix it echoes back.
+func filterUploadsByPrefix(uploads []driver.MultipartUpload, prefix string) []driver.MultipartUpload {
+	if prefix == "" {
+		return uploads
+	}
+
+	filtered := uploads[:0]
+
+	for i := range uploads {
+		if strings.HasPrefix(uploads[i].Key, prefix) {
+			filtered = append(filtered, uploads[i])
+		}
+	}
+
+	return filtered
+}
+
+// sortMultipartUploads orders uploads by key ascending, then, for uploads sharing
+// a key, by initiation time ascending (falling back to upload id when the times
+// are equal or unparseable), as real S3 does. Resume comparisons against
+// upload-id-marker stay lexicographic and are handled in skipToUploadMarker.
+func sortMultipartUploads(uploads []driver.MultipartUpload) {
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].Key != uploads[j].Key {
+			return uploads[i].Key < uploads[j].Key
+		}
+
+		ti, ei := time.Parse(time.RFC3339, uploads[i].CreatedAt)
+		tj, ej := time.Parse(time.RFC3339, uploads[j].CreatedAt)
+
+		if ei == nil && ej == nil && !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+
+		return uploads[i].UploadID < uploads[j].UploadID
+	})
+}
+
+// skipToUploadMarker drops the uploads preceding a key-marker/upload-id-marker
+// pair so a resumed listing starts at the first not-yet-returned upload. With
+// only a key-marker, listing resumes at keys strictly greater than it; with
+// both, uploads for the marker key resume at upload ids lexicographically
+// greater than upload-id-marker.
+func skipToUploadMarker(uploads []driver.MultipartUpload, keyMarker, uploadIDMarker string) []driver.MultipartUpload {
+	if keyMarker == "" {
+		return uploads
+	}
+
+	for i := range uploads {
+		u := &uploads[i]
+		if u.Key > keyMarker {
+			return uploads[i:]
+		}
+
+		if u.Key == keyMarker && uploadIDMarker != "" && u.UploadID > uploadIDMarker {
+			return uploads[i:]
+		}
+	}
+
+	return nil
 }
 
 // objectTaggingOp dispatches PUT/GET/DELETE for the ?tagging sub-resource.
@@ -824,69 +2112,166 @@ func (h *Handler) getBucketVersioning(w http.ResponseWriter, r *http.Request, bu
 // listObjectVersions handles GET /{bucket}?versions. When the driver retains
 // version history it returns the full history (versions + delete markers);
 // otherwise it falls back to listing current objects as the sole "null" version.
+// It honors max-keys, key-marker and version-id-marker: the driver returns the
+// full ordered history (keys ascending, newest version first within a key) and
+// the handler slices the requested page, echoing the markers and setting
+// IsTruncated / NextKeyMarker / NextVersionIdMarker as real S3 does.
 func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
+	q := r.URL.Query()
 	opts := driver.ListOptions{
-		Prefix:    r.URL.Query().Get("prefix"),
-		Delimiter: r.URL.Query().Get("delimiter"),
+		Prefix:    q.Get("prefix"),
+		Delimiter: q.Get("delimiter"),
 	}
 
-	resp := listVersionsResult{
-		Xmlns:     xmlns,
-		Name:      bucket,
-		Prefix:    opts.Prefix,
-		Delimiter: opts.Delimiter,
-		MaxKeys:   defaultMaxKeys,
-	}
+	keyMarker := q.Get("key-marker")
+	versionIDMarker := q.Get("version-id-marker")
 
-	if h.versioned != nil {
-		result, err := h.versioned.ListObjectVersions(r.Context(), bucket, opts)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		for _, v := range result.Versions {
-			if v.DeleteMarker {
-				resp.DeleteMarkers = append(resp.DeleteMarkers, deleteMarkerXML{
-					Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
-				})
-				continue
-			}
-
-			resp.Versions = append(resp.Versions, objectVersionXML{
-				Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
-				ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: "STANDARD",
-			})
-		}
-
-		for _, p := range result.CommonPrefixes {
-			resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
-		}
-
-		wire.WriteXML(w, http.StatusOK, resp)
-
-		return
-	}
-
-	// Fallback: no version history — list current objects as the "null" version.
-	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
+	entries, commonPrefixes, err := h.collectObjectVersions(r.Context(), bucket, opts)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	for _, obj := range result.Objects {
+	resp := listVersionsResult{
+		Xmlns:           xmlns,
+		Name:            bucket,
+		Prefix:          opts.Prefix,
+		Delimiter:       opts.Delimiter,
+		KeyMarker:       keyMarker,
+		VersionIDMarker: versionIDMarker,
+		MaxKeys:         parseMaxItems(q.Get("max-keys")),
+	}
+
+	entries = skipToVersionMarker(entries, keyMarker, versionIDMarker)
+
+	if len(entries) > resp.MaxKeys {
+		next := entries[resp.MaxKeys]
+		resp.IsTruncated = true
+		resp.NextKeyMarker = next.Key
+		resp.NextVersionIDMarker = next.VersionID
+		entries = entries[:resp.MaxKeys]
+	}
+
+	for i := range entries {
+		v := &entries[i]
+		if v.DeleteMarker {
+			resp.DeleteMarkers = append(resp.DeleteMarkers, deleteMarkerXML{
+				Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
+			})
+			continue
+		}
+
 		resp.Versions = append(resp.Versions, objectVersionXML{
-			Key: obj.Key, VersionID: "null", IsLatest: true, LastModified: obj.LastModified,
-			ETag: fmt.Sprintf("%q", obj.ETag), Size: obj.Size, StorageClass: "STANDARD",
+			Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
+			ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: storageClassOrDefault(v.StorageClass),
 		})
 	}
 
-	for _, p := range result.CommonPrefixes {
+	// A CommonPrefix is echoed only when it is lexicographically greater than
+	// key-marker, so a resumed (truncated) listing does not re-return the same
+	// prefixes on every page. An empty key-marker keeps them all.
+	for _, p := range commonPrefixes {
+		if p <= keyMarker {
+			continue
+		}
+
 		resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
 	}
 
 	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// collectObjectVersions returns the full ordered version history for a bucket
+// (keys ascending, newest version first within a key) and its rolled-up common
+// prefixes. It reads real history when the driver retains it, otherwise falls
+// back to listing current objects as the sole "null" version.
+func (h *Handler) collectObjectVersions(
+	ctx context.Context, bucket string, opts driver.ListOptions,
+) (entries []driver.ObjectVersion, commonPrefixes []string, err error) {
+	if h.versioned != nil {
+		result, verr := h.versioned.ListObjectVersions(ctx, bucket, opts)
+		if verr != nil {
+			return nil, nil, verr
+		}
+
+		return result.Versions, result.CommonPrefixes, nil
+	}
+
+	// Fallback: no version history — list current objects as the "null" version.
+	result, lerr := h.bucket.ListObjects(ctx, bucket, opts)
+	if lerr != nil {
+		return nil, nil, lerr
+	}
+
+	entries = make([]driver.ObjectVersion, 0, len(result.Objects))
+
+	for i := range result.Objects {
+		obj := &result.Objects[i]
+		entries = append(entries, driver.ObjectVersion{
+			Key: obj.Key, VersionID: "null", IsLatest: true,
+			Size: obj.Size, ETag: obj.ETag, LastModified: obj.LastModified,
+			StorageClass: obj.StorageClass,
+		})
+	}
+
+	return entries, result.CommonPrefixes, nil
+}
+
+// skipToVersionMarker drops the entries that precede a key-marker/
+// version-id-marker pair so a resumed listing starts at the first not-yet-
+// returned version. With only a key-marker, listing resumes at keys strictly
+// greater than it; with both, it resumes at the entry matching the pair
+// (inclusive) — the values S3 reports as NextKeyMarker/NextVersionIdMarker.
+func skipToVersionMarker(entries []driver.ObjectVersion, keyMarker, versionIDMarker string) []driver.ObjectVersion {
+	if keyMarker == "" {
+		return entries
+	}
+
+	for i := range entries {
+		e := &entries[i]
+		if versionIDMarker == "" {
+			if e.Key > keyMarker {
+				return entries[i:]
+			}
+
+			continue
+		}
+
+		if e.Key == keyMarker && e.VersionID == versionIDMarker {
+			return entries[i:]
+		}
+
+		if e.Key > keyMarker {
+			return entries[i:]
+		}
+	}
+
+	return nil
+}
+
+// extractSystemProps pulls the S3 system-defined object property request headers
+// (Cache-Control, Content-Encoding, Content-Disposition, Content-Language,
+// Expires) and the x-amz-storage-class header into an ObjectSystemProps. A zero
+// value means the caller sent none of them.
+func extractSystemProps(h http.Header) driver.ObjectSystemProps {
+	return driver.ObjectSystemProps{
+		CacheControl:       h.Get("Cache-Control"),
+		ContentEncoding:    h.Get("Content-Encoding"),
+		ContentDisposition: h.Get("Content-Disposition"),
+		ContentLanguage:    h.Get("Content-Language"),
+		Expires:            h.Get("Expires"),
+		StorageClass:       h.Get("X-Amz-Storage-Class"),
+	}
+}
+
+// storageClassOrDefault returns sc, or STANDARD when sc is empty — the value S3
+// reports in a listing's <StorageClass> element for a default-class object.
+func storageClassOrDefault(sc string) string {
+	if sc == "" {
+		return storageClassStandard
+	}
+
+	return sc
 }
 
 // extractMetadata pulls x-amz-meta-* headers into a map.
@@ -908,6 +2293,61 @@ func extractMetadata(h http.Header) map[string]string {
 	return meta
 }
 
+// parseTaggingHeader decodes an x-amz-tagging header ("k1=v1&k2=v2",
+// URL-query-encoded) into a tag map. An empty or unparseable header yields nil.
+func parseTaggingHeader(header string) map[string]string {
+	if header == "" {
+		return nil
+	}
+
+	values, err := url.ParseQuery(header)
+	if err != nil {
+		return nil
+	}
+
+	tags := make(map[string]string, len(values))
+
+	for k, v := range values {
+		if len(v) > 0 {
+			tags[k] = v[0]
+		}
+	}
+
+	if len(tags) == 0 {
+		return nil
+	}
+
+	return tags
+}
+
+// writeDeleteMarker answers a version-addressed GET/HEAD of a delete marker
+// with 405 MethodNotAllowed and x-amz-delete-marker: true, as S3 does — a
+// delete marker has no retrievable content. It returns false when err is not a
+// delete marker, leaving the caller to handle it normally.
+func writeDeleteMarker(w http.ResponseWriter, err error, versionID string) bool {
+	if !errors.Is(err, driver.ErrDeleteMarker) {
+		return false
+	}
+
+	w.Header().Set("X-Amz-Delete-Marker", "true")
+	w.Header().Set("Allow", "DELETE")
+
+	// S3 returns the delete marker's Last-Modified timestamp in the 405 response.
+	var dm *driver.DeleteMarkerError
+	if errors.As(err, &dm) && dm.LastModified != "" {
+		w.Header().Set("Last-Modified", wire.ToHTTPDate(dm.LastModified))
+	}
+
+	if versionID != "" {
+		w.Header().Set("X-Amz-Version-Id", versionID)
+	}
+
+	writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
+		"The specified method is not allowed against this resource.")
+
+	return true
+}
+
 // writeError writes an S3-format XML error response.
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	wire.WriteXML(w, status, errorXML{Code: code, Message: msg})
@@ -918,10 +2358,24 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 // missing resource is the upload (NoSuchUpload), not the object key.
 func writeMultipartErr(w http.ResponseWriter, err error) {
 	if cerrors.IsNotFound(err) {
-		writeError(w, http.StatusNotFound, "NoSuchUpload", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchUpload", cerrors.Message(err))
 		return
 	}
 	writeErr(w, err)
+}
+
+// writeCompleteMultipartErr maps a CompleteMultipartUpload driver error. A
+// missing upload is NoSuchUpload; a bad part reference (unknown part number or
+// an ETag that does not match the stored part) is InvalidPart in real S3.
+func writeCompleteMultipartErr(w http.ResponseWriter, err error) {
+	switch {
+	case cerrors.IsNotFound(err):
+		writeError(w, http.StatusNotFound, "NoSuchUpload", cerrors.Message(err))
+	case cerrors.IsInvalidArgument(err):
+		writeError(w, http.StatusBadRequest, "InvalidPart", cerrors.Message(err))
+	default:
+		writeErr(w, err)
+	}
 }
 
 // bucketMissing reports whether a NotFound error names a bucket rather
@@ -941,23 +2395,25 @@ func bucketMissing(err error) bool {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
 		// Real S3 distinguishes NoSuchBucket from NoSuchKey.
 		if bucketMissing(err) {
-			writeError(w, http.StatusNotFound, "NoSuchBucket", err.Error())
+			writeError(w, http.StatusNotFound, "NoSuchBucket", msg)
 			return
 		}
-		writeError(w, http.StatusNotFound, "NoSuchKey", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchKey", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "BucketAlreadyOwnedByYou", err.Error())
+		writeError(w, http.StatusConflict, "BucketAlreadyOwnedByYou", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidArgument", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Deleting a non-empty bucket is a client error in real S3, not a
 		// server fault — and a 5xx would trigger SDK retry backoff.
-		writeError(w, http.StatusConflict, "BucketNotEmpty", err.Error())
+		writeError(w, http.StatusConflict, "BucketNotEmpty", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", msg)
 	}
 }

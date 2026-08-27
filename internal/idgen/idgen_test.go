@@ -180,3 +180,34 @@ func TestReset(t *testing.T) {
 
 	assert.Equal(t, id1, id2)
 }
+
+func TestUUID(t *testing.T) {
+	seen := make(map[string]bool)
+
+	for i := 0; i < 200; i++ {
+		id := UUID()
+
+		require.Len(t, id, 36, "UUID must be 36 chars")
+		assert.Equal(t, 4, strings.Count(id, "-"), "UUID must have 4 hyphens")
+		assert.Equal(t, "4", string(id[14]), "version-4 UUID has '4' in the version position")
+		require.False(t, seen[id], "duplicate UUID generated: %s", id)
+		seen[id] = true
+	}
+}
+
+func TestSecretARNSuffix(t *testing.T) {
+	// Deterministic per seed.
+	assert.Equal(t, SecretARNSuffix("my-secret"), SecretARNSuffix("my-secret"))
+
+	// Six alphanumeric characters.
+	suffix := SecretARNSuffix("us-east-1:123456789012:db")
+	require.Len(t, suffix, 6)
+
+	for _, c := range suffix {
+		isAlnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		assert.True(t, isAlnum, "suffix char %q must be alphanumeric", c)
+	}
+
+	// Distinct seeds generally differ.
+	assert.NotEqual(t, SecretARNSuffix("secret-a"), SecretARNSuffix("secret-b"))
+}

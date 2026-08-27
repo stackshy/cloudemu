@@ -1,8 +1,11 @@
 package cloudsql
 
 import (
+	"crypto/sha1" //nolint:gosec // SHA-1 fingerprints are the Cloud SQL cert identifier format, not a security control.
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -13,6 +16,37 @@ import (
 const (
 	activationAlways = "ALWAYS"
 	activationNever  = "NEVER"
+
+	// availabilityRegional / availabilityZonal are the Cloud SQL
+	// settings.availabilityType enum values. REGIONAL denotes a highly-available
+	// (multi-zone) instance; ZONAL is the single-zone default.
+	availabilityRegional = "REGIONAL"
+	availabilityZonal    = "ZONAL"
+
+	// serverCaCertPEM is the placeholder PEM returned as the instance's
+	// serverCaCert. It is a well-formed shape for SDK round-trips, not a real CA.
+	serverCaCertPEM = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----"
+
+	// selfLinkBase is the resource URI prefix Cloud SQL stamps on every
+	// selfLink/targetLink. Even the v1 client is answered with sql/v1beta4
+	// selfLinks — that is the version the real service returns.
+	selfLinkBase = "https://sqladmin.googleapis.com/sql/v1beta4/projects/"
+
+	// operationUser is the caller identity Cloud SQL records on an operation.
+	// The emulator enforces no auth, so a fixed service-account address stands
+	// in for the authenticated principal.
+	operationUser = "cloudemu@cloudemu.iam.gserviceaccount.com"
+
+	// rfc3339Milli is the millisecond RFC3339 layout Cloud SQL uses for its
+	// timestamp fields (createTime, insertTime, startTime, endTime).
+	rfc3339Milli = "2006-01-02T15:04:05.000Z"
+
+	// defaultTier / defaultStorage / defaultStorageType are the values an omitted
+	// setting reverts to on a PUT (full-resource update). They mirror the provider
+	// backend's insert defaults so a PUT and a fresh insert converge.
+	defaultTier        = "db-f1-micro"
+	defaultStorage     = 10
+	defaultStorageType = "PD_SSD"
 )
 
 // sqlInstance is the JSON shape Cloud SQL expects for DatabaseInstance.
@@ -31,6 +65,7 @@ type sqlInstance struct {
 	ReplicaNames       []string     `json:"replicaNames,omitempty"`
 	IPAddresses        []ipMapping  `json:"ipAddresses,omitempty"`
 	Settings           *sqlSettings `json:"settings,omitempty"`
+	ServerCaCert       *sslCert     `json:"serverCaCert,omitempty"`
 	CreateTime         string       `json:"createTime,omitempty"`
 }
 
@@ -41,6 +76,16 @@ type sqlSettings struct {
 	DataDiskType     string            `json:"dataDiskType,omitempty"`
 	AvailabilityType string            `json:"availabilityType,omitempty"`
 	UserLabels       map[string]string `json:"userLabels,omitempty"`
+	// DeletionProtectionEnabled guards the instance from deletion while true. A
+	// pointer so an absent field on a Patch means "no change" (merge) rather than
+	// clobbering the current value to false; it is always populated on a Get.
+	DeletionProtectionEnabled *bool `json:"deletionProtectionEnabled,omitempty"`
+	// databaseFlags, backupConfiguration and ipConfiguration are carried as
+	// opaque JSON so they round-trip unchanged on Insert->Get and Patch without
+	// the wire layer modeling every nested field real Cloud SQL exposes.
+	DatabaseFlags       json.RawMessage `json:"databaseFlags,omitempty"`
+	BackupConfiguration json.RawMessage `json:"backupConfiguration,omitempty"`
+	IPConfiguration     json.RawMessage `json:"ipConfiguration,omitempty"`
 }
 
 type ipMapping struct {
@@ -49,8 +94,9 @@ type ipMapping struct {
 }
 
 type sqlInstanceList struct {
-	Kind  string        `json:"kind"`
-	Items []sqlInstance `json:"items"`
+	Kind          string        `json:"kind"`
+	Items         []sqlInstance `json:"items"`
+	NextPageToken string        `json:"nextPageToken,omitempty"`
 }
 
 type backupRun struct {
@@ -95,42 +141,47 @@ type operation struct {
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
-// doneOperation builds an LRO Operation with status=DONE and a synthetic name
-// derived from project+verb.
-func doneOperation(project, name, opType, _ string) operation {
+// doneOperationWithTarget builds a DONE operation that carries the full record
+// a real Cloud SQL operation exposes: the affected resource (targetId /
+// targetLink), the acting user, insert/start/end timestamps, and its own
+// selfLink. Mutating handlers persist the result so a later Operations.Get
+// returns this same record rather than a synthetic stand-in.
+func doneOperationWithTarget(project, name, opType, resourceType, target string) operation {
+	now := time.Now().UTC().Format(rfc3339Milli)
+
 	return operation{
 		Kind:          "sql#operation",
 		Name:          name,
 		OperationType: opType,
 		Status:        "DONE",
+		User:          operationUser,
+		InsertTime:    now,
+		StartTime:     now,
+		EndTime:       now,
+		TargetID:      target,
 		TargetProject: project,
+		TargetLink:    selfLinkBase + project + "/" + resourceType + "/" + target,
+		SelfLink:      selfLinkBase + project + "/operations/" + name,
 	}
-}
-
-// doneOperationWithTarget builds a DONE operation that also carries a
-// targetLink/targetId pointing at the affected resource.
-func doneOperationWithTarget(project, name, opType, resourceType, target string) operation {
-	op := doneOperation(project, name, opType, "")
-	op.TargetID = target
-	op.TargetLink = pathPrefix + project + "/" + resourceType + "/" + target
-
-	return op
 }
 
 // toSQLInstance converts a portable Instance to the wire shape.
 func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 	return sqlInstance{
-		Kind:               "sql#instance",
-		Name:               inst.ID,
-		Project:            project,
-		Region:             inst.AvailabilityZone,
-		DatabaseVersion:    inst.Engine,
-		State:              sqlState(inst.State),
-		BackendType:        "SECOND_GEN",
-		ConnectionName:     inst.ConnectionName,
+		Kind:            "sql#instance",
+		Name:            inst.ID,
+		Project:         project,
+		Region:          inst.AvailabilityZone,
+		DatabaseVersion: inst.Engine,
+		State:           sqlState(inst.State),
+		BackendType:     "SECOND_GEN",
+		// connectionName is keyed on the REQUEST project (from the URL), matching
+		// real Cloud SQL's {project}:{region}:{instance} — not the server's
+		// configured project, which the stored inst.ConnectionName carries.
+		ConnectionName:     project + ":" + inst.AvailabilityZone + ":" + inst.ID,
 		MasterInstanceName: inst.ReadReplicaSource,
 		ReplicaNames:       inst.ReadReplicaTargets,
-		SelfLink:           pathPrefix + project + "/instances/" + inst.ID,
+		SelfLink:           selfLinkBase + project + "/instances/" + inst.ID,
 		// PRIMARY is the public IP a client is meant to connect to. Endpoint holds
 		// the reachable host: a synthetic IP normally, or the real engine host
 		// when a database engine backs the instance.
@@ -138,13 +189,65 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			{IPAddress: inst.Endpoint, Type: "PRIMARY"},
 		},
 		Settings: &sqlSettings{
-			Tier:             inst.InstanceClass,
-			DataDiskSizeGb:   inst.AllocatedStorage,
-			DataDiskType:     inst.StorageType,
-			UserLabels:       inst.Tags,
-			ActivationPolicy: activationFromState(inst.State),
+			Tier:                      inst.InstanceClass,
+			DataDiskSizeGb:            inst.AllocatedStorage,
+			DataDiskType:              inst.StorageType,
+			UserLabels:                inst.Tags,
+			ActivationPolicy:          activationFromState(inst.State),
+			AvailabilityType:          availabilityType(inst.MultiAZ),
+			DeletionProtectionEnabled: boolPtr(inst.DeletionProtection),
+			DatabaseFlags:             rawJSONOrNil(inst.GCPDatabaseFlags),
+			BackupConfiguration:       rawJSONOrNil(inst.GCPBackupConfig),
+			IPConfiguration:           rawJSONOrNil(inst.GCPIPConfig),
 		},
-		CreateTime: inst.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		ServerCaCert: serverCaCertFor(inst),
+		CreateTime:   inst.CreatedAt.UTC().Format(rfc3339Milli),
+	}
+}
+
+// availabilityType maps the portable MultiAZ flag to the Cloud SQL
+// availabilityType enum: REGIONAL for a highly available (multi-zone) instance,
+// ZONAL otherwise — matching what real Cloud SQL returns on a Get.
+func availabilityType(multiAZ bool) string {
+	if multiAZ {
+		return availabilityRegional
+	}
+
+	return availabilityZonal
+}
+
+// boolPtr returns a pointer to b, used to always populate deletionProtectionEnabled
+// on a Get (Terraform reads it as a computed attribute).
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// rawJSONOrNil returns the stored opaque JSON as a RawMessage, or nil when empty
+// so the field is omitted rather than emitted as an empty value.
+func rawJSONOrNil(s string) json.RawMessage {
+	if s == "" {
+		return nil
+	}
+
+	return json.RawMessage(s)
+}
+
+// serverCaCertFor builds the synthetic server CA certificate Cloud SQL reports
+// on every instance. Terraform reads server_ca_cert as a computed attribute, so
+// it must be populated; the fingerprint is derived from the instance id so it is
+// stable across reads.
+func serverCaCertFor(inst *rdsdriver.Instance) *sslCert {
+	sum := sha1.Sum([]byte("serverCaCert/" + inst.ID)) //nolint:gosec // fingerprint id, not a security control.
+	fp := hex.EncodeToString(sum[:])
+
+	return &sslCert{
+		Kind:             "sql#sslCert",
+		CommonName:       "Google Cloud SQL Server CA",
+		Sha1Fingerprint:  fp,
+		CertSerialNumber: fp[:16],
+		Cert:             serverCaCertPEM,
+		Instance:         inst.ID,
+		CreateTime:       inst.CreatedAt.UTC().Format(rfc3339Milli),
 	}
 }
 
@@ -156,8 +259,8 @@ func toBackupRun(snap *rdsdriver.Snapshot) backupRun {
 		Status:     sqlBackupStatus(snap.State),
 		Type:       "ON_DEMAND",
 		Instance:   snap.InstanceID,
-		StartTime:  snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		EndTime:    snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		StartTime:  snap.CreatedAt.UTC().Format(rfc3339Milli),
+		EndTime:    snap.CreatedAt.UTC().Format(rfc3339Milli),
 		BackupKind: "SNAPSHOT",
 	}
 }
@@ -233,7 +336,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusConflict, "FAILED_PRECONDITION", err.Error())
+		// Google's canonical error mapping puts FAILED_PRECONDITION at HTTP 400
+		// (e.g. Cloud SQL's deletion-protection guard), not 409.
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	}

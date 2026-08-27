@@ -10,6 +10,7 @@ import (
 	awsdynamo "github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	awsec2 "github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	awss3 "github.com/stackshy/cloudemu/v2/providers/aws/s3"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -412,21 +413,27 @@ func TestWrapDatabaseScanChaos(t *testing.T) {
 // Helper from chaos_test.go was here previously; we keep it co-located so
 // wrapper tests are self-contained.
 type computeConfigCompat = struct {
-	ImageID        string
-	InstanceType   string
-	Tags           map[string]string
-	SubnetID       string
-	SecurityGroups []string
-	KeyName        string
-	UserData       string
-	Managed        bool
-	Principal      string
-	OSType         string
-	Priority       string
-	LicenseType    string
-	Zones          []string
-	Region         string
-	ResourceGroup  string
+	ImageID                string
+	InstanceType           string
+	Tags                   map[string]string
+	SubnetID               string
+	SecurityGroups         []string
+	KeyName                string
+	UserData               string
+	Managed                bool
+	Principal              string
+	OSType                 string
+	Priority               string
+	LicenseType            string
+	Zones                  []string
+	Region                 string
+	ResourceGroup          string
+	ClientToken            string
+	IamInstanceProfileARN  string
+	IamInstanceProfileName string
+	Identity               *computedriver.ManagedIdentity
+	NetworkInterfaces      []computedriver.AzureNICRef
+	PrivateIP              string
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
 
 // buildShards partitions the full 128-bit hash-key space into count open shards
-// numbered from startIndex, each seeded with the given starting sequence number.
-func (*Mock) buildShards(count int32, startIndex int, startSeq string) []*shardState {
+// numbered from startIndex, each seeded with the given starting sequence number
+// and creation time.
+func (*Mock) buildShards(count int32, startIndex int, startSeq string, createdAt time.Time) []*shardState {
 	shards := make([]*shardState, 0, count)
 	maxKey := maxHashKey()
 	span := new(big.Int).Div(new(big.Int).Add(maxKey, big.NewInt(1)), big.NewInt(int64(count)))
@@ -27,6 +29,7 @@ func (*Mock) buildShards(count int32, startIndex int, startSeq string) []*shardS
 		}
 
 		shards = append(shards, &shardState{
+			createdAt: createdAt,
 			shard: driver.Shard{
 				ShardID:             fmt.Sprintf(shardIDFmt, startIndex+int(i)),
 				HashKeyRange:        driver.HashKeyRange{StartingHashKey: start.String(), EndingHashKey: end.String()},
@@ -51,8 +54,15 @@ func (m *Mock) CreateStream(_ context.Context, in driver.CreateStreamInput) erro
 	}
 
 	shardCount := in.ShardCount
+
 	if mode == driver.ModeOnDemand {
-		shardCount = 4 // on-demand streams start with 4 shards
+		// On-demand streams manage their own shards; AWS rejects an explicit
+		// ShardCount for them and starts the stream with 4 shards.
+		if in.ShardCount != 0 {
+			return invalidArg("ShardCount is not supported for on-demand streams")
+		}
+
+		shardCount = onDemandStartShards
 	}
 
 	if shardCount < 1 {
@@ -75,7 +85,7 @@ func (m *Mock) CreateStream(_ context.Context, in driver.CreateStreamInput) erro
 		consumers: map[string]*driver.Consumer{},
 		tags:      copyTags(in.Tags),
 	}
-	sd.shards = m.buildShards(shardCount, 0, formatSeq(0))
+	sd.shards = m.buildShards(shardCount, 0, formatSeq(0), now)
 
 	if !m.streams.SetIfAbsent(in.StreamName, sd) {
 		return errInUse("stream %q already exists", in.StreamName)
@@ -197,8 +207,11 @@ func openShardCount(shards []*shardState) int32 {
 }
 
 // ListStreams returns stream names and summaries, ordered by name and paginated
-// by limit (a returned NextToken/HasMoreStreams resumes after the last name).
-func (m *Mock) ListStreams(_ context.Context, nextToken string, limit int32) (*driver.ListStreamsOutput, error) {
+// by limit. Results resume strictly after a cursor name: the opaque NextToken
+// (modern paginator) when set, otherwise the legacy ExclusiveStartStreamName.
+func (m *Mock) ListStreams(
+	_ context.Context, nextToken, exclusiveStartStreamName string, limit int32,
+) (*driver.ListStreamsOutput, error) {
 	all := m.streams.All()
 
 	names := make([]string, 0, len(all))
@@ -213,12 +226,18 @@ func (m *Mock) ListStreams(_ context.Context, nextToken string, limit int32) (*d
 		maxOut = int(limit)
 	}
 
+	// NextToken takes precedence; ExclusiveStartStreamName is the legacy cursor.
+	after := nextToken
+	if after == "" {
+		after = exclusiveStartStreamName
+	}
+
 	out := &driver.ListStreamsOutput{}
-	started := nextToken == ""
+	started := after == ""
 
 	for _, name := range names {
 		if !started {
-			if name == nextToken {
+			if name == after {
 				started = true
 			}
 
@@ -294,8 +313,8 @@ func (m *Mock) setRetention(name, arn string, hours int32, increase bool) error 
 func (m *Mock) UpdateShardCount(
 	_ context.Context, name, arn string, targetCount int32, _ string,
 ) (current, target int32, err error) {
-	if targetCount < 1 {
-		return 0, 0, invalidArg("TargetShardCount must be at least 1")
+	if targetCount < 1 || targetCount > maxTargetShardCount {
+		return 0, 0, invalidArg("TargetShardCount must be between 1 and %d", maxTargetShardCount)
 	}
 
 	sd, err := m.resolve(name, arn)
@@ -307,19 +326,41 @@ func (m *Mock) UpdateShardCount(
 	defer sd.mu.Unlock()
 
 	before := openShardCount(sd.shards)
-	endSeq := sd.nextSeq()
-	nextIdx := len(sd.shards)
 
-	// Snapshot the open shards' hash ranges, then close them, so each new shard
-	// can be linked to the parent(s) whose range it overlaps.
-	type parentRange struct {
-		id         string
-		start, end *big.Int
+	// AWS allows scaling by at most a factor of 2 (up or down) in a single call.
+	if targetCount > before*shardScaleFactor || targetCount*shardScaleFactor < before {
+		return 0, 0, invalidArg(
+			"TargetShardCount %d must be within half to double the current shard count %d", targetCount, before)
 	}
 
+	now := m.now()
+	nextIdx := len(sd.shards)
+
+	// Close the open shards (snapshotting their ranges), build the new open shards,
+	// then link each child to the parent(s) it overlaps so draining a closed shard
+	// reports its children — otherwise a following consumer dead-ends.
+	parents := closeOpenShards(sd.shards, now, sd.nextSeq())
+	children := m.buildShards(targetCount, nextIdx, sd.nextSeq(), now)
+	linkChildren(children, parents)
+
+	sd.shards = append(sd.shards, children...)
+
+	return before, targetCount, nil
+}
+
+// parentRange is a closed shard's id and hash-key range, used to link the child
+// shards a reshard creates back to the parents whose range they overlap.
+type parentRange struct {
+	id         string
+	start, end *big.Int
+}
+
+// closeOpenShards closes every open shard, stamping its end sequence and close
+// time, and returns the hash ranges of the shards that were open.
+func closeOpenShards(shards []*shardState, closedAt time.Time, endSeq string) []parentRange {
 	var parents []parentRange
 
-	for _, ss := range sd.shards {
+	for _, ss := range shards {
 		if ss.closed {
 			continue
 		}
@@ -328,14 +369,16 @@ func (m *Mock) UpdateShardCount(
 		e, _ := new(big.Int).SetString(ss.shard.HashKeyRange.EndingHashKey, base10)
 		parents = append(parents, parentRange{ss.shard.ShardID, s, e})
 		ss.closed = true
+		ss.closedAt = closedAt
 		ss.shard.SequenceNumberRange.EndingSequenceNumber = endSeq
 	}
 
-	children := m.buildShards(targetCount, nextIdx, sd.nextSeq())
+	return parents
+}
 
-	// Link each child to the parent shard(s) it overlaps, so draining a closed
-	// shard reports its children (closed-shard→child contract), matching
-	// SplitShard/MergeShards — otherwise a following consumer dead-ends.
+// linkChildren records, on each child shard, the parent range(s) its hash-key
+// range overlaps (up to two, matching the split/merge parent contract).
+func linkChildren(children []*shardState, parents []parentRange) {
 	for _, ch := range children {
 		cs, _ := new(big.Int).SetString(ch.shard.HashKeyRange.StartingHashKey, base10)
 		ce, _ := new(big.Int).SetString(ch.shard.HashKeyRange.EndingHashKey, base10)
@@ -356,10 +399,6 @@ func (m *Mock) UpdateShardCount(
 			ch.shard.AdjacentParentShardID = overlap[1]
 		}
 	}
-
-	sd.shards = append(sd.shards, children...)
-
-	return before, targetCount, nil
 }
 
 // UpdateStreamMode switches a stream between PROVISIONED and ON_DEMAND.

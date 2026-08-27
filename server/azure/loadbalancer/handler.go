@@ -34,25 +34,99 @@
 //	DELETE .../loadBalancers/{name}            — LoadBalancers.BeginDelete (LRO, sync-200)
 //	GET    .../resourceGroups/{rg}/…/loadBalancers    — LoadBalancers.List (RG scope)
 //	GET    .../subscriptions/{s}/…/loadBalancers      — LoadBalancers.ListAll (sub scope)
+//
+// Sub-resource requests (a URL with a segment past the load balancer name)
+// route through serveSubResource (subresource.go) to true per-child CRUD
+// instead of ever reaching the whole-LB handlers above, matching the real ARM
+// operation surface per child kind:
+//
+//	GET                     .../backendAddressPools[/{name}]      — Get/List
+//	PUT/DELETE              .../backendAddressPools/{name}        — BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
+//	GET                     .../inboundNatRules[/{name}]          — Get/List
+//	PUT/DELETE              .../inboundNatRules/{name}            — BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
+//	GET                     .../probes[/{name}]                   — Get/List only (405 on PUT/DELETE)
+//	GET                     .../loadBalancingRules[/{name}]       — Get/List only (405 on PUT/DELETE)
+//	GET                     .../outboundRules[/{name}]            — Get/List only (405 on PUT/DELETE)
+//	GET                     .../frontendIPConfigurations[/{name}] — Get/List only (405 on PUT/DELETE)
+//
+// inboundNatPools has no standalone ARM operation group at all — it is
+// reflected only as a nested array inside the whole load balancer body, so a
+// request addressing it standalone 404s.
 package loadbalancer
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Handler serves Microsoft.Network/loadBalancers ARM requests against a
 // loadbalancer driver.
 type Handler struct {
 	lb lbdriver.LoadBalancer
+	// nics resolves NIC ipConfigurations so a backend address pool can project
+	// its read-only backendIPConfigurations from the NIC side of the
+	// association. Optional: nil when the networking driver is absent, in which
+	// case pools report no members. Wired via SetNICResolver.
+	nics netdriver.AzureNetworkInterfaces
 }
 
 // New returns an Azure Load Balancer handler backed by lb.
 func New(lb lbdriver.LoadBalancer) *Handler {
 	return &Handler{lb: lb}
+}
+
+// SetNICResolver wires the Azure network-interface surface so a backend
+// address pool can project the ipConfigurations that reference it into its
+// read-only backendIPConfigurations. Without it, pools resolve with no members.
+func (h *Handler) SetNICResolver(nics netdriver.AzureNetworkInterfaces) {
+	h.nics = nics
+}
+
+// poolMembers builds a lookup from a backend address pool's ARM id (lower-cased,
+// since ARM ids are case-insensitive) to the ipConfiguration ARM ids that have
+// joined it, scanning every NIC's stored loadBalancerBackendAddressPools. It
+// returns nil when no NIC resolver is wired, so pools simply carry no members.
+func (h *Handler) poolMembers(ctx context.Context, subscription string) map[string][]string {
+	if h.nics == nil {
+		return nil
+	}
+
+	nics, err := h.nics.ListNetworkInterfaces(ctx, "")
+	if err != nil {
+		return nil
+	}
+
+	members := make(map[string][]string)
+
+	for i := range nics {
+		nic := &nics[i]
+
+		for j := range nic.IPConfigs {
+			cfg := &nic.IPConfigs[j]
+			ipCfgID := nicIPConfigID(subscription, nic.ResourceGroup, nic.Name, cfg.Name)
+
+			for _, poolID := range cfg.LBBackendPoolIDs {
+				key := strings.ToLower(poolID)
+				members[key] = append(members[key], ipCfgID)
+			}
+		}
+	}
+
+	return members
+}
+
+// nicIPConfigID builds the nested ARM resource id of a NIC ipConfiguration,
+// used as a backend address pool's backendIPConfigurations reference.
+func nicIPConfigID(subscription, resourceGroup, nicName, configName string) string {
+	return "/subscriptions/" + subscription +
+		"/resourceGroups/" + resourceGroup +
+		"/providers/" + providerName + "/networkInterfaces/" +
+		nicName + "/ipConfigurations/" + configName
 }
 
 // isLBsType reports whether the ARM resource type is loadBalancers,
@@ -95,11 +169,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A sub-resource segment (backendAddressPools, probes, loadBalancingRules,
+	// inboundNatRules, inboundNatPools, outboundRules, frontendIPConfigurations)
+	// addresses one child of the load balancer, not the load balancer itself —
+	// route it to per-child CRUD before any whole-LB handler ever sees the
+	// request. Falling through here would let a standalone child PUT/GET/DELETE
+	// be misparsed as a whole-LB request scoped to rp.ResourceName, silently
+	// wiping or deleting every other child.
+	if rp.SubResource != "" {
+		h.serveSubResource(w, r, &rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateLoadBalancer(w, r, &rp)
 	case http.MethodGet:
 		h.getLoadBalancer(w, r, &rp)
+	case http.MethodPatch:
+		h.updateLoadBalancerTags(w, r, &rp)
 	case http.MethodDelete:
 		h.deleteLoadBalancer(w, r, &rp)
 	default:

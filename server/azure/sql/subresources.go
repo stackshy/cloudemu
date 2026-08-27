@@ -336,6 +336,7 @@ func (*Handler) writeElasticPool(
 	if body.SKU != nil {
 		cfg.SKUName = body.SKU.Name
 		cfg.SKUTier = body.SKU.Tier
+		cfg.SKUCapacity = body.SKU.Capacity
 	}
 
 	if body.Properties != nil {
@@ -401,7 +402,7 @@ func toARMElasticPool(ep *rdsdriver.ElasticPool, rp *azurearm.ResourcePath) armE
 		Name:     ep.Name,
 		Type:     providerName + "/" + resourceServers + "/" + subElasticPools,
 		Location: ep.Location,
-		SKU:      &armSKU{Name: ep.SKUName, Tier: ep.SKUTier},
+		SKU:      &armSKU{Name: ep.SKUName, Tier: ep.SKUTier, Capacity: ep.SKUCapacity},
 		Properties: &armElasticPoolCfg{
 			MaxSizeBytes:       ep.MaxSizeBytes,
 			State:              ep.State,

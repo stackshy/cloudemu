@@ -3,6 +3,8 @@ package cache
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"path"
@@ -20,8 +22,16 @@ import (
 
 const defaultRedisSSLPort = 6380
 
-// Compile-time check that Mock implements driver.Cache.
-var _ driver.Cache = (*Mock)(nil)
+// accessKeyBytes is the byte length of a generated Redis access key before
+// base64 encoding; 32 bytes encodes to the 44-character key real Azure returns.
+const accessKeyBytes = 32
+
+// Compile-time checks that Mock implements driver.Cache and the optional
+// Azure access-key capability.
+var (
+	_ driver.Cache      = (*Mock)(nil)
+	_ driver.AccessKeys = (*Mock)(nil)
+)
 
 type cacheItem struct {
 	Value     []byte
@@ -104,18 +114,26 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:               cfg.Name,
-		Scope:              cfg.Scope,
-		NodeType:           nodeType,
-		Engine:             engine,
-		Status:             "Running",
-		Endpoint:           endpoint,
-		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:               tags,
-		SKUFamily:          cfg.SKUFamily,
-		SKUCapacity:        cfg.SKUCapacity,
-		ShardCount:         cfg.ShardCount,
-		ReplicasPerPrimary: cfg.ReplicasPerPrimary,
+		Name:                cfg.Name,
+		Scope:               cfg.Scope,
+		Location:            cfg.Location,
+		NodeType:            nodeType,
+		Engine:              engine,
+		Status:              "Running",
+		Endpoint:            endpoint,
+		CreatedAt:           m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:                tags,
+		SKUFamily:           cfg.SKUFamily,
+		SKUCapacity:         cfg.SKUCapacity,
+		ShardCount:          cfg.ShardCount,
+		ReplicasPerPrimary:  cfg.ReplicasPerPrimary,
+		RedisConfiguration:  cloneStringMap(cfg.RedisConfiguration),
+		EnableNonSSLPort:    cfg.EnableNonSSLPort,
+		MinimumTLSVersion:   cfg.MinimumTLSVersion,
+		PublicNetworkAccess: cfg.PublicNetworkAccess,
+		RedisVersion:        cfg.RedisVersion,
+		PrimaryKey:          generateAccessKey(),
+		SecondaryKey:        generateAccessKey(),
 	}
 
 	// Opt-in: back the cache with a real Redis, replacing the synthetic endpoint
@@ -215,6 +233,28 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		updated.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
 	}
 
+	// Nil/empty means "not supplied" on a partial update: a tags-only or
+	// scale-only PATCH must not wipe redisConfiguration/enableNonSslPort/etc.
+	if cfg.RedisConfiguration != nil {
+		updated.info.RedisConfiguration = cloneStringMap(cfg.RedisConfiguration)
+	}
+
+	if cfg.EnableNonSSLPort != nil {
+		updated.info.EnableNonSSLPort = cfg.EnableNonSSLPort
+	}
+
+	if cfg.MinimumTLSVersion != "" {
+		updated.info.MinimumTLSVersion = cfg.MinimumTLSVersion
+	}
+
+	if cfg.PublicNetworkAccess != "" {
+		updated.info.PublicNetworkAccess = cfg.PublicNetworkAccess
+	}
+
+	if cfg.RedisVersion != "" {
+		updated.info.RedisVersion = cfg.RedisVersion
+	}
+
 	if cfg.Tags != nil {
 		updated.info.Tags = maps.Clone(cfg.Tags)
 	}
@@ -228,6 +268,66 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	result := updated.info
 
 	return &result, nil
+}
+
+// ListCacheKeys returns the cache's current primary and secondary access keys.
+func (m *Mock) ListCacheKeys(_ context.Context, name string) (primary, secondary string, err error) {
+	cd, ok := m.caches.Get(name)
+	if !ok {
+		return "", "", errors.Newf(errors.NotFound, "cache %q not found", name)
+	}
+
+	return cd.info.PrimaryKey, cd.info.SecondaryKey, nil
+}
+
+// RegenerateCacheKey rotates the requested key ("Primary" or "Secondary") and
+// returns both current keys.
+func (m *Mock) RegenerateCacheKey(_ context.Context, name, keyType string) (primary, secondary string, err error) {
+	cd, ok := m.caches.Get(name)
+	if !ok {
+		return "", "", errors.Newf(errors.NotFound, "cache %q not found", name)
+	}
+
+	// Mutate a copy and swap it in, never the shared stored pointer: GetCache
+	// snapshots cd.info without a lock, so an in-place write would be a torn
+	// read under concurrency.
+	updated := *cd
+
+	switch keyType {
+	case "Secondary":
+		updated.info.SecondaryKey = generateAccessKey()
+	case "Primary":
+		updated.info.PrimaryKey = generateAccessKey()
+	default:
+		return "", "", errors.Newf(errors.InvalidArgument, "keyType %q must be Primary or Secondary", keyType)
+	}
+
+	m.caches.Set(name, &updated)
+
+	return updated.info.PrimaryKey, updated.info.SecondaryKey, nil
+}
+
+// cloneStringMap returns a copy of m, or nil when m is nil, so stored cache
+// state never aliases the caller's map.
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+
+	return maps.Clone(m)
+}
+
+// generateAccessKey returns a fresh 44-character base64 Redis access key,
+// matching the shape of a real Azure Cache for Redis key.
+func generateAccessKey() string {
+	b := make([]byte, accessKeyBytes)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand.Read never returns an error on supported platforms; fall
+		// back to a deterministic value rather than panicking.
+		return base64.StdEncoding.EncodeToString(make([]byte, accessKeyBytes))
+	}
+
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 // Set stores a value in the cache with an optional TTL.

@@ -1,16 +1,31 @@
 package iam
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"math/big"
 	"net/http"
-	"strings"
+	"net/url"
+	"sort"
+	"strconv"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
-const maxBodyBytes = 1 << 20
+const (
+	maxBodyBytes = 1 << 20
+
+	saUniqueIDDigits = 21 // real GCP service-account uniqueIds are 21-digit numerics
+	keyValidityYears = 10 // user-managed key default validity window
+	decimalBase      = 10 // base for the uniqueId digit-range math
+
+	defaultPageSize = 100
+	maxPageSize     = 1000
+)
 
 // --- ServiceAccounts ---
 
@@ -72,8 +87,9 @@ func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, pr
 	}
 
 	wildcard := project == "-"
-	out := listServiceAccountsResponse{Accounts: make([]serviceAccount, 0, len(users))}
+	matched := make([]serviceAccount, 0, len(users))
 
+	h.mu.RLock()
 	for i := range users {
 		u := &users[i]
 		if !wildcard && u.Path != project {
@@ -88,17 +104,45 @@ func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, pr
 		}
 
 		sa := saFromUser(u)
-		out.Accounts = append(out.Accounts,
-			toServiceAccountJSON(responseProject, u.Name, &sa))
+		sa.Disabled = h.disabled[u.Name] // reflect the disabled bit in list, like Get
+		matched = append(matched, toServiceAccountJSON(responseProject, u.Name, &sa))
 	}
+	h.mu.RUnlock()
 
-	writeJSON(w, out)
+	// ListUsers returns map order (random), so sort by the stable resource name
+	// before applying the offset page token — otherwise page boundaries shift
+	// between requests and callers see duplicated or skipped accounts.
+	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
+
+	page, next := paginate(matched, pageSizeParam(r), decodePageToken(pageTokenParam(r)))
+
+	writeJSON(w, listServiceAccountsResponse{Accounts: page, NextPageToken: next})
 }
 
 func (h *Handler) deleteServiceAccount(w http.ResponseWriter, r *http.Request, email string) {
+	// Capture a tombstone before the hard delete so a subsequent undelete can
+	// restore the account (real GCP soft-deletes for ~30 days).
+	user, gerr := h.iam.GetUser(r.Context(), email)
+
 	if err := h.iam.DeleteUser(r.Context(), email); err != nil {
 		writeCErr(w, err)
 		return
+	}
+
+	if gerr == nil {
+		sa := saFromUser(user)
+
+		h.mu.Lock()
+		h.deletedSA[email] = &deletedSA{
+			project:     user.Path,
+			displayName: sa.DisplayName,
+			description: sa.Description,
+			disabled:    h.disabled[email],
+		}
+		delete(h.disabled, email)
+		delete(h.saPolicy, email)
+		delete(h.policyVersion, email)
+		h.mu.Unlock()
 	}
 
 	// GCP returns an empty body with 200 on successful SA delete.
@@ -220,7 +264,7 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 		return
 	}
 
-	out := listRolesResponse{Roles: make([]role, 0, len(roles))}
+	matched := make([]role, 0, len(roles))
 
 	for i := range roles {
 		dr := &roles[i]
@@ -233,10 +277,17 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 		// its name rather than silently dropping it from the list — the
 		// underlying entry exists and the caller should see something.
 		props, _ := decodeRoleProps(dr.AssumeRolePolicyDoc)
-		out.Roles = append(out.Roles, toRoleJSON(project, dr.Name, &props))
+		matched = append(matched, toRoleJSON(project, dr.Name, &props))
 	}
 
-	writeJSON(w, out)
+	// ListRoles returns map order (random), so sort by the stable role name
+	// before applying the offset page token to keep page boundaries consistent
+	// across requests (no duplicated or skipped roles).
+	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
+
+	page, next := paginate(matched, pageSizeParam(r), decodePageToken(pageTokenParam(r)))
+
+	writeJSON(w, listRolesResponse{Roles: page, NextPageToken: next})
 }
 
 func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request, project, roleID string) {
@@ -258,10 +309,49 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request, project, ro
 		return
 	}
 
+	// Tombstone the role so it can be undeleted (real GCP soft-deletes custom
+	// roles for 7 days).
+	h.mu.Lock()
+	h.deletedRole[roleID] = &deletedRole{project: project, props: props}
+	h.mu.Unlock()
+
 	// GCP marks the role as deleted in the echoed body.
 	out := toRoleJSON(project, roleID, &props)
 	out.Deleted = true
 	writeJSON(w, out)
+}
+
+// undeleteRole restores a soft-deleted custom role from its tombstone.
+func (h *Handler) undeleteRole(w http.ResponseWriter, r *http.Request, project, roleID string) {
+	h.mu.Lock()
+	tomb := h.deletedRole[roleID]
+	delete(h.deletedRole, roleID) // no-op when absent
+	h.mu.Unlock()
+
+	if tomb == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND",
+			"role "+roleID+" was not found or is not recoverable")
+
+		return
+	}
+
+	propsJSON, err := json.Marshal(tomb.props)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL",
+			"could not encode role props: "+err.Error())
+		return
+	}
+
+	if _, err := h.iam.CreateRole(r.Context(), iamdriver.RoleConfig{
+		Name:                roleID,
+		Path:                tomb.project,
+		AssumeRolePolicyDoc: string(propsJSON),
+	}); err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, toRoleJSON(project, roleID, &tomb.props))
 }
 
 // updateRole handles PATCH .../roles/{roleId}. Unlike SA Patch the role
@@ -323,7 +413,9 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, project, ema
 		return
 	}
 
-	writeJSON(w, toKeyJSON(project, email, k.AccessKeyID, k.SecretAccessKey))
+	// privateKeyData is the base64 credentials file, returned once at create.
+	keyFile := buildKeyFileData(project, email, k.AccessKeyID, k.SecretAccessKey)
+	writeJSON(w, toKeyJSON(project, email, k.AccessKeyID, keyFile, k.CreatedAt))
 }
 
 func (h *Handler) getKey(w http.ResponseWriter, r *http.Request, project, email, keyID string) {
@@ -337,7 +429,7 @@ func (h *Handler) getKey(w http.ResponseWriter, r *http.Request, project, email,
 		if keys[i].AccessKeyID == keyID {
 			// Empty private-key body on GET — GCP only returns the private
 			// material once at create time.
-			writeJSON(w, toKeyJSON(project, email, keyID, ""))
+			writeJSON(w, toKeyJSON(project, email, keyID, "", keys[i].CreatedAt))
 			return
 		}
 	}
@@ -355,7 +447,8 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, project, emai
 
 	out := listKeysResponse{Keys: make([]serviceAccountKey, 0, len(keys))}
 	for i := range keys {
-		out.Keys = append(out.Keys, toKeyJSON(project, email, keys[i].AccessKeyID, ""))
+		out.Keys = append(out.Keys,
+			toKeyJSON(project, email, keys[i].AccessKeyID, "", keys[i].CreatedAt))
 	}
 
 	writeJSON(w, out)
@@ -402,11 +495,43 @@ func toServiceAccountJSON(project, email string, sa *serviceAccount) serviceAcco
 	out.Email = email
 
 	if out.UniqueID == "" {
-		// Stable synthetic ID derived from the email so tests can match it.
-		out.UniqueID = "uid-" + strings.ReplaceAll(email, "@", "-")
+		out.UniqueID = saUniqueID(email)
 	}
 
+	// In real GCP the OAuth2 client id equals the numeric unique id, and every
+	// SA carries a (deprecated but populated) etag.
+	out.OAuth2ClientID = out.UniqueID
+	out.Etag = saEtag(email)
+
 	return out
+}
+
+// saUniqueID derives a stable 21-digit numeric unique id from the SA email,
+// matching the shape of a real GCP service-account uniqueId (and oauth2ClientId).
+func saUniqueID(email string) string {
+	sum := sha256.Sum256([]byte("uid:" + email))
+	n := new(big.Int).SetBytes(sum[:])
+
+	base := big.NewInt(decimalBase)
+	// 21-digit numbers span [10^20, 10^21); map the hash into that half-open range.
+	lo := new(big.Int).Exp(base, big.NewInt(saUniqueIDDigits-1), nil)
+	hi := new(big.Int).Exp(base, big.NewInt(saUniqueIDDigits), nil)
+	span := new(big.Int).Sub(hi, lo)
+
+	n.Mod(n, span)
+	n.Add(n, lo)
+
+	return n.String()
+}
+
+// saEtag returns a stable, populated etag for a service account resource.
+func saEtag(email string) string {
+	return base64.StdEncoding.EncodeToString([]byte("sa:" + email))
+}
+
+// roleEtag returns a stable, populated etag for a custom role resource.
+func roleEtag(project, roleID string) string {
+	return base64.StdEncoding.EncodeToString([]byte("role:" + project + "/" + roleID))
 }
 
 // toRoleJSON builds the wire envelope for a custom role. The "name" field
@@ -418,22 +543,66 @@ func toRoleJSON(project, roleID string, props *roleProps) role {
 		Description:         props.Description,
 		IncludedPermissions: props.IncludedPermissions,
 		Stage:               props.Stage,
+		Etag:                roleEtag(project, roleID),
 	}
 }
 
 // toKeyJSON builds the wire envelope for a service-account key. private is
 // only populated on create (GCP returns the private key material exactly
-// once); GET / LIST pass an empty string.
-func toKeyJSON(project, email, keyID, private string) serviceAccountKey {
+// once); GET / LIST pass an empty string. createdAt (RFC3339) drives the
+// validity window; a zero value means "now".
+func toKeyJSON(project, email, keyID, private, createdAt string) serviceAccountKey {
+	validAfter := createdAt
+	if validAfter == "" {
+		validAfter = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	validBefore := validAfter
+	if t, err := time.Parse(time.RFC3339, validAfter); err == nil {
+		validBefore = t.AddDate(keyValidityYears, 0, 0).UTC().Format(time.RFC3339)
+	}
+
 	return serviceAccountKey{
 		Name: "projects/" + project + "/serviceAccounts/" + email +
 			"/keys/" + keyID,
-		PrivateKeyType: "TYPE_GOOGLE_CREDENTIALS_FILE",
-		KeyAlgorithm:   "KEY_ALG_RSA_2048",
-		PrivateKeyData: private,
-		KeyOrigin:      "GOOGLE_PROVIDED",
-		KeyType:        "USER_MANAGED",
+		PrivateKeyType:  "TYPE_GOOGLE_CREDENTIALS_FILE",
+		KeyAlgorithm:    "KEY_ALG_RSA_2048",
+		PrivateKeyData:  private,
+		ValidAfterTime:  validAfter,
+		ValidBeforeTime: validBefore,
+		KeyOrigin:       "GOOGLE_PROVIDED",
+		KeyType:         "USER_MANAGED",
 	}
+}
+
+// buildKeyFileData returns the base64-encoded service-account credentials file
+// (JSON) that real GCP hands back exactly once, at key-create time. The private
+// key material is a synthetic placeholder — cloudemu never mints real RSA keys —
+// but the envelope is the standard google-credentials shape clients parse.
+func buildKeyFileData(project, email, keyID, secret string) string {
+	// Synthetic PEM body — cloudemu never mints real RSA keys.
+	pemBody := base64.StdEncoding.EncodeToString([]byte("cloudemu:" + secret))
+	pem := "-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\n"
+
+	keyFile := map[string]string{ //nolint:gosec // synthetic key file, no real credentials
+		"type":                        "service_account",
+		"project_id":                  project,
+		"private_key_id":              keyID,
+		"private_key":                 pem,
+		"client_email":                email,
+		"client_id":                   saUniqueID(email),
+		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
+		"token_uri":                   "https://oauth2.googleapis.com/token",
+		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/" + url.PathEscape(email),
+	}
+
+	raw, err := json.Marshal(keyFile)
+	if err != nil {
+		return ""
+	}
+
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func decodeRoleProps(doc string) (roleProps, error) {
@@ -484,6 +653,64 @@ func drainBody(r *http.Request) error {
 	_, err := io.Copy(io.Discard, r.Body)
 
 	return err
+}
+
+// --- pagination ---
+
+// paginate returns the slice window starting at offset (capped to pageSize)
+// and the opaque nextPageToken for the following window, or "" when exhausted.
+func paginate[T any](items []T, pageSize, offset int) (page []T, nextToken string) {
+	if offset < 0 || offset >= len(items) {
+		return []T{}, ""
+	}
+
+	end := offset + pageSize
+	if end >= len(items) {
+		return items[offset:], ""
+	}
+
+	return items[offset:end], encodePageToken(end)
+}
+
+// pageSizeParam reads ?pageSize, clamping to a sane default/max.
+func pageSizeParam(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if err != nil || n <= 0 {
+		return defaultPageSize
+	}
+
+	if n > maxPageSize {
+		return maxPageSize
+	}
+
+	return n
+}
+
+func pageTokenParam(r *http.Request) string {
+	return r.URL.Query().Get("pageToken")
+}
+
+// encodePageToken/decodePageToken carry a slice offset as an opaque base64 token.
+func encodePageToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func decodePageToken(tok string) int {
+	if tok == "" {
+		return 0
+	}
+
+	b, err := base64.StdEncoding.DecodeString(tok)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.Atoi(string(b))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
 }
 
 // writeCErr maps canonical cloudemu errors to GCP JSON error envelopes.

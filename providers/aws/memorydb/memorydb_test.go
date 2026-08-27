@@ -2,6 +2,7 @@ package memorydb
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -26,6 +27,10 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
+func i32p(v int32) *int32 { return &v }
+
+func boolp(v bool) *bool { return &v }
+
 func TestClusterShardTopologyLimits(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -37,14 +42,14 @@ func TestClusterShardTopologyLimits(t *testing.T) {
 	}
 
 	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
-		Name: "too-many-replicas", NumShards: 1, NumReplicasPerShard: maxReplicasPerShard + 1,
+		Name: "too-many-replicas", NumShards: 1, NumReplicasPerShard: i32p(maxReplicasPerShard + 1),
 	}); !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("ReplicasPerShard over limit: got %v, want InvalidArgument", err)
 	}
 
 	// At the limits it succeeds.
 	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
-		Name: "at-limit", NumShards: 1, NumReplicasPerShard: maxReplicasPerShard,
+		Name: "at-limit", NumShards: 1, NumReplicasPerShard: i32p(maxReplicasPerShard),
 	}); err != nil {
 		t.Fatalf("at-limit create: unexpected error %v", err)
 	}
@@ -55,7 +60,7 @@ func TestClusterLifecycleAndTopology(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
-		Name: "c1", NumShards: 2, NumReplicasPerShard: 1, TLSEnabled: true,
+		Name: "c1", NumShards: 2, NumReplicasPerShard: i32p(1), TLSEnabled: boolp(true),
 	})
 	requireNoError(t, err)
 
@@ -116,16 +121,66 @@ func TestClusterReferenceValidation(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c", ACLName: "ghost"}); err == nil {
-		t.Error("missing ACL: expected NotFound")
+	// A dangling sibling reference returns a kind-tagged NotFoundError so the
+	// wire layer can emit the specific <Kind>NotFoundFault the SDK models.
+	cases := []struct {
+		name string
+		cfg  mdbdriver.CreateClusterConfig
+		kind string
+	}{
+		{"acl", mdbdriver.CreateClusterConfig{Name: "c", ACLName: "ghost"}, "ACL"},
+		{"pg", mdbdriver.CreateClusterConfig{Name: "c", ParameterGroupName: "ghost"}, "ParameterGroup"},
+		{"subnet", mdbdriver.CreateClusterConfig{Name: "c", SubnetGroupName: "ghost"}, "SubnetGroup"},
 	}
 
-	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c", ParameterGroupName: "ghost"}); err == nil {
-		t.Error("missing parameter group: expected NotFound")
+	for _, tc := range cases {
+		_, err := m.CreateCluster(ctx, tc.cfg)
+
+		var nf *mdbdriver.NotFoundError
+		if !errors.As(err, &nf) {
+			t.Fatalf("%s: got %v, want *NotFoundError", tc.name, err)
+		}
+
+		if nf.Kind != tc.kind {
+			t.Errorf("%s: kind = %q, want %q", tc.name, nf.Kind, tc.kind)
+		}
+	}
+}
+
+func TestCreateClusterDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	// TLSEnabled and NumReplicasPerShard omitted: AWS defaults are TLS on and
+	// 1 replica/shard (2 nodes) with MultiAZ.
+	def, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "def", NumShards: 2, Port: 6380})
+	requireNoError(t, err)
+
+	if !def.TLSEnabled {
+		t.Error("TLSEnabled default = false, want true")
 	}
 
-	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c", SubnetGroupName: "ghost"}); err == nil {
-		t.Error("missing subnet group: expected NotFound")
+	if def.AvailabilityMode != "MultiAZ" || def.Shards[0].NumberOfNodes != 2 {
+		t.Errorf("default topology: mode=%q nodes/shard=%d, want MultiAZ / 2", def.AvailabilityMode, def.Shards[0].NumberOfNodes)
+	}
+
+	if def.Shards[0].Nodes[0].Endpoint.Port != 6380 || def.ClusterEndpoint.Port != 6380 {
+		t.Errorf("custom port not on node endpoint: node=%d cluster=%d",
+			def.Shards[0].Nodes[0].Endpoint.Port, def.ClusterEndpoint.Port)
+	}
+
+	// Explicit TLSEnabled=false and NumReplicasPerShard=0 are preserved.
+	exp, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
+		Name: "exp", NumShards: 2, NumReplicasPerShard: i32p(0), TLSEnabled: boolp(false),
+	})
+	requireNoError(t, err)
+
+	if exp.TLSEnabled {
+		t.Error("explicit TLSEnabled=false not preserved")
+	}
+
+	if exp.AvailabilityMode != "SingleAZ" || exp.Shards[0].NumberOfNodes != 1 {
+		t.Errorf("explicit-0 topology: mode=%q nodes/shard=%d, want SingleAZ / 1", exp.AvailabilityMode, exp.Shards[0].NumberOfNodes)
 	}
 }
 
@@ -165,7 +220,7 @@ func TestRestorePreservesTopology(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
-		Name: "src", NumShards: 2, NumReplicasPerShard: 2, TLSEnabled: true,
+		Name: "src", NumShards: 2, NumReplicasPerShard: i32p(2), TLSEnabled: boolp(true),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -251,7 +306,7 @@ func TestFailoverRequiresReplica(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c1", NumShards: 1, NumReplicasPerShard: 0}); err != nil {
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c1", NumShards: 1, NumReplicasPerShard: i32p(0)}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 

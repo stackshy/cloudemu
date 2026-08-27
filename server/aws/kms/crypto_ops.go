@@ -149,6 +149,25 @@ func (h *Handler) generateRandom(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) getPublicKey(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *getPublicKeyRequest) (any, error) {
+		out, err := h.kms.GetPublicKey(ctx, kmsdriver.GetPublicKeyInput{KeyID: req.KeyID})
+		if err != nil {
+			return nil, err
+		}
+
+		return getPublicKeyResponse{
+			KeyID:                 out.KeyID,
+			PublicKey:             out.PublicKey,
+			KeySpec:               out.KeySpec,
+			CustomerMasterKeySpec: out.KeySpec,
+			KeyUsage:              out.KeyUsage,
+			EncryptionAlgorithms:  out.EncryptionAlgorithms,
+			SigningAlgorithms:     out.SigningAlgorithms,
+		}, nil
+	})
+}
+
 //nolint:dupl // templated KMS wire handler; the decode/call/respond shape is intrinsic
 func (h *Handler) sign(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *signRequest) (any, error) {

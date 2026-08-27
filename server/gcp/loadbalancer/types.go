@@ -6,32 +6,94 @@ package loadbalancer
 
 // --- backend services (→ driver target groups) ---
 
+// backend is one entry of a backend service's backends[] — the instance-group
+// or NEG reference plus its balancing knobs. google_compute_backend_service
+// sends this on every apply, so it must round-trip.
+type backend struct {
+	Group          string  `json:"group,omitempty"`
+	BalancingMode  string  `json:"balancingMode,omitempty"`
+	CapacityScaler float64 `json:"capacityScaler,omitempty"`
+	MaxUtilization float64 `json:"maxUtilization,omitempty"`
+}
+
+// connectionDraining is the backend service's connection-draining policy.
+type connectionDraining struct {
+	DrainingTimeoutSec int `json:"drainingTimeoutSec,omitempty"`
+}
+
+// cdnPolicy is the subset of a backend service's Cloud CDN policy the emulator
+// round-trips verbatim (the full body is preserved as an opaque JSON blob).
+type cdnPolicy struct {
+	CacheMode  string `json:"cacheMode,omitempty"`
+	DefaultTTL int    `json:"defaultTtl,omitempty"`
+	ClientTTL  int    `json:"clientTtl,omitempty"`
+	MaxTTL     int    `json:"maxTtl,omitempty"`
+}
+
 type backendServiceRequest struct {
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
-	Port         int      `json:"port,omitempty"`
-	PortName     string   `json:"portName,omitempty"`
-	HealthChecks []string `json:"healthChecks,omitempty"`
+	Name                string              `json:"name"`
+	Description         string              `json:"description,omitempty"`
+	Protocol            string              `json:"protocol,omitempty"`
+	Port                int                 `json:"port,omitempty"`
+	PortName            string              `json:"portName,omitempty"`
+	HealthChecks        []string            `json:"healthChecks,omitempty"`
+	LoadBalancingScheme string              `json:"loadBalancingScheme,omitempty"`
+	SessionAffinity     string              `json:"sessionAffinity,omitempty"`
+	TimeoutSec          int                 `json:"timeoutSec,omitempty"`
+	Backends            []backend           `json:"backends,omitempty"`
+	ConnectionDraining  *connectionDraining `json:"connectionDraining,omitempty"`
+	CdnPolicy           *cdnPolicy          `json:"cdnPolicy,omitempty"`
+	EnableCDN           *bool               `json:"enableCDN,omitempty"`
 }
 
 type backendServiceResponse struct {
-	Kind         string   `json:"kind"`
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
-	Port         int      `json:"port,omitempty"`
-	PortName     string   `json:"portName,omitempty"`
-	HealthChecks []string `json:"healthChecks,omitempty"`
-	SelfLink     string   `json:"selfLink"`
+	Kind                string              `json:"kind"`
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	Description         string              `json:"description,omitempty"`
+	Protocol            string              `json:"protocol,omitempty"`
+	Port                int                 `json:"port,omitempty"`
+	PortName            string              `json:"portName,omitempty"`
+	HealthChecks        []string            `json:"healthChecks,omitempty"`
+	LoadBalancingScheme string              `json:"loadBalancingScheme,omitempty"`
+	SessionAffinity     string              `json:"sessionAffinity,omitempty"`
+	TimeoutSec          int                 `json:"timeoutSec,omitempty"`
+	Backends            []backend           `json:"backends,omitempty"`
+	ConnectionDraining  *connectionDraining `json:"connectionDraining,omitempty"`
+	CdnPolicy           *cdnPolicy          `json:"cdnPolicy,omitempty"`
+	EnableCDN           *bool               `json:"enableCDN,omitempty"`
+	Fingerprint         string              `json:"fingerprint,omitempty"`
+	CreationTimestamp   string              `json:"creationTimestamp,omitempty"`
+	SelfLink            string              `json:"selfLink"`
+}
+
+// resourceGroupReference is the getHealth request body: the instance-group (or
+// NEG) URL whose backends' health is being queried.
+type resourceGroupReference struct {
+	Group string `json:"group,omitempty"`
+}
+
+// healthStatus is one backend instance's health entry in a
+// backendServiceGroupHealth response.
+type healthStatus struct {
+	HealthState string `json:"healthState,omitempty"`
+	Instance    string `json:"instance,omitempty"`
+	IPAddress   string `json:"ipAddress,omitempty"`
+	Port        int    `json:"port,omitempty"`
+}
+
+// backendServiceGroupHealth is the compute.backendServices.getHealth response.
+type backendServiceGroupHealth struct {
+	Kind         string         `json:"kind"`
+	HealthStatus []healthStatus `json:"healthStatus,omitempty"`
 }
 
 type backendServiceListResponse struct {
-	Kind     string                   `json:"kind"`
-	ID       string                   `json:"id"`
-	Items    []backendServiceResponse `json:"items"`
-	SelfLink string                   `json:"selfLink"`
+	Kind          string                   `json:"kind"`
+	ID            string                   `json:"id"`
+	Items         []backendServiceResponse `json:"items"`
+	NextPageToken string                   `json:"nextPageToken,omitempty"`
+	SelfLink      string                   `json:"selfLink"`
 }
 
 // --- forwarding rules (→ driver load balancers) ---
@@ -39,6 +101,7 @@ type backendServiceListResponse struct {
 type forwardingRuleRequest struct {
 	Name                string `json:"name"`
 	Description         string `json:"description,omitempty"`
+	IPAddress           string `json:"IPAddress,omitempty"`
 	IPProtocol          string `json:"IPProtocol,omitempty"`
 	PortRange           string `json:"portRange,omitempty"`
 	Target              string `json:"target,omitempty"`
@@ -57,12 +120,14 @@ type forwardingRuleResponse struct {
 	Target              string `json:"target,omitempty"`
 	BackendService      string `json:"backendService,omitempty"`
 	LoadBalancingScheme string `json:"loadBalancingScheme,omitempty"`
+	CreationTimestamp   string `json:"creationTimestamp,omitempty"`
 	SelfLink            string `json:"selfLink"`
 }
 
 type forwardingRuleListResponse struct {
-	Kind     string                   `json:"kind"`
-	ID       string                   `json:"id"`
-	Items    []forwardingRuleResponse `json:"items"`
-	SelfLink string                   `json:"selfLink"`
+	Kind          string                   `json:"kind"`
+	ID            string                   `json:"id"`
+	Items         []forwardingRuleResponse `json:"items"`
+	NextPageToken string                   `json:"nextPageToken,omitempty"`
+	SelfLink      string                   `json:"selfLink"`
 }

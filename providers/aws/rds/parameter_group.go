@@ -2,7 +2,6 @@ package rds
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -52,34 +51,6 @@ func errParameterGroupNotFound(name string) error {
 
 func errClusterParameterGroupNotFound(name string) error {
 	return cerrors.Newf(cerrors.NotFound, "DB cluster parameter group %q not found", name)
-}
-
-// paramsToDriver renders a stored parameter map as sorted driver Parameters,
-// tagging each as user-set (the only kind the emulator tracks) and preserving
-// each parameter's apply method.
-func paramsToDriver(params map[string]rdsdriver.Parameter) []rdsdriver.Parameter {
-	names := make([]string, 0, len(params))
-	for name := range params {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-
-	out := make([]rdsdriver.Parameter, 0, len(names))
-
-	for _, name := range names {
-		p := params[name]
-		out = append(out, rdsdriver.Parameter{
-			Name:        name,
-			Value:       p.Value,
-			ApplyMethod: applyMethodOrDefault(p.ApplyMethod),
-			Source:      "user",
-			ApplyType:   "static",
-			DataType:    "string",
-		})
-	}
-
-	return out
 }
 
 func applyMethodOrDefault(m string) string {
@@ -141,6 +112,7 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.paramGroups.Set(cfg.Name, pg)
+	m.setGroupTags(pg.ARN, copyTags(cfg.Tags))
 
 	out := pg
 
@@ -211,16 +183,37 @@ func (m *Mock) DeleteDBParameterGroup(_ context.Context, name string) error {
 	return nil
 }
 
+// DescribeDBParameters returns the group's full parameter set: the engine
+// defaults for its family overlaid with any user modifications, matching real
+// RDS (which never returns an empty list). A "default.<family>" group name that
+// was never explicitly created is synthesized from the family in its name, so
+// the always-present default parameter groups resolve too.
 func (m *Mock) DescribeDBParameters(_ context.Context, name string) ([]rdsdriver.Parameter, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	pg, ok := m.paramGroups.Get(name)
 	if !ok {
+		if family, isDefault := defaultGroupFamily(name); isDefault {
+			return mergedParameters(family, nil), nil
+		}
+
 		return nil, errParameterGroupNotFound(name)
 	}
 
-	return paramsToDriver(pg.Parameters), nil
+	return mergedParameters(pg.Family, pg.Parameters), nil
+}
+
+// defaultGroupFamily extracts the family from a "default.<family>" group name
+// (e.g. "default.mysql8.0" -> "mysql8.0"). RDS provides one such always-present
+// group per engine family.
+func defaultGroupFamily(name string) (string, bool) {
+	const prefix = "default."
+	if !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+
+	return strings.TrimPrefix(name, prefix), true
 }
 
 //nolint:dupl // structurally mirrors its sibling per-resource block by design.
@@ -314,6 +307,7 @@ func (m *Mock) CreateDBClusterParameterGroup(
 		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.clusterParamGroups.Set(cfg.Name, pg)
+	m.setGroupTags(pg.ARN, copyTags(cfg.Tags))
 
 	out := pg
 
@@ -386,16 +380,23 @@ func (m *Mock) DeleteDBClusterParameterGroup(_ context.Context, name string) err
 	return nil
 }
 
+// DescribeDBClusterParameters mirrors DescribeDBParameters for Aurora cluster
+// parameter groups: the family's engine defaults overlaid with user changes,
+// with "default.<family>" cluster groups synthesized from their name.
 func (m *Mock) DescribeDBClusterParameters(_ context.Context, name string) ([]rdsdriver.Parameter, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	pg, ok := m.clusterParamGroups.Get(name)
 	if !ok {
+		if family, isDefault := defaultGroupFamily(name); isDefault {
+			return mergedParameters(family, nil), nil
+		}
+
 		return nil, errClusterParameterGroupNotFound(name)
 	}
 
-	return paramsToDriver(pg.Parameters), nil
+	return mergedParameters(pg.Family, pg.Parameters), nil
 }
 
 //nolint:dupl // structurally mirrors its sibling per-resource block by design.

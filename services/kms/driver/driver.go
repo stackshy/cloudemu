@@ -26,6 +26,7 @@ const (
 	SpecECCNISTP256      = "ECC_NIST_P256"
 	SpecECCNISTP384      = "ECC_NIST_P384"
 	SpecECCNISTP521      = "ECC_NIST_P521"
+	SpecHMAC224          = "HMAC_224"
 	SpecHMAC256          = "HMAC_256"
 	SpecHMAC384          = "HMAC_384"
 	SpecHMAC512          = "HMAC_512"
@@ -69,6 +70,14 @@ type KeyMetadata struct {
 	DeletionDate time.Time // zero unless KeyState is PendingDeletion
 	// ValidTo is the expiry of imported key material (zero when not set).
 	ValidTo time.Time
+
+	// Algorithm lists advertised for the key, populated from KeySpec+KeyUsage.
+	// Only the one matching the usage is set: EncryptionAlgorithms for
+	// ENCRYPT_DECRYPT, SigningAlgorithms for SIGN_VERIFY, MacAlgorithms for
+	// GENERATE_VERIFY_MAC.
+	EncryptionAlgorithms []string
+	SigningAlgorithms    []string
+	MacAlgorithms        []string
 
 	// Multi-region configuration (populated only when MultiRegion is true).
 	// MultiRegionKeyType is "PRIMARY" or "REPLICA".

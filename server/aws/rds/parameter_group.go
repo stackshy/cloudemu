@@ -62,6 +62,7 @@ type describeDBParameterGroupsResponse struct {
 }
 
 type dbParameterGroupsList struct {
+	Marker            string                `xml:"Marker,omitempty"`
 	DBParameterGroups []dbParameterGroupXML `xml:"DBParameterGroups>DBParameterGroup"`
 }
 
@@ -126,6 +127,7 @@ type describeDBClusterParameterGroupsResponse struct {
 }
 
 type dbClusterParameterGroupsList struct {
+	Marker                   string                       `xml:"Marker,omitempty"`
 	DBClusterParameterGroups []dbClusterParameterGroupXML `xml:"DBClusterParameterGroups>DBClusterParameterGroup"`
 }
 
@@ -289,14 +291,19 @@ func (h *Handler) describeDBParameterGroups(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	out := make([]dbParameterGroupXML, 0, len(groups))
-	for i := range groups {
-		out = append(out, toParameterGroupXML(&groups[i]))
+	page, ok := paginateRDS(w, r, groups, func(g *rdsdriver.ParameterGroup) string { return g.Name })
+	if !ok {
+		return
+	}
+
+	out := make([]dbParameterGroupXML, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toParameterGroupXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBParameterGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   dbParameterGroupsList{DBParameterGroups: out},
+		Result:   dbParameterGroupsList{Marker: page.NextPageToken, DBParameterGroups: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -454,14 +461,19 @@ func (h *Handler) describeDBClusterParameterGroups(w http.ResponseWriter, r *htt
 		return
 	}
 
-	out := make([]dbClusterParameterGroupXML, 0, len(groups))
-	for i := range groups {
-		out = append(out, toClusterParameterGroupXML(&groups[i]))
+	page, ok := paginateRDS(w, r, groups, func(g *rdsdriver.ClusterParameterGroup) string { return g.Name })
+	if !ok {
+		return
+	}
+
+	out := make([]dbClusterParameterGroupXML, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toClusterParameterGroupXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBClusterParameterGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   dbClusterParameterGroupsList{DBClusterParameterGroups: out},
+		Result:   dbClusterParameterGroupsList{Marker: page.NextPageToken, DBClusterParameterGroups: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

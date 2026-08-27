@@ -56,6 +56,9 @@ func TestSDKServiceBusQueueLifecycle(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	nsClient := newNamespacesClient(t, ts)
+	createNS(t, nsClient, rgName, nsName, nil)
+
 	client := newQueuesClient(t, ts)
 	ctx := context.Background()
 

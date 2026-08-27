@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -72,7 +73,8 @@ func (m *Mock) GetLayerVersion(_ context.Context, name string, version int) (*dr
 	return &result, nil
 }
 
-// ListLayerVersions returns all versions of a layer.
+// ListLayerVersions returns all versions of a layer in descending version order
+// (latest first), matching the AWS Lambda ListLayerVersions response.
 func (m *Mock) ListLayerVersions(_ context.Context, name string) ([]driver.LayerVersion, error) {
 	ld, ok := m.layers.Get(name)
 	if !ok {
@@ -85,6 +87,10 @@ func (m *Mock) ListLayerVersions(_ context.Context, name string) ([]driver.Layer
 	for _, lv := range all {
 		result = append(result, *lv)
 	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Version > result[j].Version
+	})
 
 	return result, nil
 }

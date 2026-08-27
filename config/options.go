@@ -62,6 +62,25 @@ type Options struct {
 	// StorageEngine optionally persists object-storage bytes to a real backing
 	// (opt-in). Nil (the default) keeps object bytes in-memory.
 	StorageEngine StorageEngine
+
+	// AsyncSettle, when true, makes resources report a realistic intermediate
+	// state (pending/creating/PENDING_VALIDATION/RUNNING) for a short settle
+	// window after creation before their final state. Default false, which keeps
+	// every resource reporting its terminal state immediately (the historical
+	// behavior). See internal/settle.
+	AsyncSettle bool
+}
+
+// SettleDuration returns d when asynchronous state settling is enabled and 0
+// when it is not, so a provider can write `settle.Pending(state, now,
+// o.SettleDuration(settle.DefaultInstanceSettle))` at one call site and have the
+// window be inactive (immediate final state) unless the caller opted in.
+func (o *Options) SettleDuration(d time.Duration) time.Duration {
+	if o.AsyncSettle {
+		return d
+	}
+
+	return 0
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -152,6 +171,16 @@ func WithStorageEngine(e StorageEngine) Option {
 func WithClock(c Clock) Option {
 	return func(o *Options) {
 		o.Clock = c
+	}
+}
+
+// WithAsyncSettle enables realistic post-creation state settling (resources
+// report an intermediate state for a short window before their final state).
+// Off by default. Pair with a FakeClock to drive the transition deterministically
+// in tests. See internal/settle.
+func WithAsyncSettle() Option {
+	return func(o *Options) {
+		o.AsyncSettle = true
 	}
 }
 

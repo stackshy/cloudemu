@@ -1,8 +1,8 @@
 // Package keyvault implements the Azure Key Vault secrets data-plane API
-// (/secrets/…) as a server.Handler. Real
+// (/secrets/…, /deletedsecrets/…) as a server.Handler. Real
 // github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets clients
-// pointed at this server set, read, list, and delete secrets against the
-// shared secrets driver.
+// pointed at this server set, read, update, list, delete, recover, back up and
+// restore secrets against the shared secrets driver.
 //
 // Key Vault uses challenge-based auth: the SDK's first request carries no
 // Authorization header and expects a 401 with a WWW-Authenticate challenge
@@ -13,12 +13,18 @@
 //
 // Coverage (Key Vault 7.x REST shapes):
 //
-//	PUT    /secrets/{name}            — set secret (create or new version)
-//	GET    /secrets/{name}            — get current secret value
-//	GET    /secrets/{name}/{version}  — get specific version
-//	GET    /secrets/{name}/versions   — list versions
-//	GET    /secrets                   — list secrets
-//	DELETE /secrets/{name}            — delete secret
+//	PUT    /secrets/{name}               — set secret (create or new version)
+//	GET    /secrets/{name}[/{version}]   — get current or specific version
+//	PATCH  /secrets/{name}/{version}     — update version attributes/tags
+//	GET    /secrets/{name}/versions      — list versions
+//	GET    /secrets                      — list secrets
+//	DELETE /secrets/{name}               — soft-delete secret
+//	POST   /secrets/{name}/backup        — backup secret
+//	POST   /secrets/restore              — restore secret
+//	GET    /deletedsecrets               — list deleted secrets
+//	GET    /deletedsecrets/{name}        — get deleted secret
+//	POST   /deletedsecrets/{name}/recover— recover deleted secret
+//	DELETE /deletedsecrets/{name}        — purge deleted secret
 package keyvault
 
 import (
@@ -30,56 +36,96 @@ import (
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
-const pathPrefix = "/secrets"
+const (
+	pathPrefix    = "/secrets"
+	deletedPrefix = "/deletedsecrets"
+	versionsSeg   = "versions"
+	backupSeg     = "backup"
+	restoreSeg    = "restore"
+	recoverSeg    = "recover"
+)
 
-const versionsSeg = "versions"
-
-// Handler serves the Key Vault secrets data-plane API against a Secrets
-// driver.
+// Handler serves the Key Vault secrets data-plane API against a Secrets driver
+// that also implements the Azure-specific KeyVaultSecrets surface.
 type Handler struct {
-	secrets secretsdriver.Secrets
+	kv secretsdriver.KeyVaultSecrets
 }
 
-// New returns a Key Vault handler backed by s.
+// New returns a Key Vault handler backed by s. s must implement the
+// Azure-specific KeyVaultSecrets surface (the Azure provider mock does); a
+// backend that does not is served 500 on every data-plane call.
 func New(s secretsdriver.Secrets) *Handler {
-	return &Handler{secrets: s}
+	kv, _ := s.(secretsdriver.KeyVaultSecrets)
+
+	return &Handler{kv: kv}
 }
 
-// Matches claims /secrets data-plane requests. Disjoint from ARM
-// (/subscriptions/…) and from the Databricks secrets API (/api/{ver}/secrets)
-// and registered before the blob storage REST fallback.
+// Matches claims /secrets and /deletedsecrets data-plane requests. Disjoint
+// from ARM (/subscriptions/…) and the Databricks secrets API (/api/{ver}/…).
 func (*Handler) Matches(r *http.Request) bool {
-	return r.URL.Path == pathPrefix || strings.HasPrefix(r.URL.Path, pathPrefix+"/")
+	p := r.URL.Path
+
+	return p == pathPrefix || strings.HasPrefix(p, pathPrefix+"/") ||
+		p == deletedPrefix || strings.HasPrefix(p, deletedPrefix+"/")
 }
 
 // ServeHTTP answers the bearer challenge for unauthenticated requests, then
-// routes on the path tail and method.
+// routes on the path and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") == "" {
-		w.Header().Set("WWW-Authenticate",
-			`Bearer authorization="https://login.microsoftonline.com/common", resource="https://vault.azure.net"`)
-		writeErr(w, http.StatusUnauthorized, "Unauthorized", "bearer token required")
-
-		return
-	}
-
-	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
-	if tail == "" {
-		if r.Method == http.MethodGet {
-			h.listSecrets(w, r)
-			return
-		}
-
-		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
-
-		return
-	}
-
-	h.routeSecret(w, r, tail)
+	serveDataPlane(w, r, h.kv == nil, "Key Vault secrets backend unavailable", dataPlaneRoutes{
+		deletedPrefix: deletedPrefix,
+		mainPrefix:    pathPrefix,
+		routeDeleted:  func(tail string) { h.routeDeleted(w, r, tail) },
+		routeMain:     func(tail string) { h.routeSecrets(w, r, tail) },
+	})
 }
 
-// routeSecret dispatches /secrets/{name}[/{version}|/versions] requests.
-func (h *Handler) routeSecret(w http.ResponseWriter, r *http.Request, tail string) {
+// dataPlaneRoutes describes how a Key Vault data-plane handler splits its two
+// path spaces (the live surface and its /deleted… counterpart).
+type dataPlaneRoutes struct {
+	deletedPrefix string
+	mainPrefix    string
+	routeDeleted  func(tail string)
+	routeMain     func(tail string)
+}
+
+// serveDataPlane runs the shared Key Vault data-plane preamble — bearer
+// challenge, backend-availability check, then dispatch to the deleted or main
+// path space — used by both the secrets and keys handlers.
+func serveDataPlane(w http.ResponseWriter, r *http.Request, backendUnavailable bool, unavailableMsg string, routes dataPlaneRoutes) {
+	if bearerChallenge(w, r) {
+		return
+	}
+
+	if backendUnavailable {
+		writeErr(w, http.StatusInternalServerError, "InternalServerError", unavailableMsg)
+		return
+	}
+
+	if r.URL.Path == routes.deletedPrefix || strings.HasPrefix(r.URL.Path, routes.deletedPrefix+"/") {
+		routes.routeDeleted(strings.Trim(strings.TrimPrefix(r.URL.Path, routes.deletedPrefix), "/"))
+		return
+	}
+
+	routes.routeMain(strings.Trim(strings.TrimPrefix(r.URL.Path, routes.mainPrefix), "/"))
+}
+
+// routeSecrets dispatches /secrets[...] requests.
+func (h *Handler) routeSecrets(w http.ResponseWriter, r *http.Request, tail string) {
+	switch {
+	case tail == "" && r.Method == http.MethodGet:
+		h.listSecrets(w, r)
+	case tail == restoreSeg && r.Method == http.MethodPost:
+		h.restoreSecret(w, r)
+	case tail == "":
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+	default:
+		h.routeNamedSecret(w, r, tail)
+	}
+}
+
+// routeNamedSecret dispatches /secrets/{name}[/{version}|/versions|/backup].
+func (h *Handler) routeNamedSecret(w http.ResponseWriter, r *http.Request, tail string) {
 	name, sub, hasSub := strings.Cut(tail, "/")
 	if !hasSub {
 		h.routeBareSecret(w, r, name)
@@ -89,8 +135,14 @@ func (h *Handler) routeSecret(w http.ResponseWriter, r *http.Request, tail strin
 	switch {
 	case sub == versionsSeg && r.Method == http.MethodGet:
 		h.listSecretVersions(w, r, name)
-	case !strings.Contains(sub, "/") && r.Method == http.MethodGet:
+	case sub == backupSeg && r.Method == http.MethodPost:
+		h.backupSecret(w, r, name)
+	case strings.Contains(sub, "/"):
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+	case r.Method == http.MethodGet:
 		h.getSecret(w, r, name, sub)
+	case r.Method == http.MethodPatch:
+		h.updateSecret(w, r, name, sub)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
 	}
@@ -110,6 +162,84 @@ func (h *Handler) routeBareSecret(w http.ResponseWriter, r *http.Request, name s
 	}
 }
 
+// routeDeleted dispatches /deletedsecrets[...] requests.
+//
+//nolint:dupl // parallel soft-delete router for secrets vs keys; the shared shape is intentional
+func (h *Handler) routeDeleted(w http.ResponseWriter, r *http.Request, tail string) {
+	if tail == "" {
+		if r.Method == http.MethodGet {
+			h.listDeletedSecrets(w, r)
+			return
+		}
+
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+
+		return
+	}
+
+	name, sub, hasSub := strings.Cut(tail, "/")
+
+	switch {
+	case !hasSub && r.Method == http.MethodGet:
+		h.getDeletedSecret(w, r, name)
+	case !hasSub && r.Method == http.MethodDelete:
+		h.purgeDeletedSecret(w, r, name)
+	case sub == recoverSeg && r.Method == http.MethodPost:
+		h.recoverDeletedSecret(w, r, name)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "BadRequest", "unsupported Key Vault operation")
+	}
+}
+
+// vaultSuffixes are the DNS suffixes real Key Vault and Managed HSM data-plane
+// hosts are addressed under, across Azure public/US Gov/China clouds. The
+// vault (or HSM) name is the leading label of the host.
+//
+//nolint:gochecknoglobals // read-only lookup table, not mutable state
+var vaultSuffixes = []string{
+	".vault.azure.net",
+	".vault.azure.cn",
+	".vault.usgovcloudapi.net",
+	".managedhsm.azure.net",
+	".managedhsm.azure.cn",
+	".managedhsm.usgovcloudapi.net",
+}
+
+// vaultFromRequest extracts the vault name that scopes secret/key isolation
+// for r, so that a secret or key created in one vault is never visible
+// through another. Real Key Vault clients address a vault via its unique
+// {vault-name}.vault.azure.net (or Managed HSM equivalent) subdomain; a
+// request whose Host carries none of those suffixes (a bare host, as in a
+// test pointed directly at this server without DisableChallengeResourceVerification-style
+// vault URLs) falls back to a single "default" vault, matching this server's
+// pre-multi-vault behavior.
+func vaultFromRequest(r *http.Request) string {
+	host, _, _ := strings.Cut(r.Host, ":")
+
+	for _, suffix := range vaultSuffixes {
+		if i := strings.Index(host, suffix); i > 0 {
+			return host[:i]
+		}
+	}
+
+	return "default"
+}
+
+// bearerChallenge answers an unauthenticated request with the Key Vault bearer
+// challenge and reports whether it handled the request. Key Vault SDKs expect a
+// 401 with a WWW-Authenticate header before retrying with a token.
+func bearerChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Authorization") != "" {
+		return false
+	}
+
+	w.Header().Set("WWW-Authenticate",
+		`Bearer authorization="https://login.microsoftonline.com/common", resource="https://vault.azure.net"`)
+	writeErr(w, http.StatusUnauthorized, "Unauthorized", "bearer token required")
+
+	return true
+}
+
 // writeErr emits a Key Vault-style error body with the given HTTP status.
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -121,10 +251,16 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeCErr maps a canonical cloudemu error to a Key Vault error response.
+//
+//nolint:dupl // parallel certificate/secret error mapper; the shared shape is intentional
 func writeCErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
 		writeErr(w, http.StatusNotFound, "SecretNotFound", err.Error())
+	case cerrors.IsAlreadyExists(err) && strings.Contains(err.Error(), "deleted but recoverable"):
+		// Real Key Vault answers a set/create against a soft-deleted name with
+		// 409 Conflict and inner error code ObjectIsDeletedButRecoverable.
+		writeErrInner(w, http.StatusConflict, "Conflict", err.Error(), "ObjectIsDeletedButRecoverable")
 	case cerrors.IsAlreadyExists(err):
 		writeErr(w, http.StatusConflict, "Conflict", err.Error())
 	case cerrors.IsInvalidArgument(err):
@@ -132,4 +268,19 @@ func writeCErr(w http.ResponseWriter, err error) {
 	default:
 		writeErr(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 	}
+}
+
+// writeErrInner emits a Key Vault-style error body carrying a nested inner
+// error code, matching the shape real vaults return for recoverable conflicts.
+func writeErrInner(w http.ResponseWriter, status int, code, msg, innerCode string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"code":       code,
+			"message":    msg,
+			"innererror": map[string]string{"code": innerCode},
+		},
+	})
 }

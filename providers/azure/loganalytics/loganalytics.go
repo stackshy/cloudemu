@@ -35,6 +35,7 @@ type logGroup struct {
 	info          driver.LogGroupInfo
 	streams       *memstore.Store[*logStream]
 	metricFilters *memstore.Store[*driver.MetricFilterInfo]
+	subFilters    *memstore.Store[*driver.SubscriptionFilterInfo]
 }
 
 // Mock is an in-memory mock implementation of Azure Log Analytics.
@@ -123,6 +124,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		info:          info,
 		streams:       memstore.New[*logStream](),
 		metricFilters: memstore.New[*driver.MetricFilterInfo](),
+		subFilters:    memstore.New[*driver.SubscriptionFilterInfo](),
 	}
 
 	m.groups.Set(cfg.Name, g)
@@ -514,6 +516,65 @@ func (m *Mock) DescribeMetricFilters(
 
 	for _, mf := range all {
 		results = append(results, *mf)
+	}
+
+	return results, nil
+}
+
+// PutSubscriptionFilter stores a subscription filter on a log group. Azure Log
+// Analytics has no native cross-service log-event streaming; the CRUD is
+// implemented so the shared driver interface is satisfied and portable callers
+// can round-trip filters, but no delivery is performed.
+func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.SubscriptionFilterConfig) error {
+	g, ok := m.groups.Get(cfg.LogGroup)
+	if !ok {
+		return errors.Newf(errors.NotFound, "log group %q not found", cfg.LogGroup)
+	}
+
+	if cfg.Name == "" {
+		return errors.New(errors.InvalidArgument, "subscription filter name is required")
+	}
+
+	g.subFilters.Set(cfg.Name, &driver.SubscriptionFilterInfo{
+		Name:           cfg.Name,
+		LogGroup:       cfg.LogGroup,
+		FilterPattern:  cfg.FilterPattern,
+		DestinationARN: cfg.DestinationARN,
+		RoleARN:        cfg.RoleARN,
+		Distribution:   cfg.Distribution,
+		CreatedAt:      m.opts.Clock.Now().UTC(),
+	})
+
+	return nil
+}
+
+// DeleteSubscriptionFilter removes a subscription filter from a log group.
+func (m *Mock) DeleteSubscriptionFilter(_ context.Context, logGroup, filterName string) error {
+	g, ok := m.groups.Get(logGroup)
+	if !ok {
+		return errors.Newf(errors.NotFound, "log group %q not found", logGroup)
+	}
+
+	if !g.subFilters.Delete(filterName) {
+		return errors.Newf(errors.NotFound,
+			"subscription filter %q not found in group %q", filterName, logGroup)
+	}
+
+	return nil
+}
+
+// DescribeSubscriptionFilters lists all subscription filters for a log group.
+func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) ([]driver.SubscriptionFilterInfo, error) {
+	g, ok := m.groups.Get(logGroup)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
+	}
+
+	all := g.subFilters.SortedValues()
+	results := make([]driver.SubscriptionFilterInfo, 0, len(all))
+
+	for _, sf := range all {
+		results = append(results, *sf)
 	}
 
 	return results, nil

@@ -4,13 +4,16 @@
 // Operations they emit) plus a live Kubernetes data plane. When a shared
 // kubernetes.APIServer is wired in, GetCluster's Endpoint + masterAuth CA point
 // at a real in-memory apiserver so `gcloud container clusters get-credentials`
-// yields a working kubeconfig. Without one, GetCluster falls back to a sentinel
-// Endpoint (https://GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local) so kubeconfig
+// yields a working kubeconfig. Without one, GetCluster reports a deterministic
+// control-plane IP (matching real GKE's bare-IP `endpoint` field) so kubeconfig
 // rendering still works syntactically.
 package gke
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
+	"sort"
 	"sync"
 	"time"
 
@@ -22,10 +25,8 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
-// Stub values used in Cluster responses until the Kubernetes data-plane
-// arrives in Wave 2.
+// Default versions reported by clusters/node pools and getServerConfig.
 const (
-	StubEndpoint    = "GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
 	StubMasterVer   = "1.30.0-gke.0"
 	stubNodeVersion = "1.30.0-gke.0"
 )
@@ -36,6 +37,20 @@ const (
 	defaultNodeCount   = 1
 	defaultMachineType = "e2-medium"
 	defaultDiskSizeGB  = 100
+
+	// defaultServicesCIDR mirrors GKE's default Kubernetes Services IP range.
+	defaultServicesCIDR = "34.118.224.0/20"
+	// defaultClusterCIDR is the default pod IP range for the cluster.
+	defaultClusterCIDR = "10.0.0.0/14"
+	// defaultNodeIPv4CIDRSize is the per-node pod CIDR block size (/24).
+	defaultNodeIPv4CIDRSize = 24
+
+	// controlPlaneIPFirstOctet anchors synthesized control-plane IPs in a
+	// public-looking /8, matching real GKE's public endpoint shape.
+	controlPlaneIPFirstOctet = 35
+	octetMod                 = 253
+	octetShift8              = 8
+	octetShift16             = 16
 )
 
 // Cluster is the in-memory representation of a GKE cluster. The shape mirrors
@@ -43,6 +58,7 @@ const (
 // these to the wire shape google.golang.org/api/container/v1.Cluster expects.
 type Cluster struct {
 	Name              string
+	ID                string
 	Location          string
 	Description       string
 	Network           string
@@ -50,12 +66,15 @@ type Cluster struct {
 	InitialNodeCount  int64
 	NodeIPv4CIDRSize  int64
 	ClusterIPv4CIDR   string
+	ServicesIPv4CIDR  string
+	ControlPlaneIP    string
 	LoggingService    string
 	MonitoringService string
 	LegacyAbacEnabled bool
 	NetworkPolicy     bool
 	MasterUsername    string
 	ResourceLabels    map[string]string
+	LabelFingerprint  string // opaque hash of ResourceLabels; computed on read.
 	MaintenanceWindow string // RFC-3339 daily window encoding; empty = none.
 	IPRotationActive  bool
 	NodePoolNames     []string
@@ -67,21 +86,23 @@ type Cluster struct {
 
 // NodePool is the in-memory representation of a GKE node pool.
 type NodePool struct {
-	Name              string
-	ClusterName       string
-	Location          string
-	NodeCount         int64
-	MachineType       string
-	DiskSizeGB        int64
-	Version           string
-	AutoscalingMin    int64
-	AutoscalingMax    int64
-	AutoscalingOn     bool
-	AutoUpgrade       bool
-	AutoRepair        bool
-	Status            string
-	UpgradeRolledBack bool
-	CreatedAt         time.Time
+	Name                  string
+	ClusterName           string
+	Location              string
+	NodeCount             int64
+	MachineType           string
+	DiskSizeGB            int64
+	OauthScopes           []string
+	Version               string
+	AutoscalingMin        int64
+	AutoscalingMax        int64
+	AutoscalingOn         bool
+	AutoscalingConfigured bool
+	AutoUpgrade           bool
+	AutoRepair            bool
+	Status                string
+	UpgradeRolledBack     bool
+	CreatedAt             time.Time
 }
 
 // Operation tracks GKE long-running operations. The mock completes every
@@ -147,14 +168,16 @@ func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
 // Endpoint returns the data-plane URL clients should target for a given
 // cluster. If a Kubernetes APIServer is wired and the cluster has a
 // registered UID, returns "<base>/k8s/<uid>" — the in-memory data plane.
-// Otherwise returns "https://" + StubEndpoint so the Wave-1 sentinel surface
-// stays intact.
+// Otherwise returns the cluster's synthesized control-plane IP (a bare IPv4
+// address, matching real GKE's `endpoint` field) so a kubeconfig renders to a
+// well-formed, non-sentinel host.
 func (m *Mock) Endpoint(location, name string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	key := clusterKey(location, name)
+
 	if m.k8sAPI != nil {
-		key := clusterKey(location, name)
 		if uid, ok := m.k8sUIDs[key]; ok {
 			if base := m.k8sAPI.BaseURL(); base != "" {
 				return base + "/k8s/" + uid
@@ -162,7 +185,28 @@ func (m *Mock) Endpoint(location, name string) string {
 		}
 	}
 
-	return "https://" + StubEndpoint
+	if c, ok := m.clusters.Get(key); ok && c.ControlPlaneIP != "" {
+		return c.ControlPlaneIP
+	}
+
+	return controlPlaneIP(location, name)
+}
+
+// controlPlaneIP synthesizes a deterministic, public-looking IPv4 address for a
+// cluster's control-plane endpoint. Real GKE returns such an IP in the Cluster
+// `endpoint` field; the emulator has no real control-plane host without a wired
+// data plane, so a stable per-cluster IP stands in.
+func controlPlaneIP(location, name string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(location + "/" + name))
+	sum := h.Sum32()
+
+	return fmt.Sprintf("%d.%d.%d.%d",
+		controlPlaneIPFirstOctet,
+		(sum>>octetShift16)%octetMod+1,
+		(sum>>octetShift8)%octetMod+1,
+		sum%octetMod+1,
+	)
 }
 
 // emitClusterMetrics pushes container.googleapis.com metrics for a cluster.
@@ -207,29 +251,54 @@ func (m *Mock) recordOperation(opType, location, target string) Operation {
 
 // CreateClusterInput captures the subset of CreateCluster we honor.
 type CreateClusterInput struct {
-	Name              string
-	Location          string
-	Description       string
-	Network           string
-	Subnetwork        string
-	InitialNodeCount  int64
+	Name        string
+	Location    string
+	Description string
+	Network     string
+	Subnetwork  string
+	// InitialNodeCount is a pointer so an explicitly-requested 0 (autoscale
+	// from zero) is distinguishable from an absent field. nil = unset →
+	// bootstrap the GKE default; non-nil (including *0) is honored verbatim.
+	InitialNodeCount  *int64
 	LoggingService    string
 	MonitoringService string
 	ResourceLabels    map[string]string
+	NodeConfig        *NodeConfigSpec
 	NodePools         []NodePoolSpec
+}
+
+// NodeConfigSpec captures the cluster-level nodeConfig that seeds the
+// auto-created default node pool when no explicit node pools are given.
+type NodeConfigSpec struct {
+	MachineType string
+	DiskSizeGB  int64
+	OauthScopes []string
+}
+
+// NodePoolManagement captures the node auto-management flags a create request
+// may set. A nil pointer means the request omitted the management block, so the
+// mock applies GKE's true/true defaults.
+type NodePoolManagement struct {
+	AutoUpgrade bool
+	AutoRepair  bool
 }
 
 // NodePoolSpec captures the node-pool fields we keep when bootstrapping a
 // cluster from a CreateClusterRequest.
 type NodePoolSpec struct {
-	Name             string
-	InitialNodeCount int64
+	Name string
+	// InitialNodeCount is a pointer so an explicit 0 (autoscale-from-zero
+	// pool) survives; nil means the field was absent and the GKE default
+	// applies. See nodePoolFromSpec.
+	InitialNodeCount *int64
 	MachineType      string
 	DiskSizeGB       int64
+	OauthScopes      []string
 	Version          string
 	AutoscalingMin   int64
 	AutoscalingMax   int64
 	AutoscalingOn    bool
+	Management       *NodePoolManagement
 }
 
 // CreateCluster registers a new cluster and any nested node pools.
@@ -252,13 +321,16 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 
 	cluster := Cluster{
 		Name:              input.Name,
+		ID:                idgen.SyntheticGUID(key),
 		Location:          input.Location,
 		Description:       input.Description,
 		Network:           defaultIfEmpty(input.Network, "default"),
 		Subnetwork:        defaultIfEmpty(input.Subnetwork, "default"),
-		InitialNodeCount:  input.InitialNodeCount,
-		NodeIPv4CIDRSize:  24,
-		ClusterIPv4CIDR:   "10.0.0.0/14",
+		InitialNodeCount:  derefInt64(input.InitialNodeCount),
+		NodeIPv4CIDRSize:  defaultNodeIPv4CIDRSize,
+		ClusterIPv4CIDR:   defaultClusterCIDR,
+		ServicesIPv4CIDR:  defaultServicesCIDR,
+		ControlPlaneIP:    controlPlaneIP(input.Location, input.Name),
 		LoggingService:    defaultIfEmpty(input.LoggingService, "logging.googleapis.com/kubernetes"),
 		MonitoringService: defaultIfEmpty(input.MonitoringService, "monitoring.googleapis.com/kubernetes"),
 		ResourceLabels:    copyLabels(input.ResourceLabels),
@@ -266,21 +338,27 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		CreatedAt:         m.opts.Clock.Now().UTC(),
 	}
 
-	// Bootstrap default node pool when none specified — matches real GKE.
+	// Bootstrap default node pool when none specified — matches real GKE. The
+	// cluster-level nodeConfig (when present) configures that pool; absent
+	// fields fall back to defaults via nodePoolFromSpec.
 	pools := input.NodePools
 	if len(pools) == 0 {
-		count := input.InitialNodeCount
-		if count == 0 {
-			count = defaultNodeCount
+		// Carry the pointer through untouched so an explicit initialNodeCount=0
+		// (autoscale-from-zero) reaches the default pool; nodePoolFromSpec
+		// resolves a nil (absent) count to the GKE default.
+		spec := NodePoolSpec{
+			Name:             "default-pool",
+			InitialNodeCount: input.InitialNodeCount,
+			Version:          stubNodeVersion,
 		}
 
-		pools = []NodePoolSpec{{
-			Name:             "default-pool",
-			InitialNodeCount: count,
-			MachineType:      defaultMachineType,
-			DiskSizeGB:       defaultDiskSizeGB,
-			Version:          stubNodeVersion,
-		}}
+		if nc := input.NodeConfig; nc != nil {
+			spec.MachineType = nc.MachineType
+			spec.DiskSizeGB = nc.DiskSizeGB
+			spec.OauthScopes = nc.OauthScopes
+		}
+
+		pools = []NodePoolSpec{spec}
 	}
 
 	for i := range pools {
@@ -310,9 +388,19 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 }
 
 func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time.Time) NodePool {
-	count := spec.InitialNodeCount
-	if count == 0 {
-		count = defaultNodeCount
+	// Honor an explicit count (including 0 for autoscale-from-zero); only
+	// backfill the GKE default when the field was genuinely absent (nil).
+	count := int64(defaultNodeCount)
+	if spec.InitialNodeCount != nil {
+		count = *spec.InitialNodeCount
+	}
+
+	// GKE defaults auto-upgrade/auto-repair to true; an explicit management
+	// block (even one setting them false) must survive the round-trip.
+	autoUpgrade, autoRepair := true, true
+	if spec.Management != nil {
+		autoUpgrade = spec.Management.AutoUpgrade
+		autoRepair = spec.Management.AutoRepair
 	}
 
 	return NodePool{
@@ -322,12 +410,13 @@ func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time
 		NodeCount:      count,
 		MachineType:    defaultIfEmpty(spec.MachineType, defaultMachineType),
 		DiskSizeGB:     defaultIfZero(spec.DiskSizeGB, defaultDiskSizeGB),
+		OauthScopes:    spec.OauthScopes,
 		Version:        defaultIfEmpty(spec.Version, stubNodeVersion),
 		AutoscalingMin: spec.AutoscalingMin,
 		AutoscalingMax: spec.AutoscalingMax,
 		AutoscalingOn:  spec.AutoscalingOn,
-		AutoUpgrade:    true,
-		AutoRepair:     true,
+		AutoUpgrade:    autoUpgrade,
+		AutoRepair:     autoRepair,
 		Status:         "RUNNING",
 		CreatedAt:      now,
 	}
@@ -344,6 +433,7 @@ func (m *Mock) GetCluster(_ context.Context, location, name string) (*Cluster, e
 	}
 
 	out := c
+	out.LabelFingerprint = labelFingerprint(out.ResourceLabels)
 
 	return &out, nil
 }
@@ -362,6 +452,7 @@ func (m *Mock) ListClusters(_ context.Context, location string) ([]Cluster, erro
 			continue
 		}
 
+		c.LabelFingerprint = labelFingerprint(c.ResourceLabels)
 		out = append(out, c)
 	}
 
@@ -375,13 +466,18 @@ type UpdateClusterInput struct {
 	NodeVersion       string
 	MasterVersion     string
 	ResourceLabels    map[string]string
+	// NodePoolID scopes a desiredNodeVersion roll to a single pool; empty
+	// rolls every pool in the cluster (real GKE ClusterUpdate semantics).
+	NodePoolID string
 }
 
-// UpdateCluster applies a partial update.
+// UpdateCluster applies a partial update. A desiredNodeVersion also rolls the
+// version of the targeted node pool(s), matching real GKE where a cluster-level
+// node-version update propagates to the pools it upgrades.
 func (m *Mock) UpdateCluster(
 	_ context.Context, location, name string, input UpdateClusterInput,
 ) (*Operation, error) {
-	return m.mutateCluster(location, name, func(c *Cluster) {
+	op, err := m.mutateCluster(location, name, func(c *Cluster) {
 		if input.LoggingService != "" {
 			c.LoggingService = input.LoggingService
 		}
@@ -402,6 +498,42 @@ func (m *Mock) UpdateCluster(
 			c.NodeVersion = input.NodeVersion
 		}
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	if input.NodeVersion != "" {
+		m.rollNodePoolVersions(location, name, input.NodePoolID, input.NodeVersion)
+	}
+
+	return op, nil
+}
+
+// rollNodePoolVersions applies version to the cluster's node pools. When
+// nodePoolID is set only that pool rolls; otherwise every pool in the cluster
+// does.
+func (m *Mock) rollNodePoolVersions(location, clusterName, nodePoolID, version string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	prefix := location + "/" + clusterName + "/"
+	for _, k := range m.nodePools.Keys() {
+		if !hasPrefix(k, prefix) {
+			continue
+		}
+
+		np, ok := m.nodePools.Get(k)
+		if !ok {
+			continue
+		}
+
+		if nodePoolID != "" && np.Name != nodePoolID {
+			continue
+		}
+
+		np.Version = version
+		m.nodePools.Set(k, np)
+	}
 }
 
 // DeleteCluster removes a cluster and its node pools.
@@ -478,13 +610,35 @@ func (m *Mock) SetMaintenancePolicy(_ context.Context, location, name, window st
 	})
 }
 
-// SetResourceLabels implements :setResourceLabels.
+// SetResourceLabels implements :setResourceLabels. When fingerprint is
+// non-empty it must match the cluster's current label fingerprint (optimistic
+// concurrency, as real GKE enforces); a stale value fails with
+// FAILED_PRECONDITION. An empty fingerprint skips the check.
 func (m *Mock) SetResourceLabels(
-	_ context.Context, location, name string, labels map[string]string,
+	_ context.Context, location, name string, labels map[string]string, fingerprint string,
 ) (*Operation, error) {
-	return m.mutateCluster(location, name, func(c *Cluster) {
-		c.ResourceLabels = copyLabels(labels)
-	})
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := clusterKey(location, name)
+
+	c, ok := m.clusters.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found in %q", name, location)
+	}
+
+	if fingerprint != "" && fingerprint != labelFingerprint(c.ResourceLabels) {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"labelFingerprint %q does not match current labels", fingerprint)
+	}
+
+	c.ResourceLabels = copyLabels(labels)
+	m.clusters.Set(key, c)
+
+	op := m.recordOperation("SET_LABELS", location,
+		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+name)
+
+	return &op, nil
 }
 
 // StartIPRotation implements :startIpRotation.
@@ -662,6 +816,7 @@ func (m *Mock) SetNodePoolAutoscaling(
 		np.AutoscalingOn = on
 		np.AutoscalingMin = minNodes
 		np.AutoscalingMax = maxNodes
+		np.AutoscalingConfigured = true
 	})
 }
 
@@ -719,6 +874,17 @@ func (m *Mock) GetOperation(_ context.Context, _, name string) (*Operation, erro
 	out := op
 
 	return &out, nil
+}
+
+// HasOperation reports whether an operation with the given name was recorded by
+// this GKE mock. The handler uses it to claim only its own operation polls,
+// letting foreign location operations (artifactregistry, eventarc, …) fall
+// through to the shared LRO handler.
+func (m *Mock) HasOperation(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.operations.Has(name)
 }
 
 // ListOperations returns all operations in a location ("-" for all).
@@ -789,6 +955,38 @@ func defaultIfZero(v, fallback int64) int64 {
 	}
 
 	return v
+}
+
+func derefInt64(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+
+	return *v
+}
+
+// labelFingerprint returns a deterministic opaque hash of a cluster's resource
+// labels. Real GKE returns such a fingerprint on cluster reads and requires it
+// on :setResourceLabels for optimistic concurrency; the mock derives it from
+// the sorted key=value pairs so it is stable across reads and changes whenever
+// the labels change. An empty label set hashes deterministically too.
+func labelFingerprint(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	h := fnv.New64a()
+	for _, k := range keys {
+		_, _ = h.Write([]byte(k))
+		_, _ = h.Write([]byte{'='})
+		_, _ = h.Write([]byte(labels[k]))
+		_, _ = h.Write([]byte{'\n'})
+	}
+
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 func copyLabels(src map[string]string) map[string]string {

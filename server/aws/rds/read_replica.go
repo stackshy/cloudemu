@@ -36,13 +36,14 @@ func (h *Handler) createDBInstanceReadReplica(w http.ResponseWriter, r *http.Req
 	}
 
 	inst, err := store.CreateDBInstanceReadReplica(r.Context(), rdsdriver.ReadReplicaConfig{
-		ID:                 r.Form.Get("DBInstanceIdentifier"),
-		SourceInstanceID:   r.Form.Get("SourceDBInstanceIdentifier"),
-		InstanceClass:      r.Form.Get("DBInstanceClass"),
-		AvailabilityZone:   r.Form.Get("AvailabilityZone"),
-		Port:               formInt(r.Form.Get("Port")),
-		PubliclyAccessible: formBool(r.Form.Get("PubliclyAccessible")),
-		Tags:               parseRDSTags(r.Form),
+		ID:                   r.Form.Get("DBInstanceIdentifier"),
+		SourceInstanceID:     r.Form.Get("SourceDBInstanceIdentifier"),
+		InstanceClass:        r.Form.Get("DBInstanceClass"),
+		AvailabilityZone:     r.Form.Get("AvailabilityZone"),
+		Port:                 formInt(r.Form.Get("Port")),
+		PubliclyAccessible:   formBool(r.Form.Get("PubliclyAccessible")),
+		DBParameterGroupName: r.Form.Get("DBParameterGroupName"),
+		Tags:                 parseRDSTags(r.Form),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -51,7 +52,7 @@ func (h *Handler) createDBInstanceReadReplica(w http.ResponseWriter, r *http.Req
 
 	awsquery.WriteXMLResponse(w, createDBInstanceReadReplicaResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -71,7 +72,7 @@ func (h *Handler) promoteReadReplica(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, promoteReadReplicaResponse{
 		Xmlns:    Namespace,
-		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst)},
+		Result:   dbInstanceResult{DBInstance: toInstanceXML(inst, h.resolveInstanceSubnetGroupXML(r.Context(), inst))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

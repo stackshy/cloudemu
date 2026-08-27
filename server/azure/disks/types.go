@@ -31,11 +31,15 @@ type diskSKU struct {
 }
 
 type diskResponse struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Location   string            `json:"location"`
-	SKU        *diskSKU          `json:"sku,omitempty"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Type     string   `json:"type"`
+	Location string   `json:"location"`
+	SKU      *diskSKU `json:"sku,omitempty"`
+	// ManagedBy is the ARM resource ID of the VM the disk is attached to
+	// (armcompute.Disk.ManagedBy is a top-level, read-only field — not under
+	// properties). Empty when the disk is unattached.
+	ManagedBy  string            `json:"managedBy,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties diskResponseProps `json:"properties"`
 }
@@ -48,8 +52,24 @@ type diskResponseProps struct {
 	DiskIOPSReadWrite int           `json:"diskIOPSReadWrite,omitempty"`
 	DiskMBpsReadWrite int           `json:"diskMBpsReadWrite,omitempty"`
 	Tier              string        `json:"tier,omitempty"`
+	TimeCreated       string        `json:"timeCreated,omitempty"`
+	UniqueID          string        `json:"uniqueId,omitempty"`
 }
 
 type diskListResponse struct {
 	Value []diskResponse `json:"value"`
+}
+
+// grantAccessData is the request body for POST .../disks/{name}/beginGetAccess
+// (armcompute.GrantAccessData): the requested access level and the SAS lifetime.
+type grantAccessData struct {
+	Access            string `json:"access,omitempty"`
+	DurationInSeconds int    `json:"durationInSeconds,omitempty"`
+	FileFormat        string `json:"fileFormat,omitempty"`
+}
+
+// accessURIResponse is the 200 body for beginGetAccess (armcompute.AccessURI):
+// the SAS URI a client exports/imports the disk contents through.
+type accessURIResponse struct {
+	AccessSAS string `json:"accessSAS"`
 }

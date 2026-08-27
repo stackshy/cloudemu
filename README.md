@@ -95,11 +95,16 @@ By default everything is in memory — no real database, cache, or code runs. Wh
 
 The in-memory default is unchanged; `Provider.Close()` tears down whatever you wired.
 
+## Persistence (opt-in)
+
+State is in memory and resettable, so it's ephemeral by default. When you want it to survive a restart, snapshot the **whole emulator** — every stateful service across all four providers, identity-preserving — to a single JSON file and restore it into a fresh instance. Run the background server with `--persist`, capture named states with `cloudemu snapshot save`/`load`, hit `GET`/`POST /_cloudemu/snapshot`, or drive it from Go with the `persist` package. → [docs/persistence.md](docs/persistence.md)
+
 ## Docs
 
 - [Getting Started](docs/getting-started.md) — a working test in 5 minutes
 - [Standalone Server](docs/standalone-server.md) — the local dev cloud (Docker, flags, ports)
 - [Terraform / OpenTofu](docs/terraform.md) — run real IaC against cloudemu
+- [Persistence](docs/persistence.md) — snapshot & restore the whole emulator's state
 - [Architecture](docs/architecture.md) · [Features](docs/features.md) · [Chaos](docs/chaos.md) · [Topology](docs/topology.md)
 - [Capability coverage](docs/coverage/README.md) — every service and operation, generated
 

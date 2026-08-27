@@ -2,7 +2,6 @@ package elbv2_test
 
 import (
 	"context"
-	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
-	"github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -131,21 +129,17 @@ func TestSDKELBLoadBalancerLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKELBDeleteMissingLoadBalancer proves DeleteLoadBalancer is idempotent:
+// per the API reference, deleting a load balancer that does not exist (or has
+// already been deleted) succeeds rather than returning LoadBalancerNotFound.
 func TestSDKELBDeleteMissingLoadBalancer(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	_, err := client.DeleteLoadBalancer(ctx, &elb.DeleteLoadBalancerInput{
+	if _, err := client.DeleteLoadBalancer(ctx, &elb.DeleteLoadBalancerInput{
 		LoadBalancerArn: aws.String("arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/missing"),
-	})
-
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("DeleteLoadBalancer(missing): want API error, got %v", err)
-	}
-
-	if apiErr.ErrorCode() != "LoadBalancerNotFound" {
-		t.Fatalf("error code = %q, want LoadBalancerNotFound", apiErr.ErrorCode())
+	}); err != nil {
+		t.Fatalf("DeleteLoadBalancer(missing): want success, got %v", err)
 	}
 }
 
@@ -307,4 +301,73 @@ func TestSDKELBListenerLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("DeleteListener: %v", err)
 	}
+}
+
+// TestSDKDescribeLoadBalancersPagination proves DescribeLoadBalancers honors
+// PageSize and Marker: a PageSize of 1 returns one entry plus a NextMarker, and
+// walking the marker yields every load balancer exactly once.
+func TestSDKDescribeLoadBalancersPagination(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	names := []string{"page-alb-1", "page-alb-2", "page-alb-3"}
+	for _, n := range names {
+		if _, err := client.CreateLoadBalancer(ctx, &elb.CreateLoadBalancerInput{
+			Name:    aws.String(n),
+			Subnets: []string{"subnet-a"},
+		}); err != nil {
+			t.Fatalf("CreateLoadBalancer(%s): %v", n, err)
+		}
+	}
+
+	seen := map[string]bool{}
+	marker := ""
+	pages := 0
+
+	for {
+		out, err := client.DescribeLoadBalancers(ctx, &elb.DescribeLoadBalancersInput{
+			PageSize: aws.Int32(1),
+			Marker:   markerPtr(marker),
+		})
+		if err != nil {
+			t.Fatalf("DescribeLoadBalancers page %d: %v", pages, err)
+		}
+
+		if len(out.LoadBalancers) != 1 {
+			t.Fatalf("page %d returned %d load balancers, want 1 (PageSize ignored?)",
+				pages, len(out.LoadBalancers))
+		}
+
+		seen[aws.ToString(out.LoadBalancers[0].LoadBalancerName)] = true
+		pages++
+
+		if out.NextMarker == nil || aws.ToString(out.NextMarker) == "" {
+			break
+		}
+
+		marker = aws.ToString(out.NextMarker)
+
+		if pages > len(names) {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+
+	if pages != len(names) {
+		t.Errorf("walked %d pages, want %d", pages, len(names))
+	}
+
+	for _, n := range names {
+		if !seen[n] {
+			t.Errorf("load balancer %q missing from paginated results", n)
+		}
+	}
+}
+
+// markerPtr returns nil for an empty marker so the first page omits Marker.
+func markerPtr(m string) *string {
+	if m == "" {
+		return nil
+	}
+
+	return aws.String(m)
 }

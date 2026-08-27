@@ -18,6 +18,7 @@ import (
 // handler via type assertion.
 var (
 	_ rdsdriver.Databases        = (*Mock)(nil)
+	_ rdsdriver.DatabaseUpdater  = (*Mock)(nil)
 	_ rdsdriver.Users            = (*Mock)(nil)
 	_ rdsdriver.SslCerts         = (*Mock)(nil)
 	_ rdsdriver.Failover         = (*Mock)(nil)
@@ -139,6 +140,37 @@ func (m *Mock) ListDatabases(_ context.Context, instance string) ([]rdsdriver.Da
 	return out, nil
 }
 
+// UpdateDatabase updates a logical database's charset/collation, returning
+// NotFound when the database does not exist. Empty fields leave the current
+// value unchanged, matching Cloud SQL's merge on databases.patch/update.
+//
+//nolint:gocritic // cfg matches the driver signature and cannot be a pointer.
+func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := childKey(cfg.Server, cfg.Name)
+
+	db, ok := m.databases.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "database %q not found", cfg.Name)
+	}
+
+	if cfg.Charset != "" {
+		db.Charset = cfg.Charset
+	}
+
+	if cfg.Collation != "" {
+		db.Collation = cfg.Collation
+	}
+
+	m.databases.Set(key, db)
+
+	out := db
+
+	return &out, nil
+}
+
 // DeleteDatabase removes a logical database.
 func (m *Mock) DeleteDatabase(_ context.Context, instance, name string) error {
 	m.mu.Lock()
@@ -180,7 +212,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg rdsdriver.UserConfig) (*rdsdriv
 		host = defaultUserHost
 	}
 
-	user := rdsdriver.User{Instance: cfg.Instance, Name: cfg.Name, Host: host}
+	user := rdsdriver.User{Instance: cfg.Instance, Name: cfg.Name, Host: host, Password: cfg.Password}
 	m.users.Set(key, user)
 
 	out := user
@@ -223,8 +255,10 @@ func (m *Mock) ListUsers(_ context.Context, instance string) ([]rdsdriver.User, 
 	return out, nil
 }
 
-// UpdateUser updates an existing user's host (the only mutable field the mock
-// tracks) and returns NotFound when the user does not exist.
+// UpdateUser updates an existing user's host and/or password and returns
+// NotFound when the user does not exist. A non-empty password is applied so the
+// change is actually reflected in state (users.update on a real Cloud SQL
+// rotates the login credential rather than returning a silent no-op).
 func (m *Mock) UpdateUser(_ context.Context, cfg rdsdriver.UserConfig) (*rdsdriver.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -242,6 +276,10 @@ func (m *Mock) UpdateUser(_ context.Context, cfg rdsdriver.UserConfig) (*rdsdriv
 
 	if cfg.Host != "" {
 		user.Host = cfg.Host
+	}
+
+	if cfg.Password != "" {
+		user.Password = cfg.Password
 	}
 
 	m.users.Set(key, user)

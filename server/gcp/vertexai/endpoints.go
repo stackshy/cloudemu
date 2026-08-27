@@ -5,15 +5,36 @@ import (
 	"io"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
+func deployedModelJSON(d *driver.DeployedModel) map[string]any {
+	out := map[string]any{
+		"id": d.ID, "model": d.Model, "displayName": d.DisplayName,
+	}
+
+	if d.CreateTime != "" {
+		out["createTime"] = d.CreateTime
+	}
+
+	// Surface dedicatedResources when the deployment supplied a machine spec or
+	// replica counts, so callers reading the endpoint see what they deployed.
+	if d.MachineType != "" || d.MinReplicaCount != 0 || d.MaxReplicaCount != 0 {
+		out["dedicatedResources"] = map[string]any{
+			"machineSpec":     map[string]any{"machineType": d.MachineType},
+			"minReplicaCount": d.MinReplicaCount,
+			"maxReplicaCount": d.MaxReplicaCount,
+		}
+	}
+
+	return out
+}
+
 func endpointJSON(e *driver.Endpoint) map[string]any {
 	dms := make([]map[string]any, 0, len(e.DeployedModels))
-	for _, d := range e.DeployedModels {
-		dms = append(dms, map[string]any{
-			"id": d.ID, "model": d.Model, "displayName": d.DisplayName,
-		})
+	for i := range e.DeployedModels {
+		dms = append(dms, deployedModelJSON(&e.DeployedModels[i]))
 	}
 
 	traffic := map[string]any{}
@@ -183,8 +204,7 @@ func (h *Handler) deployModel(w http.ResponseWriter, r *http.Request, endpoint s
 	var deployed map[string]any
 
 	if n := len(ep.DeployedModels); n > 0 {
-		d := ep.DeployedModels[n-1]
-		deployed = map[string]any{"id": d.ID, "model": d.Model, "displayName": d.DisplayName}
+		deployed = deployedModelJSON(&ep.DeployedModels[n-1])
 	}
 
 	writeResourceOp(w, op, map[string]any{"deployedModel": deployed}, "DeployModelResponse")
@@ -223,6 +243,15 @@ func (h *Handler) predict(w http.ResponseWriter, r *http.Request, endpoint strin
 		Endpoint: endpoint, Instances: req.Instances, Parameters: req.Parameters,
 	})
 	if err != nil {
+		// Real Vertex AI returns HTTP 400 FAILED_PRECONDITION when the endpoint
+		// has no deployed models; the shared codec maps FailedPrecondition to 409,
+		// so surface the 400 here to match the wire contract.
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
+
+			return
+		}
+
 		writeCErr(w, err)
 
 		return

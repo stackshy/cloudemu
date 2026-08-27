@@ -7,7 +7,10 @@ package driver
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Lifecycle states. Mirrors the AWS RDS terminology since RDS is the
@@ -79,6 +82,22 @@ type InstanceConfig struct {
 	OptionGroupName      string
 	ClusterID            string // empty for standalone, set for Aurora cluster members
 	AvailabilityZone     string
+	// Location is the Azure region a managed server lives in (the ARM top-level
+	// "location"). It is distinct from AvailabilityZone, which on Azure Flexible
+	// Servers carries the compute zone id ("1"/"2"/"3"). Empty for AWS/GCP, which
+	// derive region from the endpoint/self-link.
+	Location string
+	// StorageEncrypted requests encryption-at-rest on the instance's storage
+	// (AWS RDS StorageEncrypted); false for engines with no such flag.
+	StorageEncrypted bool
+	// KmsKeyId is the KMS key protecting an encrypted instance (AWS RDS
+	// KmsKeyId). When StorageEncrypted is set and this is empty, RDS fills in
+	// the account's default key; empty for unencrypted instances / other engines.
+	KmsKeyID string
+	// DeletionProtection guards a standalone instance from deletion while set
+	// (AWS RDS DeletionProtection); defaults to false. For Aurora, protection is
+	// managed at the cluster level, so this stays false on member instances.
+	DeletionProtection bool
 	// HighAvailabilityMode is the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty for engines with no such
 	// concept. StandbyAvailabilityZone is the zone the standby replica runs in
@@ -93,7 +112,17 @@ type InstanceConfig struct {
 	// primary (Cloud SQL creates replicas via a normal insert with this field);
 	// empty for a standalone primary.
 	MasterInstanceName string
-	Tags               map[string]string
+	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig carry the Cloud SQL
+	// settings sub-objects (databaseFlags, backupConfiguration, ipConfiguration)
+	// as opaque JSON so they round-trip on Insert->Get. They are a Cloud SQL-only
+	// concern; AWS RDS and Redshift never set or read them.
+	GCPDatabaseFlags string
+	GCPBackupConfig  string
+	GCPIPConfig      string
+	Tags             map[string]string
+	// Scope records where the resource lives (Azure subscription/resource
+	// group). Zero for AWS/GCP and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // Instance describes a managed database instance.
@@ -122,6 +151,25 @@ type Instance struct {
 	OptionGroupName      string
 	ClusterID            string
 	AvailabilityZone     string
+	// Location is the Azure region the server lives in (ARM top-level "location"),
+	// echoed on read. It is distinct from AvailabilityZone (the Azure Flexible
+	// Server compute zone id). Empty for AWS/GCP.
+	Location string
+	// The fields below echo AWS RDS DBInstance attributes on read. They default
+	// to their zero value for engines (Azure/GCP) that have no such concept.
+	// DbiResourceId is the immutable region-unique resource id (db-XXXX...).
+	// CACertificateIdentifier is the server CA cert id (e.g. rds-ca-rsa2048-g1).
+	DbiResourceID              string
+	BackupRetentionPeriod      int
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	CACertificateIdentifier    string
+	Iops                       int
+	StorageEncrypted           bool
+	// KmsKeyId echoes the KMS key protecting an encrypted instance (AWS RDS
+	// KmsKeyId) on read; empty for unencrypted instances / other engines.
+	KmsKeyID           string
+	DeletionProtection bool
 	// HighAvailabilityMode / StandbyAvailabilityZone echo the Azure Flexible
 	// Server HA configuration on read; empty for engines with no HA concept.
 	HighAvailabilityMode    string
@@ -134,6 +182,22 @@ type Instance struct {
 	// replica identifiers reading from this instance.
 	ReadReplicaSource  string
 	ReadReplicaTargets []string
+	// PendingModifiedValues holds the deferrable ModifyDBInstance changes that
+	// have been requested with ApplyImmediately=false but not yet applied. It is
+	// nil when nothing is pending (AWS RDS DBInstance.PendingModifiedValues).
+	PendingModifiedValues *PendingModifiedValues
+	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig echo the Cloud SQL
+	// settings sub-objects (databaseFlags, backupConfiguration, ipConfiguration)
+	// as opaque JSON so they round-trip on read. Empty for AWS RDS / Redshift,
+	// which never set or read them.
+	GCPDatabaseFlags string
+	GCPBackupConfig  string
+	GCPIPConfig      string
+	// Scope records where the resource lives (Azure subscription/resource
+	// group), echoed from the InstanceConfig it was created with. Zero for
+	// AWS/GCP and unscoped portable callers — Scope.Matches treats a zero
+	// Scope as visible under any filter.
+	Scope scope.Scope
 }
 
 // ModifyInstanceInput holds modifiable instance (and cluster) attributes.
@@ -150,13 +214,71 @@ type ModifyInstanceInput struct {
 	OptionGroupName             string
 	DBClusterParameterGroupName string
 	ElasticPoolID               string
+	// The fields below are AWS RDS ModifyDBInstance attributes; empty / zero /
+	// nil means "no change". NewInstanceID renames the instance (and its ARN).
+	NewInstanceID              string
+	BackupRetentionPeriod      int
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	StorageType                string
+	Iops                       int
+	DeletionProtection         *bool
 	// HighAvailabilityMode updates the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
 	// StandbyAvailabilityZone updates the standby replica's zone when HA is
 	// enabled; it is cleared automatically when HA is disabled.
 	HighAvailabilityMode    string
 	StandbyAvailabilityZone string
-	Tags                    map[string]string
+	// NodeType / NumberOfNodes / ClusterType are Redshift resize inputs on
+	// ModifyCluster (empty / zero means "no change"); RDS/Aurora ignore them.
+	// ClusterType is "single-node" | "multi-node"; single-node forces one node.
+	NodeType      string
+	NumberOfNodes int
+	ClusterType   string
+	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig update the Cloud SQL
+	// settings sub-objects (opaque JSON); empty means "no change". Cloud SQL-only;
+	// RDS/Redshift ignore them.
+	GCPDatabaseFlags string
+	GCPBackupConfig  string
+	GCPIPConfig      string
+	Tags             map[string]string
+	// ApplyImmediately controls when the deferrable changes above take effect
+	// (AWS RDS ModifyDBInstance ApplyImmediately, default false). When true the
+	// target fields are updated on the instance now and PendingModifiedValues is
+	// cleared; when false the requested-but-not-yet-applied deferrable changes
+	// are recorded in Instance.PendingModifiedValues and the current values stay
+	// unchanged until the next maintenance window. Non-AWS engines ignore it.
+	ApplyImmediately bool
+}
+
+// MaskedPassword is the placeholder RDS echoes for a pending master-password
+// change; the real password is never surfaced on a read.
+const MaskedPassword = "****"
+
+// PendingModifiedValues records the deferrable ModifyDBInstance changes that are
+// scheduled but not yet applied (ApplyImmediately=false). Each field is set only
+// when the requested value actually differs from the instance's current value,
+// mirroring real AWS which omits no-op changes. It is an AWS RDS concept; other
+// engines leave it nil.
+type PendingModifiedValues struct {
+	InstanceClass    string
+	AllocatedStorage int
+	EngineVersion    string
+	// MasterUserPassword is always MaskedPassword ("****") when a password
+	// change is pending — the plaintext is never echoed.
+	MasterUserPassword    string
+	BackupRetentionPeriod int
+	MultiAZ               *bool
+	Iops                  int
+	StorageType           string
+}
+
+// IsEmpty reports whether no deferrable change is pending, so callers can store
+// a nil PendingModifiedValues (which reads as absent) instead of an empty one.
+func (p *PendingModifiedValues) IsEmpty() bool {
+	return p.InstanceClass == "" && p.AllocatedStorage == 0 && p.EngineVersion == "" &&
+		p.MasterUserPassword == "" && p.BackupRetentionPeriod == 0 && p.MultiAZ == nil &&
+		p.Iops == 0 && p.StorageType == ""
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by
@@ -172,7 +294,34 @@ type ClusterConfig struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
-	Tags                        map[string]string
+	// EngineMode is the AWS Aurora engine mode ("provisioned"/"serverless");
+	// empty defaults to "provisioned". StorageEncrypted / AllocatedStorage echo
+	// the corresponding create inputs. All default to zero for non-AWS engines.
+	EngineMode       string
+	StorageEncrypted bool
+	// KmsKeyId is the KMS key protecting an encrypted Aurora cluster (AWS RDS
+	// DBCluster KmsKeyId). When StorageEncrypted is set and this is empty, RDS
+	// fills in the account's default key; empty for unencrypted clusters.
+	KmsKeyID         string
+	AllocatedStorage int
+	// DeletionProtection guards an Aurora DB cluster from deletion while set; it
+	// echoes the AWS RDS DBCluster attribute and defaults to false. Zero for
+	// non-AWS engines.
+	DeletionProtection bool
+	// Redshift-specific create inputs carried on the shared config (following the
+	// Azure HighAvailabilityMode precedent); zero for RDS/Aurora/Azure/GCP.
+	NodeType           string
+	NumberOfNodes      int
+	Encrypted          bool
+	PubliclyAccessible bool
+	AvailabilityZone   string
+	// Location is the Azure region an Azure SQL logical server lives in (ARM
+	// top-level "location"). Empty for AWS/GCP.
+	Location string
+	Tags     map[string]string
+	// Scope records where an Azure SQL logical server lives (subscription/
+	// resource group). Zero for AWS/GCP and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // Cluster describes an Aurora-style database cluster.
@@ -191,8 +340,38 @@ type Cluster struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
-	CreatedAt                   time.Time
-	Tags                        map[string]string
+	// EngineMode / DbClusterResourceId / AllocatedStorage / StorageEncrypted /
+	// AvailabilityZones echo AWS Aurora DBCluster attributes on read; they
+	// default to zero for non-AWS engines.
+	EngineMode          string
+	DBClusterResourceID string
+	AllocatedStorage    int
+	StorageEncrypted    bool
+	// KmsKeyId echoes the KMS key protecting an encrypted Aurora cluster (AWS
+	// RDS DBCluster KmsKeyId) on read; empty for unencrypted clusters.
+	KmsKeyID          string
+	AvailabilityZones []string
+	// DeletionProtection guards the cluster from deletion while set; echoes the
+	// AWS RDS DBCluster attribute and defaults to false for non-AWS engines.
+	DeletionProtection bool
+	// NodeType / NumberOfNodes / Encrypted / PubliclyAccessible /
+	// AvailabilityZone / VpcID are Redshift-specific cluster attributes carried
+	// on the shared struct (Azure HighAvailabilityMode precedent); zero for
+	// RDS/Aurora/Azure/GCP.
+	NodeType           string
+	NumberOfNodes      int
+	Encrypted          bool
+	PubliclyAccessible bool
+	AvailabilityZone   string
+	VpcID              string
+	// Location is the Azure region an Azure SQL logical server lives in (ARM
+	// top-level "location"), echoed on read. Empty for AWS/GCP.
+	Location  string
+	CreatedAt time.Time
+	Tags      map[string]string
+	// Scope records where an Azure SQL logical server lives (subscription/
+	// resource group). Zero for AWS/GCP and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // SnapshotConfig configures an instance snapshot.
@@ -213,6 +392,16 @@ type Snapshot struct {
 	State            string
 	CreatedAt        time.Time
 	Tags             map[string]string
+	// The fields below capture the source instance's shape at snapshot time, so a
+	// restore is a self-contained point-in-time image, matching real RDS ("the
+	// target database is created from the source database restore point with most
+	// of the source's original configuration") rather than a live lookup of a
+	// source instance that may since have been deleted. They are empty on
+	// snapshots created before this capture existed; restore falls back to a live
+	// source-instance lookup in that case.
+	MasterUsername string
+	DBName         string
+	Port           int
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -230,8 +419,25 @@ type ClusterSnapshot struct {
 	Engine        string
 	EngineVersion string
 	State         string
-	CreatedAt     time.Time
-	Tags          map[string]string
+	// NodeType / NumberOfNodes / Encrypted / TotalBackupSizeInMegaBytes echo the
+	// AWS Redshift snapshot attributes on read (copied from the source cluster);
+	// zero for RDS/Aurora/Azure/GCP cluster snapshots.
+	NodeType      string
+	NumberOfNodes int
+	Encrypted     bool
+	// KmsKeyID is the KMS key protecting an encrypted Redshift snapshot, copied
+	// from the source cluster at snapshot time so a restore preserves the
+	// encryption key (AWS Redshift Snapshot KmsKeyId). Empty for unencrypted
+	// snapshots and for RDS/Aurora/Azure/GCP cluster snapshots.
+	KmsKeyID                   string
+	TotalBackupSizeInMegaBytes float64
+	// MasterUsername / DatabaseName capture the source cluster's admin user and
+	// database at snapshot time so a Redshift restore is a self-contained image
+	// (the restored cluster reads them back). Empty for RDS/Aurora/Azure/GCP.
+	MasterUsername string
+	DatabaseName   string
+	CreatedAt      time.Time
+	Tags           map[string]string
 }
 
 // RestoreInstanceInput configures restoring an instance from a snapshot.
@@ -239,14 +445,22 @@ type RestoreInstanceInput struct {
 	NewInstanceID string
 	SnapshotID    string
 	InstanceClass string
-	Tags          map[string]string
+	// Port overrides the restored instance's connection port. Zero means "no
+	// override": AWS falls back to the same port as the original DB instance
+	// the snapshot was taken from, not the engine default.
+	Port int
+	Tags map[string]string
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.
 type RestoreClusterInput struct {
 	NewClusterID string
 	SnapshotID   string
-	Tags         map[string]string
+	// KmsKeyID overrides the encryption key on the restored cluster. When empty,
+	// the restored cluster inherits the snapshot's KmsKeyId (AWS Redshift
+	// RestoreFromClusterSnapshot KmsKeyId). Zero for RDS/Aurora/Azure/GCP.
+	KmsKeyID string
+	Tags     map[string]string
 }
 
 // RelationalDB is the interface that relational-database providers must satisfy.
@@ -315,12 +529,24 @@ type DatabaseConfig struct {
 	Name      string
 	Charset   string
 	Collation string
+	// Location is the Azure region the database lives in (ARM top-level
+	// "location"); Tags are the ARM resource tags. Both round-trip on read.
+	Location string
+	Tags     map[string]string
 	// SKUName / SKUTier are the database compute SKU (e.g. "GP_Gen5_2" /
 	// "GeneralPurpose") and ZoneRedundant is the HA flag — cost inputs a
 	// discoverer reads from an Azure SQL database's sku / properties.
-	SKUName       string
-	SKUTier       string
+	SKUName string
+	SKUTier string
+	// SKUCapacity is the vCore/DTU count on an Azure SQL database SKU
+	// (sku.capacity). Optional — zero means unset, so a request that omits it
+	// carries no capacity. Only the Azure SQL provider populates it.
+	SKUCapacity   int
 	ZoneRedundant bool
+	// ElasticPoolID is the Azure SQL elastic pool this database belongs to (a
+	// bare pool name or a full ARM resource ID); empty for a standalone
+	// database. Set via properties.elasticPoolId on the ARM request body.
+	ElasticPoolID string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -331,11 +557,21 @@ type Database struct {
 	Charset   string
 	Collation string
 	ARN       string
+	// Location is the Azure region the database lives in (ARM top-level
+	// "location"); Tags are the ARM resource tags. Both echoed on read.
+	Location string
+	Tags     map[string]string
 	// SKUName / SKUTier / ZoneRedundant are echoed on read for cost discovery
 	// (Azure SQL database sku.name + properties.currentSku / zoneRedundant).
-	SKUName       string
-	SKUTier       string
+	SKUName string
+	SKUTier string
+	// SKUCapacity echoes the vCore/DTU count on read (sku.capacity /
+	// properties.currentSku.capacity); zero when unset. Azure SQL only.
+	SKUCapacity   int
 	ZoneRedundant bool
+	// ElasticPoolID echoes the elastic pool this database belongs to on read
+	// (properties.elasticPoolId); empty for a standalone database.
+	ElasticPoolID string
 }
 
 // Databases is an OPTIONAL capability for managing the logical databases inside
@@ -346,6 +582,14 @@ type Databases interface {
 	GetDatabase(ctx context.Context, server, name string) (*Database, error)
 	ListDatabases(ctx context.Context, server string) ([]Database, error)
 	DeleteDatabase(ctx context.Context, server, name string) error
+}
+
+// DatabaseUpdater is an OPTIONAL capability for updating a logical database's
+// charset/collation (Cloud SQL databases.update / databases.patch), discovered
+// by type assertion. Kept separate from Databases so providers that only expose
+// create/get/list/delete are unaffected.
+type DatabaseUpdater interface {
+	UpdateDatabase(ctx context.Context, cfg DatabaseConfig) (*Database, error)
 }
 
 // FirewallRuleConfig describes a server firewall rule to create or replace.
@@ -418,6 +662,17 @@ type Failover interface {
 	FailoverInstance(ctx context.Context, id string) error
 }
 
+// ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
+// a scoped provider (Azure MySQL/Postgres Flexible Server) refuse to delete an
+// instance that does not belong to the caller's subscription/resource group —
+// a single atomic check-and-delete, avoiding the fetch-then-delete race a
+// handler-level Scope check on top of the plain DeleteInstance would leave.
+// AWS RDS and GCP Cloud SQL have no resource-group concept and do not
+// implement this interface, so their DeleteInstance is used unscoped.
+type ScopedDelete interface {
+	DeleteInstanceInScope(ctx context.Context, id string, filter scope.Scope) error
+}
+
 // VNetRuleConfig describes a virtual-network rule to create (Azure SQL).
 type VNetRuleConfig struct {
 	Server                string
@@ -446,11 +701,15 @@ type VNetRules interface {
 
 // ElasticPoolConfig describes an elastic pool to create (Azure SQL).
 type ElasticPoolConfig struct {
-	Server       string
-	Name         string
-	Location     string
-	SKUName      string
-	SKUTier      string
+	Server   string
+	Name     string
+	Location string
+	SKUName  string
+	SKUTier  string
+	// SKUCapacity is the vCore/DTU count on the pool SKU (sku.capacity).
+	// Optional — zero means unset, so a request that omits it carries no
+	// capacity. Only the Azure SQL provider populates it.
+	SKUCapacity  int
 	MaxSizeBytes int64
 	MinCapacity  float64
 	MaxCapacity  float64
@@ -458,11 +717,14 @@ type ElasticPoolConfig struct {
 
 // ElasticPool is a shared-resource pool that databases on a server draw from.
 type ElasticPool struct {
-	Server       string
-	Name         string
-	Location     string
-	SKUName      string
-	SKUTier      string
+	Server   string
+	Name     string
+	Location string
+	SKUName  string
+	SKUTier  string
+	// SKUCapacity echoes the vCore/DTU count on read (sku.capacity); zero
+	// when unset. Azure SQL only.
+	SKUCapacity  int
 	MaxSizeBytes int64
 	MinCapacity  float64
 	MaxCapacity  float64
@@ -477,6 +739,20 @@ type ElasticPools interface {
 	GetElasticPool(ctx context.Context, server, name string) (*ElasticPool, error)
 	ListElasticPools(ctx context.Context, server string) ([]ElasticPool, error)
 	DeleteElasticPool(ctx context.Context, server, name string) error
+}
+
+// ElasticPoolName extracts the pool name from an elasticPoolId, which may be
+// a bare name or a full ARM resource ID ending in ".../elasticPools/{name}".
+// Shared by the provider (which owns the pool store) and the wire server
+// (which must validate a pool reference before mutating a database), so the
+// two never parse the id differently.
+func ElasticPoolName(id string) string {
+	const marker = "/elasticPools/"
+	if i := strings.LastIndex(id, marker); i >= 0 {
+		return id[i+len(marker):]
+	}
+
+	return id
 }
 
 // FailoverGroupConfig describes a failover group to create (Azure SQL).
@@ -624,6 +900,11 @@ type User struct {
 	Instance string
 	Name     string
 	Host     string
+	// Password is the user's login credential. It is write-only: set on
+	// CreateUser/UpdateUser and used to authenticate against a real backing
+	// engine, but never surfaced back on the wire (Cloud SQL, like AWS/Azure,
+	// does not echo passwords). RDS/Redshift/Azure-SQL consumers leave it empty.
+	Password string
 }
 
 // Users is an OPTIONAL capability for managing database user accounts,
@@ -794,7 +1075,11 @@ type ReadReplicaConfig struct {
 	AvailabilityZone   string
 	Port               int
 	PubliclyAccessible bool
-	Tags               map[string]string
+	// DBParameterGroupName overrides the replica's parameter group. Empty
+	// means "no override": AWS inherits the source instance's DBParameterGroup
+	// for a same-Region replica.
+	DBParameterGroupName string
+	Tags                 map[string]string
 }
 
 // ReadReplicas is an OPTIONAL capability for creating and promoting read
@@ -998,15 +1283,17 @@ type ModifyClusterEndpointInput struct {
 	ExcludedMembers []string
 }
 
-// ClusterEndpoint is a custom Aurora cluster endpoint.
+// ClusterEndpoint is an Aurora cluster endpoint — either a built-in WRITER /
+// READER endpoint auto-provisioned at cluster create time, or a user-created
+// CUSTOM endpoint.
 type ClusterEndpoint struct {
 	EndpointID         string
 	ClusterID          string
 	ARN                string
 	Endpoint           string
 	Status             string
-	EndpointType       string // always "CUSTOM" for user-created endpoints
-	CustomEndpointType string // "READER" | "ANY"
+	EndpointType       string // "WRITER" | "READER" (built-in) or "CUSTOM" (user-created)
+	CustomEndpointType string // "READER" | "ANY" (custom endpoints only)
 	StaticMembers      []string
 	ExcludedMembers    []string
 }
@@ -1107,6 +1394,7 @@ type Tagging interface {
 // AlloyDBClusterConfig carries AlloyDB-specific cluster-create fields.
 type AlloyDBClusterConfig struct {
 	ID                     string
+	DisplayName            string // user-settable; echoed only when the caller sets it
 	DatabaseVersion        string // "POSTGRES_15", …
 	Network                string
 	InitialUser            string
@@ -1145,6 +1433,14 @@ type AlloyDBClusterInfo struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string
 	PrimaryCluster         string // set for a SECONDARY cluster
+	// UID is the server-generated system UID (distinct from the resource id).
+	UID string
+	// DisplayName is the caller-supplied display name, empty when unset.
+	DisplayName string
+	// CreateTime / UpdateTime are the cluster's creation and last-modification
+	// timestamps.
+	CreateTime time.Time
+	UpdateTime time.Time
 }
 
 // AlloyDBInstanceInfo is the AlloyDB-native view of an instance's extra
@@ -1156,6 +1452,10 @@ type AlloyDBInstanceInfo struct {
 	AvailabilityType string
 	IPAddress        string
 	GceZone          string
+	// CreateTime / UpdateTime are the instance's creation and last-modification
+	// timestamps.
+	CreateTime time.Time
+	UpdateTime time.Time
 }
 
 // AlloyDB is an OPTIONAL capability for AlloyDB-specific cluster/instance

@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
 
@@ -23,6 +24,13 @@ const (
 	maxDomains = 100
 	// maxTags is ACM's cap on tags per certificate.
 	maxTags = 50
+	// maxDomainNameLen / maxLabelLen bound a valid FQDN (RFC 5280 / ACM pattern).
+	maxDomainNameLen = 253
+	maxLabelLen      = 63
+	// minTLDLen is the minimum length of the final (top-level) label; minLabels is
+	// the minimum number of dot-separated labels an FQDN must have.
+	minTLDLen = 2
+	minLabels = 2
 )
 
 // Mock is an in-memory implementation of AWS ACM.
@@ -38,7 +46,29 @@ type Mock struct {
 // certData is a certificate plus its own lock.
 type certData struct {
 	cert driver.Certificate
-	mu   sync.RWMutex
+	// settle overlays a PENDING_VALIDATION window over the stored (ISSUED) status
+	// on the Describe/List surface under AsyncSettle; zero-value reports ISSUED
+	// immediately. While pending, each domain-validation option also reports
+	// PENDING_VALIDATION so a caller sees the CNAME it must create.
+	settle settle.Window
+	mu     sync.RWMutex
+}
+
+// observeCert returns a deep copy of cert with the PENDING_VALIDATION window
+// overlaid: while the window is unelapsed the certificate and every domain
+// validation report PENDING_VALIDATION; once elapsed the stored (ISSUED) status
+// shows through.
+func observeCert(cert *driver.Certificate, w settle.Window, now time.Time) driver.Certificate {
+	out := copyCert(cert)
+
+	if observed := w.Observe(now, out.Status); observed != out.Status {
+		out.Status = observed
+		for i := range out.DomainValidationOptions {
+			out.DomainValidationOptions[i].ValidationStatus = observed
+		}
+	}
+
+	return out
 }
 
 // New creates a new ACM mock with the given configuration options.
@@ -108,6 +138,11 @@ func copyCert(c *driver.Certificate) driver.Certificate {
 	out.SubjectAlternativeNames = append([]string(nil), c.SubjectAlternativeNames...)
 	out.InUseBy = append([]string(nil), c.InUseBy...)
 	out.DomainValidationOptions = append([]driver.DomainValidation(nil), c.DomainValidationOptions...)
+
+	for i := range out.DomainValidationOptions {
+		out.DomainValidationOptions[i].ValidationEmails =
+			append([]string(nil), c.DomainValidationOptions[i].ValidationEmails...)
+	}
 
 	return out
 }

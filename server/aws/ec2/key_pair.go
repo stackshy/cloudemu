@@ -1,9 +1,11 @@
 package ec2
 
 import (
+	"encoding/base64"
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -15,6 +17,7 @@ type keyPairSummaryXML struct {
 	KeyName        string    `xml:"keyName"`
 	KeyFingerprint string    `xml:"keyFingerprint"`
 	KeyType        string    `xml:"keyType,omitempty"`
+	CreateTime     string    `xml:"createTime,omitempty"`
 	Tags           []tagItem `xml:"tagSet>item,omitempty"`
 }
 
@@ -69,6 +72,55 @@ func (h *Handler) createKeyPair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// importKeyPairResponseXML is the ImportKeyPair response. Unlike CreateKeyPair
+// it carries NO keyMaterial — the caller already holds the private key.
+type importKeyPairResponseXML struct {
+	XMLName        xml.Name  `xml:"ImportKeyPairResponse"`
+	Xmlns          string    `xml:"xmlns,attr"`
+	RequestID      string    `xml:"requestId"`
+	KeyPairID      string    `xml:"keyPairId"`
+	KeyName        string    `xml:"keyName"`
+	KeyFingerprint string    `xml:"keyFingerprint"`
+	Tags           []tagItem `xml:"tagSet>item,omitempty"`
+}
+
+// importKeyPair handles Action=ImportKeyPair. It is served by the AWS-only
+// KeyPairImporter capability; a compute driver that does not implement it
+// reports Unimplemented. PublicKeyMaterial arrives base64-encoded on the wire.
+func (h *Handler) importKeyPair(w http.ResponseWriter, r *http.Request) {
+	importer, ok := h.compute.(computedriver.KeyPairImporter)
+	if !ok {
+		writeKeyPairErr(w, cerrors.New(cerrors.Unimplemented, "ImportKeyPair is not supported"))
+		return
+	}
+
+	material, err := base64.StdEncoding.DecodeString(r.Form.Get("PublicKeyMaterial"))
+	if err != nil {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue",
+			"PublicKeyMaterial is not valid base64")
+		return
+	}
+
+	info, err := importer.ImportKeyPair(r.Context(), computedriver.ImportKeyPairInput{
+		Name:              r.Form.Get("KeyName"),
+		PublicKeyMaterial: material,
+		Tags:              mergeTagSpecs(awsquery.TagSpecs(r.Form), "key-pair"),
+	})
+	if err != nil {
+		writeKeyPairErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, importKeyPairResponseXML{
+		Xmlns:          awsquery.Namespace,
+		RequestID:      awsquery.RequestID,
+		KeyPairID:      info.ID,
+		KeyName:        info.Name,
+		KeyFingerprint: info.Fingerprint,
+		Tags:           toTagItems(info.Tags),
+	})
+}
+
 func (h *Handler) deleteKeyPair(w http.ResponseWriter, r *http.Request) {
 	if err := h.compute.DeleteKeyPair(r.Context(), r.Form.Get("KeyName")); err != nil {
 		writeKeyPairErr(w, err)
@@ -110,10 +162,19 @@ func toKeyPairSummaryXML(kp *computedriver.KeyPairInfo) keyPairSummaryXML {
 		KeyName:        kp.Name,
 		KeyFingerprint: kp.Fingerprint,
 		KeyType:        kp.KeyType,
+		CreateTime:     kp.CreatedAt,
 		Tags:           toTagItems(kp.Tags),
 	}
 }
 
+// writeKeyPairErr maps a duplicate create to the EC2-specific
+// InvalidKeyPair.Duplicate code (the SDK's DuplicateKeyPair error) rather than
+// the generic ResourceAlreadyExists; other codes use the shared mapping.
 func writeKeyPairErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidKeyPair.Duplicate", err.Error())
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidKeyPair.NotFound", "IncorrectState")
 }

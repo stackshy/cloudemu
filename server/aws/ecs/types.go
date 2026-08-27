@@ -180,6 +180,8 @@ type wireTaskDef struct {
 	Memory                  string                     `json:"memory,omitempty"`
 	NetworkMode             string                     `json:"networkMode,omitempty"`
 	RequiresCompatibilities []string                   `json:"requiresCompatibilities,omitempty"`
+	Compatibilities         []string                   `json:"compatibilities,omitempty"`
+	RequiresAttributes      []wireAttribute            `json:"requiresAttributes,omitempty"`
 	TaskRoleArn             string                     `json:"taskRoleArn,omitempty"`
 	ExecutionRoleArn        string                     `json:"executionRoleArn,omitempty"`
 	Volumes                 []wireVolume               `json:"volumes,omitempty"`
@@ -199,15 +201,25 @@ type wireTaskDef struct {
 // containerStatusStopped is the ECS lastStatus of a finished container.
 const containerStatusStopped = "STOPPED"
 
+// wireNetworkBinding mirrors the ECS NetworkBinding shape: the host IP/port a
+// bridge- or host-mode container port mapping was bound to.
+type wireNetworkBinding struct {
+	BindIP        string `json:"bindIP,omitempty"`
+	ContainerPort int    `json:"containerPort,omitempty"`
+	HostPort      int    `json:"hostPort,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+}
+
 type wireContainer struct {
 	Name       string `json:"name,omitempty"`
 	Image      string `json:"image,omitempty"`
 	LastStatus string `json:"lastStatus,omitempty"`
 	// ExitCode is a pointer so a real exit 0 on a STOPPED container serializes
 	// (real ECS reports it), while a running container omits it entirely.
-	ExitCode  *int   `json:"exitCode,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	RuntimeID string `json:"runtimeId,omitempty"`
+	ExitCode        *int                 `json:"exitCode,omitempty"`
+	Reason          string               `json:"reason,omitempty"`
+	RuntimeID       string               `json:"runtimeId,omitempty"`
+	NetworkBindings []wireNetworkBinding `json:"networkBindings,omitempty"`
 }
 
 // wireAttachment mirrors the ECS Attachment shape (type/status/details), where
@@ -338,6 +350,8 @@ type wireService struct {
 	ServiceName                   string                       `json:"serviceName"`
 	ClusterArn                    string                       `json:"clusterArn"`
 	TaskDefinition                string                       `json:"taskDefinition,omitempty"`
+	RoleArn                       string                       `json:"roleArn,omitempty"`
+	CreatedBy                     string                       `json:"createdBy,omitempty"`
 	DesiredCount                  int                          `json:"desiredCount"`
 	RunningCount                  int                          `json:"runningCount"`
 	PendingCount                  int                          `json:"pendingCount"`
@@ -1066,6 +1080,87 @@ func fromAccountSettings(in []driver.AccountSetting) []wireAccountSetting {
 	return out
 }
 
+// Launch-type and derived-attribute constants for the compatibilities and
+// requiresAttributes fields ECS derives (not stored) for a task definition.
+const (
+	launchTypeEC2      = "EC2"
+	launchTypeFargate  = "FARGATE"
+	launchTypeExternal = "EXTERNAL"
+	networkModeAwsvpc  = "awsvpc"
+
+	attrDockerRemoteAPI = "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+	attrTaskIAMRole     = "com.amazonaws.ecs.capability.task-iam-role"
+	attrExecRoleECRPull = "ecs.capability.execution-role-ecr-pull"
+)
+
+// deriveCompatibilities computes the launch types a task definition is
+// compatible with (distinct from the caller's requiresCompatibilities): EC2 is
+// always compatible, plus every explicitly required type, plus FARGATE when the
+// definition satisfies the Fargate requirements (awsvpc networking with task
+// cpu and memory). The result is emitted in a stable EC2, FARGATE, EXTERNAL order.
+func deriveCompatibilities(t *driver.TaskDefinition) []string {
+	set := map[string]bool{launchTypeEC2: true}
+	for _, c := range t.RequiresCompatibilities {
+		set[c] = true
+	}
+
+	if t.NetworkMode == networkModeAwsvpc && t.CPU != "" && t.Memory != "" {
+		set[launchTypeFargate] = true
+	}
+
+	out := make([]string, 0, len(set))
+
+	for _, lt := range []string{launchTypeEC2, launchTypeFargate, launchTypeExternal} {
+		if set[lt] {
+			out = append(out, lt)
+		}
+	}
+
+	return out
+}
+
+// isFargateOnly reports whether a task definition targets only Fargate, i.e. it
+// requires FARGATE and no EC2/EXTERNAL launch type. Such definitions carry no
+// requiresAttributes on the wire.
+func isFargateOnly(t *driver.TaskDefinition) bool {
+	requiresFargate := false
+
+	for _, c := range t.RequiresCompatibilities {
+		if c == launchTypeEC2 || c == launchTypeExternal {
+			return false
+		}
+
+		if c == launchTypeFargate {
+			requiresFargate = true
+		}
+	}
+
+	return requiresFargate
+}
+
+// deriveRequiresAttributes computes the minimal set of container-agent
+// attributes ECS reports a task definition requires. Fargate-only definitions
+// report none; others always require the docker-remote-api capability, plus the
+// task-iam-role / execution-role-ecr-pull capabilities when the corresponding
+// role ARNs are set.
+func deriveRequiresAttributes(t *driver.TaskDefinition) []wireAttribute {
+	if isFargateOnly(t) {
+		return nil
+	}
+
+	attrs := []wireAttribute{{Name: attrDockerRemoteAPI}}
+
+	if t.TaskRoleARN != "" {
+		attrs = append(attrs, wireAttribute{Name: attrTaskIAMRole})
+	}
+
+	if t.ExecutionRoleARN != "" {
+		attrs = append(attrs, wireAttribute{Name: attrExecRoleECRPull})
+	}
+
+	return attrs
+}
+
 func taskDefToWire(t *driver.TaskDefinition) wireTaskDef {
 	return wireTaskDef{
 		TaskDefinitionArn:       t.ARN,
@@ -1077,6 +1172,8 @@ func taskDefToWire(t *driver.TaskDefinition) wireTaskDef {
 		Memory:                  t.Memory,
 		NetworkMode:             t.NetworkMode,
 		RequiresCompatibilities: t.RequiresCompatibilities,
+		Compatibilities:         deriveCompatibilities(t),
+		RequiresAttributes:      deriveRequiresAttributes(t),
 		TaskRoleArn:             t.TaskRoleARN,
 		ExecutionRoleArn:        t.ExecutionRoleARN,
 		Volumes:                 fromVolumes(t.Volumes),
@@ -1094,6 +1191,23 @@ func taskDefToWire(t *driver.TaskDefinition) wireTaskDef {
 	}
 }
 
+// fromNetworkBindings converts a container's resolved bridge/host port
+// bindings to the wire shape.
+func fromNetworkBindings(in []driver.NetworkBinding) []wireNetworkBinding {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]wireNetworkBinding, 0, len(in))
+	for _, nb := range in {
+		out = append(out, wireNetworkBinding{
+			BindIP: nb.BindIP, ContainerPort: nb.ContainerPort, HostPort: nb.HostPort, Protocol: nb.Protocol,
+		})
+	}
+
+	return out
+}
+
 func taskToWire(t *driver.Task) wireTask {
 	containers := make([]wireContainer, 0, len(t.Containers))
 
@@ -1102,6 +1216,7 @@ func taskToWire(t *driver.Task) wireTask {
 		wc := wireContainer{
 			Name: c.Name, Image: c.Image, LastStatus: c.LastStatus,
 			Reason: c.Reason, RuntimeID: c.RuntimeID,
+			NetworkBindings: fromNetworkBindings(c.NetworkBindings),
 		}
 		// Surface the exit code only once the container has stopped, so a genuine
 		// exit 0 is reported while a running container has none.
@@ -1165,6 +1280,8 @@ func serviceToWire(s *driver.Service) wireService {
 		ServiceName:                   s.Name,
 		ClusterArn:                    s.ClusterARN,
 		TaskDefinition:                s.TaskDefinition,
+		RoleArn:                       s.RoleARN,
+		CreatedBy:                     s.CreatedBy,
 		DesiredCount:                  s.DesiredCount,
 		RunningCount:                  s.RunningCount,
 		PendingCount:                  s.PendingCount,

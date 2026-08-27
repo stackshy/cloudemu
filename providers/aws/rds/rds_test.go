@@ -131,6 +131,7 @@ func TestModifyInstance(t *testing.T) {
 		EngineVersion:    "8.0.32",
 		MultiAZ:          &multi,
 		Tags:             map[string]string{"env": "prod"},
+		ApplyImmediately: true,
 	})
 	requireNoError(t, err)
 
@@ -217,6 +218,48 @@ func TestSnapshotAndRestore(t *testing.T) {
 
 	// Delete snapshot.
 	requireNoError(t, m.DeleteSnapshot(ctx, "snap-1"))
+}
+
+// TestRestoreFromSnapshotAfterSourceDeleted verifies that RestoreDBInstanceFromDBSnapshot
+// restores DBName, MasterUsername, and Port from the snapshot's own captured metadata, not
+// a live lookup of the source instance. Snapshots are meant to outlive their source instance
+// (a normal, common scenario), so the source being deleted before restore must not lose or
+// default these attributes. See AWS API docs for RestoreDBInstanceFromDBSnapshot: "The target
+// database is created from the source database restore point with most of the source's
+// original configuration" and Port "Default: The same port as the original DB instance".
+func TestRestoreFromSnapshotAfterSourceDeleted(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const nonDefaultPort = 5555
+
+	_, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:             "src2",
+		Engine:         "mysql",
+		MasterUsername: "appadmin",
+		DBName:         "appdb",
+		Port:           nonDefaultPort,
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{
+		ID:         "snap-2",
+		InstanceID: "src2",
+	})
+	requireNoError(t, err)
+
+	// Snapshots outlive their source instance; delete it before restoring.
+	requireNoError(t, m.DeleteInstance(ctx, "src2"))
+
+	restored, err := m.RestoreInstanceFromSnapshot(ctx, rdsdriver.RestoreInstanceInput{
+		NewInstanceID: "restored2",
+		SnapshotID:    "snap-2",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, "appdb", restored.DBName)
+	assertEqual(t, "appadmin", restored.MasterUsername)
+	assertEqual(t, nonDefaultPort, restored.Port)
 }
 
 func TestClusterSnapshotAndRestore(t *testing.T) {
@@ -338,5 +381,72 @@ func assertTrue(t *testing.T, val bool, msg string) {
 
 	if !val {
 		t.Errorf("expected true: %s", msg)
+	}
+}
+
+// TestAsyncSettleInstanceSnapshotReboot pins the AsyncSettle transitions:
+// instance creating->available, snapshot creating->available, and the
+// reboot available->rebooting->available transient dip, all driven by the
+// FakeClock. Default (settle off) behavior is covered by the other tests.
+func TestAsyncSettleInstanceSnapshotReboot(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m := New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("123456789012"), config.WithAsyncSettle()))
+	ctx := context.Background()
+
+	created, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db1", Engine: "mysql", MasterUsername: "admin"})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if created.State != rdsdriver.StateCreating {
+		t.Fatalf("create response State = %q, want creating", created.State)
+	}
+
+	got, err := m.DescribeInstances(ctx, []string{"db1"})
+	if err != nil || got[0].State != rdsdriver.StateCreating {
+		t.Fatalf("describe before settle = %q (err %v), want creating", got[0].State, err)
+	}
+
+	fc.Advance(4 * time.Second) // past DefaultDBInstanceSettle (3s)
+	got, _ = m.DescribeInstances(ctx, []string{"db1"})
+	if got[0].State != rdsdriver.StateAvailable {
+		t.Fatalf("describe after settle = %q, want available", got[0].State)
+	}
+
+	snap, err := m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{ID: "snap1", InstanceID: "db1"})
+	if err != nil || snap.State != rdsdriver.SnapshotCreating {
+		t.Fatalf("snapshot create State = %q (err %v), want creating", snap.State, err)
+	}
+	fc.Advance(3 * time.Second) // past DefaultDBSnapshotSettle (2s)
+	snaps, _ := m.DescribeSnapshots(ctx, []string{"snap1"}, "")
+	if snaps[0].State != rdsdriver.SnapshotAvailable {
+		t.Fatalf("snapshot after settle = %q, want available", snaps[0].State)
+	}
+
+	if err := m.RebootInstance(ctx, "db1"); err != nil {
+		t.Fatalf("RebootInstance: %v", err)
+	}
+	got, _ = m.DescribeInstances(ctx, []string{"db1"})
+	if got[0].State != rdsdriver.StateRebooting {
+		t.Fatalf("describe during reboot = %q, want rebooting", got[0].State)
+	}
+	fc.Advance(2 * time.Second) // past DefaultDBRebootSettle (1s)
+	got, _ = m.DescribeInstances(ctx, []string{"db1"})
+	if got[0].State != rdsdriver.StateAvailable {
+		t.Fatalf("describe after reboot = %q, want available", got[0].State)
+	}
+
+	// A lifecycle stop must clear the create window: a fresh instance stopped
+	// mid-settle reports stopped, not a stale creating.
+	fresh, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db2", Engine: "mysql", MasterUsername: "admin"})
+	if err != nil || fresh.State != rdsdriver.StateCreating {
+		t.Fatalf("CreateInstance db2 = %q (err %v), want creating", fresh.State, err)
+	}
+	if err := m.StopInstance(ctx, "db2"); err != nil {
+		t.Fatalf("StopInstance: %v", err)
+	}
+	got, _ = m.DescribeInstances(ctx, []string{"db2"})
+	if got[0].State != rdsdriver.StateStopped {
+		t.Fatalf("stopped db2 = %q, want stopped (window must be cleared)", got[0].State)
 	}
 }

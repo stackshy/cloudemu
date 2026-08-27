@@ -14,6 +14,15 @@ type AccountConfig struct {
 	Tags          map[string]string
 }
 
+// AccountUpdate carries the mutable fields of an account PATCH. A nil pointer
+// means "field absent from the request body" — leave it unchanged; a non-nil
+// pointer applies the value (an empty *Tags map still merges nothing).
+type AccountUpdate struct {
+	Tags         *map[string]string // nil = no change; non-nil = merge into existing tags
+	SKUName      *string            // nil = no change
+	CustomDomain *string            // nil = no change; recomputes the endpoint when set
+}
+
 // Account is a Microsoft.CognitiveServices/accounts resource.
 type Account struct {
 	ID                string
@@ -39,19 +48,24 @@ type DeploymentConfig struct {
 	ModelFormat   string // OpenAI | Microsoft | ...
 	SKUName       string // Standard | GlobalStandard | ProvisionedManaged | ...
 	SKUCapacity   int
+	RaiPolicyName string // content-filter policy attached to the deployment
+	// VersionUpgradeOption: OnceNewDefaultVersionAvailable | OnceCurrentVersionExpired | NoAutoUpgrade
+	VersionUpgradeOption string
 }
 
 // Deployment is a Microsoft.CognitiveServices/accounts/deployments resource.
 type Deployment struct {
-	ID                string
-	Name              string
-	ModelName         string
-	ModelVersion      string
-	ModelFormat       string
-	SKUName           string
-	SKUCapacity       int
-	ProvisioningState string
-	CreatedAt         string
+	ID                   string
+	Name                 string
+	ModelName            string
+	ModelVersion         string
+	ModelFormat          string
+	SKUName              string
+	SKUCapacity          int
+	RaiPolicyName        string
+	VersionUpgradeOption string
+	ProvisioningState    string
+	CreatedAt            string
 }
 
 // ProjectConfig describes an AI Foundry project under an account.
@@ -161,7 +175,7 @@ type CognitiveServices interface {
 	CreateAccount(ctx context.Context, cfg AccountConfig) (*Account, error)
 	GetAccount(ctx context.Context, resourceGroup, name string) (*Account, error)
 	DeleteAccount(ctx context.Context, resourceGroup, name string) error
-	UpdateAccountTags(ctx context.Context, resourceGroup, name string, tags map[string]string) (*Account, error)
+	UpdateAccount(ctx context.Context, resourceGroup, name string, upd AccountUpdate) (*Account, error)
 	ListAccountsByResourceGroup(ctx context.Context, resourceGroup string) ([]Account, error)
 	ListAccounts(ctx context.Context) ([]Account, error)
 	ListAccountKeys(ctx context.Context, resourceGroup, name string) (*AccountKeys, error)

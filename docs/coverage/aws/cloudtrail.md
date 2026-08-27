@@ -68,6 +68,18 @@ AWS's `cloudtrail` service · portable interface `driver.CloudTrail` · [AWS ind
 | `UpdateEventDataStore` |  |
 | `UpdateTrail` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### EventRecorder
+
+EventRecorder is an OPTIONAL capability, discovered by type assertion. The
+
+| Operation | Description |
+| --- | --- |
+| `RecordEvent` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

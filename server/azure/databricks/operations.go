@@ -3,6 +3,7 @@ package databricks
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
@@ -15,6 +16,7 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 
 	cfg := dbxdriver.WorkspaceConfig{
 		Name:          rp.ResourceName,
+		Subscription:  rp.Subscription,
 		ResourceGroup: rp.ResourceGroup,
 		Location:      body.Location,
 		Tags:          body.Tags,
@@ -27,6 +29,16 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 
 	if body.Properties != nil {
 		cfg.ManagedResourceGroupID = body.Properties.ManagedResourceGroupID
+		cfg.WorkspaceExtendedProperties = dbxdriver.WorkspaceExtendedProperties{
+			Parameters:             body.Properties.Parameters,
+			PublicNetworkAccess:    body.Properties.PublicNetworkAccess,
+			RequiredNsgRules:       body.Properties.RequiredNsgRules,
+			Authorizations:         body.Properties.Authorizations,
+			UIDefinitionURI:        body.Properties.UIDefinitionURI,
+			ManagedDiskIdentity:    body.Properties.ManagedDiskIdentity,
+			StorageAccountIdentity: body.Properties.StorageAccountIdentity,
+			DiskEncryptionSetID:    body.Properties.DiskEncryptionSetID,
+		}
 	}
 
 	ws, err := h.dbx.CreateWorkspace(r.Context(), cfg)
@@ -67,13 +79,17 @@ func (h *Handler) updateWorkspace(w http.ResponseWriter, r *http.Request, rp *az
 }
 
 func (h *Handler) deleteWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.dbx.DeleteWorkspace(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
+	// ARM DELETE is idempotent: a missing resource is the caller's desired end
+	// state, so a NotFound from the driver still returns 204 (teardown retries
+	// and delete-then-delete must not fail on the second pass).
+	err := h.dbx.DeleteWorkspace(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listWorkspaces(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

@@ -54,7 +54,11 @@ func (e *recordingEngine) Stop(_ context.Context, handle string) error {
 }
 
 func groupURL(name string) string {
-	return "/subscriptions/" + subID + "/resourceGroups/" + rgName +
+	return groupURLInRG(rgName, name)
+}
+
+func groupURLInRG(rg, name string) string {
+	return "/subscriptions/" + subID + "/resourceGroups/" + rg +
 		"/providers/Microsoft.ContainerInstance/containerGroups/" + name
 }
 
@@ -136,6 +140,42 @@ func TestContainerGroupLifecycleDrivesEngine(t *testing.T) {
 
 	// 5. GET after delete → 404.
 	doReq(t, srv.URL, http.MethodGet, groupURL("cg1")+apiVer, nil, http.StatusNotFound)
+}
+
+// TestContainerGroupsIsolatedAcrossResourceGroups is a regression test for the
+// cross-RG collision fix: a container group's ARM identity is
+// {subscriptionId, resourceGroupName, containerGroupName} — see
+// https://learn.microsoft.com/en-us/rest/api/container-instances/container-groups/create-or-update
+// — so two resource groups can each hold a same-named group without one
+// aliasing or leaking into the other.
+func TestContainerGroupsIsolatedAcrossResourceGroups(t *testing.T) {
+	const otherRG = "other-rg"
+
+	cloud := cloudemu.NewAzure()
+	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
+	t.Cleanup(srv.Close)
+
+	// Same group name ("shared") created in two different resource groups.
+	doReq(t, srv.URL, http.MethodPut, groupURLInRG(rgName, "shared")+apiVer,
+		strings.NewReader(createBody), http.StatusCreated)
+	doReq(t, srv.URL, http.MethodPut, groupURLInRG(otherRG, "shared")+apiVer,
+		strings.NewReader(strings.Replace(createBody, `"location": "eastus"`, `"location": "westus2"`, 1)),
+		http.StatusCreated)
+
+	// GET in each RG returns that RG's own group, not the other's.
+	inFirst := decodeGroup(t, doReq(t, srv.URL, http.MethodGet, groupURLInRG(rgName, "shared")+apiVer, nil, http.StatusOK))
+	inOther := decodeGroup(t, doReq(t, srv.URL, http.MethodGet, groupURLInRG(otherRG, "shared")+apiVer, nil, http.StatusOK))
+
+	if inFirst.Properties.Containers[0].Properties.Image == "" || inOther.Properties.Containers[0].Properties.Image == "" {
+		t.Fatalf("expected both groups populated, got %+v / %+v", inFirst, inOther)
+	}
+
+	// Deleting the group in one RG must not remove (or affect) the same-named
+	// group in the other RG.
+	doReq(t, srv.URL, http.MethodDelete, groupURLInRG(rgName, "shared")+apiVer, nil, http.StatusOK)
+
+	doReq(t, srv.URL, http.MethodGet, groupURLInRG(rgName, "shared")+apiVer, nil, http.StatusNotFound)
+	doReq(t, srv.URL, http.MethodGet, groupURLInRG(otherRG, "shared")+apiVer, nil, http.StatusOK)
 }
 
 func TestNilEngineStaysSynthetic(t *testing.T) {

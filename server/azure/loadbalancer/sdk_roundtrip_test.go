@@ -3,6 +3,7 @@ package loadbalancer_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -29,7 +30,19 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-func newLBClient(t *testing.T) *armnetwork.LoadBalancersClient {
+// lbServer bundles the emulator's TLS wire server endpoint with the
+// arm.ClientOptions every armnetwork client in a test shares, so a whole-LB
+// client and any sub-resource client (backend pools, NAT rules, probes, ...)
+// address the same in-memory driver instance. Endpoint/HTTPClient let a test
+// issue a raw HTTP request for a method the real armnetwork SDK has no client
+// call for (e.g. a standalone PUT on a Get/List-only sub-resource).
+type lbServer struct {
+	Endpoint   string
+	HTTPClient *http.Client
+	Opts       *arm.ClientOptions
+}
+
+func newLBServer(t *testing.T) lbServer {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -54,15 +67,31 @@ func newLBClient(t *testing.T) *armnetwork.LoadBalancersClient {
 		},
 	}
 
-	opts := &arm.ClientOptions{
-		ClientOptions: azcore.ClientOptions{
-			Cloud:     myCloud,
-			Transport: ts.Client(),
-			Retry:     policy.RetryOptions{MaxRetries: -1},
+	return lbServer{
+		Endpoint:   ts.URL,
+		HTTPClient: ts.Client(),
+		Opts: &arm.ClientOptions{
+			ClientOptions: azcore.ClientOptions{
+				Cloud:     myCloud,
+				Transport: ts.Client(),
+				Retry:     policy.RetryOptions{MaxRetries: -1},
+			},
 		},
 	}
+}
 
-	client, err := armnetwork.NewLoadBalancersClient(testSub, fakeCred{}, opts)
+// newLBServerOpts is the arm.ClientOptions-only convenience wrapper for tests
+// that don't need raw HTTP access.
+func newLBServerOpts(t *testing.T) *arm.ClientOptions {
+	t.Helper()
+
+	return newLBServer(t).Opts
+}
+
+func newLBClient(t *testing.T) *armnetwork.LoadBalancersClient {
+	t.Helper()
+
+	client, err := armnetwork.NewLoadBalancersClient(testSub, fakeCred{}, newLBServerOpts(t))
 	if err != nil {
 		t.Fatalf("armnetwork.NewLoadBalancersClient: %v", err)
 	}

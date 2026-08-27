@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
@@ -135,6 +136,11 @@ func New(opts ...config.Option) *Provider {
 	p.FCM.SetMonitoring(p.CloudMonitoring)
 	p.ArtifactRegistry.SetMonitoring(p.CloudMonitoring)
 	p.Eventarc.SetMonitoring(p.CloudMonitoring)
+	// Eventarc -> destinations: a matching published event fires the trigger's
+	// Cloud Function (in-process Invoke) or Cloud Run service (HTTP delivery at
+	// the service URL), mirroring the Pub/Sub -> Cloud Functions wiring.
+	p.Eventarc.SetFunctionInvoker(p.CloudFunctions)
+	p.Eventarc.SetCloudRunInvoker(p.CloudRun)
 	p.CloudSQL.SetMonitoring(p.CloudMonitoring)
 	p.AlloyDB.SetMonitoring(p.CloudMonitoring)
 	p.GKE.SetMonitoring(p.CloudMonitoring)
@@ -185,6 +191,15 @@ func (p *Provider) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// SnapshotServices returns the provider's services that support identity-
+// preserving snapshotting, keyed by a stable lowercased field-name service key
+// (e.g. "gcs", "firestore", "compute"). persist iterates this map, so the
+// persisted surface automatically tracks whichever services implement
+// snapshot.Snapshottable — no hand-kept registry to drift.
+func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
+	return snapshot.Discover(p)
 }
 
 // gcpRelationalDiscovery fans GCP's relational mocks (Cloud SQL instances and

@@ -21,7 +21,7 @@ func TestSetK8sAPI_CreateRegistersWithAPIServer(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestEndpoint_RealURLWhenWired(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
@@ -62,56 +62,68 @@ func TestEndpoint_RealURLWhenWired(t *testing.T) {
 	}
 }
 
-func TestEndpoint_NoAPIKeepsSentinel(t *testing.T) {
+func TestEndpoint_NoAPIReturnsControlPlaneIP(t *testing.T) {
 	m := newTestMock()
 
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
 	got := m.Endpoint("us-central1", "c1")
-	if !strings.Contains(got, "GKE-DATAPLANE-NOT-IMPLEMENTED") {
-		t.Fatalf("expected sentinel when no APIServer wired, got: %q", got)
-	}
+	assertControlPlaneIP(t, got)
 }
 
-func TestEndpoint_APIWithoutBaseURLKeepsSentinel(t *testing.T) {
+func TestEndpoint_APIWithoutBaseURLReturnsControlPlaneIP(t *testing.T) {
 	m := newTestMock()
 
 	api := kubernetes.NewAPIServer()
-	// Intentionally no SetBaseURL — Endpoint should fall back.
+	// Intentionally no SetBaseURL — Endpoint should fall back to the IP.
 	m.SetK8sAPI(api)
 
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
 	got := m.Endpoint("us-central1", "c1")
-	if !strings.Contains(got, "GKE-DATAPLANE-NOT-IMPLEMENTED") {
-		t.Fatalf("expected sentinel when APIServer has no base URL, got: %q", got)
-	}
+	assertControlPlaneIP(t, got)
 }
 
-func TestEndpoint_UnknownClusterFallsBackToSentinel(t *testing.T) {
+func TestEndpoint_UnknownClusterFallsBackToControlPlaneIP(t *testing.T) {
 	m := newTestMock()
 
 	api := kubernetes.NewAPIServer()
 	api.SetBaseURL("http://127.0.0.1:8080")
 	m.SetK8sAPI(api)
 
-	// Cluster never created — Endpoint should still return the sentinel
-	// rather than a half-built URL.
+	// Cluster never created — Endpoint should return a synthesized IP rather
+	// than a half-built /k8s/ URL.
 	got := m.Endpoint("us-central1", "ghost")
-	if !strings.Contains(got, "GKE-DATAPLANE-NOT-IMPLEMENTED") {
-		t.Fatalf("expected sentinel for unknown cluster, got: %q", got)
+	assertControlPlaneIP(t, got)
+}
+
+// assertControlPlaneIP fails unless got is a non-sentinel, dotted IPv4 host
+// (not a /k8s/ data-plane URL).
+func assertControlPlaneIP(t *testing.T, got string) {
+	t.Helper()
+
+	if strings.Contains(got, "NOT-IMPLEMENTED") {
+		t.Fatalf("endpoint still the sentinel: %q", got)
+	}
+
+	if strings.Contains(got, "/k8s/") {
+		t.Fatalf("endpoint should be a bare IP, got data-plane URL: %q", got)
+	}
+
+	if strings.Count(got, ".") != 3 {
+		t.Fatalf("endpoint = %q, want a dotted IPv4 address", got)
 	}
 }
 
@@ -125,7 +137,7 @@ func TestDeleteCluster_DeregistersK8sState(t *testing.T) {
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
 		Name:             "c1",
 		Location:         "us-central1",
-		InitialNodeCount: 1,
+		InitialNodeCount: int64Ptr(1),
 	}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}

@@ -41,7 +41,7 @@ func TestExportRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("seed source: %v", err)
 	}
 
-	ps, err := persist.Export(ctx, tSrc, persist.Options{IncludeAssets: true})
+	ps, err := persist.Export(ctx, src.SnapshotServices(), persist.Options{IncludeAssets: true})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -58,8 +58,7 @@ func TestExportRestoreRoundTrip(t *testing.T) {
 	}
 
 	dst := cloudemu.NewAWS()
-	tDst := seed.Target{Storage: dst.S3, Database: dst.DynamoDB, Secrets: dst.SecretsManager, Compute: dst.EC2}
-	if err := persist.Restore(ctx, tDst, &restored); err != nil {
+	if err := persist.Restore(ctx, dst.SnapshotServices(), &restored); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 
@@ -121,7 +120,10 @@ func TestExportAllRestoreAllMultiProvider(t *testing.T) {
 		t.Fatalf("seed gcp: %v", err)
 	}
 
-	snap, err := persist.ExportAll(ctx, src, persist.Options{IncludeAssets: true})
+	snap, err := persist.ExportAll(ctx, map[string]persist.Services{
+		"aws": aws.SnapshotServices(),
+		"gcp": gcp.SnapshotServices(),
+	}, persist.Options{IncludeAssets: true})
 	if err != nil {
 		t.Fatalf("ExportAll: %v", err)
 	}
@@ -136,9 +138,9 @@ func TestExportAllRestoreAllMultiProvider(t *testing.T) {
 	}
 
 	aws2, gcp2 := cloudemu.NewAWS(), cloudemu.NewGCP()
-	dst := map[string]seed.Target{
-		"aws": {Storage: aws2.S3, Database: aws2.DynamoDB},
-		"gcp": {Storage: gcp2.GCS, Database: gcp2.Firestore},
+	dst := map[string]persist.Services{
+		"aws": aws2.SnapshotServices(),
+		"gcp": gcp2.SnapshotServices(),
 	}
 	if err := persist.RestoreAll(ctx, &got, dst); err != nil {
 		t.Fatalf("RestoreAll: %v", err)
@@ -164,7 +166,10 @@ func dataOf(o *storagedriver.Object) []byte {
 
 // TestExportMetadataOnlyOmitsBodies verifies the default (metadata-only) export
 // records object keys/metadata but drops the bytes, and that IncludeAssets keeps
-// them — the flag that keeps the snapshot file KB-sized by default.
+// them — the flag that keeps the snapshot file KB-sized by default. With the AWS
+// S3 mock now snapshotting itself, the guarantee is asserted through a restore:
+// metadata-only keeps the object but empties its bytes, while IncludeAssets
+// keeps them.
 func TestExportMetadataOnlyOmitsBodies(t *testing.T) {
 	ctx := context.Background()
 
@@ -176,23 +181,50 @@ func TestExportMetadataOnlyOmitsBodies(t *testing.T) {
 		t.Fatalf("seed source: %v", err)
 	}
 
-	meta, err := persist.Export(ctx, tSrc, persist.Options{IncludeAssets: false})
+	// Metadata-only: the object is restored (still listed) but its bytes are gone.
+	meta, err := persist.Export(ctx, src.SnapshotServices(), persist.Options{IncludeAssets: false})
 	if err != nil {
 		t.Fatalf("export metadata-only: %v", err)
 	}
-	if len(meta.Buckets) != 1 || len(meta.Buckets[0].Objects) != 1 {
-		t.Fatalf("metadata-only dropped bucket/object metadata: %+v", meta)
-	}
-	if len(meta.Buckets[0].Objects[0].Body) != 0 {
-		t.Fatalf("metadata-only kept body: %q", meta.Buckets[0].Objects[0].Body)
+
+	metaDst := cloudemu.NewAWS()
+	if err := persist.Restore(ctx, metaDst.SnapshotServices(), &meta); err != nil {
+		t.Fatalf("restore metadata-only: %v", err)
 	}
 
-	full, err := persist.Export(ctx, tSrc, persist.Options{IncludeAssets: true})
+	head, err := metaDst.S3.HeadObject(ctx, "b", "k")
+	if err != nil {
+		t.Fatalf("metadata-only dropped object metadata: %v", err)
+	}
+	if head.Key != "k" {
+		t.Fatalf("restored object key = %q, want k", head.Key)
+	}
+
+	mo, err := metaDst.S3.GetObject(ctx, "b", "k")
+	if err != nil {
+		t.Fatalf("get metadata-only object: %v", err)
+	}
+	if len(mo.Data) != 0 {
+		t.Fatalf("metadata-only kept body: %q", mo.Data)
+	}
+
+	// IncludeAssets: the bytes survive.
+	full, err := persist.Export(ctx, src.SnapshotServices(), persist.Options{IncludeAssets: true})
 	if err != nil {
 		t.Fatalf("export with assets: %v", err)
 	}
-	if string(full.Buckets[0].Objects[0].Body) != "secret-bytes" {
-		t.Fatalf("asset export dropped body: %q", full.Buckets[0].Objects[0].Body)
+
+	fullDst := cloudemu.NewAWS()
+	if err := persist.Restore(ctx, fullDst.SnapshotServices(), &full); err != nil {
+		t.Fatalf("restore with assets: %v", err)
+	}
+
+	fo, err := fullDst.S3.GetObject(ctx, "b", "k")
+	if err != nil {
+		t.Fatalf("get asset object: %v", err)
+	}
+	if string(fo.Data) != "secret-bytes" {
+		t.Fatalf("asset export dropped body: %q", fo.Data)
 	}
 }
 
@@ -201,8 +233,7 @@ func TestExportMetadataOnlyOmitsBodies(t *testing.T) {
 func TestRestoreEmptyIsNoError(t *testing.T) {
 	ctx := context.Background()
 	dst := cloudemu.NewAWS()
-	tDst := seed.Target{Storage: dst.S3, Database: dst.DynamoDB}
-	if err := persist.Restore(ctx, tDst, &persist.ProviderState{}); err != nil {
+	if err := persist.Restore(ctx, dst.SnapshotServices(), &persist.ProviderState{}); err != nil {
 		t.Fatalf("restore empty: %v", err)
 	}
 }
@@ -221,13 +252,13 @@ func TestExportRestorePreservesGSIs(t *testing.T) {
 		t.Fatalf("create table with GSI: %v", err)
 	}
 
-	ps, err := persist.Export(ctx, seed.Target{Database: src.DynamoDB}, persist.Options{})
+	ps, err := persist.Export(ctx, src.SnapshotServices(), persist.Options{})
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
 	dst := cloudemu.NewAWS()
-	if err := persist.Restore(ctx, seed.Target{Database: dst.DynamoDB}, &ps); err != nil {
+	if err := persist.Restore(ctx, dst.SnapshotServices(), &ps); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 
@@ -249,7 +280,7 @@ func TestSnapshotFileRoundTrip(t *testing.T) {
 	snap := persist.Snapshot{
 		SchemaVersion: persist.SchemaVersion,
 		Providers: map[string]persist.ProviderState{
-			"aws": {Secrets: []persist.Secret{{Name: "k", Value: []byte("v")}}},
+			"aws": {Services: map[string]json.RawMessage{"secretsmanager": json.RawMessage(`{"k":"v"}`)}},
 		},
 	}
 	if err := snap.WriteFile(path); err != nil {
@@ -260,7 +291,7 @@ func TestSnapshotFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	if got.SchemaVersion != persist.SchemaVersion || len(got.Providers["aws"].Secrets) != 1 {
+	if got.SchemaVersion != persist.SchemaVersion || len(got.Providers["aws"].Services) != 1 {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 

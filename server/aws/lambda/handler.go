@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -54,23 +55,86 @@ const (
 // functions (not a function sub-resource), so they route on their own prefix.
 const layersPrefix = "/2018-10-31/layers"
 
+// functionURLPrefix is the Lambda Function URL API prefix. The URL config is a
+// function sub-resource (.../{name}/url and .../{name}/urls) but versioned under
+// 2021-10-31, so it needs its own Matches clause.
+const functionURLPrefix = "/2021-10-31/functions"
+
+// Function code-signing-config sub-resource (GetFunctionCodeSigningConfig et al).
+// Versioned under 2020-06-30 on the {name}/code-signing-config sub-resource, so
+// it needs its own Matches clause — otherwise the REST-JSON request falls through
+// to the S3 catch-all, which returns XML the Lambda client can't parse. Terraform
+// reads it on every function refresh.
+const (
+	codeSigningPrefix = "/2020-06-30/functions"
+	codeSigningSuffix = "/code-signing-config"
+)
+
 // subVersions is the "versions" path segment shared by the function-versions
 // route (/functions/{name}/versions) and the layer-versions routes.
 const subVersions = "versions"
+
+// Function sub-resource path segments that route both a collection/item verb
+// (serveSubresource) and a sub-item verb (the partsSubItem switch).
+const (
+	subAliases = "aliases"
+	subPolicy  = "policy"
+)
+
+// latestVersion is the symbolic version for a function's mutable current code.
+const latestVersion = "$LATEST"
+
+// packageTypeZip is the default deployment-package type. AWS requires Runtime
+// and Handler for a Zip package (but not for an Image package).
+const packageTypeZip = "Zip"
+
+// invocationTypeEvent is the async (fire-and-forget) invocation type. AWS
+// returns HTTP 202 with an empty body for it, versus 200 for RequestResponse.
+const invocationTypeEvent = "Event"
+
+// invocationTypeDryRun validates parameters and permissions without running the
+// function. AWS returns HTTP 204 No Content (nothing is executed).
+const invocationTypeDryRun = "DryRun"
+
+// lastUpdateStatusSuccessful is the terminal LastUpdateStatus real AWS reports
+// once a create/update completes. cloudemu settles synchronously, so every
+// config response carries it — this is the value the FunctionUpdatedV2 waiter
+// (SAM/CDK/Terraform) polls for.
+const lastUpdateStatusSuccessful = "Successful"
 
 const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
 )
 
+// AWS Lambda configuration defaults the handler emits when the client omitted
+// the field on create: Architectures defaults to ["x86_64"] and EphemeralStorage
+// (the /tmp size) to 512 MB.
+const (
+	archX8664                 = "x86_64"
+	defaultEphemeralStorageMB = 512
+)
+
+// EphemeralStorage accepted range: real Lambda rejects a size outside 512–10240
+// with InvalidParameterValueException.
+const (
+	minEphemeralStorageMB = 512
+	maxEphemeralStorageMB = 10240
+)
+
+// defaultLayerCodeSize is the CodeSize reported for an imported layer whose
+// content was not published to this emulator (e.g. an S3-sourced layer we did
+// not fetch), so the Layers list still carries a non-zero size.
+const defaultLayerCodeSize int64 = 1024
+
 // policyManager is the AWS-specific resource-policy surface (AddPermission /
 // GetPolicy / RemovePermission). It's not part of the portable Serverless
 // driver — resource policies are a Lambda concept — so the handler type-asserts
 // for it rather than requiring every cloud's function provider to implement it.
 type policyManager interface {
-	AddPermission(ctx context.Context, functionName string, stmt sdrv.PermissionStatement) error
-	RemovePermission(ctx context.Context, functionName, statementID string) error
-	GetPolicy(ctx context.Context, functionName string) (string, error)
+	AddPermission(ctx context.Context, functionName, qualifier string, stmt sdrv.PermissionStatement) error
+	RemovePermission(ctx context.Context, functionName, qualifier, statementID string) error
+	GetPolicy(ctx context.Context, functionName, qualifier string) (string, error)
 }
 
 // functionTagger is the AWS-specific Lambda tagging surface (not part of the
@@ -79,6 +143,15 @@ type functionTagger interface {
 	TagFunction(ctx context.Context, name string, tags map[string]string) error
 	UntagFunction(ctx context.Context, name string, keys []string) error
 	ListFunctionTags(ctx context.Context, name string) (map[string]string, error)
+}
+
+// awsConfigManager is the AWS-specific surface for the Lambda VpcConfig,
+// DeadLetterConfig and TracingConfig settings. These have no Azure Functions or
+// GCP Cloud Functions equivalent, so they are kept off the portable Serverless
+// interface and asserted the same way as policyManager / functionURLManager.
+type awsConfigManager interface {
+	SetFunctionAWSConfig(ctx context.Context, name string, cfg sdrv.AWSFunctionConfig, create bool) error
+	GetFunctionAWSConfig(ctx context.Context, name string) (sdrv.AWSFunctionConfig, error)
 }
 
 // ObjectStore is the slice of the in-process S3 backend the handler needs to
@@ -130,7 +203,9 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, esmPrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
-		strings.HasPrefix(r.URL.Path, layersPrefix)
+		strings.HasPrefix(r.URL.Path, layersPrefix) ||
+		strings.HasPrefix(r.URL.Path, functionURLPrefix) ||
+		isCodeSigningPath(r.URL.Path)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -167,9 +242,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveSubresource(w, r, name, parts[1])
 	case partsSubItem:
 		switch parts[1] {
-		case "aliases":
+		case subAliases:
 			h.serveAlias(w, r, name, parts[2])
-		case "policy":
+		case subPolicy:
 			h.serveRemovePermission(w, r, name, parts[2])
 		default:
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
@@ -193,6 +268,10 @@ func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
 		h.serveEventSourceMappings(w, r, uuid)
 	case strings.HasPrefix(r.URL.Path, layersPrefix):
 		h.serveLayers(w, r)
+	case strings.HasPrefix(r.URL.Path, functionURLPrefix):
+		h.serveFunctionURL(w, r)
+	case isCodeSigningPath(r.URL.Path):
+		h.serveFunctionCodeSigningConfig(w, r)
 	default:
 		name, ok := concurrencyFunctionName(r.URL.Path)
 		if !ok {
@@ -216,9 +295,9 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 		h.serveCode(w, r, name)
 	case subVersions:
 		h.serveVersions(w, r, name)
-	case "aliases":
+	case subAliases:
 		h.serveAliases(w, r, name)
-	case "policy":
+	case subPolicy:
 		h.servePolicy(w, r, name)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
@@ -285,6 +364,29 @@ func functionNameFromARN(arn string) string {
 	return arn
 }
 
+// splitFunctionNameQualifier extracts the bare function name and an optional
+// version/alias qualifier from an Invoke FunctionName path segment. Per the
+// Lambda Invoke API's FunctionName pattern, a version or alias can be
+// appended with ":<qualifier>" to any accepted form: a bare name
+// ("my-fn:PROD"), a full ARN ("arn:aws:lambda:region:account:function:my-fn:PROD"),
+// or a partial ARN ("account:function:my-fn:PROD"). Everything through the
+// "function:" marker (if present) is the function name; a colon after that is
+// the qualifier boundary.
+func splitFunctionNameQualifier(raw string) (name, qualifier string) {
+	const marker = ":function:"
+
+	rest := raw
+	if i := strings.LastIndex(raw, marker); i >= 0 {
+		rest = raw[i+len(marker):]
+	}
+
+	if j := strings.IndexByte(rest, ':'); j >= 0 {
+		return rest[:j], rest[j+1:]
+	}
+
+	return rest, ""
+}
+
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on
 // .../{name}/policy.
 func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name string) {
@@ -294,6 +396,8 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
+	qualifier := r.URL.Query().Get("Qualifier")
+
 	switch r.Method {
 	case http.MethodPost:
 		var req addPermissionRequest
@@ -301,7 +405,7 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 			return
 		}
 
-		err := pm.AddPermission(r.Context(), name, sdrv.PermissionStatement{
+		err := pm.AddPermission(r.Context(), name, qualifier, sdrv.PermissionStatement{
 			StatementID: req.StatementID, Action: req.Action,
 			Principal: req.Principal, SourceARN: req.SourceArn,
 		})
@@ -310,20 +414,18 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 			return
 		}
 
-		stmt, jerr := json.Marshal(map[string]any{
-			"Sid":       req.StatementID,
-			"Effect":    "Allow",
-			"Principal": map[string]string{"Service": req.Principal},
-			"Action":    req.Action,
-		})
-		if jerr != nil {
-			writeErr(w, jerr)
+		// Echo the statement exactly as GetPolicy renders it (correct per-type
+		// Principal shape, qualified Resource) rather than re-deriving it here, so
+		// the AddPermission response and a subsequent GetPolicy agree.
+		stmt, err := addedStatement(r.Context(), pm, name, qualifier, req.StatementID)
+		if err != nil {
+			writeErr(w, err)
 			return
 		}
 
-		writeJSON(w, http.StatusCreated, map[string]string{"Statement": string(stmt)})
+		writeJSON(w, http.StatusCreated, map[string]string{"Statement": stmt})
 	case http.MethodGet:
-		policy, err := pm.GetPolicy(r.Context(), name)
+		policy, err := pm.GetPolicy(r.Context(), name, qualifier)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -333,6 +435,36 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
+}
+
+// addedStatement returns the JSON of the single statement just added, pulled
+// back out of the qualifier-scoped policy so the AddPermission echo matches the
+// GetPolicy rendering (Principal shape, Resource ARN) instead of duplicating it.
+func addedStatement(ctx context.Context, pm policyManager, name, qualifier, statementID string) (string, error) {
+	policy, err := pm.GetPolicy(ctx, name, qualifier)
+	if err != nil {
+		return "", err
+	}
+
+	var doc struct {
+		Statement []json.RawMessage `json:"Statement"`
+	}
+
+	if err := json.Unmarshal([]byte(policy), &doc); err != nil {
+		return "", err
+	}
+
+	for _, raw := range doc.Statement {
+		var peek struct {
+			Sid string `json:"Sid"`
+		}
+
+		if json.Unmarshal(raw, &peek) == nil && peek.Sid == statementID {
+			return string(raw), nil
+		}
+	}
+
+	return "", cerrors.Newf(cerrors.NotFound, "statement %s not found", statementID)
 }
 
 // serveRemovePermission handles DELETE .../{name}/policy/{statementId}.
@@ -348,7 +480,7 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if err := pm.RemovePermission(r.Context(), name, statementID); err != nil {
+	if err := pm.RemovePermission(r.Context(), name, r.URL.Query().Get("Qualifier"), statementID); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -356,9 +488,23 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// serveConfiguration handles PUT .../{name}/configuration
-// (UpdateFunctionConfiguration).
+// serveConfiguration handles .../{name}/configuration: GET is
+// GetFunctionConfiguration (the op FunctionActiveV2 / FunctionUpdatedV2 waiters
+// poll — a 405 here hangs every Terraform/SAM/CDK deploy), PUT is
+// UpdateFunctionConfiguration.
 func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method == http.MethodGet {
+		cfg, err := h.resolvedConfiguration(r.Context(), name, r.URL.Query().Get("Qualifier"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, cfg)
+
+		return
+	}
+
 	if r.Method != http.MethodPut {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
@@ -370,11 +516,13 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	cfg := sdrv.FunctionConfig{
-		Name:    name,
-		Runtime: req.Runtime,
-		Handler: req.Handler,
-		Memory:  req.MemorySize,
-		Timeout: req.Timeout,
+		Name:        name,
+		Runtime:     req.Runtime,
+		Handler:     req.Handler,
+		Role:        req.Role,
+		Description: req.Description,
+		Memory:      req.MemorySize,
+		Timeout:     req.Timeout,
 	}
 	if req.Environment != nil {
 		cfg.Environment = req.Environment.Variables
@@ -386,7 +534,30 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toConfiguration(info))
+	awsCfg := h.applyAWSConfig(r.Context(), name, sdrv.AWSFunctionConfig{
+		VPCConfig:        toDriverVPCConfig(req.VpcConfig),
+		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
+		TracingConfig:    toDriverTracing(req.TracingConfig),
+		Layers:           h.resolveLayers(req.Layers),
+	}, false)
+
+	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
+}
+
+// writePublished publishes a new version of name and writes that version's
+// configuration with the given status, or the underlying error. It is the shared
+// tail of the Publish=true UpdateFunctionCode/UpdateFunctionConfiguration paths.
+func (h *Handler) writePublished(
+	ctx context.Context, w http.ResponseWriter, status int,
+	name string, info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig,
+) {
+	cfg, err := h.publishConfiguration(ctx, name, "", info, awsCfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, status, cfg)
 }
 
 // serveCode handles PUT .../{name}/code (UpdateFunctionCode). It resolves the
@@ -432,7 +603,14 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toConfiguration(info))
+	awsCfg := h.awsFnConfig(r.Context(), name)
+
+	if req.Publish {
+		h.writePublished(r.Context(), w, http.StatusOK, name, info, awsCfg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
 }
 
 // serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
@@ -457,10 +635,7 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 			return
 		}
 
-		cfg := toConfiguration(info)
-		cfg.Version = ver.Version
-		cfg.Description = ver.Description
-		writeJSON(w, http.StatusCreated, cfg)
+		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver, h.awsFnConfig(r.Context(), name)))
 	case http.MethodGet:
 		vers, err := h.fn.ListVersions(r.Context(), name)
 		if err != nil {
@@ -474,13 +649,20 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 			return
 		}
 
-		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, len(vers))}
-		for i := range vers {
-			cfg := toConfiguration(info)
-			cfg.Version = vers[i].Version
-			cfg.Description = vers[i].Description
-			out.Versions = append(out.Versions, cfg)
+		awsCfg := h.awsFnConfig(r.Context(), name)
+
+		// Sort by version so Marker offsets stay stable across paginated calls
+		// (ListVersions returns versions in publish order, but page deterministically).
+		sort.Slice(vers, func(i, j int) bool { return vers[i].Version < vers[j].Version })
+
+		start, end, nextMarker, _ := pageWindow(len(vers), r.URL.Query())
+
+		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, end-start)}
+		for i := start; i < end; i++ {
+			out.Versions = append(out.Versions, toVersionConfiguration(info, &vers[i], awsCfg))
 		}
+
+		out.NextMarker = nextMarker
 
 		writeJSON(w, http.StatusOK, out)
 	default:
@@ -501,6 +683,7 @@ func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name stri
 		a, err := h.fn.CreateAlias(r.Context(), sdrv.AliasConfig{
 			FunctionName: name, Name: req.Name,
 			FunctionVersion: req.FunctionVersion, Description: req.Description,
+			RoutingConfig: toRoutingConfig(req.RoutingConfig),
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -515,10 +698,17 @@ func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name stri
 			return
 		}
 
-		out := listAliasesResponse{Aliases: make([]aliasResponse, 0, len(aliases))}
-		for i := range aliases {
+		// Sort by name so Marker offsets stay stable across paginated calls.
+		sort.Slice(aliases, func(i, j int) bool { return aliases[i].Name < aliases[j].Name })
+
+		start, end, nextMarker, _ := pageWindow(len(aliases), r.URL.Query())
+
+		out := listAliasesResponse{Aliases: make([]aliasResponse, 0, end-start)}
+		for i := start; i < end; i++ {
 			out.Aliases = append(out.Aliases, toAliasResponse(&aliases[i]))
 		}
+
+		out.NextMarker = nextMarker
 
 		writeJSON(w, http.StatusOK, out)
 	default:
@@ -546,6 +736,7 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 		a, err := h.fn.UpdateAlias(r.Context(), sdrv.AliasConfig{
 			FunctionName: name, Name: aliasName,
 			FunctionVersion: req.FunctionVersion, Description: req.Description,
+			RoutingConfig: toRoutingConfig(req.RoutingConfig),
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -565,13 +756,39 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 	}
 }
 
+// toRoutingConfig maps the wire AliasRoutingConfiguration (a map of additional
+// version -> weight) to the single-additional-version driver shape. Only the
+// first entry is honored, which matches the driver's model.
+func toRoutingConfig(rc *aliasRoutingConfig) *sdrv.AliasRoutingConfig {
+	if rc == nil || len(rc.AdditionalVersionWeights) == 0 {
+		return nil
+	}
+
+	for version, weight := range rc.AdditionalVersionWeights {
+		return &sdrv.AliasRoutingConfig{AdditionalVersion: version, Weight: weight}
+	}
+
+	return nil
+}
+
 func toAliasResponse(a *sdrv.Alias) aliasResponse {
-	return aliasResponse{
+	resp := aliasResponse{
 		AliasArn:        a.AliasARN,
 		Name:            a.Name,
 		FunctionVersion: a.FunctionVersion,
 		Description:     a.Description,
+		RevisionID:      a.RevisionID,
 	}
+
+	if a.RoutingConfig != nil {
+		resp.RoutingConfig = &aliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{
+				a.RoutingConfig.AdditionalVersion: a.RoutingConfig.Weight,
+			},
+		}
+	}
+
+	return resp
 }
 
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
@@ -611,13 +828,20 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateCreateRequest(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := sdrv.FunctionConfig{
-		Name:    req.FunctionName,
-		Runtime: req.Runtime,
-		Handler: req.Handler,
-		Memory:  req.MemorySize,
-		Timeout: req.Timeout,
-		Tags:    req.Tags,
+		Name:        req.FunctionName,
+		Runtime:     req.Runtime,
+		Handler:     req.Handler,
+		Role:        req.Role,
+		Description: req.Description,
+		Memory:      req.MemorySize,
+		Timeout:     req.Timeout,
+		Tags:        req.Tags,
 	}
 	if req.Environment != nil {
 		cfg.Environment = req.Environment.Variables
@@ -643,7 +867,110 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, toConfiguration(info))
+	awsCfg := h.applyAWSConfig(r.Context(), req.FunctionName, h.createAWSConfig(&req), true)
+
+	// Publish=true cuts version 1 from the just-created function and returns that
+	// published version's configuration (Version "1", :1-qualified ARN), matching
+	// AWS and Terraform's aws_lambda_function{publish=true}.
+	if req.Publish {
+		cfg, perr := h.publishConfiguration(r.Context(), req.FunctionName, req.Description, info, awsCfg)
+		if perr != nil {
+			writeErr(w, perr)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, cfg)
+
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, toConfiguration(info, awsCfg))
+}
+
+// validateCreateRequest enforces the CreateFunction input rules the emulator
+// checks up front: a .zip package requires Runtime and Handler, and an
+// EphemeralStorage size must be within the accepted range. Each violation is an
+// InvalidArgument error the wire layer maps to InvalidParameterValueException.
+func validateCreateRequest(req *createFunctionRequest) error {
+	if req.PackageType == "" || req.PackageType == packageTypeZip {
+		if req.Runtime == "" {
+			return cerrors.New(cerrors.InvalidArgument,
+				"Runtime is required if the deployment package is a .zip file archive.")
+		}
+
+		if req.Handler == "" {
+			return cerrors.New(cerrors.InvalidArgument,
+				"Handler is required if the deployment package is a .zip file archive.")
+		}
+	}
+
+	return validateEphemeralStorage(req.EphemeralStorage)
+}
+
+// validateEphemeralStorage rejects a /tmp size outside the AWS 512–10240 MB range.
+func validateEphemeralStorage(e *ephemeralStorageEnvelope) error {
+	if e == nil {
+		return nil
+	}
+
+	if e.Size < minEphemeralStorageMB || e.Size > maxEphemeralStorageMB {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"'ephemeralStorage.size' value %d must be >= %d and <= %d",
+			e.Size, minEphemeralStorageMB, maxEphemeralStorageMB)
+	}
+
+	return nil
+}
+
+// createAWSConfig assembles the AWS-only settings supplied on a CreateFunction
+// request (VpcConfig/DeadLetterConfig/TracingConfig plus Architectures,
+// EphemeralStorage and the imported Layers) for applyAWSConfig to store.
+func (h *Handler) createAWSConfig(req *createFunctionRequest) sdrv.AWSFunctionConfig {
+	return sdrv.AWSFunctionConfig{
+		VPCConfig:        toDriverVPCConfig(req.VpcConfig),
+		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
+		TracingConfig:    toDriverTracing(req.TracingConfig),
+		Architectures:    req.Architectures,
+		EphemeralStorage: toDriverEphemeral(req.EphemeralStorage),
+		Layers:           h.resolveLayers(req.Layers),
+	}
+}
+
+// publishConfiguration publishes a new version of name and renders that version's
+// configuration (its own version number and a qualified ARN), the response body
+// AWS returns for a Publish=true Create/UpdateFunctionCode/Configuration.
+func (h *Handler) publishConfiguration(
+	ctx context.Context, name, description string,
+	info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig,
+) (functionConfiguration, error) {
+	ver, err := h.fn.PublishVersion(ctx, name, description)
+	if err != nil {
+		return functionConfiguration{}, err
+	}
+
+	return toVersionConfiguration(info, ver, awsCfg), nil
+}
+
+// resolveLayers maps the requested layer ARNs to the echoed Layers list,
+// resolving each layer version's CodeSize from its staged content when the layer
+// was published to this emulator, or a sane default otherwise.
+func (h *Handler) resolveLayers(arns []string) []sdrv.FunctionLayer {
+	if len(arns) == 0 {
+		return nil
+	}
+
+	out := make([]sdrv.FunctionLayer, 0, len(arns))
+
+	for _, arn := range arns {
+		size := int64(len(h.layerContentFor(arn)))
+		if size == 0 {
+			size = defaultLayerCodeSize
+		}
+
+		out = append(out, sdrv.FunctionLayer{ARN: arn, CodeSize: size})
+	}
+
+	return out
 }
 
 // resolveCode returns the deployment-package bytes for a CreateFunction request.
@@ -689,14 +1016,80 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	cfg, err := h.resolvedConfiguration(r.Context(), name, r.URL.Query().Get("Qualifier"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, functionResource{
-		Configuration: toConfiguration(info),
+		Configuration: cfg,
 		Code: codeLocation{
 			RepositoryType: "S3",
 			Location:       "https://cloudemu-mock/" + name,
 		},
-		Tags: info.Tags,
+		Concurrency: h.reservedConcurrency(r.Context(), name),
+		Tags:        info.Tags,
 	})
+}
+
+// resolvedConfiguration renders a function's configuration for an optional
+// Qualifier. An empty or "$LATEST" qualifier returns the mutable $LATEST config;
+// a version number returns that published version's snapshot (its own
+// CodeSha256/Runtime/Timeout and a version-qualified ARN); an alias resolves to
+// its target version's config but keeps the alias-qualified ARN. A qualifier
+// that names neither an alias nor a published version is a
+// ResourceNotFoundException, matching real Lambda.
+func (h *Handler) resolvedConfiguration(ctx context.Context, name, qualifier string) (functionConfiguration, error) {
+	info, err := h.fn.GetFunction(ctx, name)
+	if err != nil {
+		return functionConfiguration{}, err
+	}
+
+	awsCfg := h.awsFnConfig(ctx, name)
+
+	if qualifier == "" || qualifier == latestVersion {
+		return toConfiguration(info, awsCfg), nil
+	}
+
+	// An alias resolves one hop to its target version's config; the ARN keeps the
+	// alias qualifier rather than the target version number.
+	if a, aerr := h.fn.GetAlias(ctx, name, qualifier); aerr == nil {
+		ver, verr := h.findVersion(ctx, name, a.FunctionVersion)
+		if verr != nil {
+			return functionConfiguration{}, verr
+		}
+
+		cfg := toVersionConfiguration(info, ver, awsCfg)
+		cfg.FunctionArn = info.ARN + ":" + qualifier
+
+		return cfg, nil
+	}
+
+	ver, verr := h.findVersion(ctx, name, qualifier)
+	if verr != nil {
+		return functionConfiguration{}, cerrors.Newf(cerrors.NotFound,
+			"function version or alias %q not found for %s", qualifier, name)
+	}
+
+	return toVersionConfiguration(info, ver, awsCfg), nil
+}
+
+// findVersion returns the published version (or $LATEST) snapshot matching
+// version, or a NotFound error.
+func (h *Handler) findVersion(ctx context.Context, name, version string) (*sdrv.FunctionVersion, error) {
+	vers, err := h.fn.ListVersions(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range vers {
+		if vers[i].Version == version {
+			return &vers[i], nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "version %s not found for %s", version, name)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -706,10 +1099,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := listFunctionsResponse{Functions: make([]functionConfiguration, 0, len(infos))}
-	for i := range infos {
-		out.Functions = append(out.Functions, toConfiguration(&infos[i]))
+	// Sort by name so Marker offsets stay stable across paginated calls (the
+	// driver returns functions in map-iteration order, which is unstable).
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+
+	start, end, nextMarker, _ := pageWindow(len(infos), r.URL.Query())
+
+	out := listFunctionsResponse{Functions: make([]functionConfiguration, 0, end-start)}
+	for i := start; i < end; i++ {
+		out.Functions = append(out.Functions, toConfiguration(&infos[i], h.awsFnConfig(r.Context(), infos[i].Name)))
 	}
+
+	out.NextMarker = nextMarker
 
 	writeJSON(w, http.StatusOK, out)
 }
@@ -732,17 +1133,62 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	// FunctionName may carry its own ":<qualifier>" suffix (bare name, full ARN,
+	// or partial ARN all accept one — see the Invoke API's FunctionName pattern);
+	// the Qualifier query parameter is the other place AWS accepts one and, when
+	// both are present, wins.
+	functionName, qualifier := splitFunctionNameQualifier(name)
+	if q := r.URL.Query().Get("Qualifier"); q != "" {
+		qualifier = q
+	}
+
+	invokeType := r.Header.Get("X-Amz-Invocation-Type")
+
+	// A DryRun invocation validates the request without executing the function:
+	// confirm the function exists, then return 204 No Content (real Lambda runs
+	// nothing and returns no payload).
+	if invokeType == invocationTypeDryRun {
+		if _, err = h.fn.GetFunction(r.Context(), functionName); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	out, err := h.fn.Invoke(r.Context(), sdrv.InvokeInput{
-		FunctionName: name,
+		FunctionName: functionName,
 		Payload:      payload,
-		InvokeType:   r.Header.Get("X-Amz-Invocation-Type"),
+		InvokeType:   invokeType,
+		Qualifier:    qualifier,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	// An asynchronous (Event) invocation is fire-and-forget: AWS queues it and
+	// returns HTTP 202 with an empty body — no payload, no function-error header.
+	if invokeType == invocationTypeEvent {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
 	w.Header().Set("Content-Type", contentTypeJSON)
+
+	// A synchronous (RequestResponse) invocation always reports the version that
+	// ran via X-Amz-Executed-Version, which the SDK reads into
+	// InvokeOutput.ExecutedVersion: the alias's target version when Qualifier
+	// named an alias, the qualifier itself when it named a version, or $LATEST
+	// for an unqualified invoke.
+	executedVersion := out.ExecutedVersion
+	if executedVersion == "" {
+		executedVersion = latestVersion
+	}
+
+	w.Header().Set("X-Amz-Executed-Version", executedVersion)
 
 	if out.Error != "" {
 		// Lambda surfaces handler errors via the X-Amz-Function-Error header
@@ -767,24 +1213,212 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	_, _ = w.Write(out.Payload)
 }
 
-func toConfiguration(info *sdrv.FunctionInfo) functionConfiguration {
+// toVersionConfiguration renders a published version's configuration. It starts
+// from the live function (for name/ARN/state/environment) then overlays the
+// immutable per-version fields snapshotted at publish time, so each version
+// reports its own CodeSha256/RevisionId/runtime rather than reusing $LATEST.
+func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion, awsCfg *sdrv.AWSFunctionConfig) functionConfiguration {
+	cfg := toConfiguration(info, awsCfg)
+	cfg.Version = ver.Version
+	cfg.Description = ver.Description
+	cfg.CodeSha256 = ver.CodeSHA256
+	cfg.RevisionID = ver.RevisionID
+	cfg.Runtime = ver.Runtime
+	cfg.Handler = ver.Handler
+	cfg.Role = ver.Role
+	cfg.MemorySize = ver.Memory
+	cfg.Timeout = ver.Timeout
+
+	// A published version's ARN is qualified with the version number; $LATEST
+	// keeps the unqualified ARN.
+	if ver.Version != "" && ver.Version != latestVersion {
+		cfg.FunctionArn = info.ARN + ":" + ver.Version
+	}
+
+	return cfg
+}
+
+func toConfiguration(info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig) functionConfiguration {
+	version := info.Version
+	if version == "" {
+		version = latestVersion
+	}
+
 	cfg := functionConfiguration{
-		FunctionName: info.Name,
-		FunctionArn:  info.ARN,
-		Runtime:      info.Runtime,
-		Handler:      info.Handler,
-		MemorySize:   info.Memory,
-		Timeout:      info.Timeout,
-		LastModified: info.LastModified,
-		State:        info.State,
-		PackageType:  "Zip",
+		FunctionName:     info.Name,
+		FunctionArn:      info.ARN,
+		Runtime:          info.Runtime,
+		Role:             info.Role,
+		Handler:          info.Handler,
+		Description:      info.Description,
+		MemorySize:       info.Memory,
+		Timeout:          info.Timeout,
+		LastModified:     info.LastModified,
+		State:            info.State,
+		LastUpdateStatus: lastUpdateStatusSuccessful,
+		PackageType:      packageTypeZip,
+		CodeSha256:       info.CodeSHA256,
+		CodeSize:         info.CodeSize,
+		Version:          version,
+		RevisionID:       info.RevisionID,
 	}
 
 	if len(info.Environment) > 0 {
 		cfg.Environment = &envEnvelope{Variables: info.Environment}
 	}
 
+	// AWS always reports Architectures and EphemeralStorage, defaulting to
+	// ["x86_64"] and 512 MB when the function was created without them.
+	cfg.Architectures = []string{archX8664}
+	cfg.EphemeralStorage = &ephemeralStorageEnvelope{Size: defaultEphemeralStorageMB}
+
+	applyAWSConfigToResponse(&cfg, awsCfg)
+
 	return cfg
+}
+
+// applyAWSConfigToResponse overlays the stored AWS-only settings onto a function
+// configuration response: the imported layers, plus VpcConfig/DeadLetterConfig/
+// TracingConfig, and the non-default Architectures/EphemeralStorage.
+func applyAWSConfigToResponse(cfg *functionConfiguration, awsCfg *sdrv.AWSFunctionConfig) {
+	if awsCfg == nil {
+		return
+	}
+
+	if len(awsCfg.Architectures) > 0 {
+		cfg.Architectures = awsCfg.Architectures
+	}
+
+	if awsCfg.EphemeralStorage != nil {
+		cfg.EphemeralStorage = &ephemeralStorageEnvelope{Size: awsCfg.EphemeralStorage.Size}
+	}
+
+	cfg.Layers = toLayerReferences(awsCfg.Layers)
+
+	if awsCfg.VPCConfig != nil {
+		cfg.VpcConfig = &vpcConfigEnvelope{
+			SubnetIDs:        awsCfg.VPCConfig.SubnetIDs,
+			SecurityGroupIDs: awsCfg.VPCConfig.SecurityGroupIDs,
+			VpcID:            awsCfg.VPCConfig.VpcID,
+		}
+	}
+
+	if awsCfg.DeadLetterConfig != nil {
+		cfg.DeadLetterConfig = &deadLetterConfigEnvelope{TargetArn: awsCfg.DeadLetterConfig.TargetArn}
+	}
+
+	if awsCfg.TracingConfig != nil {
+		cfg.TracingConfig = &tracingConfigEnvelope{Mode: awsCfg.TracingConfig.Mode}
+	}
+}
+
+// reservedConcurrency returns the function's reserved-concurrency envelope for
+// the GetFunction Concurrency field, or nil when no reserved concurrency has
+// been set (GetFunctionConcurrency reports NotFound) — matching AWS, which omits
+// the object until PutFunctionConcurrency has run.
+func (h *Handler) reservedConcurrency(ctx context.Context, name string) *concurrencyEnvelope {
+	cfg, err := h.fn.GetFunctionConcurrency(ctx, name)
+	if err != nil || cfg == nil {
+		return nil
+	}
+
+	return &concurrencyEnvelope{ReservedConcurrentExecutions: cfg.ReservedConcurrentExecutions}
+}
+
+// awsFnConfig returns the AWS-only Lambda settings (VpcConfig/DeadLetterConfig/
+// TracingConfig) for a function, or nil when the backend does not model them (a
+// non-AWS serverless provider). It is fetched through the AWS-only optional
+// interface so these AWS-specific settings stay off the provider-agnostic
+// Serverless surface.
+func (h *Handler) awsFnConfig(ctx context.Context, name string) *sdrv.AWSFunctionConfig {
+	mgr, ok := h.fn.(awsConfigManager)
+	if !ok {
+		return nil
+	}
+
+	cfg, err := mgr.GetFunctionAWSConfig(ctx, name)
+	if err != nil {
+		return nil
+	}
+
+	return &cfg
+}
+
+// applyAWSConfig stores the AWS-only settings supplied on a Create/Update
+// request through the AWS-only optional interface, then returns the resulting
+// stored config for the response. It is a no-op returning nil when the backend
+// does not model these settings.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the SetFunctionAWSConfig value receiver.
+func (h *Handler) applyAWSConfig(
+	ctx context.Context, name string, cfg sdrv.AWSFunctionConfig, create bool,
+) *sdrv.AWSFunctionConfig {
+	mgr, ok := h.fn.(awsConfigManager)
+	if !ok {
+		return nil
+	}
+
+	if err := mgr.SetFunctionAWSConfig(ctx, name, cfg, create); err != nil {
+		return nil
+	}
+
+	stored, err := mgr.GetFunctionAWSConfig(ctx, name)
+	if err != nil {
+		return nil
+	}
+
+	return &stored
+}
+
+// toDriverVPCConfig maps a wire VpcConfig envelope to the driver type.
+func toDriverVPCConfig(e *vpcConfigEnvelope) *sdrv.VPCConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.VPCConfig{SubnetIDs: e.SubnetIDs, SecurityGroupIDs: e.SecurityGroupIDs}
+}
+
+// toDriverDeadLetter maps a wire DeadLetterConfig envelope to the driver type.
+func toDriverDeadLetter(e *deadLetterConfigEnvelope) *sdrv.DeadLetterConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.DeadLetterConfig{TargetArn: e.TargetArn}
+}
+
+// toDriverTracing maps a wire TracingConfig envelope to the driver type.
+func toDriverTracing(e *tracingConfigEnvelope) *sdrv.TracingConfig {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.TracingConfig{Mode: e.Mode}
+}
+
+// toDriverEphemeral maps a wire EphemeralStorage envelope to the driver type.
+func toDriverEphemeral(e *ephemeralStorageEnvelope) *sdrv.EphemeralStorage {
+	if e == nil {
+		return nil
+	}
+
+	return &sdrv.EphemeralStorage{Size: e.Size}
+}
+
+// toLayerReferences maps the stored imported layers to the function
+// configuration's Layers list.
+func toLayerReferences(layers []sdrv.FunctionLayer) []layerReference {
+	if len(layers) == 0 {
+		return nil
+	}
+
+	out := make([]layerReference, 0, len(layers))
+	for i := range layers {
+		out = append(out, layerReference{Arn: layers[i].ARN, CodeSize: layers[i].CodeSize})
+	}
+
+	return out
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -816,14 +1450,16 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ResourceConflictException", err.Error())
+		writeError(w, http.StatusConflict, "ResourceConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "ServiceException", err.Error())
+		writeError(w, http.StatusInternalServerError, "ServiceException", msg)
 	}
 }

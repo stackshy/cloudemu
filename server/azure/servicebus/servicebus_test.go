@@ -39,6 +39,19 @@ func newTestServer(t *testing.T) (*httptest.Server, *cloudemuHandle) {
 	return srv, &cloudemuHandle{provider: cloud}
 }
 
+// seedNamespace creates the parent namespace so queue/topic operations under it
+// resolve. Real Service Bus rejects child creates under a missing namespace.
+func seedNamespace(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+
+	resp := doRequest(t, srv, http.MethodPut, nsURL()+apiVer, `{"location":"eastus"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed namespace = %d", resp.StatusCode)
+	}
+
+	_ = resp.Body.Close()
+}
+
 type cloudemuHandle struct {
 	provider any
 }
@@ -47,7 +60,7 @@ func TestNamespaceLifecycle(t *testing.T) {
 	srv, _ := newTestServer(t)
 
 	put := doRequest(t, srv, http.MethodPut, nsURL()+apiVer, `{"location":"eastus"}`)
-	if put.StatusCode != http.StatusOK {
+	if put.StatusCode != http.StatusCreated {
 		t.Fatalf("PUT namespace = %d", put.StatusCode)
 	}
 
@@ -69,6 +82,7 @@ func TestNamespaceLifecycle(t *testing.T) {
 
 func TestQueueLifecycle(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	body := `{"properties":{"maxSizeInMegabytes":1024}}`
 
@@ -116,6 +130,7 @@ func TestQueueLifecycle(t *testing.T) {
 
 func TestQueueIdempotentPut(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	body := `{"properties":{}}`
 
@@ -132,6 +147,7 @@ func TestQueueIdempotentPut(t *testing.T) {
 
 func TestListQueues(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	for _, n := range []string{"a", "b", "c"} {
 		_ = doRequest(t, srv, http.MethodPut, queueURL(n)+apiVer, `{"properties":{}}`)
@@ -156,6 +172,7 @@ func TestListQueues(t *testing.T) {
 
 func TestDataPlaneSendReceive(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	if r := doRequest(t, srv, http.MethodPut, queueURL("loop")+apiVer,
 		`{"properties":{}}`); r.StatusCode != http.StatusOK {
@@ -184,18 +201,31 @@ func TestDataPlaneSendReceive(t *testing.T) {
 	}
 }
 
-func TestDataPlaneSendToMissingQueue(t *testing.T) {
+// TestDataPlaneUnknownFlatEntityDeclined confirms the Service Bus handler does
+// NOT claim a flat "/{entity}/messages" request for an entity it holds no queue
+// or topic for. That shape is shared with Azure Queue Storage's azqueue SDK, so
+// Service Bus must decline unknown entities and let the Queue Storage handler
+// serve them. With only Service Bus registered here, a declined request reaches
+// no handler and returns 501; in the full server it falls through to Queue
+// Storage. (A genuinely-addressed Service Bus miss still 404s — see
+// TestDataPlaneSubscriptionNotFound for the subscription path.)
+func TestDataPlaneUnknownFlatEntityDeclined(t *testing.T) {
 	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
 
 	resp := doRequest(t, srv, http.MethodPost, "/"+nsName+"/no-such/messages", "x")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("send to missing queue = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("send to unknown flat entity = %d, want 501 (Service Bus must decline so Queue Storage can serve it)",
+			resp.StatusCode)
 	}
 }
 
 // helpers --------------------------------------------------------------------
 
-func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) *http.Response {
+// doRequest issues a raw HTTP request against the test server. Trailing
+// headers maps, if any, are merged onto the request (e.g. a data-plane send's
+// BrokerProperties header).
+func doRequest(t *testing.T, srv *httptest.Server, method, path, body string, headers ...map[string]string) *http.Response {
 	t.Helper()
 
 	var rdr io.Reader
@@ -206,6 +236,12 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) *h
 	req, _ := http.NewRequestWithContext(context.Background(), method, srv.URL+path, rdr)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for _, hs := range headers {
+		for k, v := range hs {
+			req.Header.Set(k, v)
+		}
 	}
 
 	resp, err := http.DefaultClient.Do(req)

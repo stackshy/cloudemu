@@ -137,7 +137,9 @@ func TestStartInstances(t *testing.T) {
 	}{
 		{name: "success", ids: []string{id}},
 		{name: "not found", ids: []string{"vm-missing"}, wantErr: true, errMsg: "not found"},
-		{name: "already running", ids: []string{id}, wantErr: true, errMsg: "cannot start"},
+		// Real Azure returns 200/202 (no state-conflict error) when Start is
+		// called on an already-running VM.
+		{name: "idempotent on already running", ids: []string{id}},
 	}
 
 	for _, tt := range tests {
@@ -175,7 +177,9 @@ func TestStopInstances(t *testing.T) {
 	}{
 		{name: "success", ids: []string{id}},
 		{name: "not found", ids: []string{"vm-missing"}, wantErr: true, errMsg: "not found"},
-		{name: "already stopped", ids: []string{id}, wantErr: true, errMsg: "cannot stop"},
+		// Real Azure returns 200/202 (no state-conflict error) when Stop is
+		// called on an already-stopped VM.
+		{name: "idempotent on already stopped", ids: []string{id}},
 	}
 
 	for _, tt := range tests {
@@ -1464,7 +1468,7 @@ func TestDetachVolume(t *testing.T) {
 		err = m.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
 		require.NoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		require.NoError(t, err)
 
 		// Verify state changed back to available
@@ -1479,7 +1483,7 @@ func TestDetachVolume(t *testing.T) {
 		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
 		require.NoError(t, err)
 
-		err = m.DetachVolume(ctx, vol.ID)
+		err = m.DetachVolume(ctx, vol.ID, "", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not attached")
 	})

@@ -1170,9 +1170,21 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
 	p := NewAWS(config.WithClock(clock))
 
-	// Create alarm: CPU > 0 (any CPU should trigger since auto-metrics emit 25.0)
+	// Launch the instance first so we know its id; EC2 auto-metrics are dimensioned
+	// by InstanceId, and CloudWatch matches an alarm to a metric series by its exact
+	// dimension set — so a real user alarms on that instance's InstanceId.
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := instances[0].ID
+
+	// Create alarm: CPU > 0 on that instance (auto-metrics emit 25.0).
 	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
 		Name: "any-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		Dimensions:         map[string]string{"InstanceId": id},
 		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
 		Period: 600, EvaluationPeriods: 1, Stat: "Average",
 	}); err != nil {
@@ -1185,11 +1197,9 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 		t.Errorf("expected INSUFFICIENT_DATA, got %s", alarms[0].State)
 	}
 
-	// Launch instance — auto-metrics should trigger alarm evaluation
-	_, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
-		ImageID: "ami-test", InstanceType: "t2.micro",
-	}, 1)
-	if err != nil {
+	// A lifecycle op re-emits the instance's running auto-metrics (CPU=25),
+	// triggering alarm evaluation the way the next datapoint would in real AWS.
+	if err := p.EC2.RebootInstances(ctx, []string{id}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1205,16 +1215,8 @@ func TestLifecycleStopEmitsZeroMetrics(t *testing.T) {
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
 	p := NewAWS(config.WithClock(clock))
 
-	// Create alarm: CPU < 1 (LessThanThreshold)
-	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
-		Name: "low-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
-		ComparisonOperator: "LessThanThreshold", Threshold: 1,
-		Period: 300, EvaluationPeriods: 1, Stat: "Average",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// RunInstances → CPU=25 → alarm stays OK (25 is not < 1)
+	// Launch first to learn the instance id; the alarm carries that InstanceId
+	// dimension so exact-match evaluation reads this instance's metric series.
 	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID: "ami-test", InstanceType: "t2.micro",
 	}, 1)
@@ -1223,9 +1225,24 @@ func TestLifecycleStopEmitsZeroMetrics(t *testing.T) {
 	}
 	id := instances[0].ID
 
+	// Create alarm: CPU < 1 (LessThanThreshold) on that instance.
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "low-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		Dimensions:         map[string]string{"InstanceId": id},
+		ComparisonOperator: "LessThanThreshold", Threshold: 1,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reboot re-emits running auto-metrics (CPU=25) → alarm evaluates to OK (not < 1).
+	if err := p.EC2.RebootInstances(ctx, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+
 	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"low-cpu"})
 	if alarms[0].State != "OK" {
-		t.Errorf("expected OK after RunInstances (CPU=25, not < 1), got %s", alarms[0].State)
+		t.Errorf("expected OK after running metrics (CPU=25, not < 1), got %s", alarms[0].State)
 	}
 
 	// Advance clock past evaluation window so old datapoints fall out
@@ -1247,16 +1264,8 @@ func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
 	p := NewAWS(config.WithClock(clock))
 
-	// Create alarm: CPU > 0
-	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
-		Name: "any-cpu-start", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
-		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
-		Period: 300, EvaluationPeriods: 1, Stat: "Average",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// RunInstances → stop → advance clock → start
+	// RunInstances first to learn the id → create the dimensioned alarm → stop →
+	// advance clock → start.
 	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID: "ami-test", InstanceType: "t2.micro",
 	}, 1)
@@ -1264,6 +1273,16 @@ func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := instances[0].ID
+
+	// Create alarm: CPU > 0 on that instance.
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "any-cpu-start", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		Dimensions:         map[string]string{"InstanceId": id},
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := p.EC2.StopInstances(ctx, []string{id}); err != nil {
 		t.Fatal(err)
@@ -1526,56 +1545,60 @@ func TestCostTrackerReset(t *testing.T) {
 	}
 }
 
-// Feature: Lambda-SQS Trigger Tests
+// Feature: Lambda-SQS Event Source Mapping Tests
 func TestLambdaSQSTrigger(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
 
-	// 1. Create a Lambda function
+	// 1. Create a Lambda function.
+	var triggerCount int64
 	p.Lambda.RegisterHandler("processor", func(_ context.Context, payload []byte) ([]byte, error) {
+		atomic.AddInt64(&triggerCount, 1)
 		return []byte("processed: " + string(payload)), nil
 	})
-	_, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+
+	if _, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
 		Name: "processor", Runtime: "go1.x", Handler: "main",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// 2. Create SQS queue
+	// 2. Create SQS queue.
 	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "trigger-queue"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// 3. Wire the trigger: SQS → Lambda
-	var triggerCount int64
-	p.SQS.SetTrigger(q.URL, func(queueURL string, msg mqdriver.Message) {
-		// Invoke lambda with the message body
-		_, invokeErr := p.Lambda.Invoke(ctx, serverlessdriver.InvokeInput{
-			FunctionName: "processor",
-			Payload:      []byte(msg.Body),
-		})
-		if invokeErr != nil {
-			t.Errorf("trigger invoke failed: %v", invokeErr)
-		}
-		atomic.AddInt64(&triggerCount, 1)
-	})
+	// 3. Wire the trigger: SQS -> Lambda, via a real event source mapping.
+	if _, err := p.Lambda.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: q.ARN, FunctionName: "processor", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
-	// 4. Send messages — Lambda should be triggered automatically
+	// 4. Send messages — Lambda should be invoked automatically.
 	for i := 0; i < 5; i++ {
-		_, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+		if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 			QueueURL: q.URL,
 			Body:     "message-body",
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// 5. Verify Lambda was triggered 5 times
-	if atomic.LoadInt64(&triggerCount) != 5 {
-		t.Errorf("expected 5 trigger invocations, got %d", triggerCount)
+	// 5. Verify Lambda was invoked 5 times, and each processed message was
+	// deleted from the queue on success.
+	if got := atomic.LoadInt64(&triggerCount); got != 5 {
+		t.Errorf("expected 5 invocations, got %d", got)
+	}
+
+	info, err := p.SQS.GetQueueInfo(ctx, q.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.ApproxMessageCount != 0 {
+		t.Errorf("expected 0 messages left in queue after successful processing, got %d", info.ApproxMessageCount)
 	}
 }
 
@@ -1583,29 +1606,51 @@ func TestLambdaSQSTriggerRemove(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
 
+	var triggerCount int64
+	p.Lambda.RegisterHandler("remover", func(_ context.Context, _ []byte) ([]byte, error) {
+		atomic.AddInt64(&triggerCount, 1)
+		return nil, nil
+	})
+
+	if _, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name: "remover", Runtime: "go1.x", Handler: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "removable-trigger"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var triggerCount int64
-	p.SQS.SetTrigger(q.URL, func(_ string, _ mqdriver.Message) {
-		atomic.AddInt64(&triggerCount, 1)
+	mapping, err := p.Lambda.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: q.ARN, FunctionName: "remover", Enabled: true,
 	})
-
-	// Send one message — trigger fires
-	p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"})
-	if atomic.LoadInt64(&triggerCount) != 1 {
-		t.Errorf("expected 1 trigger, got %d", triggerCount)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Remove trigger
-	p.SQS.RemoveTrigger(q.URL)
+	// Send one message — the mapping fires.
+	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"}); err != nil {
+		t.Fatal(err)
+	}
 
-	// Send another message — trigger should NOT fire
-	p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"})
-	if atomic.LoadInt64(&triggerCount) != 1 {
-		t.Errorf("expected still 1 trigger after removal, got %d", triggerCount)
+	if got := atomic.LoadInt64(&triggerCount); got != 1 {
+		t.Errorf("expected 1 invocation, got %d", got)
+	}
+
+	// Remove the mapping.
+	if err := p.Lambda.DeleteEventSourceMapping(ctx, mapping.UUID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send another message — the mapping should NOT fire.
+	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := atomic.LoadInt64(&triggerCount); got != 1 {
+		t.Errorf("expected still 1 invocation after mapping removal, got %d", got)
 	}
 }
 
@@ -2339,11 +2384,12 @@ func testNotificationWithDriver(t *testing.T, ctx context.Context, d notifdriver
 		t.Errorf("expected 'order-events', got %q", got.Name)
 	}
 
-	// Subscribe
+	// Subscribe. SMS auto-confirms across all three providers (AWS SNS email/
+	// http/https start pending), so the confirmed assertion holds portably.
 	sub, err := d.Subscribe(ctx, notifdriver.SubscriptionConfig{
 		TopicID:  "order-events",
-		Protocol: "email",
-		Endpoint: "admin@example.com",
+		Protocol: "sms",
+		Endpoint: "+15551234567",
 	})
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
@@ -4661,9 +4707,12 @@ func TestNATGateway(t *testing.T) {
 				t.Fatalf("CreateSubnet: %v", err)
 			}
 
+			// A private NAT gateway needs no Elastic IP, so this cross-provider CRUD
+			// check stays uniform: AWS requires an AllocationId only for a public one.
 			nat, err := p.d.CreateNATGateway(ctx, netdriver.NATGatewayConfig{
-				SubnetID: subnet.ID,
-				Tags:     map[string]string{"env": "test"},
+				SubnetID:         subnet.ID,
+				ConnectivityType: "private",
+				Tags:             map[string]string{"env": "test"},
 			})
 			if err != nil {
 				t.Fatalf("CreateNATGateway: %v", err)
@@ -4784,8 +4833,17 @@ func TestRouteTables(t *testing.T) {
 				t.Errorf("expected VPC %s, got %s", vpcInfo.ID, rt.VPCID)
 			}
 
-			// Create route
-			err = p.d.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+			// Create route. The AWS provider validates that the gateway target
+			// exists, so attach a real internet gateway to point the route at.
+			igw, err := p.d.CreateInternetGateway(ctx, netdriver.InternetGatewayConfig{})
+			if err != nil {
+				t.Fatalf("CreateInternetGateway: %v", err)
+			}
+			if err = p.d.AttachInternetGateway(ctx, igw.ID, vpcInfo.ID); err != nil {
+				t.Fatalf("AttachInternetGateway: %v", err)
+			}
+
+			err = p.d.CreateRoute(ctx, rt.ID, "0.0.0.0/0", igw.ID, "gateway")
 			if err != nil {
 				t.Fatalf("CreateRoute: %v", err)
 			}
@@ -6062,9 +6120,12 @@ func TestUpdateItemGCP(t *testing.T) {
 	}
 }
 
-func TestUpdateItemNotFound(t *testing.T) {
+func TestUpdateItemMissingKey(t *testing.T) {
 	ctx := context.Background()
 
+	// DynamoDB UpdateItem upserts: an update against a missing key creates the
+	// item. Cosmos DB and Firestore instead require the document to exist, so
+	// they return NotFound — the semantics diverge by provider.
 	t.Run("AWS", func(t *testing.T) {
 		p := NewAWS()
 
@@ -6074,13 +6135,20 @@ func TestUpdateItemNotFound(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		if _, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
 			Table:   "t1",
 			Key:     map[string]any{"pk": "missing"},
 			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
-		})
-		if !cerrors.IsNotFound(err) {
-			t.Errorf("expected NotFound, got %v", err)
+		}); err != nil {
+			t.Fatalf("UpdateItem should upsert, got %v", err)
+		}
+
+		item, err := p.DynamoDB.GetItem(ctx, "t1", map[string]any{"pk": "missing"})
+		if err != nil {
+			t.Fatalf("GetItem after upsert: %v", err)
+		}
+		if item == nil {
+			t.Fatal("UpdateItem should have created the item")
 		}
 	})
 
@@ -7089,7 +7157,7 @@ func TestVolumeLifecycleAWS(t *testing.T) {
 		t.Errorf("expected state 'in-use', got %q", vols[0].State)
 	}
 
-	if err := p.EC2.DetachVolume(ctx, vol.ID); err != nil {
+	if err := p.EC2.DetachVolume(ctx, vol.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -7580,7 +7648,7 @@ func TestElasticIPAWS(t *testing.T) {
 
 	// Associate with instance.
 	assocID, err := p.VPC.AssociateAddress(
-		ctx, eip.AllocationID, "i-12345",
+		ctx, eip.AllocationID, netdriver.AssociateAddressInput{InstanceID: "i-12345"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -7951,7 +8019,7 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 }
 
 // testKeyPairOperations is a shared helper that tests key pair CRUD operations.
-func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute) {
+func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute, deleteMissingIsIdempotent bool) {
 	t.Helper()
 
 	// Create a key pair
@@ -7976,8 +8044,10 @@ func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Co
 		t.Error("expected non-empty ID")
 	}
 
-	if kp.Fingerprint != "fp-test-key" {
-		t.Errorf("expected fingerprint 'fp-test-key', got %q", kp.Fingerprint)
+	// Fingerprint format is provider-specific; AWS emits a real colon-hex digest
+	// (see server/aws/ec2 key_pair_test.go for the exact-shape assertion).
+	if kp.Fingerprint == "" {
+		t.Error("expected non-empty fingerprint")
 	}
 
 	if kp.PrivateKey == "" {
@@ -8053,9 +8123,14 @@ func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Co
 		t.Fatalf("DeleteKeyPair: %v", err)
 	}
 
-	// Delete again should fail
+	// Delete again: AWS DeleteKeyPair is idempotent (returns success for a
+	// missing key), matching real EC2; other providers still error.
 	err = c.DeleteKeyPair(ctx, "test-key")
-	if err == nil {
+	if deleteMissingIsIdempotent {
+		if err != nil {
+			t.Errorf("DeleteKeyPair of a missing key should be idempotent, got %v", err)
+		}
+	} else if err == nil {
 		t.Error("expected error deleting non-existent key pair")
 	}
 
@@ -8073,19 +8148,19 @@ func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Co
 func TestKeyPairAWS(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
-	testKeyPairOperations(t, ctx, p.EC2)
+	testKeyPairOperations(t, ctx, p.EC2, true)
 }
 
 func TestKeyPairAzure(t *testing.T) {
 	ctx := context.Background()
 	p := NewAzure()
-	testKeyPairOperations(t, ctx, p.VirtualMachines)
+	testKeyPairOperations(t, ctx, p.VirtualMachines, false)
 }
 
 func TestKeyPairGCP(t *testing.T) {
 	ctx := context.Background()
 	p := NewGCP()
-	testKeyPairOperations(t, ctx, p.GCE)
+	testKeyPairOperations(t, ctx, p.GCE, false)
 }
 
 // ─── Global Secondary Indexes ───────────────────────────────────────────
@@ -8906,17 +8981,18 @@ func testAlarmActions(
 		t.Fatalf("[%s] GetAlarmHistory: %v", label, err)
 	}
 
-	// Two transitions: INSUFFICIENT_DATA->OK, OK->ALARM.
+	// Two transitions, returned newest-first (CloudWatch's default
+	// TimestampDescending order): OK->ALARM then INSUFFICIENT_DATA->OK.
 	if len(history) != 2 {
 		t.Fatalf("[%s] expected 2 history entries, got %d", label, len(history))
 	}
 
-	if history[0].OldState != "INSUFFICIENT_DATA" || history[0].NewState != "OK" {
-		t.Errorf("[%s] history[0]: expected INSUFFICIENT_DATA->OK, got %s->%s", label, history[0].OldState, history[0].NewState)
+	if history[0].OldState != "OK" || history[0].NewState != "ALARM" {
+		t.Errorf("[%s] history[0]: expected OK->ALARM (newest), got %s->%s", label, history[0].OldState, history[0].NewState)
 	}
 
-	if history[1].OldState != "OK" || history[1].NewState != "ALARM" {
-		t.Errorf("[%s] history[1]: expected OK->ALARM, got %s->%s", label, history[1].OldState, history[1].NewState)
+	if history[1].OldState != "INSUFFICIENT_DATA" || history[1].NewState != "OK" {
+		t.Errorf("[%s] history[1]: expected INSUFFICIENT_DATA->OK, got %s->%s", label, history[1].OldState, history[1].NewState)
 	}
 
 	// 9. Verify history limit works.

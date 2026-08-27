@@ -11,9 +11,18 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// dnsNameTag stores a zone's DNS suffix (dnsName), which the dns driver does
-// not model, so it round-trips through the zone's tags.
-const dnsNameTag = "cloudemu:gcpDnsName"
+// Reserved tag keys the dns driver's ZoneInfo does not model, so they
+// round-trip through the zone's tags: the DNS suffix (dnsName), the
+// human-readable description, and the RFC3339 creation time.
+const (
+	dnsNameTag      = "cloudemu:gcpDnsName"
+	descriptionTag  = "cloudemu:gcpDescription"
+	creationTimeTag = "cloudemu:gcpCreationTime"
+)
+
+// reservedTagCount is the number of reserved tags above, used to size the tag
+// map created at zone creation.
+const reservedTagCount = 3
 
 // Kind values Cloud DNS stamps on its resources; the SDK tolerates them being
 // absent but real responses carry them, so we mirror the wire faithfully.
@@ -23,11 +32,21 @@ const (
 	kindResourceRecordSet      = "dns#resourceRecordSet"
 	kindResourceRecordSetsList = "dns#resourceRecordSetsListResponse"
 	kindChange                 = "dns#change"
+	kindChangesList            = "dns#changesListResponse"
+	kindOperation              = "dns#operation"
+	kindDNSSECConfig           = "dns#managedZoneDnsSecConfig"
+	kindDNSKeySpec             = "dns#dnsKeySpec"
+	kindPrivateVisibility      = "dns#managedZonePrivateVisibilityConfig"
+	kindVisibilityNetwork      = "dns#managedZonePrivateVisibilityConfigNetwork"
 )
 
 // changeStatusDone is the terminal state Cloud DNS reports once a change has
 // propagated; our mock applies changes synchronously so every change is done.
 const changeStatusDone = "done"
+
+// operationStatusDone is the terminal state a managed-zone Operation reports;
+// zone mutations apply synchronously so every operation is immediately done.
+const operationStatusDone = "done"
 
 // managedZoneJSON is the Cloud DNS ManagedZone resource. The SDK unmarshals
 // `id` as a uint64 (via a `,string` tag), so it must serialize as a numeric
@@ -41,11 +60,113 @@ type managedZoneJSON struct {
 	Visibility   string            `json:"visibility,omitempty"`
 	Labels       map[string]string `json:"labels,omitempty"`
 	CreationTime string            `json:"creationTime,omitempty"`
+	NameServers  []string          `json:"nameServers,omitempty"`
+	// DnssecConfig and PrivateVisibilityConfig round-trip the GCP-only zone
+	// settings the dns driver models as ZoneInfo.DNSSECConfig/VisibilityNetworks.
+	DnssecConfig            *dnssecConfigJSON            `json:"dnssecConfig,omitempty"`
+	PrivateVisibilityConfig *privateVisibilityConfigJSON `json:"privateVisibilityConfig,omitempty"`
+}
+
+// dnssecConfigJSON is the Cloud DNS ManagedZoneDnsSecConfig resource.
+type dnssecConfigJSON struct {
+	Kind            string           `json:"kind,omitempty"`
+	State           string           `json:"state,omitempty"`
+	NonExistence    string           `json:"nonExistence,omitempty"`
+	DefaultKeySpecs []dnsKeySpecJSON `json:"defaultKeySpecs,omitempty"`
+}
+
+// dnsKeySpecJSON is one entry of dnssecConfig.defaultKeySpecs.
+type dnsKeySpecJSON struct {
+	Kind      string `json:"kind,omitempty"`
+	Algorithm string `json:"algorithm,omitempty"`
+	KeyLength int64  `json:"keyLength,omitempty"`
+	KeyType   string `json:"keyType,omitempty"`
+}
+
+// privateVisibilityConfigJSON is the Cloud DNS
+// ManagedZonePrivateVisibilityConfig resource (networks subset).
+type privateVisibilityConfigJSON struct {
+	Kind     string                  `json:"kind,omitempty"`
+	Networks []visibilityNetworkJSON `json:"networks,omitempty"`
+}
+
+// visibilityNetworkJSON is one entry of privateVisibilityConfig.networks.
+type visibilityNetworkJSON struct {
+	Kind       string `json:"kind,omitempty"`
+	NetworkURL string `json:"networkUrl,omitempty"`
+}
+
+// dnssecToJSON converts the driver's DNSSEC config to its wire form.
+func dnssecToJSON(c *dnsdriver.DNSSECConfig) *dnssecConfigJSON {
+	if c == nil {
+		return nil
+	}
+
+	out := &dnssecConfigJSON{Kind: kindDNSSECConfig, State: c.State, NonExistence: c.NonExistence}
+
+	for i := range c.DefaultKeySpecs {
+		k := &c.DefaultKeySpecs[i]
+		out.DefaultKeySpecs = append(out.DefaultKeySpecs, dnsKeySpecJSON{
+			Kind: kindDNSKeySpec, Algorithm: k.Algorithm, KeyLength: int64(k.KeyLength), KeyType: k.KeyType,
+		})
+	}
+
+	return out
+}
+
+// dnssecFromJSON converts a wire DNSSEC config to the driver's form.
+func dnssecFromJSON(j *dnssecConfigJSON) *dnsdriver.DNSSECConfig {
+	if j == nil {
+		return nil
+	}
+
+	out := &dnsdriver.DNSSECConfig{State: j.State, NonExistence: j.NonExistence}
+
+	for i := range j.DefaultKeySpecs {
+		k := &j.DefaultKeySpecs[i]
+		out.DefaultKeySpecs = append(out.DefaultKeySpecs, dnsdriver.DNSKeySpec{
+			Algorithm: k.Algorithm, KeyLength: int(k.KeyLength), KeyType: k.KeyType,
+		})
+	}
+
+	return out
+}
+
+// visibilityToJSON converts the driver's visibility networks to their wire form.
+func visibilityToJSON(nets []dnsdriver.VisibilityNetwork) *privateVisibilityConfigJSON {
+	if len(nets) == 0 {
+		return nil
+	}
+
+	out := &privateVisibilityConfigJSON{Kind: kindPrivateVisibility}
+	for i := range nets {
+		out.Networks = append(out.Networks, visibilityNetworkJSON{
+			Kind: kindVisibilityNetwork, NetworkURL: nets[i].NetworkURL,
+		})
+	}
+
+	return out
+}
+
+// visibilityFromJSON converts a wire privateVisibilityConfig to the driver's
+// visibility-network slice.
+func visibilityFromJSON(j *privateVisibilityConfigJSON) []dnsdriver.VisibilityNetwork {
+	if j == nil || len(j.Networks) == 0 {
+		return nil
+	}
+
+	out := make([]dnsdriver.VisibilityNetwork, 0, len(j.Networks))
+	for i := range j.Networks {
+		out = append(out, dnsdriver.VisibilityNetwork{NetworkURL: j.Networks[i].NetworkURL})
+	}
+
+	return out
 }
 
 type managedZonesListResponse struct {
-	Kind         string            `json:"kind"`
-	ManagedZones []managedZoneJSON `json:"managedZones"`
+	Kind          string            `json:"kind"`
+	ManagedZones  []managedZoneJSON `json:"managedZones"`
+	NextPageToken string            `json:"nextPageToken,omitempty"`
 }
 
 // resourceRecordSetJSON is the Cloud DNS ResourceRecordSet resource.
@@ -58,8 +179,28 @@ type resourceRecordSetJSON struct {
 }
 
 type resourceRecordSetsListResponse struct {
-	Kind   string                  `json:"kind"`
-	Rrsets []resourceRecordSetJSON `json:"rrsets"`
+	Kind          string                  `json:"kind"`
+	Rrsets        []resourceRecordSetJSON `json:"rrsets"`
+	NextPageToken string                  `json:"nextPageToken,omitempty"`
+}
+
+// changesListResponse is the Cloud DNS changes.list response.
+type changesListResponse struct {
+	Kind          string       `json:"kind"`
+	Changes       []changeJSON `json:"changes"`
+	NextPageToken string       `json:"nextPageToken,omitempty"`
+}
+
+// operationJSON is the Cloud DNS Operation resource, returned by
+// managedZones.patch and managedZones.update. Zone mutations apply
+// synchronously, so the operation is reported done immediately.
+type operationJSON struct {
+	Kind      string `json:"kind"`
+	ID        string `json:"id,omitempty"`
+	StartTime string `json:"startTime,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Type      string `json:"type,omitempty"`
+	User      string `json:"user,omitempty"`
 }
 
 // changeJSON is the Cloud DNS Change resource: a batch of record additions and
@@ -106,13 +247,44 @@ func toManagedZoneJSON(info *dnsdriver.ZoneInfo) managedZoneJSON {
 	}
 
 	return managedZoneJSON{
-		Kind:       kindManagedZone,
-		Name:       info.Name,
-		ID:         numericID(info.ID),
-		Visibility: visibilityFor(info.Private),
-		Labels:     stripReservedTags(info.Tags),
-		DNSName:    dnsName,
+		Kind:         kindManagedZone,
+		Name:         info.Name,
+		ID:           numericID(info.ID),
+		Visibility:   visibilityFor(info.Private),
+		Labels:       stripReservedTags(info.Tags),
+		DNSName:      dnsName,
+		Description:  info.Tags[descriptionTag],
+		CreationTime: info.Tags[creationTimeTag],
+		NameServers:  nameServersFor(info.ID),
+
+		DnssecConfig:            dnssecToJSON(info.DNSSECConfig),
+		PrivateVisibilityConfig: visibilityToJSON(info.VisibilityNetworks),
 	}
+}
+
+// nsLetterCount is the number of ns-cloud-<letter> pools Cloud DNS draws from.
+const nsLetterCount = 5
+
+// nameServersPerZone is the number of authoritative name servers Cloud DNS
+// assigns to every managed zone.
+const nameServersPerZone = 4
+
+// nameServersFor returns the four authoritative name servers Cloud DNS assigns
+// to a zone, e.g. ns-cloud-e1.googledomains.com. … ns-cloud-e4.googledomains.com.
+// Real Cloud DNS picks one of five letter pools (a–e) per zone; we derive it
+// deterministically from the zone id so a given zone always reports the same
+// delegation NS set on every create/get and in its apex NS record.
+func nameServersFor(zoneID string) []string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(zoneID))
+	letter := rune('a' + int(h.Sum32()%nsLetterCount))
+
+	ns := make([]string, 0, nameServersPerZone)
+	for i := 1; i <= nameServersPerZone; i++ {
+		ns = append(ns, "ns-cloud-"+string(letter)+strconv.Itoa(i)+".googledomains.com.")
+	}
+
+	return ns
 }
 
 // stripReservedTags returns the user labels with cloudemu-internal keys removed.
@@ -136,6 +308,22 @@ func stripReservedTags(in map[string]string) map[string]string {
 	}
 
 	return out
+}
+
+// apexTTL is the TTL Cloud DNS gives the auto-created apex SOA and NS records.
+const apexTTL = 21600
+
+// apexRecordConfigs returns the SOA and NS record sets Cloud DNS auto-creates at
+// a new zone's apex (dnsName). The NS record advertises the zone's delegation
+// name servers; the SOA names the first of them as primary.
+func apexRecordConfigs(zoneID, dnsName string) []dnsdriver.RecordConfig {
+	ns := nameServersFor(zoneID)
+	soa := ns[0] + " cloud-dns-hostmaster.google.com. 1 21600 3600 259200 300"
+
+	return []dnsdriver.RecordConfig{
+		{ZoneID: zoneID, Name: dnsName, Type: "NS", TTL: apexTTL, Values: ns},
+		{ZoneID: zoneID, Name: dnsName, Type: "SOA", TTL: apexTTL, Values: []string{soa}},
+	}
 }
 
 func toRecordSetJSON(rec *dnsdriver.RecordInfo) resourceRecordSetJSON {

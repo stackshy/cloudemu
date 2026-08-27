@@ -11,7 +11,6 @@ package s3
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -53,10 +52,6 @@ func e2eRequireCode(t *testing.T, err error, want cerrors.Code, op string) {
 	if got := cerrors.GetCode(err); got != want {
 		t.Fatalf("%s: expected code %v, got %v (err=%v)", op, want, got, err)
 	}
-}
-
-func sha256Hex(data []byte) string {
-	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // TestFullObjectLifecycle walks a complete user journey:
@@ -102,7 +97,7 @@ func TestFullObjectLifecycle(t *testing.T) {
 		e2eRequireNoErr(t, m.PutObject(ctx, bucket, o.key, o.data, o.contentType, o.metadata), "PutObject "+o.key)
 	}
 
-	// GetObject returns exact bytes, content type and sha256 ETag.
+	// GetObject returns exact bytes, content type and MD5 ETag.
 	for _, o := range objects {
 		got, gerr := m.GetObject(ctx, bucket, o.key)
 		e2eRequireNoErr(t, gerr, "GetObject "+o.key)
@@ -115,8 +110,8 @@ func TestFullObjectLifecycle(t *testing.T) {
 			t.Fatalf("GetObject %s: contentType = %q, want %q", o.key, got.Info.ContentType, o.contentType)
 		}
 
-		if got.Info.ETag != sha256Hex(o.data) {
-			t.Fatalf("GetObject %s: ETag = %q, want sha256 %q", o.key, got.Info.ETag, sha256Hex(o.data))
+		if got.Info.ETag != md5Hex(o.data) {
+			t.Fatalf("GetObject %s: ETag = %q, want md5 %q", o.key, got.Info.ETag, md5Hex(o.data))
 		}
 
 		if got.Info.Size != int64(len(o.data)) {
@@ -220,7 +215,7 @@ func TestFullObjectLifecycle(t *testing.T) {
 	over, err := m.GetObject(ctx, bucket, "docs/readme.txt")
 	e2eRequireNoErr(t, err, "GetObject overwritten")
 
-	if string(over.Data) != "v2" || over.Info.ContentType != "text/markdown" || over.Info.ETag != sha256Hex([]byte("v2")) {
+	if string(over.Data) != "v2" || over.Info.ContentType != "text/markdown" || over.Info.ETag != md5Hex([]byte("v2")) {
 		t.Fatalf("overwrite not fully applied: %+v data=%q", over.Info, over.Data)
 	}
 
@@ -400,8 +395,9 @@ func TestPaginationTokens(t *testing.T) {
 		}
 	}
 
-	// Survey behavior: CommonPrefixes are NOT paginated — full set on every page
-	// even when object slice is truncated.
+	// Delimited listing: object keys and rolled-up common prefixes are capped
+	// JOINTLY by MaxKeys over one lexicographic stream. Each prefix is returned
+	// on exactly one page (never repeated), and no page exceeds MaxKeys.
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("dir%d/file", i)
 		e2eRequireNoErr(t, m.PutObject(ctx, bucket, key, []byte("x"), "text/plain", nil), "PutObject "+key)
@@ -410,8 +406,65 @@ func TestPaginationTokens(t *testing.T) {
 	first, err := m.ListObjects(ctx, bucket, driver.ListOptions{Delimiter: "/", MaxKeys: 2})
 	e2eRequireNoErr(t, err, "ListObjects delimiter page1")
 
-	if len(first.CommonPrefixes) != 5 {
-		t.Fatalf("first page CommonPrefixes = %d, want all 5 (prefixes are never paginated)", len(first.CommonPrefixes))
+	if got := len(first.Objects) + len(first.CommonPrefixes); got != 2 {
+		t.Fatalf("first page items = %d (objects=%d prefixes=%d), want 2 (MaxKeys caps keys+prefixes jointly)",
+			got, len(first.Objects), len(first.CommonPrefixes))
+	}
+
+	prefixSeen := map[string]int{}
+	keySeen := map[string]int{}
+	token = ""
+	pages = 0
+
+	for {
+		res, perr := m.ListObjects(ctx, bucket, driver.ListOptions{Delimiter: "/", MaxKeys: 2, PageToken: token})
+		e2eRequireNoErr(t, perr, "ListObjects delimiter page")
+
+		pages++
+
+		if n := len(res.Objects) + len(res.CommonPrefixes); n > 2 {
+			t.Fatalf("page %d has %d items, exceeds MaxKeys=2", pages, n)
+		}
+
+		for _, o := range res.Objects {
+			keySeen[o.Key]++
+		}
+
+		for _, p := range res.CommonPrefixes {
+			prefixSeen[p]++
+		}
+
+		if !res.IsTruncated {
+			break
+		}
+
+		token = res.NextPageToken
+	}
+
+	// 25 bare keys + 5 rolled-up prefixes = 30 items over ceil(30/2)=15 pages.
+	if pages != 15 {
+		t.Fatalf("delimited pagination in %d pages, want 15", pages)
+	}
+
+	if len(keySeen) != total {
+		t.Fatalf("distinct keys = %d, want %d", len(keySeen), total)
+	}
+
+	for k, c := range keySeen {
+		if c != 1 {
+			t.Fatalf("key %q returned %d times, want exactly 1", k, c)
+		}
+	}
+
+	if len(prefixSeen) != 5 {
+		t.Fatalf("distinct common prefixes = %d, want 5", len(prefixSeen))
+	}
+
+	for i := 0; i < 5; i++ {
+		p := fmt.Sprintf("dir%d/", i)
+		if prefixSeen[p] != 1 {
+			t.Fatalf("common prefix %q returned %d times, want exactly 1", p, prefixSeen[p])
+		}
 	}
 }
 
@@ -447,8 +500,8 @@ func TestMultipartJourney(t *testing.T) {
 		p, perr := m.UploadPart(ctx, bucket, "assembled/object.bin", up.UploadID, n, partBodies[n])
 		e2eRequireNoErr(t, perr, fmt.Sprintf("UploadPart %d", n))
 
-		if p.ETag != sha256Hex(partBodies[n]) {
-			t.Fatalf("part %d ETag = %q, want sha256 of body", n, p.ETag)
+		if p.ETag != md5Hex(partBodies[n]) {
+			t.Fatalf("part %d ETag = %q, want md5 of body", n, p.ETag)
 		}
 
 		parts = append(parts, *p)
@@ -477,8 +530,11 @@ func TestMultipartJourney(t *testing.T) {
 		t.Fatalf("assembled contentType = %q", obj.Info.ContentType)
 	}
 
-	if obj.Info.ETag != sha256Hex([]byte("AAAABBBBCCCC")) {
-		t.Fatalf("assembled ETag = %q, want fresh sha256 over whole body", obj.Info.ETag)
+	// Multipart ETag is md5(md5(part1)+md5(part2)+md5(part3))-3, parts in
+	// ascending PartNumber order (1=AAAA, 2=BBBB, 3=CCCC).
+	wantETag := multipartETag([][]byte{[]byte("AAAA"), []byte("BBBB"), []byte("CCCC")})
+	if obj.Info.ETag != wantETag {
+		t.Fatalf("assembled ETag = %q, want multipart ETag %q", obj.Info.ETag, wantETag)
 	}
 
 	if obj.Info.Metadata == nil {

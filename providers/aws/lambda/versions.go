@@ -26,14 +26,16 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 	fd.nextVersion++
 
 	verStr := strconv.Itoa(verNum)
-	sha := codeSHA(&fd.info)
+	sha := fd.info.CodeSHA256
+	rev := fd.info.RevisionID
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 
 	vd := &versionData{
-		config:    snapshotConfig(&fd.info),
-		version:   verStr,
-		codeSHA:   sha,
-		createdAt: now,
+		config:     snapshotConfig(&fd.info),
+		version:    verStr,
+		codeSHA:    sha,
+		revisionID: rev,
+		createdAt:  now,
 	}
 	fd.versions = append(fd.versions, vd)
 	m.funcs.Set(functionName, fd)
@@ -43,7 +45,13 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 		Version:      verStr,
 		Description:  description,
 		CodeSHA256:   sha,
+		RevisionID:   rev,
 		CreatedAt:    now,
+		Runtime:      fd.info.Runtime,
+		Handler:      fd.info.Handler,
+		Memory:       fd.info.Memory,
+		Timeout:      fd.info.Timeout,
+		Role:         fd.info.Role,
 	}, nil
 }
 
@@ -59,7 +67,13 @@ func (m *Mock) ListVersions(_ context.Context, functionName string) ([]driver.Fu
 	result = append(result, driver.FunctionVersion{
 		FunctionName: functionName,
 		Version:      latestVersion,
-		CodeSHA256:   codeSHA(&fd.info),
+		CodeSHA256:   fd.info.CodeSHA256,
+		RevisionID:   fd.info.RevisionID,
+		Runtime:      fd.info.Runtime,
+		Handler:      fd.info.Handler,
+		Memory:       fd.info.Memory,
+		Timeout:      fd.info.Timeout,
+		Role:         fd.info.Role,
 	})
 
 	for _, v := range fd.versions {
@@ -67,7 +81,13 @@ func (m *Mock) ListVersions(_ context.Context, functionName string) ([]driver.Fu
 			FunctionName: functionName,
 			Version:      v.version,
 			CodeSHA256:   v.codeSHA,
+			RevisionID:   v.revisionID,
 			CreatedAt:    v.createdAt,
+			Runtime:      v.config.Runtime,
+			Handler:      v.config.Handler,
+			Memory:       v.config.Memory,
+			Timeout:      v.config.Timeout,
+			Role:         v.config.Role,
 		})
 	}
 
@@ -90,6 +110,8 @@ func snapshotConfig(info *driver.FunctionInfo) driver.FunctionConfig {
 		Name:        info.Name,
 		Runtime:     info.Runtime,
 		Handler:     info.Handler,
+		Role:        info.Role,
+		Description: info.Description,
 		Memory:      info.Memory,
 		Timeout:     info.Timeout,
 		Environment: env,

@@ -51,6 +51,65 @@ func newDisksSDKClientForSnap(t *testing.T, ts *httptest.Server) *gcpcompute.Dis
 	return client
 }
 
+// TestSDKSnapshotSourceDiskEcho proves snapshots.get echoes the caller's
+// sourceDisk URL verbatim (previously a fabricated driver self-link) and
+// returns a creationTimestamp.
+func TestSDKSnapshotSourceDiskEcho(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Compute: cloudP.GCE})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	disksClient := newDisksSDKClientForSnap(t, ts)
+
+	diskOp, err := disksClient.Insert(ctx, &computepb.InsertDiskRequest{
+		Project: testProject, Zone: testZone,
+		DiskResource: &computepb.Disk{Name: ptrStr("snapsrc"), SizeGb: ptrInt64(64)},
+	})
+	if err != nil {
+		t.Fatalf("disk Insert: %v", err)
+	}
+
+	if err := diskOp.Wait(ctx); err != nil {
+		t.Fatalf("disk wait: %v", err)
+	}
+
+	const wantSource = "projects/" + testProject + "/zones/" + testZone + "/disks/snapsrc"
+
+	snapsClient := newSnapshotsSDKClient(t, ts)
+
+	snapOp, err := snapsClient.Insert(ctx, &computepb.InsertSnapshotRequest{
+		Project: testProject,
+		SnapshotResource: &computepb.Snapshot{
+			Name: ptrStr("snap-src-echo"), SourceDisk: ptrStr(wantSource),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := snapOp.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := snapsClient.Get(ctx, &computepb.GetSnapshotRequest{
+		Project: testProject, Snapshot: "snap-src-echo",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetSourceDisk() != wantSource {
+		t.Errorf("sourceDisk=%q want %q", got.GetSourceDisk(), wantSource)
+	}
+
+	if got.GetCreationTimestamp() == "" {
+		t.Error("creationTimestamp is empty")
+	}
+}
+
 func TestSDKSnapshotRoundTripGCP(t *testing.T) {
 	cloudP := cloudemu.NewGCP()
 	srv := gcpserver.New(gcpserver.Drivers{Compute: cloudP.GCE})

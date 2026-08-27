@@ -33,6 +33,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		TaskDefinition                string                             `json:"taskDefinition"`
 		DesiredCount                  int                                `json:"desiredCount"`
 		LaunchType                    string                             `json:"launchType"`
+		Role                          string                             `json:"role"`
 		SchedulingStrategy            string                             `json:"schedulingStrategy"`
 		PlatformVersion               string                             `json:"platformVersion"`
 		PropagateTags                 string                             `json:"propagateTags"`
@@ -57,6 +58,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		TaskDefinition:                req.TaskDefinition,
 		DesiredCount:                  req.DesiredCount,
 		LaunchType:                    req.LaunchType,
+		Role:                          req.Role,
 		SchedulingStrategy:            req.SchedulingStrategy,
 		DeploymentController:          deploymentControllerType(req.DeploymentController),
 		PlatformVersion:               req.PlatformVersion,
@@ -135,10 +137,13 @@ func deploymentControllerType(dc *wireDeploymentController) string {
 	return dc.Type
 }
 
-//nolint:dupl // decode-cluster/list-arns and decode-ids/describe shapes recur per resource family; typing them apart is intentional.
 func (h *Handler) listServices(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster string `json:"cluster"`
+		Cluster            string `json:"cluster"`
+		LaunchType         string `json:"launchType"`
+		SchedulingStrategy string `json:"schedulingStrategy"`
+		MaxResults         int    `json:"maxResults"`
+		NextToken          string `json:"nextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -153,13 +158,28 @@ func (h *Handler) listServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	arns := make([]string, 0, len(services))
+
 	for i := range services {
+		if req.LaunchType != "" && services[i].LaunchType != req.LaunchType {
+			continue
+		}
+
+		if req.SchedulingStrategy != "" && services[i].SchedulingStrategy != req.SchedulingStrategy {
+			continue
+		}
+
 		arns = append(arns, services[i].ARN)
 	}
 
-	wire.WriteJSON(w, map[string]any{"serviceArns": arns})
+	items, next, ok := paginateARNs(w, arns, req.MaxResults, req.NextToken)
+	if !ok {
+		return
+	}
+
+	wire.WriteJSON(w, listResponse("serviceArns", items, next))
 }
 
+//nolint:dupl // decode-ids/describe shapes recur per resource family; typing them apart is intentional.
 func (h *Handler) describeServices(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Services []string `json:"services"`

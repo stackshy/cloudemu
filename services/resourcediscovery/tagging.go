@@ -10,13 +10,18 @@ import (
 
 // AWS service identifiers as they appear in ARNs.
 const (
-	awsServiceS3       = "s3"
-	awsServiceDynamoDB = "dynamodb"
-	awsServiceEC2      = "ec2"
-	awsServiceLambda   = "lambda"
-	awsServiceSecrets  = "secretsmanager"
-	awsServiceSNS      = "sns"
-	awsServiceSQS      = "sqs"
+	awsServiceS3          = "s3"
+	awsServiceDynamoDB    = "dynamodb"
+	awsServiceEC2         = "ec2"
+	awsServiceLambda      = "lambda"
+	awsServiceSecrets     = "secretsmanager"
+	awsServiceSNS         = "sns"
+	awsServiceSQS         = "sqs"
+	awsServiceElastiCache = "elasticache"
+	awsServiceECR         = "ecr"
+	awsServiceLogs        = "logs"
+	awsServiceRDS         = "rds"
+	awsServiceIAM         = "iam"
 )
 
 // DynamoDB resource type within a DynamoDB ARN.
@@ -37,6 +42,14 @@ const (
 	secretsTypeSecret  = "secret"
 )
 
+// ECR / CloudWatch Logs / IAM resource-type prefixes within their ARNs.
+const (
+	ecrTypeRepository = "repository"
+	logsTypeLogGroup  = "log-group"
+	iamTypeRole       = "role"
+	iamTypeUser       = "user"
+)
+
 // arnParts is the number of colon-separated segments in a fully-qualified
 // AWS ARN: arn:partition:service:region:account:resource.
 const arnParts = 6
@@ -55,9 +68,15 @@ const arnParts = 6
 //   - Secrets Manager:      arn:aws:secretsmanager:region:account:secret:name
 //   - SNS topic:            arn:aws:sns:region:account:name
 //   - SQS queue:            arn:aws:sqs:region:account:name
+//   - ElastiCache:          arn:aws:elasticache:region:account:cluster:name
+//   - ECR repository:       arn:aws:ecr:region:account:repository/name
+//   - CloudWatch Logs:      arn:aws:logs:region:account:log-group:name
+//   - RDS:                  arn:aws:rds:region:account:db:name
+//   - IAM role/user:        arn:aws:iam::account:{role,user}/name
 //
 // Returns InvalidArgument for services/resource types without a tag store
-// (e.g. CloudWatch alarms, IAM, RDS) or for unparseable ARNs.
+// (e.g. CloudWatch alarms, Route 53 zones, IAM policies/groups) or for
+// unparseable ARNs.
 func (e *Engine) TagResourceByARN(ctx context.Context, arn string, tags map[string]string) error {
 	res, err := parseSupportedARN(arn)
 	if err != nil {
@@ -100,25 +119,31 @@ func parseSupportedARN(arn string) (parsedARN, error) {
 	service := parts[2]
 	resource := parts[5]
 
-	switch service {
-	case awsServiceS3:
-		return parseS3ARN(arn, resource)
-	case awsServiceDynamoDB:
-		return parseDynamoDBARN(arn, resource)
-	case awsServiceEC2:
-		return parseEC2ARN(arn, resource)
-	case awsServiceLambda:
-		return parseLambdaARN(arn, resource)
-	case awsServiceSecrets:
-		return parseSecretsARN(arn, resource)
-	case awsServiceSNS:
-		return parseSNSARN(arn, resource)
-	case awsServiceSQS:
-		return parseSQSARN(arn, resource)
-	default:
+	// Each supported AWS service parses its resource segment into the routing
+	// fragments the tag dispatcher needs. A service absent from the table has no
+	// tag store wired (or no ARN shape we tag), and is reported as unsupported.
+	parsers := map[string]func(arn, resource string) (parsedARN, error){
+		awsServiceS3:          parseS3ARN,
+		awsServiceDynamoDB:    parseDynamoDBARN,
+		awsServiceEC2:         parseEC2ARN,
+		awsServiceLambda:      parseLambdaARN,
+		awsServiceSecrets:     parseSecretsARN,
+		awsServiceSNS:         parseSNSARN,
+		awsServiceSQS:         parseSQSARN,
+		awsServiceElastiCache: parseElastiCacheARN,
+		awsServiceECR:         parseECRARN,
+		awsServiceLogs:        parseLogsARN,
+		awsServiceRDS:         parseRDSARN,
+		awsServiceIAM:         parseIAMARN,
+	}
+
+	parse, ok := parsers[service]
+	if !ok {
 		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument,
 			"tagging service %q is not yet supported", service)
 	}
+
+	return parse(arn, resource)
 }
 
 func parseS3ARN(arn, resource string) (parsedARN, error) {
@@ -214,6 +239,77 @@ func parseSQSARN(arn, resource string) (parsedARN, error) {
 	return parsedARN{service: awsServiceSQS, id: resource}, nil
 }
 
+// parseElastiCacheARN accepts arn:aws:elasticache:region:account:{cluster|
+// replicationgroup|snapshot|parametergroup|subnetgroup}:name. ElastiCache tags
+// are addressed by the full ARN, so the whole ARN is carried as the id.
+func parseElastiCacheARN(arn, resource string) (parsedARN, error) {
+	rt, id, ok := splitTypeID(resource, ':')
+	if !ok || id == "" {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected ElastiCache ARN, got %q", arn)
+	}
+
+	return parsedARN{service: awsServiceElastiCache, resourceType: rt, id: arn}, nil
+}
+
+// parseECRARN accepts arn:aws:ecr:region:account:repository/name.
+func parseECRARN(arn, resource string) (parsedARN, error) {
+	rt, id, ok := splitTypeID(resource, '/')
+	if !ok || rt != ecrTypeRepository || id == "" {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected ECR repository ARN, got %q", arn)
+	}
+
+	return parsedARN{service: awsServiceECR, resourceType: rt, id: id}, nil
+}
+
+// parseLogsARN accepts arn:aws:logs:region:account:log-group:name — and the
+// stream-qualified form (…:log-group:name:*) — resolving both to the group
+// name, since a log group's tags are the tag-operation target.
+func parseLogsARN(arn, resource string) (parsedARN, error) {
+	rt, rest, ok := splitTypeID(resource, ':')
+	if !ok || rt != logsTypeLogGroup || rest == "" {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected CloudWatch Logs log-group ARN, got %q", arn)
+	}
+
+	name := rest
+	if i := strings.IndexByte(rest, ':'); i >= 0 {
+		name = rest[:i] // strip a trailing :* stream qualifier
+	}
+
+	if name == "" {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "CloudWatch Logs ARN missing group name: %q", arn)
+	}
+
+	return parsedARN{service: awsServiceLogs, resourceType: rt, id: name}, nil
+}
+
+// parseRDSARN accepts arn:aws:rds:region:account:{db|cluster|snapshot|...}:name.
+// RDS tags are addressed by the full ARN, so the whole ARN is carried as the id.
+func parseRDSARN(arn, resource string) (parsedARN, error) {
+	rt, id, ok := splitTypeID(resource, ':')
+	if !ok || id == "" {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected RDS ARN, got %q", arn)
+	}
+
+	return parsedARN{service: awsServiceRDS, resourceType: rt, id: arn}, nil
+}
+
+// parseIAMARN accepts arn:aws:iam::account:{role|user}/name. Only roles and
+// users carry a tag store; other IAM resource types are rejected as untaggable.
+func parseIAMARN(arn, resource string) (parsedARN, error) {
+	rt, id, ok := splitTypeID(resource, '/')
+	if !ok || id == "" {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "malformed IAM ARN: %q", arn)
+	}
+
+	switch rt {
+	case iamTypeRole, iamTypeUser:
+		return parsedARN{service: awsServiceIAM, resourceType: rt, id: id}, nil
+	default:
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument,
+			"tagging IAM resource type %q is not supported", rt)
+	}
+}
+
 func splitTypeID(s string, sep rune) (rt, id string, ok bool) {
 	for i, r := range s {
 		if r == sep {
@@ -234,28 +330,38 @@ func isEC2ComputeType(rt string) bool {
 }
 
 func (e *Engine) dispatchTag(ctx context.Context, res parsedARN, tags map[string]string, set bool, keys []string) error {
-	switch res.service {
-	case awsServiceS3:
-		return e.tagS3(ctx, res.id, tags, set, keys)
-	case awsServiceDynamoDB:
-		return e.tagDynamoDB(ctx, res.id, tags, set, keys)
-	case awsServiceEC2:
-		if isEC2ComputeType(res.resourceType) {
-			return e.tagEC2Compute(ctx, res.id, tags, set, keys)
-		}
+	routes := map[string]func() error{
+		awsServiceS3:          func() error { return e.tagS3(ctx, res.id, tags, set, keys) },
+		awsServiceDynamoDB:    func() error { return e.tagDynamoDB(ctx, res.id, tags, set, keys) },
+		awsServiceEC2:         func() error { return e.tagEC2(ctx, res, tags, set, keys) },
+		awsServiceLambda:      func() error { return e.tagLambda(ctx, res.id, tags, set, keys) },
+		awsServiceSecrets:     func() error { return e.tagSecret(ctx, res.id, tags, set, keys) },
+		awsServiceSNS:         func() error { return e.tagTopic(ctx, res.id, tags, set, keys) },
+		awsServiceSQS:         func() error { return e.tagQueue(ctx, res.id, tags, set, keys) },
+		awsServiceElastiCache: func() error { return e.tagCache(ctx, res.id, tags, set, keys) },
+		awsServiceECR:         func() error { return e.tagRepository(ctx, res.id, tags, set, keys) },
+		awsServiceLogs:        func() error { return e.tagLogGroup(ctx, res.id, tags, set, keys) },
+		awsServiceRDS:         func() error { return e.tagRDS(ctx, res.id, tags, set, keys) },
+		awsServiceIAM:         func() error { return e.tagIAM(ctx, res.resourceType, res.id, tags, set, keys) },
+	}
 
-		return e.tagEC2Network(ctx, res.resourceType, res.id, tags, set, keys)
-	case awsServiceLambda:
-		return e.tagLambda(ctx, res.id, tags, set, keys)
-	case awsServiceSecrets:
-		return e.tagSecret(ctx, res.id, tags, set, keys)
-	case awsServiceSNS:
-		return e.tagTopic(ctx, res.id, tags, set, keys)
-	case awsServiceSQS:
-		return e.tagQueue(ctx, res.id, tags, set, keys)
-	default:
+	route, ok := routes[res.service]
+	if !ok {
 		return cerrors.Newf(cerrors.InvalidArgument, "internal: unrouted parsedARN %+v", res)
 	}
+
+	return route()
+}
+
+// tagEC2 routes an EC2 ARN to the compute or networking tag store by its
+// resource type (instance/volume/snapshot/image → compute; vpc/subnet/
+// security-group → networking).
+func (e *Engine) tagEC2(ctx context.Context, res parsedARN, tags map[string]string, set bool, keys []string) error {
+	if isEC2ComputeType(res.resourceType) {
+		return e.tagEC2Compute(ctx, res.id, tags, set, keys)
+	}
+
+	return e.tagEC2Network(ctx, res.resourceType, res.id, tags, set, keys)
 }
 
 // The tag-mutation methods below are provider-specific: only the AWS mocks
@@ -290,6 +396,42 @@ type topicTagger interface {
 type queueTagger interface {
 	TagQueue(ctx context.Context, queueURL string, tags map[string]string) error
 	UntagQueue(ctx context.Context, queueURL string, keys []string) error
+}
+
+// cacheTagger is implemented by the AWS ElastiCache mock; it tags a cache
+// cluster / replication group by its full ARN.
+type cacheTagger interface {
+	AddTags(ctx context.Context, arn string, tags map[string]string) error
+	RemoveTags(ctx context.Context, arn string, keys []string) error
+}
+
+// repositoryTagger is implemented by the AWS ECR mock; it tags a repository by
+// its short name.
+type repositoryTagger interface {
+	TagRepository(ctx context.Context, name string, tags map[string]string) error
+	UntagRepository(ctx context.Context, name string, keys []string) error
+}
+
+// logGroupTagger is implemented by the AWS CloudWatch Logs mock; it tags a log
+// group by its name.
+type logGroupTagger interface {
+	TagLogGroup(ctx context.Context, name string, tags map[string]string) error
+	UntagLogGroup(ctx context.Context, name string, keys []string) error
+}
+
+// relationalDBTagger is implemented by the AWS RDS discovery adapter (delegating
+// to the RDS mock); it tags an RDS instance/cluster/snapshot by its full ARN.
+type relationalDBTagger interface {
+	AddTagsToResource(ctx context.Context, arn string, tags map[string]string) error
+	RemoveTagsFromResource(ctx context.Context, arn string, keys []string) error
+}
+
+// iamTagger is implemented by the AWS IAM mock; it tags roles and users by name.
+type iamTagger interface {
+	TagRole(ctx context.Context, name string, tags map[string]string) error
+	UntagRole(ctx context.Context, name string, keys []string) error
+	TagUser(ctx context.Context, name string, tags map[string]string) error
+	UntagUser(ctx context.Context, name string, keys []string) error
 }
 
 func (e *Engine) tagS3(ctx context.Context, bucket string, tags map[string]string, set bool, keys []string) error {
@@ -442,6 +584,84 @@ func (e *Engine) tagQueue(ctx context.Context, name string, tags map[string]stri
 	}
 
 	return qt.UntagQueue(ctx, url, keys)
+}
+
+func (e *Engine) tagCache(ctx context.Context, arn string, tags map[string]string, set bool, keys []string) error {
+	ct, err := driverAs[cacheTagger](e.drivers.Cache, "cache")
+	if err != nil {
+		return err
+	}
+
+	if set {
+		return ct.AddTags(ctx, arn, tags)
+	}
+
+	return ct.RemoveTags(ctx, arn, keys)
+}
+
+func (e *Engine) tagRepository(ctx context.Context, name string, tags map[string]string, set bool, keys []string) error {
+	rt, err := driverAs[repositoryTagger](e.drivers.ContainerReg, "container registry")
+	if err != nil {
+		return err
+	}
+
+	if set {
+		return rt.TagRepository(ctx, name, tags)
+	}
+
+	return rt.UntagRepository(ctx, name, keys)
+}
+
+func (e *Engine) tagLogGroup(ctx context.Context, name string, tags map[string]string, set bool, keys []string) error {
+	lt, err := driverAs[logGroupTagger](e.drivers.Logging, "logging")
+	if err != nil {
+		return err
+	}
+
+	if set {
+		return lt.TagLogGroup(ctx, name, tags)
+	}
+
+	return lt.UntagLogGroup(ctx, name, keys)
+}
+
+func (e *Engine) tagRDS(ctx context.Context, arn string, tags map[string]string, set bool, keys []string) error {
+	rt, err := driverAs[relationalDBTagger](e.drivers.RelationalDB, "relational database")
+	if err != nil {
+		return err
+	}
+
+	if set {
+		return rt.AddTagsToResource(ctx, arn, tags)
+	}
+
+	return rt.RemoveTagsFromResource(ctx, arn, keys)
+}
+
+func (e *Engine) tagIAM(ctx context.Context, resourceType, id string,
+	tags map[string]string, set bool, keys []string,
+) error {
+	it, err := driverAs[iamTagger](e.drivers.IAM, "iam")
+	if err != nil {
+		return err
+	}
+
+	switch resourceType {
+	case iamTypeRole:
+		if set {
+			return it.TagRole(ctx, id, tags)
+		}
+
+		return it.UntagRole(ctx, id, keys)
+	case iamTypeUser:
+		if set {
+			return it.TagUser(ctx, id, tags)
+		}
+
+		return it.UntagUser(ctx, id, keys)
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "tagging IAM resource type %q is not supported", resourceType)
+	}
 }
 
 func (e *Engine) resolveQueueURL(ctx context.Context, name string) (string, error) {

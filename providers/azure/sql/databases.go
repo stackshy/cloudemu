@@ -20,9 +20,23 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		return nil, cerrors.New(cerrors.InvalidArgument, "server and database name are required")
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// A database is a child of a logical server: real Azure returns
+	// ParentResourceNotFound (404) when the server has not been created.
+	server, ok := m.clusters.Get(cfg.Server)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "Azure SQL server %q not found", cfg.Server)
+	}
+
 	key := dbKey(cfg.Server, cfg.Name)
 	if _, ok := m.databases.Get(key); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "database %q already exists on server %q", cfg.Name, cfg.Server)
+	}
+
+	if err := m.requireElasticPool(cfg.Server, cfg.ElasticPoolID); err != nil {
+		return nil, err
 	}
 
 	skuName := cfg.SKUName
@@ -41,9 +55,13 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		Charset:       cfg.Charset,
 		Collation:     cfg.Collation,
 		ARN:           serverDatabaseResourceID(m.opts.Region, cfg.Server, cfg.Name),
+		Location:      orDefault(cfg.Location, server.Location),
+		Tags:          copyTags(cfg.Tags),
 		SKUName:       skuName,
 		SKUTier:       skuTier,
+		SKUCapacity:   cfg.SKUCapacity,
 		ZoneRedundant: cfg.ZoneRedundant,
+		ElasticPoolID: cfg.ElasticPoolID,
 	}
 	m.databases.Set(key, db)
 
@@ -54,22 +72,32 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 
 // GetDatabase returns a logical database, or NotFound.
 func (m *Mock) GetDatabase(_ context.Context, server, name string) (*rdsdriver.Database, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	db, ok := m.databases.Get(dbKey(server, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "database %q not found on server %q", name, server)
 	}
 
 	out := db
+	out.Tags = copyTags(db.Tags)
 
 	return &out, nil
 }
 
 // ListDatabases returns every logical database on a server.
 func (m *Mock) ListDatabases(_ context.Context, server string) ([]rdsdriver.Database, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	out := []rdsdriver.Database{}
 
-	for _, db := range m.databases.SortedValues() {
-		if db.Server == server {
+	vals := m.databases.SortedValues()
+	for i := range vals {
+		if vals[i].Server == server {
+			db := vals[i]
+			db.Tags = copyTags(db.Tags)
 			out = append(out, db)
 		}
 	}
@@ -79,6 +107,9 @@ func (m *Mock) ListDatabases(_ context.Context, server string) ([]rdsdriver.Data
 
 // DeleteDatabase removes a logical database, or returns NotFound.
 func (m *Mock) DeleteDatabase(_ context.Context, server, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.databases.Delete(dbKey(server, name)) {
 		return cerrors.Newf(cerrors.NotFound, "database %q not found on server %q", name, server)
 	}

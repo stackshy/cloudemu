@@ -164,6 +164,23 @@ func TestSDKMySQLFlexConfigurations(t *testing.T) {
 		t.Fatalf("value: got %v, want 200", got.Properties)
 	}
 
+	// DefaultValue must be populated (the catalog default), not just Value —
+	// a real client relies on it to know what "reset" restores.
+	if got.Properties.DefaultValue == nil || *got.Properties.DefaultValue != "151" {
+		t.Errorf("max_connections defaultValue: got %v, want 151", got.Properties.DefaultValue)
+	}
+
+	// An untouched known parameter's Get must also carry its DefaultValue.
+	untouched, err := conf.Get(ctx, "rg-1", "srv1", "wait_timeout", nil)
+	if err != nil {
+		t.Fatalf("Get wait_timeout: %v", err)
+	}
+
+	if untouched.Properties == nil || untouched.Properties.DefaultValue == nil ||
+		*untouched.Properties.DefaultValue != "28800" {
+		t.Errorf("wait_timeout defaultValue: got %v, want 28800", untouched.Properties)
+	}
+
 	batchPoller, err := conf.BeginBatchUpdate(ctx, "rg-1", "srv1", armmysqlflexibleservers.ConfigurationListForBatchUpdate{
 		Value: []*armmysqlflexibleservers.ConfigurationForBatchUpdate{
 			{Name: to.Ptr("slow_query_log"), Properties: &armmysqlflexibleservers.ConfigurationForBatchUpdateProperties{
@@ -208,9 +225,34 @@ func TestSDKMySQLFlexConfigurations(t *testing.T) {
 	}
 }
 
+// mustCreateHAServer creates a server with ZoneRedundant HighAvailability —
+// the precondition a forced failover needs (there is a standby to fail over
+// to).
+func mustCreateHAServer(t *testing.T, cf *armmysqlflexibleservers.ClientFactory, name string) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	poller, err := cf.NewServersClient().BeginCreate(ctx, "rg-1", name, armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armmysqlflexibleservers.ServerProperties{
+			HighAvailability: &armmysqlflexibleservers.HighAvailability{
+				Mode: to.Ptr(armmysqlflexibleservers.HighAvailabilityModeZoneRedundant),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+}
+
 func TestSDKMySQLFlexFailover(t *testing.T) {
 	cf := newFactory(t)
-	mustCreateServer(t, cf)
+	mustCreateHAServer(t, cf, "srv1")
 
 	ctx := context.Background()
 	servers := cf.NewServersClient()
@@ -232,5 +274,25 @@ func TestSDKMySQLFlexFailover(t *testing.T) {
 	if got.Server.Properties == nil || got.Server.Properties.State == nil ||
 		*got.Server.Properties.State != armmysqlflexibleservers.ServerStateReady {
 		t.Fatalf("expected Ready after failover, got %v", got.Server.Properties.State)
+	}
+}
+
+// TestSDKMySQLFlexFailoverRequiresHighAvailability asserts real Azure's
+// behavior: a forced failover on a server with HighAvailability Disabled (no
+// standby) is rejected rather than silently succeeding.
+func TestSDKMySQLFlexFailoverRequiresHighAvailability(t *testing.T) {
+	cf := newFactory(t)
+	mustCreateServer(t, cf) // no HighAvailability configured
+
+	ctx := context.Background()
+	servers := cf.NewServersClient()
+
+	poller, err := servers.BeginFailover(ctx, "rg-1", "srv1", nil)
+	if err == nil {
+		_, err = poller.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("expected failover on a non-HA server to fail, got nil")
 	}
 }

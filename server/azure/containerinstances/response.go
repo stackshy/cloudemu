@@ -30,9 +30,30 @@ func toGroupJSON(rp *azurearm.ResourcePath, g *driver.ContainerGroup) containerG
 			RestartPolicy:     g.RestartPolicy,
 			ProvisioningState: g.ProvisioningState,
 			Containers:        toContainerJSONs(g.Containers),
+			IPAddress:         toIPAddressJSON(g.IPAddress),
 			InstanceView:      &groupInstanceView{State: g.State, Events: []any{}},
 		},
 	}
+}
+
+// toIPAddressJSON maps the group's assigned IP configuration onto the ARM shape.
+func toIPAddressJSON(in *driver.IPAddress) *ipAddressJSON {
+	if in == nil {
+		return nil
+	}
+
+	out := &ipAddressJSON{
+		Type:         in.Type,
+		IP:           in.IP,
+		DNSNameLabel: in.DNSNameLabel,
+		FQDN:         in.FQDN,
+	}
+
+	for _, p := range in.Ports {
+		out.Ports = append(out.Ports, portJSON{Port: p.Port, Protocol: p.Protocol})
+	}
+
+	return out
 }
 
 // toContainerJSONs maps the group's containers (with their observed state) onto

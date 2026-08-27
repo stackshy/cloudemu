@@ -159,13 +159,32 @@ type Topic struct {
 }
 
 // ClusterOperation is a record of an in-flight or completed cluster mutation.
+// SourceClusterInfo / TargetClusterInfo carry the modeled cluster attributes
+// before and after the mutation (real MSK's ClusterOperationInfo.sourceClusterInfo
+// / targetClusterInfo), so a caller can inspect the before/after delta.
 type ClusterOperation struct {
-	OperationARN   string
-	ClusterARN     string
-	OperationType  string
-	OperationState string
-	CreationTime   time.Time
-	RawOptions     map[string]json.RawMessage
+	OperationARN      string
+	ClusterARN        string
+	OperationType     string
+	OperationState    string
+	CreationTime      time.Time
+	SourceClusterInfo *MutableClusterInfo
+	TargetClusterInfo *MutableClusterInfo
+	RawOptions        map[string]json.RawMessage
+}
+
+// MutableClusterInfo is the subset of cluster attributes that update APIs can
+// change (real MSK's MutableClusterInfo). A zero-valued field is omitted from
+// the wire rendering, so an operation's source/target snapshots surface only the
+// attributes the emulator models. EBSVolumeSizeGB renders as a brokerEBSVolumeInfo
+// entry keyed to the ALL broker.
+type MutableClusterInfo struct {
+	NumberOfBrokerNodes int32
+	InstanceType        string
+	KafkaVersion        string
+	StorageMode         string
+	EnhancedMonitoring  string
+	EBSVolumeSizeGB     int64
 }
 
 // Replicator is an MSK Replicator (cross-cluster replication).

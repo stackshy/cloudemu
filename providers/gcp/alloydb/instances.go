@@ -189,6 +189,10 @@ func (m *Mock) ModifyInstance(
 		inst.Tags = copyTags(input.Tags)
 	}
 
+	extra := m.instanceExtra[key]
+	extra.UpdatedAt = m.opts.Clock.Now().UTC()
+	m.instanceExtra[key] = extra
+
 	m.instances.Set(key, inst)
 
 	out := cloneInstance(inst)

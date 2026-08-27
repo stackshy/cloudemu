@@ -33,53 +33,85 @@ const (
 // iamActions enumerates every Action this handler recognizes. Used by Matches
 // to decide whether to claim a request.
 var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateUser":                    {},
-	"DeleteUser":                    {},
-	"GetUser":                       {},
-	"ListUsers":                     {},
-	"CreateRole":                    {},
-	"DeleteRole":                    {},
-	"GetRole":                       {},
-	"ListRoles":                     {},
-	"CreatePolicy":                  {},
-	"DeletePolicy":                  {},
-	"GetPolicy":                     {},
-	"ListPolicies":                  {},
-	"CreatePolicyVersion":           {},
-	"GetPolicyVersion":              {},
-	"ListPolicyVersions":            {},
-	"DeletePolicyVersion":           {},
-	"SetDefaultPolicyVersion":       {},
-	"AttachUserPolicy":              {},
-	"DetachUserPolicy":              {},
-	"AttachRolePolicy":              {},
-	"DetachRolePolicy":              {},
-	"ListAttachedUserPolicies":      {},
-	"ListAttachedRolePolicies":      {},
-	"CreateGroup":                   {},
-	"DeleteGroup":                   {},
-	"GetGroup":                      {},
-	"ListGroups":                    {},
-	"AddUserToGroup":                {},
-	"RemoveUserFromGroup":           {},
-	"ListGroupsForUser":             {},
-	"CreateAccessKey":               {},
-	"DeleteAccessKey":               {},
-	"ListAccessKeys":                {},
-	"CreateInstanceProfile":         {},
-	"DeleteInstanceProfile":         {},
-	"GetInstanceProfile":            {},
-	"ListInstanceProfiles":          {},
-	"ListInstanceProfilesForRole":   {},
-	"AddRoleToInstanceProfile":      {},
-	"RemoveRoleFromInstanceProfile": {},
-	"PutRolePolicy":                 {},
-	"GetRolePolicy":                 {},
-	"DeleteRolePolicy":              {},
-	"ListRolePolicies":              {},
-	"TagRole":                       {},
-	"UntagRole":                     {},
-	"ListRoleTags":                  {},
+	"CreateUser":                     {},
+	"DeleteUser":                     {},
+	"GetUser":                        {},
+	"ListUsers":                      {},
+	"CreateRole":                     {},
+	"DeleteRole":                     {},
+	"GetRole":                        {},
+	"ListRoles":                      {},
+	"UpdateRole":                     {},
+	"UpdateAssumeRolePolicy":         {},
+	"CreatePolicy":                   {},
+	"DeletePolicy":                   {},
+	"GetPolicy":                      {},
+	"ListPolicies":                   {},
+	"CreatePolicyVersion":            {},
+	"GetPolicyVersion":               {},
+	"ListPolicyVersions":             {},
+	"DeletePolicyVersion":            {},
+	"SetDefaultPolicyVersion":        {},
+	"AttachUserPolicy":               {},
+	"DetachUserPolicy":               {},
+	"AttachRolePolicy":               {},
+	"DetachRolePolicy":               {},
+	"ListAttachedUserPolicies":       {},
+	"ListAttachedRolePolicies":       {},
+	"ListEntitiesForPolicy":          {},
+	"CreateGroup":                    {},
+	"DeleteGroup":                    {},
+	"GetGroup":                       {},
+	"ListGroups":                     {},
+	"AddUserToGroup":                 {},
+	"RemoveUserFromGroup":            {},
+	"ListGroupsForUser":              {},
+	"CreateAccessKey":                {},
+	"DeleteAccessKey":                {},
+	"ListAccessKeys":                 {},
+	"UpdateAccessKey":                {},
+	"CreateInstanceProfile":          {},
+	"DeleteInstanceProfile":          {},
+	"GetInstanceProfile":             {},
+	"ListInstanceProfiles":           {},
+	"ListInstanceProfilesForRole":    {},
+	"AddRoleToInstanceProfile":       {},
+	"RemoveRoleFromInstanceProfile":  {},
+	"PutRolePolicy":                  {},
+	"GetRolePolicy":                  {},
+	"DeleteRolePolicy":               {},
+	"ListRolePolicies":               {},
+	"AttachGroupPolicy":              {},
+	"DetachGroupPolicy":              {},
+	"ListAttachedGroupPolicies":      {},
+	"PutGroupPolicy":                 {},
+	"GetGroupPolicy":                 {},
+	"DeleteGroupPolicy":              {},
+	"ListGroupPolicies":              {},
+	"PutUserPolicy":                  {},
+	"GetUserPolicy":                  {},
+	"DeleteUserPolicy":               {},
+	"ListUserPolicies":               {},
+	"TagRole":                        {},
+	"UntagRole":                      {},
+	"ListRoleTags":                   {},
+	"TagUser":                        {},
+	"UntagUser":                      {},
+	"ListUserTags":                   {},
+	"GetAccountAuthorizationDetails": {},
+	"CreateServiceLinkedRole":        {},
+	"PutRolePermissionsBoundary":     {},
+	"DeleteRolePermissionsBoundary":  {},
+	"PutUserPermissionsBoundary":     {},
+	"DeleteUserPermissionsBoundary":  {},
+	"SimulatePrincipalPolicy":        {},
+	"SimulateCustomPolicy":           {},
+	"GetAccountSummary":              {},
+	"GetAccountPasswordPolicy":       {},
+	"UpdateAccountPasswordPolicy":    {},
+	"DeleteAccountPasswordPolicy":    {},
+	"CreateVirtualMFADevice":         {},
+	"ListMFADevices":                 {},
 }
 
 // roleTagManager is the AWS-specific role-tagging surface, asserted against the
@@ -99,14 +131,46 @@ type rolePolicyManager interface {
 	ListRolePolicies(ctx context.Context, roleName string) ([]string, error)
 }
 
-// Handler serves IAM query-protocol requests.
-type Handler struct {
-	iam iamdriver.IAM
+// groupPolicyManager is the AWS-specific group managed- and inline-policy
+// surface. It's not part of the portable IAM driver, so the handler
+// type-asserts for it.
+type groupPolicyManager interface {
+	AttachGroupPolicy(ctx context.Context, groupName, policyARN string) error
+	DetachGroupPolicy(ctx context.Context, groupName, policyARN string) error
+	ListAttachedGroupPolicies(ctx context.Context, groupName string) ([]string, error)
+	PutGroupPolicy(ctx context.Context, groupName, policyName, policyDocument string) error
+	GetGroupPolicy(ctx context.Context, groupName, policyName string) (string, error)
+	DeleteGroupPolicy(ctx context.Context, groupName, policyName string) error
+	ListGroupPolicies(ctx context.Context, groupName string) ([]string, error)
 }
 
-// New returns an IAM handler backed by drv.
-func New(drv iamdriver.IAM) *Handler {
-	return &Handler{iam: drv}
+// userPolicyManager is the AWS-specific inline-user-policy surface. It's not
+// part of the portable IAM driver, so the handler type-asserts for it.
+type userPolicyManager interface {
+	PutUserPolicy(ctx context.Context, userName, policyName, policyDocument string) error
+	GetUserPolicy(ctx context.Context, userName, policyName string) (string, error)
+	DeleteUserPolicy(ctx context.Context, userName, policyName string) error
+	ListUserPolicies(ctx context.Context, userName string) ([]string, error)
+}
+
+// defaultAccountID is used when the server was configured without one, so a
+// well-formed caller ARN is always available for GetUser with no UserName.
+const defaultAccountID = "000000000000"
+
+// Handler serves IAM query-protocol requests.
+type Handler struct {
+	iam       iamdriver.IAM
+	accountID string
+}
+
+// New returns an IAM handler backed by drv. accountID is used to synthesize the
+// calling user's identity for GetUser requests that omit UserName.
+func New(drv iamdriver.IAM, accountID string) *Handler {
+	if accountID == "" {
+		accountID = defaultAccountID
+	}
+
+	return &Handler{iam: drv, accountID: accountID}
 }
 
 // Matches returns true if the request looks like an AWS IAM query-protocol
@@ -157,6 +221,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getRole(w, r)
 	case "ListRoles":
 		h.listRoles(w, r)
+	case "UpdateRole":
+		h.updateRole(w, r)
+	case "UpdateAssumeRolePolicy":
+		h.updateAssumeRolePolicy(w, r)
 	case "CreatePolicy":
 		h.createPolicy(w, r)
 	case "DeletePolicy":
@@ -187,6 +255,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listAttachedUserPolicies(w, r)
 	case "ListAttachedRolePolicies":
 		h.listAttachedRolePolicies(w, r)
+	case "ListEntitiesForPolicy":
+		h.listEntitiesForPolicy(w, r)
 	case "CreateGroup":
 		h.createGroup(w, r)
 	case "DeleteGroup":
@@ -207,6 +277,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteAccessKey(w, r)
 	case "ListAccessKeys":
 		h.listAccessKeys(w, r)
+	case "UpdateAccessKey":
+		h.updateAccessKey(w, r)
 	case "CreateInstanceProfile":
 		h.createInstanceProfile(w, r)
 	case "DeleteInstanceProfile":
@@ -229,12 +301,68 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteRolePolicy(w, r)
 	case "ListRolePolicies":
 		h.listRolePolicies(w, r)
+	case "AttachGroupPolicy":
+		h.attachGroupPolicy(w, r)
+	case "DetachGroupPolicy":
+		h.detachGroupPolicy(w, r)
+	case "ListAttachedGroupPolicies":
+		h.listAttachedGroupPolicies(w, r)
+	case "PutGroupPolicy":
+		h.putGroupPolicy(w, r)
+	case "GetGroupPolicy":
+		h.getGroupPolicy(w, r)
+	case "DeleteGroupPolicy":
+		h.deleteGroupPolicy(w, r)
+	case "ListGroupPolicies":
+		h.listGroupPolicies(w, r)
+	case "PutUserPolicy":
+		h.putUserPolicy(w, r)
+	case "GetUserPolicy":
+		h.getUserPolicy(w, r)
+	case "DeleteUserPolicy":
+		h.deleteUserPolicy(w, r)
+	case "ListUserPolicies":
+		h.listUserPolicies(w, r)
 	case "TagRole":
 		h.tagRole(w, r)
 	case "UntagRole":
 		h.untagRole(w, r)
 	case "ListRoleTags":
 		h.listRoleTags(w, r)
+	case "TagUser":
+		h.tagUser(w, r)
+	case "UntagUser":
+		h.untagUser(w, r)
+	case "ListUserTags":
+		h.listUserTags(w, r)
+	case "GetAccountAuthorizationDetails":
+		h.getAccountAuthorizationDetails(w, r)
+	case "CreateServiceLinkedRole":
+		h.createServiceLinkedRole(w, r)
+	case "PutRolePermissionsBoundary":
+		h.putRolePermissionsBoundary(w, r)
+	case "DeleteRolePermissionsBoundary":
+		h.deleteRolePermissionsBoundary(w, r)
+	case "PutUserPermissionsBoundary":
+		h.putUserPermissionsBoundary(w, r)
+	case "DeleteUserPermissionsBoundary":
+		h.deleteUserPermissionsBoundary(w, r)
+	case "SimulatePrincipalPolicy":
+		h.simulatePrincipalPolicy(w, r)
+	case "SimulateCustomPolicy":
+		h.simulateCustomPolicy(w, r)
+	case "GetAccountSummary":
+		h.getAccountSummary(w, r)
+	case "GetAccountPasswordPolicy":
+		h.getAccountPasswordPolicy(w, r)
+	case "UpdateAccountPasswordPolicy":
+		h.updateAccountPasswordPolicy(w, r)
+	case "DeleteAccountPasswordPolicy":
+		h.deleteAccountPasswordPolicy(w, r)
+	case "CreateVirtualMFADevice":
+		h.createVirtualMFADevice(w, r)
+	case "ListMFADevices":
+		h.listMFADevices(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))
@@ -243,18 +371,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // writeErr maps canonical cloudemu errors to IAM XML error responses.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusConflict, alreadyExistsCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusConflict, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidInput", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusConflict, "DeleteConflict", err.Error())
+		awsquery.WriteXMLError(w, http.StatusConflict, "DeleteConflict", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		awsquery.WriteXMLError(w, http.StatusConflict, "LimitExceeded", err.Error())
+		awsquery.WriteXMLError(w, http.StatusConflict, "LimitExceeded", msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }

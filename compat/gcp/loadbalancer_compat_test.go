@@ -132,3 +132,58 @@ func TestLoadBalancerCompat(t *testing.T) {
 		return op.Wait(ctx)
 	})
 }
+
+// TestBackendServiceGetHealth proves compute.backendServices.getHealth returns a
+// valid BackendServiceGroupHealth (kind + healthStatus) rather than 405. Pre-fix
+// the named-resource POST fell through to method-not-allowed.
+func TestBackendServiceGetHealth(t *testing.T) {
+	const backendName = "compat-health-backend"
+
+	cloud := cloudemu.NewGCP()
+	sess := compat.BootGCP(t, gcpserver.Drivers{LB: cloud.LB, Compute: cloud.GCE})
+	ctx := context.Background()
+
+	bsClient, err := gcpcompute.NewBackendServicesRESTClient(ctx,
+		option.WithEndpoint(sess.Endpoint()),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(sess.Transport()),
+	)
+	if err != nil {
+		t.Fatalf("NewBackendServicesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = bsClient.Close() })
+
+	project := compat.GCPProject
+	strp := func(s string) *string { return &s }
+
+	op, err := bsClient.Insert(ctx, &computepb.InsertBackendServiceRequest{
+		Project: project,
+		BackendServiceResource: &computepb.BackendService{
+			Name:     strp(backendName),
+			Protocol: strp("HTTP"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert backend service: %v", err)
+	}
+
+	if werr := op.Wait(ctx); werr != nil {
+		t.Fatalf("wait insert: %v", werr)
+	}
+
+	health, err := bsClient.GetHealth(ctx, &computepb.GetHealthBackendServiceRequest{
+		Project:        project,
+		BackendService: backendName,
+		ResourceGroupReferenceResource: &computepb.ResourceGroupReference{
+			Group: strp("projects/" + project + "/zones/us-central1-a/instanceGroups/ig-1"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("getHealth: %v", err)
+	}
+
+	if health.GetKind() != "compute#backendServiceGroupHealth" {
+		t.Fatalf("getHealth kind = %q, want compute#backendServiceGroupHealth", health.GetKind())
+	}
+}

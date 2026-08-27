@@ -63,11 +63,15 @@ func validateShardTopology(numShards, replicasPerShard int) error {
 
 // buildShards constructs the shard/node topology + endpoints for a cluster.
 // Callers must validate numShards/replicasPerShard via validateShardTopology
-// first; the values are bounded to the MemoryDB service limits.
-func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard int) []mdbdriver.Shard {
+// first; the values are bounded to the MemoryDB service limits. port is the
+// cluster's configured port, applied to every node endpoint so they match the
+// cluster endpoint (real MemoryDB uses the same port on all nodes).
+func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard, port int) []mdbdriver.Shard {
 	if numShards <= 0 {
 		numShards = 1
 	}
+
+	port = portOr(port)
 
 	// Defensive clamp to the service limits. Callers reject out-of-range counts
 	// via validateShardTopology first, so this never triggers for valid input;
@@ -107,7 +111,7 @@ func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard int) 
 				CreateTime:       now,
 				Endpoint: mdbdriver.Endpoint{
 					Address: fmt.Sprintf("%s.%s.memorydb.%s.amazonaws.com", nodeName, clusterName, m.opts.Region),
-					Port:    defaultPort,
+					Port:    port,
 				},
 			})
 		}
@@ -142,22 +146,23 @@ func slotRange(shard, total int) string {
 	return fmt.Sprintf("%d-%d", start, end)
 }
 
-// validateClusterRefs checks that referenced ACL/parameter-group/subnet-group
-// exist. A dangling reference is an invalid input to the create/update call
-// (not a missing cluster), so it surfaces as InvalidArgument — real MemoryDB
-// answers CreateCluster with a bad ACLName as InvalidParameterValueException.
-// The caller holds the lock.
+// validateClusterRefs checks that a referenced ACL/parameter-group/subnet-group
+// exists. A dangling reference surfaces as a kind-tagged NotFoundError so the
+// wire layer can answer with the specific fault the AWS SDK models
+// (ACLNotFoundFault / SubnetGroupNotFoundFault / ParameterGroupNotFoundFault)
+// rather than a generic InvalidParameterValueException. The caller holds the
+// lock.
 func (m *Mock) validateClusterRefs(aclName, paramGroup, subnetGroup string) error {
 	if aclName != "" && !m.acls.Has(aclName) {
-		return cerrors.Newf(cerrors.InvalidArgument, "ACL %q not found", aclName)
+		return &mdbdriver.NotFoundError{Kind: "ACL", Name: aclName}
 	}
 
 	if paramGroup != "" && !m.parameterGroups.Has(paramGroup) {
-		return cerrors.Newf(cerrors.InvalidArgument, "parameter group %q not found", paramGroup)
+		return &mdbdriver.NotFoundError{Kind: "ParameterGroup", Name: paramGroup}
 	}
 
 	if subnetGroup != "" && !m.subnetGroups.Has(subnetGroup) {
-		return cerrors.Newf(cerrors.InvalidArgument, "subnet group %q not found", subnetGroup)
+		return &mdbdriver.NotFoundError{Kind: "SubnetGroup", Name: subnetGroup}
 	}
 
 	return nil
@@ -207,7 +212,7 @@ func (m *Mock) applySnapshotShape(cfg *mdbdriver.CreateClusterConfig, shape *clu
 		shape.numShards = sc.NumShards
 	}
 
-	if cfg.NumReplicasPerShard == 0 {
+	if cfg.NumReplicasPerShard == nil {
 		shape.replicas = sc.ReplicasPerShard
 	}
 
@@ -223,7 +228,7 @@ func (m *Mock) applySnapshotShape(cfg *mdbdriver.CreateClusterConfig, shape *clu
 		shape.pg = sc.ParameterGroupName
 	}
 
-	if !cfg.TLSEnabled {
+	if cfg.TLSEnabled == nil {
 		shape.tls = sc.TLSEnabled
 	}
 
@@ -281,11 +286,11 @@ func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cl
 
 	shape := clusterShape{
 		numShards:   cfg.NumShards,
-		replicas:    cfg.NumReplicasPerShard,
+		replicas:    replicasOrDefault(cfg.NumReplicasPerShard),
 		nodeType:    orDefault(cfg.NodeType, defaultNodeType),
 		subnetGroup: cfg.SubnetGroupName,
 		pg:          orDefault(cfg.ParameterGroupName, "default.memorydb-redis7"),
-		tls:         cfg.TLSEnabled,
+		tls:         tlsOrDefault(cfg.TLSEnabled),
 	}
 	engine := orDefault(cfg.Engine, defaultEngine)
 	engineVersion := orDefault(cfg.EngineVersion, defaultEngineVersion)
@@ -322,7 +327,7 @@ func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cl
 		ParameterGroupStatus: mdbdriver.StatusAvailable,
 		SubnetGroupName:      shape.subnetGroup,
 		SecurityGroups:       sgs,
-		Shards:               m.buildShards(cfg.Name, shape.numShards, shape.replicas),
+		Shards:               m.buildShards(cfg.Name, shape.numShards, shape.replicas, portOr(cfg.Port)),
 		ClusterEndpoint: mdbdriver.Endpoint{
 			Address: fmt.Sprintf("clustercfg.%s.memorydb.%s.amazonaws.com", cfg.Name, m.opts.Region),
 			Port:    portOr(cfg.Port),
@@ -344,6 +349,14 @@ func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cl
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
+
+	// Create-time tags must be addressable by ListTags(arn), which reads m.tags;
+	// without this they would live only on cluster.Tags and be invisible until a
+	// later TagResource call.
+	if len(cfg.Tags) > 0 {
+		m.tags[cluster.ARN] = copyTags(cfg.Tags)
+	}
+
 	m.linkACLCluster(acl, cfg.Name, true)
 
 	if cfg.MultiRegionClusterName != "" {
@@ -490,7 +503,7 @@ func (m *Mock) reconfigureShards(c *mdbdriver.Cluster, cfg *mdbdriver.UpdateClus
 		}
 
 		c.NumberOfShards = *cfg.ShardCount
-		c.Shards = m.buildShards(c.Name, *cfg.ShardCount, len(c.Shards[0].Nodes)-1)
+		c.Shards = m.buildShards(c.Name, *cfg.ShardCount, len(c.Shards[0].Nodes)-1, c.ClusterEndpoint.Port)
 	}
 
 	if cfg.ReplicaCount != nil {
@@ -498,7 +511,7 @@ func (m *Mock) reconfigureShards(c *mdbdriver.Cluster, cfg *mdbdriver.UpdateClus
 			return err
 		}
 
-		c.Shards = m.buildShards(c.Name, c.NumberOfShards, *cfg.ReplicaCount)
+		c.Shards = m.buildShards(c.Name, c.NumberOfShards, *cfg.ReplicaCount, c.ClusterEndpoint.Port)
 		c.AvailabilityMode = availabilityMode(*cfg.ReplicaCount)
 	}
 
@@ -669,6 +682,26 @@ func portOr(p int) int {
 	}
 
 	return p
+}
+
+// replicasOrDefault resolves the requested replicas-per-shard, defaulting a nil
+// (omitted) request to 1 to match AWS, while preserving an explicit 0.
+func replicasOrDefault(p *int32) int {
+	if p == nil {
+		return 1
+	}
+
+	return int(*p)
+}
+
+// tlsOrDefault resolves the requested TLS flag, defaulting a nil (omitted)
+// request to true to match AWS, while preserving an explicit false.
+func tlsOrDefault(p *bool) bool {
+	if p == nil {
+		return true
+	}
+
+	return *p
 }
 
 func maxInt(a, b int) int {

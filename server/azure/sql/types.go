@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -68,11 +69,10 @@ type armList[T any] struct {
 // toARMServer converts a portable Cluster (logical server) to ARM JSON.
 func toARMServer(cluster *rdsdriver.Cluster, subscription, resourceGroup string) armServer {
 	return armServer{
-		ID:   armServerID(subscription, resourceGroup, cluster.ID),
-		Name: cluster.ID,
-		Type: providerName + "/servers",
-		// Region is stashed in SubnetGroupName by the provider.
-		Location: cluster.SubnetGroupName,
+		ID:       armServerID(subscription, resourceGroup, cluster.ID),
+		Name:     cluster.ID,
+		Type:     providerName + "/servers",
+		Location: cluster.Location,
 		Tags:     cluster.Tags,
 		Properties: &armServerProps{
 			AdministratorLogin:       cluster.MasterUsername,
@@ -90,19 +90,31 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath) armDatabas
 	zoneRedundant := db.ZoneRedundant
 
 	return armDatabase{
-		ID:   armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
-		Name: db.Name,
-		Type: providerName + "/servers/databases",
-		SKU:  &armSKU{Name: db.SKUName, Tier: db.SKUTier},
+		ID:       armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
+		Name:     db.Name,
+		Type:     providerName + "/servers/databases",
+		Location: db.Location,
+		Tags:     db.Tags,
+		SKU:      &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
 		Properties: &armDatabaseProps{
 			Status:                      dbStatusOnline,
 			Collation:                   db.Collation,
-			DatabaseID:                  db.ARN,
+			DatabaseID:                  databaseGUID(db),
 			CurrentServiceObjectiveName: db.SKUName,
-			CurrentSKU:                  &armSKU{Name: db.SKUName, Tier: db.SKUTier},
+			CurrentSKU:                  &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
 			ZoneRedundant:               &zoneRedundant,
+			ElasticPoolID:               db.ElasticPoolID,
 		},
 	}
+}
+
+// databaseGUID derives the stable, GUID-shaped databaseId Azure reports for a
+// database. Real Azure's databaseId is an intrinsic GUID, not a resource path,
+// so it is seeded from the database's server/name (stable across reads,
+// distinct per database) rather than reusing db.ARN, whose region-based ARN
+// leaks us-east-1 into the value.
+func databaseGUID(db *rdsdriver.Database) string {
+	return idgen.SyntheticGUID(db.Server + "/" + db.Name)
 }
 
 func armServerID(subscription, resourceGroup, server string) string {

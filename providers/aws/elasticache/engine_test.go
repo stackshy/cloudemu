@@ -74,7 +74,7 @@ func TestCreateReplicationGroupUsesEngineForRedis(t *testing.T) {
 		t.Fatalf("unexpected provision calls: %+v", eng.provisioned)
 	}
 
-	if err := m.DeleteReplicationGroup(ctx, "rg1"); err != nil {
+	if err := m.DeleteReplicationGroup(ctx, "rg1", driver.DeleteReplicationGroupOptions{}); err != nil {
 		t.Fatalf("DeleteReplicationGroup: %v", err)
 	}
 

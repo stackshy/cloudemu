@@ -7,14 +7,60 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+// VPCAssociation identifies an Amazon VPC associated with an AWS Route 53
+// private hosted zone. Other providers leave it unused.
+type VPCAssociation struct {
+	VPCID     string
+	VPCRegion string
+}
+
+// DNSKeySpec is one key specification within a GCP Cloud DNS DNSSEC config.
+// Other providers leave it unused.
+type DNSKeySpec struct {
+	Algorithm string
+	KeyLength int
+	KeyType   string // "keySigning" | "zoneSigning"
+}
+
+// DNSSECConfig is the GCP Cloud DNS DNSSEC configuration of a managed zone.
+// Other providers leave it nil.
+type DNSSECConfig struct {
+	State           string // "off" | "on" | "transfer"
+	NonExistence    string // "nsec" | "nsec3"
+	DefaultKeySpecs []DNSKeySpec
+}
+
+// VisibilityNetwork is a VPC network a GCP Cloud DNS private zone is visible
+// to (privateVisibilityConfig.networks[]). Other providers leave it nil.
+type VisibilityNetwork struct {
+	NetworkURL string
+}
+
 // ZoneConfig describes a DNS zone to create.
 type ZoneConfig struct {
 	Name    string
 	Private bool
 	Tags    map[string]string
+	// CallerReference is the AWS Route 53 caller-supplied idempotency token,
+	// persisted and returned verbatim on Get/List. Other providers leave it
+	// empty.
+	CallerReference string
+	// Comment is the AWS Route 53 hosted-zone comment, persisted and returned on
+	// Create/Get. Other providers leave it empty.
+	Comment string
+	// VPCs are the Amazon VPCs a Route 53 private hosted zone is associated with
+	// at create time. A non-empty list marks the zone private. Other providers
+	// leave it nil.
+	VPCs []VPCAssociation
 	// Scope records the cloud-side container the zone was created in (Azure
 	// subscription/resource group or GCP project). The zero value is unscoped.
 	Scope scope.Scope
+	// DNSSECConfig is the GCP Cloud DNS DNSSEC configuration to apply. Other
+	// providers leave it nil.
+	DNSSECConfig *DNSSECConfig
+	// VisibilityNetworks are the VPC networks a GCP Cloud DNS private zone is
+	// visible to. Other providers leave it nil.
+	VisibilityNetworks []VisibilityNetwork
 }
 
 // ZoneInfo describes a DNS zone.
@@ -24,9 +70,55 @@ type ZoneInfo struct {
 	Private     bool
 	RecordCount int
 	Tags        map[string]string
+	// CallerReference is the AWS Route 53 caller-supplied idempotency token as
+	// stored on create. Other providers leave it empty.
+	CallerReference string
+	// Comment is the AWS Route 53 hosted-zone comment as stored on create. Other
+	// providers leave it empty.
+	Comment string
+	// VPCs are the Amazon VPCs a Route 53 private hosted zone is currently
+	// associated with. Other providers leave it nil.
+	VPCs []VPCAssociation
 	// Scope is the container the zone lives in; scoped list endpoints filter
 	// on it. The zero value is unscoped and visible everywhere.
 	Scope scope.Scope
+	// DNSSECConfig is the GCP Cloud DNS DNSSEC configuration as stored on
+	// create/patch. Other providers leave it nil.
+	DNSSECConfig *DNSSECConfig
+	// VisibilityNetworks are the VPC networks a GCP Cloud DNS private zone is
+	// visible to. Other providers leave it nil.
+	VisibilityNetworks []VisibilityNetwork
+}
+
+// AliasTarget describes an AWS Route 53 alias target (an A/AAAA record that
+// points at another AWS resource instead of an IP). Other providers leave it
+// nil.
+type AliasTarget struct {
+	DNSName              string
+	HostedZoneID         string
+	EvaluateTargetHealth bool
+}
+
+// GeoLocation describes an AWS Route 53 geolocation routing constraint. Other
+// providers leave it nil.
+type GeoLocation struct {
+	ContinentCode   string
+	CountryCode     string
+	SubdivisionCode string
+}
+
+// SOARecord carries the editable timing fields of an Azure DNS zone's apex SOA
+// record set. Azure lets a caller edit an SOA record set's refresh/retry/expire
+// times, minimum TTL, serial number and email; the host (authoritative name
+// server) is read-only. Other providers leave it nil, and the auto-created apex
+// SOA leaves it nil too so it reads back Azure's platform defaults.
+type SOARecord struct {
+	Email        string
+	SerialNumber int64
+	RefreshTime  int64
+	RetryTime    int64
+	ExpireTime   int64
+	MinimumTTL   int64
 }
 
 // RecordConfig describes a DNS record.
@@ -38,6 +130,19 @@ type RecordConfig struct {
 	Values []string
 	Weight *int // for weighted routing, nil means not weighted
 	SetID  string
+	// Routing/alias attributes below are AWS Route 53 specific; other providers
+	// leave them zero. They round-trip on a record set the same way Weight/SetID
+	// do so weighted/latency/failover/geo/alias records are faithful.
+	Failover         string // "PRIMARY" | "SECONDARY", empty when not a failover record
+	Region           string // latency-based routing region, empty otherwise
+	HealthCheckID    string
+	MultiValueAnswer *bool
+	GeoLocation      *GeoLocation
+	AliasTarget      *AliasTarget
+	// SOA carries the editable Azure SOA timing fields so a caller-edited apex
+	// SOA reads back the edited values. Nil for non-SOA records and for the
+	// auto-created apex SOA (which reads back platform defaults).
+	SOA *SOARecord
 }
 
 // RecordInfo describes a DNS record.
@@ -49,6 +154,16 @@ type RecordInfo struct {
 	Values []string
 	Weight *int
 	SetID  string
+	// AWS Route 53 routing/alias attributes; other providers leave them zero.
+	Failover         string
+	Region           string
+	HealthCheckID    string
+	MultiValueAnswer *bool
+	GeoLocation      *GeoLocation
+	AliasTarget      *AliasTarget
+	// SOA carries the editable Azure SOA timing fields as stored. Nil for
+	// non-SOA records and for the auto-created apex SOA.
+	SOA *SOARecord
 }
 
 // HealthCheckConfig describes a health check to create.

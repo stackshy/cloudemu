@@ -129,6 +129,10 @@ func TestSDKTableLifecycle(t *testing.T) {
 		t.Fatalf("comment lost: %+v", got.Comment)
 	}
 
+	if got.CreationTimestamp == nil || got.CreationTimestamp.IsZero() {
+		t.Fatalf("CreationTimestamp missing: %+v", got.CreationTimestamp)
+	}
+
 	// Update: enable PITR + switch to provisioned.
 	if _, err := client.UpdateTable(ctx, &awskeyspaces.UpdateTableInput{
 		KeyspaceName:        aws.String("app"),

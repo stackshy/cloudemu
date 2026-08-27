@@ -36,6 +36,7 @@ const (
 	maxEventSizeStd   = "Standard"
 	arnPrefix         = "arn"
 	serviceName       = "cloudtrail"
+	readWriteAll      = "All"
 )
 
 // trailData is a trail plus its logging status, selectors, and lock.
@@ -93,6 +94,12 @@ type Mock struct {
 
 	orgMu     sync.Mutex
 	delegated map[string]struct{}
+
+	// eventsMu guards events, the bounded, newest-last log of management events
+	// LookupEvents queries. Fed by RecordEvent as API activity flows through the
+	// wire server (real CloudTrail records management events for API calls).
+	eventsMu sync.RWMutex
+	events   []driver.Event
 
 	opts *config.Options
 }

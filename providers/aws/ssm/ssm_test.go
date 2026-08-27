@@ -2,6 +2,7 @@ package ssm_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -49,6 +50,131 @@ func TestPutOverwriteAndHistory(t *testing.T) {
 
 	if len(hist) != 2 || hist[0].Value != "1" || hist[1].Value != "2" {
 		t.Fatalf("history = %+v, want [1 2]", hist)
+	}
+}
+
+func TestPutOverwriteRetainsTypeWhenOmitted(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/secure", Value: "s1", Type: driver.TypeSecureString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	// Overwrite without a Type must keep SecureString.
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/secure", Value: "s2", Overwrite: true,
+	}); err != nil {
+		t.Fatalf("PutParameter(overwrite): %v", err)
+	}
+
+	got, err := m.GetParameter(ctx, "/secure", true)
+	if err != nil {
+		t.Fatalf("GetParameter: %v", err)
+	}
+
+	if got.Type != driver.TypeSecureString {
+		t.Fatalf("Type = %q, want SecureString (retained)", got.Type)
+	}
+
+	if got.Value != "s2" {
+		t.Fatalf("Value = %q, want s2", got.Value)
+	}
+}
+
+func TestPutOverwriteChangingTypeRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/p", Value: "v1", Type: driver.TypeString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	_, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/p", Value: "v2", Type: driver.TypeSecureString, Overwrite: true,
+	})
+	if err == nil {
+		t.Fatal("PutParameter(change type): want error, got nil")
+	}
+
+	if !errors.Is(err, driver.ErrTypeMismatch) {
+		t.Fatalf("want ErrTypeMismatch, got %v", err)
+	}
+
+	// The stored type must be unchanged.
+	got, err := m.GetParameter(ctx, "/p", false)
+	if err != nil {
+		t.Fatalf("GetParameter: %v", err)
+	}
+
+	if got.Type != driver.TypeString {
+		t.Fatalf("Type = %q, want String (unchanged)", got.Type)
+	}
+}
+
+func TestPutParameterInvalidTypeRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	_, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/bad", Value: "v", Type: "Bogus"})
+	if err == nil {
+		t.Fatal("PutParameter(invalid type): want error, got nil")
+	}
+
+	if !errors.Is(err, driver.ErrUnsupportedType) {
+		t.Fatalf("want ErrUnsupportedType, got %v", err)
+	}
+
+	if _, err := m.GetParameter(ctx, "/bad", false); !cerrors.IsNotFound(err) {
+		t.Fatalf("after rejected put, GetParameter err = %v, want NotFound", err)
+	}
+}
+
+func TestPutParameterTagsOnCreate(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/t/p", Value: "v", Type: driver.TypeString,
+		Tags: map[string]string{"Env": "prod"},
+	}); err != nil {
+		t.Fatalf("PutParameter(create with tags): %v", err)
+	}
+
+	tags, err := m.ListParameterTags(ctx, "/t/p")
+	if err != nil {
+		t.Fatalf("ListParameterTags: %v", err)
+	}
+
+	if len(tags) != 1 || tags["Env"] != "prod" {
+		t.Fatalf("tags = %v, want {Env:prod}", tags)
+	}
+}
+
+func TestPutParameterOverwriteWithTagsRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/t/ot", Value: "v1", Type: driver.TypeString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	_, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/t/ot", Value: "v2", Overwrite: true,
+		Tags: map[string]string{"K": "V"},
+	})
+	if err == nil {
+		t.Fatal("PutParameter(overwrite+tags): want error, got nil")
+	}
+
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("want InvalidArgument, got %v", err)
 	}
 }
 
@@ -121,6 +247,92 @@ func TestGetParametersByPathRecursive(t *testing.T) {
 	if len(deep) != 3 {
 		t.Fatalf("recursive returned %d, want 3", len(deep))
 	}
+}
+
+func TestGetParametersByPathTypeFilter(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/f/a", Value: "1", Type: driver.TypeString}); err != nil {
+		t.Fatalf("Put /f/a: %v", err)
+	}
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/f/b", Value: "x,y", Type: driver.TypeStringList}); err != nil {
+		t.Fatalf("Put /f/b: %v", err)
+	}
+
+	got, err := m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path: "/f",
+		ParameterFilters: []driver.ParameterStringFilter{
+			{Key: "Type", Option: "Equals", Values: []string{driver.TypeString}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetParametersByPath(Type=String): %v", err)
+	}
+
+	if len(got) != 1 || got[0].Name != "/f/a" {
+		t.Fatalf("got %+v, want only /f/a", paramNamesOf(got))
+	}
+}
+
+func TestGetParametersByPathLabelFilter(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	for _, n := range []string{"/g/a", "/g/b"} {
+		if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: n, Value: "v", Type: driver.TypeString}); err != nil {
+			t.Fatalf("Put %s: %v", n, err)
+		}
+	}
+
+	if _, _, err := m.LabelParameterVersion(ctx, "/g/a", 0, []string{"prod"}); err != nil {
+		t.Fatalf("LabelParameterVersion: %v", err)
+	}
+
+	got, err := m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path: "/g",
+		ParameterFilters: []driver.ParameterStringFilter{
+			{Key: "Label", Option: "Equals", Values: []string{"prod"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetParametersByPath(Label=prod): %v", err)
+	}
+
+	if len(got) != 1 || got[0].Name != "/g/a" {
+		t.Fatalf("got %v, want only /g/a", paramNamesOf(got))
+	}
+}
+
+func TestGetParametersByPathInvalidFilter(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	_, err := m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path:             "/f",
+		ParameterFilters: []driver.ParameterStringFilter{{Key: "Name", Option: "Equals", Values: []string{"x"}}},
+	})
+	if !errors.Is(err, driver.ErrInvalidFilterKey) {
+		t.Fatalf("unsupported key: got %v, want ErrInvalidFilterKey", err)
+	}
+
+	_, err = m.GetParametersByPath(ctx, driver.GetByPathInput{
+		Path:             "/f",
+		ParameterFilters: []driver.ParameterStringFilter{{Key: "Type", Option: "Contains", Values: []string{"String"}}},
+	})
+	if !errors.Is(err, driver.ErrInvalidFilterOption) {
+		t.Fatalf("unsupported option: got %v, want ErrInvalidFilterOption", err)
+	}
+}
+
+func paramNamesOf(ps []driver.Parameter) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, p.Name)
+	}
+
+	return out
 }
 
 // TestDeleteParameterStripsSelector covers #266: DeleteParameter strips a

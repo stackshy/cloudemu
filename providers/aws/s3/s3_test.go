@@ -46,9 +46,9 @@ func TestBucketNotificationDelivery(t *testing.T) {
 		t.Fatalf("CreateBucket: %v", err)
 	}
 
-	if err := m.PutBucketNotification(ctx, "nb", []QueueNotification{
-		{QueueARN: "arn:aws:sqs:us-east-1:000000000000:s3events", Events: []string{"s3:ObjectCreated:*"}},
-		{QueueARN: "arn:aws:sqs:us-east-1:000000000000:deletes", Events: []string{"s3:ObjectRemoved:*"}},
+	if err := m.PutBucketNotification(ctx, "nb", []BucketNotification{
+		{Target: NotifyQueue, ARN: "arn:aws:sqs:us-east-1:000000000000:s3events", Events: []string{"s3:ObjectCreated:*"}},
+		{Target: NotifyQueue, ARN: "arn:aws:sqs:us-east-1:000000000000:deletes", Events: []string{"s3:ObjectRemoved:*"}},
 	}); err != nil {
 		t.Fatalf("PutBucketNotification: %v", err)
 	}
@@ -336,6 +336,49 @@ func TestListObjects(t *testing.T) {
 	t.Run("bucket not found", func(t *testing.T) {
 		_, err := m.ListObjects(ctx, "nope", driver.ListOptions{})
 		assertError(t, err, true)
+	})
+
+	t.Run("start after", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "sab")
+		for _, k := range []string{"a", "b", "c", "d"} {
+			_ = m.PutObject(ctx, "sab", k, []byte("x"), "", nil)
+		}
+
+		result, err := m.ListObjects(ctx, "sab", driver.ListOptions{StartAfter: "b"})
+		requireNoError(t, err)
+		assertEqual(t, 2, len(result.Objects))
+		assertEqual(t, "c", result.Objects[0].Key)
+		assertEqual(t, "d", result.Objects[1].Key)
+	})
+
+	t.Run("start after continues across pages without overlap", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "sab2")
+		for _, k := range []string{"a", "b", "c", "d", "e"} {
+			_ = m.PutObject(ctx, "sab2", k, []byte("x"), "", nil)
+		}
+
+		// A real SDK paginator carries the original StartAfter forward on every
+		// page and only adds the continuation token. StartAfter="a" leaves
+		// b,c,d,e; MaxKeys=2 truncates the first page to b,c.
+		first, err := m.ListObjects(ctx, "sab2", driver.ListOptions{
+			StartAfter: "a", MaxKeys: 2,
+		})
+		requireNoError(t, err)
+		assertEqual(t, 2, len(first.Objects))
+		assertEqual(t, "b", first.Objects[0].Key)
+		assertEqual(t, "c", first.Objects[1].Key)
+		if !first.IsTruncated || first.NextPageToken == "" {
+			t.Fatalf("expected first page to be truncated with a continuation token")
+		}
+
+		// The continuation must resume strictly past c — no re-listing of b,c.
+		second, err := m.ListObjects(ctx, "sab2", driver.ListOptions{
+			StartAfter: "a", MaxKeys: 2, PageToken: first.NextPageToken,
+		})
+		requireNoError(t, err)
+		assertEqual(t, 2, len(second.Objects))
+		assertEqual(t, "d", second.Objects[0].Key)
+		assertEqual(t, "e", second.Objects[1].Key)
 	})
 }
 

@@ -3,6 +3,7 @@ package oci
 
 import (
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
@@ -113,4 +114,15 @@ func (p *Provider) wireDiscovery() {
 			Serverless: p.Functions,
 		},
 	)
+}
+
+// SnapshotServices returns the provider's services that support identity-
+// preserving snapshotting, keyed by a stable lowercased field-name service key.
+// persist iterates this map, so the persisted surface automatically tracks
+// whichever services implement snapshot.Snapshottable — no hand-kept registry to
+// drift. Discover asserts on the runtime value behind each interface field, so
+// the concrete mocks that implement it (Identity, VCN, Monitoring) are picked up
+// even though the provider exposes them as driver interfaces.
+func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
+	return snapshot.Discover(p)
 }

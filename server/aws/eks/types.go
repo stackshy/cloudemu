@@ -33,19 +33,74 @@ type certificate struct {
 	Data string `json:"data"`
 }
 
+// identityJSON carries the cluster's OIDC identity, read by IRSA tooling and
+// aws_iam_openid_connect_provider.
+type identityJSON struct {
+	OIDC oidcJSON `json:"oidc"`
+}
+
+type oidcJSON struct {
+	Issuer string `json:"issuer"`
+}
+
+// loggingJSON is the EKS cluster logging shape, used on both CreateCluster
+// (request) and DescribeCluster (response).
+type loggingJSON struct {
+	ClusterLogging []logSetupJSON `json:"clusterLogging"`
+}
+
+// logSetupJSON is one control-plane log-type group and whether it is enabled.
+type logSetupJSON struct {
+	Types   []string `json:"types"`
+	Enabled bool     `json:"enabled"`
+}
+
+// kubernetesNetworkConfigRequest is the CreateCluster request shape for cluster
+// networking: the caller may set serviceIpv4Cidr and ipFamily.
+type kubernetesNetworkConfigRequest struct {
+	ServiceIPv4CIDR string `json:"serviceIpv4Cidr,omitempty"`
+	IPFamily        string `json:"ipFamily,omitempty"`
+}
+
+// kubernetesNetworkConfigResponse is the DescribeCluster response shape; EKS
+// echoes the service CIDR for the chosen family plus the ipFamily.
+type kubernetesNetworkConfigResponse struct {
+	ServiceIPv4CIDR string `json:"serviceIpv4Cidr,omitempty"`
+	ServiceIPv6CIDR string `json:"serviceIpv6Cidr,omitempty"`
+	IPFamily        string `json:"ipFamily,omitempty"`
+}
+
+// accessConfigRequest is the CreateCluster request shape for cluster access
+// management. bootstrapClusterCreatorAdminPermissions is a pointer so an
+// omitted value is distinguishable from an explicit false.
+type accessConfigRequest struct {
+	AuthenticationMode                      string `json:"authenticationMode,omitempty"`
+	BootstrapClusterCreatorAdminPermissions *bool  `json:"bootstrapClusterCreatorAdminPermissions,omitempty"`
+}
+
+// accessConfigResponse is the DescribeCluster response shape for access config.
+type accessConfigResponse struct {
+	AuthenticationMode                      string `json:"authenticationMode,omitempty"`
+	BootstrapClusterCreatorAdminPermissions bool   `json:"bootstrapClusterCreatorAdminPermissions"`
+}
+
 // clusterJSON is the EKS cluster resource shape.
 type clusterJSON struct {
-	Name                 string             `json:"name"`
-	Arn                  string             `json:"arn"`
-	CreatedAt            float64            `json:"createdAt"`
-	Version              string             `json:"version,omitempty"`
-	Endpoint             string             `json:"endpoint,omitempty"`
-	RoleArn              string             `json:"roleArn,omitempty"`
-	ResourcesVpcConfig   *vpcConfigResponse `json:"resourcesVpcConfig,omitempty"`
-	Status               string             `json:"status"`
-	CertificateAuthority *certificate       `json:"certificateAuthority,omitempty"`
-	PlatformVersion      string             `json:"platformVersion,omitempty"`
-	Tags                 map[string]string  `json:"tags,omitempty"`
+	Name                    string                           `json:"name"`
+	Arn                     string                           `json:"arn"`
+	CreatedAt               float64                          `json:"createdAt"`
+	Version                 string                           `json:"version,omitempty"`
+	Endpoint                string                           `json:"endpoint,omitempty"`
+	RoleArn                 string                           `json:"roleArn,omitempty"`
+	ResourcesVpcConfig      *vpcConfigResponse               `json:"resourcesVpcConfig,omitempty"`
+	KubernetesNetworkConfig *kubernetesNetworkConfigResponse `json:"kubernetesNetworkConfig,omitempty"`
+	Logging                 *loggingJSON                     `json:"logging,omitempty"`
+	AccessConfig            *accessConfigResponse            `json:"accessConfig,omitempty"`
+	Status                  string                           `json:"status"`
+	CertificateAuthority    *certificate                     `json:"certificateAuthority,omitempty"`
+	Identity                *identityJSON                    `json:"identity,omitempty"`
+	PlatformVersion         string                           `json:"platformVersion,omitempty"`
+	Tags                    map[string]string                `json:"tags,omitempty"`
 }
 
 // nodegroupScalingConfigJSON mirrors the SDK shape for nodegroup scaling.
@@ -53,6 +108,14 @@ type nodegroupScalingConfigJSON struct {
 	MinSize     *int32 `json:"minSize,omitempty"`
 	MaxSize     *int32 `json:"maxSize,omitempty"`
 	DesiredSize *int32 `json:"desiredSize,omitempty"`
+}
+
+// taintJSON mirrors the SDK Taint shape (key, value, effect) used on
+// CreateNodegroup, DescribeNodegroup, and UpdateNodegroupConfig.
+type taintJSON struct {
+	Key    string `json:"key,omitempty"`
+	Value  string `json:"value,omitempty"`
+	Effect string `json:"effect,omitempty"`
 }
 
 // nodegroupJSON is the EKS nodegroup resource shape.
@@ -72,8 +135,36 @@ type nodegroupJSON struct {
 	AmiType        string                      `json:"amiType,omitempty"`
 	NodeRole       string                      `json:"nodeRole,omitempty"`
 	Labels         map[string]string           `json:"labels,omitempty"`
+	Taints         []taintJSON                 `json:"taints,omitempty"`
 	DiskSize       *int32                      `json:"diskSize,omitempty"`
+	Health         *nodegroupHealthJSON        `json:"health,omitempty"`
+	Resources      *nodegroupResourcesJSON     `json:"resources,omitempty"`
 	Tags           map[string]string           `json:"tags,omitempty"`
+}
+
+// nodegroupHealthJSON carries a nodegroup's health issues. A healthy nodegroup
+// reports an empty (but non-nil) issues list, matching real EKS.
+type nodegroupHealthJSON struct {
+	Issues []nodegroupIssueJSON `json:"issues"`
+}
+
+// nodegroupIssueJSON is one health issue on a nodegroup.
+type nodegroupIssueJSON struct {
+	Code        string   `json:"code,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	ResourceIDs []string `json:"resourceIds,omitempty"`
+}
+
+// nodegroupResourcesJSON describes the managed resources EKS provisions for a
+// nodegroup: at least one Auto Scaling group and an optional remote-access SG.
+type nodegroupResourcesJSON struct {
+	AutoScalingGroups         []autoScalingGroupJSON `json:"autoScalingGroups,omitempty"`
+	RemoteAccessSecurityGroup string                 `json:"remoteAccessSecurityGroup,omitempty"`
+}
+
+// autoScalingGroupJSON names one Auto Scaling group backing a nodegroup.
+type autoScalingGroupJSON struct {
+	Name string `json:"name"`
 }
 
 // fargateProfileSelectorJSON matches Pods to a Fargate profile.
@@ -120,11 +211,14 @@ type updateJSON struct {
 // Request bodies decoded from POST/PUT JSON.
 
 type createClusterRequest struct {
-	Name               string            `json:"name"`
-	Version            string            `json:"version,omitempty"`
-	RoleArn            string            `json:"roleArn,omitempty"`
-	ResourcesVpcConfig *vpcConfigRequest `json:"resourcesVpcConfig,omitempty"`
-	Tags               map[string]string `json:"tags,omitempty"`
+	Name                    string                          `json:"name"`
+	Version                 string                          `json:"version,omitempty"`
+	RoleArn                 string                          `json:"roleArn,omitempty"`
+	ResourcesVpcConfig      *vpcConfigRequest               `json:"resourcesVpcConfig,omitempty"`
+	KubernetesNetworkConfig *kubernetesNetworkConfigRequest `json:"kubernetesNetworkConfig,omitempty"`
+	Logging                 *loggingJSON                    `json:"logging,omitempty"`
+	AccessConfig            *accessConfigRequest            `json:"accessConfig,omitempty"`
+	Tags                    map[string]string               `json:"tags,omitempty"`
 }
 
 type updateClusterConfigRequest struct {
@@ -148,20 +242,28 @@ type createNodegroupRequest struct {
 	ReleaseVersion string                      `json:"releaseVersion,omitempty"`
 	ScalingConfig  *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
 	Labels         map[string]string           `json:"labels,omitempty"`
+	Taints         []taintJSON                 `json:"taints,omitempty"`
 	Tags           map[string]string           `json:"tags,omitempty"`
 }
 
 type updateNodegroupConfigRequest struct {
 	ScalingConfig *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
 	Labels        *labelsUpdate               `json:"labels,omitempty"`
+	Taints        *taintsUpdate               `json:"taints,omitempty"`
 }
 
 // labelsUpdate is the request shape for nodegroup label changes; the SDK
-// sends addOrUpdateLabels and removeLabels separately. The mock applies
-// addOrUpdateLabels and ignores removeLabels for Wave 1.
+// sends addOrUpdateLabels and removeLabels separately.
 type labelsUpdate struct {
 	AddOrUpdateLabels map[string]string `json:"addOrUpdateLabels,omitempty"`
 	RemoveLabels      []string          `json:"removeLabels,omitempty"`
+}
+
+// taintsUpdate is the request shape for nodegroup taint changes; the SDK sends
+// addOrUpdateTaints and removeTaints separately.
+type taintsUpdate struct {
+	AddOrUpdateTaints []taintJSON `json:"addOrUpdateTaints,omitempty"`
+	RemoveTaints      []taintJSON `json:"removeTaints,omitempty"`
 }
 
 type updateNodegroupVersionRequest struct {
@@ -214,19 +316,28 @@ type updateEnvelope struct {
 }
 
 type listClustersResponse struct {
-	Clusters []string `json:"clusters"`
+	Clusters  []string `json:"clusters"`
+	NextToken string   `json:"nextToken,omitempty"`
 }
 
 type listNodegroupsResponse struct {
 	Nodegroups []string `json:"nodegroups"`
+	NextToken  string   `json:"nextToken,omitempty"`
 }
 
 type listFargateProfilesResponse struct {
 	FargateProfileNames []string `json:"fargateProfileNames"`
+	NextToken           string   `json:"nextToken,omitempty"`
 }
 
 type listAddonsResponse struct {
-	Addons []string `json:"addons"`
+	Addons    []string `json:"addons"`
+	NextToken string   `json:"nextToken,omitempty"`
+}
+
+type listUpdatesResponse struct {
+	UpdateIDs []string `json:"updateIds"`
+	NextToken string   `json:"nextToken,omitempty"`
 }
 
 // nanosPerSecond converts UnixNano to fractional seconds (the EKS wire format).

@@ -478,12 +478,19 @@ func TestAcceptPeeringConnection(t *testing.T) {
 	})
 }
 
+// TestCreateNATGateway covers Azure's actual creation semantics: unlike AWS, a
+// NAT gateway is not bound to a subnet at creation time (subnets attach to it
+// afterwards via their own natGateway reference), so an empty config succeeds.
+// A supplied AllocationID must resolve to a real, unassociated public IP.
 func TestCreateNATGateway(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
 	vpcID := createTestVPC(t, m)
 
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpcID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+
+	eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -493,17 +500,21 @@ func TestCreateNATGateway(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "success",
-			cfg:  driver.NATGatewayConfig{SubnetID: subnet.ID, Tags: map[string]string{"env": "test"}},
+			name: "no subnet or public IP",
+			cfg:  driver.NATGatewayConfig{Tags: map[string]string{"env": "test"}},
 		},
 		{
-			name:    "empty subnet",
-			cfg:     driver.NATGatewayConfig{},
-			wantErr: true, errMsg: "subnet ID is required",
+			name: "bound to subnet and public IP",
+			cfg:  driver.NATGatewayConfig{SubnetID: subnet.ID, AllocationID: eip.AllocationID},
 		},
 		{
 			name:    "subnet not found",
 			cfg:     driver.NATGatewayConfig{SubnetID: "subnet-missing"},
+			wantErr: true, errMsg: "not found",
+		},
+		{
+			name:    "allocation not found",
+			cfg:     driver.NATGatewayConfig{AllocationID: "eip-missing"},
 			wantErr: true, errMsg: "not found",
 		},
 	}
@@ -519,13 +530,58 @@ func TestCreateNATGateway(t *testing.T) {
 			default:
 				require.NoError(t, err)
 				assert.NotEmpty(t, nat.ID)
-				assert.Equal(t, subnet.ID, nat.SubnetID)
-				assert.Equal(t, vpcID, nat.VPCID)
+				assert.Equal(t, tt.cfg.SubnetID, nat.SubnetID)
 				assert.Equal(t, "available", nat.State)
-				assert.NotEmpty(t, nat.PublicIP)
+
+				if tt.cfg.AllocationID != "" {
+					assert.Equal(t, tt.cfg.AllocationID, nat.AllocationID)
+					assert.NotEmpty(t, nat.PublicIP)
+				} else {
+					assert.Empty(t, nat.PublicIP)
+				}
 			}
 		})
 	}
+}
+
+// TestCreateNATGatewayAllocationAlreadyAssociated guards the atomic
+// check-and-set in bindNATGatewayAllocation: a public IP already bound to one
+// NAT gateway cannot be bound to a second.
+func TestCreateNATGatewayAllocationAlreadyAssociated(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+	require.NoError(t, err)
+
+	_, err = m.CreateNATGateway(ctx, driver.NATGatewayConfig{AllocationID: eip.AllocationID})
+	require.NoError(t, err)
+
+	_, err = m.CreateNATGateway(ctx, driver.NATGatewayConfig{AllocationID: eip.AllocationID})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already associated")
+}
+
+// TestDeleteNATGatewayReleasesAllocation guards the DeleteNATGateway fix: the
+// bound public IP must be releasable again once the NAT gateway is gone.
+func TestDeleteNATGatewayReleasesAllocation(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+	require.NoError(t, err)
+
+	nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{AllocationID: eip.AllocationID})
+	require.NoError(t, err)
+
+	// The allocation is in use: release must be refused.
+	err = m.ReleaseAddress(ctx, eip.AllocationID)
+	require.Error(t, err)
+
+	require.NoError(t, m.DeleteNATGateway(ctx, nat.ID))
+
+	// Freed by the delete: release now succeeds.
+	require.NoError(t, m.ReleaseAddress(ctx, eip.AllocationID))
 }
 
 func TestCreateFlowLog(t *testing.T) {
@@ -1137,7 +1193,7 @@ func TestElasticIP(t *testing.T) {
 
 	t.Run("associate address", func(t *testing.T) {
 		eips, _ := m.DescribeAddresses(ctx, nil)
-		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, driver.AssociateAddressInput{InstanceID: "i-12345"})
 		require.NoError(t, err)
 		assert.NotEmpty(t, assocID)
 
@@ -1173,7 +1229,7 @@ func TestElasticIP(t *testing.T) {
 	})
 
 	t.Run("associate nonexistent allocation", func(t *testing.T) {
-		_, err := m.AssociateAddress(ctx, "eipalloc-missing", "i-12345")
+		_, err := m.AssociateAddress(ctx, "eipalloc-missing", driver.AssociateAddressInput{InstanceID: "i-12345"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})

@@ -12,6 +12,8 @@ package aks
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,9 +33,23 @@ const (
 	defaultNodeCount     = 3
 	defaultVMSize        = "Standard_DS2_v2"
 	defaultOSDiskGB      = 128
-	cpuMetricRunning     = 0.35
-	memMetricRunning     = 0.50
-	podMetricRunning     = 12.0
+	defaultMaxPods       = 110
+	defaultOSDiskType    = "Managed"
+	defaultPoolType      = "VirtualMachineScaleSets"
+	defaultNodeImage     = "AKSUbuntu-2204gen2containerd-202401.09.0"
+	poolPowerRunning     = "Running"
+	// Network-profile defaults the real AKS service synthesizes when a create
+	// omits properties.networkProfile entirely.
+	defaultNetworkPlugin   = "kubenet"
+	defaultServiceCidr     = "10.0.0.0/16"
+	defaultDNSServiceIP    = "10.0.0.10"
+	defaultPodCidr         = "10.244.0.0/16"
+	defaultLoadBalancerSKU = "standard"
+	defaultOutboundType    = "loadBalancer"
+	emulatorTenantID       = "11111111-1111-1111-1111-111111111111"
+	cpuMetricRunning       = 0.35
+	memMetricRunning       = 0.50
+	podMetricRunning       = 12.0
 )
 
 // ManagedCluster is the in-memory representation of an AKS cluster.
@@ -53,8 +69,62 @@ type ManagedCluster struct {
 	Tags           map[string]string
 	AgentPoolNames []string
 
+	// NetworkProfile echoes properties.networkProfile. When a create omits it,
+	// the mock stores the standard AKS defaults (see defaultNetworkProfile);
+	// otherwise it stores exactly the submitted values so a read round-trips.
+	NetworkProfile NetworkProfile
+
+	// EnableRBAC mirrors properties.enableRBAC; defaults to true, the AKS
+	// default when a create omits it.
+	EnableRBAC bool
+	// Identity echoes the managed-identity block. IdentityType is
+	// "SystemAssigned" / "UserAssigned" / "None"/""; PrincipalID and TenantID
+	// are populated for a system-assigned identity.
+	IdentityType string
+	PrincipalID  string
+	TenantID     string
+	// UserAssignedIdentities echoes identity.userAssignedIdentities: the ARM
+	// resource ID of each assigned identity mapped to its synthesized
+	// principal/client pair. Populated only for a UserAssigned identity.
+	UserAssignedIdentities map[string]UserAssignedIdentity
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// UserAssignedIdentity is the synthesized principal/client pair echoed for a
+// single user-assigned managed identity.
+type UserAssignedIdentity struct {
+	PrincipalID string
+	ClientID    string
+}
+
+// NetworkProfile captures the cluster network configuration echoed back on read.
+// A pointer to it on ClusterInput distinguishes "caller omitted networkProfile"
+// (nil → synthesize defaults) from "caller submitted it" (echo verbatim). Only
+// the sub-keys the emulator models live here; any sub-key a caller sets but the
+// emulator does not model still round-trips through the property overlay.
+type NetworkProfile struct {
+	NetworkPlugin   string
+	NetworkPolicy   string
+	ServiceCidr     string
+	DNSServiceIP    string
+	PodCidr         string
+	LoadBalancerSKU string
+	OutboundType    string
+}
+
+// defaultNetworkProfile returns the network-profile values the real AKS service
+// synthesizes when a create omits properties.networkProfile.
+func defaultNetworkProfile() NetworkProfile {
+	return NetworkProfile{
+		NetworkPlugin:   defaultNetworkPlugin,
+		ServiceCidr:     defaultServiceCidr,
+		DNSServiceIP:    defaultDNSServiceIP,
+		PodCidr:         defaultPodCidr,
+		LoadBalancerSKU: defaultLoadBalancerSKU,
+		OutboundType:    defaultOutboundType,
+	}
 }
 
 // AgentPool is a node pool attached to a managed cluster.
@@ -74,9 +144,47 @@ type AgentPool struct {
 	ScaleSetPriority string
 	NodeLabels       map[string]string
 	NodeTaints       []string
+	// MaxPods, OSDiskType, Type, PowerState and NodeImageVersion are the
+	// computed pool fields the real API always returns; the emulator synthesizes
+	// standard defaults when a create omits them.
+	MaxPods          int32
+	OSDiskType       string
+	Type             string
+	PowerState       string
+	NodeImageVersion string
+	// Advanced pool fields Terraform's default_node_pool commonly submits. They
+	// are echoed exactly as submitted (nil/empty when omitted) so a read
+	// round-trips; the emulator synthesizes no defaults for them.
+	AvailabilityZones  []string
+	EnableAutoScaling  *bool
+	MinCount           *int32
+	MaxCount           *int32
+	VnetSubnetID       string
+	OSSKU              string
+	EnableNodePublicIP *bool
+	// Additional default_node_pool fields Terraform commonly submits inline.
+	// Echoed verbatim so an inline submission round-trips the same as a
+	// standalone pool; the emulator synthesizes no defaults for them.
+	UpgradeSettings        *AgentPoolUpgradeSettings
+	Tags                   map[string]string
+	EnableFIPS             *bool
+	SpotMaxPrice           *float32
+	ScaleSetEvictionPolicy string
+	NodePublicIPPrefixID   string
+	KubeletDiskType        string
+	KubeletConfig          map[string]any
+	LinuxOSConfig          map[string]any
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// AgentPoolUpgradeSettings mirrors the subset of
+// armcontainerservice.AgentPoolUpgradeSettings the emulator round-trips.
+type AgentPoolUpgradeSettings struct {
+	MaxSurge                  string
+	DrainTimeoutInMinutes     *int32
+	NodeSoakDurationInMinutes *int32
 }
 
 // MaintenanceConfig is a maintenance window attached to a managed cluster.
@@ -237,6 +345,23 @@ type ClusterInput struct {
 	// Tier is the cluster SKU tier (Free / Standard / Premium); defaults to Free.
 	Tier string
 	Tags map[string]string
+	// IdentityPresent is true when the PUT body carried an identity block. When
+	// false on an update, the stored identity is preserved untouched.
+	IdentityPresent bool
+	// IdentityType echoes the managed-identity block: "SystemAssigned",
+	// "UserAssigned", "None" or "".
+	IdentityType string
+	// UserAssignedIdentityIDs are the ARM resource IDs submitted under
+	// identity.userAssignedIdentities; the mock synthesizes a principal/client
+	// pair for each. Only meaningful when IdentityType includes "UserAssigned".
+	UserAssignedIdentityIDs []string
+	// EnableRBAC mirrors properties.enableRBAC. Nil means "not submitted", which
+	// the mock resolves to the AKS default (true).
+	EnableRBAC *bool
+	// NetworkProfile mirrors properties.networkProfile. Nil means "not
+	// submitted", which the mock resolves to the AKS defaults; a non-nil value
+	// is echoed verbatim so a read round-trips the submitted configuration.
+	NetworkProfile *NetworkProfile
 	// AgentPools may be nil for an empty cluster; otherwise these are the
 	// pools shipped inline at create time (system pool typically).
 	AgentPools []AgentPoolInput
@@ -244,8 +369,11 @@ type ClusterInput struct {
 
 // AgentPoolInput captures the mutable fields of an AgentPool CreateOrUpdate.
 type AgentPoolInput struct {
-	Name             string
-	Count            int32
+	Name string
+	// Count is a pointer so an explicit count of 0 (scale-to-zero on a user
+	// pool) is distinguishable from an omitted count. Nil means "not submitted"
+	// and the mock applies the standard default node count.
+	Count            *int32
 	VMSize           string
 	OSDiskSizeGB     int32
 	OSType           string
@@ -254,6 +382,34 @@ type AgentPoolInput struct {
 	ScaleSetPriority string
 	NodeLabels       map[string]string
 	NodeTaints       []string
+	// MaxPods is the submitted max-pods-per-node; 0 means "not submitted" and
+	// the mock applies the standard default.
+	MaxPods int32
+	// OSDiskType (Managed / Ephemeral) and Type (VirtualMachineScaleSets /
+	// AvailabilitySet) round-trip when submitted; the mock applies the standard
+	// default only when the field is empty.
+	OSDiskType string
+	Type       string
+	// Advanced pool fields (autoscaler bounds, availability zones, subnet, OS
+	// SKU, public-IP flag) echoed verbatim; nil/empty when omitted.
+	AvailabilityZones  []string
+	EnableAutoScaling  *bool
+	MinCount           *int32
+	MaxCount           *int32
+	VnetSubnetID       string
+	OSSKU              string
+	EnableNodePublicIP *bool
+	// Additional default_node_pool fields echoed verbatim; nil/empty when
+	// omitted so a read round-trips exactly what was submitted.
+	UpgradeSettings        *AgentPoolUpgradeSettings
+	Tags                   map[string]string
+	EnableFIPS             *bool
+	SpotMaxPrice           *float32
+	ScaleSetEvictionPolicy string
+	NodePublicIPPrefixID   string
+	KubeletDiskType        string
+	KubeletConfig          map[string]any
+	LinuxOSConfig          map[string]any
 }
 
 // CreateOrUpdateCluster creates a new managed cluster or updates an existing
@@ -284,19 +440,13 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 		}
 	}
 
-	cluster.Location = input.Location
-	cluster.KubernetesVersion = defaultIfEmpty(input.KubernetesVersion, defaultK8sVersion)
-	cluster.DNSPrefix = defaultIfEmpty(input.DNSPrefix, input.Name+"-dns")
-	cluster.NodeResourceGroup = defaultIfEmpty(input.NodeResourceGroup, "MC_"+input.ResourceGroup+"_"+input.Name+"_"+input.Location)
-	cluster.FQDN = cluster.DNSPrefix + ".hcp." + defaultIfEmpty(input.Location, "eastus") + ".azmk8s.io"
-	cluster.ProvisioningState = "Succeeded"
-	cluster.PowerState = "Running"
-	cluster.Tier = defaultIfEmpty(input.Tier, "Free")
-	cluster.Tags = copyTags(input.Tags)
+	resolveClusterFields(&cluster, input, existing)
 	cluster.UpdatedAt = now
 
-	// Inline pools — replace what we have for this cluster.
-	cluster.AgentPoolNames = m.replaceInlinePools(input, now)
+	// Reconcile inline pools by NAME — never wipe. A PUT that omits
+	// agentPoolProfiles leaves every existing pool (including standalone-API
+	// pools) untouched; a PUT that includes them upserts those pools.
+	cluster.AgentPoolNames = m.reconcileInlinePools(input, cluster.KubernetesVersion, now)
 
 	// Wave 2: if a Kubernetes data-plane server is wired and this is a fresh
 	// cluster, register a ClusterState and remember the UID so Kubeconfig can
@@ -319,37 +469,165 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	return &out, nil
 }
 
-// replaceInlinePools wipes any pre-existing pools for the cluster and re-adds
-// each input pool. Caller must hold m.mu (write).
+// resolveClusterFields merges the submitted input onto cluster. On a create,
+// unset fields resolve to the AKS defaults; on an update, a field the request
+// omits is preserved from the stored value — so a tags-only or version-only PUT
+// never resets networkProfile, identity, dnsPrefix, or the node pools.
 //
 //nolint:gocritic // input is a value-type mirror of the public CreateOrUpdate body.
-func (m *Mock) replaceInlinePools(input ClusterInput, now time.Time) []string {
-	// Drop existing pools for this cluster.
-	prefix := input.ResourceGroup + "/" + input.Name + "/"
+func resolveClusterFields(cluster *ManagedCluster, input ClusterInput, existing bool) {
+	cluster.Location = mergeStr(cluster.Location, input.Location, "", existing)
+	cluster.ProvisioningState = "Succeeded"
+	cluster.PowerState = "Running"
+	cluster.Tier = mergeStr(cluster.Tier, input.Tier, "Free", existing)
+	cluster.KubernetesVersion = mergeStr(cluster.KubernetesVersion, input.KubernetesVersion, defaultK8sVersion, existing)
+	cluster.DNSPrefix = mergeStr(cluster.DNSPrefix, input.DNSPrefix, input.Name+"-dns", existing)
+	cluster.NodeResourceGroup = mergeStr(cluster.NodeResourceGroup, input.NodeResourceGroup,
+		"MC_"+input.ResourceGroup+"_"+input.Name+"_"+cluster.Location, existing)
 
-	for _, k := range m.pools.Keys() {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
-			m.pools.Delete(k)
+	if input.Tags != nil || !existing {
+		cluster.Tags = copyTags(input.Tags)
+	}
+
+	if input.EnableRBAC != nil || !existing {
+		cluster.EnableRBAC = input.EnableRBAC == nil || *input.EnableRBAC
+	}
+
+	if input.NetworkProfile != nil || !existing {
+		applyNetworkProfile(cluster, input.NetworkProfile)
+	}
+
+	resolveClusterIdentity(cluster, input, existing)
+
+	cluster.FQDN = cluster.DNSPrefix + ".hcp." + defaultIfEmpty(cluster.Location, "eastus") + ".azmk8s.io"
+}
+
+// mergeStr resolves a string field: the submitted value wins when non-empty;
+// otherwise the stored value is preserved on an update, or def applied on a
+// create.
+func mergeStr(cur, in, def string, existing bool) string {
+	if in != "" {
+		return in
+	}
+
+	if existing {
+		return cur
+	}
+
+	return def
+}
+
+// resolveClusterIdentity applies the submitted identity block, or preserves the
+// stored identity when the update omitted identity entirely.
+//
+//nolint:gocritic // input is a value-type mirror of the public CreateOrUpdate body.
+func resolveClusterIdentity(cluster *ManagedCluster, input ClusterInput, existing bool) {
+	if existing && !input.IdentityPresent {
+		return
+	}
+
+	applyClusterIdentity(cluster, input.IdentityType, input.UserAssignedIdentityIDs)
+}
+
+// applyClusterIdentity echoes the submitted managed-identity block, generating
+// a deterministic principal/tenant pair for a system-assigned identity and a
+// synthesized principal/client pair for each user-assigned identity.
+func applyClusterIdentity(cluster *ManagedCluster, identityType string, userAssignedIDs []string) {
+	cluster.IdentityType = identityType
+	cluster.PrincipalID = ""
+	cluster.TenantID = ""
+	cluster.UserAssignedIdentities = nil
+
+	if identityType == "" || identityType == "None" {
+		return
+	}
+
+	if strings.Contains(identityType, "SystemAssigned") {
+		cluster.PrincipalID = idgen.SyntheticGUID(
+			"principal/cluster/" + cluster.ResourceGroup + "/" + cluster.Name)
+		cluster.TenantID = emulatorTenantID
+	}
+
+	if strings.Contains(identityType, "UserAssigned") {
+		cluster.UserAssignedIdentities = synthesizeUserAssigned(userAssignedIDs)
+	}
+}
+
+// synthesizeUserAssigned builds a deterministic principal/client pair for each
+// submitted user-assigned identity ARM resource ID.
+func synthesizeUserAssigned(ids []string) map[string]UserAssignedIdentity {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	out := make(map[string]UserAssignedIdentity, len(ids))
+	for _, id := range ids {
+		out[id] = UserAssignedIdentity{
+			PrincipalID: idgen.SyntheticGUID("principal/uami/" + id),
+			ClientID:    idgen.SyntheticGUID("client/uami/" + id),
 		}
 	}
 
-	names := make([]string, 0, len(input.AgentPools))
+	return out
+}
 
+// applyNetworkProfile stores the submitted network profile verbatim, or the
+// standard AKS defaults when the caller omitted properties.networkProfile.
+func applyNetworkProfile(cluster *ManagedCluster, np *NetworkProfile) {
+	if np == nil {
+		cluster.NetworkProfile = defaultNetworkProfile()
+		return
+	}
+
+	cluster.NetworkProfile = *np
+}
+
+// reconcileInlinePools upserts the pools carried in the cluster PUT body by
+// NAME and never wipes pools absent from the body — those may be standalone
+// agentPools-API pools (azurerm_kubernetes_cluster_node_pool), which real AKS
+// leaves intact across a cluster PUT. A PUT that omits agentPoolProfiles leaves
+// every existing pool untouched. Caller must hold m.mu (write). clusterVersion
+// is inherited by inline pools that omit their own orchestratorVersion.
+//
+//nolint:gocritic // input is a value-type mirror of the public CreateOrUpdate body.
+func (m *Mock) reconcileInlinePools(input ClusterInput, clusterVersion string, now time.Time) []string {
 	//nolint:gocritic // pool is a value mirror of the SDK input; copy is intentional.
 	for _, pool := range input.AgentPools {
-		ap := buildAgentPool(input.ResourceGroup, input.Name, pool, now)
-		m.pools.Set(poolKey(input.ResourceGroup, input.Name, pool.Name), ap)
-		names = append(names, pool.Name)
+		key := poolKey(input.ResourceGroup, input.Name, pool.Name)
+		ap := buildAgentPool(input.ResourceGroup, input.Name, clusterVersion, pool, now)
+
+		if prev, ok := m.pools.Get(key); ok {
+			ap.CreatedAt = prev.CreatedAt
+		}
+
+		m.pools.Set(key, ap)
 	}
+
+	return m.poolNamesForCluster(input.ResourceGroup, input.Name)
+}
+
+// poolNamesForCluster returns the sorted names of every pool currently attached
+// to the cluster. Caller must hold m.mu.
+func (m *Mock) poolNamesForCluster(rg, cluster string) []string {
+	prefix := rg + "/" + cluster + "/"
+	names := make([]string, 0)
+
+	for _, k := range m.pools.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			names = append(names, k[len(prefix):])
+		}
+	}
+
+	sort.Strings(names)
 
 	return names
 }
 
 //nolint:gocritic // in is a value mirror of the SDK AgentPool body; pointer would invite caller mutation.
-func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentPool {
-	count := in.Count
-	if count <= 0 {
-		count = defaultNodeCount
+func buildAgentPool(rg, cluster, clusterVersion string, in AgentPoolInput, now time.Time) AgentPool {
+	count := int32(defaultNodeCount)
+	if in.Count != nil {
+		count = *in.Count
 	}
 
 	disk := in.OSDiskSizeGB
@@ -357,32 +635,115 @@ func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentP
 		disk = defaultOSDiskGB
 	}
 
-	return AgentPool{
-		Name:              in.Name,
-		ClusterName:       cluster,
-		ResourceGroup:     rg,
-		Count:             count,
-		VMSize:            defaultIfEmpty(in.VMSize, defaultVMSize),
-		OSDiskSizeGB:      disk,
-		OSType:            defaultIfEmpty(in.OSType, "Linux"),
-		Mode:              defaultIfEmpty(in.Mode, "User"),
-		OrchestratorVer:   defaultIfEmpty(in.OrchestratorVer, defaultK8sVersion),
-		ProvisioningState: "Succeeded",
-		ScaleSetPriority:  defaultIfEmpty(in.ScaleSetPriority, "Regular"),
-		NodeLabels:        copyLabels(in.NodeLabels),
-		NodeTaints:        copyTaints(in.NodeTaints),
-		CreatedAt:         now,
-		UpdatedAt:         now,
+	maxPods := in.MaxPods
+	if maxPods <= 0 {
+		maxPods = defaultMaxPods
 	}
+
+	return AgentPool{
+		Name:                   in.Name,
+		ClusterName:            cluster,
+		ResourceGroup:          rg,
+		Count:                  count,
+		VMSize:                 defaultIfEmpty(in.VMSize, defaultVMSize),
+		OSDiskSizeGB:           disk,
+		OSType:                 defaultIfEmpty(in.OSType, "Linux"),
+		Mode:                   defaultIfEmpty(in.Mode, "User"),
+		OrchestratorVer:        defaultIfEmpty(in.OrchestratorVer, defaultIfEmpty(clusterVersion, defaultK8sVersion)),
+		ProvisioningState:      "Succeeded",
+		ScaleSetPriority:       defaultIfEmpty(in.ScaleSetPriority, "Regular"),
+		NodeLabels:             copyLabels(in.NodeLabels),
+		NodeTaints:             copyTaints(in.NodeTaints),
+		MaxPods:                maxPods,
+		OSDiskType:             defaultIfEmpty(in.OSDiskType, defaultOSDiskType),
+		Type:                   defaultIfEmpty(in.Type, defaultPoolType),
+		PowerState:             poolPowerRunning,
+		NodeImageVersion:       defaultNodeImage,
+		AvailabilityZones:      copyTaints(in.AvailabilityZones),
+		EnableAutoScaling:      copyBoolPtr(in.EnableAutoScaling),
+		MinCount:               copyInt32Ptr(in.MinCount),
+		MaxCount:               copyInt32Ptr(in.MaxCount),
+		VnetSubnetID:           in.VnetSubnetID,
+		OSSKU:                  in.OSSKU,
+		EnableNodePublicIP:     copyBoolPtr(in.EnableNodePublicIP),
+		UpgradeSettings:        copyUpgradeSettings(in.UpgradeSettings),
+		Tags:                   copyTags(in.Tags),
+		EnableFIPS:             copyBoolPtr(in.EnableFIPS),
+		SpotMaxPrice:           copyFloat32Ptr(in.SpotMaxPrice),
+		ScaleSetEvictionPolicy: in.ScaleSetEvictionPolicy,
+		NodePublicIPPrefixID:   in.NodePublicIPPrefixID,
+		KubeletDiskType:        in.KubeletDiskType,
+		KubeletConfig:          copyAnyMap(in.KubeletConfig),
+		LinuxOSConfig:          copyAnyMap(in.LinuxOSConfig),
+		CreatedAt:              now,
+		UpdatedAt:              now,
+	}
+}
+
+func copyBoolPtr(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
+}
+
+func copyInt32Ptr(p *int32) *int32 {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
+}
+
+func copyFloat32Ptr(p *float32) *float32 {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
+}
+
+func copyAnyMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
+}
+
+func copyUpgradeSettings(s *AgentPoolUpgradeSettings) *AgentPoolUpgradeSettings {
+	if s == nil {
+		return nil
+	}
+
+	out := AgentPoolUpgradeSettings{
+		MaxSurge:                  s.MaxSurge,
+		DrainTimeoutInMinutes:     copyInt32Ptr(s.DrainTimeoutInMinutes),
+		NodeSoakDurationInMinutes: copyInt32Ptr(s.NodeSoakDurationInMinutes),
+	}
+
+	return &out
 }
 
 func totalNodeCount(pools []AgentPoolInput) int32 {
 	var total int32
 
 	for i := range pools {
-		c := pools[i].Count
-		if c <= 0 {
-			c = defaultNodeCount
+		c := int32(defaultNodeCount)
+		if pools[i].Count != nil {
+			c = *pools[i].Count
 		}
 
 		total += c
@@ -473,7 +834,7 @@ func (m *Mock) ListClustersByResourceGroup(_ context.Context, rg string) ([]Mana
 	defer m.mu.RUnlock()
 
 	all := m.clusters.Filter(func(_ string, c ManagedCluster) bool {
-		return c.ResourceGroup == rg
+		return strings.EqualFold(c.ResourceGroup, rg)
 	})
 
 	out := make([]ManagedCluster, 0, len(all))
@@ -535,12 +896,14 @@ func (m *Mock) CreateOrUpdateAgentPool(
 	defer m.mu.Unlock()
 
 	cKey := clusterKey(rg, cluster)
-	if !m.clusters.Has(cKey) {
+
+	clusterRec, ok := m.clusters.Get(cKey)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "managed cluster %q not found in resource group %q", cluster, rg)
 	}
 
 	now := m.opts.Clock.Now().UTC()
-	pool := buildAgentPool(rg, cluster, in, now)
+	pool := buildAgentPool(rg, cluster, clusterRec.KubernetesVersion, in, now)
 
 	if existing, ok := m.pools.Get(poolKey(rg, cluster, in.Name)); ok {
 		pool.CreatedAt = existing.CreatedAt
@@ -618,7 +981,7 @@ func (m *Mock) ListAgentPools(_ context.Context, rg, cluster string) ([]AgentPoo
 	}
 
 	all := m.pools.Filter(func(_ string, p AgentPool) bool {
-		return p.ResourceGroup == rg && p.ClusterName == cluster
+		return strings.EqualFold(p.ResourceGroup, rg) && strings.EqualFold(p.ClusterName, cluster)
 	})
 
 	out := make([]AgentPool, 0, len(all))
@@ -707,7 +1070,7 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 	}
 
 	all := m.maintenance.Filter(func(_ string, mc MaintenanceConfig) bool {
-		return mc.ResourceGroup == rg && mc.ClusterName == cluster
+		return strings.EqualFold(mc.ResourceGroup, rg) && strings.EqualFold(mc.ClusterName, cluster)
 	})
 
 	out := make([]MaintenanceConfig, 0, len(all))

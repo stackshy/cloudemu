@@ -3,19 +3,24 @@ package containerinstances
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // createOrUpdateGroup handles PUT — ContainerGroups.BeginCreateOrUpdate. The LRO
-// completes inline: returning 201 with the resource body terminates the SDK's
-// poller on the first response.
+// completes inline: returning the resource body terminates the SDK's poller on
+// the first response. A fresh create answers 201, an in-place update 200 —
+// matching ARM PUT.
 func (h *Handler) createOrUpdateGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body containerGroupJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
+
+	_, getErr := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	existed := getErr == nil
 
 	group, err := h.aci.CreateContainerGroup(r.Context(), toConfig(rp, &body))
 	if err != nil {
@@ -24,12 +29,88 @@ func (h *Handler) createOrUpdateGroup(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusCreated, toGroupJSON(rp, group))
+	status := http.StatusCreated
+	if existed {
+		status = http.StatusOK
+	}
+
+	azurearm.WriteJSON(w, status, toGroupJSON(rp, group))
+}
+
+// updateGroup handles PATCH — ContainerGroups.Update. Real Azure's Update is a
+// PATCH that merges the request tags into an existing group and returns it
+// (200). A missing group answers 404.
+func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body containerGroupJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	group, err := h.aci.UpdateContainerGroupTags(
+		r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, body.Tags)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toGroupJSON(rp, group))
+}
+
+// lifecycleGroup handles the POST start/stop/restart verbs. All three complete
+// inline and answer 204 No Content, terminating the SDK's begin-poller.
+func (h *Handler) lifecycleGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var err error
+
+	switch rp.SubResource {
+	case subActionStart:
+		err = h.aci.StartContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	case subActionStop:
+		err = h.aci.StopContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	case subActionRestart:
+		err = h.aci.RestartContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	}
+
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// execContainer handles POST .../containers/{c}/exec — Containers.ExecuteCommand.
+// It returns the exec websocket URI and one-time password.
+func (h *Handler) execContainer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+
+		return
+	}
+
+	var req execRequest
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	session, err := h.aci.ExecContainer(
+		r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, strings.Fields(req.Command))
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, execResponse{
+		WebSocketURI: session.WebSocketURI,
+		Password:     session.Password,
+	})
 }
 
 // getGroup handles GET on a single resource — ContainerGroups.Get.
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	group, err := h.aci.GetContainerGroup(r.Context(), rp.ResourceName)
+	group, err := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 
@@ -42,14 +123,14 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.
 // deleteGroup handles DELETE — ContainerGroups.BeginDelete. Returning 200 with
 // the deleted resource body completes the SDK's poller on the first response.
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	group, err := h.aci.GetContainerGroup(r.Context(), rp.ResourceName)
+	group, err := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 
 		return
 	}
 
-	if derr := h.aci.DeleteContainerGroup(r.Context(), rp.ResourceName); derr != nil {
+	if derr := h.aci.DeleteContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); derr != nil {
 		azurearm.WriteCErr(w, derr)
 
 		return
@@ -88,7 +169,8 @@ func (h *Handler) containerLogs(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	content, err := h.aci.ContainerLogs(r.Context(), rp.ResourceName, rp.SubResourceName, tailParam(r))
+	content, err := h.aci.ContainerLogs(
+		r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, tailParam(r))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 

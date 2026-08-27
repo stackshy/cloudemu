@@ -277,12 +277,16 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		Port:               port,
 		State:              rdsdriver.StateAvailable,
 		MultiAZ:            cfg.MultiAZ,
+		DeletionProtection: cfg.DeletionProtection,
 		PubliclyAccessible: cfg.PubliclyAccessible,
 		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:    cfg.SubnetGroupName,
 		AvailabilityZone:   region,
 		CreatedAt:          m.opts.Clock.Now().UTC(),
 		Tags:               copyTags(cfg.Tags),
+		GCPDatabaseFlags:   cfg.GCPDatabaseFlags,
+		GCPBackupConfig:    cfg.GCPBackupConfig,
+		GCPIPConfig:        cfg.GCPIPConfig,
 	}
 }
 
@@ -393,13 +397,26 @@ func (m *Mock) ModifyInstance(
 		inst.AllocatedStorage = input.AllocatedStorage
 	}
 
+	if input.StorageType != "" {
+		inst.StorageType = input.StorageType
+	}
+
+	if input.DeletionProtection != nil {
+		inst.DeletionProtection = *input.DeletionProtection
+	}
+
 	if input.EngineVersion != "" {
-		inst.EngineVersion = input.EngineVersion
+		// Cloud SQL's databaseVersion is stored in Engine (that is the field
+		// toSQLInstance renders as databaseVersion), so a patched databaseVersion
+		// must land there to be visible on the next Get.
+		inst.Engine = input.EngineVersion
 	}
 
 	if input.MultiAZ != nil {
 		inst.MultiAZ = *input.MultiAZ
 	}
+
+	applyGCPSettings(&inst, &input)
 
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
@@ -412,6 +429,22 @@ func (m *Mock) ModifyInstance(
 	return &out, nil
 }
 
+// applyGCPSettings merges the Cloud SQL settings sub-object blobs from a Patch
+// onto the instance; an empty blob means "no change" (patch merges).
+func applyGCPSettings(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+	if input.GCPDatabaseFlags != "" {
+		inst.GCPDatabaseFlags = input.GCPDatabaseFlags
+	}
+
+	if input.GCPBackupConfig != "" {
+		inst.GCPBackupConfig = input.GCPBackupConfig
+	}
+
+	if input.GCPIPConfig != "" {
+		inst.GCPIPConfig = input.GCPIPConfig
+	}
+}
+
 // DeleteInstance removes an instance, unlinks it from any replica relationship,
 // and cascades to its children.
 func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
@@ -421,6 +454,13 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
+	}
+
+	// Deletion protection blocks the delete until the guard is cleared, matching
+	// real Cloud SQL (settings.deletionProtectionEnabled).
+	if inst.DeletionProtection {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q has deletion protection enabled", id)
 	}
 
 	// Tear down the real database backing the instance, if any.

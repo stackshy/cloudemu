@@ -24,6 +24,10 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		return nil, cerrors.Newf(cerrors.NotFound, "version %s not found", cfg.FunctionVersion)
 	}
 
+	if err := m.validateRoutingConfig(&fd, cfg.FunctionVersion, cfg.RoutingConfig); err != nil {
+		return nil, err
+	}
+
 	aliasARN := idgen.AWSARN(
 		"lambda", m.opts.Region, m.opts.AccountID,
 		"function:"+cfg.FunctionName+":"+cfg.Name,
@@ -37,6 +41,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		RoutingConfig:   copyRoutingConfig(cfg.RoutingConfig),
 		AliasARN:        aliasARN,
 		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		RevisionID:      newRevisionID(),
 	}
 
 	fd.aliases.Set(cfg.Name, &aliasData{alias: a})
@@ -58,13 +63,29 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", cfg.Name)
 	}
 
+	// Compute the prospective effective FunctionVersion without touching the
+	// live alias yet. UpdateAlias is atomic in real AWS: if any validation
+	// fails the alias must be left completely unchanged.
+	effectiveVersion := ad.alias.FunctionVersion
+
 	if cfg.FunctionVersion != "" {
 		if !m.versionExists(&fd, cfg.FunctionVersion) {
 			return nil, cerrors.Newf(cerrors.NotFound, "version %s not found", cfg.FunctionVersion)
 		}
 
-		ad.alias.FunctionVersion = cfg.FunctionVersion
+		effectiveVersion = cfg.FunctionVersion
 	}
+
+	if cfg.RoutingConfig != nil {
+		// Validate the routing config against the prospective FunctionVersion,
+		// which is the effective primary target for this alias.
+		if err := m.validateRoutingConfig(&fd, effectiveVersion, cfg.RoutingConfig); err != nil {
+			return nil, err
+		}
+	}
+
+	// All validation passed — commit the changes to the live alias.
+	ad.alias.FunctionVersion = effectiveVersion
 
 	if cfg.Description != "" {
 		ad.alias.Description = cfg.Description
@@ -73,6 +94,8 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	if cfg.RoutingConfig != nil {
 		ad.alias.RoutingConfig = copyRoutingConfig(cfg.RoutingConfig)
 	}
+
+	ad.alias.RevisionID = newRevisionID()
 
 	fd.aliases.Set(cfg.Name, ad)
 
@@ -139,6 +162,31 @@ func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig
 	cp := *rc
 
 	return &cp
+}
+
+// validateRoutingConfig enforces the RoutingConfig.AdditionalVersionWeights
+// rules real Lambda applies: neither the alias's own version nor the additional
+// version can be $LATEST (InvalidParameterValueException), and the additional
+// version must exist (ResourceNotFoundException). effectiveVersion is the alias's
+// own FunctionVersion after the operation. An absent additional version is a no-op.
+func (m *Mock) validateRoutingConfig(fd *funcData, effectiveVersion string, rc *driver.AliasRoutingConfig) error {
+	if rc == nil || rc.AdditionalVersion == "" {
+		return nil
+	}
+
+	// A weighted alias cannot point to $LATEST — this restriction applies to the
+	// alias's own FunctionVersion (the primary target) as well as the additional
+	// version. Both must be published.
+	if effectiveVersion == latestVersion || rc.AdditionalVersion == latestVersion {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Alias with weights can not be created with function version $LATEST")
+	}
+
+	if !m.versionExists(fd, rc.AdditionalVersion) {
+		return cerrors.Newf(cerrors.NotFound, "version %s not found", rc.AdditionalVersion)
+	}
+
+	return nil
 }
 
 // versionExists checks whether a version string exists for the given function.

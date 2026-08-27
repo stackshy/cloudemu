@@ -53,9 +53,18 @@ func (h *Handler) serveConcurrency(w http.ResponseWriter, r *http.Request, name 
 
 		writeJSON(w, http.StatusOK, map[string]any{"ReservedConcurrentExecutions": req.ReservedConcurrentExecutions})
 	case http.MethodGet:
+		// GetFunctionConcurrency 404s only when the FUNCTION is missing. A function
+		// with no reserved concurrency set is HTTP 200 with an empty body, matching
+		// AWS — the provider reports NotFound for both cases, so the function's
+		// existence is checked separately here.
+		if _, err := h.fn.GetFunction(r.Context(), name); err != nil {
+			writeErr(w, err)
+			return
+		}
+
 		cfg, err := h.fn.GetFunctionConcurrency(r.Context(), name)
 		if err != nil {
-			writeErr(w, err)
+			writeJSON(w, http.StatusOK, map[string]any{})
 			return
 		}
 

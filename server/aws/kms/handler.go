@@ -54,6 +54,7 @@ func New(k kmsdriver.KMS) *Handler {
 		"GenerateDataKeyPair":                 h.generateDataKeyPair,
 		"GenerateDataKeyPairWithoutPlaintext": h.generateDataKeyPairWithoutPlaintext,
 		"GenerateRandom":                      h.generateRandom,
+		"GetPublicKey":                        h.getPublicKey,
 		"Sign":                                h.sign,
 		"Verify":                              h.verify,
 		"GenerateMac":                         h.generateMac,
@@ -144,6 +145,8 @@ func sentinelException(err error) string {
 		return "KMSInvalidStateException"
 	case errors.Is(err, kmsdriver.ErrInvalidKeyUsage):
 		return "InvalidKeyUsageException"
+	case errors.Is(err, kmsdriver.ErrUnsupportedOperation):
+		return "UnsupportedOperationException"
 	default:
 		return ""
 	}
@@ -153,22 +156,24 @@ func sentinelException(err error) string {
 // errors take precedence so distinct crypto/state failures reach the client as
 // their real typed exceptions rather than a generic ValidationException.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	if exc := sentinelException(err); exc != "" {
-		wire.WriteJSONError(w, http.StatusBadRequest, exc, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, exc, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "NotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "NotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "AlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "AlreadyExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "KMSInvalidStateException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "KMSInvalidStateException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "KMSInternalException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "KMSInternalException", msg)
 	}
 }

@@ -2,12 +2,38 @@ package sfn
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
+
+// validateASL performs a minimal Amazon States Language structural check: the
+// definition must be a JSON object carrying a top-level "StartAt" string and a
+// non-empty "States" object. Real Step Functions rejects anything else with
+// InvalidDefinition. No full semantic validation is performed.
+func validateASL(definition string) error {
+	var doc struct {
+		StartAt string                     `json:"StartAt"`
+		States  map[string]json.RawMessage `json:"States"`
+	}
+
+	if err := json.Unmarshal([]byte(definition), &doc); err != nil {
+		return invalidDefinition("definition is not valid JSON")
+	}
+
+	if doc.StartAt == "" {
+		return invalidDefinition("definition is missing the required top-level 'StartAt' field")
+	}
+
+	if len(doc.States) == 0 {
+		return invalidDefinition("definition is missing the required top-level 'States' object")
+	}
+
+	return nil
+}
 
 func (m *Mock) getSM(arn string) (*smData, error) {
 	if !validStateMachineARN(arn) {
@@ -37,6 +63,16 @@ func (m *Mock) CreateStateMachine(
 		return "", "", time.Time{}, invalidName("state machine definition is required")
 	}
 
+	if err := validateASL(in.Definition); err != nil {
+		return "", "", time.Time{}, err
+	}
+
+	// roleArn is required and must be a valid IAM role ARN. An empty or
+	// malformed value is InvalidArn (real SFN validates the role ARN shape).
+	if !validRoleARN(in.RoleArn) {
+		return "", "", time.Time{}, invalidArn("%q is not a valid IAM role ARN", in.RoleArn)
+	}
+
 	smType := in.Type
 	if smType == "" {
 		smType = driver.TypeStandard
@@ -59,10 +95,37 @@ func (m *Mock) CreateStateMachine(
 	// Claim the name atomically so two concurrent same-name creates can't both
 	// succeed (uniqueness invariant under concurrency).
 	if !m.machines.SetIfAbsent(arn, &smData{sm: sm}) {
-		return "", "", time.Time{}, smAlreadyExists(in.Name)
+		return m.reconcileExisting(arn, &sm)
 	}
 
 	return arn, versionArn, now, nil
+}
+
+// reconcileExisting resolves a CreateStateMachine against a name that is already
+// taken. Real Step Functions makes CreateStateMachine idempotent: a repeat call
+// with the same name whose definition, type, logging and tracing configuration
+// all match the existing machine returns that machine (HTTP 200) — a differing
+// roleArn or tags is ignored. Any other difference is StateMachineAlreadyExists.
+func (m *Mock) reconcileExisting(
+	arn string, want *driver.StateMachine,
+) (resolvedArn, versionArn string, created time.Time, err error) {
+	sd, ok := m.machines.Get(arn)
+	if !ok {
+		return "", "", time.Time{}, smAlreadyExists(want.Name)
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	same := sd.sm.Definition == want.Definition &&
+		sd.sm.Type == want.Type &&
+		sd.sm.LoggingConfigJSON == want.LoggingConfigJSON &&
+		sd.sm.TracingConfigJSON == want.TracingConfigJSON
+	if !same {
+		return "", "", time.Time{}, smAlreadyExists(want.Name)
+	}
+
+	return sd.sm.ARN, sd.sm.LatestVersionArn, sd.sm.CreationDate, nil
 }
 
 // publishLocked appends a new version to sm and returns its ARN. Callers must
@@ -94,6 +157,16 @@ func (m *Mock) DescribeStateMachine(_ context.Context, arn string) (*driver.Stat
 	return &out, nil
 }
 
+// hasUpdatableField reports whether an UpdateStateMachine request supplies at
+// least one field it can mutate. Real SFN rejects an update carrying none of
+// them with MissingRequiredParameter.
+//
+//nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
+func hasUpdatableField(in driver.UpdateStateMachineInput) bool {
+	return in.Definition != "" || in.RoleArn != "" || in.LoggingConfigJSON != "" ||
+		in.TracingConfigJSON != "" || in.EncryptionCfgJSON != ""
+}
+
 //nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
 func (m *Mock) UpdateStateMachine(
 	_ context.Context, in driver.UpdateStateMachineInput,
@@ -101,6 +174,14 @@ func (m *Mock) UpdateStateMachine(
 	sd, err := m.getSM(in.ARN)
 	if err != nil {
 		return nil, err
+	}
+
+	// UpdateStateMachine must change at least one updatable field. Supplying
+	// none is a no-op that real SFN rejects with MissingRequiredParameter (and
+	// it must not bump the revision).
+	if !hasUpdatableField(in) {
+		return nil, missingRequiredParameter(
+			"UpdateStateMachine requires at least one of definition or roleArn")
 	}
 
 	sd.mu.Lock()

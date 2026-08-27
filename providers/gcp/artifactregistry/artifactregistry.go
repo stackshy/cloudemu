@@ -19,11 +19,10 @@ import (
 )
 
 const (
-	defaultMediaType     = "application/vnd.docker.distribution.manifest.v2+json"
-	mutableTag           = "MUTABLE"
-	immutableTag         = "IMMUTABLE"
-	scanStatusComplete   = "COMPLETE"
-	digestHashFormatByte = 8
+	defaultMediaType   = "application/vnd.docker.distribution.manifest.v2+json"
+	mutableTag         = "MUTABLE"
+	immutableTag       = "IMMUTABLE"
+	scanStatusComplete = "COMPLETE"
 )
 
 // Compile-time check that Mock implements driver.ContainerRegistry.
@@ -45,7 +44,7 @@ type repoData struct {
 
 // Mock is an in-memory mock implementation of the GCP Artifact Registry service.
 type Mock struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -87,6 +86,9 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 		return nil, errors.New(errors.InvalidArgument, "repository name is required")
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.repos.Has(cfg.Name) {
 		return nil, errors.Newf(errors.AlreadyExists, "repository %q already exists", cfg.Name)
 	}
@@ -99,11 +101,13 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 	tags := copyTags(cfg.Tags)
 	uri := fmt.Sprintf("%s-docker.pkg.dev/%s/%s", m.opts.Region, m.opts.ProjectID, cfg.Name)
 	selfLink := idgen.GCPID(m.opts.ProjectID, "repositories", cfg.Name)
+	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 
 	info := driver.Repository{
 		Name:       selfLink,
 		URI:        uri,
-		CreatedAt:  m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		CreatedAt:  now,
+		UpdatedAt:  now,
 		Tags:       tags,
 		ImageCount: 0,
 	}
@@ -125,6 +129,9 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 
 // DeleteRepository deletes an Artifact Registry repository.
 func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", name)
@@ -141,6 +148,9 @@ func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) erro
 
 // GetRepository retrieves information about an Artifact Registry repository.
 func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rd, ok := m.repos.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", name)
@@ -152,8 +162,34 @@ func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository
 	return &result, nil
 }
 
+// UpdateRepository replaces a repository's tag set (used by the GCP Artifact
+// Registry wire layer to persist label/description/mode patches) and advances
+// UpdatedAt. It is a GCP-specific extension not part of the shared driver
+// interface; the wire handler reaches it via an optional interface assertion.
+func (m *Mock) UpdateRepository(_ context.Context, name string, tags map[string]string) (*driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", name)
+	}
+
+	rd.info.Tags = copyTags(tags)
+	rd.info.UpdatedAt = m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	m.repos.Set(name, rd)
+
+	result := rd.info
+	result.ImageCount = rd.images.Len()
+
+	return &result, nil
+}
+
 // ListRepositories lists all Artifact Registry repositories.
 func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.repos.All()
 	repos := make([]driver.Repository, 0, len(all))
 
@@ -182,26 +218,8 @@ func (m *Mock) PutImage(ctx context.Context, manifest *driver.ImageManifest) (*d
 		return nil, err
 	}
 
-	digest := resolveDigest(manifest, m.opts.Clock.Now())
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	mediaType := resolveMediaType(manifest.MediaType)
-
-	detail := driver.ImageDetail{
-		RegistryID: m.opts.ProjectID,
-		Repository: manifest.Repository,
-		Digest:     digest,
-		Tags:       []string{manifest.Tag},
-		SizeBytes:  manifest.SizeBytes,
-		PushedAt:   now,
-		MediaType:  mediaType,
-	}
-
-	img := &imageData{detail: detail, layers: manifest.Layers}
-	rd.images.Set(digest, img)
-
-	if manifest.Tag != "" {
-		updateTagIndex(rd, digest, manifest.Tag)
-	}
+	digest := resolveDigest(manifest)
+	img := m.storeImage(rd, manifest, digest)
 
 	rd.info.ImageCount = rd.images.Len()
 
@@ -211,13 +229,46 @@ func (m *Mock) PutImage(ctx context.Context, manifest *driver.ImageManifest) (*d
 
 	m.emitMetric(ctx, "push_request_count", 1, map[string]string{"repository_name": manifest.Repository})
 
-	result := detail
+	result := img.detail
 
 	return &result, nil
 }
 
+// storeImage adds or updates the image identified by digest. An image is
+// identified by its digest and carries a SET of tags: re-pushing the same
+// manifest under a new tag accumulates the tag onto the existing manifest
+// (preserving its original push time) rather than replacing it, and the tag is
+// moved off any other manifest that currently holds it.
+func (m *Mock) storeImage(rd *repoData, manifest *driver.ImageManifest, digest string) *imageData {
+	img, ok := rd.images.Get(digest)
+	if !ok {
+		img = &imageData{
+			detail: driver.ImageDetail{
+				RegistryID: m.opts.ProjectID,
+				Repository: manifest.Repository,
+				Digest:     digest,
+				SizeBytes:  manifest.SizeBytes,
+				PushedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+				MediaType:  resolveMediaType(manifest.MediaType),
+				Manifest:   manifest.Manifest,
+			},
+			layers: manifest.Layers,
+		}
+		rd.images.Set(digest, img)
+	}
+
+	if manifest.Tag != "" {
+		updateTagIndex(rd, digest, manifest.Tag)
+	}
+
+	return img
+}
+
 // GetImage retrieves image details by repository and reference.
 func (m *Mock) GetImage(ctx context.Context, repository, reference string) (*driver.ImageDetail, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -237,6 +288,9 @@ func (m *Mock) GetImage(ctx context.Context, repository, reference string) (*dri
 
 // ListImages lists all images in an Artifact Registry repository.
 func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageDetail, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -305,6 +359,9 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 
 // PutLifecyclePolicy sets a cleanup policy on an Artifact Registry repository.
 func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy driver.LifecyclePolicy) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -318,6 +375,9 @@ func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy d
 
 // GetLifecyclePolicy retrieves the cleanup policy for an Artifact Registry repository.
 func (m *Mock) GetLifecyclePolicy(_ context.Context, repository string) (*driver.LifecyclePolicy, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -332,8 +392,32 @@ func (m *Mock) GetLifecyclePolicy(_ context.Context, repository string) (*driver
 	return &result, nil
 }
 
+// DeleteLifecyclePolicy removes the cleanup policy from an Artifact Registry
+// repository and returns the policy that was deleted.
+func (m *Mock) DeleteLifecyclePolicy(_ context.Context, repository string) (*driver.LifecyclePolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	if rd.policy == nil {
+		return nil, errors.Newf(errors.NotFound, "no cleanup policy for repository %q", repository)
+	}
+
+	result := copyLifecyclePolicy(*rd.policy)
+	rd.policy = nil
+
+	return &result, nil
+}
+
 // EvaluateLifecyclePolicy evaluates the cleanup policy and returns digests to expire.
 func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -350,6 +434,9 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 func (m *Mock) StartImageScan(
 	_ context.Context, repository, reference string,
 ) (*driver.ScanResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -372,6 +459,9 @@ func (m *Mock) StartImageScan(
 func (m *Mock) GetImageScanResults(
 	_ context.Context, repository, reference string,
 ) (*driver.ScanResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -434,16 +524,25 @@ func checkTagMutability(rd *repoData, tag string) error {
 	return nil
 }
 
-// resolveDigest generates a digest from the manifest if not provided.
-func resolveDigest(manifest *driver.ImageManifest, now time.Time) string {
+// resolveDigest returns the image digest. When the client supplies an explicit
+// digest it is respected; otherwise the digest is content-addressed as the full
+// sha256 of the manifest bytes, so identical manifest content yields the same
+// 64-hex digest regardless of tag or push time. When no manifest body is
+// supplied it falls back to a stable per-tag input so distinct tags remain
+// distinct images.
+func resolveDigest(manifest *driver.ImageManifest) string {
 	if manifest.Digest != "" {
 		return manifest.Digest
 	}
 
-	input := fmt.Sprintf("%s:%s:%s", manifest.Repository, manifest.Tag, now.String())
+	input := manifest.Manifest
+	if input == "" {
+		input = manifest.Repository + ":" + manifest.Tag
+	}
+
 	hash := sha256.Sum256([]byte(input))
 
-	return fmt.Sprintf("sha256:%x", hash[:digestHashFormatByte])
+	return fmt.Sprintf("sha256:%x", hash)
 }
 
 // updateTagIndex removes a tag from any existing image and adds it to the target digest.

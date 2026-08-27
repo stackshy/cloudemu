@@ -37,6 +37,12 @@ type lifecycleTransition struct {
 	finalState        string
 	metricValues      []float64
 	errVerb           string
+	// idempotentStates are states where the operation is a no-op rather than
+	// an error. Real GCE documents instances.start/instances.stop as
+	// returning a completed zone operation (no error) when the instance is
+	// already at the requested power state, rather than an invalid-state
+	// error.
+	idempotentStates []string
 }
 
 var (
@@ -48,12 +54,14 @@ var (
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "start",
+		idempotentStates:  []string{compute.StateRunning, compute.StatePending},
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateStopping,
 		finalState:        compute.StateStopped,
 		metricValues:      zeroMetricValues,
 		errVerb:           "stop",
+		idempotentStates:  []string{compute.StateStopped, compute.StateStopping},
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateRestarting,
@@ -126,7 +134,32 @@ func gcpMetricNames() []string {
 	}
 }
 
-func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime string) {
+// gcpZoneTagKey mirrors the wire layer's zone tag (server/gcp/compute
+// instance_state.go keyZone): a GCE instance's launch zone is round-tripped
+// through its tags because the driver Instance model has no zone field. The
+// metric emitters read it so the gce_instance monitored resource carries a zone
+// label (see metricDimensions).
+const gcpZoneTagKey = "cloudemu:gcp:zone"
+
+// metricDimensions builds the gce_instance monitored-resource labels stamped on
+// every emitted metric datum: project_id and instance_id are always present,
+// zone when the launch zone is known. Cloud Monitoring resource filters
+// (resource.labels.zone=…, resource.labels.project_id=…) match on these, so all
+// three must be emitted for a filtered timeSeries.list to return the series.
+func (m *Mock) metricDimensions(instanceID, zone string) map[string]string {
+	dims := map[string]string{
+		"instance_id": instanceID,
+		"project_id":  m.opts.ProjectID,
+	}
+
+	if zone != "" {
+		dims["zone"] = zone
+	}
+
+	return dims
+}
+
+func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, zone string) {
 	if m.monitoring == nil {
 		return
 	}
@@ -138,18 +171,22 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 
 	metrics := gcpMetricNames()
 	values := []float64{0.25, 1024.0, 512.0, 100.0, 50.0}
+	dims := m.metricDimensions(instanceID, zone)
 
 	var data []mondriver.MetricDatum
 
+	// Backfill the 5 datapoints going backward from launch time so they land in
+	// the recent past. Forward-dating would place them in the future, where a
+	// metrics query ending at "now" filters them out.
 	for i, metricName := range metrics {
 		for j := 0; j < 5; j++ {
-			ts := lt.Add(time.Duration(j) * time.Minute)
+			ts := lt.Add(-time.Duration(j) * time.Minute)
 			data = append(data, mondriver.MetricDatum{
 				Namespace:  "compute.googleapis.com",
 				MetricName: metricName,
 				Value:      values[i],
 				Unit:       "None",
-				Dimensions: map[string]string{"instance_id": instanceID},
+				Dimensions: dims,
 				Timestamp:  ts,
 			})
 		}
@@ -158,13 +195,14 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
-func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, values []float64) {
+func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string, values []float64) {
 	if m.monitoring == nil {
 		return
 	}
 
 	metrics := gcpMetricNames()
 	now := m.opts.Clock.Now()
+	dims := m.metricDimensions(instanceID, zone)
 	data := make([]mondriver.MetricDatum, len(metrics))
 
 	for i, metricName := range metrics {
@@ -173,7 +211,7 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, valu
 			MetricName: metricName,
 			Value:      values[i],
 			Unit:       "None",
-			Dimensions: map[string]string{"instance_id": instanceID},
+			Dimensions: dims,
 			Timestamp:  now,
 		}
 	}
@@ -253,9 +291,18 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		sg := make([]string, len(cfg.SecurityGroups))
 		copy(sg, cfg.SecurityGroups)
 
+		// Honor an explicit private IP (the wire layer resolves the client's
+		// networkIP or an address from the referenced subnet's CIDR) for the
+		// first instance; the rest of a multi-count batch fall back to the
+		// synthetic allocator so they never collide on the same address.
+		privateIP := m.nextIP()
+		if cfg.PrivateIP != "" && i == 0 {
+			privateIP = cfg.PrivateIP
+		}
+
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
-			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
+			State: compute.StatePending, PrivateIP: privateIP, SubnetID: cfg.SubnetID,
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		}
@@ -282,7 +329,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		inst.State = compute.StateRunning
 		results = append(results, toInstance(inst))
 		created = append(created, inst)
-		m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
+		m.emitInstanceMetrics(ctx, id, inst.LaunchTime, tags[gcpZoneTagKey])
 	}
 
 	return results, nil
@@ -306,11 +353,18 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 	}
 }
 
-func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
+func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t *lifecycleTransition) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
 			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+		}
+
+		// Real GCE documents start/stop as idempotent on the target state.
+		// Skip the state machine and return success without changing state
+		// when we're already there.
+		if isIdempotent(inst.State, t.idempotentStates) {
+			continue
 		}
 
 		if err := m.sm.Transition(id, t.intermediateState); err != nil {
@@ -321,26 +375,36 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		_ = m.sm.Transition(id, t.finalState)
 		inst.State = t.finalState
 
-		m.emitLifecycleMetrics(ctx, id, t.metricValues)
+		m.emitLifecycleMetrics(ctx, id, inst.Tags[gcpZoneTagKey], t.metricValues)
 	}
 
 	return nil
 }
 
+func isIdempotent(state string, idempotentStates []string) bool {
+	for _, s := range idempotentStates {
+		if state == s {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (m *Mock) StartInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, startTransition)
+	return m.transitionInstances(ctx, instanceIDs, &startTransition)
 }
 
 func (m *Mock) StopInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, stopTransition)
+	return m.transitionInstances(ctx, instanceIDs, &stopTransition)
 }
 
 func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, rebootTransition)
+	return m.transitionInstances(ctx, instanceIDs, &rebootTransition)
 }
 
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
-	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+	if err := m.transitionInstances(ctx, instanceIDs, &terminateTransition); err != nil {
 		return err
 	}
 
@@ -411,6 +475,37 @@ func (m *Mock) RemoveInstance(ctx context.Context, instanceID string) error {
 
 	m.instances.Delete(instanceID)
 	m.sm.Remove(instanceID)
+
+	return nil
+}
+
+// MutateInstanceGCP applies a GCP-specific instance mutation used by the GCE
+// wire handler for setLabels/setMetadata/setTags/setMachineType/attachDisk/
+// detachDisk. Unlike ModifyInstance (which requires a stopped instance), these
+// GCP verbs apply to running VMs. set entries are merged into the tag map,
+// remove keys are deleted, and machineType replaces the instance type when
+// non-empty. GCP-specific; reached via a type assertion from the GCE handler.
+func (m *Mock) MutateInstanceGCP(instanceID string, set map[string]string, remove []string, machineType string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if inst.Tags == nil {
+		inst.Tags = make(map[string]string)
+	}
+
+	for k, v := range set {
+		inst.Tags[k] = v
+	}
+
+	for _, k := range remove {
+		delete(inst.Tags, k)
+	}
+
+	if machineType != "" {
+		inst.InstanceType = machineType
+	}
 
 	return nil
 }
@@ -525,6 +620,7 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 	return nil
 }
 
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	id := fmt.Sprintf("projects/%s/zones/%s/disks/disk-%d",
 		m.opts.ProjectID, m.opts.Region, m.volCounter.Add(1))
@@ -569,6 +665,22 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 	return describeResources(m.volumes, ids), nil
 }
 
+// ResizeVolumeGCP grows the disk to sizeGb (a no-op when already that large).
+// GCP forbids shrinking, so the wire handler rejects smaller sizes before this
+// is reached. GCP-specific; reached via a type assertion from the GCE handler.
+func (m *Mock) ResizeVolumeGCP(volumeID string, sizeGb int) error {
+	vol, ok := m.volumes.Get(volumeID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
+	}
+
+	if sizeGb > vol.Size {
+		vol.Size = sizeGb
+	}
+
+	return nil
+}
+
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
 	vol, ok := m.volumes.Get(volumeID)
 	if !ok {
@@ -590,7 +702,9 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 	return nil
 }
 
-func (m *Mock) DetachVolume(_ context.Context, volumeID string) error {
+// DetachVolume detaches a persistent disk. instanceID/device are accepted for
+// driver-interface parity with AWS; GCP detaches by disk id alone.
+func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
 	vol, ok := m.volumes.Get(volumeID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)

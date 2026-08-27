@@ -24,19 +24,74 @@ const targetPrefix = "secretsmanager."
 // Manager also implement it), so the handler type-asserts for them rather than
 // widening the shared interface.
 type secretMutator interface {
-	UpdateSecret(ctx context.Context, name, description string, value []byte) (*secretsdriver.SecretInfo, error)
+	UpdateSecret(ctx context.Context, name, description string, value []byte) (*secretsdriver.SecretInfo, string, error)
 	TagSecret(ctx context.Context, name string, tags map[string]string) error
 	UntagSecret(ctx context.Context, name string, keys []string) error
+}
+
+// secretStager is the AWS-specific staging/rotation/soft-delete surface the
+// handler type-asserts for (implemented by the AWS provider), keeping the
+// portable Secrets driver minimal so Azure/GCP are unaffected.
+type secretStager interface {
+	MarkVersionBinary(ctx context.Context, name, versionID string) error
+	GetSecretValueStage(ctx context.Context, name, versionID, stage string) (*secretsdriver.SecretVersion, error)
+	SecretVersionStages(ctx context.Context, name string) (map[string][]string, error)
+	SecretDeletionDate(ctx context.Context, name string) (string, bool)
+	SecretMetadata(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+	DeleteSecretWithOptions(
+		ctx context.Context, name string, recoveryWindow *int64, force bool,
+	) (*secretsdriver.SecretInfo, string, error)
+	RestoreSecret(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+	RotateSecret(ctx context.Context, name string) (*secretsdriver.SecretVersion, error)
+	PutSecretValueStaged(
+		ctx context.Context, name string, value []byte, clientRequestToken string, versionStages []string,
+	) (*secretsdriver.SecretVersion, error)
+	UpdateSecretVersionStage(
+		ctx context.Context, name, versionStage, removeFrom, moveTo string,
+	) (*secretsdriver.SecretInfo, error)
+}
+
+// secretPolicyManager is the AWS-specific resource-based-policy surface the
+// handler type-asserts for (implemented by the AWS provider), keeping the
+// portable Secrets driver minimal so Azure/GCP are unaffected.
+type secretPolicyManager interface {
+	PutResourcePolicy(ctx context.Context, name, policy string) (*secretsdriver.SecretInfo, error)
+	GetResourcePolicy(ctx context.Context, name string) (*secretsdriver.SecretInfo, string, error)
+	DeleteResourcePolicy(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
 }
 
 // Handler serves Secrets Manager JSON-RPC requests against a Secrets driver.
 type Handler struct {
 	secrets secretsdriver.Secrets
+	routes  map[string]http.HandlerFunc
 }
 
 // New returns a Secrets Manager handler backed by s.
 func New(s secretsdriver.Secrets) *Handler {
-	return &Handler{secrets: s}
+	h := &Handler{secrets: s}
+	h.routes = map[string]http.HandlerFunc{
+		"CreateSecret":             h.createSecret,
+		"DeleteSecret":             h.deleteSecret,
+		"DescribeSecret":           h.describeSecret,
+		"GetResourcePolicy":        h.getResourcePolicy,
+		"PutResourcePolicy":        h.putResourcePolicy,
+		"DeleteResourcePolicy":     h.deleteResourcePolicy,
+		"ValidateResourcePolicy":   h.validateResourcePolicy,
+		"ListSecrets":              h.listSecrets,
+		"GetSecretValue":           h.getSecretValue,
+		"BatchGetSecretValue":      h.batchGetSecretValue,
+		"PutSecretValue":           h.putSecretValue,
+		"ListSecretVersionIds":     h.listSecretVersionIDs,
+		"UpdateSecret":             h.updateSecret,
+		"UpdateSecretVersionStage": h.updateSecretVersionStage,
+		"RestoreSecret":            h.restoreSecret,
+		"RotateSecret":             h.rotateSecret,
+		"GetRandomPassword":        h.getRandomPassword,
+		"TagResource":              h.tagResource,
+		"UntagResource":            h.untagResource,
+	}
+
+	return h
 }
 
 // Matches returns true for Secrets Manager-shaped requests, identified by an
@@ -47,32 +102,16 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches Secrets Manager operations based on X-Amz-Target.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix) {
-	case "CreateSecret":
-		h.createSecret(w, r)
-	case "DeleteSecret":
-		h.deleteSecret(w, r)
-	case "DescribeSecret":
-		h.describeSecret(w, r)
-	case "ListSecrets":
-		h.listSecrets(w, r)
-	case "GetSecretValue":
-		h.getSecretValue(w, r)
-	case "PutSecretValue":
-		h.putSecretValue(w, r)
-	case "ListSecretVersionIds":
-		h.listSecretVersionIDs(w, r)
-	case "UpdateSecret":
-		h.updateSecret(w, r)
-	case "TagResource":
-		h.tagResource(w, r)
-	case "UntagResource":
-		h.untagResource(w, r)
-	default:
-		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"UnknownOperationException", "unknown Secrets Manager operation: "+op)
+	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+
+	if fn, ok := h.routes[op]; ok {
+		fn(w, r)
+
+		return
 	}
+
+	wire.WriteJSONError(w, http.StatusBadRequest,
+		"UnknownOperationException", "unknown Secrets Manager operation: "+op)
 }
 
 // errNotSupported is returned when the backing driver doesn't implement the
@@ -83,18 +122,20 @@ var errNotSupported = cerrors.New(cerrors.Unimplemented, "operation not supporte
 // responses. Secrets Manager returns errors as HTTP 400 with a "__type" body
 // the SDK maps to a typed exception.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServiceError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServiceError", msg)
 	}
 }

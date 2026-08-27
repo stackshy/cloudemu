@@ -2,6 +2,8 @@ package kafka
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/kafka/driver"
@@ -136,7 +138,75 @@ func clusterToWire(c *driver.Cluster) map[string]json.RawMessage {
 		base["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)
 	}
 
+	if _, ok := c.RawOptions["encryptionInfo"]; !ok {
+		base["encryptionInfo"] = defaultEncryptionInfo()
+	}
+
+	addZookeeperConnect(base, c)
+
 	return mergeRaw(base, c.RawOptions)
+}
+
+// addZookeeperConnect synthesizes the ZooKeeper connect strings a provisioned
+// (ZooKeeper-mode) cluster exports (real MSK's ClusterInfo.zookeeperConnectString
+// / zookeeperConnectStringTls, which Terraform's aws_msk_cluster surfaces).
+// Serverless clusters have no ZooKeeper, so they are skipped.
+func addZookeeperConnect(base map[string]any, c *driver.Cluster) {
+	if c.ClusterType == driver.ClusterTypeServerless {
+		return
+	}
+
+	plain, tls := zookeeperConnectStrings(c.ClusterName, regionFromARN(c.ClusterARN))
+	base["zookeeperConnectString"] = plain
+	base["zookeeperConnectStringTls"] = tls
+}
+
+// zookeeperConnectStrings builds a plausible three-node ZooKeeper ensemble
+// connect string (plaintext :2181, TLS :2182), synthesized deterministically
+// from the cluster name and region — mirroring how bootstrap brokers are
+// synthesized.
+func zookeeperConnectStrings(name, region string) (plain, tls string) {
+	const zkNodes = 3
+
+	var plainHosts, tlsHosts []string
+
+	for i := 1; i <= zkNodes; i++ {
+		host := "z-" + strconv.Itoa(i) + "." + name + ".kafka." + region + ".amazonaws.com"
+		plainHosts = append(plainHosts, host+":2181")
+		tlsHosts = append(tlsHosts, host+":2182")
+	}
+
+	return strings.Join(plainHosts, ","), strings.Join(tlsHosts, ",")
+}
+
+// regionFromARN extracts the region (4th colon-delimited field) from an AWS ARN.
+// Cluster ARNs are minted by the emulator and always well-formed; an unexpected
+// shape yields an empty region rather than a panic.
+func regionFromARN(arn string) string {
+	parts := strings.Split(arn, ":")
+
+	const regionIndex = 3
+	if len(parts) <= regionIndex {
+		return ""
+	}
+
+	return parts[regionIndex]
+}
+
+// defaultEncryptionInfo returns the MSK default encryption configuration that
+// real DescribeCluster surfaces when none is specified at create time:
+// in-transit TLS (client-broker + in-cluster) and at-rest with an
+// AWS-managed data-volume KMS key.
+func defaultEncryptionInfo() map[string]any {
+	return map[string]any{
+		"encryptionAtRest": map[string]any{
+			"dataVolumeKMSKeyId": "arn:aws:kms:us-east-1:000000000000:key/msk-default",
+		},
+		"encryptionInTransit": map[string]any{
+			"clientBroker": "TLS",
+			"inCluster":    true,
+		},
+	}
 }
 
 // clusterToWireV2 renders a driver cluster as the v2 clusterInfo (types.Cluster)
@@ -187,6 +257,12 @@ func provisionedBlock(c *driver.Cluster) map[string]any {
 		block["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)
 	}
 
+	if _, ok := c.RawOptions["encryptionInfo"]; !ok {
+		block["encryptionInfo"] = defaultEncryptionInfo()
+	}
+
+	addZookeeperConnect(block, c)
+
 	return block
 }
 
@@ -206,7 +282,7 @@ func serverlessBlock(c *driver.Cluster) json.RawMessage {
 //
 //nolint:gocritic // hugeParam: rendered from a value copy.
 func operationToWire(op driver.ClusterOperation) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"clusterArn":     op.ClusterARN,
 		"operationArn":   op.OperationARN,
 		"operationState": op.OperationState,
@@ -214,6 +290,66 @@ func operationToWire(op driver.ClusterOperation) map[string]any {
 		"creationTime":   timeRFC3339(op.CreationTime),
 		"endTime":        timeRFC3339(op.CreationTime),
 	}
+
+	addOperationDeltas(out, op)
+
+	return out
+}
+
+// addOperationDeltas renders the operation's before/after cluster snapshots as
+// sourceClusterInfo / targetClusterInfo (real MSK's MutableClusterInfo).
+//
+//nolint:gocritic // hugeParam: rendered from a value copy alongside operationToWire.
+func addOperationDeltas(out map[string]any, op driver.ClusterOperation) {
+	if src := mutableClusterInfoToWire(op.SourceClusterInfo); src != nil {
+		out["sourceClusterInfo"] = src
+	}
+
+	if tgt := mutableClusterInfoToWire(op.TargetClusterInfo); tgt != nil {
+		out["targetClusterInfo"] = tgt
+	}
+}
+
+// mutableClusterInfoToWire renders a mutable-cluster-info snapshot as its wire
+// shape, omitting zero-valued attributes. Returns nil when nothing is set.
+func mutableClusterInfoToWire(mi *driver.MutableClusterInfo) map[string]any {
+	if mi == nil {
+		return nil
+	}
+
+	out := map[string]any{}
+
+	if mi.NumberOfBrokerNodes > 0 {
+		out["numberOfBrokerNodes"] = mi.NumberOfBrokerNodes
+	}
+
+	if mi.InstanceType != "" {
+		out["instanceType"] = mi.InstanceType
+	}
+
+	if mi.KafkaVersion != "" {
+		out["kafkaVersion"] = mi.KafkaVersion
+	}
+
+	if mi.StorageMode != "" {
+		out["storageMode"] = mi.StorageMode
+	}
+
+	if mi.EnhancedMonitoring != "" {
+		out["enhancedMonitoring"] = mi.EnhancedMonitoring
+	}
+
+	if mi.EBSVolumeSizeGB > 0 {
+		out["brokerEBSVolumeInfo"] = []map[string]any{
+			{"kafkaBrokerNodeId": "ALL", "volumeSizeGB": mi.EBSVolumeSizeGB},
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // operationToWireV2 renders a cluster operation as the ClusterOperationV2 /
@@ -221,7 +357,7 @@ func operationToWire(op driver.ClusterOperation) map[string]any {
 //
 //nolint:gocritic // hugeParam: rendered from a value copy.
 func operationToWireV2(op driver.ClusterOperation, clusterType string) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"clusterArn":     op.ClusterARN,
 		"clusterType":    clusterType,
 		"operationArn":   op.OperationARN,
@@ -230,6 +366,10 @@ func operationToWireV2(op driver.ClusterOperation, clusterType string) map[strin
 		"startTime":      timeRFC3339(op.CreationTime),
 		"endTime":        timeRFC3339(op.CreationTime),
 	}
+
+	addOperationDeltas(out, op)
+
+	return out
 }
 
 // nodeToWire renders a broker node as the NodeInfo wire shape.

@@ -31,8 +31,8 @@ const pathPrefix = "/acr/v1/"
 
 const (
 	catalogSeg   = "_catalog"
-	tagsSuffix   = "/_tags"
-	manifestsSeg = "/_manifests"
+	tagsSeg      = "_tags"
+	manifestsSeg = "_manifests"
 )
 
 // Handler serves the ACR data-plane catalog API against a ContainerRegistry
@@ -56,22 +56,92 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tail := strings.TrimPrefix(r.URL.Path, pathPrefix)
 
-	switch {
-	case tail == catalogSeg && r.Method == http.MethodGet:
-		h.listRepositories(w, r)
-	case strings.Contains(tail, manifestsSeg):
-		// Manifest operations are out of scope; answer explicitly rather than
-		// letting the path masquerade as a (missing) repository.
-		writeErr(w, http.StatusNotImplemented, "UNSUPPORTED", "manifest operations are not supported")
-	case strings.HasSuffix(tail, tagsSuffix) && r.Method == http.MethodGet:
-		h.listTags(w, r, strings.TrimSuffix(tail, tagsSuffix))
-	case r.Method == http.MethodGet:
-		h.getRepositoryProperties(w, r, tail)
-	case r.Method == http.MethodDelete:
-		h.deleteRepository(w, r, tail)
+	if tail == catalogSeg {
+		if r.Method == http.MethodGet {
+			h.listRepositories(w, r)
+			return
+		}
+
+		writeErr(w, http.StatusMethodNotAllowed, "UNSUPPORTED", "unsupported ACR operation")
+
+		return
+	}
+
+	repo, resource, reference := parseACRPath(tail)
+
+	switch resource {
+	case tagsSeg:
+		h.serveTags(w, r, repo, reference)
+	case manifestsSeg:
+		h.serveManifests(w, r, repo, reference)
+	default:
+		h.serveRepository(w, r, repo)
+	}
+}
+
+// parseACRPath splits an ACR data-plane tail into the repository name, the
+// resource kind ("_tags" / "_manifests" / ""), and the trailing reference. The
+// repository name may be hierarchical (e.g. "team/app"), so the split hinges on
+// the "_tags" / "_manifests" marker segment rather than the first slash.
+func parseACRPath(tail string) (repo, resource, reference string) {
+	for _, marker := range []string{tagsSeg, manifestsSeg} {
+		if idx := strings.Index(tail, "/"+marker+"/"); idx >= 0 {
+			return tail[:idx], marker, tail[idx+len(marker)+2:]
+		}
+
+		if strings.HasSuffix(tail, "/"+marker) {
+			return strings.TrimSuffix(tail, "/"+marker), marker, ""
+		}
+	}
+
+	return tail, "", ""
+}
+
+func (h *Handler) serveRepository(w http.ResponseWriter, r *http.Request, repo string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getRepositoryProperties(w, r, repo)
+	case http.MethodDelete:
+		h.deleteRepository(w, r, repo)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "UNSUPPORTED", "unsupported ACR operation")
 	}
+}
+
+func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, repo, tag string) {
+	if tag == "" {
+		if r.Method == http.MethodGet {
+			h.listTags(w, r, repo)
+			return
+		}
+
+		writeErr(w, http.StatusMethodNotAllowed, "UNSUPPORTED", "unsupported ACR operation")
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getTagProperties(w, r, repo, tag)
+	case http.MethodDelete:
+		h.deleteTag(w, r, repo, tag)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "UNSUPPORTED", "unsupported ACR operation")
+	}
+}
+
+func (h *Handler) serveManifests(w http.ResponseWriter, r *http.Request, repo, digest string) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "UNSUPPORTED", "unsupported ACR operation")
+		return
+	}
+
+	if digest == "" {
+		h.listManifests(w, r, repo)
+		return
+	}
+
+	h.getManifestProperties(w, r, repo, digest)
 }
 
 // writeErr emits an ACR-style error body with the given HTTP status.

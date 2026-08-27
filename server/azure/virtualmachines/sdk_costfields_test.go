@@ -157,3 +157,92 @@ func TestSDKVMSSCostFields(t *testing.T) {
 		t.Errorf("virtualMachineProfile.priority=%v want Spot", vp)
 	}
 }
+
+// TestSDKVMSSScaleToZero asserts an explicit sku.capacity:0 (scale-in-to-zero,
+// a standard armcompute request real autoscale/CLI tooling issues) is honored
+// rather than silently coerced to the create-time default of 1. See
+// https://learn.microsoft.com/en-us/azure/virtual-machine-scale-sets/virtual-machine-scale-sets-scale-in-to-zero
+// and armcompute.SKU.Capacity, which is *int64 precisely so "capacity":0 can
+// be sent distinctly from omitting the field.
+func TestSDKVMSSScaleToZero(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{VirtualMachines: cloudP.VirtualMachines})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, armOptions(t, ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	poller, err := client.BeginCreateOrUpdate(ctx, "rg-1", "zero-vmss", armcompute.VirtualMachineScaleSet{
+		Location: to.Ptr("eastus"),
+		SKU: &armcompute.SKU{
+			Name:     to.Ptr("Standard_D2s_v3"),
+			Tier:     to.Ptr("Standard"),
+			Capacity: to.Ptr[int64](0),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("VMSS BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}); err != nil {
+		t.Fatalf("VMSS create poll: %v", err)
+	}
+
+	got, err := client.Get(ctx, "rg-1", "zero-vmss", nil)
+	if err != nil {
+		t.Fatalf("VMSS Get: %v", err)
+	}
+
+	if got.SKU == nil || got.SKU.Capacity == nil || *got.SKU.Capacity != 0 {
+		t.Errorf("sku.capacity=%v want 0 (explicit scale-in-to-zero must be honored, not coerced to 1)", got.SKU)
+	}
+}
+
+// TestSDKVMSSCapacityDefaultsWhenOmitted asserts that omitting sku.capacity
+// entirely (as opposed to sending an explicit 0) still defaults to 1, so the
+// scale-to-zero fix does not regress the default-instance-count behavior.
+func TestSDKVMSSCapacityDefaultsWhenOmitted(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{VirtualMachines: cloudP.VirtualMachines})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, armOptions(t, ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	poller, err := client.BeginCreateOrUpdate(ctx, "rg-1", "default-vmss", armcompute.VirtualMachineScaleSet{
+		Location: to.Ptr("eastus"),
+		SKU: &armcompute.SKU{
+			Name: to.Ptr("Standard_D2s_v3"),
+			Tier: to.Ptr("Standard"),
+			// Capacity intentionally left nil (omitted from the wire request).
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("VMSS BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}); err != nil {
+		t.Fatalf("VMSS create poll: %v", err)
+	}
+
+	got, err := client.Get(ctx, "rg-1", "default-vmss", nil)
+	if err != nil {
+		t.Fatalf("VMSS Get: %v", err)
+	}
+
+	if got.SKU == nil || got.SKU.Capacity == nil || *got.SKU.Capacity != 1 {
+		t.Errorf("sku.capacity=%v want 1 (default when omitted)", got.SKU)
+	}
+}

@@ -1,122 +1,144 @@
 package keyvault
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"time"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
-// setSecret creates the secret on first PUT and adds a new version on
-// subsequent PUTs, mirroring Key Vault's create-or-update SetSecret call.
+// writeJSON writes v as a 200 application/json response. Non-200 replies (the
+// bearer challenge, errors, and the 204 from purge) are written directly.
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// attrsFromRequest maps a request attributes sub-object to driver attributes,
+// defaulting Enabled to true (Key Vault's default for a new version).
+func attrsFromRequest(a *setSecretAttributesJSON) secretsdriver.KVAttributes {
+	attrs := secretsdriver.KVAttributes{Enabled: true}
+	if a == nil {
+		return attrs
+	}
+
+	if a.Enabled != nil {
+		attrs.Enabled = *a.Enabled
+	}
+
+	if a.Expires != nil {
+		attrs.Expires = *a.Expires
+	}
+
+	if a.NotBefore != nil {
+		attrs.NotBefore = *a.NotBefore
+	}
+
+	return attrs
+}
+
 func (h *Handler) setSecret(w http.ResponseWriter, r *http.Request, name string) {
 	var req setSecretRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	if _, err := h.secrets.GetSecret(r.Context(), name); err != nil {
-		if !cerrors.IsNotFound(err) {
-			writeCErr(w, err)
-			return
-		}
-
-		h.createSecret(w, r, name, &req)
-
-		return
-	}
-
-	ver, err := h.secrets.PutSecretValue(r.Context(), name, []byte(req.Value))
+	kv, err := h.kv.SetKeyVaultSecret(r.Context(), vaultFromRequest(r), name, secretsdriver.KVSetParams{
+		Value:       []byte(req.Value),
+		ContentType: req.ContentType,
+		Tags:        req.Tags,
+		Attributes:  attrsFromRequest(req.SecretAttributes),
+	})
 	if err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	h.writeBundle(w, r, name, ver)
-}
-
-func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request, name string, req *setSecretRequest) {
-	info, err := h.secrets.CreateSecret(r.Context(), secretsdriver.SecretConfig{
-		Name: name,
-		Tags: req.Tags,
-	}, []byte(req.Value))
-	if err != nil {
-		writeCErr(w, err)
-		return
-	}
-
-	ver, err := h.secrets.GetSecretValue(r.Context(), info.Name, "")
-	if err != nil {
-		writeCErr(w, err)
-		return
-	}
-
-	wire.WriteJSON(w, toBundle(r, info, ver))
-}
-
-// writeBundle emits the full secret bundle for the given version.
-func (h *Handler) writeBundle(w http.ResponseWriter, r *http.Request, name string, ver *secretsdriver.SecretVersion) {
-	info, err := h.secrets.GetSecret(r.Context(), name)
-	if err != nil {
-		writeCErr(w, err)
-		return
-	}
-
-	wire.WriteJSON(w, toBundle(r, info, ver))
+	writeJSON(w, toBundle(r, kv))
 }
 
 func (h *Handler) getSecret(w http.ResponseWriter, r *http.Request, name, version string) {
-	ver, err := h.secrets.GetSecretValue(r.Context(), name, version)
+	kv, err := h.kv.GetKeyVaultSecret(r.Context(), vaultFromRequest(r), name, version)
 	if err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	h.writeBundle(w, r, name, ver)
+	if !kv.Enabled {
+		writeErr(w, http.StatusForbidden, "Forbidden", "Operation get is not allowed on a disabled secret.")
+		return
+	}
+
+	// A secret outside its nbf/exp window is not operable: Key Vault returns 403
+	// on get, just as for a disabled secret.
+	now := time.Now().Unix()
+	if (kv.NotBefore != 0 && now < kv.NotBefore) || (kv.Expires != 0 && now >= kv.Expires) {
+		writeErr(w, http.StatusForbidden, "Forbidden", "Operation get is not allowed on an expired or not-yet-valid secret.")
+		return
+	}
+
+	writeJSON(w, toBundle(r, kv))
+}
+
+func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request, name, version string) {
+	var req updateSecretRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	patch := secretsdriver.KVPatch{ContentType: req.ContentType}
+	if req.Tags != nil {
+		patch.Tags = req.Tags
+		patch.SetTags = true
+	}
+
+	if a := req.SecretAttributes; a != nil {
+		patch.Enabled = a.Enabled
+		patch.Expires = a.Expires
+		patch.NotBefore = a.NotBefore
+	}
+
+	kv, err := h.kv.UpdateKeyVaultSecret(r.Context(), vaultFromRequest(r), name, version, patch)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, toBundle(r, kv))
 }
 
 func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request, name string) {
-	info, err := h.secrets.GetSecret(r.Context(), name)
+	deleted, err := h.kv.DeleteKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	ver, err := h.secrets.GetSecretValue(r.Context(), name, "")
-	if err != nil {
-		writeCErr(w, err)
-		return
-	}
-
-	if err := h.secrets.DeleteSecret(r.Context(), name); err != nil {
-		writeCErr(w, err)
-		return
-	}
-
-	wire.WriteJSON(w, deletedSecretBundleJSON{
-		secretBundleJSON: toBundle(r, info, ver),
-		RecoveryID:       vaultBaseURL(r) + "/deletedsecrets/" + info.Name,
-	})
+	writeJSON(w, toDeletedBundle(r, deleted))
 }
 
 func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
-	infos, err := h.secrets.ListSecrets(r.Context())
+	secrets, err := h.kv.ListKeyVaultSecrets(r.Context(), vaultFromRequest(r))
 	if err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	items := make([]secretItemJSON, 0, len(infos))
-	for i := range infos {
-		items = append(items, toItem(r, &infos[i]))
+	items := make([]secretItemJSON, 0, len(secrets))
+	for i := range secrets {
+		items = append(items, toItem(r, &secrets[i]))
 	}
 
-	wire.WriteJSON(w, listResponseJSON{Value: items})
+	writeJSON(w, listResponseJSON{Value: items})
 }
 
 func (h *Handler) listSecretVersions(w http.ResponseWriter, r *http.Request, name string) {
-	versions, err := h.secrets.ListSecretVersions(r.Context(), name)
+	versions, err := h.kv.ListKeyVaultSecretVersions(r.Context(), vaultFromRequest(r), name)
 	if err != nil {
 		writeCErr(w, err)
 		return
@@ -124,8 +146,83 @@ func (h *Handler) listSecretVersions(w http.ResponseWriter, r *http.Request, nam
 
 	items := make([]secretItemJSON, 0, len(versions))
 	for i := range versions {
-		items = append(items, toVersionItem(r, name, &versions[i]))
+		items = append(items, toItem(r, &versions[i]))
 	}
 
-	wire.WriteJSON(w, listResponseJSON{Value: items})
+	writeJSON(w, listResponseJSON{Value: items})
+}
+
+func (h *Handler) backupSecret(w http.ResponseWriter, r *http.Request, name string) {
+	blob, err := h.kv.BackupKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, backupResultJSON{Value: base64.RawURLEncoding.EncodeToString(blob)})
+}
+
+func (h *Handler) restoreSecret(w http.ResponseWriter, r *http.Request) {
+	var req restoreRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	blob, err := base64.RawURLEncoding.DecodeString(req.Value)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "BadParameter", "invalid secret backup blob")
+		return
+	}
+
+	kv, err := h.kv.RestoreKeyVaultSecret(r.Context(), vaultFromRequest(r), blob)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, toBundle(r, kv))
+}
+
+func (h *Handler) listDeletedSecrets(w http.ResponseWriter, r *http.Request) {
+	deleted, err := h.kv.ListDeletedKeyVaultSecrets(r.Context(), vaultFromRequest(r))
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	items := make([]deletedSecretItemJSON, 0, len(deleted))
+	for i := range deleted {
+		items = append(items, toDeletedItem(r, &deleted[i]))
+	}
+
+	writeJSON(w, deletedListResponseJSON{Value: items})
+}
+
+func (h *Handler) getDeletedSecret(w http.ResponseWriter, r *http.Request, name string) {
+	deleted, err := h.kv.GetDeletedKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, toDeletedBundle(r, deleted))
+}
+
+func (h *Handler) recoverDeletedSecret(w http.ResponseWriter, r *http.Request, name string) {
+	kv, err := h.kv.RecoverDeletedKeyVaultSecret(r.Context(), vaultFromRequest(r), name)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, toBundle(r, kv))
+}
+
+func (h *Handler) purgeDeletedSecret(w http.ResponseWriter, r *http.Request, name string) {
+	if err := h.kv.PurgeDeletedKeyVaultSecret(r.Context(), vaultFromRequest(r), name); err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

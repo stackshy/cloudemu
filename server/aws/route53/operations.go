@@ -1,8 +1,11 @@
 package route53
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,9 +15,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// listMaxItems is the fixed page size echoed back to the SDK; the mock never
-// paginates, so IsTruncated is always false.
+// listMaxItems is the default/maximum page size for record-set and zone
+// listings when the caller does not request a smaller one.
 const listMaxItems = 100
+
+// TTLs for the SOA and NS records a hosted zone is seeded with on create.
+const (
+	soaTTL = 900
+	nsTTL  = 172800
+)
 
 func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 	var req createHostedZoneRequest
@@ -22,9 +31,21 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := dnsdriver.ZoneConfig{Name: req.Name}
+	cfg := dnsdriver.ZoneConfig{
+		Name:            ensureTrailingDot(req.Name),
+		CallerReference: req.CallerReference,
+	}
 	if req.HostedZoneConfig != nil {
 		cfg.Private = req.HostedZoneConfig.PrivateZone
+		cfg.Comment = req.HostedZoneConfig.Comment
+	}
+
+	// A VPC in the request associates the new zone with that VPC and makes it a
+	// private hosted zone — the presence of a VPC implies PrivateZone whether or
+	// not HostedZoneConfig said so.
+	if req.VPC != nil {
+		cfg.Private = true
+		cfg.VPCs = []dnsdriver.VPCAssociation{{VPCID: req.VPC.VPCId, VPCRegion: req.VPC.VPCRegion}}
 	}
 
 	info, err := h.dns.CreateZone(r.Context(), cfg)
@@ -33,17 +54,48 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Echo the caller's CallerReference back faithfully (the driver doesn't
-	// persist it, so this is only recoverable on the create response).
-	hz := toHostedZoneXML(info)
-	if req.CallerReference != "" {
-		hz.CallerReference = req.CallerReference
+	// A new hosted zone starts with its authoritative SOA and NS records, just
+	// like real Route 53 — so RRSetCount is 2 and downstream record management
+	// (and the NS delegation the registrar needs) works.
+	nameServers := nameServersFor(info.ID)
+	h.seedZoneRecords(r, info.ID, info.Name, nameServers)
+
+	// Re-read so RecordCount reflects the seeded SOA+NS records.
+	if refreshed, gerr := h.dns.GetZone(r.Context(), info.ID); gerr == nil {
+		info = refreshed
 	}
 
-	wire.WriteXML(w, http.StatusCreated, createHostedZoneResponse{
-		Xmlns:      xmlns,
-		HostedZone: hz,
-		ChangeInfo: newChangeInfo(),
+	hz := toHostedZoneXML(info)
+
+	// Real Route 53 returns a Location header pointing at the new zone.
+	w.Header().Set("Location", pathPrefix+"/"+info.ID)
+
+	resp := createHostedZoneResponse{
+		Xmlns:         xmlns,
+		HostedZone:    hz,
+		ChangeInfo:    newChangeInfo(),
+		DelegationSet: delegationSetXML{NameServers: nameServers},
+	}
+
+	// A private zone created with a VPC echoes that VPC back at the top level.
+	if req.VPC != nil {
+		resp.VPC = &vpcXML{VPCRegion: req.VPC.VPCRegion, VPCId: req.VPC.VPCId}
+	}
+
+	wire.WriteXML(w, http.StatusCreated, resp)
+}
+
+// seedZoneRecords creates the SOA and NS records a new hosted zone is born with.
+// Failures are ignored: seeding is best-effort convenience and must not fail the
+// CreateHostedZone call itself.
+func (h *Handler) seedZoneRecords(r *http.Request, zoneID, zoneName string, nameServers []string) {
+	soaValue := nameServers[0] + ". awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400"
+
+	_, _ = h.dns.CreateRecord(r.Context(), dnsdriver.RecordConfig{
+		ZoneID: zoneID, Name: zoneName, Type: "SOA", TTL: soaTTL, Values: []string{soaValue},
+	})
+	_, _ = h.dns.CreateRecord(r.Context(), dnsdriver.RecordConfig{
+		ZoneID: zoneID, Name: zoneName, Type: "NS", TTL: nsTTL, Values: nameServers,
 	})
 }
 
@@ -55,13 +107,18 @@ func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id strin
 	}
 
 	wire.WriteXML(w, http.StatusOK, getHostedZoneResponse{
-		Xmlns:      xmlns,
-		HostedZone: toHostedZoneXML(info),
+		Xmlns:         xmlns,
+		HostedZone:    toHostedZoneXML(info),
+		DelegationSet: delegationSetXML{NameServers: nameServersFor(info.ID)},
+		VPCs:          toVPCsXML(info.VPCs),
 	})
 }
 
+// listHostedZones answers ListHostedZones. Hosted zones are account-global, so
+// they list unscoped; they are returned in a stable id order and paginated
+// Route 53 Marker-style: maxitems bounds the page and NextMarker (echoed back as
+// the next marker) resumes listing at the following zone id.
 func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
-	// Route 53 hosted zones are account-global, so list them unscoped.
 	infos, err := h.dns.ListZones(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
@@ -73,16 +130,68 @@ func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
 		zones = append(zones, toHostedZoneXML(&infos[i]))
 	}
 
+	marker := r.URL.Query().Get("marker")
+	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
+	page, next := markerPage(zones, marker, maxItems, func(z hostedZoneXML) string { return z.Id })
+
 	wire.WriteXML(w, http.StatusOK, listHostedZonesResponse{
 		Xmlns:       xmlns,
-		HostedZones: zones,
-		IsTruncated: false,
-		MaxItems:    listMaxItems,
+		HostedZones: page,
+		Marker:      marker,
+		IsTruncated: next != "",
+		NextMarker:  next,
+		//nolint:gosec // maxItems is clamped to [1,listMaxItems] by parseMaxItems
+		MaxItems: int32(maxItems),
 	})
 }
 
+// markerPage sorts items by id (stable), resumes at the marker id (inclusive),
+// and returns the page of up to maxItems items plus the next marker — the id the
+// following page resumes from, or "" when this page is the last. It implements
+// Route 53's Marker-style pagination shared by ListHostedZones and
+// ListHealthChecks.
+func markerPage[T any](items []T, marker string, maxItems int, id func(T) string) (page []T, next string) {
+	sort.SliceStable(items, func(i, j int) bool { return id(items[i]) < id(items[j]) })
+
+	if marker != "" {
+		for len(items) > 0 && id(items[0]) < marker {
+			items = items[1:]
+		}
+	}
+
+	if len(items) > maxItems {
+		return items[:maxItems], id(items[maxItems])
+	}
+
+	return items, ""
+}
+
 func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.dns.DeleteZone(r.Context(), trimZonePrefix(id)); err != nil {
+	zoneID := trimZonePrefix(id)
+
+	zone, err := h.dns.GetZone(r.Context(), zoneID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// Real Route 53 deletes a hosted zone only when it holds nothing but the
+	// default SOA and apex NS records; any other record set returns a 400
+	// HostedZoneNotEmpty and deletes nothing.
+	records, err := h.dns.ListRecords(r.Context(), zoneID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if extra := extraRecordName(zone.Name, records); extra != "" {
+		writeError(w, http.StatusBadRequest, "HostedZoneNotEmpty",
+			"The hosted zone contains resource records that are not SOA or NS records, or a custom NS record: "+extra)
+
+		return
+	}
+
+	if err := h.dns.DeleteZone(r.Context(), zoneID); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -91,6 +200,28 @@ func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id st
 		Xmlns:      xmlns,
 		ChangeInfo: newChangeInfo(),
 	})
+}
+
+// extraRecordName returns the name of the first record set that blocks deletion
+// (any record beyond the default apex SOA and apex NS), or "" when the zone is
+// empty enough to delete. Matching is case-insensitive and trailing-dot
+// insensitive so an apex name written either way is recognized.
+func extraRecordName(zoneName string, records []dnsdriver.RecordInfo) string {
+	apex := strings.ToLower(strings.TrimSuffix(zoneName, "."))
+
+	for i := range records {
+		rec := &records[i]
+		name := strings.ToLower(strings.TrimSuffix(rec.Name, "."))
+		isApex := name == apex
+
+		if isApex && (rec.Type == "SOA" || rec.Type == "NS") {
+			continue
+		}
+
+		return rec.Name
+	}
+
+	return ""
 }
 
 // changeResourceRecordSets applies a CREATE/UPSERT/DELETE batch against the
@@ -107,7 +238,25 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 
 	zoneID := trimZonePrefix(id)
 
-	if err := h.validateChangeBatch(r, zoneID, req.ChangeBatch.Changes); err != nil {
+	// Route 53 stores and returns record names as FQDNs (with a trailing dot).
+	// Normalize once here so validation, create, delete, and upsert all agree on
+	// the stored name whether the client sent the dot or not.
+	for i := range req.ChangeBatch.Changes {
+		rr := &req.ChangeBatch.Changes[i].ResourceRecordSet
+		rr.Name = ensureTrailingDot(rr.Name)
+	}
+
+	// The hosted zone must exist before the change batch is validated: a change
+	// against a missing zone is NoSuchHostedZone (404), not the batch-level
+	// InvalidChangeBatch (400). Only record-level errors from batch validation
+	// map to InvalidChangeBatch.
+	zone, err := h.dns.GetZone(r.Context(), zoneID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if err := h.validateChangeBatch(r, zone, req.ChangeBatch.Changes); err != nil {
 		writeChangeErr(w, err)
 		return
 	}
@@ -132,49 +281,162 @@ func rrSetKey(name, rtype, setID string) string {
 	return strings.ToLower(name) + "|" + strings.ToUpper(rtype) + "|" + setID
 }
 
+// validateRecordSet checks a single record set's fields are self-consistent,
+// independent of the zone's current state. Real Route 53 rejects these as part
+// of change-batch validation before any change is applied. apex is the zone's
+// FQDN, used to reject a CNAME at the zone apex.
+func validateRecordSet(rr *resourceRecordSetXML, apex string) error {
+	if rr.Name == "" || rr.Type == "" {
+		return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+	}
+
+	// A CNAME is not permitted at the zone apex — the apex must carry the SOA and
+	// NS records, so it can only use an A/AAAA or an ALIAS. Real Route 53 rejects
+	// an apex CNAME as an InvalidChangeBatch (FailedPrecondition maps to that).
+	if strings.EqualFold(rr.Type, "CNAME") && sameDNSName(rr.Name, apex) {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"RRSet of type CNAME with DNS name %s is not permitted at apex in zone %s",
+			ensureTrailingDot(rr.Name), ensureTrailingDot(apex))
+	}
+
+	// Weighted routing record sets require a non-empty SetIdentifier that
+	// distinguishes them from their siblings at the same name+type. Real Route 53
+	// rejects a weighted record set with a missing SetIdentifier as an
+	// InvalidChangeBatch (FailedPrecondition maps to that code).
+	if rr.Weight != nil && rr.SetIdentifier == "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"record set %q %s: SetIdentifier is required for weighted routing", rr.Name, rr.Type)
+	}
+
+	return nil
+}
+
+// sameDNSName reports whether two DNS names are equal, case- and
+// trailing-dot-insensitively.
+func sameDNSName(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
+}
+
+// deleteMatchesRecord reports whether a DELETE request's TTL and values exactly
+// match the stored record set — Route 53's rule that a DELETE must repeat the
+// record's current values. Alias records match on their alias target instead of
+// a TTL and resource records.
+func deleteMatchesRecord(cur *dnsdriver.RecordInfo, rr *resourceRecordSetXML) bool {
+	if cur.AliasTarget != nil || rr.AliasTarget != nil {
+		if cur.AliasTarget == nil || rr.AliasTarget == nil {
+			return false
+		}
+
+		return sameDNSName(cur.AliasTarget.DNSName, rr.AliasTarget.DNSName) &&
+			cur.AliasTarget.HostedZoneID == rr.AliasTarget.HostedZoneId
+	}
+
+	reqTTL := 0
+	if rr.TTL != nil {
+		reqTTL = int(*rr.TTL)
+	}
+
+	if cur.TTL != reqTTL {
+		return false
+	}
+
+	reqValues := make([]string, 0, len(rr.ResourceRecords))
+	for _, v := range rr.ResourceRecords {
+		reqValues = append(reqValues, v.Value)
+	}
+
+	return sameValueSet(cur.Values, reqValues)
+}
+
+// sameValueSet reports whether two resource-record value lists are equal as
+// sets (order-independent), matching how Route 53 compares a DELETE's values.
+func sameValueSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	as := append([]string(nil), a...)
+	sort.Strings(as)
+
+	bs := append([]string(nil), b...)
+	sort.Strings(bs)
+
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // validateChangeBatch checks every change would apply cleanly before any is
 // applied, so an invalid batch is rejected whole (nothing half-applied). It
 // simulates the batch against the zone's current record sets, folding in each
 // change's effect so ordering within the batch is respected.
-func (h *Handler) validateChangeBatch(r *http.Request, zoneID string, changes []changeItem) error {
-	existing, err := h.dns.ListRecords(r.Context(), zoneID)
+func (h *Handler) validateChangeBatch(r *http.Request, zone *dnsdriver.ZoneInfo, changes []changeItem) error {
+	existing, err := h.dns.ListRecords(r.Context(), zone.ID)
 	if err != nil {
 		return err
 	}
 
 	present := make(map[string]bool, len(existing))
+	byKey := make(map[string]*dnsdriver.RecordInfo, len(existing))
 	for i := range existing {
-		present[rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)] = true
+		key := rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)
+		present[key] = true
+		byKey[key] = &existing[i]
 	}
 
 	for i := range changes {
-		rr := &changes[i].ResourceRecordSet
+		if err := validateChange(&changes[i], zone.Name, present, byKey); err != nil {
+			return err
+		}
+	}
 
-		if rr.Name == "" || rr.Type == "" {
-			return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+	return nil
+}
+
+// validateChange checks one change against the batch's simulated presence set
+// (present) and the zone's pre-batch record sets (byKey), folding the change's
+// effect back into present so later changes in the batch see it.
+func validateChange(
+	ch *changeItem, apex string, present map[string]bool, byKey map[string]*dnsdriver.RecordInfo,
+) error {
+	rr := &ch.ResourceRecordSet
+
+	if err := validateRecordSet(rr, apex); err != nil {
+		return err
+	}
+
+	key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
+
+	switch ch.Action {
+	case actionCreate:
+		if present[key] {
+			return cerrors.Newf(cerrors.AlreadyExists, "record set %q %s already exists", rr.Name, rr.Type)
 		}
 
-		key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
-
-		switch changes[i].Action {
-		case actionCreate:
-			if present[key] {
-				return cerrors.Newf(cerrors.AlreadyExists,
-					"record set %q %s already exists", rr.Name, rr.Type)
-			}
-			present[key] = true
-		case actionDelete:
-			if !present[key] {
-				return cerrors.Newf(cerrors.NotFound,
-					"record set %q %s not found", rr.Name, rr.Type)
-			}
-			present[key] = false
-		case actionUpsert:
-			present[key] = true
-		default:
-			return cerrors.Newf(cerrors.InvalidArgument,
-				"unsupported change action %q", changes[i].Action)
+		present[key] = true
+	case actionDelete:
+		if !present[key] {
+			return cerrors.Newf(cerrors.NotFound, "record set %q %s not found", rr.Name, rr.Type)
 		}
+		// Route 53 requires a DELETE to specify the exact TTL and values of the
+		// existing record set. Enforce it only against a record that was already
+		// present before this batch (byKey); one created earlier in the same
+		// batch has no pre-existing values to match against.
+		if cur, ok := byKey[key]; ok && !deleteMatchesRecord(cur, rr) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"Tried to delete resource record set [name=%s, type=%s] but the values provided do not match the current values",
+				ensureTrailingDot(rr.Name), rr.Type)
+		}
+
+		present[key] = false
+	case actionUpsert:
+		present[key] = true
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "unsupported change action %q", ch.Action)
 	}
 
 	return nil
@@ -187,7 +449,7 @@ func (h *Handler) applyChange(r *http.Request, zoneID string, ch *changeItem) er
 
 	switch ch.Action {
 	case actionDelete:
-		return h.dns.DeleteRecord(r.Context(), zoneID, rr.Name, rr.Type)
+		return h.deleteRecordSet(r, zoneID, rr)
 	case actionCreate:
 		_, err := h.dns.CreateRecord(r.Context(), cfg)
 		return err
@@ -198,19 +460,37 @@ func (h *Handler) applyChange(r *http.Request, zoneID string, ch *changeItem) er
 	}
 }
 
-// upsertRecord updates the record if it already exists, otherwise creates it —
-// Route 53's UPSERT semantics. Only a genuine not-found routes to create; any
-// other GetRecord error (e.g. an injected/transient failure) is propagated so
-// an existing record isn't misrouted into a create → spurious conflict.
+// recordSetDeleter is the AWS-only extension a Route 53 backend implements to
+// delete one record set addressed by SetIdentifier, leaving weighted/latency/
+// failover/geo siblings at the same name+type untouched. Backends without it
+// fall back to the SetIdentifier-less DeleteRecord.
+type recordSetDeleter interface {
+	DeleteRecordSet(ctx context.Context, zoneID, name, recordType, setID string) error
+}
+
+// deleteRecordSet removes exactly the record set identified by name+type+
+// SetIdentifier. A weighted/latency/failover/geo DELETE must not disturb its
+// siblings, so the SetIdentifier is honored when the backend supports it.
+func (h *Handler) deleteRecordSet(r *http.Request, zoneID string, rr *resourceRecordSetXML) error {
+	if d, ok := h.dns.(recordSetDeleter); ok {
+		return d.DeleteRecordSet(r.Context(), zoneID, rr.Name, rr.Type, rr.SetIdentifier)
+	}
+
+	return h.dns.DeleteRecord(r.Context(), zoneID, rr.Name, rr.Type)
+}
+
+// upsertRecord creates the record set, and on an exact-key conflict updates it
+// instead — Route 53's UPSERT semantics keyed by name+type+SetIdentifier. Going
+// through CreateRecord first keeps a new weighted/geo sibling from being
+// misrouted into an update of a different SetIdentifier's record.
 func (h *Handler) upsertRecord(r *http.Request, cfg dnsdriver.RecordConfig) error {
-	_, err := h.dns.GetRecord(r.Context(), cfg.ZoneID, cfg.Name, cfg.Type)
+	_, err := h.dns.CreateRecord(r.Context(), cfg)
 	switch {
 	case err == nil:
+		return nil
+	case cerrors.IsAlreadyExists(err):
 		_, uerr := h.dns.UpdateRecord(r.Context(), cfg)
 		return uerr
-	case cerrors.IsNotFound(err):
-		_, cerr := h.dns.CreateRecord(r.Context(), cfg)
-		return cerr
 	default:
 		return err
 	}
@@ -223,17 +503,146 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	sets := make([]resourceRecordSetXML, 0, len(records))
-	for i := range records {
-		sets = append(sets, toRecordSetXML(&records[i]))
+	// Real Route 53 returns record sets in DNS name order — sorted first by DNS
+	// name with the labels reversed (so the zone apex sorts before its
+	// subdomains: com.order. < com.order.a.), then by record type, then by
+	// SetIdentifier so weighted/latency/failover/geo siblings at the same name+type
+	// have a stable total order. This ordering is what the
+	// StartRecordName/Type/Identifier continuation walks.
+	sort.Slice(records, func(i, j int) bool {
+		if c := compareDNSName(records[i].Name, records[j].Name); c != 0 {
+			return c < 0
+		}
+
+		if records[i].Type != records[j].Type {
+			return records[i].Type < records[j].Type
+		}
+
+		return records[i].SetID < records[j].SetID
+	})
+
+	// StartRecordName (with optional StartRecordType, then StartRecordIdentifier)
+	// skips forward to the first record at or after the requested position in that
+	// same order. The identifier is what keeps a multi-value group that straddles a
+	// page boundary from being re-emitted on the next page.
+	start := r.URL.Query().Get("name")
+	startType := r.URL.Query().Get("type")
+	startID := r.URL.Query().Get("identifier")
+	records = recordsFrom(records, start, startType, startID)
+
+	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
+
+	resp := listResourceRecordSetsResponse{
+		Xmlns:    xmlns,
+		MaxItems: int32(maxItems),
 	}
 
-	wire.WriteXML(w, http.StatusOK, listResourceRecordSetsResponse{
-		Xmlns:              xmlns,
-		ResourceRecordSets: sets,
-		IsTruncated:        false,
-		MaxItems:           listMaxItems,
-	})
+	if len(records) > maxItems {
+		next := records[maxItems]
+		resp.IsTruncated = true
+		resp.NextRecordName = next.Name
+		resp.NextRecordType = next.Type
+		resp.NextRecordIdentifier = next.SetID
+		records = records[:maxItems]
+	}
+
+	resp.ResourceRecordSets = make([]resourceRecordSetXML, 0, len(records))
+	for i := range records {
+		resp.ResourceRecordSets = append(resp.ResourceRecordSets, toRecordSetXML(&records[i]))
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// recordsFrom returns the slice starting at the first record whose
+// (name, type, SetIdentifier) triple is at or after (start, startType, startID)
+// in reversed-label DNS order. An empty start returns all records. Honoring
+// startID is what resumes a same-name+type multi-value group at the exact
+// sibling the previous page stopped before, so none is duplicated or skipped.
+func recordsFrom(records []dnsdriver.RecordInfo, start, startType, startID string) []dnsdriver.RecordInfo {
+	if start == "" {
+		return records
+	}
+
+	for i := range records {
+		if recordAtOrAfter(&records[i], start, startType, startID) {
+			return records[i:]
+		}
+	}
+
+	return nil
+}
+
+// recordAtOrAfter reports whether rec is at or after the (start, startType,
+// startID) position in ListResourceRecordSets order. An empty startType matches
+// from the whole name; an empty startID matches from the first sibling of the
+// name+type.
+func recordAtOrAfter(rec *dnsdriver.RecordInfo, start, startType, startID string) bool {
+	if c := compareDNSName(rec.Name, start); c != 0 {
+		return c > 0
+	}
+
+	if startType == "" || rec.Type != startType {
+		return rec.Type >= startType
+	}
+
+	return startID == "" || rec.SetID >= startID
+}
+
+// compareDNSName orders two DNS names the way Route 53's ListResourceRecordSets
+// does: by the name with its labels reversed (TLD first), compared as a flat
+// ASCII string with the dots — including the trailing dot — kept in place. The
+// trailing dot matters: a character whose ASCII value is below '.' (0x2e), such
+// as '-' (0x2d) or the wildcard '*' (0x2a), sorts a longer label before the
+// terminator, so "com.order.api-v2." < "com.order.api." (api-v2 sorts first).
+// A per-label compare would wrongly treat "api" as the prefix that wins.
+// Comparison is case-insensitive (DNS names are); it returns -1, 0, or 1.
+func compareDNSName(a, b string) int {
+	return strings.Compare(reversedDotted(a), reversedDotted(b))
+}
+
+// reversedDotted lower-cases a DNS name, drops the trailing dot, reverses the
+// LABEL order, and rejoins with dots plus a trailing dot — the flat key Route 53
+// sorts on: "api-v2.Order.com." → "com.order.api-v2.". Comparing these keys as
+// plain strings (dots included) reproduces Route 53's ordering exactly.
+func reversedDotted(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	if name == "" {
+		return "."
+	}
+
+	labels := strings.Split(name, ".")
+	for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
+		labels[i], labels[j] = labels[j], labels[i]
+	}
+
+	return strings.Join(labels, ".") + "."
+}
+
+// parseMaxItems reads the maxitems query param, clamping to the fixed page size
+// when absent or invalid.
+func parseMaxItems(v string) int {
+	if v == "" {
+		return listMaxItems
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 || n > listMaxItems {
+		return listMaxItems
+	}
+
+	return n
+}
+
+// ensureTrailingDot returns name as an FQDN (with a trailing dot), the form
+// Route 53 stores and returns zone and record names in. An empty name is left
+// as-is, and a name that already ends in a dot is unchanged.
+func ensureTrailingDot(name string) string {
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+
+	return name + "."
 }
 
 // recordConfig builds a driver RecordConfig from a parsed record set element.
@@ -244,11 +653,15 @@ func recordConfig(zoneID string, rr *resourceRecordSetXML) dnsdriver.RecordConfi
 	}
 
 	cfg := dnsdriver.RecordConfig{
-		ZoneID: zoneID,
-		Name:   rr.Name,
-		Type:   rr.Type,
-		Values: values,
-		SetID:  rr.SetIdentifier,
+		ZoneID:           zoneID,
+		Name:             rr.Name,
+		Type:             rr.Type,
+		Values:           values,
+		SetID:            rr.SetIdentifier,
+		Region:           rr.Region,
+		Failover:         rr.Failover,
+		HealthCheckID:    rr.HealthCheckId,
+		MultiValueAnswer: rr.MultiValueAnswer,
 	}
 
 	if rr.TTL != nil {
@@ -260,16 +673,46 @@ func recordConfig(zoneID string, rr *resourceRecordSetXML) dnsdriver.RecordConfi
 		cfg.Weight = &w
 	}
 
+	if rr.GeoLocation != nil {
+		cfg.GeoLocation = &dnsdriver.GeoLocation{
+			ContinentCode:   rr.GeoLocation.ContinentCode,
+			CountryCode:     rr.GeoLocation.CountryCode,
+			SubdivisionCode: rr.GeoLocation.SubdivisionCode,
+		}
+	}
+
+	if rr.AliasTarget != nil {
+		cfg.AliasTarget = &dnsdriver.AliasTarget{
+			DNSName:              rr.AliasTarget.DNSName,
+			HostedZoneID:         rr.AliasTarget.HostedZoneId,
+			EvaluateTargetHealth: rr.AliasTarget.EvaluateTargetHealth,
+		}
+	}
+
 	return cfg
 }
 
-// newChangeInfo returns a synthetic INSYNC ChangeInfo for a mutating op.
+// newChangeInfo returns a synthetic INSYNC ChangeInfo for a mutating op. Each
+// call gets a distinct change id so two changes are distinguishable (real
+// Route 53 assigns a fresh id per change); GetChange reports INSYNC for any id.
 func newChangeInfo() changeInfoXML {
 	return changeInfoXML{
-		Id:          changeID,
+		Id:          newChangeID(),
 		Status:      changeStatusInsync,
 		SubmittedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+// cleanMsg returns a cloudemu error's message without the leading canonical
+// "Code: " prefix its Error() string carries, so the wire message doesn't leak
+// an internal code (e.g. "NotFound:") alongside the AWS error code element.
+func cleanMsg(err error) string {
+	msg := err.Error()
+	if i := strings.Index(msg, ": "); i >= 0 {
+		return msg[i+2:]
+	}
+
+	return msg
 }
 
 // decodeXML reads an XML request body into v, writing an InvalidInput error and
@@ -297,7 +740,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NoSuchHostedZone", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchHostedZone", cleanMsg(err))
 	case cerrors.IsAlreadyExists(err):
 		writeError(w, http.StatusConflict, "HostedZoneAlreadyExists", err.Error())
 	case cerrors.IsInvalidArgument(err):

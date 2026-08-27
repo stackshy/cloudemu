@@ -5,17 +5,48 @@ package functions
 // (id, name, type, kind, location, basic properties) and skip the long tail
 // of feature flags real App Service surfaces.
 type siteResource struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Kind       string            `json:"kind"`
-	Location   string            `json:"location"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Kind     string `json:"kind"`
+	Location string `json:"location"`
+	// Identity is the managed-service-identity envelope, a sibling of properties
+	// at the resource root. Omitted (nil) when the site has no identity attached,
+	// matching real Azure.
+	Identity   *siteIdentity     `json:"identity,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties siteProperties    `json:"properties"`
 }
 
+// siteIdentity is the ARM ManagedServiceIdentity envelope for a function app:
+// system-assigned and/or user-assigned identity configuration.
+type siteIdentity struct {
+	// Type is one of "None", "SystemAssigned", "UserAssigned",
+	// "SystemAssigned,UserAssigned".
+	Type string `json:"type,omitempty"`
+	// PrincipalID/TenantID are read-only: Azure populates them once a
+	// system-assigned identity is attached. A request sends neither; we decode
+	// them so a client that round-trips a GET response back into a PUT still
+	// decodes.
+	PrincipalID string `json:"principalId,omitempty"`
+	TenantID    string `json:"tenantId,omitempty"`
+	// UserAssignedIdentities is keyed by the full ARM resource ID of a
+	// user-assigned identity to attach. A request sends an empty object per key;
+	// principalId/clientId are read-only, populated on the response.
+	UserAssignedIdentities map[string]*siteUserAssignedIdentity `json:"userAssignedIdentities,omitempty"`
+}
+
+// siteUserAssignedIdentity is one entry of siteIdentity.userAssignedIdentities:
+// the read-only principal/client id pair Azure reports for an attached
+// user-assigned identity.
+type siteUserAssignedIdentity struct {
+	PrincipalID string `json:"principalId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
+}
+
 type siteProperties struct {
 	State               string            `json:"state"`
+	ProvisioningState   string            `json:"provisioningState,omitempty"`
 	HostNames           []string          `json:"hostNames"`
 	DefaultHostName     string            `json:"defaultHostName"`
 	SiteConfig          siteConfig        `json:"siteConfig"`
@@ -27,9 +58,13 @@ type siteProperties struct {
 }
 
 type siteConfig struct {
-	LinuxFxVersion      string      `json:"linuxFxVersion,omitempty"`
-	NetFrameworkVersion string      `json:"netFrameworkVersion,omitempty"`
-	AppSettings         []nameValue `json:"appSettings,omitempty"`
+	LinuxFxVersion      string `json:"linuxFxVersion,omitempty"`
+	NetFrameworkVersion string `json:"netFrameworkVersion,omitempty"`
+	// AppSettings has no omitempty: a plain site GET emits it as null so the
+	// server's unmodeled-property echo does not reflect the request's app
+	// settings (secret values included) back onto the response. The dedicated
+	// config/web and config/appsettings/list routes populate it explicitly.
+	AppSettings []nameValue `json:"appSettings"`
 }
 
 type nameValue struct {
@@ -47,6 +82,7 @@ type siteListResponse struct {
 type createSiteRequest struct {
 	Kind       string               `json:"kind"`
 	Location   string               `json:"location"`
+	Identity   *siteIdentity        `json:"identity"`
 	Tags       map[string]string    `json:"tags"`
 	Properties createSiteProperties `json:"properties"`
 }
@@ -61,6 +97,32 @@ type createSiteProperties struct {
 type createSiteConfig struct {
 	LinuxFxVersion string      `json:"linuxFxVersion"`
 	AppSettings    []nameValue `json:"appSettings"`
+}
+
+// patchSiteRequest captures a PATCH (WebApps_Update / SitePatchResource) body.
+// Every field is a pointer (or a nil-able map/slice) so an omitted field is
+// distinguishable from one explicitly set to its zero value — PATCH must apply
+// only the fields the caller supplied and leave the rest as stored.
+type patchSiteRequest struct {
+	Kind       *string              `json:"kind"`
+	Location   *string              `json:"location"`
+	Identity   *siteIdentity        `json:"identity"`
+	Tags       map[string]string    `json:"tags"`
+	Properties *patchSiteProperties `json:"properties"`
+}
+
+type patchSiteProperties struct {
+	SiteConfig   *patchSiteConfig `json:"siteConfig"`
+	Reserved     *bool            `json:"reserved"`
+	ServerFarmID *string          `json:"serverFarmId"`
+	HTTPSOnly    *bool            `json:"httpsOnly"`
+}
+
+type patchSiteConfig struct {
+	LinuxFxVersion *string `json:"linuxFxVersion"`
+	// AppSettings is nil when the PATCH omitted the block (settings preserved) and
+	// non-nil (possibly empty) when it supplied one (settings replaced).
+	AppSettings []nameValue `json:"appSettings"`
 }
 
 // serverFarmResource is the ARM JSON shape for Microsoft.Web/serverfarms (App
@@ -88,10 +150,75 @@ type serverFarmProperties struct {
 	Status            string `json:"status,omitempty"`
 }
 
+// serverFarmListResponse is the {value:[...]} envelope for the serverfarms
+// collection GET.
+type serverFarmListResponse struct {
+	Value []serverFarmResource `json:"value"`
+}
+
 // createServerFarmRequest captures the fields read from a serverfarms PUT body.
 type createServerFarmRequest struct {
 	Kind     string            `json:"kind"`
 	Location string            `json:"location"`
 	Tags     map[string]string `json:"tags"`
 	SKU      serverFarmSKU     `json:"sku"`
+}
+
+// stringDictionary is the ARM StringDictionary shape returned by
+// listApplicationSettings and listFunctionKeys.
+type stringDictionary struct {
+	ID         string            `json:"id,omitempty"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Kind       string            `json:"kind,omitempty"`
+	Properties map[string]string `json:"properties"`
+}
+
+// hostKeys is the ARM HostKeys shape returned by listHostKeys.
+type hostKeys struct {
+	MasterKey    string            `json:"masterKey"`
+	FunctionKeys map[string]string `json:"functionKeys"`
+	SystemKeys   map[string]string `json:"systemKeys"`
+}
+
+// siteConfigResource is the ARM SiteConfigResource returned by GET config/web.
+type siteConfigResource struct {
+	ID         string     `json:"id,omitempty"`
+	Name       string     `json:"name"`
+	Type       string     `json:"type"`
+	Properties siteConfig `json:"properties"`
+}
+
+// functionEnvelope is the ARM FunctionEnvelope for one deployed function.
+type functionEnvelope struct {
+	ID         string                `json:"id"`
+	Name       string                `json:"name"`
+	Type       string                `json:"type"`
+	Properties functionEnvelopeProps `json:"properties"`
+}
+
+// functionEnvelopeProps carries the function's config and hrefs.
+type functionEnvelopeProps struct {
+	Name          string         `json:"name"`
+	FunctionAppID string         `json:"function_app_id,omitempty"`
+	Config        map[string]any `json:"config,omitempty"`
+	Href          string         `json:"href,omitempty"`
+	Language      string         `json:"language,omitempty"`
+	IsDisabled    bool           `json:"isDisabled,omitempty"`
+}
+
+// functionEnvelopeCollection is the {value:[...]} envelope for listFunctions.
+type functionEnvelopeCollection struct {
+	Value []functionEnvelope `json:"value"`
+}
+
+// createFunctionRequest captures the fields read from a function PUT body.
+type createFunctionRequest struct {
+	Properties createFunctionProps `json:"properties"`
+}
+
+type createFunctionProps struct {
+	Config     map[string]any `json:"config"`
+	Language   string         `json:"language"`
+	IsDisabled bool           `json:"isDisabled"`
 }

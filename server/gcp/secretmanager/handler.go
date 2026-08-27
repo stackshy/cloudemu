@@ -5,16 +5,24 @@
 //
 // Coverage (v1 REST):
 //
-//	POST   /v1/projects/{p}/secrets?secretId={id}              — Create secret
-//	GET    /v1/projects/{p}/secrets/{id}                       — Get secret
-//	GET    /v1/projects/{p}/secrets                            — List secrets
-//	DELETE /v1/projects/{p}/secrets/{id}                       — Delete secret
-//	POST   /v1/projects/{p}/secrets/{id}:addVersion            — Add version
-//	GET    /v1/projects/{p}/secrets/{id}/versions              — List versions
-//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}          — Get version
-//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}:access   — Access payload
+//	POST   /v1/projects/{p}/secrets?secretId={id}                 — Create secret
+//	GET    /v1/projects/{p}/secrets/{id}                          — Get secret
+//	PATCH  /v1/projects/{p}/secrets/{id}?updateMask=labels        — Patch secret
+//	GET    /v1/projects/{p}/secrets                               — List secrets (paged)
+//	DELETE /v1/projects/{p}/secrets/{id}                          — Delete secret
+//	POST   /v1/projects/{p}/secrets/{id}:addVersion               — Add version
+//	GET    /v1/projects/{p}/secrets/{id}:getIamPolicy             — Get IAM policy
+//	POST   /v1/projects/{p}/secrets/{id}:setIamPolicy             — Set IAM policy
+//	POST   /v1/projects/{p}/secrets/{id}:testIamPermissions       — Test IAM perms
+//	GET    /v1/projects/{p}/secrets/{id}/versions                 — List versions (paged)
+//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}             — Get version
+//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}:access      — Access payload
+//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:enable      — Enable version
+//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:disable     — Disable version
+//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:destroy     — Destroy version
 //
-// "latest" is accepted as a version alias, matching real Secret Manager. The
+// Versions are numbered by monotonic integer (1, 2, 3…) and addressable by that
+// id; "latest" is accepted as a version alias, matching real Secret Manager. The
 // driver seeds an initial (empty) version on create, so a freshly created
 // secret carries one more version than the addVersion calls made against it.
 package secretmanager
@@ -34,6 +42,13 @@ const (
 
 	verbAddVersion = "addVersion"
 	verbAccess     = "access"
+	verbDestroy    = "destroy"
+	verbDisable    = "disable"
+	verbEnable     = "enable"
+
+	verbGetIam  = "getIamPolicy"
+	verbSetIam  = "setIamPolicy"
+	verbTestIam = "testIamPermissions"
 
 	latestAlias = "latest"
 )
@@ -49,11 +64,20 @@ const (
 // Handler serves secretmanager.googleapis.com v1 requests.
 type Handler struct {
 	secrets secretsdriver.Secrets
+	// gcp is the GCP-specific surface (version lifecycle, patch, IAM). It is
+	// present whenever the backing driver implements driver.GCPSecrets (the GCP
+	// mock always does); nil-checked so a non-GCP driver degrades to 501.
+	gcp secretsdriver.GCPSecrets
 }
 
 // New returns a Secret Manager handler backed by s.
 func New(s secretsdriver.Secrets) *Handler {
-	return &Handler{secrets: s}
+	h := &Handler{secrets: s}
+	if g, ok := s.(secretsdriver.GCPSecrets); ok {
+		h.gcp = g
+	}
+
+	return h
 }
 
 type route struct {
@@ -144,13 +168,34 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rt rou
 // serveSecret dispatches /secrets/{id} resource requests, including the
 // :addVersion custom method.
 func (h *Handler) serveSecret(w http.ResponseWriter, r *http.Request, rt route) {
-	switch {
-	case rt.verb == verbAddVersion && r.Method == http.MethodPost:
-		h.addVersion(w, r, rt)
-	case rt.verb == "" && r.Method == http.MethodGet:
+	if rt.verb != "" {
+		h.serveSecretVerb(w, r, rt)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
 		h.getSecret(w, r, rt)
-	case rt.verb == "" && r.Method == http.MethodDelete:
+	case http.MethodPatch:
+		h.patchSecret(w, r, rt)
+	case http.MethodDelete:
 		h.deleteSecret(w, r, rt)
+	default:
+		writeUnsupported(w)
+	}
+}
+
+// serveSecretVerb dispatches the custom :verb methods on a secret resource.
+func (h *Handler) serveSecretVerb(w http.ResponseWriter, r *http.Request, rt route) {
+	switch rt.verb {
+	case verbAddVersion:
+		postOnly(w, r, func() { h.addVersion(w, r, rt) })
+	case verbSetIam:
+		postOnly(w, r, func() { h.setIamPolicy(w, r, rt) })
+	case verbTestIam:
+		postOnly(w, r, func() { h.testIamPermissions(w, r, rt) })
+	case verbGetIam:
+		getOnly(w, r, func() { h.getIamPolicy(w, r, rt) })
 	default:
 		writeUnsupported(w)
 	}
@@ -160,12 +205,22 @@ func (h *Handler) serveSecret(w http.ResponseWriter, r *http.Request, rt route) 
 // the :access custom method.
 func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, rt route) {
 	switch {
-	case rt.listVer && r.Method == http.MethodGet:
-		h.listVersions(w, r, rt)
-	case rt.verb == verbAccess && r.Method == http.MethodGet:
-		h.accessVersion(w, r, rt)
-	case rt.verb == "" && r.Method == http.MethodGet:
-		h.getVersion(w, r, rt)
+	case rt.listVer:
+		getOnly(w, r, func() { h.listVersions(w, r, rt) })
+	case rt.verb != "":
+		h.serveVersionVerb(w, r, rt)
+	default:
+		getOnly(w, r, func() { h.getVersion(w, r, rt) })
+	}
+}
+
+// serveVersionVerb dispatches the custom :verb methods on a version resource.
+func (h *Handler) serveVersionVerb(w http.ResponseWriter, r *http.Request, rt route) {
+	switch rt.verb {
+	case verbAccess:
+		getOnly(w, r, func() { h.accessVersion(w, r, rt) })
+	case verbDestroy, verbDisable, verbEnable:
+		postOnly(w, r, func() { h.mutateVersion(w, r, rt, rt.verb) })
 	default:
 		writeUnsupported(w)
 	}
@@ -173,4 +228,24 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, rt route
 
 func writeUnsupported(w http.ResponseWriter) {
 	gcprest.WriteError(w, http.StatusBadRequest, "badRequest", "unsupported Secret Manager operation")
+}
+
+// getOnly runs fn for GET requests, else replies 400 unsupported.
+func getOnly(w http.ResponseWriter, r *http.Request, fn func()) {
+	if r.Method == http.MethodGet {
+		fn()
+		return
+	}
+
+	writeUnsupported(w)
+}
+
+// postOnly runs fn for POST requests, else replies 400 unsupported.
+func postOnly(w http.ResponseWriter, r *http.Request, fn func()) {
+	if r.Method == http.MethodPost {
+		fn()
+		return
+	}
+
+	writeUnsupported(w)
 }

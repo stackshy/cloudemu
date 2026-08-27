@@ -2,15 +2,21 @@ package efs
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/efs/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// CreateMountTarget creates a mount target for a file system in a subnet.
-func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetInput) (*driver.MountTarget, error) {
+// CreateMountTarget creates a mount target for a file system in a subnet. The
+// VpcId and Availability Zone are derived from the subnet (real EFS behavior):
+// all mount targets of one file system share a VpcId, and each reports its
+// subnet's AZ. When the subnet can't be resolved, a deterministic per-file-
+// system VpcId and the region's first AZ are used instead of a random VpcId.
+func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTargetInput) (*driver.MountTarget, error) {
 	if in.SubnetID == "" {
 		return nil, errors.New(errors.InvalidArgument, "SubnetId is required")
 	}
@@ -20,16 +26,17 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
+	subnet := m.resolveSubnet(ctx, in.SubnetID)
+	vpcID, azName, azIdent := m.mountTargetPlacement(fd.fs.FileSystemID, subnet)
+
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	// EFS allows one mount target per Availability Zone. The emulator models a
-	// subnet as its own AZ, so reject a second mount target in the same subnet.
-	for _, mt := range fd.mountTgts {
-		if mt.SubnetID == in.SubnetID {
-			return nil, conflict(driver.KindMountTarget,
-				"mount target already exists in subnet %q", in.SubnetID)
-		}
+	// EFS allows one mount target per Availability Zone. When the subnet's AZ is
+	// known, enforce that (two subnets in one AZ conflict); otherwise fall back to
+	// one per subnet.
+	if err := checkMountTargetConflict(fd, in.SubnetID, azName, subnet != nil); err != nil {
+		return nil, err
 	}
 
 	id := "fsmt-" + idgen.GenerateID("")
@@ -43,9 +50,9 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 		LifeCycleState:       driver.StateAvailable,
 		IPAddress:            ipAddressOrDefault(in.IPAddress),
 		NetworkInterfaceID:   eni,
-		AvailabilityZoneID:   azID(m.opts.Region),
-		AvailabilityZoneName: m.opts.Region + "a",
-		VPCID:                "vpc-" + idgen.GenerateID(""),
+		AvailabilityZoneID:   azIdent,
+		AvailabilityZoneName: azName,
+		VPCID:                vpcID,
 		SecurityGroups:       append([]string(nil), in.SecurityGroups...),
 	}
 
@@ -59,12 +66,61 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 	return &out, nil
 }
 
-// azID builds an AWS-style AZ id (e.g. "use1-az1") from a region. AWS's real
-// AZ-id short codes are hand-maintained abbreviations; this approximates them by
-// keeping the first region token whole and abbreviating the rest to their first
-// letter (us-east-1 → use1, eu-west-1 → euw1), which is exact for the common
-// single-word regions.
-func azID(region string) string {
+// mountTargetPlacement resolves the VpcId and Availability Zone for a mount
+// target. A resolved subnet supplies the real VPC and AZ; otherwise the VpcId is
+// a deterministic value tied to the file system (so every mount target of one
+// file system shares it) and the AZ defaults to the region's first zone.
+func (m *Mock) mountTargetPlacement(
+	fileSystemID string, subnet *netdriver.SubnetInfo,
+) (vpcID, azName, azIdent string) {
+	azName = m.opts.Region + "a"
+	azIdent = azID(m.opts.Region)
+
+	if subnet != nil {
+		vpcID = subnet.VPCID
+
+		if subnet.AvailabilityZone != "" {
+			azName = subnet.AvailabilityZone
+			azIdent = azIDFromName(subnet.AvailabilityZone)
+		}
+	}
+
+	if vpcID == "" {
+		vpcID = "vpc-" + strings.TrimPrefix(fileSystemID, "fs-")
+	}
+
+	return vpcID, azName, azIdent
+}
+
+// checkMountTargetConflict enforces EFS's one-mount-target-per-AZ rule. When the
+// subnet's AZ is known, two mount targets in the same AZ conflict; otherwise the
+// check falls back to one mount target per subnet. Callers hold fd.mu.
+func checkMountTargetConflict(fd *fsData, subnetID, azName string, azKnown bool) error {
+	for _, mt := range fd.mountTgts {
+		if azKnown {
+			if mt.AvailabilityZoneName == azName {
+				return conflict(driver.KindMountTarget,
+					"mount target already exists in availability zone %q", azName)
+			}
+
+			continue
+		}
+
+		if mt.SubnetID == subnetID {
+			return conflict(driver.KindMountTarget,
+				"mount target already exists in subnet %q", subnetID)
+		}
+	}
+
+	return nil
+}
+
+// regionShortCode builds an AWS-style region short code (e.g. us-east-1 → use1,
+// eu-west-1 → euw1) used as the prefix of an AZ id. AWS's real short codes are
+// hand-maintained abbreviations; this approximates them by keeping the first
+// region token whole and abbreviating the rest to their first letter, which is
+// exact for the common single-word regions.
+func regionShortCode(region string) string {
 	short := ""
 
 	for i, part := range strings.Split(region, "-") {
@@ -80,7 +136,33 @@ func azID(region string) string {
 		}
 	}
 
-	return short + "-az1"
+	return short
+}
+
+// azID builds an AWS-style AZ id (e.g. "use1-az1") from a region, defaulting to
+// the first AZ. Callers that know the AZ name should use azIDFromName instead.
+func azID(region string) string {
+	return regionShortCode(region) + "-az1"
+}
+
+// azIDFromName maps an AZ name (e.g. "us-west-2b") to its consistent AZ id
+// ("usew2-az2") the way real EFS reports it: the region short code, then "-az"
+// plus the zone-letter's ordinal (a→1, b→2, …). A name without a trailing
+// letter falls back to az1.
+func azIDFromName(azName string) string {
+	if azName == "" {
+		return ""
+	}
+
+	last := azName[len(azName)-1]
+	if last < 'a' || last > 'z' {
+		return regionShortCode(azName) + "-az1"
+	}
+
+	region := azName[:len(azName)-1]
+	ordinal := int(last-'a') + 1
+
+	return regionShortCode(region) + "-az" + strconv.Itoa(ordinal)
 }
 
 func ipAddressOrDefault(ip string) string {
@@ -234,15 +316,19 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
-	fd.mu.Lock()
-	defer fd.mu.Unlock()
-
 	name := in.Name
 	if name == "" {
 		name = in.Tags[nameTag]
 	}
 
 	id := "fsap-" + idgen.GenerateID("")
+
+	// Store the access point and publish it via apIndex BEFORE claiming the
+	// ClientToken, so a racing same-token loser can always resolve the winner's
+	// access point by id — there is no lookup-before-store window (the F1
+	// file-system path is safe the same way: its loser recovers by id, not by
+	// object lookup).
+	fd.mu.Lock()
 	ap := &driver.AccessPoint{
 		ClientToken:    in.ClientToken,
 		Name:           name,
@@ -255,9 +341,49 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 		RootDirectory:  rootDirOrDefault(in.RootDirectory),
 		Tags:           copyTags(in.Tags),
 	}
-
 	fd.accessPts[id] = ap
-	m.apIndex.Set(id, fd.fs.FileSystemID)
+	out := *ap
+	fd.mu.Unlock()
+
+	m.apIndex.Set(id, in.FileSystemID)
+
+	// ClientToken idempotency: claim the token. If another same-token call won the
+	// race, roll back this just-created access point and return the existing one —
+	// never a duplicate, never AccessPointNotFound.
+	if in.ClientToken != "" && !m.apTokenIndex.SetIfAbsent(in.ClientToken, id) {
+		fd.mu.Lock()
+		delete(fd.accessPts, id)
+		fd.mu.Unlock()
+		m.apIndex.Delete(id)
+
+		existingID, _ := m.apTokenIndex.Get(in.ClientToken)
+
+		return m.accessPointByID(existingID)
+	}
+
+	return &out, nil
+}
+
+// accessPointByID returns a copy of an access point by id, used to satisfy an
+// idempotent CreateAccessPoint retry from the existing access point.
+func (m *Mock) accessPointByID(accessPointID string) (*driver.AccessPoint, error) {
+	fsID, ok := m.apIndex.Get(accessPointID)
+	if !ok {
+		return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
+	}
+
+	fd, ok := m.getFS(fsID)
+	if !ok {
+		return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
+	}
+
+	fd.mu.RLock()
+	defer fd.mu.RUnlock()
+
+	ap, ok := fd.accessPts[accessPointID]
+	if !ok {
+		return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
+	}
 
 	out := *ap
 
@@ -313,6 +439,10 @@ func (m *Mock) DeleteAccessPoint(_ context.Context, accessPointID string) error 
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	if ap := fd.accessPts[accessPointID]; ap != nil && ap.ClientToken != "" {
+		m.apTokenIndex.Delete(ap.ClientToken)
+	}
 
 	delete(fd.accessPts, accessPointID)
 	m.apIndex.Delete(accessPointID)

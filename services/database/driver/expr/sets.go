@@ -10,11 +10,13 @@ import "bytes"
 // StringSet is a DynamoDB String Set (SS).
 type StringSet []string
 
-// NumberSet is a DynamoDB Number Set (NS). Elements are numeric values, kept as
-// float64 to match how scalar numbers (N) are modeled; like scalar N, this does
-// not preserve DynamoDB's full decimal precision for very large or high-precision
-// numbers.
-type NumberSet []float64
+// NumberSet is a DynamoDB Number Set (NS). Each element is kept as its exact
+// decimal string (a Number), mirroring how the scalar N type is modeled, so
+// large ids and high-precision decimals round-trip without float64 corruption.
+// Uniqueness and membership are by numeric value (Number's exact comparison),
+// so "1", "1.0" and "+1" are one element, while values that differ only beyond
+// float64 precision stay distinct.
+type NumberSet []Number
 
 // BinarySet is a DynamoDB Binary Set (BS).
 type BinarySet [][]byte
@@ -30,10 +32,10 @@ func stringSetHas(s StringSet, v string) bool {
 	return false
 }
 
-// numberSetHas reports whether s contains v.
-func numberSetHas(s NumberSet, v float64) bool {
+// numberSetHas reports whether s contains v, comparing by exact numeric value.
+func numberSetHas(s NumberSet, v Number) bool {
 	for _, e := range s {
-		if e == v {
+		if numberEqual(e, v) {
 			return true
 		}
 	}

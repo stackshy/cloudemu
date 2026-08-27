@@ -106,6 +106,8 @@ func (h *Handler) listTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 		FamilyPrefix string `json:"familyPrefix"`
 		Status       string `json:"status"`
 		Sort         string `json:"sort"`
+		MaxResults   int    `json:"maxResults"`
+		NextToken    string `json:"nextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -124,7 +126,12 @@ func (h *Handler) listTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 		arns = append(arns, defs[i].ARN)
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskDefinitionArns": arns})
+	items, next, ok := paginateARNs(w, arns, req.MaxResults, req.NextToken)
+	if !ok {
+		return
+	}
+
+	wire.WriteJSON(w, listResponse("taskDefinitionArns", items, next))
 }
 
 func (h *Handler) describeTaskDefinition(w http.ResponseWriter, r *http.Request) {

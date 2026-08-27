@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	cf "google.golang.org/api/cloudfunctions/v1"
+	cfv2 "google.golang.org/api/cloudfunctions/v2"
 	"google.golang.org/api/option"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
@@ -141,4 +142,53 @@ func TestCloudFunctionsCompat(t *testing.T) {
 
 		return nil
 	})
+}
+
+// TestGen2GenerateDownloadURL proves the gen2 (v2) functions.generateDownloadUrl
+// method returns a downloadUrl for an existing function, rather than 404
+// ("unknown method"). generateUploadUrl already worked; download was the gap.
+func TestGen2GenerateDownloadURL(t *testing.T) {
+	provider := cloudemu.NewGCP()
+	sess := compat.BootGCP(t, gcpserver.Drivers{CloudFunctions: provider.CloudFunctions})
+	ctx := context.Background()
+
+	svc, err := cfv2.NewService(ctx,
+		option.WithEndpoint(sess.Endpoint()),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(sess.Transport()),
+	)
+	if err != nil {
+		t.Fatalf("cloudfunctions v2 service: %v", err)
+	}
+
+	parent := "projects/" + compat.GCPProject + "/locations/us-central1"
+	name := parent + "/functions/g2dl"
+
+	createOp, err := svc.Projects.Locations.Functions.Create(parent, &cfv2.Function{
+		Environment: "GEN_2",
+		BuildConfig: &cfv2.BuildConfig{
+			Runtime:    "go121",
+			EntryPoint: "Hello",
+			Source: &cfv2.Source{
+				StorageSource: &cfv2.StorageSource{Bucket: "b", Object: "o.zip"},
+			},
+		},
+	}).FunctionId("g2dl").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("create gen2 function: %v", err)
+	}
+
+	if !createOp.Done {
+		t.Fatal("create operation not done")
+	}
+
+	resp, err := svc.Projects.Locations.Functions.
+		GenerateDownloadUrl(name, &cfv2.GenerateDownloadUrlRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("generateDownloadUrl: %v", err)
+	}
+
+	if resp.DownloadUrl == "" {
+		t.Fatalf("generateDownloadUrl returned empty downloadUrl")
+	}
 }

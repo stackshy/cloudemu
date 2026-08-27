@@ -7,6 +7,8 @@
 package aws
 
 import (
+	"net/http"
+
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -325,6 +327,10 @@ func New(d Drivers) *server.Server {
 
 	if d.DynamoDB != nil {
 		srv.Register(dynamodb.New(d.DynamoDB))
+		// DynamoDB Streams shares the DynamoDB host but uses the disjoint
+		// X-Amz-Target prefix DynamoDBStreams_20120810.* (vs DynamoDB_20120810.*
+		// and AmazonSQS.*), so its Matches predicate never collides.
+		srv.Register(dynamodb.NewStreams(d.DynamoDB))
 	}
 
 	// SQS shares the X-Amz-Target header with DynamoDB but uses a different
@@ -351,7 +357,7 @@ func New(d Drivers) *server.Server {
 	// IAM also speaks AWS query-protocol; its action set is disjoint from
 	// RDS, Redshift, and EC2. Registered before EC2 for the same reason.
 	if d.IAM != nil {
-		srv.Register(iam.New(d.IAM))
+		srv.Register(iam.New(d.IAM, d.AccountID))
 	}
 
 	if d.ECR != nil {
@@ -539,11 +545,14 @@ func New(d Drivers) *server.Server {
 	// ElastiCache, SNS, and EC2, so no shadowing occurs. It has no driver, so
 	// it's gated on the STS bool. Registered before the EC2 catch-all.
 	if d.STS {
-		srv.Register(stssrv.New(d.AccountID, d.Region))
+		// Pass the IAM driver so AssumeRole can enforce the target role's trust
+		// policy and existence. d.IAM may be nil (standalone STS-only), in which
+		// case AssumeRole stays permissive.
+		srv.Register(stssrv.New(d.AccountID, d.Region, d.IAM))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
-		srv.Register(ec2.New(d.EC2, d.VPC))
+		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID))
 	}
 
 	if d.Lambda != nil {
@@ -633,6 +642,13 @@ func New(d Drivers) *server.Server {
 
 	if d.S3 != nil {
 		srv.Register(s3.New(d.S3))
+	}
+
+	// When the CloudTrail backend can record events, observe every served
+	// request and log a management event so LookupEvents reflects real API
+	// activity. This is the one cross-service hook CloudTrail needs.
+	if rec, ok := d.CloudTrail.(cloudtraildriver.EventRecorder); ok {
+		srv.SetObserver(func(r *http.Request) { recordManagementEvent(rec, r) })
 	}
 
 	return srv

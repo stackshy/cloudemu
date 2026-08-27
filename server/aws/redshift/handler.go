@@ -33,27 +33,56 @@ const (
 // redshiftActions is the set of Action values this handler recognizes. Matches
 // uses it to decide whether to claim a request.
 var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCluster":               {},
-	"DescribeClusters":            {},
-	"ModifyCluster":               {},
-	"DeleteCluster":               {},
-	"RebootCluster":               {},
-	"CreateClusterSnapshot":       {},
-	"DescribeClusterSnapshots":    {},
-	"DeleteClusterSnapshot":       {},
-	"RestoreFromClusterSnapshot":  {},
-	"CreateClusterParameterGroup": {},
-	"CreateClusterSubnetGroup":    {},
-	"CreateTags":                  {},
-	"DeleteTags":                  {},
-	"DescribeTags":                {},
+	"CreateCluster":                  {},
+	"DescribeClusters":               {},
+	"ModifyCluster":                  {},
+	"DeleteCluster":                  {},
+	"RebootCluster":                  {},
+	"CreateClusterSnapshot":          {},
+	"DescribeClusterSnapshots":       {},
+	"DeleteClusterSnapshot":          {},
+	"RestoreFromClusterSnapshot":     {},
+	"GetClusterCredentials":          {},
+	"PauseCluster":                   {},
+	"ResumeCluster":                  {},
+	"CreateClusterParameterGroup":    {},
+	"DescribeClusterParameterGroups": {},
+	"DeleteClusterParameterGroup":    {},
+	"ModifyClusterParameterGroup":    {},
+	"DescribeClusterParameters":      {},
+	"ResetClusterParameterGroup":     {},
+	"CreateClusterSubnetGroup":       {},
+	"DescribeClusterSubnetGroups":    {},
+	"DeleteClusterSubnetGroup":       {},
+	"CreateTags":                     {},
+	"DeleteTags":                     {},
+	"DescribeTags":                   {},
 }
 
 // clusterGroupManager is the AWS-specific parameter/subnet-group surface, not
 // part of the shared relationaldb driver; the handler type-asserts for it.
 type clusterGroupManager interface {
 	CreateClusterParameterGroup(ctx context.Context, name, family, description string) (*redshiftprovider.ParameterGroup, error)
+	DescribeClusterParameterGroups(ctx context.Context, names []string) ([]redshiftprovider.ParameterGroup, error)
+	DeleteClusterParameterGroup(ctx context.Context, name string) error
+	ModifyClusterParameterGroup(
+		ctx context.Context, name string, params []rdbdriver.Parameter,
+	) (*redshiftprovider.ParameterGroup, error)
+	DescribeClusterParameters(ctx context.Context, name string) ([]rdbdriver.Parameter, error)
+	ResetClusterParameterGroup(
+		ctx context.Context, name string, paramNames []string, resetAll bool,
+	) (*redshiftprovider.ParameterGroup, error)
 	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
+	DescribeClusterSubnetGroups(ctx context.Context, names []string) ([]redshiftprovider.SubnetGroup, error)
+	DeleteClusterSubnetGroup(ctx context.Context, name string) error
+}
+
+// clusterPauser is the AWS-only PauseCluster/ResumeCluster surface, kept off
+// the shared relationaldb driver; the handler discovers it by type assertion
+// and answers InvalidAction when the backing driver does not implement it.
+type clusterPauser interface {
+	PauseCluster(ctx context.Context, id string) (*rdbdriver.Cluster, error)
+	ResumeCluster(ctx context.Context, id string) (*rdbdriver.Cluster, error)
 }
 
 // resourceTagger is the AWS-specific Redshift tagging surface.
@@ -105,7 +134,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	// claim these only when the SigV4 credential scope names "redshift";
 	// otherwise let them fall through to the owning handler.
 	if _, ambiguous := ambiguousTagActions[action]; ambiguous {
-		return sigV4ScopeService(r.Header.Get("Authorization")) == "redshift"
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "redshift"
 	}
 
 	return true
@@ -117,24 +146,6 @@ var ambiguousTagActions = map[string]struct{}{ //nolint:gochecknoglobals // stat
 	"CreateTags":   {},
 	"DeleteTags":   {},
 	"DescribeTags": {},
-}
-
-// sigV4ScopeService extracts the service from a SigV4 Authorization credential
-// scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
-func sigV4ScopeService(auth string) string {
-	i := strings.Index(auth, "Credential=")
-	if i < 0 {
-		return ""
-	}
-
-	parts := strings.Split(auth[i+len("Credential="):], "/")
-
-	const serviceField = 3
-	if len(parts) <= serviceField {
-		return ""
-	}
-
-	return parts[serviceField]
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
@@ -160,10 +171,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteClusterSnapshot(w, r)
 	case "RestoreFromClusterSnapshot":
 		h.restoreFromClusterSnapshot(w, r)
+	case "GetClusterCredentials":
+		h.getClusterCredentials(w, r)
+	case "PauseCluster":
+		h.pauseCluster(w, r)
+	case "ResumeCluster":
+		h.resumeCluster(w, r)
 	case "CreateClusterParameterGroup":
 		h.createClusterParameterGroup(w, r)
+	case "DescribeClusterParameterGroups":
+		h.describeClusterParameterGroups(w, r)
+	case "DeleteClusterParameterGroup":
+		h.deleteClusterParameterGroup(w, r)
+	case "ModifyClusterParameterGroup":
+		h.modifyClusterParameterGroup(w, r)
+	case "DescribeClusterParameters":
+		h.describeClusterParameters(w, r)
+	case "ResetClusterParameterGroup":
+		h.resetClusterParameterGroup(w, r)
 	case "CreateClusterSubnetGroup":
 		h.createClusterSubnetGroup(w, r)
+	case "DescribeClusterSubnetGroups":
+		h.describeClusterSubnetGroups(w, r)
+	case "DeleteClusterSubnetGroup":
+		h.deleteClusterSubnetGroup(w, r)
 	case "CreateTags":
 		h.createTags(w, r)
 	case "DeleteTags":
@@ -178,17 +209,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // writeErr maps cloudemu errors to Redshift XML error responses.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidClusterState", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidClusterState", msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }
 
@@ -199,6 +232,10 @@ func notFoundCode(err error) string {
 	switch {
 	case strings.Contains(msg, "cluster snapshot"):
 		return "ClusterSnapshotNotFound"
+	case strings.Contains(msg, "parameter group"):
+		return "ClusterParameterGroupNotFound"
+	case strings.Contains(msg, "subnet group"):
+		return "ClusterSubnetGroupNotFoundFault"
 	case strings.Contains(msg, "cluster"):
 		return "ClusterNotFound"
 	default:

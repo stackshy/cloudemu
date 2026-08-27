@@ -34,7 +34,8 @@
 //
 //	POST   /v1/projects/{p}/locations/{l}/triggers?triggerId={id}   — Create (LRO, done inline)
 //	GET    /v1/projects/{p}/locations/{l}/triggers/{id}             — Get
-//	GET    /v1/projects/{p}/locations/{l}/triggers                  — List
+//	GET    /v1/projects/{p}/locations/{l}/triggers                  — List (paginated)
+//	PATCH  /v1/projects/{p}/locations/{l}/triggers/{id}?updateMask= — Update (LRO, done inline)
 //	DELETE /v1/projects/{p}/locations/{l}/triggers/{id}             — Delete (LRO, done inline)
 package eventarc
 
@@ -42,6 +43,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
@@ -61,12 +63,21 @@ const minTriggersCollectionParts = 5
 // eventbus driver.
 type Handler struct {
 	bus ebdriver.EventBus
+
+	// ops records created operations with the shared poller so a client that
+	// polls the returned operation name gets the typed response (and unknown
+	// names 404). Nil in a standalone package server.
+	ops *lro.Registry
 }
 
 // New returns an Eventarc handler backed by b.
 func New(b ebdriver.EventBus) *Handler {
 	return &Handler{bus: b}
 }
+
+// SetOperationRegistry wires the shared LRO poller so created operations are
+// resolvable (with their response) through the full server's operations host.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 
 type route struct {
 	project   string
@@ -152,6 +163,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.getTrigger(w, r, &rt)
+	case http.MethodPatch:
+		h.patchTrigger(w, r, &rt)
 	case http.MethodDelete:
 		h.deleteTrigger(w, r, &rt)
 	default:

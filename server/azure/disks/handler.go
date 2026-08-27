@@ -11,7 +11,10 @@ package disks
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -22,7 +25,33 @@ const (
 	providerName    = "Microsoft.Compute"
 	resourceType    = "disks"
 	armNameTag      = "cloudemu:azureDiskName"
+	rgTag           = "cloudemu:azureRG"
+	createOptionTag = "cloudemu:createOption"
+	sourceIDTag     = "cloudemu:sourceResourceId"
 	defaultLocation = "eastus"
+
+	// vmARMNameTag mirrors the constant in server/azure/virtualmachines so a
+	// disk's AttachedTo (a driver compute instance ID) can be resolved to the
+	// attaching VM's ARM resource ID for the disk's managedBy field.
+	vmARMNameTag = "cloudemu:azureName"
+
+	// vmResourceType is the ARM resource type of the VM a disk's managedBy
+	// field points at.
+	vmResourceType = "virtualMachines"
+
+	// createOptionEmpty is the default disk createOption (an empty disk).
+	createOptionEmpty = "Empty"
+
+	// snapshotARMNameTag mirrors the ARM-name tag the snapshots handler stamps,
+	// so a Copy source snapshot can be resolved to its driver volume.
+	snapshotARMNameTag = "cloudemu:azureSnapshotName"
+
+	// accessLevelRead is the default disk SAS access level when none is given.
+	accessLevelRead = "Read"
+
+	// defaultAccessDuration is the SAS lifetime (seconds) applied when the
+	// request omits or zeroes durationInSeconds (Azure's own default is 3600).
+	defaultAccessDuration = 3600
 )
 
 // Handler serves Microsoft.Compute/disks requests.
@@ -59,6 +88,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SAS export/import actions are POST sub-resources on a named disk.
+	if rp.SubResource != "" {
+		h.serveAction(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
@@ -70,6 +105,97 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"not implemented: "+r.Method+" "+r.URL.Path)
 	}
+}
+
+// serveAction dispatches the POST SAS actions on a named disk: beginGetAccess
+// (grant a time-bounded SAS URI) and endGetAccess (revoke it).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
+			"method not allowed: "+r.Method+" "+r.URL.Path)
+
+		return
+	}
+
+	switch strings.ToLower(rp.SubResource) {
+	case "begingetaccess":
+		h.beginGetAccess(w, r, rp)
+	case "endgetaccess":
+		h.endGetAccess(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"not implemented: action "+rp.SubResource)
+	}
+}
+
+// beginGetAccess handles POST .../disks/{name}/beginGetAccess. It issues a
+// time-bounded SAS URI for exporting/importing the disk's contents, returning
+// the AccessUri (accessSAS) real Azure returns.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) beginGetAccess(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	accessor, ok := h.compute.(computedriver.AzureDiskAccessor)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "disk access SAS not supported")
+		return
+	}
+
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	var req grantAccessData
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	access := req.Access
+	if access == "" {
+		access = accessLevelRead
+	}
+
+	duration := req.DurationInSeconds
+	if duration <= 0 {
+		duration = defaultAccessDuration
+	}
+
+	sas, err := accessor.GrantDiskAccess(r.Context(), vol.ID, access, duration)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, accessURIResponse{AccessSAS: sas})
+}
+
+// endGetAccess handles POST .../disks/{name}/endGetAccess, revoking any SAS
+// access previously granted to the disk.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) endGetAccess(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	accessor, ok := h.compute.(computedriver.AzureDiskAccessor)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "disk access SAS not supported")
+		return
+	}
+
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if err := accessor.RevokeDiskAccess(r.Context(), vol.ID); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -90,10 +216,18 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 	out := make([]diskResponse, 0, len(vols))
 
 	for i := range vols {
+		if rp.ResourceGroup != "" && !strings.EqualFold(tagOr(vols[i].Tags, rgTag, ""), rp.ResourceGroup) {
+			continue
+		}
+
 		name := tagOr(vols[i].Tags, armNameTag, vols[i].ID)
 		scope := rp
+		// On a subscription-scoped list rp.ResourceGroup is empty; use the disk's
+		// own recorded group so the rendered id carries its true
+		// resourceGroups/{rg} segment.
+		scope.ResourceGroup = tagOr(vols[i].Tags, rgTag, rp.ResourceGroup)
 		scope.ResourceName = name
-		out = append(out, toDiskResponse(&vols[i], scope, ""))
+		out = append(out, h.toDiskResponse(r.Context(), &vols[i], scope, ""))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, diskListResponse{Value: out})
@@ -112,13 +246,38 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	createOption, sourceID := creationParams(req.Properties.CreationData)
+
+	size := req.Properties.DiskSizeGB
+	if size == 0 && sourceID != "" {
+		size = h.sourceSize(r.Context(), sourceID)
+	}
+
 	cfg := computedriver.VolumeConfig{
-		Size:       req.Properties.DiskSizeGB,
+		Size:       size,
 		VolumeType: skuName(req.SKU),
 		IOPS:       req.Properties.DiskIOPSReadWrite,
 		Throughput: req.Properties.DiskMBpsReadWrite,
 		Tier:       diskTier(req.Properties.Tier, skuTier(req.SKU)),
-		Tags:       mergeDiskTags(req.Tags, rp.ResourceName),
+		Location:   req.Location,
+		Tags:       mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
+	}
+
+	// ARM CreateOrUpdate is idempotent: an existing disk is updated in place —
+	// preserving its ID (and derived uniqueId), timeCreated, and any live
+	// attachment — rather than delete+recreate, which would leave a duplicate
+	// phantom volume when the disk is attached (DeleteVolume rejects an attached
+	// disk) and churn the uniqueId/timeCreated on every re-PUT.
+	if existing, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
+		vol, err := h.updateExistingDisk(r.Context(), existing, cfg)
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		h.writeDiskCreateResponse(w, r, rp, req, vol)
+
+		return
 	}
 
 	vol, err := h.compute.CreateVolume(r.Context(), cfg)
@@ -127,31 +286,125 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	h.writeDiskCreateResponse(w, r, rp, req, vol)
+}
+
+// updateExistingDisk applies an idempotent CreateOrUpdate to an already-existing
+// disk. It uses the driver's in-place UpdateVolume when supported (preserving
+// the volume ID, CreatedAt, and attachment); a driver without that capability
+// falls back to the legacy delete+recreate, tolerated only for the unattached
+// case.
+//
+//nolint:gocritic // cfg mirrors the driver-interface signature.
+func (h *Handler) updateExistingDisk(
+	ctx context.Context, existing *computedriver.VolumeInfo, cfg computedriver.VolumeConfig,
+) (*computedriver.VolumeInfo, error) {
+	if updater, ok := h.compute.(computedriver.AzureDiskUpdater); ok {
+		return updater.UpdateVolume(ctx, existing.ID, cfg)
+	}
+
+	_ = h.compute.DeleteVolume(ctx, existing.ID)
+
+	return h.compute.CreateVolume(ctx, cfg)
+}
+
+// writeDiskCreateResponse writes the 202 + Azure-AsyncOperation CreateOrUpdate
+// reply for a created or updated disk.
+//
+//nolint:gocritic // rp/req are request-scoped values passed once per request.
+func (h *Handler) writeDiskCreateResponse(
+	w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, req diskRequest, vol *computedriver.VolumeInfo,
+) {
 	location := req.Location
 	if location == "" {
 		location = defaultLocation
 	}
 
-	body := toDiskResponse(vol, rp, location)
+	body := h.toDiskResponse(r.Context(), vol, rp, location)
 	body.SKU = req.SKU
 
 	writeDiskAsync(w, r, rp.Subscription, "disk-create-"+rp.ResourceName, body)
 }
 
+// creationParams extracts the createOption and source resource id from the
+// request's creationData, defaulting createOption to "Empty" when unset.
+func creationParams(c *creationData) (createOption, sourceID string) {
+	if c == nil {
+		return createOptionEmpty, ""
+	}
+
+	opt := c.CreateOption
+	if opt == "" {
+		opt = createOptionEmpty
+	}
+
+	src := c.SourceResourceID
+	if src == "" {
+		src = c.SourceURI
+	}
+
+	return opt, src
+}
+
+// sourceSize resolves the size (GB) of a Copy/Restore source referenced by an
+// ARM snapshot or disk id, so a disk created from a source without an explicit
+// diskSizeGB inherits the source's size. Returns 0 when unresolved.
+func (h *Handler) sourceSize(ctx context.Context, sourceID string) int {
+	if name, ok := armName(sourceID, "/snapshots/"); ok {
+		snaps, err := h.compute.DescribeSnapshots(ctx, nil)
+		if err == nil {
+			for i := range snaps {
+				if tagOr(snaps[i].Tags, snapshotARMNameTag, "") == name {
+					return snaps[i].Size
+				}
+			}
+		}
+	}
+
+	if name, ok := armName(sourceID, "/disks/"); ok {
+		vols, err := h.compute.DescribeVolumes(ctx, nil)
+		if err == nil {
+			for i := range vols {
+				if tagOr(vols[i].Tags, armNameTag, "") == name {
+					return vols[i].Size
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
+// armName extracts the trailing resource name from an ARM id after the given
+// "/{type}/" segment (e.g. "/snapshots/"). Reports false when absent.
+func armName(id, segment string) (string, bool) {
+	idx := strings.LastIndex(id, segment)
+	if idx < 0 {
+		return "", false
+	}
+
+	name := id[idx+len(segment):]
+	if i := strings.Index(name, "/"); i >= 0 {
+		name = name[:i]
+	}
+
+	return name, name != ""
+}
+
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toDiskResponse(vol, rp, ""))
+	azurearm.WriteJSON(w, http.StatusOK, h.toDiskResponse(r.Context(), vol, rp, ""))
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -166,16 +419,24 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 }
 
 // findDiskByName looks up a volume by its ARM-tagged name.
-func findDiskByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.VolumeInfo, error) {
+func findDiskByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.VolumeInfo, error) {
 	vols, err := c.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range vols {
-		if tagOr(vols[i].Tags, armNameTag, "") == name {
-			return &vols[i], nil
+		if tagOr(vols[i].Tags, armNameTag, "") != name {
+			continue
 		}
+
+		// A resource's identity in ARM is {subscription, resourceGroup, name};
+		// a same-named disk in another RG is a different resource.
+		if resourceGroup != "" && tagOr(vols[i].Tags, rgTag, "") != resourceGroup {
+			continue
+		}
+
+		return &vols[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "disk %s not found", name)
@@ -209,7 +470,15 @@ func writeDiskAsync(w http.ResponseWriter, r *http.Request, sub, opID string, bo
 // toDiskResponse maps a driver VolumeInfo to an ARM disk JSON body.
 //
 //nolint:gocritic // rp is a request-scoped value
-func toDiskResponse(vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, location string) diskResponse {
+func (h *Handler) toDiskResponse(
+	ctx context.Context, vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, location string,
+) diskResponse {
+	// On Get/List the caller passes no location; report the region the disk was
+	// created in (persisted on the volume) rather than always defaulting.
+	if location == "" {
+		location = vol.Location
+	}
+
 	if location == "" {
 		location = defaultLocation
 	}
@@ -221,23 +490,65 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, loc
 		sku = &diskSKU{Name: vol.VolumeType, Tier: vol.Tier}
 	}
 
+	createOption := tagOr(vol.Tags, createOptionTag, createOptionEmpty)
+	cd := &creationData{CreateOption: createOption}
+
+	if src := tagOr(vol.Tags, sourceIDTag, ""); src != "" {
+		cd.SourceResourceID = src
+	}
+
 	return diskResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
-		Name:     name,
-		Type:     providerName + "/" + resourceType,
-		Location: location,
-		SKU:      sku,
-		Tags:     stripInternalDiskTags(vol.Tags),
+		ID:        azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
+		Name:      name,
+		Type:      providerName + "/" + resourceType,
+		Location:  location,
+		SKU:       sku,
+		ManagedBy: h.managedByID(ctx, rp.Subscription, vol.AttachedTo),
+		Tags:      stripInternalDiskTags(vol.Tags),
 		Properties: diskResponseProps{
 			ProvisioningState: "Succeeded",
 			DiskSizeGB:        vol.Size,
 			DiskState:         diskStateFor(vol.State),
-			CreationData:      &creationData{CreateOption: "Empty"},
+			CreationData:      cd,
 			DiskIOPSReadWrite: vol.IOPS,
 			DiskMBpsReadWrite: vol.Throughput,
 			Tier:              vol.Tier,
+			TimeCreated:       vol.CreatedAt,
+			UniqueID:          diskUniqueID(vol.ID),
 		},
 	}
+}
+
+// managedByID resolves a disk's AttachedTo (a driver compute instance ID) to
+// the ARM resource ID of the VM it is attached to, for the disk's managedBy
+// field (armcompute.Disk.ManagedBy: "a relative URI containing the ID of the
+// VM that has the disk attached"). Returns "" when the disk is unattached or
+// the attaching instance can't be resolved to an ARM VM name.
+func (h *Handler) managedByID(ctx context.Context, subscription, attachedTo string) string {
+	if attachedTo == "" {
+		return ""
+	}
+
+	insts, err := h.compute.DescribeInstances(ctx, []string{attachedTo}, nil)
+	if err != nil || len(insts) == 0 {
+		return ""
+	}
+
+	name := tagOr(insts[0].Tags, vmARMNameTag, "")
+	if name == "" {
+		return ""
+	}
+
+	return azurearm.BuildResourceID(subscription, insts[0].ResourceGroup, providerName, vmResourceType, name)
+}
+
+// diskUniqueID derives a stable GUID-shaped uniqueId from the driver volume id,
+// mirroring the properties.uniqueId Azure assigns each managed disk.
+func diskUniqueID(volID string) string {
+	sum := sha256.Sum256([]byte(volID))
+	h := hex.EncodeToString(sum[:])
+
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
 // diskTier prefers properties.tier, falling back to sku.tier.
@@ -280,14 +591,30 @@ func skuTier(s *diskSKU) string {
 	return s.Tier
 }
 
-func mergeDiskTags(in map[string]string, name string) map[string]string {
-	out := make(map[string]string, len(in)+1)
+// diskExtraSlots is the headroom for the cloudemu-internal tags mergeDiskTags
+// inserts (name, resource group, createOption, source id).
+const diskExtraSlots = 4
+
+func mergeDiskTags(in map[string]string, name, resourceGroup, createOption, sourceID string) map[string]string {
+	out := make(map[string]string, len(in)+diskExtraSlots)
 
 	for k, v := range in {
 		out[k] = v
 	}
 
 	out[armNameTag] = name
+
+	if resourceGroup != "" {
+		out[rgTag] = resourceGroup
+	}
+
+	if createOption != "" {
+		out[createOptionTag] = createOption
+	}
+
+	if sourceID != "" {
+		out[sourceIDTag] = sourceID
+	}
 
 	return out
 }
@@ -308,7 +635,7 @@ func stripInternalDiskTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag {
+		if k == armNameTag || k == rgTag || k == createOptionTag || k == sourceIDTag {
 			continue
 		}
 

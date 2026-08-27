@@ -4,12 +4,27 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 type tagJSON struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
+}
+
+// listTagsPageSize caps the tags returned per ListTagsOfResource page. DynamoDB
+// allows at most 50 tags per resource, so a real response fits in one page and
+// emits no NextToken; the token plumbing still pages correctly with a smaller
+// size.
+const listTagsPageSize = 50
+
+// pageTags stable-sorts tags by key and slices the page named by token. A
+// malformed token is surfaced as an error the caller maps to a
+// ValidationException.
+func pageTags(tags []tagJSON, token string, size int) (pagination.Page[tagJSON], error) {
+	return pagination.PaginateSorted(tags,
+		func(a, b tagJSON) bool { return a.Key < b.Key }, token, size)
 }
 
 // tableFromARN resolves a DynamoDB ResourceArn ("arn:aws:dynamodb:<region>:
@@ -91,6 +106,7 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listTagsOfResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string `json:"ResourceArn"`
+		NextToken   string `json:"NextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -108,5 +124,21 @@ func (h *Handler) listTagsOfResource(w http.ResponseWriter, r *http.Request) {
 		out = append(out, tagJSON{Key: k, Value: v})
 	}
 
-	wire.WriteJSON(w, map[string]any{"Tags": out})
+	page, perr := pageTags(out, req.NextToken, listTagsPageSize)
+	if perr != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", "Invalid NextToken")
+		return
+	}
+
+	items := page.Items
+	if items == nil {
+		items = []tagJSON{}
+	}
+
+	resp := map[string]any{"Tags": items}
+	if page.NextPageToken != "" {
+		resp["NextToken"] = page.NextPageToken
+	}
+
+	wire.WriteJSON(w, resp)
 }

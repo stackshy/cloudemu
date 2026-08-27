@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -26,8 +27,12 @@ const (
 	blobDefaultSASExpiry = time.Hour
 	blobDefaultMaxKeys   = 1000
 	blobTimeFormat       = "2006-01-02T15:04:05Z"
-	blobAccountName      = "cloudemu"
-	blobHoursPerDay      = 24
+	// AccountName is the single storage account the blob data plane models. The
+	// blob URL host and the Event Grid system-topic routing key both derive from
+	// it, so a system-topic subscription created for this account (a bus of this
+	// name on the Event Grid mock) receives the account's Blob events.
+	AccountName     = "cloudemu"
+	blobHoursPerDay = 24
 )
 
 // Compile-time check that Mock implements driver.Bucket.
@@ -42,6 +47,43 @@ type blobObject struct {
 	LastModified string
 	Metadata     map[string]string
 	Tags         map[string]string
+	// BlobType is "BlockBlob" (default, empty) or "AppendBlob".
+	BlobType string
+	// AccessTier is the blob access tier (Hot/Cool/Cold/Archive), set by Set Blob
+	// Tier; empty when unset.
+	AccessTier string
+	// Content* are additional system properties settable via Set Blob Properties.
+	ContentEncoding    string
+	ContentLanguage    string
+	ContentDisposition string
+	CacheControl       string
+	// CommittedBlocks records the block id/size pairs assembled by the most
+	// recent Put Block List commit, in commit order, for Get Block List.
+	CommittedBlocks []driver.BlockInfo
+	// committedBlockData retains the bytes of each committed block by id, so a
+	// later Put Block List can re-reference an already-committed block
+	// (<Committed>/<Latest>) instead of only freshly staged ones.
+	committedBlockData map[string][]byte
+	// mu guards the in-place mutations of the new Azure ops (append, metadata /
+	// property / tier updates, leases). Whole-object replacements via the
+	// container store don't need it.
+	mu sync.Mutex
+	// appendBlocks counts committed Append Block operations (append blobs only).
+	appendBlocks int
+
+	// Lease Blob state. leaseState is one of leaseStateAvailable (""),
+	// leaseStateLeased, leaseStateBreaking, or leaseStateBroken; a "leased" or
+	// "breaking" state additionally transitions to expired/broken lazily (see
+	// effectiveLeaseState) once its deadline passes, without a background timer.
+	leaseState       string
+	leaseID          string
+	leaseDurationSec int32
+	leaseExpiresAt   time.Time
+	leaseBreakAt     time.Time
+	// leaseModTimeAtAcquire is the blob's LastModified at the last successful
+	// Acquire/Renew, used to detect "blob modified since lease" on a Renew of
+	// an expired-but-unreleased lease.
+	leaseModTimeAtAcquire string
 }
 
 type blobMultipartUpload struct {
@@ -67,22 +109,73 @@ type containerMeta struct {
 	corsConfig *driver.CORSConfig
 	encryption *driver.EncryptionConfig
 	tags       map[string]string
+	// metadata is the container's x-ms-meta-* metadata (Set Container Metadata).
+	metadata map[string]string
+	// publicAccess is the container's public access level (Set/Get Container
+	// ACL), empty for private (the Azure default).
+	publicAccess string
+	// accessPolicies are the container's stored access policies (Set/Get
+	// Container ACL).
+	accessPolicies []driver.SignedIdentifier
+	// staging holds uncommitted blocks (Put Block) keyed by blob name.
+	staging *memstore.Store[*blockStaging]
+	// snapshots holds immutable blob snapshots keyed by snapshotKey(blob, id).
+	// Snapshots live at the container level so they survive a base-blob
+	// overwrite, matching real Azure snapshot lifetime.
+	snapshots *memstore.Store[*blobObject]
+	// mu guards snapshotSeq (and any future container-scoped counters).
+	mu          sync.Mutex
+	snapshotSeq int
+}
+
+// blockStaging buffers the uncommitted blocks staged for one blob before a
+// Put Block List commits them.
+type blockStaging struct {
+	mu     sync.Mutex
+	blocks map[string][]byte
 }
 
 // Mock is an in-memory mock implementation of Azure Blob Storage.
 type Mock struct {
 	containers *memstore.Store[*containerMeta]
-	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier)
-	// per container, for the BucketAttributes discovery capability.
+	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier/
+	// location/tags) per container, for the BucketAttributes discovery capability.
 	bucketAttrs *memstore.Store[driver.AccountAttributes]
-	opts        *config.Options
-	monitoring  mondriver.Monitoring
+	// accountKeys holds the shared access keys per storage account, generated
+	// lazily on first ListStorageAccountKeys.
+	accountKeys *memstore.Store[[]driver.AccountKey]
+	// blobServiceProps holds the account-level Blob service properties
+	// (versioning/soft-delete/change-feed/CORS) set via the blobServices/default
+	// ARM sub-resource, for the BlobServiceConfig capability.
+	blobServiceProps *memstore.Store[driver.BlobServiceProperties]
+	// accountEncryption holds the account's service-side encryption
+	// configuration (Properties.Encryption), for the AccountEncryptionConfig
+	// capability. Kept separate from bucketAttrs so that struct stays small.
+	accountEncryption *memstore.Store[driver.AccountEncryption]
+	opts              *config.Options
+	monitoring        mondriver.Monitoring
+	// eventgrid, when wired, receives a Microsoft.Storage.BlobCreated/BlobDeleted
+	// event on every blob write/delete so an Event Grid system-topic subscription
+	// for this account can deliver it. nil in library/typed use, where blob writes
+	// simply skip event emission.
+	eventgrid EventGridPublisher
+	// blobEventSeq backs the monotonically increasing sequencer stamped on each
+	// emitted blob event (Event Grid's per-blob ordering token).
+	blobEventSeq atomic.Uint64
 }
 
 // Compile-time check that Mock satisfies the optional BucketAttributes
 // discovery capability, so a signature typo fails the build rather than
 // silently failing the runtime type assertion in walkStorage.
 var _ driver.BucketAttributes = (*Mock)(nil)
+
+// Compile-time check that Mock satisfies the optional BlobServiceConfig
+// capability the ARM storage-account handler reaches by type assertion.
+var _ driver.BlobServiceConfig = (*Mock)(nil)
+
+// Compile-time check that Mock satisfies the optional AccountEncryptionConfig
+// capability the ARM storage-account handler reaches by type assertion.
+var _ driver.AccountEncryptionConfig = (*Mock)(nil)
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
@@ -114,9 +207,12 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 // New creates a new Azure Blob Storage mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		containers:  memstore.New[*containerMeta](),
-		bucketAttrs: memstore.New[driver.AccountAttributes](),
-		opts:        opts,
+		containers:        memstore.New[*containerMeta](),
+		bucketAttrs:       memstore.New[driver.AccountAttributes](),
+		accountKeys:       memstore.New[[]driver.AccountKey](),
+		blobServiceProps:  memstore.New[driver.BlobServiceProperties](),
+		accountEncryption: memstore.New[driver.AccountEncryption](),
+		opts:              opts,
 	}
 }
 
@@ -150,6 +246,63 @@ func (m *Mock) BucketAttributes(_ context.Context, bucket string) (driver.Accoun
 	return a, nil
 }
 
+// UpdateBucketAttributes atomically applies fn to a container's stored
+// attributes (Azure storage-account PATCH — AccountsClient.Update), seeding
+// the real-Azure baseline (Standard_LRS/StorageV2/Hot) first if none was set
+// yet. Routed through memstore's Update rather than a Get-then-Set pair so a
+// concurrent PATCH/create never loses an update.
+func (m *Mock) UpdateBucketAttributes(
+	_ context.Context, name string, fn func(driver.AccountAttributes) driver.AccountAttributes,
+) (driver.AccountAttributes, error) {
+	m.bucketAttrs.SetIfAbsent(name, driver.AccountAttributes{SKU: "Standard_LRS", Kind: "StorageV2", AccessTier: "Hot"})
+
+	var updated driver.AccountAttributes
+
+	m.bucketAttrs.Update(name, func(v driver.AccountAttributes) driver.AccountAttributes {
+		updated = fn(v)
+		return updated
+	})
+
+	return updated, nil
+}
+
+// SetBlobServiceProperties implements the storage BlobServiceConfig optional
+// capability (…/blobServices/default PUT), replacing any previously stored
+// properties for the account wholesale — matching real Azure's Set Blob
+// Service Properties, which takes a complete properties document each call.
+func (m *Mock) SetBlobServiceProperties(_ context.Context, account string, props driver.BlobServiceProperties) error {
+	m.blobServiceProps.Set(account, props)
+
+	return nil
+}
+
+// BlobServiceProperties implements the storage BlobServiceConfig optional
+// capability (…/blobServices/default GET), returning the zero value (all
+// features disabled) for an account that never had properties set — matching
+// real Azure's defaults for a freshly created account.
+func (m *Mock) BlobServiceProperties(_ context.Context, account string) (driver.BlobServiceProperties, error) {
+	props, _ := m.blobServiceProps.Get(account)
+
+	return props, nil
+}
+
+// SetAccountEncryption implements the storage AccountEncryptionConfig
+// optional capability, storing the account's requested encryption
+// configuration so it round-trips on a later GET instead of always reporting
+// the platform-managed default.
+func (m *Mock) SetAccountEncryption(account string, enc driver.AccountEncryption) {
+	m.accountEncryption.Set(account, enc)
+}
+
+// AccountEncryption implements the storage AccountEncryptionConfig optional
+// capability, returning the zero value (platform-managed default) for an
+// account that never requested customer-managed-key encryption.
+func (m *Mock) AccountEncryption(_ context.Context, account string) (driver.AccountEncryption, error) {
+	enc, _ := m.accountEncryption.Get(account)
+
+	return enc, nil
+}
+
 // CreateBucket creates a new blob container.
 func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	if name == "" {
@@ -166,6 +319,8 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 		CreatedAt:  m.opts.Clock.Now().UTC().Format(blobTimeFormat),
 		objects:    memstore.New[*blobObject](),
 		multiparts: memstore.New[*blobMultipartUpload](),
+		staging:    memstore.New[*blockStaging](),
+		snapshots:  memstore.New[*blobObject](),
 	})
 
 	return nil
@@ -213,9 +368,35 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 // PutObject stores a blob in a container. When a real StorageEngine is wired the
 // bytes flow through it and the in-memory object holds metadata only (Data nil).
 func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
+	_, err := m.putBlockBlobInternal(ctx, bucket, key, data, contentType, nil, metadata)
+
+	return err
+}
+
+// PutBlockBlob writes a block blob's content together with its system content
+// properties (Put Blob), so Content-Encoding/Cache-Control/Content-Language/
+// Content-Disposition round-trip on a later read. props may be nil.
+func (m *Mock) PutBlockBlob(
+	ctx context.Context, bucket, key string, data []byte, props *driver.BlobProperties, metadata map[string]string,
+) (*driver.ObjectInfo, error) {
+	contentType := ""
+	if props != nil {
+		contentType = props.ContentType
+	}
+
+	return m.putBlockBlobInternal(ctx, bucket, key, data, contentType, props, metadata)
+}
+
+// putBlockBlobInternal is the shared Put Blob path: it stores the content,
+// optional content properties (props may be nil), and metadata, carrying over
+// any active lease, and returns the new object info.
+func (m *Mock) putBlockBlobInternal(
+	ctx context.Context, bucket, key string, data []byte, contentType string,
+	props *driver.BlobProperties, metadata map[string]string,
+) (*driver.ObjectInfo, error) {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
 	size := int64(len(data))
@@ -230,11 +411,18 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		Metadata:     meta,
 	}
 
+	if props != nil {
+		obj.ContentEncoding = props.ContentEncoding
+		obj.ContentLanguage = props.ContentLanguage
+		obj.ContentDisposition = props.ContentDisposition
+		obj.CacheControl = props.CacheControl
+	}
+
 	if m.opts.StorageEngine != nil {
 		if err := storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
 			Bucket: bucket, Key: key, Data: data, ContentType: contentType, Metadata: meta,
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		dataCopy := make([]byte, len(data))
@@ -242,11 +430,15 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		obj.Data = dataCopy
 	}
 
+	m.carryOverLease(ctr, key, obj)
 	ctr.objects.Set(key, obj)
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
+	m.emitBlobCreated(ctx, obj, bucket)
 
-	return nil
+	info := objectInfo(obj)
+
+	return &info, nil
 }
 
 // GetObject retrieves a blob from a container.
@@ -261,6 +453,18 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
+	// Get Blob doesn't support reading blob content while the blob's tier is
+	// Archive: the data has been moved to offline storage and must first be
+	// rehydrated by Set Blob Tier to an online tier. Get Blob Properties/Head/
+	// List Blobs still succeed and report the Archive tier.
+	// https://learn.microsoft.com/en-us/rest/api/storageservices/set-blob-tier
+	if obj.AccessTier == accessTierArchive {
+		return nil, &driver.BlobOpError{
+			Status: http.StatusConflict, Code: "BlobArchived",
+			Message: "This operation is not permitted on an archived blob.",
+		}
+	}
+
 	data, err := m.loadObjectData(ctx, bucket, obj)
 	if err != nil {
 		return nil, err
@@ -269,12 +473,20 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Egress": float64(obj.Size)})
 
 	return &driver.Object{
-		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-		},
+		Info: objectInfo(obj),
 		Data: data,
 	}, nil
+}
+
+// objectInfo renders a blobObject as a driver.ObjectInfo with cloned metadata.
+func objectInfo(obj *blobObject) driver.ObjectInfo {
+	return driver.ObjectInfo{
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
+		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+		BlobType: obj.BlobType, AccessTier: obj.AccessTier,
+		CacheControl: obj.CacheControl, ContentEncoding: obj.ContentEncoding,
+		ContentDisposition: obj.ContentDisposition, ContentLanguage: obj.ContentLanguage,
+	}
 }
 
 // loadObjectData returns the object's bytes: from the wired StorageEngine when
@@ -306,7 +518,8 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
-	if !ctr.objects.Has(key) {
+	obj, ok := ctr.objects.Get(key)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
@@ -317,6 +530,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
+	m.emitBlobDeleted(ctx, obj, bucket)
 
 	return nil
 }
@@ -333,10 +547,18 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
-	return &driver.ObjectInfo{
-		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-	}, nil
+	info := objectInfo(obj)
+
+	return &info, nil
+}
+
+// listEntry is one item in the merged list stream — either a blob or a
+// delimiter-rolled-up common prefix — so both count toward maxresults and
+// paginate together (matching real Azure's List Blobs).
+type listEntry struct {
+	name     string
+	isPrefix bool
+	obj      *blobObject
 }
 
 // ListObjects lists blobs in a container with optional prefix/delimiter filtering.
@@ -346,12 +568,47 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
+	entries := collectListEntries(ctr, opts)
+
+	maxKeys := opts.MaxKeys
+	if maxKeys <= 0 {
+		maxKeys = blobDefaultMaxKeys
+	}
+
+	// Blobs and common prefixes fold into ONE sorted stream so both count
+	// toward maxresults and neither is duplicated nor skipped across pages.
+	page, err := pagination.PaginateSorted(entries, func(a, b listEntry) bool {
+		if a.name != b.name {
+			return a.name < b.name
+		}
+
+		return !a.isPrefix && b.isPrefix
+	}, opts.PageToken, maxKeys)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
+
+	objects, commonPrefixes := splitListPage(page.Items)
+
+	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
+
+	return &driver.ListResult{
+		Objects:        objects,
+		CommonPrefixes: commonPrefixes,
+		NextPageToken:  page.NextPageToken,
+		IsTruncated:    page.HasMore,
+	}, nil
+}
+
+// collectListEntries builds the unsorted merged blob+prefix stream for a list
+// request, applying the prefix filter and (when set) the delimiter rollup.
+func collectListEntries(ctr *containerMeta, opts driver.ListOptions) []listEntry {
 	allKeys := ctr.objects.Keys()
 	sort.Strings(allKeys)
 
-	var matchedObjects []driver.ObjectInfo
+	var entries []listEntry
 
-	commonPrefixSet := make(map[string]struct{})
+	seenPrefix := make(map[string]struct{})
 
 	for _, k := range allKeys {
 		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
@@ -361,9 +618,14 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		if opts.Delimiter != "" {
 			rest := k[len(opts.Prefix):]
 
-			idx := strings.Index(rest, opts.Delimiter)
-			if idx >= 0 {
-				commonPrefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
+			if idx := strings.Index(rest, opts.Delimiter); idx >= 0 {
+				prefix := opts.Prefix + rest[:idx+len(opts.Delimiter)]
+				if _, dup := seenPrefix[prefix]; !dup {
+					seenPrefix[prefix] = struct{}{}
+
+					entries = append(entries, listEntry{name: prefix, isPrefix: true})
+				}
+
 				continue
 			}
 		}
@@ -373,78 +635,91 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 			continue
 		}
 
-		matchedObjects = append(matchedObjects, driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
-		})
+		entries = append(entries, listEntry{name: obj.Key, obj: obj})
 	}
 
-	commonPrefixes := make([]string, 0, len(commonPrefixSet))
-	for p := range commonPrefixSet {
-		commonPrefixes = append(commonPrefixes, p)
-	}
-
-	sort.Strings(commonPrefixes)
-
-	maxKeys := opts.MaxKeys
-	if maxKeys <= 0 {
-		maxKeys = blobDefaultMaxKeys
-	}
-
-	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
-	}
-
-	// Clone metadata only for the page actually returned — cloning every
-	// match would make a paged scan O(bucket) allocations per request.
-	for i := range page.Items {
-		page.Items[i].Metadata = maps.Clone(page.Items[i].Metadata)
-	}
-
-	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
-
-	return &driver.ListResult{
-		Objects:        page.Items,
-		CommonPrefixes: commonPrefixes,
-		NextPageToken:  page.NextPageToken,
-		IsTruncated:    page.HasMore,
-	}, nil
+	return entries
 }
 
-// CopyObject copies a blob from one location to another.
+// splitListPage separates a paginated merged page back into the blob objects
+// and common prefixes the driver.ListResult reports, preserving page order.
+// objectInfo (which clones metadata) runs only for the page actually returned,
+// not for every match, keeping a paged scan cheap on a large container.
+func splitListPage(items []listEntry) (objects []driver.ObjectInfo, commonPrefixes []string) {
+	for i := range items {
+		if items[i].isPrefix {
+			commonPrefixes = append(commonPrefixes, items[i].name)
+			continue
+		}
+
+		objects = append(objects, objectInfo(items[i].obj))
+	}
+
+	return objects, commonPrefixes
+}
+
+// CopyObject copies a blob from one location to another, inheriting the source
+// blob's metadata (the default Azure Copy Blob behavior when the request carries
+// no x-ms-meta-* headers).
 func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+	_, err := m.copyBlobInternal(ctx, dstBucket, dstKey, src, nil, false)
+
+	return err
+}
+
+// CopyObjectV2 implements the ObjectCopier capability so the Azure Blob wire
+// layer can express Copy Blob's metadata override: when ReplaceMetadata is set
+// the destination takes exactly req.Metadata instead of inheriting the source's.
+// Content properties are always inherited from the source (Azure Copy Blob does
+// not let the caller override them).
+func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
+	info, err := m.copyBlobInternal(ctx, req.DstBucket, req.DstKey, req.Src, req.Metadata, req.ReplaceMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	return &driver.CopyObjectResult{ETag: info.ETag, LastModified: info.LastModified}, nil
+}
+
+// copyBlobInternal is the shared copy path for CopyObject and CopyObjectV2. When
+// replaceMeta is true the destination's metadata is exactly overrideMeta;
+// otherwise it inherits the source blob's metadata.
+func (m *Mock) copyBlobInternal(
+	ctx context.Context, dstBucket, dstKey string, src driver.CopySource, overrideMeta map[string]string, replaceMeta bool,
+) (*driver.ObjectInfo, error) {
 	srcCtr, ok := m.containers.Get(src.Bucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "source container %q not found", src.Bucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "source container %q not found", src.Bucket)
 	}
 
 	srcObj, ok := srcCtr.objects.Get(src.Key)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "source blob %q not found", src.Key)
+		return nil, cerrors.Newf(cerrors.NotFound, "source blob %q not found", src.Key)
 	}
 
 	dstCtr, ok := m.containers.Get(dstBucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
 	}
 
-	meta := make(map[string]string, len(srcObj.Metadata))
-	for k, v := range srcObj.Metadata {
-		meta[k] = v
+	meta := maps.Clone(srcObj.Metadata)
+	if replaceMeta {
+		meta = maps.Clone(overrideMeta)
 	}
 
 	dstObj := &blobObject{
 		Key: dstKey, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
-		Metadata: meta,
+		Metadata: meta, BlobType: srcObj.BlobType, AccessTier: srcObj.AccessTier,
+		ContentEncoding: srcObj.ContentEncoding, ContentLanguage: srcObj.ContentLanguage,
+		ContentDisposition: srcObj.ContentDisposition, CacheControl: srcObj.CacheControl,
 	}
 
 	if m.opts.StorageEngine != nil {
 		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
 			config.StorageRef{Bucket: dstBucket, Key: dstKey},
 			config.StorageRef{Bucket: src.Bucket, Key: src.Key}); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		dataCopy := make([]byte, len(srcObj.Data))
@@ -452,11 +727,15 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		dstObj.Data = dataCopy
 	}
 
+	m.carryOverLease(dstCtr, dstKey, dstObj)
 	dstCtr.objects.Set(dstKey, dstObj)
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
+	m.emitBlobCreatedAPI(ctx, dstObj, dstBucket, blobEventAPICopyBlob)
 
-	return nil
+	info := objectInfo(dstObj)
+
+	return &info, nil
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
@@ -486,7 +765,7 @@ func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRe
 
 	url := fmt.Sprintf(
 		"https://%s.blob.core.windows.net/%s/%s?sv=2023-11-03&sig=%s&se=%s&sp=%s",
-		blobAccountName, req.Bucket, req.Key, sig,
+		AccountName, req.Bucket, req.Key, sig,
 		expiresAt.Format(blobTimeFormat), permissions,
 	)
 

@@ -125,25 +125,39 @@ type CustomVerificationEmailTemplateInput struct {
 
 // Config-set event destination types.
 
+// CloudWatchDimension is a single CloudWatch dimension configuration on a
+// CloudWatch event destination.
+type CloudWatchDimension struct {
+	DimensionName         string
+	DimensionValueSource  string
+	DefaultDimensionValue string
+}
+
 // EventDestination is a destination configuration-set events are published to.
 type EventDestination struct {
-	Name                string
-	Enabled             bool
-	MatchingEventTypes  []string
-	KinesisFirehoseARN  string
-	SNSTopicARN         string
-	CloudWatchNamespace string
+	Name                   string
+	Enabled                bool
+	MatchingEventTypes     []string
+	KinesisFirehoseARN     string
+	KinesisFirehoseRoleARN string
+	SNSTopicARN            string
+	CloudWatchNamespace    string
+	CloudWatchDimensions   []CloudWatchDimension
+	PinpointApplicationARN string
 }
 
 // EventDestinationInput describes an event destination to create/update.
 type EventDestinationInput struct {
-	ConfigurationSetName string
-	EventDestinationName string
-	Enabled              bool
-	MatchingEventTypes   []string
-	KinesisFirehoseARN   string
-	SNSTopicARN          string
-	CloudWatchNamespace  string
+	ConfigurationSetName   string
+	EventDestinationName   string
+	Enabled                bool
+	MatchingEventTypes     []string
+	KinesisFirehoseARN     string
+	KinesisFirehoseRoleARN string
+	SNSTopicARN            string
+	CloudWatchNamespace    string
+	CloudWatchDimensions   []CloudWatchDimension
+	PinpointApplicationARN string
 }
 
 // Dedicated IP types.

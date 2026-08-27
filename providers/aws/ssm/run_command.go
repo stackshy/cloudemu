@@ -2,6 +2,7 @@ package ssm
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -27,25 +28,35 @@ func (m *Mock) SetInstanceResolver(r InstanceResolver) {
 // Nothing executes: an emulated instance has no guest operating system. The
 // invocation is recorded as successful so a caller's send/poll loop runs to
 // completion, but the script itself is never validated — see driver.RunCommand.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (string, error) {
-	if len(cfg.InstanceIDs) == 0 {
-		return "", errors.New(errors.InvalidArgument, "at least one instance id is required")
+	// Real SSM accepts EITHER explicit InstanceIds OR tag/attribute Targets;
+	// supplying neither is a ValidationException.
+	if len(cfg.InstanceIDs) == 0 && len(cfg.Targets) == 0 {
+		return "", errors.New(errors.InvalidArgument, "either instance IDs or targets must be specified")
 	}
 
 	if cfg.DocumentName == "" {
 		return "", errors.New(errors.InvalidArgument, "DocumentName is required")
 	}
 
-	// Real SSM answers InvalidInstanceId when a target is not a managed
-	// instance, and that is the single most common Run Command failure during
-	// bring-up. Accepting any id hides it until the caller runs for real.
+	// Real SSM answers InvalidInstanceId when an explicitly listed target is not
+	// a managed instance, and that is the single most common Run Command failure
+	// during bring-up. Accepting any id hides it until the caller runs for real.
 	if err := m.checkTargets(ctx, cfg.InstanceIDs); err != nil {
 		return "", err
 	}
 
+	// Resolve tag/attribute Targets to concrete instance ids. Unlike an explicit
+	// id, a Target that matches nothing is not an error — real SSM accepts the
+	// command with a TargetCount of zero.
+	resolved := m.resolveTargets(ctx, cfg.Targets)
+	instanceIDs := dedupeStrings(append(append([]string{}, cfg.InstanceIDs...), resolved...))
+
 	commandID := idgen.GenerateID("")
 
-	for _, instanceID := range cfg.InstanceIDs {
+	for _, instanceID := range instanceIDs {
 		m.commands.Set(commandKey(commandID, instanceID), driver.CommandInvocation{
 			CommandID:    commandID,
 			InstanceID:   instanceID,
@@ -56,6 +67,84 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 	}
 
 	return commandID, nil
+}
+
+// resolveTargets maps SSM Targets to the instance ids they select. Multiple
+// targets are AND-combined, matching real SSM. Resolution needs the compute
+// mock; without it (or on a lookup error) no ids are resolved, which still
+// yields an accepted command.
+func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarget) []string {
+	if len(targets) == 0 || m.instanceResolver == nil {
+		return nil
+	}
+
+	filters := make([]computedriver.DescribeFilter, 0, len(targets))
+
+	for _, t := range targets {
+		name, ok := targetFilterName(t.Key)
+		if !ok {
+			// A documented Run Command target key the emulator cannot resolve
+			// (resource-groups:Name, resource-groups:ResourceTypeFilters, tag-key).
+			// Targets are AND-combined, so an unresolvable one must select nothing.
+			// Forwarding the raw key as an EC2 describe-filter name instead falls
+			// into matchesTagFilter's default branch, which matches every instance
+			// unconditionally — fanning the command out to the whole fleet.
+			return nil
+		}
+
+		filters = append(filters, computedriver.DescribeFilter{
+			Name: name, Values: t.Values,
+		})
+	}
+
+	found, err := m.instanceResolver.DescribeInstances(ctx, nil, filters,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
+	if err != nil {
+		return nil
+	}
+
+	ids := make([]string, 0, len(found))
+	for i := range found {
+		ids = append(ids, found[i].ID)
+	}
+
+	return ids
+}
+
+// targetFilterName maps a supported SSM Target Key to the equivalent EC2
+// describe-filter name, reporting whether the key is one the emulator can
+// resolve. Only the two Run Command keys the EC2 matcher actually understands
+// are supported: the "InstanceIds" pseudo-key (selects by instance id) and
+// "tag:<name>" (passes through unchanged). Other documented keys such as
+// resource-groups:Name / resource-groups:ResourceTypeFilters, and the bare
+// "tag-key" form, are reported unsupported so the caller can decline to forward
+// them — the EC2 matcher would otherwise treat them as an unrestricted match.
+func targetFilterName(key string) (string, bool) {
+	switch {
+	case key == "InstanceIds":
+		return "instance-id", true
+	case strings.HasPrefix(key, "tag:") && len(key) > len("tag:"):
+		return key, true
+	default:
+		return "", false
+	}
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+
+		seen[s] = true
+
+		out = append(out, s)
+	}
+
+	return out
 }
 
 // GetCommandInvocation returns the recorded invocation for one instance.

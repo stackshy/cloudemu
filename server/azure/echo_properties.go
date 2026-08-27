@@ -33,6 +33,8 @@ func newPropertyOverlay() *propertyOverlay {
 // entry. An empty set clears the entry so a resource that no longer carries
 // unmodeled properties (e.g. re-created without them) does not keep stale ones.
 func (o *propertyOverlay) capture(id string, unmodeled map[string]any) {
+	id = normalizeOverlayKey(id)
+
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -46,10 +48,42 @@ func (o *propertyOverlay) capture(id string, unmodeled map[string]any) {
 
 // lookup returns the unmodeled properties recorded for id, or nil.
 func (o *propertyOverlay) lookup(id string) map[string]any {
+	id = normalizeOverlayKey(id)
+
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 
 	return o.store[id]
+}
+
+// normalizeOverlayKey lowercases the resource-group segment of an ARM resource
+// id so overlay entries key case-insensitively on the resource group, matching
+// ARM's case-insensitive resource-group semantics. A resource created under
+// resourceGroups/rg-1 and read back via resourceGroups/RG-1 must resolve the
+// same overlay entry; without this, the differently-cased read would miss and
+// silently drop unmodeled properties. Only the resource-group segment is
+// touched — the rest of the id (including the resource name) is left byte-for-
+// byte, so distinct resources never collide. Applied identically on capture,
+// lookup and evict, so the internal map key is consistent regardless of the
+// casing a request used; the response body's id is never altered.
+func normalizeOverlayKey(id string) string {
+	const marker = "/resourceGroups/"
+
+	i := strings.Index(id, marker)
+	if i < 0 {
+		return id
+	}
+
+	start := i + len(marker)
+
+	end := strings.IndexByte(id[start:], '/')
+	if end < 0 {
+		return id[:start] + strings.ToLower(id[start:])
+	}
+
+	end += start
+
+	return id[:start] + strings.ToLower(id[start:end]) + id[end:]
 }
 
 // evict drops any entry for id — called when a resource is deleted so the
@@ -58,6 +92,8 @@ func (o *propertyOverlay) evict(id string) {
 	if id == "" {
 		return
 	}
+
+	id = normalizeOverlayKey(id)
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -95,15 +131,32 @@ func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.H
 
 // resourceIDFromPath reconstructs the ARM resource id from a request path so a
 // DELETE can evict the matching overlay entry (DELETE responses carry no body
-// to read the id from). Returns "" for a path that is not a single named
-// resource, in which case nothing is evicted.
+// to read the id from). Handles both a top-level resource
+// (.../{type}/{name}) and a named sub-resource one level down
+// (.../{type}/{name}/{subResource}/{subResourceName}, e.g. a SQL database
+// under its server) — the sub-resource id is built the same way the handlers
+// that create these resources build it (see server/azure/sql childID), so it
+// matches the "id" field the overlay was captured under. Returns "" for a path
+// that isn't a single named resource or named sub-resource, in which case
+// nothing is evicted — e.g. a bodiless action like .../failoverGroups/{n}/
+// failover carries a SubResourceAction and is left alone.
 func resourceIDFromPath(urlPath string) string {
 	rp, ok := azurearm.ParsePath(urlPath)
-	if !ok || rp.ResourceName == "" || rp.SubResource != "" {
+	if !ok || rp.ResourceName == "" {
 		return ""
 	}
 
-	return azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, rp.Provider, rp.ResourceType, rp.ResourceName)
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, rp.Provider, rp.ResourceType, rp.ResourceName)
+
+	if rp.SubResource == "" {
+		return id
+	}
+
+	if rp.SubResourceName == "" || rp.SubResourceAction != "" {
+		return ""
+	}
+
+	return id + "/" + rp.SubResource + "/" + rp.SubResourceName
 }
 
 // readRequestProperties returns the request body's top-level "properties"
@@ -189,7 +242,8 @@ func writeJSONResponse(w http.ResponseWriter, status int, body []byte) {
 // rewrite merges the recorded and request-carried unmodeled properties into the
 // response and writes the result. It returns false (and writes nothing) when
 // the response is not a rewritable ARM resource object, leaving the caller to
-// flush the original bytes.
+// flush the original bytes. A collection response ({"value": [...]}) is
+// dispatched to rewriteList instead of the single-resource path below.
 func (c *captureWriter) rewrite(
 	w http.ResponseWriter, r *http.Request, reqProps map[string]any, overlay *propertyOverlay,
 ) bool {
@@ -206,6 +260,10 @@ func (c *captureWriter) rewrite(
 		return false
 	}
 
+	if values, ok := resource["value"].([]any); ok {
+		return c.rewriteList(w, resource, values, overlay)
+	}
+
 	id, ok := resource["id"].(string)
 	if !ok || id == "" {
 		return false
@@ -220,6 +278,54 @@ func (c *captureWriter) rewrite(
 	}
 
 	resource["properties"] = mergeProperties(respProps, unmodeled)
+
+	rewritten, err := json.Marshal(resource)
+	if err != nil {
+		return false
+	}
+
+	writeJSONResponse(w, c.status, rewritten)
+
+	return true
+}
+
+// rewriteList merges each list item's previously-recorded overlay entry into
+// its own properties, keyed by the item's own "id". A collection list (e.g.
+// RecordSets.ListByDnsZone) carries no request body to capture fresh
+// unmodeled properties from — list is read-only — so this only replays what
+// an earlier create/update on that same item already recorded; without it, a
+// record set with unmodeled data (e.g. an MX or SRV DNS record set, whose
+// MXRecords/SRVRecords are not natively modeled) loses that data specifically
+// on the list response while a single GET on it still returns it correctly.
+func (c *captureWriter) rewriteList(
+	w http.ResponseWriter, resource map[string]any, values []any, overlay *propertyOverlay,
+) bool {
+	changed := false
+
+	for _, v := range values {
+		item, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		id, ok := item["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+
+		unmodeled := overlay.lookup(id)
+		if len(unmodeled) == 0 {
+			continue
+		}
+
+		respProps, _ := item["properties"].(map[string]any)
+		item["properties"] = mergeProperties(respProps, unmodeled)
+		changed = true
+	}
+
+	if !changed {
+		return false
+	}
 
 	rewritten, err := json.Marshal(resource)
 	if err != nil {
@@ -257,10 +363,117 @@ func captureUnmodeled(
 	return fresh
 }
 
+// writeOnlyProperty reports whether an ARM request-body property key is a
+// write-only secret that real Azure accepts on write but never returns on a
+// read. Such a key must never be captured by the overlay or echoed back:
+// because the owning handler deliberately omits it from its response (mirroring
+// Azure), the generic overlay would otherwise treat it as an unmodeled property
+// and reflect the caller's secret on the create response and on every later GET
+// — a credential leak. Matched case-insensitively at any nesting depth, since
+// missingProperties descends into nested objects.
+//
+// A key is treated as write-only in two ways:
+//
+// 1. Suffix rule (the robust guard against wholly-unmodeled subtrees captured
+// verbatim): any key whose lowercased name ENDS WITH "password" or "secret".
+// This covers every write-only credential input real Azure accepts but never
+// echoes, regardless of the prefix a handler's model happens not to know:
+//   - administratorLoginPassword — Microsoft.Sql/servers (server/azure/sql),
+//     DBforMySQL/DBforPostgreSQL flexibleServers (mysqlflex/postgresflex) and
+//     Cosmos DB for PostgreSQL clusters (cosmospostgresql); each toARM* omits it.
+//   - adminPassword — VM osProfile (virtualmachines); the osProfile model has no
+//     password field, so it is dropped.
+//   - initialCassandraAdminPassword — managed Cassandra (managedcassandra);
+//     toARMCluster omits it.
+//   - password — Cosmos-PG role (toARMRole drops it) and Container Instances
+//     imageRegistryCredentials[].password (the array is unmodeled, captured
+//     verbatim — hence the []any recursion in sanitizeUnmodeled).
+//   - secret — AKS servicePrincipalProfile.secret (armManagedClusterProperties
+//     omits the whole block).
+//   - serverAppSecret / clientSecret — AKS aadProfile.serverAppSecret and any
+//     clientSecret-style field in a verbatim-captured subtree (aadProfile is
+//     unmodeled). The sibling serverAppID (public) does not end in the suffix,
+//     so it still round-trips, matching real Azure's aadProfile read.
+//
+// The suffix is a true endsWith, so it never touches a field that merely
+// contains the word: secretName, secretUri, secretRef, clientSecretSetting,
+// passwordPolicy and the plural list outputs secrets/accessKeys are all
+// preserved. Verified by sweeping every server/azure response/toARM* struct: no
+// field a handler RETURNS has a json name ending in "password" or "secret". The
+// sole password-ending returned field is the Container Instances exec action's
+// `password`, a bare {webSocketUri, password} object with no id/properties — the
+// overlay only rewrites ARM resources and only ever ADDS unmodeled keys onto a
+// properties map (it never removes a handler's own fields), so that response is
+// untouched. Output credential keys a client never sends on write
+// (primaryKey/secondaryKey/accessKeys/connectionString) never enter the
+// request-capture path and are correctly left alone.
+//
+// 2. Exact-match object keys: the Notification Hubs PNS credential blocks, which
+// carry secrets but do not end in the suffixes. toHubJSON (notificationhubs)
+// models only name/registrationTtl and drops these; real Azure serves them only
+// via GetPnsCredentials, never the generic hub GET. Each is an object, so
+// denylisting the key skips the whole credential subtree.
+//
+// The rule is matched case-insensitively at any nesting depth (missingProperties
+// and sanitizeUnmodeled recurse into nested objects and arrays), and never
+// suppresses a field a handler legitimately returns.
+func writeOnlyProperty(key string) bool {
+	lower := strings.ToLower(key)
+
+	if strings.HasSuffix(lower, "password") || strings.HasSuffix(lower, "secret") {
+		return true
+	}
+
+	switch lower {
+	case "gcmcredential", "apnscredential", "wnscredential",
+		"admcredential", "baiducredential", "mpnscredential":
+		return true
+	default:
+		return false
+	}
+}
+
+// sanitizeUnmodeled deep-copies a captured request value with every write-only
+// secret key (writeOnlyProperty) removed at every depth. It guards the wholesale
+// capture path in missingProperties: when the handler drops an entire object or
+// array, it is preserved as-is, so a secret nested inside it would otherwise
+// slip past the per-key denylist. Both objects (map[string]any) and arrays
+// ([]any, e.g. imageRegistryCredentials[].password) are recursed and deep-copied
+// so no request-owned map or slice is aliased into the overlay store; any other
+// value passes through unchanged.
+func sanitizeUnmodeled(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+
+		for k, val := range t {
+			if writeOnlyProperty(k) {
+				continue
+			}
+
+			out[k] = sanitizeUnmodeled(val)
+		}
+
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, el := range t {
+			out[i] = sanitizeUnmodeled(el)
+		}
+
+		return out
+	default:
+		return v
+	}
+}
+
 // missingProperties returns the entries of req that resp does not already carry,
-// descending into nested objects so an unmodeled leaf under a modeled parent is
-// still captured. A key present in both as scalars is considered modeled (the
-// handler owns it) and is omitted.
+// descending into nested objects — and, element-by-element, into arrays of
+// objects — so an unmodeled leaf under a modeled parent (or under a modeled
+// array element, e.g. a vnet inline subnet or a VM data disk) is still captured.
+// A key present in both as scalars is considered modeled (the handler owns it)
+// and is omitted. Write-only secret keys (writeOnlyProperty) are skipped at
+// every level so they are never captured, persisted, or echoed.
 func missingProperties(req, resp map[string]any) map[string]any {
 	if len(req) == 0 {
 		return nil
@@ -269,18 +482,36 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	out := map[string]any{}
 
 	for k, reqVal := range req {
-		respVal, present := resp[k]
-		if !present {
-			out[k] = reqVal
+		if writeOnlyProperty(k) {
 			continue
 		}
 
-		reqChild, reqIsMap := reqVal.(map[string]any)
-		respChild, respIsMap := respVal.(map[string]any)
+		respVal, present := resp[k]
+		if !present {
+			// A wholly-unmodeled object is captured verbatim, so strip any
+			// write-only secret nested inside it — the per-key skip above only
+			// covers keys the loop visits directly, not those buried in a
+			// subtree the handler dropped entirely (e.g. a VM osProfile the
+			// response omits, carrying adminPassword).
+			out[k] = sanitizeUnmodeled(reqVal)
+			continue
+		}
 
-		if reqIsMap && respIsMap {
-			if nested := missingProperties(reqChild, respChild); len(nested) > 0 {
-				out[k] = nested
+		if reqChild, ok := reqVal.(map[string]any); ok {
+			if respChild, ok := respVal.(map[string]any); ok {
+				if nested := missingProperties(reqChild, respChild); len(nested) > 0 {
+					out[k] = nested
+				}
+			}
+
+			continue
+		}
+
+		if reqArr, ok := reqVal.([]any); ok {
+			if respArr, ok := respVal.([]any); ok {
+				if nested := missingArrayElements(reqArr, respArr); nested != nil {
+					out[k] = nested
+				}
 			}
 		}
 	}
@@ -292,9 +523,55 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	return out
 }
 
+// missingArrayElements diffs a request array against the response array that a
+// handler returned for the same key, element by element and aligned by index,
+// so unmodeled sub-fields on an array element (e.g. an inline subnet's or a data
+// disk's un-modeled property) survive round-trip the same way nested-object
+// sub-fields already do. It returns an []any positionally aligned to the request
+// prefix, each entry being that element's own missingProperties diff (or nil
+// when the element carries nothing unmodeled), or nil overall when no element
+// has anything to carry.
+//
+// It never describes more elements than BOTH sides have (n = min): the handler
+// alone decides how many elements the response holds, so a request longer than
+// the response contributes nothing for the surplus (no phantom elements), and a
+// request shorter than the response simply leaves the response tail unenriched.
+// Only object elements paired with object elements are diffed; a scalar element
+// present in both is left to the handler (a wholly-unmodeled scalar array is
+// captured verbatim by the caller's !present branch instead).
+func missingArrayElements(req, resp []any) []any {
+	n := len(resp)
+	if len(req) < n {
+		n = len(req)
+	}
+
+	out := make([]any, n)
+
+	found := false
+
+	for i := 0; i < n; i++ {
+		reqEl, reqOK := req[i].(map[string]any)
+		respEl, respOK := resp[i].(map[string]any)
+
+		if reqOK && respOK {
+			if nested := missingProperties(reqEl, respEl); len(nested) > 0 {
+				out[i] = nested
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return out
+}
+
 // mergeProperties overlays the unmodeled properties onto resp without
 // overwriting any key resp already carries (the handler/driver is authoritative
-// for the properties it models). Nested objects are merged recursively.
+// for the properties it models). Nested objects — and, element by element,
+// arrays of objects — are merged recursively.
 func mergeProperties(resp, unmodeled map[string]any) map[string]any {
 	// Size the map to resp and let it grow for the unmodeled keys — summing the
 	// two lengths as a capacity hint is a pointless overflow risk for no gain.
@@ -310,12 +587,53 @@ func mergeProperties(resp, unmodeled map[string]any) map[string]any {
 			continue
 		}
 
-		existingChild, existingIsMap := existing.(map[string]any)
-		addChild, addIsMap := addVal.(map[string]any)
+		if existingChild, ok := existing.(map[string]any); ok {
+			if addChild, ok := addVal.(map[string]any); ok {
+				out[k] = mergeProperties(existingChild, addChild)
+			}
 
-		if existingIsMap && addIsMap {
-			out[k] = mergeProperties(existingChild, addChild)
+			continue
 		}
+
+		if existingArr, ok := existing.([]any); ok {
+			if addArr, ok := addVal.([]any); ok {
+				out[k] = mergeArrayElements(existingArr, addArr)
+			}
+		}
+	}
+
+	return out
+}
+
+// mergeArrayElements enriches each response array element with the unmodeled
+// sub-fields captured for it, aligned by index — the apply-side mirror of
+// missingArrayElements. It preserves the response array exactly: same length,
+// same order, same elements, only adding back per-element unmodeled sub-fields
+// (via mergeProperties, which never overwrites a modeled field). It never
+// appends elements the response does not have (the handler owns element count)
+// and never indexes past either slice; elements the overlay has nothing for, and
+// any element that is not an object on both sides, pass through unchanged.
+func mergeArrayElements(resp, unmodeled []any) []any {
+	out := make([]any, len(resp))
+	copy(out, resp)
+
+	n := len(unmodeled)
+	if len(resp) < n {
+		n = len(resp)
+	}
+
+	for i := 0; i < n; i++ {
+		add, addOK := unmodeled[i].(map[string]any)
+		if !addOK || len(add) == 0 {
+			continue
+		}
+
+		base, baseOK := out[i].(map[string]any)
+		if !baseOK {
+			continue
+		}
+
+		out[i] = mergeProperties(base, add)
 	}
 
 	return out

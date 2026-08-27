@@ -6,6 +6,7 @@
 // Supported operations (instance lifecycle parity with AWS EC2):
 //
 //	PUT    .../virtualMachines/{name}        — CreateOrUpdate
+//	PATCH  .../virtualMachines/{name}        — Update (merge-patch; dataDisks attach/detach)
 //	GET    .../virtualMachines/{name}        — Get
 //	GET    .../virtualMachines               — List in resource group
 //	GET    .../providers/.../virtualMachines — List in subscription
@@ -26,6 +27,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // providerName is the ARM provider this handler serves.
@@ -45,11 +47,17 @@ const resourceTypeLocations = "locations"
 // Handler serves ARM JSON requests for Microsoft.Compute/virtualMachines.
 type Handler struct {
 	compute computedriver.Compute
+	// net is the networking driver used to validate that a VM's networkProfile
+	// references an existing NIC. It is optional: a nil net (or one that does
+	// not implement AzureNetworkInterfaces) skips the existence check.
+	net netdriver.Networking
 }
 
-// New returns a virtualMachines handler backed by c.
-func New(c computedriver.Compute) *Handler {
-	return &Handler{compute: c}
+// New returns a virtualMachines handler backed by c. net is the networking
+// driver used to validate networkProfile NIC references; pass nil to disable
+// the check (e.g. when no networking driver is wired).
+func New(c computedriver.Compute, net netdriver.Networking) *Handler {
+	return &Handler{compute: c, net: net}
 }
 
 // Matches returns true for ARM URLs targeting Microsoft.Compute/virtualMachines
@@ -126,6 +134,8 @@ func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rp azure
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.update(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -154,18 +164,43 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 		return
 	}
 
+	// instanceView is a GET sub-resource, not a POST action.
+	if strings.EqualFold(rp.SubResource, "instanceView") {
+		if r.Method != http.MethodGet {
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+			return
+		}
+
+		h.instanceView(w, r, rp)
+
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
 	}
 
+	h.servePostAction(w, r, rp)
+}
+
+// servePostAction dispatches the POST sub-resource actions on a named VM.
+//
+//nolint:gocritic // rp travels through the dispatch chain once per request
+func (h *Handler) servePostAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	switch strings.ToLower(rp.SubResource) {
 	case "start":
 		h.start(w, r, rp)
-	case "poweroff", "deallocate":
+	case "poweroff":
 		h.powerOff(w, r, rp)
+	case "deallocate":
+		h.deallocate(w, r, rp)
 	case "restart":
 		h.restart(w, r, rp)
+	case "generalize":
+		h.generalize(w, r, rp)
+	case "capture":
+		h.capture(w, r, rp)
 	case "retrievebootdiagnosticsdata":
 		h.retrieveBootDiagnosticsData(w, r, rp)
 	default:

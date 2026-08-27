@@ -39,6 +39,13 @@ type Mock struct {
 	topics     *memstore.Store[*topicData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// Azure-only state (AzureNotificationHubs optional capability): namespace
+	// SKU, Shared Access authorization rules and data-plane registrations.
+	nsMeta        *memstore.Store[driver.AzureNamespaceMeta]
+	sasRules      *memstore.Store[driver.AzureSASRule]
+	registrations *memstore.Store[driver.AzureRegistration]
+	pnsCreds      *memstore.Store[string]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -71,8 +78,12 @@ func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
 // New creates a new Notification Hubs mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		topics: memstore.New[*topicData](),
-		opts:   opts,
+		topics:        memstore.New[*topicData](),
+		opts:          opts,
+		nsMeta:        memstore.New[driver.AzureNamespaceMeta](),
+		sasRules:      memstore.New[driver.AzureSASRule](),
+		registrations: memstore.New[driver.AzureRegistration](),
+		pnsCreds:      memstore.New[string](),
 	}
 }
 
@@ -109,6 +120,7 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 		DisplayName:       cfg.DisplayName,
 		SubscriptionCount: 0,
 		Tags:              tags,
+		Region:            cfg.Region,
 	}
 
 	td := &topicData{
@@ -181,6 +193,9 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	}
 	if !cfg.Scope.IsZero() {
 		td.info.Scope = cfg.Scope
+	}
+	if cfg.Region != "" {
+		td.info.Region = cfg.Region
 	}
 
 	m.topics.Set(cfg.Name, td)

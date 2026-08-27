@@ -30,7 +30,7 @@ func TestClusterLifecycle(t *testing.T) {
 		Location:          "eastus",
 		KubernetesVersion: "1.29.5",
 		AgentPools: []AgentPoolInput{
-			{Name: "system", Count: 2, VMSize: "Standard_D2s_v3", Mode: "System"},
+			{Name: "system", Count: int32Ptr(2), VMSize: "Standard_D2s_v3", Mode: "System"},
 		},
 	})
 	requireNoError(t, err)
@@ -59,6 +59,28 @@ func TestClusterLifecycle(t *testing.T) {
 	if _, err := m.GetCluster(ctx, "rg-1", "k8s-prod"); err == nil {
 		t.Fatal("expected NotFound after delete")
 	}
+}
+
+// TestListClustersResourceGroupCaseInsensitive verifies a subscription-scoped
+// list with a differently-cased resource group still returns the cluster — ARM
+// resource-group names are case-insensitive.
+func TestListClustersResourceGroupCaseInsensitive(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateOrUpdateCluster(ctx, ClusterInput{
+		Subscription:  "sub-1",
+		ResourceGroup: "rg-1",
+		Name:          "k8s-prod",
+		Location:      "eastus",
+		AgentPools:    []AgentPoolInput{{Name: "system", Count: int32Ptr(1), VMSize: "Standard_D2s_v3", Mode: "System"}},
+	})
+	requireNoError(t, err)
+
+	list, err := m.ListClustersByResourceGroup(ctx, "RG-1")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(list))
+	assertEqual(t, "rg-1", list[0].ResourceGroup)
 }
 
 func TestClusterRequiresName(t *testing.T) {
@@ -91,7 +113,7 @@ func TestAgentPoolLifecycle(t *testing.T) {
 
 	pool, err := m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-1", AgentPoolInput{
 		Name:   "userpool",
-		Count:  4,
+		Count:  int32Ptr(4),
 		VMSize: "Standard_D4s_v3",
 		Mode:   "User",
 	})
@@ -102,7 +124,7 @@ func TestAgentPoolLifecycle(t *testing.T) {
 	// Update pool — count change.
 	pool, err = m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-1", AgentPoolInput{
 		Name:  "userpool",
-		Count: 6,
+		Count: int32Ptr(6),
 	})
 	requireNoError(t, err)
 	assertEqual(t, int32(6), pool.Count)
@@ -171,7 +193,7 @@ func TestDeleteClusterCascades(t *testing.T) {
 		ResourceGroup: "rg-1",
 		Name:          "k8s-1",
 		AgentPools: []AgentPoolInput{
-			{Name: "system", Count: 2},
+			{Name: "system", Count: int32Ptr(2)},
 		},
 	})
 	requireNoError(t, err)
@@ -260,4 +282,8 @@ func assertNotEmpty(t *testing.T, s string) {
 	if s == "" {
 		t.Error("expected non-empty string")
 	}
+}
+
+func int32Ptr(v int32) *int32 {
+	return &v
 }

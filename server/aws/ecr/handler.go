@@ -9,6 +9,7 @@ package ecr
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"strings"
 	"time"
@@ -55,6 +56,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeRepositories(w, r)
 	case "DeleteRepository":
 		h.deleteRepository(w, r)
+	case "PutImageTagMutability":
+		h.putImageTagMutability(w, r)
+	case "PutImageScanningConfiguration":
+		h.putImageScanningConfiguration(w, r)
 	case "PutImage":
 		h.putImage(w, r)
 	case "ListImages":
@@ -63,6 +68,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeImages(w, r)
 	case "BatchDeleteImage":
 		h.batchDeleteImage(w, r)
+	case "BatchGetImage":
+		h.batchGetImage(w, r)
 	case "GetAuthorizationToken":
 		h.getAuthorizationToken(w, r)
 	case "TagResource":
@@ -81,6 +88,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.putLifecyclePolicy(w, r)
 	case "GetLifecyclePolicy":
 		h.getLifecyclePolicy(w, r)
+	case "DeleteLifecyclePolicy":
+		h.deleteLifecyclePolicy(w, r)
 	case "StartImageScan":
 		h.startImageScan(w, r)
 	case "DescribeImageScanFindings":
@@ -118,22 +127,46 @@ func (h *Handler) getAuthorizationToken(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// writePutImageErr maps PutImage errors. On an IMMUTABLE repository, re-pushing
+// an existing tag surfaces as FailedPrecondition from the driver; real ECR
+// returns ImageTagAlreadyExistsException (not RepositoryNotEmptyException).
+func writePutImageErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ImageTagAlreadyExistsException", cerrors.Message(err))
+		return
+	}
+
+	writeErr(w, err)
+}
+
 // writeErr maps canonical cloudemu errors to ECR JSON error responses. ECR
 // returns errors as HTTP 400 with a "__type" body the SDK maps to a typed
 // exception.
 func writeErr(w http.ResponseWriter, err error) {
+	// A provider error may carry a precise ECR exception name (e.g.
+	// ImageNotFoundException vs ScanNotFoundException vs
+	// RepositoryPolicyNotFoundException), which the generic code-based mapping
+	// below would otherwise collapse to RepositoryNotFoundException.
+	msg := cerrors.Message(err)
+
+	var ex interface{ ECRException() string }
+	if stderrors.As(err, &ex) {
+		wire.WriteJSONError(w, http.StatusBadRequest, ex.ECRException(), msg)
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryAlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryAlreadyExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotEmptyException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotEmptyException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "ServerException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "ServerException", msg)
 	}
 }

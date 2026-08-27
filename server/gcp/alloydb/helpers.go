@@ -3,6 +3,7 @@ package alloydb
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	alloydb "google.golang.org/api/alloydb/v1"
 
@@ -62,10 +63,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// doneOperation builds a completed AlloyDB LRO envelope carrying the resource
-// as its response. AlloyDB REST callers receive a terminal operation, so no
-// polling is required.
-func (*Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.Operation {
+// doneOperation builds a completed AlloyDB LRO envelope carrying the resource as
+// its response. AlloyDB REST callers receive a terminal operation, and a client
+// that polls the returned name resolves the same done operation (with its
+// response) via the shared LRO poller in the full server.
+func (h *Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.Operation {
 	name := "projects/" + p.project + "/locations/" + p.location + "/operations/op-" + verb
 
 	op := &alloydb.Operation{Name: name, Done: true}
@@ -75,6 +77,8 @@ func (*Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.
 			op.Response = raw
 		}
 	}
+
+	h.ops.Register(name, op.Response)
 
 	return op
 }
@@ -96,12 +100,15 @@ func (h *Handler) usersCap() (rdsdriver.Users, bool) {
 func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClusterInfo) *alloydb.Cluster {
 	out := &alloydb.Cluster{
 		Name:            c.ARN,
-		DisplayName:     c.ID,
+		DisplayName:     info.DisplayName,
 		DatabaseVersion: info.DatabaseVersion,
 		Network:         info.Network,
 		ClusterType:     info.ClusterType,
 		State:           alloyDBState(c.State),
-		Uid:             c.ID,
+		Uid:             info.UID,
+		Labels:          c.Tags,
+		CreateTime:      formatTime(info.CreateTime),
+		UpdateTime:      formatTime(info.UpdateTime),
 		ContinuousBackupConfig: &alloydb.ContinuousBackupConfig{
 			Enabled: info.ContinuousBackup,
 		},
@@ -117,6 +124,16 @@ func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClust
 	return out
 }
 
+// formatTime renders t as an RFC3339Nano timestamp, matching AlloyDB's
+// output-only createTime/updateTime; a zero time renders as the empty string.
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDBInstanceInfo) *alloydb.Instance {
 	return &alloydb.Instance{
 		Name:             inst.ARN,
@@ -127,6 +144,8 @@ func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDB
 		GceZone:          info.GceZone,
 		State:            alloyDBState(inst.State),
 		Uid:              inst.ID,
+		CreateTime:       formatTime(info.CreateTime),
+		UpdateTime:       formatTime(info.UpdateTime),
 		MachineConfig:    &alloydb.MachineConfig{CpuCount: int64(info.CPUCount)},
 	}
 }

@@ -12,6 +12,13 @@ func smNotFound(arn string) error {
 	}
 }
 
+func invalidDefinition(msg string) error {
+	return &driver.APIError{
+		Exception: driver.ExInvalidDefinition,
+		Err:       errors.New(errors.InvalidArgument, msg),
+	}
+}
+
 func smAlreadyExists(name string) error {
 	return &driver.APIError{
 		Exception: driver.ExStateMachineAlreadyExists,
@@ -69,6 +76,18 @@ func invalidArn(format string, args ...any) error {
 // invalidName builds an InvalidName-tagged error.
 func invalidName(msg string) error {
 	return &driver.APIError{Exception: driver.ExInvalidName, Err: errors.New(errors.InvalidArgument, msg)}
+}
+
+// missingRequiredParameter builds a MissingRequiredParameter-tagged error,
+// returned when UpdateStateMachine supplies none of its updatable fields.
+func missingRequiredParameter(msg string) error {
+	return &driver.APIError{Exception: driver.ExMissingRequiredParameter, Err: errors.New(errors.InvalidArgument, msg)}
+}
+
+// invalidExecutionInput builds an InvalidExecutionInput-tagged error, returned
+// when a StartExecution Input is not valid JSON.
+func invalidExecutionInput(msg string) error {
+	return &driver.APIError{Exception: driver.ExInvalidExecutionInput, Err: errors.New(errors.InvalidArgument, msg)}
 }
 
 // invalidToken builds an InvalidToken-tagged error.

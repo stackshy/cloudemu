@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 
@@ -41,6 +42,7 @@ type describeDBSubnetGroupsResponse struct {
 }
 
 type subnetGroupsList struct {
+	Marker         string             `xml:"Marker,omitempty"`
 	DBSubnetGroups []dbSubnetGroupXML `xml:"DBSubnetGroups>DBSubnetGroup"`
 }
 
@@ -103,14 +105,19 @@ func (h *Handler) describeDBSubnetGroups(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	out := make([]dbSubnetGroupXML, 0, len(groups))
-	for i := range groups {
-		out = append(out, toSubnetGroupXML(&groups[i]))
+	page, ok := paginateRDS(w, r, groups, func(g *rdsdriver.SubnetGroup) string { return g.Name })
+	if !ok {
+		return
+	}
+
+	out := make([]dbSubnetGroupXML, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, toSubnetGroupXML(&page.Items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, describeDBSubnetGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   subnetGroupsList{DBSubnetGroups: out},
+		Result:   subnetGroupsList{Marker: page.NextPageToken, DBSubnetGroups: out},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -131,6 +138,30 @@ func (h *Handler) deleteDBSubnetGroup(w http.ResponseWriter, r *http.Request) {
 		Xmlns:    Namespace,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// resolveInstanceSubnetGroupXML resolves the DB subnet group an instance is
+// placed in to the full nested <DBSubnetGroup> wire shape RDS embeds on a
+// DBInstance. It returns nil when the instance has no subnet group, the driver
+// does not model subnet groups, or the named group no longer exists.
+func (h *Handler) resolveInstanceSubnetGroupXML(ctx context.Context, inst *rdsdriver.Instance) *dbSubnetGroupXML {
+	if inst.SubnetGroupName == "" {
+		return nil
+	}
+
+	store, ok := h.subnetGroups()
+	if !ok {
+		return nil
+	}
+
+	groups, err := store.DescribeDBSubnetGroups(ctx, []string{inst.SubnetGroupName})
+	if err != nil || len(groups) == 0 {
+		return nil
+	}
+
+	x := toSubnetGroupXML(&groups[0])
+
+	return &x
 }
 
 func toSubnetGroupXML(sg *rdsdriver.SubnetGroup) dbSubnetGroupXML {
