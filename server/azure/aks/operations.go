@@ -16,6 +16,9 @@ func (h *Handler) createOrUpdateCluster(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	_, getErr := h.be.GetCluster(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	existed := getErr == nil
+
 	cluster, err := h.be.CreateOrUpdateCluster(r.Context(), buildClusterInput(&body, rp))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -24,7 +27,14 @@ func (h *Handler) createOrUpdateCluster(w http.ResponseWriter, r *http.Request, 
 
 	pools, _ := h.be.ListAgentPools(r.Context(), rp.ResourceGroup, rp.ResourceName)
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMCluster(cluster, pools, rp.Subscription))
+	// ARM PUT of a new resource returns 201 Created; an in-place update of an
+	// existing one returns 200.
+	status := http.StatusCreated
+	if existed {
+		status = http.StatusOK
+	}
+
+	azurearm.WriteJSON(w, status, toARMCluster(cluster, pools, rp.Subscription))
 }
 
 func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.ClusterInput {

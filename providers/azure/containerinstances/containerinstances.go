@@ -188,6 +188,39 @@ func (m *Mock) restartOnFailure(
 	return handle, statuses, nil
 }
 
+// UpdateContainerGroupTags merges tags into an existing group and returns it,
+// leaving the running workload untouched (ARM "Container Groups - Update" is a
+// PATCH that updates a group's tags).
+func (m *Mock) UpdateContainerGroupTags(
+	_ context.Context, subscription, resourceGroup, name string, tags map[string]string,
+) (*driver.ContainerGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := groupKey(subscription, resourceGroup, name)
+
+	data, ok := m.groups.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container group %q not found", name)
+	}
+
+	merged := make(map[string]string, len(data.group.Tags)+len(tags))
+	for k, v := range data.group.Tags {
+		merged[k] = v
+	}
+
+	for k, v := range tags {
+		merged[k] = v
+	}
+
+	data.group.Tags = merged
+	m.groups.Set(key, data)
+
+	out := data.group
+
+	return &out, nil
+}
+
 // GetContainerGroup returns the recorded group scoped to subscription and
 // resourceGroup.
 func (m *Mock) GetContainerGroup(_ context.Context, subscription, resourceGroup, name string) (*driver.ContainerGroup, error) {

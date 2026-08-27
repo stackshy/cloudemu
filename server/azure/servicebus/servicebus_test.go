@@ -45,7 +45,7 @@ func seedNamespace(t *testing.T, srv *httptest.Server) {
 	t.Helper()
 
 	resp := doRequest(t, srv, http.MethodPut, nsURL()+apiVer, `{"location":"eastus"}`)
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("seed namespace = %d", resp.StatusCode)
 	}
 
@@ -60,7 +60,7 @@ func TestNamespaceLifecycle(t *testing.T) {
 	srv, _ := newTestServer(t)
 
 	put := doRequest(t, srv, http.MethodPut, nsURL()+apiVer, `{"location":"eastus"}`)
-	if put.StatusCode != http.StatusOK {
+	if put.StatusCode != http.StatusCreated {
 		t.Fatalf("PUT namespace = %d", put.StatusCode)
 	}
 

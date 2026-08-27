@@ -219,7 +219,15 @@ func privateFromZoneType(zt string) bool {
 // toZoneJSON converts a driver zone into its ARM element for the given path
 // scope. Azure DNS zones are always "global" location.
 func toZoneJSON(rp *azurearm.ResourcePath, info *dnsdriver.ZoneInfo) zoneJSON {
-	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeZones, info.Name)
+	// Build the id from the zone's own group, not the request path's — which is
+	// empty on a subscription-scoped list — so the id carries its true
+	// resourceGroups/{rg} segment.
+	rg := info.Scope.ResourceGroup
+	if rg == "" {
+		rg = rp.ResourceGroup
+	}
+
+	id := azurearm.BuildResourceID(rp.Subscription, rg, providerName, typeZones, info.Name)
 
 	return zoneJSON{
 		ID:       id,

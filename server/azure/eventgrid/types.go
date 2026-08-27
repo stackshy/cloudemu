@@ -72,7 +72,15 @@ func topicEndpoint(name, location string) string {
 // toTopicJSON converts a driver event bus into its ARM Topic element for the
 // given path scope.
 func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJSON {
-	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeTopics, info.Name)
+	// Build the id (and the derived metricResourceId) from the topic's own
+	// group, not the request path's — which is empty on a subscription-scoped
+	// list — so the id carries its true resourceGroups/{rg} segment.
+	rg := info.Scope.ResourceGroup
+	if rg == "" {
+		rg = rp.ResourceGroup
+	}
+
+	id := azurearm.BuildResourceID(rp.Subscription, rg, providerName, typeTopics, info.Name)
 	loc := topicLocation(info)
 
 	inputSchema := info.InputSchema

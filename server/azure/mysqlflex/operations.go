@@ -100,6 +100,10 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 		}
 	}
 
+	// ARM PUT of a new resource returns 201 Created; an in-place update of an
+	// existing one returns 200.
+	status := http.StatusCreated
+
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
 	if err != nil {
 		if !cerrors.IsAlreadyExists(err) {
@@ -111,9 +115,11 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 		if inst, ok = h.upsertOnNameCollision(w, r, rp, &body); !ok {
 			return
 		}
+
+		status = http.StatusOK
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+	azurearm.WriteJSON(w, status, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
 // upsertOnNameCollision resolves a PUT whose server name is already taken.
@@ -250,7 +256,15 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 			continue
 		}
 
-		out = append(out, toARMServer(&insts[i], rp.Subscription, rp.ResourceGroup))
+		// Render the id from the server's own group, not the request path's
+		// (empty on a subscription-scoped list) — so the id carries its true
+		// resourceGroups/{rg} segment.
+		rg := insts[i].Scope.ResourceGroup
+		if rg == "" {
+			rg = rp.ResourceGroup
+		}
+
+		out = append(out, toARMServer(&insts[i], rp.Subscription, rg))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armList[armServer]{Value: out})

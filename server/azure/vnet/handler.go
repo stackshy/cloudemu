@@ -52,6 +52,12 @@ const (
 	// are already scoped.
 	armVNetRGTag = "cloudemu:azureVNetResourceGroup"
 	armNSGRGTag  = "cloudemu:azureNSGResourceGroup"
+	// armSyntheticAnchorTag marks a VPC that was fabricated purely to satisfy the
+	// networking driver's mandatory VPCID when creating a standalone NSG or route
+	// table (which are top-level, VNet-independent resources in Azure). Such an
+	// anchor is internal plumbing, not a user resource, so it is excluded from the
+	// virtualNetworks list/get responses.
+	armSyntheticAnchorTag = "cloudemu:azureSyntheticVNetAnchor"
 	// armSubnetNATTag stores the full ARM resource id of the NAT gateway a
 	// subnet is associated with (set via the subnet's own natGateway
 	// property), so both the subnet response and the NAT gateway's
@@ -515,6 +521,12 @@ func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.
 	out := vnetListResponse{}
 
 	for i := range infos {
+		// Skip anchors fabricated only to satisfy the driver's mandatory VPCID
+		// when creating a standalone NSG/route table — they are not user vnets.
+		if tagOr(infos[i].Tags, armSyntheticAnchorTag, "") == "true" {
+			continue
+		}
+
 		itemRG := tagOr(infos[i].Tags, armVNetRGTag, "")
 		// An RG-scoped list (rp.ResourceGroup set) returns only that group's
 		// networks; a subscription-scoped list (empty) returns all, each stamped
@@ -1213,7 +1225,10 @@ func (h *Handler) upsertNSG(ctx context.Context, rg, name string,
 	if len(vpcs) > 0 {
 		anchor = vpcs[0].ID
 	} else {
-		v, vErr := h.net.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		v, vErr := h.net.CreateVPC(ctx, netdriver.VPCConfig{
+			CIDRBlock: "10.0.0.0/16",
+			Tags:      map[string]string{armSyntheticAnchorTag: "true"},
+		})
 		if vErr != nil {
 			return nil, vErr
 		}

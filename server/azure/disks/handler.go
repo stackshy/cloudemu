@@ -222,6 +222,10 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 
 		name := tagOr(vols[i].Tags, armNameTag, vols[i].ID)
 		scope := rp
+		// On a subscription-scoped list rp.ResourceGroup is empty; use the disk's
+		// own recorded group so the rendered id carries its true
+		// resourceGroups/{rg} segment.
+		scope.ResourceGroup = tagOr(vols[i].Tags, rgTag, rp.ResourceGroup)
 		scope.ResourceName = name
 		out = append(out, h.toDiskResponse(r.Context(), &vols[i], scope, ""))
 	}
@@ -255,6 +259,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		IOPS:       req.Properties.DiskIOPSReadWrite,
 		Throughput: req.Properties.DiskMBpsReadWrite,
 		Tier:       diskTier(req.Properties.Tier, skuTier(req.SKU)),
+		Location:   req.Location,
 		Tags:       mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
 	}
 
@@ -468,6 +473,12 @@ func writeDiskAsync(w http.ResponseWriter, r *http.Request, sub, opID string, bo
 func (h *Handler) toDiskResponse(
 	ctx context.Context, vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, location string,
 ) diskResponse {
+	// On Get/List the caller passes no location; report the region the disk was
+	// created in (persisted on the volume) rather than always defaulting.
+	if location == "" {
+		location = vol.Location
+	}
+
 	if location == "" {
 		location = defaultLocation
 	}

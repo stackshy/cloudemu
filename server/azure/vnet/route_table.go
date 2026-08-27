@@ -85,7 +85,10 @@ func (h *Handler) upsertRouteTable(ctx context.Context, rg, name string) (*netdr
 	if len(vpcs) > 0 {
 		anchor = vpcs[0].ID
 	} else {
-		v, vErr := h.net.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		v, vErr := h.net.CreateVPC(ctx, netdriver.VPCConfig{
+			CIDRBlock: "10.0.0.0/16",
+			Tags:      map[string]string{armSyntheticAnchorTag: "true"},
+		})
 		if vErr != nil {
 			return nil, vErr
 		}

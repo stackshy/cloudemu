@@ -105,7 +105,7 @@ func nsScope() string {
 func seedSBNamespace(t *testing.T, ts *httptest.Server) {
 	t.Helper()
 
-	sbDo(t, ts, http.MethodPut, nsScope()+sbAPIVer, `{"location":"eastus"}`, http.StatusOK)
+	sbDo(t, ts, http.MethodPut, nsScope()+sbAPIVer, `{"location":"eastus"}`, http.StatusCreated)
 }
 
 // newStorageQueueClient returns an azqueue client for a named Storage queue on

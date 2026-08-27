@@ -319,6 +319,9 @@ type ClusterConfig struct {
 	// top-level "location"). Empty for AWS/GCP.
 	Location string
 	Tags     map[string]string
+	// Scope records where an Azure SQL logical server lives (subscription/
+	// resource group). Zero for AWS/GCP and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // Cluster describes an Aurora-style database cluster.
@@ -366,6 +369,9 @@ type Cluster struct {
 	Location  string
 	CreatedAt time.Time
 	Tags      map[string]string
+	// Scope records where an Azure SQL logical server lives (subscription/
+	// resource group). Zero for AWS/GCP and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // SnapshotConfig configures an instance snapshot.
