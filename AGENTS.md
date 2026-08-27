@@ -4,7 +4,7 @@ Guidance for AI agents working in the cloudemu repository. (Human contributors: 
 
 ## What cloudemu is
 
-Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. It runs three ways: as a standalone server (the `cloudemu serve` binary or the `ghcr.io/stackshy/cloudemu` Docker image) that any app in any language points at, and in-process from Go via either the SDK-compat HTTP server or the typed mock API. It emulates control surfaces, not a real cloud — it does not run workloads/containers, serve real traffic, authenticate requests, enforce quotas, or persist state across restarts. See the [README](README.md) for the full framing and scope.
+Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. It runs three ways: as a standalone server (the `cloudemu serve` binary or the `ghcr.io/stackshy/cloudemu` Docker image) that any app in any language points at, and in-process from Go via either the SDK-compat HTTP server or the typed mock API. It emulates control surfaces, not a real cloud — it does not run workloads/containers, serve real traffic, authenticate requests, or enforce quotas. State is in-memory and resettable, so it is ephemeral by default (lost on process exit unless saved); persistence is opt-in — the whole emulator's state can be snapshotted to one JSON file and restored identity-preservingly across all four providers (`--persist`, `snapshot save`/`load`, the `/_cloudemu/snapshot` endpoint, the `persist` package). See the [README](README.md) for the full framing and scope.
 
 ## Where the capabilities are
 
