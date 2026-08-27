@@ -60,6 +60,16 @@ const layersPrefix = "/2018-10-31/layers"
 // 2021-10-31, so it needs its own Matches clause.
 const functionURLPrefix = "/2021-10-31/functions"
 
+// Function code-signing-config sub-resource (GetFunctionCodeSigningConfig et al).
+// Versioned under 2020-06-30 on the {name}/code-signing-config sub-resource, so
+// it needs its own Matches clause — otherwise the REST-JSON request falls through
+// to the S3 catch-all, which returns XML the Lambda client can't parse. Terraform
+// reads it on every function refresh.
+const (
+	codeSigningPrefix = "/2020-06-30/functions"
+	codeSigningSuffix = "/code-signing-config"
+)
+
 // subVersions is the "versions" path segment shared by the function-versions
 // route (/functions/{name}/versions) and the layer-versions routes.
 const subVersions = "versions"
@@ -194,7 +204,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
 		strings.HasPrefix(r.URL.Path, layersPrefix) ||
-		strings.HasPrefix(r.URL.Path, functionURLPrefix)
+		strings.HasPrefix(r.URL.Path, functionURLPrefix) ||
+		isCodeSigningPath(r.URL.Path)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -259,6 +270,8 @@ func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
 		h.serveLayers(w, r)
 	case strings.HasPrefix(r.URL.Path, functionURLPrefix):
 		h.serveFunctionURL(w, r)
+	case isCodeSigningPath(r.URL.Path):
+		h.serveFunctionCodeSigningConfig(w, r)
 	default:
 		name, ok := concurrencyFunctionName(r.URL.Path)
 		if !ok {

@@ -2,6 +2,7 @@ package sqs_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -152,10 +153,20 @@ func TestSDKSQSDeleteQueue(t *testing.T) {
 		t.Fatalf("DeleteQueue: %v", err)
 	}
 
-	if _, err := client.GetQueueUrl(ctx, &awssqs.GetQueueUrlInput{
+	_, err := client.GetQueueUrl(ctx, &awssqs.GetQueueUrlInput{
 		QueueName: aws.String("doomed"),
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("GetQueueUrl after delete returned nil error, want QueueDoesNotExist")
+	}
+
+	// The SDK only deserializes the typed QueueDoesNotExist error when the wire
+	// __type is the modeled shape name "QueueDoesNotExist" — the shape the
+	// Terraform / aws-sdk-go-v2 delete waiter matches (errs.IsA) to treat a queue
+	// as gone. The legacy query code would drop back to a generic error here.
+	var qdne *sqstypes.QueueDoesNotExist
+	if !errors.As(err, &qdne) {
+		t.Fatalf("GetQueueUrl error = %v, want typed *QueueDoesNotExist", err)
 	}
 }
 

@@ -183,6 +183,14 @@ type instanceData struct {
 	// ebsOptimized is the EBS-optimized flag toggled via
 	// ModifyInstanceAttribute(EbsOptimized).
 	ebsOptimized bool
+	// disableAPIStop is the stop-protection flag set via
+	// ModifyInstanceAttribute(DisableApiStop), read back by
+	// DescribeInstanceAttribute(disableApiStop). Defaults false.
+	disableAPIStop bool
+	// shutdownBehavior is the instance-initiated shutdown behavior
+	// ("stop"/"terminate") set via ModifyInstanceAttribute; empty means the
+	// default "stop".
+	shutdownBehavior string
 	// reservationID groups all instances launched by one RunInstances call under
 	// a shared AWS reservation (r-xxxx).
 	reservationID string
@@ -1259,6 +1267,13 @@ const (
 	attrUserData              = "userData"
 	attrEbsOptimized          = "ebsOptimized"
 	attrMonitoring            = "monitoring"
+
+	attrInstanceInitiatedShutdownBehavior = "instanceInitiatedShutdownBehavior"
+	attrDisableAPIStop                    = "disableApiStop"
+
+	// shutdownBehaviorStop is the default instanceInitiatedShutdownBehavior
+	// value, matching real EC2 (the alternative is "terminate").
+	shutdownBehaviorStop = "stop"
 )
 
 // SetInstanceAttribute updates a single instance attribute in place. It backs
@@ -1282,6 +1297,10 @@ func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value s
 		inst.sourceDestCheck = parseBool(value)
 	case attrEbsOptimized:
 		inst.ebsOptimized = parseBool(value)
+	case attrDisableAPIStop:
+		inst.disableAPIStop = parseBool(value)
+	case attrInstanceInitiatedShutdownBehavior:
+		inst.shutdownBehavior = value
 	case attrUserData:
 		inst.userData = value
 	case attrMonitoring:
@@ -1331,21 +1350,53 @@ func (m *Mock) GetInstanceAttribute(_ context.Context, instanceID, name string) 
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 
+	if v, ok := inst.boolAttribute(name); ok {
+		return strconv.FormatBool(v), nil
+	}
+
+	if v, ok := inst.stringAttribute(name); ok {
+		return v, nil
+	}
+
+	return "", cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
+}
+
+// boolAttribute returns the boolean instance attribute named by name and whether
+// name is a boolean attribute. Caller holds inst.mu.
+func (d *instanceData) boolAttribute(name string) (value, ok bool) {
 	switch name {
 	case attrDisableAPITermination:
-		return strconv.FormatBool(inst.disableAPITermination), nil
+		return d.disableAPITermination, true
 	case attrSourceDestCheck:
-		return strconv.FormatBool(inst.sourceDestCheck), nil
+		return d.sourceDestCheck, true
 	case attrEbsOptimized:
-		return strconv.FormatBool(inst.ebsOptimized), nil
-	case attrInstanceType:
-		return inst.InstanceType, nil
-	case attrUserData:
-		return inst.userData, nil
-	case attrMonitoring:
-		return inst.monitoring, nil
+		return d.ebsOptimized, true
+	case attrDisableAPIStop:
+		return d.disableAPIStop, true
 	default:
-		return "", cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
+		return false, false
+	}
+}
+
+// stringAttribute returns the string instance attribute named by name and whether
+// name is a string attribute. instanceInitiatedShutdownBehavior defaults to
+// "stop" when unset. Caller holds inst.mu.
+func (d *instanceData) stringAttribute(name string) (value string, ok bool) {
+	switch name {
+	case attrInstanceInitiatedShutdownBehavior:
+		if d.shutdownBehavior == "" {
+			return shutdownBehaviorStop, true
+		}
+
+		return d.shutdownBehavior, true
+	case attrInstanceType:
+		return d.InstanceType, true
+	case attrUserData:
+		return d.userData, true
+	case attrMonitoring:
+		return d.monitoring, true
+	default:
+		return "", false
 	}
 }
 

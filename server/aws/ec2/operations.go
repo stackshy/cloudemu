@@ -36,6 +36,9 @@ const (
 	attrEbsOptimized          = "ebsOptimized"
 	attrGroupSet              = "groupSet"
 	attrMonitoring            = "monitoring"
+
+	attrInstanceInitiatedShutdownBehavior = "instanceInitiatedShutdownBehavior"
+	attrDisableAPIStop                    = "disableApiStop"
 )
 
 // reservationPrefix is the AWS reservation ID prefix (r-xxxx).
@@ -441,7 +444,10 @@ func (h *Handler) applyInstanceAttributes(r *http.Request, id string) error {
 		return nil
 	}
 
-	for _, name := range []string{attrDisableAPITermination, attrSourceDestCheck, attrEbsOptimized, attrUserData} {
+	for _, name := range []string{
+		attrDisableAPITermination, attrSourceDestCheck, attrEbsOptimized, attrUserData,
+		attrDisableAPIStop, attrInstanceInitiatedShutdownBehavior,
+	} {
 		if v := r.Form.Get(attrForm(name) + ".Value"); v != "" {
 			if err := attributer.SetInstanceAttribute(r.Context(), id, name, v); err != nil {
 				return err
@@ -497,6 +503,15 @@ func (h *Handler) describeInstanceAttribute(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	setInstanceAttributeField(&resp, attr, val)
+
+	awsquery.WriteXMLResponse(w, resp)
+}
+
+// setInstanceAttributeField places the read attribute value into the matching
+// field of resp. Boolean attributes wrap val == "true"; string attributes carry
+// val verbatim. Each DescribeInstanceAttribute response holds exactly one.
+func setInstanceAttributeField(resp *describeInstanceAttributeResponse, attr, val string) {
 	switch attr {
 	case attrDisableAPITermination:
 		resp.DisableAPITermination = &attributeBooleanValueXML{Value: val == formTrue}
@@ -504,13 +519,15 @@ func (h *Handler) describeInstanceAttribute(w http.ResponseWriter, r *http.Reque
 		resp.SourceDestCheck = &attributeBooleanValueXML{Value: val == formTrue}
 	case attrEbsOptimized:
 		resp.EBSOptimized = &attributeBooleanValueXML{Value: val == formTrue}
+	case attrDisableAPIStop:
+		resp.DisableAPIStop = &attributeBooleanValueXML{Value: val == formTrue}
+	case attrInstanceInitiatedShutdownBehavior:
+		resp.ShutdownBehavior = &attributeValueXML{Value: val}
 	case attrInstanceType:
 		resp.InstanceType = &attributeValueXML{Value: val}
 	case attrUserData:
 		resp.UserData = &attributeValueXML{Value: val}
 	}
-
-	awsquery.WriteXMLResponse(w, resp)
 }
 
 // attachInstanceGroups populates resp.Groups from the instance's current
@@ -543,6 +560,10 @@ func attrForm(name string) string {
 		return "SourceDestCheck"
 	case attrEbsOptimized:
 		return "EbsOptimized"
+	case attrDisableAPIStop:
+		return "DisableApiStop"
+	case attrInstanceInitiatedShutdownBehavior:
+		return "InstanceInitiatedShutdownBehavior"
 	case attrUserData:
 		return "UserData"
 	default:

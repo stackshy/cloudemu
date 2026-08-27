@@ -22,6 +22,16 @@ import (
 
 const targetPrefix = "AmazonSQS."
 
+// errNonExistentQueue is the __type value for a missing queue. Modern SQS speaks
+// AwsJson1_0, where the SDK resolves the error shape from __type: "QueueDoesNotExist"
+// is the modeled shape name, so it deserializes into the typed sqs types
+// QueueDoesNotExist that the aws-sdk-go-v2 / Terraform delete waiter matches on
+// (via errs.IsA and ErrorCode()=="QueueDoesNotExist"). Do NOT change this to the
+// legacy query-protocol code "AWS.SimpleQueueService.NonExistentQueue" — as a JSON
+// __type it matches no modeled shape, dropping the SDK back to a generic error the
+// waiter does not recognize, so destroy hangs.
+const errNonExistentQueue = "QueueDoesNotExist"
+
 // Handler serves SQS JSON-RPC requests against a messagequeue.MessageQueue
 // driver.
 type Handler struct {
@@ -161,7 +171,7 @@ func (h *Handler) getQueueURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest,
-		"QueueDoesNotExist", "queue not found: "+req.QueueName)
+		errNonExistentQueue, "queue not found: "+req.QueueName)
 }
 
 func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
@@ -1131,7 +1141,7 @@ func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "QueueDoesNotExist", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, errNonExistentQueue, err.Error())
 	case cerrors.IsAlreadyExists(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "QueueNameExists", err.Error())
 	case cerrors.IsInvalidArgument(err):

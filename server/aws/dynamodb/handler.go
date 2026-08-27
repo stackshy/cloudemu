@@ -576,10 +576,20 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 			"IndexSizeBytes": 0,
 		}
 
+		// Real AWS attaches ProvisionedThroughput to every GSI, including on a
+		// PAY_PER_REQUEST table where the capacities read back as zero. Omitting it
+		// there makes the Terraform provider blank the whole index element (name
+		// included), producing a perpetual add/remove diff — so emit zeros.
 		if billing == billingProvisioned {
 			desc["ProvisionedThroughput"] = map[string]any{
 				"ReadCapacityUnits":      cfg.ReadCapacityUnits,
 				"WriteCapacityUnits":     cfg.WriteCapacityUnits,
+				"NumberOfDecreasesToday": 0,
+			}
+		} else {
+			desc["ProvisionedThroughput"] = map[string]any{
+				"ReadCapacityUnits":      0,
+				"WriteCapacityUnits":     0,
 				"NumberOfDecreasesToday": 0,
 			}
 		}

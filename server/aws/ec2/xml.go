@@ -268,8 +268,10 @@ type describeInstanceAttributeResponse struct {
 	DisableAPITermination *attributeBooleanValueXML `xml:"disableApiTermination,omitempty"`
 	SourceDestCheck       *attributeBooleanValueXML `xml:"sourceDestCheck,omitempty"`
 	EBSOptimized          *attributeBooleanValueXML `xml:"ebsOptimized,omitempty"`
+	DisableAPIStop        *attributeBooleanValueXML `xml:"disableApiStop,omitempty"`
 	InstanceType          *attributeValueXML        `xml:"instanceType,omitempty"`
 	UserData              *attributeValueXML        `xml:"userData,omitempty"`
+	ShutdownBehavior      *attributeValueXML        `xml:"instanceInitiatedShutdownBehavior,omitempty"`
 	Groups                []groupItem               `xml:"groupSet>item,omitempty"`
 }
 
