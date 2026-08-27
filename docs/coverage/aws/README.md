@@ -18,6 +18,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [ECR](./ecr.md) | `containerregistry` | 15 |
 | [ECS](./ecs.md) | `ecs` | 37 |
 | [EFS](./efs.md) | `efs` | 27 |
+| [EKS](./eks.md) | — (provider-native) | 29 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |
 | [EventBridge](./eventbridge.md) | `eventbus` | 16 |
@@ -32,7 +33,10 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [MemoryDB](./memorydb.md) | `memorydb` | 33 |
 | [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 23 |
 | [OpenSearch](./opensearch.md) | `opensearch` | 96 |
+| [RDS](./rds.md) | — (provider-native) | 21 |
 | [Redshift](./redshift.md) | `relationaldb` | 21 |
+| [Resourceexplorer2](./resourceexplorer2.md) | — (provider-native) | 0 |
+| [Resourcegroupstaggingapi](./resourcegroupstaggingapi.md) | — (provider-native) | 0 |
 | [Route53](./route53.md) | `dns` | 16 |
 | [Route53Resolver](./route53resolver.md) | `route53resolver` | 72 |
 | [S3](./s3.md) | `storage` | 35 |
@@ -41,6 +45,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [SNS](./sns.md) | `notification` | 9 |
 | [SQS](./sqs.md) | `messagequeue` | 14 |
 | [SSM](./ssm.md) | `parameterstore` | 9 |
+| [STS](./sts.md) | — (provider-native) | 0 |
 | [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
 | [VPC](./vpc.md) | `networking` | 57 |

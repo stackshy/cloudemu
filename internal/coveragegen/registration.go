@@ -33,6 +33,12 @@ func checkRegistrations(root string, services []*Service) ([]string, error) {
 		}
 
 		for _, svc := range services {
+			// Provider-native services are, by construction, discovered from the
+			// wire server's own registrations, so a dead-handler check is moot.
+			if svc.Interface == providerNativeInterface {
+				continue
+			}
+
 			native := svc.Providers[prov]
 			if native == "" {
 				continue
