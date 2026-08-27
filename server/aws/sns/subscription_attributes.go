@@ -227,7 +227,7 @@ func (h *Handler) publishBatch(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			failures = append(failures, batchErrorEntry{
-				ID: entryID, Code: batchErrorCode(err), Message: err.Error(), SenderFault: true,
+				ID: entryID, Code: batchErrorCode(err), Message: cerrors.Message(err), SenderFault: true,
 			})
 
 			continue

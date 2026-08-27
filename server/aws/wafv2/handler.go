@@ -154,23 +154,25 @@ func dispatch[Req any](
 // tagged with a specific WAFv2 exception (via driver.APIError) take precedence
 // so distinct exceptions surface as themselves rather than a generic code map.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *wafdriver.APIError
 	if errors.As(err, &apiErr) {
-		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "WAFNonexistentItemException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "WAFNonexistentItemException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "WAFDuplicateItemException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "WAFDuplicateItemException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "WAFInvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "WAFInvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "WAFOptimisticLockException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "WAFOptimisticLockException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "WAFInternalErrorException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "WAFInternalErrorException", msg)
 	}
 }

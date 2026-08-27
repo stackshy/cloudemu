@@ -211,15 +211,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // set of error codes; the SDK maps NotFound → NotFoundException and
 // InvalidParameter → InvalidParameterException.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, "NotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, "NotFound", msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameter", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameter", msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameter", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameter", msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalError", msg)
 	}
 }
 

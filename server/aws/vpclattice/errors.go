@@ -29,21 +29,23 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 
 // writeErr maps a canonical cloudemu error to the closest VPC Lattice exception.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ConflictException", err.Error())
+		writeError(w, http.StatusConflict, "ConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		writeError(w, http.StatusBadRequest, "ValidationException", msg)
 	case cerrors.IsPermissionDenied(err):
-		writeError(w, http.StatusForbidden, "AccessDeniedException", err.Error())
+		writeError(w, http.StatusForbidden, "AccessDeniedException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusConflict, "ConflictException", err.Error())
+		writeError(w, http.StatusConflict, "ConflictException", msg)
 	case cerrors.IsThrottled(err):
-		writeError(w, http.StatusTooManyRequests, "ThrottlingException", err.Error())
+		writeError(w, http.StatusTooManyRequests, "ThrottlingException", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalServerException", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalServerException", msg)
 	}
 }
 

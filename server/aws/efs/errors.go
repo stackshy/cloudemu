@@ -100,7 +100,7 @@ func writeErr(w http.ResponseWriter, err error) {
 
 	status, errType := exceptionFor(kind, err)
 
-	body := errorBody{Type: errType, ErrorCode: errType, Message: err.Error()}
+	body := errorBody{Type: errType, ErrorCode: errType, Message: cerrors.Message(err)}
 	if kind == driver.KindFileSystem {
 		body.FileSystemID = resourceID
 	}

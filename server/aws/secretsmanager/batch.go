@@ -88,12 +88,12 @@ func (h *Handler) batchLookup(r *http.Request, secretID string) (*secretValueEnt
 
 	info, err := h.secrets.GetSecret(r.Context(), name)
 	if err != nil {
-		return nil, &batchErrorEntry{SecretID: secretID, ErrorCode: batchErrorCode(err), Message: err.Error()}
+		return nil, &batchErrorEntry{SecretID: secretID, ErrorCode: batchErrorCode(err), Message: cerrors.Message(err)}
 	}
 
 	ver, err := h.getVersion(r, name, "", "")
 	if err != nil {
-		return nil, &batchErrorEntry{SecretID: secretID, ErrorCode: batchErrorCode(err), Message: err.Error()}
+		return nil, &batchErrorEntry{SecretID: secretID, ErrorCode: batchErrorCode(err), Message: cerrors.Message(err)}
 	}
 
 	entry := secretValueEntry{

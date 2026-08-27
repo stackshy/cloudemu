@@ -152,23 +152,25 @@ func dispatch[Req any](
 // tagged with a specific CloudTrail exception (via driver.APIError) take
 // precedence so distinct exceptions surface as themselves.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *ctdriver.APIError
 	if errors.As(err, &apiErr) {
-		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ConflictException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ConflictException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailureException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailureException", msg)
 	}
 }

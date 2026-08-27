@@ -172,7 +172,7 @@ func extractOperation(path string) string {
 func writeCBORError(w http.ResponseWriter, status int, errType, msg string) {
 	payload := map[string]any{
 		"__type":  errType,
-		"Message": msg,
+		"message": msg,
 	}
 
 	body, _ := cbor.Marshal(payload)

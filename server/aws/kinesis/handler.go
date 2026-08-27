@@ -118,21 +118,23 @@ func dispatch[Req any](
 // writeErr maps a driver error to the closest Kinesis JSON error type, honoring
 // a tagged driver.APIError exception when present.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *kinesisdriver.APIError
 	if errors.As(err, &apiErr) {
-		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err), cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidArgumentException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidArgumentException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }

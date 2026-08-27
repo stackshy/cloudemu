@@ -132,7 +132,7 @@ func (h *Handler) getAuthorizationToken(w http.ResponseWriter, r *http.Request) 
 // returns ImageTagAlreadyExistsException (not RepositoryNotEmptyException).
 func writePutImageErr(w http.ResponseWriter, err error) {
 	if cerrors.IsFailedPrecondition(err) {
-		wire.WriteJSONError(w, http.StatusBadRequest, "ImageTagAlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ImageTagAlreadyExistsException", cerrors.Message(err))
 		return
 	}
 
@@ -147,24 +147,26 @@ func writeErr(w http.ResponseWriter, err error) {
 	// ImageNotFoundException vs ScanNotFoundException vs
 	// RepositoryPolicyNotFoundException), which the generic code-based mapping
 	// below would otherwise collapse to RepositoryNotFoundException.
+	msg := cerrors.Message(err)
+
 	var ex interface{ ECRException() string }
 	if stderrors.As(err, &ex) {
-		wire.WriteJSONError(w, http.StatusBadRequest, ex.ECRException(), err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, ex.ECRException(), msg)
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryAlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryAlreadyExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotEmptyException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryNotEmptyException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "ServerException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "ServerException", msg)
 	}
 }

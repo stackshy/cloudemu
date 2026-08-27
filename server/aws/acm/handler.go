@@ -98,21 +98,23 @@ func dispatch[Req any](
 // distinct exceptions like InvalidArnException / InvalidParameterException /
 // InvalidStateException surface as themselves rather than a generic code map.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *acmdriver.APIError
 	if errors.As(err, &apiErr) {
-		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalException", msg)
 	}
 }
