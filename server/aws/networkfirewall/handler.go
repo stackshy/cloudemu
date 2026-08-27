@@ -91,7 +91,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 const updateToken = "00000000-0000-0000-0000-000000000000"
 
 func writeErr(w http.ResponseWriter, err error) {
-	msg := err.Error()
+	msg := cerrors.Message(err)
 
 	switch {
 	case cerrors.IsNotFound(err):

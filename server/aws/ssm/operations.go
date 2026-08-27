@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
@@ -39,14 +40,14 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		// real Parameter Store with HierarchyTypeMismatchException, not the
 		// generic ValidationException.
 		if errors.Is(err, ssmdriver.ErrTypeMismatch) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyTypeMismatchException", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyTypeMismatchException", cerrors.Message(err))
 			return
 		}
 
 		// An unrecognized Type is UnsupportedParameterType, not the generic
 		// ValidationException that InvalidArgument maps to.
 		if errors.Is(err, ssmdriver.ErrUnsupportedType) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedParameterType", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedParameterType", cerrors.Message(err))
 			return
 		}
 
@@ -68,7 +69,7 @@ func (h *Handler) getParameter(w http.ResponseWriter, r *http.Request) {
 		// The parameter existed but the requested version/label didn't — AWS
 		// returns the distinct ParameterVersionNotFound, not ParameterNotFound.
 		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))
 			return
 		}
 		writeErr(w, err)
@@ -114,12 +115,12 @@ func (h *Handler) getParametersByPath(w http.ResponseWriter, r *http.Request) {
 		// GetParametersByPath rejects an unsupported filter key/option with the
 		// distinct InvalidFilterKey/InvalidFilterOption, not ValidationException.
 		if errors.Is(err, ssmdriver.ErrInvalidFilterKey) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterKey", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterKey", cerrors.Message(err))
 			return
 		}
 
 		if errors.Is(err, ssmdriver.ErrInvalidFilterOption) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterOption", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterOption", cerrors.Message(err))
 			return
 		}
 

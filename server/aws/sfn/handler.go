@@ -119,23 +119,25 @@ func dispatch[Req any](
 // precedence so distinct exceptions like StateMachineDoesNotExist /
 // ExecutionAlreadyExists / InvalidArn surface as themselves.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *sfndriver.APIError
 	if errors.As(err, &apiErr) {
-		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFound", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFound", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ConflictException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ConflictException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ConflictException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", msg)
 	}
 }

@@ -84,7 +84,7 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		// code — it is the ordinary Run Command bring-up failure — and
 		// ParameterNotFound would send them looking at the wrong subsystem.
 		if cerrors.IsNotFound(err) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidInstanceId", err.Error())
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidInstanceId", cerrors.Message(err))
 			return
 		}
 
@@ -139,7 +139,7 @@ func (h *Handler) getCommandInvocation(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// AWS names this one specifically, and callers branch on it while
 		// polling a command that has not registered yet.
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvocationDoesNotExist", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvocationDoesNotExist", cerrors.Message(err))
 
 		return
 	}

@@ -86,25 +86,27 @@ func dispatch[Req any](
 // distinct exceptions like EntityNotFoundException / AlreadyExistsException /
 // InvalidInputException surface as themselves rather than a generic code map.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *gluedriver.APIError
 	if errors.As(err, &apiErr) {
-		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, msg)
 
 		return
 	}
 
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExEntityNotFound, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExEntityNotFound, msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExAlreadyExists, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExAlreadyExists, msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExInvalidInput, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExInvalidInput, msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExResourceNumberLimit, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExResourceNumberLimit, msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExConcurrentModification, err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, gluedriver.ExConcurrentModification, msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, gluedriver.ExInternalService, err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, gluedriver.ExInternalService, msg)
 	}
 }

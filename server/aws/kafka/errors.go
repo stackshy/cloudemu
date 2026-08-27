@@ -70,15 +70,17 @@ func exceptionForCode(err error) (status int, errType string) {
 // driver.APIError values are honored first so the exact exception name is
 // preserved; untagged errors fall back to the canonical-code mapping.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	var apiErr *driver.APIError
 	if errors.As(err, &apiErr) {
-		writeError(w, statusForException(apiErr.Exception), apiErr.Exception, err.Error())
+		writeError(w, statusForException(apiErr.Exception), apiErr.Exception, msg)
 
 		return
 	}
 
 	status, errType := exceptionForCode(err)
-	writeError(w, status, errType, err.Error())
+	writeError(w, status, errType, msg)
 }
 
 func notFoundPath(w http.ResponseWriter, path string) {

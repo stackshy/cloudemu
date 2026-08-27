@@ -122,18 +122,20 @@ var errNotSupported = cerrors.New(cerrors.Unimplemented, "operation not supporte
 // responses. Secrets Manager returns errors as HTTP 400 with a "__type" body
 // the SDK maps to a typed exception.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServiceError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServiceError", msg)
 	}
 }

@@ -163,18 +163,20 @@ var validRetentionInDays = map[int]bool{
 // responses. Like the other AWS JSON 1.1 services, errors are HTTP 400 with a
 // "__type" body the SDK maps to a typed exception.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidOperationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidOperationException", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LimitExceededException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "ServiceUnavailableException", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "ServiceUnavailableException", msg)
 	}
 }
