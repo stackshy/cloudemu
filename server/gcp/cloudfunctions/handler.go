@@ -57,6 +57,9 @@ const (
 	actionCall = "call"
 	// actionGenerateUploadURL mints an upload URL for a source deploy.
 	actionGenerateUploadURL = "generateUploadUrl"
+	// actionGenerateDownloadURL mints a URL to download a function's source
+	// (gen2 functions.generateDownloadUrl).
+	actionGenerateDownloadURL = "generateDownloadUrl"
 	// actionGetIamPolicy / actionSetIamPolicy are the IAM invoker-policy verbs.
 	actionGetIamPolicy = "getIamPolicy"
 	actionSetIamPolicy = "setIamPolicy"

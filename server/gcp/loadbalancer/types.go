@@ -67,6 +67,27 @@ type backendServiceResponse struct {
 	SelfLink            string              `json:"selfLink"`
 }
 
+// resourceGroupReference is the getHealth request body: the instance-group (or
+// NEG) URL whose backends' health is being queried.
+type resourceGroupReference struct {
+	Group string `json:"group,omitempty"`
+}
+
+// healthStatus is one backend instance's health entry in a
+// backendServiceGroupHealth response.
+type healthStatus struct {
+	HealthState string `json:"healthState,omitempty"`
+	Instance    string `json:"instance,omitempty"`
+	IPAddress   string `json:"ipAddress,omitempty"`
+	Port        int    `json:"port,omitempty"`
+}
+
+// backendServiceGroupHealth is the compute.backendServices.getHealth response.
+type backendServiceGroupHealth struct {
+	Kind         string         `json:"kind"`
+	HealthStatus []healthStatus `json:"healthStatus,omitempty"`
+}
+
 type backendServiceListResponse struct {
 	Kind          string                   `json:"kind"`
 	ID            string                   `json:"id"`

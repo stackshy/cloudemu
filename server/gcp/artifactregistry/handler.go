@@ -243,8 +243,16 @@ func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rt *rout
 }
 
 // serveSub dispatches the repository sub-collections (docker images, packages,
-// versions, tags, files). All are read-only GETs.
+// versions, tags, files). Reads are GETs; packages and versions also accept
+// DELETE (packages.delete / versions.delete), routed through servePackages.
 func (h *Handler) serveSub(w http.ResponseWriter, r *http.Request, rt *route) {
+	// The packages sub-tree owns both GET (list/get) and DELETE (package/version
+	// removal); it dispatches on method itself.
+	if rt.sub == packagesSeg {
+		h.servePackages(w, r, rt)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported "+rt.sub+" operation")
 		return
@@ -253,8 +261,6 @@ func (h *Handler) serveSub(w http.ResponseWriter, r *http.Request, rt *route) {
 	switch rt.sub {
 	case dockerImagesSeg:
 		h.listDockerImages(w, r, rt)
-	case packagesSeg:
-		h.servePackages(w, r, rt)
 	case filesSeg:
 		h.listFiles(w, r, rt)
 	default:

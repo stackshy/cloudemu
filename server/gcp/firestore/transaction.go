@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
@@ -57,14 +58,25 @@ type listCollectionIDsResponse struct {
 	NextPageToken string   `json:"nextPageToken,omitempty"`
 }
 
-// listCollectionIDs handles POST .../documents:listCollectionIds (and the
-// per-document variant). Collections are created lazily on first write and
-// modeled as driver tables, so the collection ids are the table names. The body
-// (pageSize/pageToken) is optional; an absent body lists all ids.
-func (h *Handler) listCollectionIDs(w http.ResponseWriter, r *http.Request) {
+// listCollectionIDs handles POST .../documents:listCollectionIds (root) and the
+// per-document variant .../documents/{coll}/{doc}:listCollectionIds. Collections
+// are created lazily on first write and modeled as driver tables keyed by their
+// full parent path, so the ids returned must be scoped to the request's parent:
+// the root call returns only immediate top-level collections and a per-document
+// call returns only that document's direct subcollections — each a single id
+// segment, never a full nested path. base is the resource path before the
+// ":listCollectionIds" action. The body (pageSize/pageToken) is optional; an
+// absent body lists all matching ids.
+func (h *Handler) listCollectionIDs(w http.ResponseWriter, r *http.Request, base string) {
 	var req listCollectionIDsRequest
 
 	if r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+		return
+	}
+
+	parent, perr := parseFirestorePath(base)
+	if perr != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", perr.Error())
 		return
 	}
 
@@ -74,10 +86,11 @@ func (h *Handler) listCollectionIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sort.Strings(names)
+	ids := immediateCollectionIDs(names, parent.parentPath())
+	sort.Strings(ids)
 
-	page, perr := pagination.Paginate(names, req.PageToken, req.PageSize)
-	if perr != nil {
+	page, pgerr := pagination.Paginate(ids, req.PageToken, req.PageSize)
+	if pgerr != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageToken")
 		return
 	}
@@ -86,4 +99,44 @@ func (h *Handler) listCollectionIDs(w http.ResponseWriter, r *http.Request) {
 		CollectionIDs: page.Items,
 		NextPageToken: page.NextPageToken,
 	})
+}
+
+// immediateCollectionIDs filters the driver table names (each a full parent
+// path like "cities" or "cities/SF/landmarks") to the collection ids that are
+// immediate children of parent, returning only each match's final path segment.
+// A parent of "" selects the top-level collections. This scopes the result to
+// the requested document so an unrelated document's subcollections never leak.
+func immediateCollectionIDs(tables []string, parent string) []string {
+	seen := make(map[string]struct{}, len(tables))
+
+	ids := make([]string, 0, len(tables))
+
+	for _, t := range tables {
+		rest := t
+
+		if parent != "" {
+			prefix := parent + "/"
+			if !strings.HasPrefix(t, prefix) {
+				continue
+			}
+
+			rest = t[len(prefix):]
+		}
+
+		// An immediate child collection is a single segment under the parent;
+		// skip a deeper subcollection path (it has another "/") or an empty rest.
+		if rest == "" || strings.Contains(rest, "/") {
+			continue
+		}
+
+		if _, ok := seen[rest]; ok {
+			continue
+		}
+
+		seen[rest] = struct{}{}
+
+		ids = append(ids, rest)
+	}
+
+	return ids
 }

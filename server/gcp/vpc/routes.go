@@ -124,7 +124,7 @@ func (h *Handler) insertRoute(w http.ResponseWriter, r *http.Request, rp gcprest
 
 	h.routes.put(rp.Project, name, enrichRoute(raw, rp, hostOf(r), name))
 
-	gcprest.WriteJSON(w, http.StatusOK, gcprest.NewDoneOperation(hostOf(r), rp.Project,
+	gcprest.WriteJSON(w, http.StatusOK, h.ops.RecordDone(hostOf(r), rp.Project,
 		gcprest.ScopeGlobal, "", resourceRoutes, name, "insert"))
 }
 
@@ -181,14 +181,18 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, gcprest.NewDoneOperation(hostOf(r), rp.Project,
+	gcprest.WriteJSON(w, http.StatusOK, h.ops.RecordDone(hostOf(r), rp.Project,
 		gcprest.ScopeGlobal, "", resourceRoutes, rp.ResourceName, "delete"))
 }
 
 // enrichRoute stamps the server-assigned fields (kind, id, selfLink,
 // creationTimestamp) onto a route while preserving the caller's routing spec
-// (network, destRange, next-hop, priority). Without them a Get reads back an
-// incomplete resource.
+// (destRange, priority). It also normalizes the reference fields — network and
+// the global next-hop references — to fully-qualified self-link URLs, matching
+// real GCP's read shape so a caller (Terraform google_compute_route) that sends
+// a relative "global/networks/default" doesn't read back a value that never
+// stops diffing against the API's absolute self-link. Without this a Get returns
+// the caller's raw relative reference verbatim.
 //
 //nolint:gocritic // rp is a request-scoped value
 func enrichRoute(raw json.RawMessage, rp gcprest.ResourcePath, host, name string) json.RawMessage {
@@ -202,10 +206,28 @@ func enrichRoute(raw json.RawMessage, rp gcprest.ResourcePath, host, name string
 	body["selfLink"] = gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", resourceRoutes, name)
 	body["creationTimestamp"] = nowRFC3339()
 
+	qualifyGlobalRef(body, "network", host, rp.Project, "networks")
+	qualifyGlobalRef(body, "nextHopNetwork", host, rp.Project, "networks")
+	qualifyGlobalRef(body, "nextHopGateway", host, rp.Project, "gateways")
+
 	enriched, err := json.Marshal(body)
 	if err != nil {
 		return raw
 	}
 
 	return enriched
+}
+
+// qualifyGlobalRef rewrites body[field], when present and non-empty, to a
+// fully-qualified global self-link under collection (e.g. networks, gateways),
+// preserving only the trailing name segment of whatever reference the caller
+// supplied (bare name, relative path, or absolute URL). A field that is absent
+// or not a string is left untouched.
+func qualifyGlobalRef(body map[string]any, field, host, project, collection string) {
+	raw, ok := body[field].(string)
+	if !ok || raw == "" {
+		return
+	}
+
+	body[field] = gcprest.SelfLink(host, project, gcprest.ScopeGlobal, "", collection, lastSegment(raw))
 }

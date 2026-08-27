@@ -23,12 +23,38 @@ func (h *Handler) serveMetricDescriptors(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if r.Method != http.MethodGet {
+	mtype := strings.Join(rest, "/")
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getDescriptor(w, project, mtype)
+	case http.MethodDelete:
+		h.deleteDescriptor(w, project, mtype)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+	}
+}
+
+// deleteDescriptor removes a custom metric descriptor created via
+// metricDescriptors.create. Only custom descriptors are deletable — a descriptor
+// synthesized from live series (or one that never existed) is 404, matching real
+// GCP, which rejects deleting a built-in/absent descriptor.
+func (h *Handler) deleteDescriptor(w http.ResponseWriter, _, mtype string) {
+	h.mu.Lock()
+
+	_, ok := h.descriptors[mtype]
+	if ok {
+		delete(h.descriptors, mtype)
+	}
+
+	h.mu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "metricDescriptor "+mtype+" not found")
 		return
 	}
 
-	h.getDescriptor(w, project, strings.Join(rest, "/"))
+	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
 func (h *Handler) listDescriptors(w http.ResponseWriter, project string) {

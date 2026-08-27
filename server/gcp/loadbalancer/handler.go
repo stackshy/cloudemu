@@ -44,6 +44,10 @@ const (
 	resourceForwardingRules = "forwardingRules"
 )
 
+// actionGetHealth is the POST action on a named backend service that returns the
+// health of its backends (compute.backendServices.getHealth).
+const actionGetHealth = "getHealth"
+
 // reasonResourceInUse is the GCP error reason returned when a delete is rejected
 // because another resource still references the target. Real GCP answers such a
 // delete with HTTP 400 and this reason, so dependents are never orphaned.
@@ -52,12 +56,22 @@ const reasonResourceInUse = "resourceInUseByAnotherResource"
 // Handler serves the GCP load-balancing REST surface.
 type Handler struct {
 	lb lbdriver.LoadBalancer
+	// ops records the compute#operation names this handler mints so the compute
+	// handler's shared /operations route (which serves LB operation polls)
+	// resolves a real operation and 404s a bogus one. Nil in a package-level
+	// server (every operation poll answered DONE, legacy behavior).
+	ops *gcprest.OperationRegistry
 }
 
 // New returns a GCP load balancer handler backed by lb.
 func New(lb lbdriver.LoadBalancer) *Handler {
 	return &Handler{lb: lb}
 }
+
+// SetOperationRegistry wires the shared compute-operation registry so the
+// operations this handler mints are resolvable (and unknown names 404) through
+// the compute handler's /operations poll route.
+func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
 // Matches returns true for /compute/v1/.../backendServices|forwardingRules
 // URLs. Disjoint from the compute (instances/operations/disks/…) and networks
@@ -117,6 +131,13 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	// getHealth is a POST action on a named backend service, distinct from the
+	// resource-level verbs below.
+	if r.Method == http.MethodPost && rp.Action == actionGetHealth {
+		h.getBackendServiceHealth(w, r, rp)
 		return
 	}
 

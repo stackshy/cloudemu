@@ -501,6 +501,35 @@ func (m *Mock) CreateNotificationChannel(
 	return ch, nil
 }
 
+// UpdateNotificationChannel applies apply to a copy of the stored channel and
+// persists it, keeping the channel's stable ID (and thus its resource name).
+// It backs the wire layer's notificationChannels.patch. Mutating a copy rather
+// than the stored pointer avoids racing a concurrent Get/List that shares it.
+func (m *Mock) UpdateNotificationChannel(
+	_ context.Context, id string, apply func(*driver.NotificationChannelInfo),
+) (*driver.NotificationChannelInfo, error) {
+	existing, ok := m.channels.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "notification channel %q not found", id)
+	}
+
+	updated := *existing
+
+	if existing.Tags != nil {
+		tags := make(map[string]string, len(existing.Tags))
+		for k, v := range existing.Tags {
+			tags[k] = v
+		}
+
+		updated.Tags = tags
+	}
+
+	apply(&updated)
+	m.channels.Set(id, &updated)
+
+	return &updated, nil
+}
+
 // DeleteNotificationChannel deletes the notification channel with the given ID.
 func (m *Mock) DeleteNotificationChannel(_ context.Context, id string) error {
 	if !m.channels.Delete(id) {

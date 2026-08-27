@@ -16,22 +16,28 @@ import (
 // the Repository body.
 
 // servePackages dispatches the packages sub-tree: the packages collection, a
-// single package, and its versions / tags sub-collections.
+// single package, and its versions / tags sub-collections. A single package and
+// a single version also accept DELETE (packages.delete / versions.delete); the
+// collections, tags, and the packages collection itself remain read-only.
 func (h *Handler) servePackages(w http.ResponseWriter, r *http.Request, rt *route) {
 	if rt.pkg == "" {
+		if !requireGet(w, r, "packages") {
+			return
+		}
+
 		h.listPackages(w, r, rt)
+
 		return
 	}
 
 	switch rt.pkgSub {
 	case versionsSeg:
-		if rt.pkgSubID != "" {
-			h.getVersion(w, r, rt)
+		h.serveVersions(w, r, rt)
+	case tagsSeg:
+		if !requireGet(w, r, "tags") {
 			return
 		}
 
-		h.listVersions(w, r, rt)
-	case tagsSeg:
 		if rt.pkgSubID != "" {
 			h.getTag(w, r, rt)
 			return
@@ -39,10 +45,96 @@ func (h *Handler) servePackages(w http.ResponseWriter, r *http.Request, rt *rout
 
 		h.listTags(w, r, rt)
 	case "":
-		h.getPackage(w, r, rt)
+		h.servePackage(w, r, rt)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported package sub-collection "+rt.pkgSub)
 	}
+}
+
+// servePackage serves a single package: GET returns it, DELETE removes it (and
+// its underlying image), returning a done long-running operation.
+func (h *Handler) servePackage(w http.ResponseWriter, r *http.Request, rt *route) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getPackage(w, r, rt)
+	case http.MethodDelete:
+		h.deletePackage(w, r, rt)
+	default:
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported package operation")
+	}
+}
+
+// serveVersions serves the versions sub-collection: GET lists or gets a version,
+// DELETE removes a single version (packages.versions.delete).
+func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, rt *route) {
+	if rt.pkgSubID == "" {
+		if !requireGet(w, r, "versions") {
+			return
+		}
+
+		h.listVersions(w, r, rt)
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getVersion(w, r, rt)
+	case http.MethodDelete:
+		h.deleteVersion(w, r, rt)
+	default:
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported version operation")
+	}
+}
+
+// deletePackage removes a package (packages.delete) — the driver models one
+// image per package keyed by digest, so this deletes that image — and returns a
+// done LRO the SDK/gcloud polls.
+func (h *Handler) deletePackage(w http.ResponseWriter, r *http.Request, rt *route) {
+	if _, ok := h.findImage(w, r, rt); !ok {
+		return
+	}
+
+	if err := h.registry.DeleteImage(r.Context(), rt.repository, rt.pkg); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.pkg, nil))
+}
+
+// deleteVersion removes a single version (packages.versions.delete). The version
+// id must equal the package's digest (one version per image); it deletes the
+// backing image and returns a done LRO.
+func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, rt *route) {
+	img, ok := h.findImage(w, r, rt)
+	if !ok {
+		return
+	}
+
+	if rt.pkgSubID != img.Digest {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "version "+rt.pkgSubID+" not found")
+		return
+	}
+
+	if err := h.registry.DeleteImage(r.Context(), rt.repository, img.Digest); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.pkgSubID, nil))
+}
+
+// requireGet writes a 404 (matching the sub-collection's read-only error shape)
+// and returns false when the method is not GET.
+func requireGet(w http.ResponseWriter, r *http.Request, what string) bool {
+	if r.Method == http.MethodGet {
+		return true
+	}
+
+	gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported "+what+" operation")
+
+	return false
 }
 
 // getVersion returns a single version (.../packages/{pkg}/versions/{version}).

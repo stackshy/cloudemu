@@ -35,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
@@ -159,16 +160,28 @@ func New(d Drivers) *server.Server {
 	opsReg := lro.NewRegistry()
 	srv.Register(lro.New(opsReg))
 
+	// Shared compute-operation registry. The compute handler's /operations route
+	// serves every compute#operation poll (its own, plus the networks and load-
+	// balancing handlers', which mint compute operations but have no operations
+	// route of their own). Sharing one registry lets an Insert/Delete poll resolve
+	// a real operation and 404 a name that was never issued, uniformly across the
+	// three handlers.
+	computeOps := gcprest.NewOperationRegistry()
+
 	if d.Compute != nil {
 		// d.Networking (may be nil) lets insert allocate the instance's private
 		// networkIP from the referenced subnetwork's CIDR.
-		srv.Register(compute.New(d.Compute, d.Networking))
+		computeH := compute.New(d.Compute, d.Networking)
+		computeH.SetOperationRegistry(computeOps)
+		srv.Register(computeH)
 	}
 
 	if d.Networking != nil {
 		// d.Compute (may be nil) lets the subnetwork delete guard reject removing a
 		// subnet that still has instances.
-		srv.Register(vpc.New(d.Networking, d.Compute))
+		netH := vpc.New(d.Networking, d.Compute)
+		netH.SetOperationRegistry(computeOps)
+		srv.Register(netH)
 	}
 
 	// Service Networking has no driver: a private-services connection is a
@@ -185,7 +198,9 @@ func New(d Drivers) *server.Server {
 	// return operation envelopes the SDK polls via the compute handler's
 	// /global/operations route.
 	if d.LB != nil {
-		srv.Register(lbsrv.New(d.LB))
+		lbH := lbsrv.New(d.LB)
+		lbH.SetOperationRegistry(computeOps)
+		srv.Register(lbH)
 	}
 
 	// Compute-space catch-all. Registered AFTER the compute, networks and load-
