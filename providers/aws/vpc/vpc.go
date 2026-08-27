@@ -23,6 +23,11 @@ const (
 	// CIDR (network, VPC router, DNS, future use, broadcast). A /24 therefore
 	// advertises 256-5 = 251 usable addresses on a fresh subnet.
 	subnetReservedIPs = 5
+	// maxSubnetHostBits caps the host-bit width baseSubnetIPCount will shift, so
+	// an absurd mask cannot overflow the address-count computation. 30 is well
+	// above any real subnet (the widest EC2 allows is a /16, 16 host bits) yet
+	// keeps 1<<hostBits within int range on every platform.
+	maxSubnetHostBits = 30
 )
 
 // VPC IPv4 CIDR netmask bounds. EC2 requires a VPC block between a /16 and a
@@ -619,7 +624,16 @@ func baseSubnetIPCount(cidr string) int {
 		return 0
 	}
 
-	total := 1 << (net.IPv4len*8 - ones)
+	// hostBits is 0..32 for any IPv4 mask. Guard absurdly wide masks before the
+	// shift: 1<<31 already overflows a 32-bit int, so an unbounded shift amount is
+	// an integer-overflow hazard. Real VPC/subnet CIDRs are /16../28 (hostBits
+	// 4..16), far below the cap, so this changes nothing for valid inputs.
+	hostBits := net.IPv4len*8 - ones
+	if hostBits > maxSubnetHostBits {
+		return 0
+	}
+
+	total := 1 << uint(hostBits)
 	if total <= subnetReservedIPs {
 		return 0
 	}
@@ -1126,7 +1140,10 @@ func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []stri
 // keys (tags wins on overlap). The original existing map is not modified
 // so concurrent readers can keep iterating it safely.
 func mergeTagMap(existing, tags map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(tags))
+	// Size the hint from the existing map only; adding len(tags) risks an integer
+	// overflow in the allocation size. The map grows to absorb tags as needed, so
+	// the result is unchanged.
+	out := make(map[string]string, len(existing))
 
 	for k, v := range existing {
 		out[k] = v

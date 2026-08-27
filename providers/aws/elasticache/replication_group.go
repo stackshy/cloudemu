@@ -86,9 +86,26 @@ func (m *Mock) CreateReplicationGroup(
 	return &rg, nil
 }
 
+// maxReplicationGroupNodes bounds the member-cluster count a replication group
+// can synthesize. Real ElastiCache tops out well below this (a node group holds
+// a primary plus at most 5 replicas, and the default per-group node cap is far
+// smaller); the ceiling exists only so a pathological NumCacheNodes cannot drive
+// an unbounded allocation. Valid provisions stay far under it.
+const maxReplicationGroupNodes = 500
+
 // memberClusters synthesizes the cache cluster ids that make up a replication
 // group, matching the "<id>-001", "<id>-002", … naming real ElastiCache assigns.
 func memberClusters(id string, nodes int) []string {
+	if nodes < 0 {
+		nodes = 0
+	}
+
+	// Defensive clamp: the count originates from caller input (NumCacheNodes), so
+	// bound it before it sizes the allocation regardless of the call path.
+	if nodes > maxReplicationGroupNodes {
+		nodes = maxReplicationGroupNodes
+	}
+
 	members := make([]string, 0, nodes)
 	for i := 1; i <= nodes; i++ {
 		members = append(members, fmt.Sprintf("%s-%03d", id, i))

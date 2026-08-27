@@ -20,6 +20,11 @@ const defaultRedisPort = 6379
 // from Redis/Valkey (single configuration endpoint on port 11211).
 const memcachedEngine = "memcached"
 
+// maxCacheNodesPerCluster is the real ElastiCache ceiling on nodes in a single
+// cache cluster (Memcached allows up to 40; Redis is single-node). It bounds the
+// per-node allocation when rendering the cluster's XML.
+const maxCacheNodesPerCluster = 40
+
 type responseMetadata struct {
 	RequestID string `xml:"RequestId"`
 }
@@ -242,6 +247,13 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 	numNodes := info.NumCacheNodes
 	if numNodes < 1 {
 		numNodes = 1
+	}
+
+	// Defensive clamp to the real ElastiCache ceiling (Memcached tops out at 40
+	// nodes; Redis reports 1). The stored count is validated on create, but bound
+	// it here too so a tainted value can never size an unbounded node allocation.
+	if numNodes > maxCacheNodesPerCluster {
+		numNodes = maxCacheNodesPerCluster
 	}
 
 	out := cacheClusterXML{
