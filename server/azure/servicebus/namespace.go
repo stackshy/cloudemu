@@ -67,7 +67,14 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, sp sbP
 	resource := toNamespaceResource(ns)
 	h.mu.Unlock()
 
-	azurearm.WriteJSON(w, http.StatusOK, resource)
+	// ARM PUT of a new resource returns 201 Created; an in-place update of an
+	// existing one returns 200.
+	status := http.StatusCreated
+	if existed {
+		status = http.StatusOK
+	}
+
+	azurearm.WriteJSON(w, status, resource)
 }
 
 func (h *Handler) updateNamespace(w http.ResponseWriter, r *http.Request, sp sbPath) {

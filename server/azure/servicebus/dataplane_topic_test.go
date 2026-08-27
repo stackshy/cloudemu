@@ -182,7 +182,7 @@ func TestDataPlaneSubscriptionDeleteDrainsStore(t *testing.T) {
 func TestNamespaceCaseInsensitive(t *testing.T) {
 	srv, _ := newTestServer(t)
 
-	if r := doRequest(t, srv, http.MethodPut, nsURLNamed("Case-NS")+apiVer, `{"location":"eastus"}`); r.StatusCode != http.StatusOK {
+	if r := doRequest(t, srv, http.MethodPut, nsURLNamed("Case-NS")+apiVer, `{"location":"eastus"}`); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create namespace = %d", r.StatusCode)
 	}
 

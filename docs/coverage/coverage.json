@@ -2746,6 +2746,10 @@
       {
         "name": "StopContainerGroup",
         "doc": "StopContainerGroup stops all containers in the group and deallocates"
+      },
+      {
+        "name": "UpdateContainerGroupTags",
+        "doc": "UpdateContainerGroupTags merges tags into an existing group and returns it,"
       }
     ],
     "providers": {

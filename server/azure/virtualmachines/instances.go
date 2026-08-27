@@ -576,6 +576,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 
 		name := tagOr(instances[i].Tags, armNameTag, instances[i].ID)
 		scope := rp
+		// On a subscription-scoped list rp.ResourceGroup is empty; use the
+		// instance's own recorded group so the rendered id carries its true
+		// resourceGroups/{rg} segment (arm.ParseResourceID / Terraform state).
+		scope.ResourceGroup = instances[i].ResourceGroup
 		scope.ResourceName = name
 		out = append(out, h.buildVMResponse(r.Context(), &instances[i], scope, vmRequest{}, provisioningSucceeded))
 	}

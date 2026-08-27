@@ -468,6 +468,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		Location:       orDefault(cfg.Location, m.opts.Region),
 		CreatedAt:      m.opts.Clock.Now().UTC(),
 		Tags:           copyTags(cfg.Tags),
+		Scope:          cfg.Scope,
 	}
 
 	m.clusters.Set(cfg.ID, cluster)

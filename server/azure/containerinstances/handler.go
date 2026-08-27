@@ -98,13 +98,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.serveNamedGroup(w, r, &rp)
+}
+
+// serveNamedGroup dispatches the method verbs on a single named container group.
+func (h *Handler) serveNamedGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch r.Method {
 	case http.MethodPut:
-		h.createOrUpdateGroup(w, r, &rp)
+		h.createOrUpdateGroup(w, r, rp)
+	case http.MethodPatch:
+		h.updateGroup(w, r, rp)
 	case http.MethodGet:
-		h.getGroup(w, r, &rp)
+		h.getGroup(w, r, rp)
 	case http.MethodDelete:
-		h.deleteGroup(w, r, &rp)
+		h.deleteGroup(w, r, rp)
 	default:
 		writeMethodNotAllowed(w)
 	}

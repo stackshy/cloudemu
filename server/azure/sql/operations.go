@@ -7,6 +7,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // ---- Server (logical) ops ----
@@ -29,12 +30,17 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		}),
 		EngineVersion: reqVersion,
 		Tags:          body.Tags,
+		Scope:         scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
 	}
 
 	// Azure SQL synthesizes version "12.0" when a server create omits it.
 	if cfg.EngineVersion == "" {
 		cfg.EngineVersion = defaultServerVersion
 	}
+
+	// ARM PUT of a new resource returns 201 Created; an in-place update of an
+	// existing one returns 200.
+	status := http.StatusCreated
 
 	cluster, err := h.db.CreateCluster(r.Context(), cfg)
 	if err != nil {
@@ -55,9 +61,11 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 			azurearm.WriteCErr(w, err)
 			return
 		}
+
+		status = http.StatusOK
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMServer(cluster, rp.Subscription, rp.ResourceGroup))
+	azurearm.WriteJSON(w, status, toARMServer(cluster, rp.Subscription, rp.ResourceGroup))
 }
 
 func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -113,9 +121,24 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 		return
 	}
 
+	filter := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+
 	out := make([]armServer, 0, len(clusters))
+
 	for i := range clusters {
-		out = append(out, toARMServer(&clusters[i], rp.Subscription, rp.ResourceGroup))
+		if !clusters[i].Scope.Matches(filter) {
+			continue
+		}
+
+		// Render the id from the server's own group, not the request path's
+		// (empty on a subscription-scoped list) — so the id carries its true
+		// resourceGroups/{rg} segment.
+		rg := clusters[i].Scope.ResourceGroup
+		if rg == "" {
+			rg = rp.ResourceGroup
+		}
+
+		out = append(out, toARMServer(&clusters[i], rp.Subscription, rg))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armList[armServer]{Value: out})

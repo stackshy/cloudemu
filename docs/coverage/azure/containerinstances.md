@@ -3,7 +3,7 @@
 
 Azure's `containerinstances` service · portable interface `driver.ContainerInstances` · [Azure index](./README.md)
 
-## Operations (9)
+## Operations (10)
 
 | Operation | Description |
 | --- | --- |
@@ -16,6 +16,7 @@ Azure's `containerinstances` service · portable interface `driver.ContainerInst
 | `RestartContainerGroup` | RestartContainerGroup restarts all containers in the group. Returns NotFound |
 | `StartContainerGroup` | StartContainerGroup starts all containers in a stopped group, allocating |
 | `StopContainerGroup` | StopContainerGroup stops all containers in the group and deallocates |
+| `UpdateContainerGroupTags` | UpdateContainerGroupTags merges tags into an existing group and returns it, |
 
 ## Not in scope
 

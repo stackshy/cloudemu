@@ -37,6 +37,26 @@ func (h *Handler) createOrUpdateGroup(w http.ResponseWriter, r *http.Request, rp
 	azurearm.WriteJSON(w, status, toGroupJSON(rp, group))
 }
 
+// updateGroup handles PATCH — ContainerGroups.Update. Real Azure's Update is a
+// PATCH that merges the request tags into an existing group and returns it
+// (200). A missing group answers 404.
+func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body containerGroupJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	group, err := h.aci.UpdateContainerGroupTags(
+		r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, body.Tags)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toGroupJSON(rp, group))
+}
+
 // lifecycleGroup handles the POST start/stop/restart verbs. All three complete
 // inline and answer 204 No Content, terminating the SDK's begin-poller.
 func (h *Handler) lifecycleGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

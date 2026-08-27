@@ -397,6 +397,10 @@ type VolumeConfig struct {
 	SnapshotID string
 	// KmsKeyID is the KMS key protecting the volume's encryption key, when set.
 	KmsKeyID string
+	// Location is the Azure region the managed disk is created in (ARM disk
+	// top-level "location"), persisted so Get/List report where it lives.
+	// Empty for AWS/GCP, which locate volumes by AvailabilityZone.
+	Location string
 }
 
 // VolumeInfo describes a block storage volume.
@@ -422,6 +426,9 @@ type VolumeInfo struct {
 	SnapshotID string
 	// KmsKeyID is the KMS key protecting the volume's encryption key, when set.
 	KmsKeyID string
+	// Location is the Azure region the managed disk was created in (ARM disk
+	// top-level "location"). Empty for AWS/GCP.
+	Location string
 }
 
 // SnapshotConfig describes a snapshot to create.

@@ -126,6 +126,14 @@ type ContainerInstances interface {
 	// NotFound when the group does not exist.
 	DeleteContainerGroup(ctx context.Context, subscription, resourceGroup, name string) error
 
+	// UpdateContainerGroupTags merges tags into an existing group and returns it,
+	// leaving the running workload untouched. This backs ARM "Container Groups -
+	// Update", a PATCH that updates a group's tags. Returns NotFound when the
+	// group does not exist.
+	UpdateContainerGroupTags(
+		ctx context.Context, subscription, resourceGroup, name string, tags map[string]string,
+	) (*ContainerGroup, error)
+
 	// ListContainerGroups returns the groups visible under filter.
 	ListContainerGroups(ctx context.Context, filter scope.Scope) ([]ContainerGroup, error)
 

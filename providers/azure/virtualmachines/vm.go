@@ -1055,6 +1055,7 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		IOPS:             cfg.IOPS,
 		Throughput:       cfg.Throughput,
 		Tier:             cfg.Tier,
+		Location:         cfg.Location,
 	}
 	m.volumes.Set(id, vol)
 
@@ -1088,6 +1089,10 @@ func (m *Mock) UpdateVolume(_ context.Context, id string, cfg driver.VolumeConfi
 
 	if cfg.Tier != "" {
 		vol.Tier = cfg.Tier
+	}
+
+	if cfg.Location != "" {
+		vol.Location = cfg.Location
 	}
 
 	vol.IOPS = cfg.IOPS
