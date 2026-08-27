@@ -45,6 +45,12 @@ type Handler struct {
 	// networking driver wired), in which case IP allocation falls back to the
 	// compute provider's synthetic allocator.
 	net netdriver.Networking
+	// ops records the compute#operation names this handler mints so a poll of an
+	// operation that was never issued returns 404 instead of a fabricated DONE.
+	// Shared with the networks and load-balancing handlers (which mint compute
+	// operations this handler's /operations route serves). Nil in a package-level
+	// server, where every operation poll is answered DONE (legacy behavior).
+	ops *gcprest.OperationRegistry
 }
 
 // New returns a Compute handler backed by c. net (may be nil) lets insert
@@ -53,6 +59,11 @@ type Handler struct {
 func New(c computedriver.Compute, net netdriver.Networking) *Handler {
 	return &Handler{compute: c, net: net}
 }
+
+// SetOperationRegistry wires the shared compute-operation registry so this
+// handler records the operations it mints and 404s a poll for an operation name
+// that was never issued.
+func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
 // Matches returns true for /compute/v1/projects/... URLs targeting instances
 // or operations resources. Other resource types fall through so future
@@ -124,7 +135,7 @@ func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcp
 func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) bool {
 	switch rp.ResourceType {
 	case resourceOperations:
-		serveOperations(w, r, rp)
+		h.serveOperations(w, r, rp)
 	case resourceDisks:
 		h.serveDisksRoute(w, r, rp)
 	case resourceSnapshots:
@@ -296,11 +307,14 @@ func (h *Handler) dispatchInstanceVerb(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
-// serveOperations handles GET on operations/{name}. Since our mock executes
-// synchronously, every operation lookup returns DONE.
+// serveOperations handles GET on operations/{name}. Since the mock executes
+// synchronously, a known operation always reads back DONE. An operation name
+// that was never minted (a bogus poll, `gcloud compute operations describe
+// <bogus>`) is 404, matching real GCP, rather than a fabricated DONE — provided
+// a shared registry is wired (a nil registry keeps the legacy allow-all).
 //
 //nolint:gocritic // rp is a request-scoped value
-func serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+func (h *Handler) serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if r.Method != http.MethodGet {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
@@ -316,6 +330,13 @@ func serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.Resource
 			"items":    []any{},
 			"selfLink": gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "operations", ""),
 		})
+
+		return
+	}
+
+	if !h.ops.Has(rp.Scope, rp.ScopeName, rp.ResourceName) {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound",
+			"The resource 'operations/"+rp.ResourceName+"' was not found")
 
 		return
 	}

@@ -197,3 +197,93 @@ func skipIteratorDone(err error) error {
 
 	return err
 }
+
+// TestRouteNetworkSelfLink proves compute.routes.get normalizes the Route's
+// network reference to a fully-qualified self-link URL on read, rather than
+// echoing the caller's relative "global/networks/{name}" verbatim (a perpetual
+// Terraform google_compute_route.network diff pre-fix). The global next-hop
+// gateway reference is normalized the same way.
+func TestRouteNetworkSelfLink(t *testing.T) {
+	const (
+		routeNet  = "compat-route-net"
+		routeName = "compat-route"
+	)
+
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+	sess := compat.BootGCP(t, gcpserver.Drivers{Networking: cloudP.VPC, Compute: cloudP.GCE})
+
+	opts := []option.ClientOption{
+		option.WithEndpoint(sess.Endpoint()),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(sess.Transport()),
+	}
+
+	nets, err := gcpcompute.NewNetworksRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewNetworksRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = nets.Close() })
+
+	routes, err := gcpcompute.NewRoutesRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewRoutesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = routes.Close() })
+
+	strp := func(s string) *string { return &s }
+	boolp := func(b bool) *bool { return &b }
+	project := compat.GCPProject
+
+	netOp, err := nets.Insert(ctx, &computepb.InsertNetworkRequest{
+		Project: project,
+		NetworkResource: &computepb.Network{
+			Name:                  strp(routeNet),
+			AutoCreateSubnetworks: boolp(false),
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert network: %v", err)
+	}
+
+	if werr := netOp.Wait(ctx); werr != nil {
+		t.Fatalf("wait network: %v", werr)
+	}
+
+	// Insert a route referencing the network by a relative path — the shape
+	// Terraform sends.
+	rtOp, err := routes.Insert(ctx, &computepb.InsertRouteRequest{
+		Project: project,
+		RouteResource: &computepb.Route{
+			Name:           strp(routeName),
+			Network:        strp("global/networks/" + routeNet),
+			DestRange:      strp("10.20.0.0/16"),
+			NextHopGateway: strp("global/gateways/default-internet-gateway"),
+			Priority:       func() *uint32 { p := uint32(1000); return &p }(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("insert route: %v", err)
+	}
+
+	if werr := rtOp.Wait(ctx); werr != nil {
+		t.Fatalf("wait route: %v", werr)
+	}
+
+	got, err := routes.Get(ctx, &computepb.GetRouteRequest{Project: project, Route: routeName})
+	if err != nil {
+		t.Fatalf("get route: %v", err)
+	}
+
+	wantNet := sess.Endpoint() + "/compute/v1/projects/" + project + "/global/networks/" + routeNet
+	if got.GetNetwork() != wantNet {
+		t.Fatalf("route network = %q, want self-link %q", got.GetNetwork(), wantNet)
+	}
+
+	wantGw := sess.Endpoint() + "/compute/v1/projects/" + project + "/global/gateways/default-internet-gateway"
+	if got.GetNextHopGateway() != wantGw {
+		t.Fatalf("route nextHopGateway = %q, want self-link %q", got.GetNextHopGateway(), wantGw)
+	}
+}

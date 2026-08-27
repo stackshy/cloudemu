@@ -106,6 +106,10 @@ type Handler struct {
 	routers   *routerStore
 	addresses *addressStore
 	routes    *routeStore
+	// ops records the compute#operation names this handler mints so the compute
+	// handler's shared /operations route (which serves these polls) resolves a
+	// real operation and 404s a bogus one. Nil in a package-level server.
+	ops *gcprest.OperationRegistry
 }
 
 // New returns a networks handler. compute is optional (may be nil): when
@@ -119,6 +123,11 @@ func New(n netdriver.Networking, compute instanceLister) *Handler {
 		routes:    newRouteStore(),
 	}
 }
+
+// SetOperationRegistry wires the shared compute-operation registry so the
+// operations this handler mints are resolvable (and unknown names 404) through
+// the compute handler's /operations poll route.
+func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
 // Matches returns true for /compute/v1/.../networks|subnetworks|firewalls URLs.
 func (*Handler) Matches(r *http.Request) bool {
@@ -310,7 +319,7 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		"networks", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -428,7 +437,7 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		"networks", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -473,7 +482,7 @@ func (h *Handler) patchNetwork(w http.ResponseWriter, r *http.Request, rp gcpres
 		}
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		"networks", rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -528,7 +537,7 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		"subnetworks", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -656,7 +665,7 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		"subnetworks", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -705,7 +714,7 @@ func (h *Handler) patchSubnetwork(w http.ResponseWriter, r *http.Request, rp gcp
 		}
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		"subnetworks", rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -785,7 +794,7 @@ func (h *Handler) expandSubnetIPCIDR(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		"subnetworks", rp.ResourceName, expandAction)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -950,7 +959,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		"firewalls", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -1020,7 +1029,7 @@ func (h *Handler) deleteFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		"firewalls", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -1059,7 +1068,7 @@ func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
 		"firewalls", rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

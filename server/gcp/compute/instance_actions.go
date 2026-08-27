@@ -187,7 +187,7 @@ func (h *Handler) applyMutation(
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", rp.ResourceName, opType)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

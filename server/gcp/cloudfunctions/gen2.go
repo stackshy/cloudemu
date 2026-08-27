@@ -91,6 +91,11 @@ type gen2UploadURLResponse struct {
 	StorageSource *gen2StorageSource `json:"storageSource,omitempty"`
 }
 
+// gen2DownloadURLResponse is the body of v2 functions:generateDownloadUrl.
+type gen2DownloadURLResponse struct {
+	DownloadURL string `json:"downloadUrl"`
+}
+
 // v2Path holds the parsed components of a /v2/projects/... Cloud Functions URL.
 // For an operation poll, name carries the operation id.
 type v2Path struct {
@@ -210,6 +215,8 @@ func (h *Handler) serveV2Action(w http.ResponseWriter, r *http.Request, p v2Path
 	switch p.action {
 	case actionGenerateUploadURL:
 		h.generateUploadURLV2(w, r, p)
+	case actionGenerateDownloadURL:
+		h.generateDownloadURLV2(w, r, p)
 	case actionGetIamPolicy, actionSetIamPolicy:
 		h.serveV2IamPolicy(w, r, p)
 	case actionTestIamPermissions:
@@ -438,6 +445,32 @@ func (h *Handler) generateUploadURLV2(w http.ResponseWriter, r *http.Request, p 
 			Object: token + ".zip",
 		},
 	})
+}
+
+// generateDownloadURLV2 serves v2 functions:generateDownloadUrl on a named
+// function: it returns a URL from which the function's deployed source can be
+// downloaded. The function must exist (404 otherwise). gen2 source is only
+// staged (not executed) in the emulator, so the URL is synthetic — enough for
+// the SDK/gcloud call to succeed and read back a downloadUrl.
+func (h *Handler) generateDownloadURLV2(w http.ResponseWriter, r *http.Request, p v2Path) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+
+	h.mu.RLock()
+	_, ok := h.gen2[p.fullName()]
+	h.mu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
+		return
+	}
+
+	downloadURL := requestScheme(r) + "://" + r.Host + pathPrefix + p.project + "/" + locationsSeg + "/" + p.location +
+		"/" + functionsSeg + "/" + p.name + "/source.zip"
+
+	writeJSON(w, http.StatusOK, gen2DownloadURLResponse{DownloadURL: downloadURL})
 }
 
 // mergeGen2 applies a patch body onto the stored function under the update mask.

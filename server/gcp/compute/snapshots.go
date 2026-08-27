@@ -85,7 +85,7 @@ func (h *Handler) insertSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"snapshots", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -140,7 +140,7 @@ func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"snapshots", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

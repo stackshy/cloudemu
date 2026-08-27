@@ -88,7 +88,7 @@ func (h *Handler) insertDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"disks", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -166,7 +166,7 @@ func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"disks", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -218,7 +218,7 @@ func (h *Handler) resizeDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"disks", rp.ResourceName, "resize")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

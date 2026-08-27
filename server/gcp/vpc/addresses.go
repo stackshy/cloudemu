@@ -202,7 +202,7 @@ func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 	h.addresses.put(rp.Project, scopeOf(rp), named.Name,
 		h.enrichAddress(raw, rp, hostOf(r), named.Name))
 
-	gcprest.WriteJSON(w, http.StatusOK, gcprest.NewDoneOperation(hostOf(r), rp.Project,
+	gcprest.WriteJSON(w, http.StatusOK, h.ops.RecordDone(hostOf(r), rp.Project,
 		rp.Scope, rp.ScopeName, resourceAddresses, named.Name, "insert"))
 }
 
@@ -377,7 +377,7 @@ func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, gcprest.NewDoneOperation(host, rp.Project,
+	gcprest.WriteJSON(w, http.StatusOK, h.ops.RecordDone(host, rp.Project,
 		rp.Scope, rp.ScopeName, resourceAddresses, rp.ResourceName, "delete"))
 }
 

@@ -177,7 +177,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, base, acti
 	case "rollback":
 		h.rollback(w, r)
 	case "listCollectionIds":
-		h.listCollectionIDs(w, r)
+		h.listCollectionIDs(w, r, base)
 	default:
 		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "action not implemented: "+action)
 	}

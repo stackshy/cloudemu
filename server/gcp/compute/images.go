@@ -91,7 +91,7 @@ func (h *Handler) insertImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"images", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -146,7 +146,7 @@ func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"images", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

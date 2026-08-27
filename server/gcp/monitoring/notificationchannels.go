@@ -1,6 +1,7 @@
 package monitoring
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -27,11 +28,62 @@ func (h *Handler) serveNotificationChannels(w http.ResponseWriter, r *http.Reque
 	switch r.Method {
 	case http.MethodGet:
 		h.getChannel(w, r, project, id)
+	case http.MethodPatch:
+		h.patchChannel(w, r, project, id)
 	case http.MethodDelete:
 		h.deleteChannel(w, r, id)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 	}
+}
+
+// channelUpdater is the optional monitoring-driver extension that persists a
+// notification-channel patch. Only the GCP mock implements it; a driver without
+// it gets a 501 on PATCH rather than a shared-interface method it can't satisfy.
+type channelUpdater interface {
+	UpdateNotificationChannel(
+		ctx context.Context, id string, apply func(*mondriver.NotificationChannelInfo),
+	) (*mondriver.NotificationChannelInfo, error)
+}
+
+// patchChannel serves notificationChannels.patch: it merges the request body's
+// present fields (displayName, type, labels) onto the stored channel, keeping
+// its stable name, and returns the updated channel.
+func (h *Handler) patchChannel(w http.ResponseWriter, r *http.Request, project, id string) {
+	updater, ok := h.mon.(channelUpdater)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "notification channel patch unsupported")
+		return
+	}
+
+	var body notificationChannel
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+
+	info, err := updater.UpdateNotificationChannel(r.Context(), id, func(ch *mondriver.NotificationChannelInfo) {
+		if body.DisplayName != "" {
+			ch.Name = body.DisplayName
+		}
+
+		if body.Type != "" {
+			ch.Type = body.Type
+		}
+
+		if body.Labels != nil {
+			ch.Tags = body.Labels
+			ch.Endpoint = channelEndpoint(body.Labels)
+		}
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toChannelJSON(project, info))
 }
 
 func (h *Handler) createChannel(w http.ResponseWriter, r *http.Request, project string) {

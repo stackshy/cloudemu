@@ -18,10 +18,74 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
+
+// OperationRegistry records the compute#operation names the compute-family
+// handlers (compute, networks/vpc, load balancing) mint, so a subsequent
+// zone/region/global Operations.get resolves a real operation and 404s a name
+// that was never issued — matching real GCP, instead of fabricating DONE for any
+// name. A nil *OperationRegistry records nothing and reports every name as
+// present, preserving the legacy allow-all behavior for a handler constructed
+// without a shared registry (e.g. a package-level test).
+type OperationRegistry struct {
+	mu   sync.RWMutex
+	seen map[string]struct{}
+}
+
+// NewOperationRegistry returns an empty operation registry.
+func NewOperationRegistry() *OperationRegistry {
+	return &OperationRegistry{seen: map[string]struct{}{}}
+}
+
+// opKey scopes an operation name by the URL scope it is polled under, so a
+// zonal, regional, and global operation of the same name stay distinct.
+func opKey(scope, scopeName, name string) string {
+	return scope + "\x00" + scopeName + "\x00" + name
+}
+
+// Record notes that operation name exists at scope/scopeName. Nil-safe: a nil
+// registry is a no-op.
+func (reg *OperationRegistry) Record(scope, scopeName, name string) {
+	if reg == nil {
+		return
+	}
+
+	reg.mu.Lock()
+	reg.seen[opKey(scope, scopeName, name)] = struct{}{}
+	reg.mu.Unlock()
+}
+
+// Has reports whether operation name was recorded at scope/scopeName. A nil
+// registry reports true (not enforcing), so a handler without a shared registry
+// keeps answering every operation poll as it did before.
+func (reg *OperationRegistry) Has(scope, scopeName, name string) bool {
+	if reg == nil {
+		return true
+	}
+
+	reg.mu.RLock()
+	_, ok := reg.seen[opKey(scope, scopeName, name)]
+	reg.mu.RUnlock()
+
+	return ok
+}
+
+// RecordDone builds a DONE operation for a mutation (via NewDoneOperation) and
+// records its name so a later poll resolves it. It replaces a bare
+// NewDoneOperation call at a handler's mint sites; a nil registry still returns
+// the operation but records nothing.
+func (reg *OperationRegistry) RecordDone(
+	host, project, scope, scopeName, resourceType, name, opType string,
+) Operation {
+	op := NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType)
+	reg.Record(scope, scopeName, op.Name)
+
+	return op
+}
 
 // ContentType is the JSON content type used by all REST responses.
 const ContentType = "application/json"

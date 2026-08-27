@@ -78,7 +78,7 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -200,7 +200,7 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -245,7 +245,7 @@ func (h *Handler) action(
 		return
 	}
 
-	doneOp := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+	doneOp := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", rp.ResourceName, opType)
 
 	gcprest.WriteJSON(w, http.StatusOK, doneOp)

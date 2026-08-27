@@ -61,7 +61,7 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceBackendServices, req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -110,7 +110,7 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceBackendServices, rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -125,6 +125,36 @@ func (h *Handler) getBackendService(w http.ResponseWriter, r *http.Request, rp g
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, toBackendServiceResponse(tg, rp, hostOf(r)))
+}
+
+// getBackendServiceHealth serves compute.backendServices.getHealth: POST
+// .../backendServices/{bs}/getHealth with a ResourceGroupReference body. The
+// backend service must exist (404 otherwise). The emulator does not model
+// instance-group membership or health probes, so it reports the referenced
+// group as HEALTHY when a group was named and an empty health set otherwise —
+// a valid BackendServiceGroupHealth shape the SDK/Terraform can read back.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) getBackendServiceHealth(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if _, err := h.findTGByName(r.Context(), rp, rp.ResourceName); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var req resourceGroupReference
+	if r.ContentLength != 0 && !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	resp := backendServiceGroupHealth{Kind: "compute#backendServiceGroupHealth"}
+	if req.Group != "" {
+		resp.HealthStatus = []healthStatus{{
+			HealthState: "HEALTHY",
+			Instance:    req.Group,
+		}}
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, resp)
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -197,7 +227,7 @@ func (h *Handler) deleteBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceBackendServices, rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -263,7 +293,7 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		}
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceForwardingRules, req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
@@ -337,7 +367,7 @@ func (h *Handler) deleteForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceForwardingRules, rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)

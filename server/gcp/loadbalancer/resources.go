@@ -113,7 +113,7 @@ func (h *Handler) mutateGCPResource(w http.ResponseWriter, r *http.Request, rp g
 		verb = "patch"
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, rp.ResourceName, verb)
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, rp.ResourceName, verb)
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
@@ -165,7 +165,7 @@ func (h *Handler) insertGCPResource(w http.ResponseWriter, r *http.Request, rp g
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, name, "insert")
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, name, "insert")
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
@@ -268,7 +268,7 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 		return
 	}
 
-	op := gcprest.NewDoneOperation(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, rp.ResourceName, "delete")
+	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, rp.ResourceName, "delete")
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
