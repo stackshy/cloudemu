@@ -13,15 +13,20 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [CloudLogging](./cloudlogging.md) | `logging` | 17 |
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |
 | [CloudRun](./cloudrun.md) | `cloudrun` | 16 |
+| [CloudSQL](./cloudsql.md) | — (provider-native) | 21 |
+| [Cloudasset](./cloudasset.md) | — (provider-native) | 0 |
 | [Eventarc](./eventarc.md) | `eventbus` | 16 |
 | [FCM](./fcm.md) | `notification` | 9 |
 | [Firestore](./firestore.md) | `database` | 24 |
 | [GCE](./gce.md) | `compute` | 37 |
 | [GCS](./gcs.md) | `storage` | 35 |
+| [GKE](./gke.md) | — (provider-native) | 18 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
+| [LRO](./lro.md) | — (provider-native) | 0 |
 | [Memorystore](./memorystore.md) | `cache` | 17 |
 | [PubSub](./pubsub.md) | `messagequeue` | 14 |
 | [SecretManager](./secretmanager.md) | `secrets` | 7 |
+| [Servicenetworking](./servicenetworking.md) | — (provider-native) | 0 |
 | [VPC](./vpc.md) | `networking` | 57 |
 | [VertexAI](./vertexai.md) | `vertexai` | 125 |

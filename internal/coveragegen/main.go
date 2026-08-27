@@ -71,6 +71,10 @@ func run() error {
 		return err
 	}
 
+	if err := synthesizeNativeServices(root, services); err != nil {
+		return err
+	}
+
 	ordered := sortedServices(services)
 	if err := render(root, ordered); err != nil {
 		return err

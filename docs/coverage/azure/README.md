@@ -7,16 +7,20 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | --- | --- | --- |
 | [ACR](./acr.md) | `containerregistry` | 15 |
 | [AI](./ai.md) | `azureai` | 92 |
+| [AKS](./aks.md) | — (provider-native) | 16 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |
 | [ContainerInstances](./containerinstances.md) | `containerinstances` | 9 |
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
 | [CosmosPostgreSQL](./cosmospostgresql.md) | `cosmospostgresql` | 34 |
+| [Cosmosaccount](./cosmosaccount.md) | — (provider-native) | 0 |
 | [DNS](./dns.md) | `dns` | 16 |
 | [Databricks](./databricks.md) | `databricks` | 46 |
+| [Disks](./disks.md) | — (provider-native) | 0 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Functions](./functions.md) | `serverless` | 27 |
 | [IAM](./iam.md) | `iam` | 40 |
+| [Images](./images.md) | — (provider-native) | 0 |
 | [KeyVault](./keyvault.md) | `secrets` | 7 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
 | [LogAnalytics](./loganalytics.md) | `logging` | 17 |
@@ -24,8 +28,18 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Monitor](./monitor.md) | `monitoring` | 12 |
 | [MySQLFlex](./mysqlflex.md) | `relationaldb` | 21 |
 | [NotificationHubs](./notificationhubs.md) | `notification` | 9 |
+| [PostgresFlex](./postgresflex.md) | — (provider-native) | 21 |
+| [Queue](./queue.md) | — (provider-native) | 0 |
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |
+| [Resourcegraph](./resourcegraph.md) | — (provider-native) | 0 |
+| [Resourcegroups](./resourcegroups.md) | — (provider-native) | 0 |
+| [SQL](./sql.md) | — (provider-native) | 21 |
 | [Search](./search.md) | `azuresearch` | 53 |
+| [Snapshots](./snapshots.md) | — (provider-native) | 0 |
+| [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 0 |
+| [Storageaccount](./storageaccount.md) | — (provider-native) | 0 |
+| [Subscriptions](./subscriptions.md) | — (provider-native) | 0 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 9 |
+| [Tenants](./tenants.md) | — (provider-native) | 0 |
 | [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |

@@ -60,6 +60,63 @@
     }
   },
   {
+    "service": "aks",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAgentPool"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "CreateOrUpdateMaintenanceConfig"
+      },
+      {
+        "name": "DeleteAgentPool"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteMaintenanceConfig"
+      },
+      {
+        "name": "GetAgentPool"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetMaintenanceConfig"
+      },
+      {
+        "name": "Kubeconfig"
+      },
+      {
+        "name": "ListAgentPools"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListMaintenanceConfigs"
+      },
+      {
+        "name": "RotateClusterCertificates"
+      },
+      {
+        "name": "UpdateClusterTags"
+      }
+    ],
+    "providers": {
+      "azure": "AKS"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [
@@ -1601,6 +1658,14 @@
     }
   },
   {
+    "service": "cloudasset",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "gcp": "Cloudasset"
+    }
+  },
+  {
     "service": "cloudrun",
     "interface": "CloudRun",
     "operations": [
@@ -1671,6 +1736,82 @@
     ],
     "providers": {
       "gcp": "CloudRun"
+    }
+  },
+  {
+    "service": "cloudsql",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudSQL"
     }
   },
   {
@@ -2746,6 +2887,14 @@
     }
   },
   {
+    "service": "cosmosaccount",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Cosmosaccount"
+    }
+  },
+  {
     "service": "cosmospostgresql",
     "interface": "CosmosPostgreSQL",
     "operations": [
@@ -3261,6 +3410,14 @@
     }
   },
   {
+    "service": "disks",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Disks"
+    }
+  },
+  {
     "service": "dns",
     "interface": "DNS",
     "operations": [
@@ -3606,6 +3763,102 @@
     }
   },
   {
+    "service": "eks",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateAddon"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateFargateProfile"
+      },
+      {
+        "name": "CreateNodegroup"
+      },
+      {
+        "name": "DeleteAddon"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteFargateProfile"
+      },
+      {
+        "name": "DeleteNodegroup"
+      },
+      {
+        "name": "DescribeAddon"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeFargateProfile"
+      },
+      {
+        "name": "DescribeNodegroup"
+      },
+      {
+        "name": "DescribeUpdate"
+      },
+      {
+        "name": "EKSException"
+      },
+      {
+        "name": "Error"
+      },
+      {
+        "name": "ListAddons"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListFargateProfiles"
+      },
+      {
+        "name": "ListNodegroups"
+      },
+      {
+        "name": "ListResourceTags"
+      },
+      {
+        "name": "ListUpdates"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "Unwrap"
+      },
+      {
+        "name": "UpdateAddon"
+      },
+      {
+        "name": "UpdateClusterConfig"
+      },
+      {
+        "name": "UpdateClusterVersion"
+      },
+      {
+        "name": "UpdateNodegroupConfig"
+      },
+      {
+        "name": "UpdateNodegroupVersion"
+      }
+    ],
+    "providers": {
+      "aws": "EKS"
+    }
+  },
+  {
     "service": "eventbus",
     "interface": "EventBus",
     "operations": [
@@ -3668,6 +3921,69 @@
       "aws": "EventBridge",
       "azure": "EventGrid",
       "gcp": "Eventarc"
+    }
+  },
+  {
+    "service": "gke",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CancelOperation"
+      },
+      {
+        "name": "CompleteIPRotation"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateNodePool"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteNodePool"
+      },
+      {
+        "name": "Endpoint"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetNodePool"
+      },
+      {
+        "name": "GetOperation"
+      },
+      {
+        "name": "HasOperation"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListNodePools"
+      },
+      {
+        "name": "ListOperations"
+      },
+      {
+        "name": "RollbackNodePool"
+      },
+      {
+        "name": "StartIPRotation"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateNodePool"
+      }
+    ],
+    "providers": {
+      "gcp": "GKE"
     }
   },
   {
@@ -5002,6 +5318,14 @@
     }
   },
   {
+    "service": "images",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Images"
+    }
+  },
+  {
     "service": "kafka",
     "interface": "Kafka",
     "operations": [
@@ -5977,6 +6301,14 @@
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
       "gcp": "CloudLogging"
+    }
+  },
+  {
+    "service": "lro",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "gcp": "LRO"
     }
   },
   {
@@ -7850,6 +8182,166 @@
     }
   },
   {
+    "service": "postgresflex",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "azure": "PostgresFlex"
+    }
+  },
+  {
+    "service": "queue",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Queue"
+    }
+  },
+  {
+    "service": "rds",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "aws": "RDS"
+    }
+  },
+  {
     "service": "relationaldb",
     "interface": "RelationalDB",
     "operations": [
@@ -8479,6 +8971,38 @@
       "aws": "Redshift",
       "azure": "MySQLFlex",
       "gcp": "AlloyDB"
+    }
+  },
+  {
+    "service": "resourceexplorer2",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "aws": "Resourceexplorer2"
+    }
+  },
+  {
+    "service": "resourcegraph",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Resourcegraph"
+    }
+  },
+  {
+    "service": "resourcegroups",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Resourcegroups"
+    }
+  },
+  {
+    "service": "resourcegroupstaggingapi",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "aws": "Resourcegroupstaggingapi"
     }
   },
   {
@@ -10040,6 +10564,14 @@
     }
   },
   {
+    "service": "servicenetworking",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "gcp": "Servicenetworking"
+    }
+  },
+  {
     "service": "sesv2",
     "interface": "SESV2",
     "operations": [
@@ -10534,6 +11066,98 @@
     ],
     "providers": {
       "aws": "SFN"
+    }
+  },
+  {
+    "service": "snapshots",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Snapshots"
+    }
+  },
+  {
+    "service": "sql",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "providers": {
+      "azure": "SQL"
+    }
+  },
+  {
+    "service": "sshpublickeys",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Sshpublickeys"
     }
   },
   {
@@ -11072,6 +11696,30 @@
     }
   },
   {
+    "service": "storageaccount",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Storageaccount"
+    }
+  },
+  {
+    "service": "sts",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "aws": "STS"
+    }
+  },
+  {
+    "service": "subscriptions",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Subscriptions"
+    }
+  },
+  {
     "service": "tablestorage",
     "interface": "TableStorage",
     "operations": [
@@ -11106,6 +11754,14 @@
     ],
     "providers": {
       "azure": "TableStorage"
+    }
+  },
+  {
+    "service": "tenants",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "azure": "Tenants"
     }
   },
   {
@@ -12144,6 +12800,14 @@
     ],
     "providers": {
       "aws": "WAFv2"
+    }
+  },
+  {
+    "service": "workrequest",
+    "interface": "provider-native",
+    "operations": [],
+    "providers": {
+      "oci": "Workrequest"
     }
   }
 ]
