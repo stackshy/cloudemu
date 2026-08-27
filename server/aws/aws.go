@@ -232,6 +232,10 @@ type Drivers struct {
 	// default, which accepts any credentials exactly as before. Requires IAM to
 	// implement the optional access-key resolver; without it every signed request
 	// fails to resolve its key (InvalidClientTokenId).
+	//
+	// Long-term (AKIA) keys are verified; STS temporary (ASIA) credentials are
+	// accepted without signature verification (a follow-up). Authentication only:
+	// IAM policy is not yet enforced on the wire.
 	EnforceAuth bool
 }
 

@@ -115,7 +115,8 @@ func runServe(args []string) error {
 	fs.BoolVar(&c.persistMetaOnly, "persist-metadata-only", false, "persist resource structure but omit object bodies (smaller snapshot)")
 	fs.StringVar(&c.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
 	fs.BoolVar(&c.enforceAuth, "enforce-auth", false,
-		"verify the AWS SigV4 signature on each request against a registered IAM access key (403 on failure); off by default")
+		"verify the AWS SigV4 signature on each request against a registered IAM access key (403 on failure); off by default. "+
+			"Long-term (AKIA) keys are verified; STS temporary (ASIA) credentials are accepted unverified for now (a follow-up)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()

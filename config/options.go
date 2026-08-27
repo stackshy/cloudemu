@@ -194,6 +194,11 @@ func WithAsyncSettle() Option {
 // verifies each request's signature against a registered IAM access key and
 // rejects bad/missing signatures with 403. Off by default, which accepts any
 // credentials (the historical behavior).
+//
+// Scope of this revision: long-term (AKIA) access-key signatures are verified;
+// STS temporary (ASIA) credentials are accepted without signature verification
+// (a follow-up), and request timestamps are not checked for expiry. It is
+// authentication only — IAM policy is not yet enforced on the wire.
 func WithEnforceAuth() Option {
 	return func(o *Options) {
 		o.EnforceAuth = true

@@ -17,9 +17,13 @@ import (
 // tempCredentialPrefix marks STS-issued temporary access keys. Their secret is
 // synthetic (derived by STS, not stored as an IAM access key), so their SigV4
 // signature cannot be verified here; such requests are treated as authenticated
-// pass-throughs in this revision. Verifying temporary-credential signatures is
-// a follow-up. This is not an auth bypass: a completely unsigned request is
-// still rejected, and only STS's own ASIA-prefixed keys qualify.
+// pass-throughs in this revision, and verifying temporary-credential signatures
+// is a follow-up. Note the limitation this leaves: unsigned or malformed
+// requests are still rejected, but ANY credential whose scope carries an
+// ASIA-prefixed key id is trusted without a signature check — so this is not yet
+// a hard boundary against a forged ASIA credential. That is acceptable for a
+// local dev emulator (rejecting all ASIA would break legitimate STS/IRSA/
+// instance-profile flows) and is closed when temp-credential verification lands.
 const tempCredentialPrefix = "ASIA"
 
 // newAuthGate builds the SigV4 authentication pre-dispatch hook. It buffers and
