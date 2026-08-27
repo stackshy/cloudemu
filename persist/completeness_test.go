@@ -33,14 +33,13 @@ var guardExclude = map[string]struct{}{}
 // Discover) so a NEW stateful service that forgets to add persistence fails
 // here, naming the field, until it is implemented or justified in guardExclude.
 //
-// OCI is intentionally covered-by-criterion-but-empty: the OCI Provider exposes
-// its services as DRIVER INTERFACES (netdriver.Networking, iamdriver.IAM, ...),
-// not concrete *Mock structs, so holdsStore — which walks static struct/pointer
-// types — never reaches the memstore.Store the concrete OCI mocks hold behind
-// those interfaces. OCI persistence is therefore out of scope by this guard's
-// criterion (the concrete OCI mocks do use memstore.Store; persisting them is a
-// separate follow-up). The AWS/Azure/GCP providers expose concrete *Mock fields,
-// so they are fully covered.
+// OCI is covered too, even though its Provider exposes services as DRIVER
+// INTERFACES (netdriver.Networking, iamdriver.IAM, ...) rather than concrete
+// *Mock structs: for a non-nil interface-typed field the guard resolves the
+// runtime concrete type behind it (e.g. *identity.Mock) and runs the same
+// holdsStore + Snapshottable check on that concrete type. So a stateful mock
+// hidden behind an interface is caught, not blind-spotted. The AWS/Azure/GCP
+// providers expose concrete *Mock fields, which take the static-type path.
 func TestSnapshotCompleteness(t *testing.T) {
 	snapType := reflect.TypeOf((*snapshot.Snapshottable)(nil)).Elem()
 
@@ -75,11 +74,25 @@ func TestSnapshotCompleteness(t *testing.T) {
 					continue
 				}
 
-				if !holdsStore(f.Type, 0) {
+				// Resolve an interface-typed field (every OCI service field) to
+				// the concrete type of the value it holds, so a stateful mock
+				// behind the interface is inspected like a concrete *Mock field.
+				// A nil interface holds no state and is skipped.
+				ft := f.Type
+				if ft.Kind() == reflect.Interface {
+					fv := v.Field(i)
+					if fv.IsNil() {
+						continue
+					}
+
+					ft = fv.Elem().Type()
+				}
+
+				if !holdsStore(ft, 0) {
 					continue
 				}
 
-				if f.Type.Implements(snapType) {
+				if ft.Implements(snapType) {
 					continue
 				}
 
@@ -91,7 +104,7 @@ func TestSnapshotCompleteness(t *testing.T) {
 				missing++
 
 				t.Errorf("%s: field %s (%s) holds a memstore.Store but is not Snapshottable — "+
-					"add persistence (see #582) or justify in guardExclude", prov.name, f.Name, f.Type)
+					"add persistence (see #582) or justify in guardExclude", prov.name, f.Name, ft)
 			}
 		})
 	}
@@ -102,10 +115,11 @@ func TestSnapshotCompleteness(t *testing.T) {
 }
 
 // holdsStore reports whether a *memstore.Store is reachable from type t within
-// maxStoreScanDepth nested struct/pointer hops. It walks STATIC types, so a field
-// typed as an interface (as every OCI service field is) is opaque and returns
-// false — the concrete mock behind it is never inspected. This is the same
-// criterion used to compute the set of services persistence must cover.
+// maxStoreScanDepth nested struct/pointer hops. It walks STATIC types, so an
+// interface type is opaque to it; the caller resolves an interface-typed
+// provider field to its runtime concrete type before calling this, so the mock
+// behind it is inspected. This is the same criterion used to compute the set of
+// services persistence must cover.
 func holdsStore(t reflect.Type, depth int) bool {
 	if depth > maxStoreScanDepth || t == nil {
 		return false
