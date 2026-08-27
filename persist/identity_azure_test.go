@@ -7,7 +7,6 @@ import (
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/persist"
-	"github.com/stackshy/cloudemu/v2/seed"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -60,9 +59,7 @@ func TestIdentityPreservedAcrossRestoreAzure(t *testing.T) {
 
 	wantInstanceID := launched[0].ID
 
-	tSrc := seed.Target{Storage: src.BlobStorage, Database: src.CosmosDB, Secrets: src.KeyVault, Compute: src.VirtualMachines}
-
-	snap, err := persist.ExportAll(ctx, map[string]seed.Target{"azure": tSrc}, persist.Options{IncludeAssets: true})
+	snap, err := persist.ExportAll(ctx, map[string]persist.Services{"azure": src.SnapshotServices()}, persist.Options{IncludeAssets: true})
 	if err != nil {
 		t.Fatalf("ExportAll: %v", err)
 	}
@@ -79,8 +76,7 @@ func TestIdentityPreservedAcrossRestoreAzure(t *testing.T) {
 
 	// Restore into a completely fresh provider.
 	dst := cloudemu.NewAzure()
-	tDst := seed.Target{Storage: dst.BlobStorage, Database: dst.CosmosDB, Secrets: dst.KeyVault, Compute: dst.VirtualMachines}
-	if err := persist.RestoreAll(ctx, &got, map[string]seed.Target{"azure": tDst}); err != nil {
+	if err := persist.RestoreAll(ctx, &got, map[string]persist.Services{"azure": dst.SnapshotServices()}); err != nil {
 		t.Fatalf("RestoreAll: %v", err)
 	}
 

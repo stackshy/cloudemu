@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -269,6 +270,15 @@ func (p *Provider) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// SnapshotServices returns the provider's services that support identity-
+// preserving snapshotting, keyed by a stable lowercased field-name service key
+// (e.g. "blobstorage", "cosmosdb", "virtualmachines"). persist iterates this
+// map, so the persisted surface automatically tracks whichever services
+// implement snapshot.Snapshottable — no hand-kept registry to drift.
+func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
+	return snapshot.Discover(p)
 }
 
 // sqlDiscovery adapts the Azure relational mocks (SQL logical servers plus

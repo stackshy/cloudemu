@@ -9,6 +9,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -363,4 +364,13 @@ func (p *Provider) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// SnapshotServices returns the provider's services that support identity-
+// preserving snapshotting, keyed by a stable lowercased field-name service key
+// (e.g. "s3", "dynamodb", "ec2"). persist iterates this map, so the persisted
+// surface automatically tracks whichever services implement
+// snapshot.Snapshottable — no hand-kept registry to drift.
+func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
+	return snapshot.Discover(p)
 }
