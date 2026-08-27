@@ -16,7 +16,7 @@ import (
 func newFullHandler() *Handler {
 	opts := config.NewOptions()
 
-	return New(awsec2.New(opts), awsvpc.New(opts))
+	return New(awsec2.New(opts), awsvpc.New(opts), opts.AccountID)
 }
 
 func TestRouteVPCDispatchesAllActions(t *testing.T) {
@@ -354,15 +354,16 @@ func TestResolveRouteTarget(t *testing.T) {
 }
 
 func TestToVpcXMLStateDefaults(t *testing.T) {
+	h := newFullHandler()
 	in := &netdriver.VPCInfo{ID: "vpc-x", CIDRBlock: "10.0.0.0/16"} // no State
 
-	got := toVpcXML(in)
+	got := h.toVpcXML(in)
 	if got.State != "available" {
 		t.Errorf("default state should be 'available', got %q", got.State)
 	}
 
 	in.State = "pending"
-	got = toVpcXML(in)
+	got = h.toVpcXML(in)
 
 	if got.State != "pending" {
 		t.Errorf("explicit state preserved: %q", got.State)
@@ -372,9 +373,10 @@ func TestToVpcXMLStateDefaults(t *testing.T) {
 func TestToSubnetXMLStateDefaults(t *testing.T) {
 	const usableIPs = 251
 
+	h := newFullHandler()
 	in := &netdriver.SubnetInfo{ID: "subnet-x", VPCID: "vpc-x", AvailableIPAddressCount: usableIPs}
 
-	got := toSubnetXML(in, "us-east-1")
+	got := h.toSubnetXML(in, "us-east-1")
 	if got.State != "available" {
 		t.Errorf("default state: %q", got.State)
 	}
@@ -387,13 +389,15 @@ func TestToSubnetXMLStateDefaults(t *testing.T) {
 }
 
 func TestToInternetGatewayXMLAttachment(t *testing.T) {
+	h := newFullHandler()
+
 	detached := &netdriver.InternetGateway{ID: "igw-1"}
-	if got := toInternetGatewayXML(detached); len(got.Attachments) != 0 {
+	if got := h.toInternetGatewayXML(detached); len(got.Attachments) != 0 {
 		t.Errorf("detached IGW should have 0 attachments, got %d", len(got.Attachments))
 	}
 
 	attached := &netdriver.InternetGateway{ID: "igw-2", VpcID: "vpc-1"}
-	got := toInternetGatewayXML(attached)
+	got := h.toInternetGatewayXML(attached)
 
 	if len(got.Attachments) != 1 {
 		t.Fatalf("attached IGW should have 1 attachment, got %d", len(got.Attachments))
@@ -416,7 +420,7 @@ func TestToRouteTableXMLTargetMapping(t *testing.T) {
 		},
 	}
 
-	got := toRouteTableXML(rt)
+	got := newFullHandler().toRouteTableXML(rt)
 	if len(got.Routes) != 3 {
 		t.Fatalf("len=%d want 3", len(got.Routes))
 	}
@@ -472,7 +476,7 @@ func TestToIPPermissionXMLsGroupsByTuple(t *testing.T) {
 		{Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0"},
 	}
 
-	got := toIPPermissionXMLs(rules)
+	got := newFullHandler().toIPPermissionXMLs(rules)
 	if len(got) != 2 {
 		t.Fatalf("len=%d want 2 tuples", len(got))
 	}
@@ -484,7 +488,7 @@ func TestToIPPermissionXMLsGroupsByTuple(t *testing.T) {
 }
 
 func TestToIPPermissionXMLsEmpty(t *testing.T) {
-	if got := toIPPermissionXMLs(nil); got != nil {
+	if got := newFullHandler().toIPPermissionXMLs(nil); got != nil {
 		t.Errorf("empty rules should give nil, got %v", got)
 	}
 }

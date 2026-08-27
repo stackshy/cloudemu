@@ -95,7 +95,7 @@ func (h *Handler) createVpc(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, createVpcResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		Vpc:       toVpcXML(info),
+		Vpc:       h.toVpcXML(info),
 	})
 }
 
@@ -129,7 +129,7 @@ func (h *Handler) describeVpcs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page, next := pageNetworkingXML(
-		filterXML(vpcs, filters, vpcMatchesFilters, toVpcXML), r,
+		filterXML(vpcs, filters, vpcMatchesFilters, h.toVpcXML), r,
 		func(v vpcXML) string { return v.VpcID })
 
 	awsquery.WriteXMLResponse(w, describeVpcsResponseXML{
@@ -140,7 +140,7 @@ func (h *Handler) describeVpcs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func toVpcXML(v *netdriver.VPCInfo) vpcXML {
+func (h *Handler) toVpcXML(v *netdriver.VPCInfo) vpcXML {
 	state := v.State
 	if state == "" {
 		state = stateAvailable
@@ -153,7 +153,7 @@ func toVpcXML(v *netdriver.VPCInfo) vpcXML {
 		DhcpOptionsID:           nonEmpty(v.DhcpOptionsID, dhcpDefault),
 		InstanceTenancy:         nonEmpty(v.InstanceTenancy, tenancyDefaultXML),
 		IsDefault:               false,
-		OwnerID:                 ownerID,
+		OwnerID:                 h.accountID,
 		CidrBlockAssociationSet: vpcCidrAssociationSet(v),
 		Tags:                    toTagItems(v.Tags),
 	}

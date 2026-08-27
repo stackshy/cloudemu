@@ -27,18 +27,34 @@ const maxFormBodyBytes = 1 << 20
 // non-existent instance id.
 const codeInvalidInstanceID = "InvalidInstanceID.NotFound"
 
+// defaultAccountID is the owner account id echoed on EC2/VPC resources when the
+// server is constructed without an explicit account id. It matches the AWS
+// server's default so EC2 owner-ids and ARNs agree with STS/IAM/SQS/etc.
+const defaultAccountID = "000000000000"
+
 // Handler serves EC2 query-protocol requests. Real AWS EC2 serves both
 // compute and VPC/networking on one endpoint, so the handler holds both
 // drivers and dispatches based on the Action parameter.
 type Handler struct {
 	compute computedriver.Compute
 	vpc     netdriver.Networking
+	// accountID is the configured owner account echoed as the ownerId on
+	// resources and embedded in ARNs, so EC2/VPC agree with the account id the
+	// rest of the AWS server (STS/IAM/SQS/...) reports. Defaults to
+	// defaultAccountID when the caller passes an empty string.
+	accountID string
 }
 
 // New returns an EC2 handler backed by c and v. Either may be nil if only
 // one service is being emulated, though most workflows need both together.
-func New(c computedriver.Compute, v netdriver.Networking) *Handler {
-	return &Handler{compute: c, vpc: v}
+// accountID is the owner account echoed on resources; an empty string falls
+// back to defaultAccountID.
+func New(c computedriver.Compute, v netdriver.Networking, accountID string) *Handler {
+	if accountID == "" {
+		accountID = defaultAccountID
+	}
+
+	return &Handler{compute: c, vpc: v, accountID: accountID}
 }
 
 // Matches returns true for EC2-shaped requests. EC2 uses the AWS query

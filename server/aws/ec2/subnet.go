@@ -72,7 +72,7 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, createSubnetResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		Subnet:    toSubnetXML(info, regionFromRequest(r)),
+		Subnet:    h.toSubnetXML(info, regionFromRequest(r)),
 	})
 }
 
@@ -105,7 +105,7 @@ func (h *Handler) describeSubnets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	region := regionFromRequest(r)
-	toXML := func(s *netdriver.SubnetInfo) subnetXML { return toSubnetXML(s, region) }
+	toXML := func(s *netdriver.SubnetInfo) subnetXML { return h.toSubnetXML(s, region) }
 
 	page, next := pageNetworkingXML(
 		filterXML(subnets, filters, subnetMatchesFilters, toXML), r,
@@ -147,7 +147,7 @@ func (h *Handler) modifySubnetAttribute(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func toSubnetXML(s *netdriver.SubnetInfo, region string) subnetXML {
+func (h *Handler) toSubnetXML(s *netdriver.SubnetInfo, region string) subnetXML {
 	state := s.State
 	if state == "" {
 		state = stateAvailable
@@ -162,12 +162,12 @@ func toSubnetXML(s *netdriver.SubnetInfo, region string) subnetXML {
 		AvailabilityZone:    s.AvailabilityZone,
 		AvailabilityZoneID:  zoneIDFor(s.AvailabilityZone),
 		MapPublicIPOnLaunch: s.MapPublicIPOnLaunch,
-		OwnerID:             ownerID,
+		OwnerID:             h.accountID,
 		Tags:                toTagItems(s.Tags),
 	}
 
 	if s.ID != "" {
-		x.SubnetArn = idgen.AWSARN("ec2", region, ownerID, "subnet/"+s.ID)
+		x.SubnetArn = idgen.AWSARN("ec2", region, h.accountID, "subnet/"+s.ID)
 	}
 
 	return x

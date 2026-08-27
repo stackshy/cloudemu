@@ -12,10 +12,6 @@ const (
 	stateCodeStopping     = 64
 	stateCodeStopped      = 80
 
-	// Canonical "owner" returned in responses. SDK clients don't validate it;
-	// any 12-digit account id works.
-	ownerID = "123456789012"
-
 	// stateRunning is the driver's string name for a running instance.
 	stateRunning = "running"
 )

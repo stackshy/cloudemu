@@ -60,9 +60,6 @@ const (
 	visibilityHidden  = "hidden"
 	visibilityVisible = "visible"
 
-	// awsAccountID is the fixed owner account for resources this mock creates,
-	// echoed as ownerId on volumes/snapshots/images.
-	awsAccountID = "123456789012"
 	// defaultEBSKeyID is the stub KMS key id used when an encrypted volume is
 	// created without an explicit KmsKeyId (real EC2 substitutes the account's
 	// default EBS key).
@@ -1472,7 +1469,7 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 
 	kmsKeyID := cfg.KmsKeyID
 	if cfg.Encrypted && kmsKeyID == "" {
-		kmsKeyID = idgen.AWSARN("kms", m.opts.Region, awsAccountID, "key/"+defaultEBSKeyID)
+		kmsKeyID = idgen.AWSARN("kms", m.opts.Region, m.opts.AccountID, "key/"+defaultEBSKeyID)
 	}
 
 	vol := &driver.VolumeInfo{
@@ -1685,7 +1682,7 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*dr
 		Size:        vol.Size,
 		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:        copyTags(cfg.Tags),
-		OwnerID:     awsAccountID,
+		OwnerID:     m.opts.AccountID,
 		Progress:    "100%",
 		Encrypted:   vol.Encrypted,
 	}
@@ -1839,7 +1836,7 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 		Description: "Created by CreateImage for " + id,
 		Size:        imageRootDeviceSize,
 		CreatedAt:   now,
-		OwnerID:     awsAccountID,
+		OwnerID:     m.opts.AccountID,
 		Progress:    "100%",
 	})
 
@@ -1850,7 +1847,7 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 		Description:        cfg.Description,
 		CreatedAt:          now,
 		Tags:               copyTags(cfg.Tags),
-		OwnerID:            awsAccountID,
+		OwnerID:            m.opts.AccountID,
 		Architecture:       "x86_64",
 		RootDeviceType:     "ebs",
 		RootDeviceName:     "/dev/sda1",
@@ -1909,7 +1906,7 @@ func (m *Mock) CopyImage(_ context.Context, input driver.CopyImageInput) (*drive
 	copyImg := *src
 	copyImg.ID = id
 	copyImg.CreatedAt = m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
-	copyImg.OwnerID = awsAccountID
+	copyImg.OwnerID = m.opts.AccountID
 	copyImg.LaunchPermissions = nil
 	copyImg.Tags = copyTags(input.Tags)
 
@@ -2074,7 +2071,7 @@ func (m *Mock) CopySnapshot(_ context.Context, in driver.CopySnapshotInput) (*dr
 		Size:        src.Size,
 		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:        copyTags(in.Tags),
-		OwnerID:     awsAccountID,
+		OwnerID:     m.opts.AccountID,
 		Progress:    "100%",
 		Encrypted:   src.Encrypted || in.Encrypted,
 	}
@@ -2115,7 +2112,7 @@ func (m *Mock) RegisterImage(_ context.Context, in driver.RegisterImageInput) (*
 		Description:         in.Description,
 		CreatedAt:           m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:                copyTags(in.Tags),
-		OwnerID:             awsAccountID,
+		OwnerID:             m.opts.AccountID,
 		Architecture:        nonEmpty(in.Architecture, "x86_64"),
 		RootDeviceType:      "ebs",
 		RootDeviceName:      nonEmpty(in.RootDeviceName, "/dev/sda1"),

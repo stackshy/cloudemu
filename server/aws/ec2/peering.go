@@ -212,7 +212,7 @@ func (h *Handler) enrichedPeeringXML(r *http.Request, p *netdriver.PeeringConnec
 		VpcPeeringConnectionID: p.ID,
 		RequesterVpcInfo:       h.peeringVpcInfo(r, p.RequesterVPC, region),
 		AccepterVpcInfo:        h.peeringVpcInfo(r, p.AccepterVPC, region),
-		Status:                 peeringStatusXML{Code: p.Status, Message: peeringStatusMessage(p.Status)},
+		Status:                 peeringStatusXML{Code: p.Status, Message: h.peeringStatusMessage(p.Status)},
 		CreationTime:           p.CreatedAt,
 		Tags:                   toTagItems(p.Tags),
 	}
@@ -222,7 +222,7 @@ func (h *Handler) enrichedPeeringXML(r *http.Request, p *netdriver.PeeringConnec
 // VPC's CIDR from the networking driver so IaC that reads accepter/requester
 // CIDRs (Terraform aws_vpc_peering_connection) sees real values.
 func (h *Handler) peeringVpcInfo(r *http.Request, vpcID, region string) peeringVpcInfo {
-	info := peeringVpcInfo{VpcID: vpcID, OwnerID: ownerID, Region: region}
+	info := peeringVpcInfo{VpcID: vpcID, OwnerID: h.accountID, Region: region}
 	if vpcID == "" {
 		return info
 	}
@@ -237,10 +237,10 @@ func (h *Handler) peeringVpcInfo(r *http.Request, vpcID, region string) peeringV
 
 // peeringStatusMessage mirrors the human-readable status message AWS attaches to
 // each peering status code.
-func peeringStatusMessage(code string) string {
+func (h *Handler) peeringStatusMessage(code string) string {
 	switch code {
 	case "pending-acceptance":
-		return "Pending Acceptance by " + ownerID
+		return "Pending Acceptance by " + h.accountID
 	case "active":
 		return "Active"
 	case "rejected":

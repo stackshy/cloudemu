@@ -140,7 +140,7 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 		// account that owns the interface, which in the emulator is the single
 		// default account.
 		if addr.NetworkInterfaceID != "" {
-			addr.NetworkInterfaceOwnerID = ownerID
+			addr.NetworkInterfaceOwnerID = h.accountID
 		}
 
 		out = append(out, addr)

@@ -132,7 +132,7 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, createRouteTableResponseXML{
 		Xmlns:      awsquery.Namespace,
 		RequestID:  awsquery.RequestID,
-		RouteTable: toRouteTableXML(rt),
+		RouteTable: h.toRouteTableXML(rt),
 	})
 }
 
@@ -157,7 +157,7 @@ func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		out = append(out, toRouteTableXML(&rts[i]))
+		out = append(out, h.toRouteTableXML(&rts[i]))
 	}
 
 	page, next := pageNetworkingXML(out, r, func(rt routeTableXML) string { return rt.RouteTableID })
@@ -405,11 +405,11 @@ func anyAssoc(rt *netdriver.RouteTable, pred func(netdriver.RouteTableAssociatio
 	return false
 }
 
-func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
+func (h *Handler) toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 	x := routeTableXML{
 		RouteTableID: rt.ID,
 		VpcID:        rt.VPCID,
-		OwnerID:      ownerID,
+		OwnerID:      h.accountID,
 		Tags:         toTagItems(rt.Tags),
 	}
 

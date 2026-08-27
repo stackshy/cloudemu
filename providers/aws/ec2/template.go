@@ -35,7 +35,7 @@ func (m *Mock) CreateLaunchTemplate(
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(timeFormat)
-	createdBy := idgen.AWSARN("iam", "", awsAccountID, "root")
+	createdBy := idgen.AWSARN("iam", "", m.opts.AccountID, "root")
 
 	tmpl := &driver.LaunchTemplate{
 		ID:             idgen.GenerateID("lt-"),
