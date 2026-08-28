@@ -6,6 +6,8 @@ Nothing to mock. No Docker. No accounts. The same SDK calls you'd run against re
 
 The backend is in-memory by default; the same drivers can be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL/Redis/function code) when you need real workloads behind the wire protocol.
 
+> **This page is library mode — the in-process SDK-compat server, for Go unit tests written inside cloudemu-aware code.** It builds the server in-process with `httptest.NewServer`. **To integrate cloudemu with an existing, already-running application, don't spin it up in a `_test.go` — run [server mode](standalone-server.md) and set your SDK's endpoint** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), per [integration.md](integration.md). Server mode is the default for integration and E2E. The wire protocol and per-service coverage below are identical either way — only how you start the server differs.
+
 ## Why
 
 CloudEmu's Go API is great for new code you write for testing. But most real apps already use the official cloud SDKs directly. Rewriting those call sites just to test against an emulator is friction. The SDK-compat server removes that friction — change the endpoint, done.
