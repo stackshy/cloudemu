@@ -460,7 +460,7 @@ func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (
 	// outside qd.mu so a handler that calls back into SQS (SendMessage,
 	// ReceiveMessage, DeleteMessage against this or another queue) never
 	// deadlocks on it.
-	m.deliverToESM(ctx, qd, msg)
+	m.deliverToESM(ctx, qd)
 
 	return &driver.SendMessageOutput{
 		MessageID:      msgID,
@@ -468,16 +468,57 @@ func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (
 	}, nil
 }
 
-// deliverToESM synchronously delivers a newly sent message to the Lambda
-// event-source-mapping(s) targeting this queue, mirroring real SQS ESM
-// polling collapsed into the SendMessage call since the emulator has no
-// background poller. Each pass builds a trial "received" view of the message
-// (a fresh ReceiptHandle, ReceiveCount+1) without touching the stored message
-// yet, and only commits that receive once DeliverEventSourceBatch reports
-// delivered=true — i.e. a mapping actually exists for this queue's ARN. A
-// queue with no ESM configured at all must therefore leave the message
-// completely untouched, rather than have "nothing happened" misread as a
-// processed batch.
+// deliverToESM sweeps the queue for messages whose delay has elapsed and
+// delivers each to the Lambda event-source-mapping(s) targeting this queue,
+// mirroring real SQS ESM polling collapsed into the SendMessage call since the
+// emulator has no background poller. Only messages that are visible now
+// (VisibleAt <= now) are swept: a message still inside its DelaySeconds window
+// is not yet visible to a poller, so it is skipped and picked up by the next
+// SendMessage on this queue after its delay elapses — the same visibility gate
+// the ReceiveMessages poll path applies (see collectVisibleMessages). The
+// visible set is snapshotted once so the sweep is bounded regardless of a
+// per-message outcome. A no-op when no invoker is wired.
+//
+// callerCtx is SendMessage's own context, used only to read the re-entrant
+// delivery depth (internal/recursionguard): a mapped handler commonly
+// re-sends to the very queue that triggered it, re-entering here through the
+// same synchronous call chain (SendMessage -> deliver -> Invoke -> handler ->
+// SendMessage -> ...). Delivery itself always runs on a fresh background
+// context, decoupled from callerCtx's cancellation/deadline (delivery must
+// still complete once the SendMessage call has already returned), carrying
+// forward only the depth so the chain stays bounded.
+func (m *Mock) deliverToESM(callerCtx context.Context, qd *queueData) {
+	if m.esmInvoker == nil {
+		return
+	}
+
+	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
+
+	qd.mu.Lock()
+	now := m.opts.Clock.Now()
+	pending := make([]*sqsMessage, 0, len(qd.messages))
+
+	for _, msg := range qd.messages {
+		if !msg.VisibleAt.After(now) {
+			pending = append(pending, msg)
+		}
+	}
+
+	qd.mu.Unlock()
+
+	for _, msg := range pending {
+		m.deliverMessageToESM(ctx, qd, msg)
+	}
+}
+
+// deliverMessageToESM delivers a single already-visible message to the Lambda
+// event-source-mapping(s) targeting this queue. Each pass builds a trial
+// "received" view of the message (a fresh ReceiptHandle, ReceiveCount+1)
+// without touching the stored message yet, and only commits that receive once
+// DeliverEventSourceBatch reports delivered=true — i.e. a mapping actually
+// exists for this queue's ARN. A queue with no ESM configured at all must
+// therefore leave the message completely untouched, rather than have "nothing
+// happened" misread as a processed batch.
 //
 // Once a mapping has genuinely consumed the message: on success it is
 // deleted, matching "When your function successfully processes a batch,
@@ -488,23 +529,8 @@ func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (
 // in a synchronous loop until it either succeeds or exceedsMaxReceive is
 // reached, at which point the same DLQ-redrive threshold ReceiveMessages
 // honors (see collectVisibleMessages) moves the message to the dead-letter
-// queue. A no-op when no invoker is wired.
-//
-// callerCtx is SendMessage's own context, used only to read the re-entrant
-// delivery depth (internal/recursionguard): a mapped handler commonly
-// re-sends to the very queue that triggered it, re-entering here through the
-// same synchronous call chain (SendMessage -> deliver -> Invoke -> handler ->
-// SendMessage -> ...). Delivery itself always runs on a fresh background
-// context, decoupled from callerCtx's cancellation/deadline (delivery must
-// still complete once the SendMessage call has already returned), carrying
-// forward only the depth so the chain stays bounded.
-func (m *Mock) deliverToESM(callerCtx context.Context, qd *queueData, msg *sqsMessage) {
-	if m.esmInvoker == nil {
-		return
-	}
-
-	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
-
+// queue. ctx already carries the re-entrant delivery depth.
+func (m *Mock) deliverMessageToESM(ctx context.Context, qd *queueData, msg *sqsMessage) {
 	for {
 		qd.mu.Lock()
 

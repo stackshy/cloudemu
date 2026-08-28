@@ -776,8 +776,7 @@ func TestUpdateAliasWithRoutingConfig(t *testing.T) {
 
 	t.Run("update with routing config", func(t *testing.T) {
 		rc := &driver.AliasRoutingConfig{
-			AdditionalVersion: "2",
-			Weight:            0.1,
+			AdditionalVersionWeights: map[string]float64{"2": 0.1},
 		}
 		result, err := m.UpdateAlias(ctx, driver.AliasConfig{
 			FunctionName: "fn1", Name: "prod", FunctionVersion: "1",
@@ -785,8 +784,7 @@ func TestUpdateAliasWithRoutingConfig(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotNil(t, result.RoutingConfig)
-		assert.Equal(t, "2", result.RoutingConfig.AdditionalVersion)
-		assert.InDelta(t, 0.1, result.RoutingConfig.Weight, 0.001)
+		assert.InDelta(t, 0.1, result.RoutingConfig.AdditionalVersionWeights["2"], 0.001)
 	})
 
 	t.Run("update description only", func(t *testing.T) {
@@ -988,8 +986,7 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	require.NoError(t, err)
 
 	rc := &driver.AliasRoutingConfig{
-		AdditionalVersion: "1",
-		Weight:            0.5,
+		AdditionalVersionWeights: map[string]float64{"1": 0.5},
 	}
 
 	_, err = m.CreateAlias(ctx, driver.AliasConfig{
@@ -1000,11 +997,11 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Mutate the original config
-	rc.Weight = 0.9
+	// Mutate the original config's map: the stored alias must be unaffected.
+	rc.AdditionalVersionWeights["1"] = 0.9
 
 	alias, err := m.GetAlias(ctx, "fn-dc", "deep-copy")
 	require.NoError(t, err)
 	require.NotNil(t, alias.RoutingConfig)
-	assert.InDelta(t, 0.5, alias.RoutingConfig.Weight, 0.001)
+	assert.InDelta(t, 0.5, alias.RoutingConfig.AdditionalVersionWeights["1"], 0.001)
 }

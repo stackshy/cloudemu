@@ -66,10 +66,12 @@ type AliasConfig struct {
 	RoutingConfig   *AliasRoutingConfig // for weighted aliases
 }
 
-// AliasRoutingConfig defines weighted routing between versions.
+// AliasRoutingConfig defines weighted routing between versions. It mirrors the
+// AWS Lambda AliasRoutingConfiguration shape: AdditionalVersionWeights maps a
+// published version to the fraction of traffic (0.0-1.0) it receives; the
+// remaining traffic goes to the alias's primary FunctionVersion.
 type AliasRoutingConfig struct {
-	AdditionalVersion string
-	Weight            float64 // 0.0-1.0, traffic percentage to additional version
+	AdditionalVersionWeights map[string]float64
 }
 
 // Alias represents a function alias.
@@ -222,7 +224,7 @@ type FunctionInfo struct {
 type InvokeInput struct {
 	FunctionName string
 	Payload      []byte
-	InvokeType   string // "RequestResponse" or "Event"
+	InvokeType   string // "RequestResponse", "Event", or "DryRun"
 	// Qualifier selects a published version (a numeric version string) or
 	// alias to invoke instead of the mutable $LATEST code. Empty invokes
 	// $LATEST, matching the AWS Lambda Invoke Qualifier parameter.

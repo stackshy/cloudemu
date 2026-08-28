@@ -136,9 +136,16 @@ func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig
 		return nil
 	}
 
-	cp := *rc
+	if len(rc.AdditionalVersionWeights) == 0 {
+		return &driver.AliasRoutingConfig{}
+	}
 
-	return &cp
+	weights := make(map[string]float64, len(rc.AdditionalVersionWeights))
+	for v, w := range rc.AdditionalVersionWeights {
+		weights[v] = w
+	}
+
+	return &driver.AliasRoutingConfig{AdditionalVersionWeights: weights}
 }
 
 // versionExists checks whether a version string exists for the given function.

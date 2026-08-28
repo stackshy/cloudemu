@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
@@ -120,6 +121,70 @@ func TestEventSourceInvokerDeliversOnSend(t *testing.T) {
 	info, err := m.GetQueueInfo(ctx, q.URL)
 	requireNoError(t, err)
 	assertEqual(t, 0, info.ApproxMessageCount)
+}
+
+// TestEventSourceInvokerHonorsDelaySeconds verifies that a message sent with
+// DelaySeconds is NOT delivered to the Lambda event-source-mapping while it is
+// still inside its delay window, and IS delivered once the delay elapses and a
+// later send re-sweeps the queue — mirroring how a real SQS->Lambda ESM poller
+// only sees a message after its delay makes it visible.
+func TestEventSourceInvokerHonorsDelaySeconds(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+
+	inv := &recordingESMInvoker{}
+	m.SetEventSourceInvoker(inv)
+
+	q, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "delay-queue"})
+	requireNoError(t, err)
+
+	// A delayed message is not yet visible, so the ESM must not receive it.
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{
+		QueueURL: q.URL, Body: "delayed", DelaySeconds: 5,
+	})
+	requireNoError(t, err)
+
+	if len(inv.arns) != 0 {
+		t.Fatalf("deliveries before delay elapsed = %d, want 0", len(inv.arns))
+	}
+
+	// Advance past the delay and send a second message: the sweep now sees both.
+	fc.Advance(6 * time.Second)
+
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "trigger"})
+	requireNoError(t, err)
+
+	if len(inv.payloads) != 2 {
+		t.Fatalf("deliveries after delay elapsed = %d, want 2", len(inv.payloads))
+	}
+
+	if !deliveredBody(t, inv.payloads, "delayed") {
+		t.Fatal("the delayed message was never delivered after its delay elapsed")
+	}
+}
+
+// deliveredBody reports whether any delivered SQS event batch carries a record
+// with the given body.
+func deliveredBody(t *testing.T, payloads [][]byte, body string) bool {
+	t.Helper()
+
+	for _, p := range payloads {
+		var event struct {
+			Records []struct {
+				Body string `json:"body"`
+			} `json:"Records"`
+		}
+
+		requireNoError(t, json.Unmarshal(p, &event))
+
+		for _, rec := range event.Records {
+			if rec.Body == body {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // TestEventSourceInvokerNoInvokerNoDelivery verifies SendMessage never delivers
