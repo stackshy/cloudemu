@@ -1030,7 +1030,11 @@ func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
 
 	return e.emitSimple(ServiceMonitoring, TypeAlarm, len(alarms),
 		func(i int) (string, string, map[string]string) {
-			return alarms[i].Name, e.monitoringAlarmARN(alarms[i].Name), nil
+			// Tags come from the alarm's own tag store (AWS CloudWatch
+			// AddAlarmTags / the Resource Groups Tagging API), so a tagged alarm
+			// is filterable in GetResources. Non-AWS monitoring mocks leave it
+			// empty, matching the prior behavior.
+			return alarms[i].Name, e.monitoringAlarmARN(alarms[i].Name), alarms[i].Tags
 		}), nil
 }
 

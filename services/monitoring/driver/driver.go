@@ -107,6 +107,9 @@ type AlarmInfo struct {
 	AlarmDescription        string
 	AlarmArn                string
 	Dimensions              map[string]string
+	// Tags are the alarm's resource tags. Populated by providers that store
+	// them (AWS CloudWatch alarm tags); empty for the others.
+	Tags map[string]string
 }
 
 // NotificationChannelConfig describes a notification channel.
