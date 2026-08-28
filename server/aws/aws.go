@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
+	cloudformationsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudformation"
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
@@ -65,6 +66,7 @@ import (
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	cfnsvc "github.com/stackshy/cloudemu/v2/services/cloudformation"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
@@ -168,6 +170,9 @@ type Drivers struct {
 
 	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
 	Kinesis kinesisdriver.Kinesis
+	// CloudFormation serves the CloudFormation query protocol (CreateStack,
+	// DescribeStacks, …) against the stack orchestrator.
+	CloudFormation cfnsvc.API
 	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
 	// "CloudTrail_20131101.") against the cloudtrail driver.
 	CloudTrail cloudtraildriver.CloudTrail
@@ -299,6 +304,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
 		APIGateway:          p.APIGateway,
+		CloudFormation:      p.CloudFormation,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -572,6 +578,13 @@ func New(d Drivers) *server.Server {
 	// no shadowing occurs. Registered before the EC2 catch-all.
 	if d.SNS != nil {
 		srv.Register(sns.New(d.SNS))
+	}
+
+	// CloudFormation also speaks the AWS query protocol; its action set
+	// (CreateStack, DescribeStacks, …) is disjoint from RDS, Redshift, IAM, SNS,
+	// and EC2, so no shadowing occurs. Registered before the EC2 catch-all.
+	if d.CloudFormation != nil {
+		srv.Register(cloudformationsrv.New(d.CloudFormation))
 	}
 
 	// STS also speaks the AWS query protocol; its action set (GetCallerIdentity,

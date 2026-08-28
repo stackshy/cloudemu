@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
@@ -180,6 +181,7 @@ type Provider struct {
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
 	APIGateway          *apigateway.Mock
+	CloudFormation      *cloudformation.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -331,7 +333,7 @@ func New(opts ...config.Option) *Provider {
 	// the same recursion-guarded InvokeSync seam, returning the function's
 	// {statusCode,headers,body} as the HTTP response.
 	p.APIGateway.SetLambdaInvoker(p.Lambda)
-	wireLambdaEventSources(p)
+	wirePostBuildServices(o, p)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
@@ -340,10 +342,12 @@ func New(opts ...config.Option) *Provider {
 	return p
 }
 
-// wireLambdaEventSources wires the services that deliver events to Lambda
-// through the shared InvokeExternal choke point. It is split out of New so the
-// factory stays within the function-length budget.
-func wireLambdaEventSources(p *Provider) {
+// wirePostBuildServices runs the cross-service wiring that must happen after
+// every service mock exists: the Lambda event-source delivery seams, and the
+// CloudFormation orchestrator, whose provisioner registry reads the live service
+// mocks. It is split out of New so the factory stays within the function-length
+// budget; the wiring-parity test scans this helper as if it were New().
+func wirePostBuildServices(o *config.Options, p *Provider) {
 	// S3 event notifications deliver to their configured targets: SQS queues,
 	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
@@ -364,6 +368,11 @@ func wireLambdaEventSources(p *Provider) {
 	// subscription filter's pattern are delivered (gzipped awslogs payload) to
 	// the filter's Lambda destination on PutLogEvents.
 	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
+	// CloudFormation is an orchestrator: it provisions each stack resource by
+	// calling the matching service driver, so its registry is built from the
+	// live mocks rather than a store of its own.
+	p.CloudFormation = cloudformation.New(o)
+	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's

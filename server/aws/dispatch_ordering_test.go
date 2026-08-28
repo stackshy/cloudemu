@@ -96,6 +96,7 @@ func TestQueryProtocolHandlersWinBeforeEC2(t *testing.T) {
 		{"elasticache_before_ec2", "DescribeCacheClusters", "DescribeCacheClustersResponse"},
 		{"sns_before_ec2", "ListTopics", "ListTopicsResponse"},
 		{"sts_before_ec2", "GetCallerIdentity", "GetCallerIdentityResponse"},
+		{"cloudformation_before_ec2", "ListStacks", "ListStacksResponse"},
 	}
 
 	for _, tc := range cases {
