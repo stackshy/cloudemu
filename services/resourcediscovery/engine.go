@@ -37,15 +37,18 @@ type Drivers struct {
 	ScaleSets       ScaleSets
 	AppServicePlans AppServicePlans
 	Secrets         secretsdriver.Secrets
-	ContainerReg    crdriver.ContainerRegistry
-	MessageQueue    mqdriver.MessageQueue
-	Notification    notifdriver.Notification
-	DNS             dnsdriver.DNS
-	Logging         loggingdriver.Logging
-	Cache           cachedriver.Cache
-	LoadBalancer    lbdriver.LoadBalancer
-	Monitoring      monitoringdriver.Monitoring
-	IAM             iamdriver.IAM
+	// KeyVaults surfaces Azure Key Vault vaults (Microsoft.KeyVault/vaults) in
+	// the inventory, distinct from the managed secrets Secrets already walks.
+	KeyVaults    secretsdriver.KeyVaultVaults
+	ContainerReg crdriver.ContainerRegistry
+	MessageQueue mqdriver.MessageQueue
+	Notification notifdriver.Notification
+	DNS          dnsdriver.DNS
+	Logging      loggingdriver.Logging
+	Cache        cachedriver.Cache
+	LoadBalancer lbdriver.LoadBalancer
+	Monitoring   monitoringdriver.Monitoring
+	IAM          iamdriver.IAM
 
 	// Taggers maps an AWS service token (segment 3 of an ARN — e.g. "kms",
 	// "ecs", "elasticloadbalancing") to an adapter that tags/untags a resource
@@ -348,6 +351,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Secrets != nil {
 		ws = append(ws, e.walkSecrets)
+	}
+
+	if e.drivers.KeyVaults != nil {
+		ws = append(ws, e.walkKeyVaults)
 	}
 
 	if e.drivers.ContainerReg != nil {

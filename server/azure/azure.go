@@ -513,6 +513,14 @@ func New(d Drivers) http.Handler {
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
 		srv.Register(keyvaultsrv.New(d.KeyVault))
+		// Key Vault ARM control plane (Microsoft.KeyVault/vaults). A unique ARM
+		// provider name among Azure handlers, so registration order is
+		// unconstrained; registered only when the backend implements the
+		// KeyVaultVaults surface. Disjoint from the /secrets, /keys and
+		// /certificates data-plane handlers below.
+		if vaults, ok := d.KeyVault.(secretsdriver.KeyVaultVaults); ok {
+			srv.Register(keyvaultsrv.NewVaultARM(vaults))
+		}
 		// Keys data-plane matches /keys and /deletedkeys — disjoint from the
 		// /secrets surface above and from ARM. Registered only when the backend
 		// implements the KeyVaultKeys surface.
