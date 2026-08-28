@@ -23,26 +23,27 @@ const (
 // named by policySourceARN (plus any extra policy documents) against each
 // action/resource pair (IAM SimulatePrincipalPolicy).
 func (m *Mock) SimulatePrincipalPolicy(
-	_ context.Context, policySourceARN string, actions, resourceARNs, extraPolicies []string,
+	_ context.Context, policySourceARN string, actions, resourceARNs, extraPolicies []string, condCtx map[string]string,
 ) ([]driver.SimulationResult, error) {
 	entityType, name := parsePrincipalARN(policySourceARN)
 	docs := m.gatherPrincipalDocs(entityType, name)
 	docs = append(docs, extraPolicies...)
 
-	return simulate(docs, actions, resourceARNs), nil
+	return simulate(docs, actions, resourceARNs, ConditionContext(condCtx)), nil
 }
 
 // SimulateCustomPolicy evaluates a set of standalone policy documents against
 // each action/resource pair (IAM SimulateCustomPolicy).
 func (*Mock) SimulateCustomPolicy(
-	_ context.Context, policyDocs, actions, resourceARNs []string,
+	_ context.Context, policyDocs, actions, resourceARNs []string, condCtx map[string]string,
 ) ([]driver.SimulationResult, error) {
-	return simulate(policyDocs, actions, resourceARNs), nil
+	return simulate(policyDocs, actions, resourceARNs, ConditionContext(condCtx)), nil
 }
 
 // simulate evaluates every action against every resource (defaulting to "*"
-// when no resources are given) and reports the resulting decision.
-func simulate(docs, actions, resourceARNs []string) []driver.SimulationResult {
+// when no resources are given) and reports the resulting decision, applying the
+// supplied request condition context to each statement's Condition block.
+func simulate(docs, actions, resourceARNs []string, cctx ConditionContext) []driver.SimulationResult {
 	resources := resourceARNs
 	if len(resources) == 0 {
 		resources = []string{"*"}
@@ -55,7 +56,7 @@ func simulate(docs, actions, resourceARNs []string) []driver.SimulationResult {
 			results = append(results, driver.SimulationResult{
 				ActionName:   action,
 				ResourceName: resource,
-				Decision:     decide(docs, action, resource),
+				Decision:     decide(docs, action, resource, cctx),
 			})
 		}
 	}
@@ -66,11 +67,11 @@ func simulate(docs, actions, resourceARNs []string) []driver.SimulationResult {
 // decide reduces a set of policy documents to a single simulation decision for
 // one action/resource: an explicit Deny wins, then any Allow, else the default
 // implicit deny.
-func decide(docs []string, action, resource string) string {
+func decide(docs []string, action, resource string, cctx ConditionContext) string {
 	allow, deny := false, false
 
 	for _, doc := range docs {
-		a, d := evaluatePolicy(doc, action, resource)
+		a, d := evaluatePolicy(doc, action, resource, cctx)
 		if d {
 			deny = true
 		}

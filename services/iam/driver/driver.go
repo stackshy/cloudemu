@@ -215,6 +215,20 @@ type PolicyInspector interface {
 	PrincipalHasPolicies(ctx context.Context, name string) bool
 }
 
+// ContextualAuthorizer is an optional capability: an IAM implementation that can
+// evaluate a permission with an explicit request condition context (aws:SourceIp,
+// aws:CurrentTime, aws:SecureTransport, aws:PrincipalArn, aws:RequestedRegion, …)
+// so statements guarded by a Condition are evaluated against the real request.
+// The AWS authorization gate type-asserts for it to authorize the routed
+// action against the derived target resource with the caller's context. Like
+// PolicyInspector it is AWS-only and therefore not part of the shared IAM
+// interface. A nil context makes it equivalent to CheckPermission.
+type ContextualAuthorizer interface {
+	CheckPermissionWithContext(
+		ctx context.Context, principal, action, resource string, condCtx map[string]string,
+	) (bool, error)
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)

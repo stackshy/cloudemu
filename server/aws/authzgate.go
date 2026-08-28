@@ -1,11 +1,16 @@
 package aws
 
 import (
+	"encoding/json"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/authctx"
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -79,7 +84,7 @@ var jsonRPCServiceByTarget = map[string]string{
 // caller scoped to service A run an operation that executes under service B, so
 // action+resource authorization bound to the routed operation is a follow-up.
 func authorize(
-	w http.ResponseWriter, r *http.Request, p authctx.Principal, iamDriver iamdriver.IAM,
+	w http.ResponseWriter, r *http.Request, p authctx.Principal, iamDriver iamdriver.IAM, body []byte, accountID string,
 ) bool {
 	service, action, decision := deriveAction(r)
 
@@ -101,14 +106,112 @@ func authorize(
 		return true // no policies defined: unrestricted (dev-friendly bootstrap).
 	}
 
-	allowed, err := iamDriver.CheckPermission(r.Context(), p.UserName, action, "*")
-	if err == nil && allowed {
+	resource := deriveResource(service, body, sigv4.Region(r), accountID)
+
+	if checkPermission(r, p, iamDriver, action, resource) {
 		return true
 	}
 
 	writeAuthzDenied(w, p, action)
 
 	return false
+}
+
+// checkPermission evaluates the action against the derived resource for the
+// caller. When the IAM driver supports the ContextualAuthorizer capability, the
+// request condition context (source IP, region, principal, secure transport,
+// current time) is threaded so Condition-guarded statements are honored;
+// otherwise it falls back to the resource-only CheckPermission.
+func checkPermission(
+	r *http.Request, p authctx.Principal, iamDriver iamdriver.IAM, action, resource string,
+) bool {
+	if ca, ok := iamDriver.(iamdriver.ContextualAuthorizer); ok {
+		allowed, err := ca.CheckPermissionWithContext(r.Context(), p.UserName, action, resource, requestConditionContext(r, p))
+		return err == nil && allowed
+	}
+
+	allowed, err := iamDriver.CheckPermission(r.Context(), p.UserName, action, resource)
+
+	return err == nil && allowed
+}
+
+// requestConditionContext gathers the AWS global condition keys the gate can
+// derive from the request and the verified principal. Keys that cannot be
+// determined are omitted, so a policy that references an absent key evaluates
+// per IAM's absent-key rules (plain → no match, ...IfExists → match).
+func requestConditionContext(r *http.Request, p authctx.Principal) map[string]string {
+	ctx := map[string]string{
+		"aws:CurrentTime":     time.Now().UTC().Format(time.RFC3339),
+		"aws:SecureTransport": strconv.FormatBool(r.TLS != nil),
+	}
+
+	if ip := clientIP(r); ip != "" {
+		ctx["aws:SourceIp"] = ip
+	}
+
+	if p.ARN != "" {
+		ctx["aws:PrincipalArn"] = p.ARN
+	}
+
+	if p.UserName != "" {
+		ctx["aws:username"] = p.UserName
+	}
+
+	if region := sigv4.Region(r); region != "" {
+		ctx["aws:RequestedRegion"] = region
+	}
+
+	return ctx
+}
+
+// clientIP extracts the caller's source IP, preferring the first X-Forwarded-For
+// hop and falling back to the connection's RemoteAddr (port stripped).
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if i := strings.IndexByte(fwd, ','); i >= 0 {
+			return strings.TrimSpace(fwd[:i])
+		}
+
+		return strings.TrimSpace(fwd)
+	}
+
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+
+	return r.RemoteAddr
+}
+
+// deriveResource derives the target resource ARN for an authorized action from
+// the request, so resource-scoped Allow/Deny policies apply. It covers the
+// services whose JSON-RPC body names a single primary resource; where the
+// resource cannot be derived it falls back to "*", which matches any
+// resource-scoped statement's "*" and leaves resource-scoped statements for
+// other resources non-binding (the pre-existing behavior).
+func deriveResource(service string, body []byte, region, accountID string) string {
+	if service == "dynamodb" {
+		if name := jsonField(body, "TableName"); name != "" {
+			return "arn:aws:dynamodb:" + region + ":" + accountID + ":table/" + name
+		}
+	}
+
+	return "*"
+}
+
+// jsonField extracts a single top-level string field from a JSON-RPC request
+// body without fully modeling the operation. It returns "" when the body is not
+// an object or the field is absent or non-string.
+func jsonField(body []byte, field string) string {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+
+	if v, ok := m[field].(string); ok {
+		return v
+	}
+
+	return ""
 }
 
 // deriveAction maps an incoming request to its IAM action (e.g. dynamodb:PutItem)

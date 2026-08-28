@@ -60,6 +60,14 @@ AccessKeyResolver is an optional capability: an IAM implementation that can
 | --- | --- |
 | `AccessKeyByID` |  |
 
+### ContextualAuthorizer
+
+ContextualAuthorizer is an optional capability: an IAM implementation that can
+
+| Operation | Description |
+| --- | --- |
+| `CheckPermissionWithContext` |  |
+
 ### PolicyInspector
 
 PolicyInspector is an optional capability: an IAM implementation that can

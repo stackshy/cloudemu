@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -13,10 +14,10 @@ import (
 // of the portable IAM driver, so the handler type-asserts for it.
 type policySimulator interface {
 	SimulatePrincipalPolicy(
-		ctx context.Context, policySourceARN string, actions, resourceARNs, extraPolicies []string,
+		ctx context.Context, policySourceARN string, actions, resourceARNs, extraPolicies []string, condCtx map[string]string,
 	) ([]iamdriver.SimulationResult, error)
 	SimulateCustomPolicy(
-		ctx context.Context, policyDocs, actions, resourceARNs []string,
+		ctx context.Context, policyDocs, actions, resourceARNs []string, condCtx map[string]string,
 	) ([]iamdriver.SimulationResult, error)
 }
 
@@ -78,8 +79,9 @@ func (h *Handler) simulatePrincipalPolicy(w http.ResponseWriter, r *http.Request
 
 	resources := awsquery.ListStrings(r.Form, "ResourceArns.member")
 	extra := awsquery.ListStrings(r.Form, "PolicyInputList.member")
+	condCtx := parseContextEntries(r)
 
-	results, err := sim.SimulatePrincipalPolicy(r.Context(), r.Form.Get("PolicySourceArn"), actions, resources, extra)
+	results, err := sim.SimulatePrincipalPolicy(r.Context(), r.Form.Get("PolicySourceArn"), actions, resources, extra, condCtx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -90,6 +92,35 @@ func (h *Handler) simulatePrincipalPolicy(w http.ResponseWriter, r *http.Request
 		Result:   simulateResult{EvaluationResults: toEvaluationResults(results)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// parseContextEntries reads the SimulatePolicy ContextEntries.member.N groups
+// (ContextKeyName + ContextKeyValues.member.M) into a flat key→value condition
+// context, taking the first value of each key. It stops at the first absent
+// index, matching the contiguous 1..N form SDKs emit.
+func parseContextEntries(r *http.Request) map[string]string {
+	const maxEntries = 64
+
+	out := map[string]string{}
+
+	for i := 1; i <= maxEntries; i++ {
+		base := "ContextEntries.member." + strconv.Itoa(i)
+
+		name := r.Form.Get(base + ".ContextKeyName")
+		if name == "" {
+			break
+		}
+
+		if vals := awsquery.ListStrings(r.Form, base+".ContextKeyValues.member"); len(vals) > 0 {
+			out[name] = vals[0]
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 func (h *Handler) simulateCustomPolicy(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +139,9 @@ func (h *Handler) simulateCustomPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resources := awsquery.ListStrings(r.Form, "ResourceArns.member")
+	condCtx := parseContextEntries(r)
 
-	results, err := sim.SimulateCustomPolicy(r.Context(), docs, actions, resources)
+	results, err := sim.SimulateCustomPolicy(r.Context(), docs, actions, resources, condCtx)
 	if err != nil {
 		writeErr(w, err)
 		return
