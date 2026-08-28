@@ -947,6 +947,67 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	assertEqual(t, 0.5, alias.RoutingConfig.AdditionalVersionWeights["2"])
 }
 
+// TestConcurrentAliasRaceFree hammers a single alias with concurrent
+// UpdateAlias/GetAlias/ListAliases calls. Every one of these paths reads or
+// mutates fields on the shared *aliasData, so without per-entity
+// synchronization the -race detector flags a data race on alias.FunctionVersion
+// / Description / RoutingConfig. It must run clean under `go test -race`.
+func TestConcurrentAliasRaceFree(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "prod",
+		FunctionVersion: "1",
+	})
+	requireNoError(t, err)
+
+	const (
+		workers    = 8
+		iterations = 40
+	)
+
+	var wg sync.WaitGroup
+
+	run := func(fn func()) {
+		defer wg.Done()
+
+		for i := 0; i < iterations; i++ {
+			fn()
+		}
+	}
+
+	wg.Add(4 * workers)
+
+	for w := 0; w < workers; w++ {
+		go run(func() {
+			_, _ = m.UpdateAlias(ctx, driver.AliasConfig{
+				FunctionName: "my-func", Name: "prod", FunctionVersion: "1", Description: "a",
+			})
+		})
+		go run(func() {
+			_, _ = m.UpdateAlias(ctx, driver.AliasConfig{
+				FunctionName: "my-func", Name: "prod", FunctionVersion: "2", Description: "b",
+			})
+		})
+		go run(func() { _, _ = m.GetAlias(ctx, "my-func", "prod") })
+		go run(func() { _, _ = m.ListAliases(ctx, "my-func") })
+	}
+
+	wg.Wait()
+
+	alias, err := m.GetAlias(ctx, "my-func", "prod")
+	requireNoError(t, err)
+
+	if alias.FunctionVersion != "1" && alias.FunctionVersion != "2" {
+		t.Fatalf("alias left in inconsistent version %q", alias.FunctionVersion)
+	}
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

@@ -63,6 +63,11 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", cfg.Name)
 	}
 
+	// ad is a shared pointer held in the store; guard the read-validate-mutate of
+	// its alias fields so a concurrent Update/Get/List cannot race it.
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
 	// Compute the prospective effective FunctionVersion without touching the
 	// live alias yet. UpdateAlias is atomic in real AWS: if any validation
 	// fails the alias must be left completely unchanged.
@@ -97,8 +102,8 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 
 	ad.alias.RevisionID = newRevisionID()
 
-	fd.aliases.Set(cfg.Name, ad)
-
+	// ad is the shared pointer already held in the store, so the in-place
+	// mutations above are already visible — no re-Set needed.
 	result := ad.alias
 
 	return &result, nil
@@ -132,7 +137,9 @@ func (m *Mock) GetAlias(_ context.Context, functionName, aliasName string) (*dri
 		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", aliasName)
 	}
 
+	ad.mu.Lock()
 	result := ad.alias
+	ad.mu.Unlock()
 
 	return &result, nil
 }
@@ -148,7 +155,9 @@ func (m *Mock) ListAliases(_ context.Context, functionName string) ([]driver.Ali
 	aliases := make([]driver.Alias, 0, len(all))
 
 	for _, ad := range all {
+		ad.mu.Lock()
 		aliases = append(aliases, ad.alias)
+		ad.mu.Unlock()
 	}
 
 	return aliases, nil

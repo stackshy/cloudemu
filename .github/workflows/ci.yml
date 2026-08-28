@@ -252,7 +252,7 @@ jobs:
       - run: go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
 
   race:
-    name: Race (advisory)
+    name: Race
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -268,15 +268,13 @@ jobs:
           key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-
-      # Advisory whole-tree race detector. -race is 2-10x slower and much of the
-      # codebase is not race-clean yet (mutable entities held as *T behind
-      # memstore.Store have their fields mutated without per-entity sync), so this
-      # is non-blocking for now: it surfaces data races as warnings while the
-      # per-entity-mutex idiom (see SQS queueData.mu; use memstore.Update, never
-      # Get+Set) is rolled out provider-by-provider. Flip to blocking once green.
-      # Tracking: github issue "Architecture Theme 1".
-      - name: go test -race ./... (advisory)
-        run: go test -race -timeout 20m ./... || echo '::warning::go test -race reported findings (advisory; concurrency hardening in progress)'
+      # Blocking whole-tree race detector. The per-entity-mutex idiom (see SQS
+      # queueData.mu / EC2 instanceData.mu; use memstore.Update, never Get+Set) is
+      # rolled out across the mutable-store entities, so the tree is race-clean and
+      # any newly introduced data race must fail CI. -race is 2-10x slower, hence
+      # the generous timeout.
+      - name: go test -race ./...
+        run: go test -race -timeout 20m ./...
 
   tidy:
     name: Tidy
