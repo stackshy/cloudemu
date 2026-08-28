@@ -2,7 +2,7 @@
 
 **Integrating CloudEmu into an existing service is one thing: an endpoint override on the client your app already builds.** Run CloudEmu in server mode, then point your running app/services at it by setting the SDK endpoint — `AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override. Your real code runs the live path end-to-end against an in-memory cloud, no mocks.
 
-The mistake to avoid: **don't write a new `main.go` or `_test.go` that just spins CloudEmu up in-process and prints "it works."** That exercises the library, not your app. For integration and E2E, run the server and override the endpoint. In-process/library mode (bottom of this page) is only for Go unit tests you write inside CloudEmu-aware code.
+Integration means your app's **real code path** runs against CloudEmu: for integration and E2E, run the server and point your existing SDK client at it with one endpoint override, so the actual request flow is exercised end to end. In-process/library mode (bottom of this page) is for Go unit tests you write inside CloudEmu-aware code.
 
 > Need the real path to exercise real SQL, Redis or function code rather than the in-memory backend? Back the relevant driver with a [real engine](features.md#11-real-data-plane-engines-opt-in) — the wiring is a `config.With<X>Engine` option (or the `cloudemu-server` flags), everything below stays the same.
 
@@ -115,8 +115,8 @@ The endpoint knob is identical to server mode — AWS `o.BaseEndpoint`, GCP `opt
 
 ```markdown
 CloudEmu (github.com/stackshy/cloudemu/v2) is an in-memory cloud emulator. To integrate it
-into an existing service, run it in SERVER mode and set the SDK endpoint on your running app —
-NOT a new main.go or _test.go: AWS AWS_ENDPOINT_URL / o.BaseEndpoint (+ UsePathStyle for S3),
+into an existing service, run it in SERVER mode and set the SDK endpoint on your running app:
+AWS AWS_ENDPOINT_URL / o.BaseEndpoint (+ UsePathStyle for S3),
 GCP option.WithEndpoint + option.WithoutAuthentication, Azure arm.ClientOptions ResourceManager
 endpoint, Databricks Config.Host. Make that endpoint injectable however this codebase prefers
 (env var, config field, or set in the test) so production keeps the real cloud, code unchanged.

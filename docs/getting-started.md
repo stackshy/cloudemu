@@ -2,7 +2,7 @@
 
 ## Integrate with an existing app (start here)
 
-**To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint, then point your already-running app or services at it. Do NOT write a `_test.go` file for integration** — that spins cloudemu up in-process and exercises the library, not your app end-to-end. Library mode (below) is only for Go unit tests you write inside cloudemu-aware code.
+**To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint, then point your already-running app or services at it** — its real code path runs against cloudemu end-to-end. Library mode (below) is for Go unit tests you write inside cloudemu-aware code.
 
 Run the server, then override the endpoint your existing client already builds:
 

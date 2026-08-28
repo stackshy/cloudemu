@@ -2,7 +2,7 @@
 
 Guidance for AI agents working in the cloudemu repository. (Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md).)
 
-> **Integrating cloudemu into an existing service = an endpoint override on the already-running service** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), **NOT a new `_test.go` file.** Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is only for Go unit tests written inside cloudemu-aware code. Details: [docs/integration.md](docs/integration.md).
+> **Integrating cloudemu into an existing service = an endpoint override on the already-running service** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override). Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is for Go unit tests written inside cloudemu-aware code. Details: [docs/integration.md](docs/integration.md).
 
 ## What cloudemu is
 
