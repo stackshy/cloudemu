@@ -7,6 +7,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -59,7 +60,7 @@ var optionGroupOptionCatalog = map[string][]string{
 	"sqlserver-se": {"TDE", "SQLSERVER_AUDIT"},
 }
 
-func (m *Mock) CreateOptionGroup(_ context.Context, cfg rdsdriver.OptionGroupConfig) (*rdsdriver.OptionGroup, error) {
+func (m *Mock) CreateOptionGroup(ctx context.Context, cfg rdsdriver.OptionGroupConfig) (*rdsdriver.OptionGroup, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "OptionGroupName is required")
 	}
@@ -84,7 +85,7 @@ func (m *Mock) CreateOptionGroup(_ context.Context, cfg rdsdriver.OptionGroupCon
 		EngineName:         cfg.EngineName,
 		MajorEngineVersion: cfg.MajorEngineVersion,
 		Description:        cfg.Description,
-		ARN:                optionGroupARN(m.opts.Region, m.opts.AccountID, cfg.Name),
+		ARN:                optionGroupARN(regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, cfg.Name),
 	}
 	m.optionGroups.Set(cfg.Name, og)
 	m.setGroupTags(og.ARN, copyTags(cfg.Tags))
@@ -212,7 +213,7 @@ func (m *Mock) CopyOptionGroup(_ context.Context, source, target, description st
 		EngineName:         src.EngineName,
 		MajorEngineVersion: src.MajorEngineVersion,
 		Description:        description,
-		ARN:                optionGroupARN(m.opts.Region, m.opts.AccountID, target),
+		ARN:                optionGroupARN(arnRegion(src.ARN, m.opts.Region), m.opts.AccountID, target),
 		Options:            append([]rdsdriver.Option(nil), src.Options...),
 	}
 	m.optionGroups.Set(target, og)

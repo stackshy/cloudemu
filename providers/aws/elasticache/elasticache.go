@@ -7,12 +7,14 @@ import (
 	"maps"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -129,9 +131,24 @@ func (m *Mock) requireSubnetGroup(name string) error {
 	return nil
 }
 
-// cacheARN builds an ElastiCache cluster ARN.
-func (m *Mock) cacheARN(name string) string {
-	return "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID + ":cluster:" + name
+// cacheARN builds an ElastiCache cluster ARN in the given region.
+func (m *Mock) cacheARN(region, name string) string {
+	return "arn:aws:elasticache:" + region + ":" + m.opts.AccountID + ":cluster:" + name
+}
+
+// arnRegion returns the region field of an ElastiCache ARN
+// (arn:aws:elasticache:<region>:<account>:<type>:<name>), or fallback when the
+// ARN is malformed. A replication group's stored ARN is the source of truth for
+// the region of a cache cluster retained from it.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // defaultEngineVersion returns the ElastiCache default engine version for an
@@ -237,7 +254,8 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		return nil, err
 	}
 
-	endpoint := clusterEndpoint(cfg.Name, m.opts.Region, engine, resolvePort(engine, cfg.Port))
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+	endpoint := clusterEndpoint(cfg.Name, region, engine, resolvePort(engine, cfg.Port))
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -252,7 +270,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		EngineVersion:      engineVersion,
 		Status:             statusAvailable,
 		Endpoint:           endpoint,
-		ARN:                m.cacheARN(cfg.Name),
+		ARN:                m.cacheARN(region, cfg.Name),
 		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		Tags:               tags,
 		NumCacheNodes:      numNodes,

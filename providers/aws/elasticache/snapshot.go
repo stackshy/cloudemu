@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
-// snapshotARN builds an ElastiCache snapshot ARN.
-func (m *Mock) snapshotARN(name string) string {
-	return "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID + ":snapshot:" + name
+// snapshotARN builds an ElastiCache snapshot ARN in the given region.
+func (m *Mock) snapshotARN(region, name string) string {
+	return "arn:aws:elasticache:" + region + ":" + m.opts.AccountID + ":snapshot:" + name
 }
 
 // CreateSnapshot takes a point-in-time backup of a cache cluster or replication
@@ -18,7 +19,7 @@ func (m *Mock) snapshotARN(name string) string {
 // with SnapshotAlreadyExistsFault; the identity of the source (engine, node
 // type, version, port, node count) is copied into the snapshot so a restore can
 // recreate a like-for-like cluster.
-func (m *Mock) CreateSnapshot(_ context.Context, cfg cachedriver.SnapshotConfig) (*cachedriver.Snapshot, error) {
+func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfig) (*cachedriver.Snapshot, error) {
 	name := strings.ToLower(cfg.SnapshotName)
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "SnapshotName is required")
@@ -29,6 +30,10 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg cachedriver.SnapshotConfig)
 			"SnapshotAlreadyExistsFault: snapshot %q already exists", name)
 	}
 
+	// A snapshot is a child of the cluster or replication group it backs up, so
+	// it inherits that source's region. The request region is only a fallback for
+	// the (AWS-invalid) case where no source is given.
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	snap := cachedriver.Snapshot{
 		Name:          name,
 		Status:        statusAvailable,
@@ -36,10 +41,10 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg cachedriver.SnapshotConfig)
 		Port:          defaultRedisPort,
 		NumCacheNodes: 1,
 		CreatedAt:     m.opts.Clock.Now().UTC(),
-		ARN:           m.snapshotARN(name),
+		ARN:           m.snapshotARN(region, name),
 	}
 
-	if err := m.fillSnapshotSource(cfg, &snap); err != nil {
+	if err := m.fillSnapshotSource(cfg, &snap, region); err != nil {
 		return nil, err
 	}
 
@@ -49,8 +54,11 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg cachedriver.SnapshotConfig)
 }
 
 // fillSnapshotSource resolves the snapshot's source cluster or replication group
-// and copies its identity onto snap.
-func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedriver.Snapshot) error {
+// and copies its identity onto snap, including stamping the snapshot's ARN with
+// the source's region (from its stored ARN) so the child inherits the parent's
+// region rather than the request's. fallbackRegion is used only if the source's
+// stored ARN is malformed.
+func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedriver.Snapshot, fallbackRegion string) error {
 	switch {
 	case cfg.CacheClusterID != "":
 		cd, ok := m.caches.Get(cfg.CacheClusterID)
@@ -68,6 +76,7 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.EngineVersion = cd.info.EngineVersion
 		snap.NodeType = cd.info.NodeType
 		snap.ParameterGroupName = paramGroupName(cd.info.Engine)
+		snap.ARN = m.snapshotARN(arnRegion(cd.info.ARN, fallbackRegion), snap.Name)
 
 		if cd.info.NumCacheNodes > 0 {
 			snap.NumCacheNodes = cd.info.NumCacheNodes
@@ -84,6 +93,7 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.EngineVersion = rg.EngineVersion
 		snap.NodeType = rg.NodeType
 		snap.ParameterGroupName = paramGroupName(rg.Engine)
+		snap.ARN = m.snapshotARN(arnRegion(rg.ARN, fallbackRegion), snap.Name)
 
 		if rg.PrimaryPort != 0 {
 			snap.Port = rg.PrimaryPort

@@ -43,7 +43,7 @@ func (*Mock) buildShards(count int32, startIndex int, startSeq string, createdAt
 
 // CreateStream creates a new stream with the requested shard count (or on-demand
 // default) and moves it straight to ACTIVE.
-func (m *Mock) CreateStream(_ context.Context, in driver.CreateStreamInput) error {
+func (m *Mock) CreateStream(ctx context.Context, in driver.CreateStreamInput) error {
 	if in.StreamName == "" {
 		return invalidArg("StreamName is required")
 	}
@@ -69,7 +69,7 @@ func (m *Mock) CreateStream(_ context.Context, in driver.CreateStreamInput) erro
 		return invalidArg("ShardCount must be at least 1 for provisioned streams")
 	}
 
-	arn := m.streamARN(in.StreamName)
+	arn := m.streamARN(ctx, in.StreamName)
 	now := m.now()
 
 	sd := &streamData{

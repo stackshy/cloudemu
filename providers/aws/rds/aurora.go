@@ -5,6 +5,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -26,7 +27,7 @@ func globalClusterARN(accountID, id string) string {
 // ---- custom cluster endpoints ----
 
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateDBClusterEndpoint(_ context.Context, cfg rdsdriver.ClusterEndpointConfig) (*rdsdriver.ClusterEndpoint, error) {
+func (m *Mock) CreateDBClusterEndpoint(ctx context.Context, cfg rdsdriver.ClusterEndpointConfig) (*rdsdriver.ClusterEndpoint, error) {
 	if cfg.EndpointID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterEndpointIdentifier is required")
 	}
@@ -42,11 +43,12 @@ func (m *Mock) CreateDBClusterEndpoint(_ context.Context, cfg rdsdriver.ClusterE
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB cluster endpoint %q already exists", cfg.EndpointID)
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	ep := rdsdriver.ClusterEndpoint{
 		EndpointID:         cfg.EndpointID,
 		ClusterID:          cfg.ClusterID,
-		ARN:                clusterEndpointARN(m.opts.Region, m.opts.AccountID, cfg.EndpointID),
-		Endpoint:           endpointFor(cfg.EndpointID, m.opts.Region, "cluster-custom"),
+		ARN:                clusterEndpointARN(region, m.opts.AccountID, cfg.EndpointID),
+		Endpoint:           endpointFor(cfg.EndpointID, region, "cluster-custom"),
 		Status:             rdsdriver.StateAvailable,
 		EndpointType:       "CUSTOM",
 		CustomEndpointType: cfg.EndpointType,

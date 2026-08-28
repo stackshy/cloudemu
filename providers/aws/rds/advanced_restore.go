@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -32,7 +33,7 @@ func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map
 
 	snap := src
 	snap.ID = target
-	snap.ARN = snapshotARN(m.opts.Region, m.opts.AccountID, target)
+	snap.ARN = snapshotARN(arnRegion(src.ARN, m.opts.Region), m.opts.AccountID, target)
 	snap.State = rdsdriver.SnapshotAvailable
 	snap.CreatedAt = m.opts.Clock.Now().UTC()
 
@@ -71,7 +72,7 @@ func (m *Mock) CopyDBClusterSnapshot(_ context.Context, source, target string, t
 
 	snap := src
 	snap.ID = target
-	snap.ARN = clusterSnapshotARN(m.opts.Region, m.opts.AccountID, target)
+	snap.ARN = clusterSnapshotARN(arnRegion(src.ARN, m.opts.Region), m.opts.AccountID, target)
 	snap.State = rdsdriver.SnapshotAvailable
 	snap.CreatedAt = m.opts.Clock.Now().UTC()
 
@@ -120,11 +121,12 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 		instanceClass = src.InstanceClass
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	inst := src
 	inst.ID = input.TargetInstanceID
-	inst.ARN = instanceARN(m.opts.Region, m.opts.AccountID, input.TargetInstanceID)
+	inst.ARN = instanceARN(region, m.opts.AccountID, input.TargetInstanceID)
 	inst.InstanceClass = instanceClass
-	inst.Endpoint = endpointFor(input.TargetInstanceID, m.opts.Region, "abcd1234")
+	inst.Endpoint = endpointFor(input.TargetInstanceID, region, "abcd1234")
 	inst.State = rdsdriver.StateAvailable
 	inst.CreatedAt = m.opts.Clock.Now().UTC()
 	inst.ReadReplicaSource = ""
@@ -184,11 +186,12 @@ func (m *Mock) RestoreDBClusterToPointInTime(
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB cluster %q already exists", input.TargetClusterID)
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := src
 	cluster.ID = input.TargetClusterID
-	cluster.ARN = clusterARN(m.opts.Region, m.opts.AccountID, input.TargetClusterID)
-	cluster.Endpoint = endpointFor(input.TargetClusterID, m.opts.Region, "cluster")
-	cluster.ReaderEndpoint = endpointFor(input.TargetClusterID, m.opts.Region, "cluster-ro")
+	cluster.ARN = clusterARN(region, m.opts.AccountID, input.TargetClusterID)
+	cluster.Endpoint = endpointFor(input.TargetClusterID, region, "cluster")
+	cluster.ReaderEndpoint = endpointFor(input.TargetClusterID, region, "cluster-ro")
 	cluster.State = rdsdriver.StateAvailable
 	cluster.Members = nil
 	cluster.CreatedAt = m.opts.Clock.Now().UTC()

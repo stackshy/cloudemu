@@ -256,3 +256,29 @@ func TestCredentialScopeService(t *testing.T) {
 		})
 	}
 }
+
+func TestCredentialScopeRegion(t *testing.T) {
+	const realHeader = "AWS4-HMAC-SHA256 Credential=AKID/20260101/ap-northeast-1/sns/aws4_request, " +
+		"SignedHeaders=host;x-amz-date, Signature=abc123"
+
+	tests := map[string]struct {
+		auth string
+		want string
+	}{
+		"real tokyo header":   {realHeader, "ap-northeast-1"},
+		"us-west-2 scope":     {"AWS4-HMAC-SHA256 Credential=AKID/20260101/us-west-2/rds/aws4_request, Signature=x", "us-west-2"},
+		"service independent": {"Credential=AKID/20260101/eu-central-1/monitoring/aws4_request", "eu-central-1"},
+		"missing credential":  {"AWS4-HMAC-SHA256 SignedHeaders=host, Signature=x", ""},
+		"empty":               {"", ""},
+		"truncated scope":     {"Credential=AKID/20260101/us-east-1/sns", ""},
+		"empty region field":  {"Credential=AKID/20260101//sns/aws4_request", ""},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := awsquery.CredentialScopeRegion(tc.auth); got != tc.want {
+				t.Errorf("CredentialScopeRegion(%q) = %q, want %q", tc.auth, got, tc.want)
+			}
+		})
+	}
+}

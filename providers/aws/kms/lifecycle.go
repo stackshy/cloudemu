@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/kms/driver"
 )
 
@@ -15,7 +16,7 @@ const symmetricKeyBytes = 32 // AES-256
 // CreateKey creates a customer master key, generating its material.
 //
 //nolint:gocritic // in is the public CreateKey input, taken by value to match the driver API
-func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.KeyMetadata, error) {
+func (m *Mock) CreateKey(ctx context.Context, in driver.CreateKeyInput) (*driver.KeyMetadata, error) {
 	usage := in.KeyUsage
 	if usage == "" {
 		usage = driver.UsageEncryptDecrypt
@@ -45,7 +46,7 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 	kd := &keyData{
 		meta: driver.KeyMetadata{
 			KeyID:        id,
-			ARN:          m.keyARN(id),
+			ARN:          m.keyARN(ctx, id),
 			AWSAccountID: m.opts.AccountID,
 			Description:  in.Description,
 			Enabled:      true,
@@ -67,7 +68,7 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 
 	if in.MultiRegion {
 		kd.meta.MultiRegionKeyType = "PRIMARY"
-		kd.meta.PrimaryRegion = m.opts.Region
+		kd.meta.PrimaryRegion = regionctx.RegionOr(ctx, m.opts.Region)
 	}
 
 	if err := populateKeyMaterial(kd, spec, origin); err != nil {

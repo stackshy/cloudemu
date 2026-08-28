@@ -32,9 +32,10 @@ func (m *Mock) ExecuteCommand(ctx context.Context, in driver.ExecuteCommandInput
 		}
 	}
 
+	region := arnRegion(t.ClusterARN, m.opts.Region)
 	sessionID := "ecs-execute-command-" + m.hexID()
-	streamURL := "wss://ssmmessages." + m.opts.Region + ".amazonaws.com/v1/data-channel/" + sessionID + "?role=publish_subscribe"
-	containerARN := m.arn("container/" + clusterNameFromARN(t.ClusterARN) + "/" + trailingID(t.ARN) + "/" + idgen.GenerateID(""))
+	streamURL := "wss://ssmmessages." + region + ".amazonaws.com/v1/data-channel/" + sessionID + "?role=publish_subscribe"
+	containerARN := m.arnIn(region, "container/"+clusterNameFromARN(t.ClusterARN)+"/"+trailingID(t.ARN)+"/"+idgen.GenerateID(""))
 
 	return &driver.ExecuteCommandResult{
 		ClusterARN:    t.ClusterARN,

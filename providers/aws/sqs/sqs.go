@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -176,7 +177,7 @@ func (m *Mock) DeliverExternalFIFO(ctx context.Context, queueARN, body, groupID,
 // CreateQueue creates a new SQS queue.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
+func (m *Mock) CreateQueue(ctx context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "queue name is required")
 	}
@@ -185,8 +186,9 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		return nil, errors.New(errors.InvalidArgument, "FIFO queue name must end with .fifo")
 	}
 
-	url := fmt.Sprintf("https://sqs.%s.amazonaws.com/%s/%s", m.opts.Region, m.opts.AccountID, cfg.Name)
-	arn := idgen.AWSARN("sqs", m.opts.Region, m.opts.AccountID, cfg.Name)
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+	url := fmt.Sprintf("https://sqs.%s.amazonaws.com/%s/%s", region, m.opts.AccountID, cfg.Name)
+	arn := idgen.AWSARN("sqs", region, m.opts.AccountID, cfg.Name)
 
 	// CreateQueue is idempotent: re-creating an existing queue with the exact
 	// same attributes returns the existing URL. QueueNameExists is returned only
@@ -327,6 +329,21 @@ func (m *Mock) parseRedrivePolicy(raw string) *driver.DeadLetterConfig {
 	}
 
 	return &driver.DeadLetterConfig{TargetQueueURL: url, MaxReceiveCount: int(maxReceive)}
+}
+
+// arnRegion returns the region field of an SQS ARN
+// (arn:aws:sqs:<region>:<account>:<name>), or fallback when the ARN is
+// malformed. The stored queue ARN is the source of truth for a queue's region,
+// so the ESM event region is derived from it rather than the configured default.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // urlForARN returns the queue URL whose ARN matches, or "" if none.
@@ -519,7 +536,7 @@ func (m *Mock) deliverToESM(callerCtx context.Context, qd *queueData, msg *sqsMe
 		trial.ReceiveCount = trialCount
 		received := buildReceivedMessage(&trial, qd.visibilityTimeout, m.opts.Clock.Now())
 		arn := qd.info.ARN
-		region := m.opts.Region
+		region := arnRegion(arn, m.opts.Region)
 		qd.mu.Unlock()
 
 		payload := driver.BuildLambdaSQSEvent(arn, region, []driver.Message{received})

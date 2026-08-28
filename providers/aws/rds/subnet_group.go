@@ -5,6 +5,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -56,7 +57,7 @@ func (m *Mock) CreateDBSubnetGroup(
 		SubnetIDs:   append([]string(nil), cfg.SubnetIDs...),
 		VPCID:       m.resolveVPCID(ctx, cfg.SubnetIDs),
 		Status:      "Complete",
-		ARN:         idgen.AWSARN("rds", m.opts.Region, m.opts.AccountID, "subgrp:"+cfg.Name),
+		ARN:         idgen.AWSARN("rds", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "subgrp:"+cfg.Name),
 	}
 	m.subnetGroups.Set(cfg.Name, sg)
 

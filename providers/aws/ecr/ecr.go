@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -75,7 +76,7 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateRepository creates a new ECR repository.
-func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) (*driver.Repository, error) {
+func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig) (*driver.Repository, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "repository name is required")
 	}
@@ -93,8 +94,9 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 	}
 
 	tags := copyTags(cfg.Tags)
-	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, m.opts.Region, cfg.Name)
-	arn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", m.opts.Region, m.opts.AccountID, cfg.Name)
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, region, cfg.Name)
+	arn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", region, m.opts.AccountID, cfg.Name)
 
 	info := driver.Repository{
 		Name:               cfg.Name,

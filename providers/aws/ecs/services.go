@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
@@ -96,7 +97,9 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 			"desiredCount must not be specified for a DAEMON service")
 	}
 
-	svc := serviceFromInput(&in, m.arn, cluster, m.now(), m.rootPrincipalARN())
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+	arnIn := func(resource string) string { return m.arnIn(region, resource) }
+	svc := serviceFromInput(&in, arnIn, cluster, m.now(), m.rootPrincipalARN())
 
 	if err := m.reserveServiceName(serviceKey(cluster, in.ServiceName), svc); err != nil {
 		return nil, err
@@ -493,7 +496,7 @@ func (m *Mock) ListServices(_ context.Context, cluster string) ([]driver.Service
 }
 
 // DescribeServices resolves services by name or ARN; unresolved ids become failures.
-func (m *Mock) DescribeServices(_ context.Context, cluster string, ids []string) ([]driver.Service, []driver.Failure, error) {
+func (m *Mock) DescribeServices(ctx context.Context, cluster string, ids []string) ([]driver.Service, []driver.Failure, error) {
 	want := resolveClusterName(cluster)
 	if !m.clusterExists(want) {
 		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
@@ -508,7 +511,10 @@ func (m *Mock) DescribeServices(_ context.Context, cluster string, ids []string)
 			continue
 		}
 
-		failures = append(failures, driver.Failure{ARN: m.arn("service/" + want + "/" + serviceNameOf(id)), Reason: "MISSING"})
+		failures = append(failures, driver.Failure{
+			ARN:    m.arnIn(regionctx.RegionOr(ctx, m.opts.Region), "service/"+want+"/"+serviceNameOf(id)),
+			Reason: "MISSING",
+		})
 	}
 
 	return found, failures, nil

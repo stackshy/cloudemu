@@ -26,7 +26,7 @@ func (m *Mock) SeedMapRun(executionArn string, run driver.MapRun) (string, error
 	execName := ed.exec.Name
 	ed.mu.RUnlock()
 
-	arn := m.mapRunARN(smName, execName, idgen.GenerateID("mr-"))
+	arn := m.mapRunARN(arnRegion(smArn, m.opts.Region), smName, execName, idgen.GenerateID("mr-"))
 	now := m.now()
 
 	run.ARN = arn

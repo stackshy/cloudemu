@@ -101,24 +101,40 @@ func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
 }
 
-func (m *Mock) smARN(name string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "stateMachine:"+name)
+func (m *Mock) smARN(region, name string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "stateMachine:"+name)
 }
 
-func (m *Mock) execARN(smName, execName string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "execution:"+smName+":"+execName)
+func (m *Mock) execARN(region, smName, execName string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "execution:"+smName+":"+execName)
 }
 
-func (m *Mock) activityARN(name string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "activity:"+name)
+func (m *Mock) activityARN(region, name string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "activity:"+name)
 }
 
-func (m *Mock) aliasARN(smName, alias string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "stateMachine:"+smName+":"+alias)
+func (m *Mock) aliasARN(region, smName, alias string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "stateMachine:"+smName+":"+alias)
 }
 
-func (m *Mock) mapRunARN(smName, execName, id string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "mapRun:"+smName+"/"+execName+":"+id)
+func (m *Mock) mapRunARN(region, smName, execName, id string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "mapRun:"+smName+"/"+execName+":"+id)
+}
+
+// arnRegion returns the region field of a Step Functions ARN
+// (arn:aws:states:<region>:<account>:<resource>), or fallback when the ARN is
+// malformed. A parent resource's stored ARN is the source of truth for the
+// region of the child ARNs derived from it (executions, aliases, map runs), so
+// a child always shares its parent's region.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // smNameFromARN extracts the state machine name from a state machine ARN.

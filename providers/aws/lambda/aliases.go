@@ -29,7 +29,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	}
 
 	aliasARN := idgen.AWSARN(
-		"lambda", m.opts.Region, m.opts.AccountID,
+		"lambda", arnRegion(fd.info.ARN, m.opts.Region), m.opts.AccountID,
 		"function:"+cfg.FunctionName+":"+cfg.Name,
 	)
 

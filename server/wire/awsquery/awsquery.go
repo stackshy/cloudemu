@@ -259,3 +259,27 @@ func CredentialScopeService(auth string) string {
 
 	return parts[serviceField]
 }
+
+// CredentialScopeRegion extracts the region from a SigV4 Authorization header's
+// credential scope: "Credential=AKID/20260101/<region>/service/aws4_request".
+// It returns "" when the header is absent or malformed, so callers fall back to
+// their configured default region rather than a stray field. The wire protocols
+// carry no region parameter, so the signature scope is the only statement of
+// which region the caller addressed.
+func CredentialScopeRegion(auth string) string {
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return ""
+	}
+
+	parts := strings.Split(auth[i+len("Credential="):], "/")
+
+	// A well-formed credential scope is AKID/DATE/REGION/SERVICE/aws4_request —
+	// require all five so a truncated scope yields "" rather than a stray field.
+	const regionField, scopeFields = 2, 5
+	if len(parts) < scopeFields || parts[regionField] == "" {
+		return ""
+	}
+
+	return parts[regionField]
+}

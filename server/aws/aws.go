@@ -669,11 +669,40 @@ func New(d Drivers) *server.Server {
 		srv.SetObserver(func(r *http.Request) { recordManagementEvent(rec, r) })
 	}
 
-	// Opt-in SigV4 request authentication. Installed only when enabled, so the
-	// default request path is byte-for-byte unchanged.
+	// Region awareness always runs; SigV4 authentication is opt-in. Both are
+	// pre-dispatch concerns, so they are composed into one hook: the region
+	// stamper first rewrites the request context with the caller's region (from
+	// the SigV4 credential scope), then the auth gate — when enabled — runs on
+	// that rewritten request. The region stamper does not depend on auth being
+	// on, and adds no request-path change beyond a context value.
+	var authGate func(http.ResponseWriter, *http.Request) (*http.Request, bool)
 	if d.EnforceAuth {
-		srv.SetPreDispatch(newAuthGate(d.IAM, d.AccountID))
+		authGate = newAuthGate(d.IAM, d.AccountID)
 	}
 
+	srv.SetPreDispatch(composePreDispatch(newRegionStamp(), authGate))
+
 	return srv
+}
+
+// composePreDispatch chains pre-dispatch hooks left to right: each may rewrite
+// the request (the next hook sees the rewrite) and any may stop dispatch. Nil
+// hooks are skipped, so an absent auth gate adds nothing.
+func composePreDispatch(
+	hooks ...func(http.ResponseWriter, *http.Request) (*http.Request, bool),
+) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
+	return func(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+		for _, hook := range hooks {
+			if hook == nil {
+				continue
+			}
+
+			var proceed bool
+			if r, proceed = hook(w, r); !proceed {
+				return r, false
+			}
+		}
+
+		return r, true
+	}
 }
