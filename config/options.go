@@ -72,8 +72,10 @@ type Options struct {
 
 	// EnforceAuth, when true, makes the AWS wire server verify the SigV4
 	// signature on each incoming request against a registered IAM access key and
-	// reject bad/missing signatures with 403. Default false, which accepts any
-	// credentials exactly as before (the historical behavior).
+	// reject bad/missing signatures with 403. It also gates JSON-RPC operations
+	// through IAM authorization (see WithEnforceAuth for the exact scope and
+	// limitations). Default false, which accepts any credentials exactly as
+	// before (the historical behavior).
 	EnforceAuth bool
 }
 
@@ -190,15 +192,28 @@ func WithAsyncSettle() Option {
 	}
 }
 
-// WithEnforceAuth turns on AWS SigV4 request authentication: the wire server
-// verifies each request's signature against a registered IAM access key and
-// rejects bad/missing signatures with 403. Off by default, which accepts any
-// credentials (the historical behavior).
+// WithEnforceAuth turns on AWS SigV4 request authentication and IAM
+// authorization: the wire server verifies each request's signature against a
+// registered IAM access key (rejecting bad/missing signatures with 403) and then
+// checks the caller's IAM policies before dispatch. Off by default, which accepts
+// any credentials (the historical behavior).
 //
-// Scope of this revision: long-term (AKIA) access-key signatures are verified;
-// STS temporary (ASIA) credentials are accepted without signature verification
-// (a follow-up), and request timestamps are not checked for expiry. It is
-// authentication only — IAM policy is not yet enforced on the wire.
+// Authentication scope: long-term (AKIA) access-key signatures are verified; STS
+// temporary (ASIA) credentials are accepted without signature verification (a
+// follow-up), and request timestamps are not checked for expiry.
+//
+// Authorization scope: enforced for JSON-RPC services (DynamoDB, KMS, SQS, …),
+// where the operation is bound to the X-Amz-Target header the dispatcher routes
+// on. Query and REST services are authenticated only — their executed operation's
+// IAM service cannot be soundly determined before dispatch (query routing is by
+// action name and the SigV4 credential scope is client-controlled), so
+// action+resource authorization for them is a follow-up. Authorization is
+// action-level (resource "*").
+//
+// Foundation limitation: authorization applies only to principals that have IAM
+// policies defined. A valid IAM user or role with NO policies is left
+// unrestricted here (real AWS implicit-denies a policy-less principal), and the
+// account-admin/root and ASIA bootstrap identities are always allowed.
 func WithEnforceAuth() Option {
 	return func(o *Options) {
 		o.EnforceAuth = true

@@ -234,8 +234,14 @@ type Drivers struct {
 	// fails to resolve its key (InvalidClientTokenId).
 	//
 	// Long-term (AKIA) keys are verified; STS temporary (ASIA) credentials are
-	// accepted without signature verification (a follow-up). Authentication only:
-	// IAM policy is not yet enforced on the wire.
+	// accepted without signature verification (a follow-up).
+	//
+	// It also enforces IAM authorization for JSON-RPC services (the operation is
+	// bound to the X-Amz-Target header the dispatcher routes on); query and REST
+	// services are authenticated only, because their executed operation cannot be
+	// soundly bound to an IAM service before dispatch. Authorization applies only
+	// to principals that have IAM policies defined — a policy-less user/role and
+	// the account-admin/root and ASIA identities are left unrestricted.
 	EnforceAuth bool
 }
 
