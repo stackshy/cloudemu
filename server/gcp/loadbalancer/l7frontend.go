@@ -342,7 +342,7 @@ func (h *Handler) gcpResourceInUse(ctx context.Context, rp gcprest.ResourcePath)
 	case resourceTargetHTTPProxies, resourceTargetHTTPSProxies:
 		return h.forwardingRuleRefTarget(ctx, rp.ResourceName)
 	case resourceInstanceGroups, resourceRegionInstanceGroups:
-		return h.backendServiceRefGroup(ctx, rp.ResourceName)
+		return h.backendServiceRefGroup(ctx, rp)
 	default:
 		return ""
 	}
@@ -417,8 +417,10 @@ func (h *Handler) forwardingRuleRefTarget(ctx context.Context, proxyName string)
 }
 
 // backendServiceRefGroup returns the name of a backend service whose backends[]
-// reference the instance group groupName, or "" when none does.
-func (h *Handler) backendServiceRefGroup(ctx context.Context, groupName string) string {
+// reference the instance group identified by rp (scope + name), or "" when none does.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) backendServiceRefGroup(ctx context.Context, rp gcprest.ResourcePath) string {
 	tgs, err := h.lb.DescribeTargetGroups(ctx, nil)
 	if err != nil {
 		return ""
@@ -430,7 +432,15 @@ func (h *Handler) backendServiceRefGroup(ctx context.Context, groupName string) 
 		decodeJSONTag(tgs[i].Tags, bsBackendsTag, &backends)
 
 		for j := range backends {
-			if backends[j].Group != "" && lastPathSegment(backends[j].Group) == groupName {
+			if backends[j].Group == "" {
+				continue
+			}
+
+			// Match the group's scope AND name, not just the trailing name: a
+			// same-named instance group in a different zone/region must not be
+			// falsely reported as in use.
+			_, scope, name := parseGroupRef(backends[j].Group)
+			if name == rp.ResourceName && scope == rp.ScopeName {
 				return displayName(tgs[i].Tags, bsNameTag, tgs[i].Name)
 			}
 		}

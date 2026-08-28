@@ -372,5 +372,7 @@ func listScopeSegment(rp gcprest.ResourcePath) string {
 		return gcprest.ScopeGlobal
 	}
 
-	return gcprest.ScopeRegions + "/" + rp.ScopeName
+	// rp.Scope is already the collection segment ("zones" or "regions"); use it
+	// verbatim so a zonal list envelope's id isn't mislabeled as "regions/...".
+	return rp.Scope + "/" + rp.ScopeName
 }

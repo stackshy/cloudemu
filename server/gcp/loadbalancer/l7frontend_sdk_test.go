@@ -463,3 +463,72 @@ func lastSeg(ref string) string {
 
 	return ref
 }
+
+// TestSDKGCPInstanceGroupDeleteScopedToZone guards the in-use delete check
+// against matching an instance group by trailing name only: a same-named group
+// in a different zone must remain deletable even while another zone's group of
+// the same name is referenced by a backend service.
+func TestSDKGCPInstanceGroupDeleteScopedToZone(t *testing.T) {
+	ts := newGCPLBServer(t)
+	ctx := context.Background()
+
+	const otherZone = "us-central1-b"
+
+	igClient, err := gcpcompute.NewInstanceGroupsRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewInstanceGroupsRESTClient: %v", err)
+	}
+	t.Cleanup(func() { _ = igClient.Close() })
+
+	bsClient, err := gcpcompute.NewBackendServicesRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewBackendServicesRESTClient: %v", err)
+	}
+	t.Cleanup(func() { _ = bsClient.Close() })
+
+	// Same-named instance group in two different zones.
+	for _, zone := range []string{testZone, otherZone} {
+		z := zone
+		waitOp(ctx, t, "instanceGroup Insert "+z, func() (*gcpcompute.Operation, error) {
+			return igClient.Insert(ctx, &computepb.InsertInstanceGroupRequest{
+				Project:               testProject,
+				Zone:                  z,
+				InstanceGroupResource: &computepb.InstanceGroup{Name: ptrStr("shared-ig")},
+			})
+		})
+	}
+
+	// A backend service references ONLY the testZone group.
+	ig, err := igClient.Get(ctx, &computepb.GetInstanceGroupRequest{
+		Project: testProject, Zone: testZone, InstanceGroup: "shared-ig",
+	})
+	if err != nil {
+		t.Fatalf("instanceGroup Get: %v", err)
+	}
+
+	waitOp(ctx, t, "backendService Insert", func() (*gcpcompute.Operation, error) {
+		return bsClient.Insert(ctx, &computepb.InsertBackendServiceRequest{
+			Project: testProject,
+			BackendServiceResource: &computepb.BackendService{
+				Name:                ptrStr("shared-bs"),
+				Protocol:            ptrStr("HTTP"),
+				LoadBalancingScheme: ptrStr("EXTERNAL_MANAGED"),
+				Backends:            []*computepb.Backend{{Group: ptrStr(ig.GetSelfLink())}},
+			},
+		})
+	})
+
+	// The unreferenced same-named group in the other zone must delete cleanly.
+	if _, err := igClient.Delete(ctx, &computepb.DeleteInstanceGroupRequest{
+		Project: testProject, Zone: otherZone, InstanceGroup: "shared-ig",
+	}); err != nil {
+		t.Fatalf("delete of unreferenced same-named group in %s should succeed, got: %v", otherZone, err)
+	}
+
+	// The referenced group must still be blocked.
+	if _, err := igClient.Delete(ctx, &computepb.DeleteInstanceGroupRequest{
+		Project: testProject, Zone: testZone, InstanceGroup: "shared-ig",
+	}); err == nil {
+		t.Fatalf("delete of the in-use group in %s should be blocked", testZone)
+	}
+}
