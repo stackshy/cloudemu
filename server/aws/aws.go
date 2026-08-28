@@ -9,6 +9,7 @@ package aws
 import (
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -243,6 +244,10 @@ type Drivers struct {
 	// to principals that have IAM policies defined — a policy-less user/role and
 	// the account-admin/root and ASIA identities are left unrestricted.
 	EnforceAuth bool
+	// Clock drives SigV4 timestamp-expiry evaluation and STS temporary-credential
+	// expiry when EnforceAuth is on. Nil uses the real clock; tests inject a
+	// FakeClock for determinism. Ignored when EnforceAuth is off.
+	Clock config.Clock
 }
 
 // DriversFrom builds a Drivers bundle wiring every service handler to the
@@ -301,6 +306,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		AccountID:           p.AccountID,
 		Region:              p.Region,
 		EnforceAuth:         p.EnforceAuth,
+		Clock:               p.Clock,
 	}
 }
 
@@ -562,11 +568,30 @@ func New(d Drivers) *server.Server {
 	// AssumeRole, GetSessionToken) is disjoint from RDS, Redshift, IAM, ELBv2,
 	// ElastiCache, SNS, and EC2, so no shadowing occurs. It has no driver, so
 	// it's gated on the STS bool. Registered before the EC2 catch-all.
+	// When EnforceAuth is on, STS records the temporary credentials it mints in a
+	// session store so the auth gate can verify signatures made with them (and
+	// reject expired sessions). Off, the store stays nil and STS returns its
+	// fixed synthetic credentials unchanged.
+	authClock := d.Clock
+	if authClock == nil {
+		authClock = config.RealClock{}
+	}
+
+	var stsSessions *stssrv.SessionStore
+	if d.EnforceAuth {
+		stsSessions = stssrv.NewSessionStore(authClock)
+	}
+
 	if d.STS {
 		// Pass the IAM driver so AssumeRole can enforce the target role's trust
 		// policy and existence. d.IAM may be nil (standalone STS-only), in which
 		// case AssumeRole stays permissive.
-		srv.Register(stssrv.New(d.AccountID, d.Region, d.IAM))
+		stsHandler := stssrv.New(d.AccountID, d.Region, d.IAM)
+		if stsSessions != nil {
+			stsHandler.SetSessions(stsSessions)
+		}
+
+		srv.Register(stsHandler)
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
@@ -677,7 +702,7 @@ func New(d Drivers) *server.Server {
 	// on, and adds no request-path change beyond a context value.
 	var authGate func(http.ResponseWriter, *http.Request) (*http.Request, bool)
 	if d.EnforceAuth {
-		authGate = newAuthGate(d.IAM, d.AccountID)
+		authGate = newAuthGate(d.IAM, d.AccountID, stsSessions, authClock)
 	}
 
 	srv.SetPreDispatch(composePreDispatch(newRegionStamp(), authGate))

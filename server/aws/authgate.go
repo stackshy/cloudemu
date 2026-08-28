@@ -8,31 +8,34 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
+	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
-// tempCredentialPrefix marks STS-issued temporary access keys. Their secret is
-// synthetic (derived by STS, not stored as an IAM access key), so their SigV4
-// signature cannot be verified here; such requests are treated as authenticated
-// pass-throughs in this revision, and verifying temporary-credential signatures
-// is a follow-up. Note the limitation this leaves: unsigned or malformed
-// requests are still rejected, but ANY credential whose scope carries an
-// ASIA-prefixed key id is trusted without a signature check — so this is not yet
-// a hard boundary against a forged ASIA credential. That is acceptable for a
-// local dev emulator (rejecting all ASIA would break legitimate STS/IRSA/
-// instance-profile flows) and is closed when temp-credential verification lands.
+// tempCredentialPrefix marks STS-issued temporary access keys (ASIA). Their
+// secret is minted by STS, which — when EnforceAuth is on — records it in the
+// session store so the signature made with it can be SigV4-verified here exactly
+// like a long-term AKIA key, and a forged ASIA credential (unknown/wrong secret)
+// is rejected.
 const tempCredentialPrefix = "ASIA"
 
 // newAuthGate builds the SigV4 authentication pre-dispatch hook. It buffers and
 // restores the request body (downstream Matches/ParseForm read it), resolves
-// the caller's secret via the IAM access-key resolver, verifies the signature,
+// the caller's secret via the IAM access-key resolver (long-term AKIA keys) or
+// the STS session store (temporary ASIA credentials), verifies the signature,
 // and either attaches the resolved principal to the request context (proceed)
-// or writes a 403 AWS error (stop).
-func newAuthGate(iamDriver iamdriver.IAM, accountID string) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
+// or writes a 403 AWS error (stop). clock drives timestamp-expiry evaluation.
+func newAuthGate(
+	iamDriver iamdriver.IAM, accountID string, sessions *stssrv.SessionStore, clock config.Clock,
+) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
 	resolver, _ := iamDriver.(iamdriver.AccessKeyResolver)
+
+	if clock == nil {
+		clock = config.RealClock{}
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 		body := drainBody(r)
@@ -50,15 +53,23 @@ func newAuthGate(iamDriver iamdriver.IAM, accountID string) func(http.ResponseWr
 			return r, false
 		}
 
-		// Temporary STS credentials cannot be SigV4-verified (synthetic secret);
-		// pass them through as authenticated for now (documented follow-up).
+		// Temporary STS credentials are verified against the secret STS recorded
+		// when it minted them (resolved from the session store), so a forged ASIA
+		// credential and an expired session are both rejected.
 		if strings.HasPrefix(akid, tempCredentialPrefix) {
+			principal, aerr := verifyTempCredential(r, body, akid, accountID, sessions, clock)
+
 			restore()
 
-			return withPrincipal(r, authctx.Principal{AccessKeyID: akid, AccountID: accountID}), true
+			if aerr != nil {
+				writeAuthError(w, r, aerr)
+				return r, false
+			}
+
+			return withPrincipal(r, principal), true
 		}
 
-		principal, aerr := sigv4.Verify(r, body, resolverLookup(r, resolver), config.RealClock{})
+		principal, aerr := sigv4.Verify(r, body, resolverLookup(r, resolver), clock)
 
 		restore()
 
@@ -73,6 +84,44 @@ func newAuthGate(iamDriver iamdriver.IAM, accountID string) func(http.ResponseWr
 
 		return withPrincipal(r, principal), true
 	}
+}
+
+// verifyTempCredential authenticates an STS temporary (ASIA) credential. It
+// resolves the secret STS recorded for the presented access key id, rejects an
+// unknown key (InvalidClientTokenId) or an expired session (ExpiredToken), then
+// SigV4-verifies the signature against that secret. When no session store is
+// wired the credential is unverifiable, so it fails closed.
+func verifyTempCredential(
+	r *http.Request, body []byte, akid, accountID string, sessions *stssrv.SessionStore, clock config.Clock,
+) (authctx.Principal, *sigv4.AuthError) {
+	invalid := &sigv4.AuthError{
+		Code:       "InvalidClientTokenId",
+		Message:    "The security token included in the request is invalid.",
+		HTTPStatus: http.StatusForbidden,
+	}
+
+	if sessions == nil {
+		return authctx.Principal{}, invalid
+	}
+
+	sess, ok := sessions.Lookup(akid)
+	if !ok {
+		return authctx.Principal{}, invalid
+	}
+
+	if clock.Now().UTC().After(sess.Expiration) {
+		return authctx.Principal{}, &sigv4.AuthError{
+			Code:       "ExpiredToken",
+			Message:    "The security token included in the request is expired.",
+			HTTPStatus: http.StatusForbidden,
+		}
+	}
+
+	lookup := func(id string) (string, authctx.Principal, bool) {
+		return sess.SecretAccessKey, authctx.Principal{AccessKeyID: id, AccountID: accountID}, true
+	}
+
+	return sigv4.Verify(r, body, lookup, clock)
 }
 
 // resolverLookup adapts the IAM access-key resolver to sigv4.LookupFunc,
