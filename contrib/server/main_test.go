@@ -89,7 +89,7 @@ func TestBatteriesServerIdentityPreserved(t *testing.T) {
 	cfg.accountID = wantAccount
 	cfg.region = wantRegion
 
-	opts, err := buildOptions(&cfg)
+	opts, _, err := buildOptions(&cfg, dockerAvailable)
 	if err != nil {
 		t.Fatalf("buildOptions: %v", err)
 	}
@@ -196,6 +196,7 @@ func testConfig(t *testing.T, engines engineSelection) appConfig {
 
 	return appConfig{
 		engines:           engines,
+		providers:         []string{providerAWS, providerAzure, providerGCP},
 		host:              "127.0.0.1",
 		awsPort:           freePortStr(t),
 		azurePort:         freePortStr(t),
@@ -446,6 +447,7 @@ func allEnginesOff() engineSelection {
 		functions:  engineOff,
 		compute:    engineOff,
 		containers: engineOff,
+		storage:    engineOff,
 	}
 }
 
