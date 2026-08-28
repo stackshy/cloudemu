@@ -11,6 +11,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
@@ -178,6 +179,7 @@ type Provider struct {
 	Glue                *glue.Mock
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
+	APIGateway          *apigateway.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -241,6 +243,7 @@ func New(opts ...config.Option) *Provider {
 		Glue:                glue.New(o),
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
+		APIGateway:          apigateway.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 		EnforceAuth:         o.EnforceAuth,
@@ -323,6 +326,11 @@ func New(opts ...config.Option) *Provider {
 	// recursion-guarded InvokeSync seam, so a Task->Lambda->StartExecution->Task
 	// cycle terminates at recursionguard.MaxDepth instead of overflowing.
 	p.SFN.SetLambdaSyncInvoker(p.Lambda)
+	// API Gateway -> Lambda: a data-plane request to a deployed REST API resolves
+	// its AWS_PROXY integration to a Lambda ARN and invokes the function through
+	// the same recursion-guarded InvokeSync seam, returning the function's
+	// {statusCode,headers,body} as the HTTP response.
+	p.APIGateway.SetLambdaInvoker(p.Lambda)
 	wireLambdaEventSources(p)
 
 	p.ResourceDiscovery = resourcediscovery.New(

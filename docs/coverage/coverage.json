@@ -117,6 +117,61 @@
     }
   },
   {
+    "service": "apigateway",
+    "interface": "APIGateway",
+    "operations": [
+      {
+        "name": "CreateDeployment"
+      },
+      {
+        "name": "CreateResource"
+      },
+      {
+        "name": "CreateRestAPI"
+      },
+      {
+        "name": "CreateStage"
+      },
+      {
+        "name": "DeleteRestAPI"
+      },
+      {
+        "name": "GetIntegration"
+      },
+      {
+        "name": "GetMethod"
+      },
+      {
+        "name": "GetResource"
+      },
+      {
+        "name": "GetResources"
+      },
+      {
+        "name": "GetRestAPI"
+      },
+      {
+        "name": "GetRestAPIs"
+      },
+      {
+        "name": "GetStage"
+      },
+      {
+        "name": "InvokeRoute",
+        "doc": "InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's"
+      },
+      {
+        "name": "PutIntegration"
+      },
+      {
+        "name": "PutMethod"
+      }
+    ],
+    "providers": {
+      "aws": "APIGateway"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [
