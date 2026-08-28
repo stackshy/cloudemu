@@ -17,8 +17,18 @@ func (h *VaultARMHandler) createOrUpdateVault(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	_, getErr := h.vaults.GetVault(r.Context(), rp.ResourceName)
+	existing, getErr := h.vaults.GetVault(r.Context(), rp.ResourceName)
 	existed := getErr == nil
+
+	// Vault names are globally unique and fixed to their creation resource
+	// group: a PUT of an existing name under a different group must not silently
+	// relocate it. Real Key Vault answers 409 Conflict (GET/DELETE below 404 on
+	// the same scope mismatch).
+	if existed && !existing.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
+		azurearm.WriteError(w, http.StatusConflict, "Conflict",
+			"vault "+rp.ResourceName+" already exists in another resource group")
+		return
+	}
 
 	info, err := h.vaults.CreateOrUpdateVault(r.Context(), vaultConfigFromJSON(rp, &body))
 	if err != nil {
