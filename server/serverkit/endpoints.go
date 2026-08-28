@@ -1,4 +1,4 @@
-package main
+package serverkit
 
 import (
 	"encoding/json"
@@ -6,6 +6,10 @@ import (
 	"io"
 	"os"
 )
+
+// endpointsFileMode is the permission for the written endpoints file: a
+// non-secret local convenience, readable by other tooling run as the same user.
+const endpointsFileMode = 0o644
 
 // endpointSet is the machine-readable bundle of URLs a client points at. Empty
 // fields (a provider that wasn't started) are omitted from the JSON.
@@ -22,11 +26,12 @@ func (e *endpointSet) writeFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+
+	return os.WriteFile(path, append(b, '\n'), endpointsFileMode)
 }
 
-// banner lists the endpoints in display order, so adding a provider is one
-// row rather than another branch in printBanner.
+// banner lists the endpoints in display order, so adding a provider is one row
+// rather than another branch in printBanner.
 func (e *endpointSet) banner() []struct{ label, url, note string } {
 	return []struct{ label, url, note string }{
 		{"AWS", e.AWS, ""},

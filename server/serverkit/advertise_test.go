@@ -1,4 +1,4 @@
-package main
+package serverkit
 
 import (
 	"reflect"
@@ -40,7 +40,7 @@ func TestK8sCertHosts(t *testing.T) {
 		t.Fatalf("loopback advertise: got %v, want [127.0.0.1 localhost] (deduped)", got)
 	}
 
-	got := k8sCertHosts("k8s.local", stringList{"192.168.1.5", "k8s.local"})
+	got := k8sCertHosts("k8s.local", []string{"192.168.1.5", "k8s.local"})
 	want := []string{"k8s.local", "localhost", "127.0.0.1", "192.168.1.5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("custom advertise + extras: got %v, want %v", got, want)

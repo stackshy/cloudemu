@@ -1,4 +1,4 @@
-package main
+package serverkit
 
 import (
 	"net/http"

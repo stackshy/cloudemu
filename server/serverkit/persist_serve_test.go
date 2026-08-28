@@ -1,4 +1,4 @@
-package main
+package serverkit
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/persist"
 )
 
-// TestRestoreStateIgnoresUnreadableFile covers M1's fail-open half: a corrupt or
+// TestRestoreStateIgnoresUnreadableFile covers the fail-open half: a corrupt or
 // missing snapshot must not wedge startup — restoreState warns and starts empty
-// rather than returning an error that aborts runServe.
+// rather than returning an error that aborts New.
 func TestRestoreStateIgnoresUnreadableFile(t *testing.T) {
 	dir := t.TempDir()
 
