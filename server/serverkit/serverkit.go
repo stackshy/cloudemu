@@ -3,9 +3,9 @@
 // It builds every selected provider, fronts each with the /_cloudemu admin
 // control plane, wires the shared Kubernetes data-plane, persistence, seeding,
 // and TLS, binds the listeners, and owns the serve/shutdown/snapshot lifecycle.
-// It is the single source of truth consumed by both cmd/cloudemu/serve.go and
-// the batteries-included contrib/server — extracting it keeps their behavior
-// from drifting.
+// It is the source of truth for cmd/cloudemu/serve.go, and the seam the
+// batteries-included contrib/server adopts in a follow-up so the two
+// entrypoints don't drift.
 //
 // Beyond moving serve's proven assembly, serverkit adds one capability the old
 // inline code lacked: it tracks the current live *Provider set and Close()es the
