@@ -241,6 +241,11 @@ type InvokeOutput struct {
 	// names a version, or "$LATEST" for an unqualified invoke. Mirrors the
 	// AWS Lambda Invoke ExecutedVersion response field.
 	ExecutedVersion string
+	// Logs is the stdout/stderr the invocation produced on the real-engine
+	// path (empty for stub/handler invocations). It is surfaced to the log
+	// service (CloudWatch Logs / Cloud Logging / Log Analytics) rather than
+	// returned on the wire.
+	Logs string
 }
 
 // HandlerFunc is a function handler that processes invocations.

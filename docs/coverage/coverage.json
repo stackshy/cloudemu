@@ -6698,6 +6698,20 @@
         "name": "SetAlarmState"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "ActivityLogRecorder",
+        "doc": "ActivityLogRecorder is an OPTIONAL capability, discovered by type assertion",
+        "operations": [
+          {
+            "name": "ListActivityLogEvents"
+          },
+          {
+            "name": "RecordActivityLogEvent"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "CloudWatch",
       "azure": "Monitor",

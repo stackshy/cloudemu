@@ -20,6 +20,19 @@ Azure's `monitoring` service · portable interface `driver.Monitoring` · [Azure
 | `PutMetricData` |  |
 | `SetAlarmState` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### ActivityLogRecorder
+
+ActivityLogRecorder is an OPTIONAL capability, discovered by type assertion
+
+| Operation | Description |
+| --- | --- |
+| `ListActivityLogEvents` |  |
+| `RecordActivityLogEvent` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

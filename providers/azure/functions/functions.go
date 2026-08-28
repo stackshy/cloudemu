@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
@@ -69,13 +70,21 @@ type Mock struct {
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
 	monitoring mondriver.Monitoring
-	mu         sync.Mutex   // guards PublishVersion read-modify-write on funcData
-	sitesMu    sync.RWMutex // guards SiteMeta read-modify-write
+	logs       logdriver.Logging // optional: Log Analytics sink for invocation logs
+	mu         sync.Mutex        // guards PublishVersion read-modify-write on funcData
+	sitesMu    sync.RWMutex      // guards SiteMeta read-modify-write
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetLogSink wires the Log Analytics target that Invoke writes each
+// invocation's execution log lines (and any captured stdout/stderr) into.
+// Safe to leave unset — invocation-log surfacing is then skipped.
+func (m *Mock) SetLogSink(l logdriver.Logging) {
+	m.logs = l
 }
 
 func (m *Mock) emitMetric(functionName string, metrics map[string]float64) {
@@ -255,6 +264,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		m.emitMetric(input.FunctionName, map[string]float64{
 			"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1,
 		})
+		m.surfaceInvokeLogs(ctx, input.FunctionName, "", "")
 
 		payload := input.Payload
 		if len(payload) == 0 {
@@ -269,6 +279,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		m.emitMetric(input.FunctionName, map[string]float64{
 			"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1, "FunctionErrors": 1,
 		})
+		m.surfaceInvokeLogs(ctx, input.FunctionName, "", err.Error())
 
 		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error()}, nil
 	}
@@ -276,6 +287,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	m.emitMetric(input.FunctionName, map[string]float64{
 		"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1,
 	})
+	m.surfaceInvokeLogs(ctx, input.FunctionName, "", "")
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
 }
@@ -326,6 +338,7 @@ func (m *Mock) invokeEngine(ctx context.Context, input driver.InvokeInput) (*dri
 		m.emitMetric(input.FunctionName, map[string]float64{
 			"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1, "FunctionErrors": 1,
 		})
+		m.surfaceInvokeLogs(ctx, input.FunctionName, out.Logs, out.Error)
 
 		return out, nil
 	}
@@ -333,6 +346,7 @@ func (m *Mock) invokeEngine(ctx context.Context, input driver.InvokeInput) (*dri
 	m.emitMetric(input.FunctionName, map[string]float64{
 		"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1,
 	})
+	m.surfaceInvokeLogs(ctx, input.FunctionName, out.Logs, "")
 
 	return out, nil
 }
