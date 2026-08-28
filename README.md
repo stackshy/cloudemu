@@ -34,10 +34,13 @@ It emulates the API **control surface** your code actually calls, not real infra
 
 ## Quickstart
 
+**To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint** (`AWS_ENDPOINT_URL` / `BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), then point your already-running app or services at it. Do **not** write a `_test.go` file to spin it up in-process for integration — that's library mode, for unit tests inside cloudemu-aware Go code (shown last).
+
 ```sh
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
   ghcr.io/stackshy/cloudemu:latest
 #   AWS 4566 · Azure 4568 (TLS) · GCP 4569 · Kubernetes 4570 (TLS)
+# Apple Silicon: add --platform linux/amd64 if the amd64 image won't start natively.
 ```
 
 Point any existing SDK or CLI at it — nothing cloudemu-specific:
@@ -48,9 +51,43 @@ aws --endpoint-url http://127.0.0.1:4566 s3 mb s3://demo
 aws --endpoint-url http://127.0.0.1:4566 s3 ls
 ```
 
+The same override in code — your app builds its client exactly as in production, only the endpoint changes:
+
+```go
+// AWS (aws-sdk-go-v2) — or just export AWS_ENDPOINT_URL=http://127.0.0.1:4566
+client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+    o.BaseEndpoint = aws.String("http://127.0.0.1:4566")
+    o.UsePathStyle = true
+})
+
+// GCP (cloud.google.com/go)
+gcs, _ := storage.NewClient(ctx,
+    option.WithEndpoint("http://127.0.0.1:4569"),
+    option.WithoutAuthentication())
+
+// Azure (azure-sdk-for-go) — ARM endpoint override (HTTPS, self-signed cert)
+cloudCfg := cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+    cloud.ResourceManager: {Endpoint: "https://127.0.0.1:4568", Audience: "https://management.azure.com"},
+}}
+```
+
+Now the live code path runs end-to-end — the real app writes an object and reads it straight back from the in-memory backend (no assertions, no test harness):
+
+```go
+_, _ = client.PutObject(ctx, &s3.PutObjectInput{
+    Bucket: aws.String("demo"), Key: aws.String("hello.txt"),
+    Body: strings.NewReader("hi from my app")})
+
+out, _ := client.GetObject(ctx, &s3.GetObjectInput{
+    Bucket: aws.String("demo"), Key: aws.String("hello.txt")})
+// out.Body streams "hi from my app"
+```
+
 `kubectl apply -f deployment.yaml` round-trips against the in-memory cluster, and `curl -X POST http://127.0.0.1:4566/_cloudemu/reset` clears all state between tests. Full flags and per-SDK wiring: [docs/standalone-server.md](docs/standalone-server.md).
 
-### In-process (Go)
+### Library mode — for unit tests inside cloudemu-aware Go code only
+
+For Go unit tests you own, skip the server and run it in-process:
 
 ```go
 cloud := cloudemu.NewAWS()
