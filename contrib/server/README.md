@@ -41,23 +41,39 @@ eval "$(cloudemu env)"
 
 ### Docker
 
-Build from the **repository root** (the module `replace`s the core and engine
-modules by relative path):
+The batteries-included image is published to GHCR as
+**`ghcr.io/stackshy/cloudemu:engines`** (the `:engines` variant of the root
+`ghcr.io/stackshy/cloudemu` in-memory image; versioned tags are
+`:vX.Y.Z-engines` / `:X.Y-engines`). It bundles `python3` and `nodejs` so the
+subprocess functions engine (`--functions=subprocess`) works out of the box, and
+exposes AWS (4566), Azure (4568), GCP (4569), Kubernetes (4570) and OCI (4571).
 
 ```bash
-docker build -f contrib/server/Dockerfile -t cloudemu-server .
+docker pull ghcr.io/stackshy/cloudemu:engines
 
-# In-memory:
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 cloudemu-server
-
-# Real Postgres + Redis via env:
+# No-arg run is pure in-memory (identical to `cloudemu serve`); every engine
+# defaults to off until you opt in:
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
-  -e CLOUDEMU_DB=postgres -e CLOUDEMU_CACHE=redis cloudemu-server
+  ghcr.io/stackshy/cloudemu:engines
+
+# Real Postgres + Redis via env (no Docker socket needed):
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+  -e CLOUDEMU_DB=postgres -e CLOUDEMU_CACHE=redis \
+  ghcr.io/stackshy/cloudemu:engines
 
 # Docker-backed engines need the host docker socket:
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e CLOUDEMU_DB=mysql -e CLOUDEMU_CONTAINERS=docker cloudemu-server
+  -e CLOUDEMU_DB=mysql -e CLOUDEMU_CONTAINERS=docker \
+  ghcr.io/stackshy/cloudemu:engines
+```
+
+Or build it yourself from the **repository root** (the module `replace`s the core
+and engine modules by relative path, so the build context must be the repo root,
+not `contrib/server`):
+
+```bash
+docker build -f contrib/server/Dockerfile -t cloudemu-server .
 ```
 
 Without the socket mount, Docker-backed engines **degrade to in-memory** (see the
