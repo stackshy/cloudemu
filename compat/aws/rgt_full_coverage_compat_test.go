@@ -18,10 +18,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/guardduty"
 	"github.com/aws/aws-sdk-go-v2/service/keyspaces"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/redshift"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	rgttypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
+	"github.com/aws/aws-sdk-go-v2/service/sagemaker"
+	smtypes "github.com/aws/aws-sdk-go-v2/service/sagemaker/types"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
@@ -174,6 +177,7 @@ func rgtCases(sess *compat.AWSSession, acct, region string) []rgtCase {
 		kmsCase(sess), ssmCase(sess), ecsCase(sess), sfnCase(sess, acct),
 		glueCase(sess, acct, region), keyspacesCase(sess), guarddutyCase(sess, acct, region),
 		route53Case(sess), acmCase(sess), elbCase(sess),
+		sagemakerCase(sess, acct), redshiftCase(sess, acct, region),
 	}
 
 	return append(cases, cloudwatchCase(sess, acct, region))
@@ -502,9 +506,89 @@ func elbCase(sess *compat.AWSSession) rgtCase {
 	}
 }
 
-// cloudwatchCase is tag-only: CloudWatch alarms are not projected into
-// GetResources here (walkMonitoring emits alarms without tags), so we assert the
-// tag round-trip through the alarm's own ListTagsForResource only.
+// sagemakerCase covers a SageMaker model. Discovery reads the ARN-keyed tag
+// store (SageMaker.ListTags), which the RGT tagger (AddTags) writes, so the tag
+// round-trips through GetResources.
+func sagemakerCase(sess *compat.AWSSession, acct string) rgtCase {
+	c := sagemaker.NewFromConfig(sess.Config(), func(o *sagemaker.Options) { o.BaseEndpoint = aws.String(sess.Endpoint()) })
+	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/compat-sm", acct)
+
+	return rgtCase{
+		name:         "sagemaker",
+		discoverable: true,
+		create: func(ctx context.Context) (string, error) {
+			out, err := c.CreateModel(ctx, &sagemaker.CreateModelInput{
+				ModelName:        aws.String("compat-rgt-model"),
+				ExecutionRoleArn: aws.String(roleARN),
+				PrimaryContainer: &smtypes.ContainerDefinition{Image: aws.String("img:latest")},
+			})
+			if err != nil {
+				return "", err
+			}
+
+			return aws.ToString(out.ModelArn), nil
+		},
+		readTags: func(ctx context.Context, arn string) (map[string]string, error) {
+			out, err := c.ListTags(ctx, &sagemaker.ListTagsInput{ResourceArn: aws.String(arn)})
+			if err != nil {
+				return nil, err
+			}
+
+			tags := make(map[string]string, len(out.Tags))
+			for _, t := range out.Tags {
+				tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
+			}
+
+			return tags, nil
+		},
+	}
+}
+
+// redshiftCase covers a Redshift cluster. Discovery merges the ARN-keyed tag
+// store (Redshift.DescribeTags), which the RGT tagger (CreateTags) writes, so
+// the tag round-trips through GetResources.
+func redshiftCase(sess *compat.AWSSession, acct, region string) rgtCase {
+	c := redshift.NewFromConfig(sess.Config(), func(o *redshift.Options) { o.BaseEndpoint = aws.String(sess.Endpoint()) })
+	const id = "compat-rgt-rs"
+	arn := fmt.Sprintf("arn:aws:redshift:%s:%s:cluster:%s", region, acct, id)
+
+	return rgtCase{
+		name:         "redshift",
+		discoverable: true,
+		create: func(ctx context.Context) (string, error) {
+			_, err := c.CreateCluster(ctx, &redshift.CreateClusterInput{
+				ClusterIdentifier:  aws.String(id),
+				NodeType:           aws.String("dc2.large"),
+				MasterUsername:     aws.String("admin"),
+				MasterUserPassword: aws.String("Passw0rd123"),
+			})
+			if err != nil {
+				return "", err
+			}
+
+			return arn, nil
+		},
+		readTags: func(ctx context.Context, arn string) (map[string]string, error) {
+			out, err := c.DescribeTags(ctx, &redshift.DescribeTagsInput{ResourceName: aws.String(arn)})
+			if err != nil {
+				return nil, err
+			}
+
+			tags := make(map[string]string, len(out.TaggedResources))
+			for _, tr := range out.TaggedResources {
+				if tr.Tag != nil {
+					tags[aws.ToString(tr.Tag.Key)] = aws.ToString(tr.Tag.Value)
+				}
+			}
+
+			return tags, nil
+		},
+	}
+}
+
+// cloudwatchCase covers a CloudWatch alarm: walkMonitoring now projects the
+// alarm's own tag store (AddAlarmTags) into GetResources, so the alarm is
+// filterable by tag like the other discoverable resources.
 func cloudwatchCase(sess *compat.AWSSession, acct, region string) rgtCase {
 	c := cloudwatch.NewFromConfig(sess.Config(), func(o *cloudwatch.Options) { o.BaseEndpoint = aws.String(sess.Endpoint()) })
 	const alarmName = "compat-rgt-alarm"
@@ -512,7 +596,7 @@ func cloudwatchCase(sess *compat.AWSSession, acct, region string) rgtCase {
 
 	return rgtCase{
 		name:         "cloudwatch",
-		discoverable: false,
+		discoverable: true,
 		create: func(ctx context.Context) (string, error) {
 			_, err := c.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
 				AlarmName:          aws.String(alarmName),
