@@ -214,6 +214,9 @@ func New(opts ...config.Option) *Provider {
 	p.BlobStorage.SetMonitoring(p.Monitor)
 	p.CosmosDB.SetMonitoring(p.Monitor)
 	p.Functions.SetMonitoring(p.Monitor)
+	// Azure Functions invocations write execution logs (and captured stdout/
+	// stderr on the real-engine path) to Log Analytics.
+	p.Functions.SetLogSink(p.LogAnalytics)
 	p.ServiceBus.SetMonitoring(p.Monitor)
 	p.Cache.SetMonitoring(p.Monitor)
 	p.LogAnalytics.SetMonitoring(p.Monitor)

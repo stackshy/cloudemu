@@ -51,7 +51,7 @@ func Invoke(ctx context.Context, engine config.FunctionEngine, name string, even
 		return nil, err
 	}
 
-	out := &driver.InvokeOutput{StatusCode: okStatusCode, Payload: res.Payload}
+	out := &driver.InvokeOutput{StatusCode: okStatusCode, Payload: res.Payload, Logs: res.Logs}
 	if res.FunctionError != "" {
 		out.Error = res.FunctionError
 	}

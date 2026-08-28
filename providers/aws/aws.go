@@ -282,6 +282,9 @@ func New(opts ...config.Option) *Provider {
 	p.ECS.SetManagedInstanceLauncher(p.EC2)
 	// Engine-backed ECS tasks push their awslogs container output to CloudWatch Logs.
 	p.ECS.SetLogSink(p.CloudWatchLogs)
+	// Lambda invocations write START/END/REPORT lines (and captured stdout/stderr
+	// on the real-engine path) to CloudWatch Logs under /aws/lambda/<name>.
+	p.Lambda.SetLogSink(p.CloudWatchLogs)
 	// A service's loadBalancers[] register/deregister RUNNING tasks with their
 	// ELBv2 target group as the scheduler converges/drains the service.
 	p.ECS.SetTargetRegistrar(p.ELB)

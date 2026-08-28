@@ -63,6 +63,8 @@ type Mock struct {
 	deliveries       []ActionGroupDelivery
 	webhookDeliverer WebhookDeliverer
 	history          []driver.AlarmHistoryEntry
+	activityMu       sync.Mutex
+	activityLog      []driver.ActivityLogEvent
 	opts             *config.Options
 }
 

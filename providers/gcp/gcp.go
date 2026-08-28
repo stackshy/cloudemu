@@ -130,6 +130,9 @@ func New(opts ...config.Option) *Provider {
 	p.GCS.SetMonitoring(p.CloudMonitoring)
 	p.Firestore.SetMonitoring(p.CloudMonitoring)
 	p.CloudFunctions.SetMonitoring(p.CloudMonitoring)
+	// Cloud Functions invocations write execution logs (and captured stdout/
+	// stderr on the real-engine path) to Cloud Logging.
+	p.CloudFunctions.SetLogSink(p.CloudLogging)
 	p.PubSub.SetMonitoring(p.CloudMonitoring)
 	p.Memorystore.SetMonitoring(p.CloudMonitoring)
 	p.CloudLogging.SetMonitoring(p.CloudMonitoring)

@@ -284,6 +284,12 @@ func New(d Drivers) http.Handler {
 	if d.Monitor != nil {
 		srv.Register(monitor.NewMetricsHandler(d.Monitor))
 		srv.Register(monitor.NewDiagnosticSettingsHandler())
+		// Activity Log read API — registered only when the monitoring backend
+		// supports the recorder capability, so its suffix match wins over any
+		// resource handler for .../eventtypes/management/values.
+		if alh := monitor.NewActivityLogHandler(d.Monitor); alh != nil {
+			srv.Register(alh)
+		}
 	}
 
 	// Register more-specific compute resource handlers first so their
@@ -576,6 +582,14 @@ func New(d Drivers) http.Handler {
 	// the unmodeled-property overlay below wraps the response).
 	if d.EnforceAuth {
 		srv.SetPreDispatch(newAuthGate(config.RealClock{}))
+	}
+
+	// When the monitoring backend can record Activity Log events, observe every
+	// served ARM request and log a management event so the Activity Log API
+	// reflects real API activity. This is the Azure analog of the AWS
+	// CloudTrail observer.
+	if rec, ok := d.Monitor.(mondriver.ActivityLogRecorder); ok {
+		srv.SetObserver(func(r *http.Request) { recordActivityLogEvent(rec, r) })
 	}
 
 	return echoUnmodeledProperties(srv, newPropertyOverlay())

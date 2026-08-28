@@ -7,6 +7,8 @@
 package gcp
 
 import (
+	"net/http"
+
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -128,7 +130,7 @@ type Drivers struct {
 // firestore, monitoring) ahead of GCS so first-match-wins keeps each on the
 // correct package.
 //
-//nolint:gocritic,gocyclo,funlen // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
+//nolint:gocritic,gocyclo,gocognit,funlen // Drivers is all interface fields; one if-per-driver, grows with the bundle.
 func New(d Drivers) *server.Server {
 	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
 	// paths, so enabling both would silently shadow one. Fail fast rather than
@@ -400,5 +402,21 @@ func New(d Drivers) *server.Server {
 		srv.Register(gcsHandler)
 	}
 
+	// When Cloud Logging is present, observe every served request and write a
+	// Cloud Audit Log Admin Activity entry for mutating operations, so the audit
+	// trail reflects real API activity. This is the GCP analog of the AWS
+	// CloudTrail observer.
+	installAuditObserver(srv, d.CloudLogging)
+
 	return srv
+}
+
+// installAuditObserver wires the Cloud Audit Log observer when Cloud Logging is
+// present. A nil sink leaves the server's request path unchanged.
+func installAuditObserver(srv *server.Server, logs logdriver.Logging) {
+	if logs == nil {
+		return
+	}
+
+	srv.SetObserver(func(r *http.Request) { recordAuditLogEvent(logs, r) })
 }
