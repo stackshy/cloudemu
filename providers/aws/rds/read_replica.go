@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -23,7 +24,7 @@ func (m *Mock) sourceEngineBacked(engine string) bool {
 // DBName, and DBParameterGroup unless the caller overrides them.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.ReadReplicaConfig) (*rdsdriver.Instance, error) {
+func (m *Mock) CreateDBInstanceReadReplica(ctx context.Context, cfg rdsdriver.ReadReplicaConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBInstanceIdentifier is required")
 	}
@@ -67,7 +68,9 @@ func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.Read
 	// client reading from the replica reaches the real database — provisioning a
 	// separate empty database would leave the replica seeing none of the source's
 	// data. A synthetic source keeps the synthetic replica endpoint.
-	endpoint := endpointFor(cfg.ID, m.opts.Region, "abcd1234")
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+
+	endpoint := endpointFor(cfg.ID, region, "abcd1234")
 	if m.sourceEngineBacked(src.Engine) {
 		endpoint = src.Endpoint
 		port = src.Port
@@ -75,7 +78,7 @@ func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.Read
 
 	replica := rdsdriver.Instance{
 		ID:                   cfg.ID,
-		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ARN:                  instanceARN(region, m.opts.AccountID, cfg.ID),
 		Engine:               src.Engine,
 		EngineVersion:        src.EngineVersion,
 		InstanceClass:        instanceClass,

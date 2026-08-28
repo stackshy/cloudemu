@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -153,7 +154,23 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateTopic creates a new SNS topic.
-func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {
+// arnRegion returns the region field of an SNS ARN
+// (arn:aws:sns:<region>:<account>:<name>), or fallback when the ARN is
+// malformed. A topic's stored ARN is the source of truth for its region, so a
+// subscription ARN and the notification-envelope URLs are derived from it rather
+// than the configured default.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
+}
+
+func (m *Mock) CreateTopic(ctx context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "topic name is required")
 	}
@@ -162,7 +179,7 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 		return nil, errors.Newf(errors.AlreadyExists, "topic %q already exists", cfg.Name)
 	}
 
-	arn := idgen.AWSARN("sns", m.opts.Region, m.opts.AccountID, cfg.Name)
+	arn := idgen.AWSARN("sns", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -314,7 +331,7 @@ func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*dri
 	}
 
 	subID := idgen.GenerateID("sub-")
-	arn := idgen.AWSARN("sns", m.opts.Region, m.opts.AccountID, cfg.TopicID+":"+subID)
+	arn := idgen.AWSARN("sns", arnRegion(td.info.ResourceID, m.opts.Region), m.opts.AccountID, cfg.TopicID+":"+subID)
 
 	attrs := make(map[string]string, len(cfg.Attributes))
 	for k, v := range cfg.Attributes {
@@ -637,9 +654,9 @@ func (m *Mock) notificationEnvelopeMap(
 		"Timestamp":        m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		"SignatureVersion": "1",
 		"Signature":        "Q2xvdWRFbXVFeGFtcGxlU2lnbmF0dXJl",
-		"SigningCertURL": "https://sns." + m.opts.Region +
+		"SigningCertURL": "https://sns." + arnRegion(td.info.ResourceID, m.opts.Region) +
 			".amazonaws.com/SimpleNotificationService-cloudemu.pem",
-		"UnsubscribeURL": "https://sns." + m.opts.Region +
+		"UnsubscribeURL": "https://sns." + arnRegion(td.info.ResourceID, m.opts.Region) +
 			".amazonaws.com/?Action=Unsubscribe&SubscriptionArn=" + subARN,
 	}
 

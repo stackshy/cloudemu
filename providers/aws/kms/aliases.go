@@ -27,7 +27,7 @@ func validateAliasName(name string) error {
 }
 
 // CreateAlias points a new alias at a key.
-func (m *Mock) CreateAlias(_ context.Context, aliasName, targetKeyID string) error {
+func (m *Mock) CreateAlias(ctx context.Context, aliasName, targetKeyID string) error {
 	if err := validateAliasName(aliasName); err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func (m *Mock) CreateAlias(_ context.Context, aliasName, targetKeyID string) err
 	now := m.now()
 	m.aliases.Set(aliasName, &aliasData{
 		name:        aliasName,
-		arn:         m.aliasARN(aliasName),
+		arn:         m.aliasARN(ctx, aliasName),
 		targetKeyID: id,
 		created:     now,
 		updated:     now,

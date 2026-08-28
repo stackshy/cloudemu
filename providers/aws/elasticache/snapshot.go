@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
-// snapshotARN builds an ElastiCache snapshot ARN.
-func (m *Mock) snapshotARN(name string) string {
-	return "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID + ":snapshot:" + name
+// snapshotARN builds an ElastiCache snapshot ARN in the given region.
+func (m *Mock) snapshotARN(region, name string) string {
+	return "arn:aws:elasticache:" + region + ":" + m.opts.AccountID + ":snapshot:" + name
 }
 
 // CreateSnapshot takes a point-in-time backup of a cache cluster or replication
@@ -18,7 +19,7 @@ func (m *Mock) snapshotARN(name string) string {
 // with SnapshotAlreadyExistsFault; the identity of the source (engine, node
 // type, version, port, node count) is copied into the snapshot so a restore can
 // recreate a like-for-like cluster.
-func (m *Mock) CreateSnapshot(_ context.Context, cfg cachedriver.SnapshotConfig) (*cachedriver.Snapshot, error) {
+func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfig) (*cachedriver.Snapshot, error) {
 	name := strings.ToLower(cfg.SnapshotName)
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "SnapshotName is required")
@@ -36,7 +37,7 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg cachedriver.SnapshotConfig)
 		Port:          defaultRedisPort,
 		NumCacheNodes: 1,
 		CreatedAt:     m.opts.Clock.Now().UTC(),
-		ARN:           m.snapshotARN(name),
+		ARN:           m.snapshotARN(regionctx.RegionOr(ctx, m.opts.Region), name),
 	}
 
 	if err := m.fillSnapshotSource(cfg, &snap); err != nil {

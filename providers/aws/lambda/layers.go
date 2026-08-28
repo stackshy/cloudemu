@@ -11,13 +11,14 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 // PublishLayerVersion publishes a new version of a layer.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) PublishLayerVersion(_ context.Context, cfg driver.LayerConfig) (*driver.LayerVersion, error) {
+func (m *Mock) PublishLayerVersion(ctx context.Context, cfg driver.LayerConfig) (*driver.LayerVersion, error) {
 	ld, ok := m.layers.Get(cfg.Name)
 	if !ok {
 		ld = &layerData{
@@ -34,7 +35,7 @@ func (m *Mock) PublishLayerVersion(_ context.Context, cfg driver.LayerConfig) (*
 	shaStr := fmt.Sprintf("%x", hash)
 
 	arn := idgen.AWSARN(
-		"lambda", m.opts.Region, m.opts.AccountID,
+		"lambda", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID,
 		"layer:"+cfg.Name+":"+strconv.Itoa(ver),
 	)
 

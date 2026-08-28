@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
@@ -153,7 +154,7 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		return nil, err
 	}
 
-	arn := idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+cfg.Name)
+	arn := idgen.AWSARN("lambda", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
 		Role: cfg.Role, Description: cfg.Description,

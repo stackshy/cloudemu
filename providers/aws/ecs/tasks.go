@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/container/containerengine"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
@@ -26,7 +27,7 @@ const maxRunTaskCount = 10
 //nolint:gocritic // in is passed by value to satisfy the driver.ECS interface; the copy is cheap for a mock.
 func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Task, []driver.Failure, error) {
 	cluster := resolveClusterName(in.Cluster)
-	clusterARN := m.arn("cluster/" + cluster)
+	clusterARN := m.arnIn(regionctx.RegionOr(ctx, m.opts.Region), "cluster/"+cluster)
 
 	if !m.clusterActive(cluster) {
 		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", cluster)
@@ -198,7 +199,7 @@ type taskSpec struct {
 // stores the task PENDING so the service reports RunningCount<DesiredCount.
 func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
 	task := &driver.Task{
-		ARN:               m.arn("task/" + spec.cluster + "/" + m.hexID()),
+		ARN:               m.arnIn(arnRegion(spec.clusterARN, m.opts.Region), "task/"+spec.cluster+"/"+m.hexID()),
 		ClusterARN:        spec.clusterARN,
 		TaskDefinitionARN: spec.td.ARN,
 		LaunchType:        spec.launchType,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -21,13 +22,13 @@ func (m *Mock) getActivity(arn string) (*actData, error) {
 }
 
 func (m *Mock) CreateActivity(
-	_ context.Context, name string, tags map[string]string,
+	ctx context.Context, name string, tags map[string]string,
 ) (arn string, created time.Time, err error) {
 	if name == "" {
 		return "", time.Time{}, invalidName("activity name is required")
 	}
 
-	arn = m.activityARN(name)
+	arn = m.activityARN(regionctx.RegionOr(ctx, m.opts.Region), name)
 	now := m.now()
 
 	if !m.activities.SetIfAbsent(arn, &actData{act: driver.Activity{

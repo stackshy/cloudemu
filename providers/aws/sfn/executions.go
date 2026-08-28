@@ -57,7 +57,7 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 		name = idgen.GenerateID("exec-")
 	}
 
-	arn := m.execARN(smName, name)
+	arn := m.execARN(arnRegion(in.StateMachineArn, m.opts.Region), smName, name)
 	now := m.now()
 
 	output := in.Input

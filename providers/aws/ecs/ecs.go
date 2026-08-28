@@ -112,8 +112,33 @@ func (m *Mock) nextEphemeralPort() int {
 	return ephemeralPortBase + int(n%ephemeralPortSpan)
 }
 
+// arn builds an ECS ARN in the emulator's configured default region. It backs
+// the ctx-less internal paths (seed helpers, container-instance registration);
+// request-scoped create paths use arnIn with the caller's region instead.
 func (m *Mock) arn(resource string) string {
-	return idgen.AWSARN("ecs", m.opts.Region, m.opts.AccountID, resource)
+	return m.arnIn(m.opts.Region, resource)
+}
+
+// arnIn builds an ECS ARN stamped with region. Create paths pass the caller's
+// request region (regionctx.RegionOr(ctx, m.opts.Region)) so a resource's ARN
+// reflects the region the client used; a child ARN derives region from its
+// parent's stored ARN so the two always match.
+func (m *Mock) arnIn(region, resource string) string {
+	return idgen.AWSARN("ecs", region, m.opts.AccountID, resource)
+}
+
+// arnRegion returns the region field of an ECS ARN
+// (arn:aws:ecs:<region>:<account>:<resource>), or fallback when the ARN is
+// malformed.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // rootPrincipalARN is the account-root IAM principal ECS records as a service's

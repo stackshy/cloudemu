@@ -67,6 +67,22 @@ func (m *Mock) CreateEventSourceMapping(
 	return &result, nil
 }
 
+// arnRegion returns the region field of a Lambda ARN
+// (arn:aws:lambda:<region>:<account>:function:<name>), or fallback when the ARN
+// is malformed. A function's stored ARN is the source of truth for its region,
+// so an alias ARN and a function URL are derived from it rather than the
+// configured default.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
+}
+
 // functionARN resolves an event-source-mapping target to a full function ARN.
 // A value already shaped like an ARN is returned unchanged; a bare name is
 // looked up (falling back to a synthesized ARN if the function isn't tracked,

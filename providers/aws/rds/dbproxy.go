@@ -6,6 +6,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -26,7 +27,7 @@ func errProxyNotFound(name string) error {
 }
 
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateDBProxy(_ context.Context, cfg rdsdriver.DBProxyConfig) (*rdsdriver.DBProxy, error) {
+func (m *Mock) CreateDBProxy(ctx context.Context, cfg rdsdriver.DBProxyConfig) (*rdsdriver.DBProxy, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBProxyName is required")
 	}
@@ -42,13 +43,14 @@ func (m *Mock) CreateDBProxy(_ context.Context, cfg rdsdriver.DBProxyConfig) (*r
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB proxy %q already exists", cfg.Name)
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	proxy := rdsdriver.DBProxy{
 		Name:                cfg.Name,
-		ARN:                 proxyARN(m.opts.Region, m.opts.AccountID, cfg.Name),
+		ARN:                 proxyARN(region, m.opts.AccountID, cfg.Name),
 		Status:              "available",
 		EngineFamily:        cfg.EngineFamily,
 		RoleARN:             cfg.RoleARN,
-		Endpoint:            fmt.Sprintf("%s.proxy-abcd1234.%s.rds.amazonaws.com", cfg.Name, m.opts.Region),
+		Endpoint:            fmt.Sprintf("%s.proxy-abcd1234.%s.rds.amazonaws.com", cfg.Name, region),
 		VPCSubnetIDs:        append([]string(nil), cfg.VPCSubnetIDs...),
 		VPCSecurityGroupIDs: append([]string(nil), cfg.VPCSecurityGroupIDs...),
 		RequireTLS:          cfg.RequireTLS,
@@ -240,14 +242,15 @@ func (m *Mock) DescribeDBProxyTargetGroups(_ context.Context, name string) ([]rd
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if !m.proxies.Has(name) {
+	proxy, ok := m.proxies.Get(name)
+	if !ok {
 		return nil, errProxyNotFound(name)
 	}
 
 	return []rdsdriver.ProxyTargetGroup{{
 		Name:      defaultTargetGroup,
 		ProxyName: name,
-		ARN:       proxyTargetGroupARN(m.opts.Region, m.opts.AccountID, name),
+		ARN:       proxyTargetGroupARN(arnRegion(proxy.ARN, m.opts.Region), m.opts.AccountID, name),
 		IsDefault: true,
 	}}, nil
 }

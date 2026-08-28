@@ -5,6 +5,7 @@
 package kinesis
 
 import (
+	"context"
 	"crypto/md5" //nolint:gosec // MD5 is the Kinesis partition-key hash, not used for security
 	"fmt"
 	"math/big"
@@ -15,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
 
@@ -87,12 +89,12 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-func (m *Mock) streamARN(name string) string {
-	return idgen.AWSARN("kinesis", m.opts.Region, m.opts.AccountID, "stream/"+name)
+func (m *Mock) streamARN(ctx context.Context, name string) string {
+	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "stream/"+name)
 }
 
-func (m *Mock) consumerARN(streamName, consumerName string) string {
-	return idgen.AWSARN("kinesis", m.opts.Region, m.opts.AccountID,
+func (m *Mock) consumerARN(ctx context.Context, streamName, consumerName string) string {
+	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID,
 		"stream/"+streamName+"/consumer/"+consumerName)
 }
 

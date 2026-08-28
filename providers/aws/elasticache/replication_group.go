@@ -9,6 +9,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -50,6 +51,7 @@ func (m *Mock) CreateReplicationGroup(
 		engineVersion = defaultEngineVersion(engine)
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	rg := cachedriver.ReplicationGroup{
 		ID:            cfg.ID,
 		Description:   cfg.Description,
@@ -61,16 +63,16 @@ func (m *Mock) CreateReplicationGroup(
 		// Callers read the primary endpoint to build a connection string; a
 		// group without one is indistinguishable from a broken provision.
 		PrimaryAddress: fmt.Sprintf("%s.%s.cache.amazonaws.com",
-			cfg.ID, m.opts.Region),
+			cfg.ID, region),
 		PrimaryPort: defaultRedisPort,
 		// The reader endpoint lets clients scale reads across the replicas.
 		ReaderAddress: fmt.Sprintf("%s-ro.%s.cache.amazonaws.com",
-			cfg.ID, m.opts.Region),
+			cfg.ID, region),
 		ReaderPort:        defaultRedisPort,
 		MemberClusters:    memberClusters(cfg.ID, nodes),
 		AutomaticFailover: failoverStatus(cfg.AutomaticFailoverEnabled),
 		SubnetGroupName:   cfg.SubnetGroupName,
-		ARN: "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID +
+		ARN: "arn:aws:elasticache:" + region + ":" + m.opts.AccountID +
 			":replicationgroup:" + cfg.ID,
 	}
 
@@ -263,7 +265,7 @@ func (m *Mock) retainPrimaryCluster(rg *cachedriver.ReplicationGroup) {
 		EngineVersion:   rg.EngineVersion,
 		Status:          statusAvailable,
 		Endpoint:        net.JoinHostPort(rg.PrimaryAddress, strconv.Itoa(rg.PrimaryPort)),
-		ARN:             m.cacheARN(rg.ID),
+		ARN:             m.cacheARN(arnRegion(rg.ARN, m.opts.Region), rg.ID),
 		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		NumCacheNodes:   1,
 		SubnetGroupName: rg.SubnetGroupName,

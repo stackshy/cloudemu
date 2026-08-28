@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -53,7 +54,7 @@ func (m *Mock) getSM(arn string) (*smData, error) {
 //
 //nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
 func (m *Mock) CreateStateMachine(
-	_ context.Context, in driver.CreateStateMachineInput,
+	ctx context.Context, in driver.CreateStateMachineInput,
 ) (arn, versionArn string, created time.Time, err error) {
 	if in.Name == "" {
 		return "", "", time.Time{}, invalidName("state machine name is required")
@@ -78,7 +79,7 @@ func (m *Mock) CreateStateMachine(
 		smType = driver.TypeStandard
 	}
 
-	arn = m.smARN(in.Name)
+	arn = m.smARN(regionctx.RegionOr(ctx, m.opts.Region), in.Name)
 	now := m.now()
 	sm := driver.StateMachine{
 		ARN: arn, Name: in.Name, Definition: in.Definition, RoleArn: in.RoleArn,

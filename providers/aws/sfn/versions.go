@@ -142,7 +142,7 @@ func (m *Mock) CreateStateMachineAlias(
 		return "", time.Time{}, err
 	}
 
-	arn = m.aliasARN(smName, name)
+	arn = m.aliasARN(arnRegion(routing[0].StateMachineVersionArn, m.opts.Region), smName, name)
 	now := m.now()
 	alias := driver.Alias{
 		ARN: arn, Name: name, Description: description,
@@ -178,7 +178,7 @@ func (m *Mock) validateRouting(smName string, routing []driver.RouteEntry) error
 			return validationErr("all routing versions must belong to the same state machine")
 		}
 
-		sd, err := m.getSM(m.smARN(smName))
+		sd, err := m.getSM(m.smARN(arnRegion(routing[i].StateMachineVersionArn, m.opts.Region), smName))
 		if err != nil {
 			return err
 		}
