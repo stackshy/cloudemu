@@ -14,6 +14,7 @@ import (
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
+	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
@@ -59,6 +60,7 @@ import (
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
+	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -175,6 +177,12 @@ type Drivers struct {
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
+	// APIGateway serves the Amazon API Gateway REST API v1 protocol: the
+	// restJson1 control plane under /restapis (RestApi/Resource/Method/
+	// Integration/Deployment/Stage) plus the execute-api data plane, which routes
+	// a request to a deployed API by method+path to its Lambda proxy integration.
+	// It must register before the S3 catch-all.
+	APIGateway apigatewaydriver.APIGateway
 	// GuardDuty serves the Amazon GuardDuty REST-JSON API (path + method routing,
 	// no version prefix) against the guardduty driver. It must register before
 	// the S3 catch-all (see the GuardDuty handler's Matches doc).
@@ -290,6 +298,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Glue:                p.Glue,
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
+		APIGateway:          p.APIGateway,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -623,6 +632,15 @@ func New(d Drivers) *server.Server {
 	// fall through to their own handlers.
 	if d.GuardDuty != nil {
 		srv.Register(guarddutysrv.New(d.GuardDuty))
+	}
+
+	// API Gateway REST v1: the restJson1 control plane roots at /restapis and the
+	// data plane matches either a "{apiId}.execute-api.<...>" Host or a
+	// /restapis/{id}/{stage}/_user_request_/... path. Both are disjoint from the
+	// Lambda control plane (/2015-03-31/functions) and must register before S3's
+	// permissive REST fallback, which would otherwise claim /restapis.
+	if d.APIGateway != nil {
+		srv.Register(apigatewaysrv.New(d.APIGateway))
 	}
 
 	// before S3 because S3 is the permissive REST fallback that would
