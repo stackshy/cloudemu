@@ -9,6 +9,7 @@ package azure
 import (
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
@@ -175,6 +176,20 @@ type Drivers struct {
 	// TenantID is the Azure AD tenant reported by the subscriptions Get/List and
 	// the global tenants list. Empty falls back to defaultTenantID.
 	TenantID string
+	// EnforceAuth turns on Azure claims-based bearer authentication: each
+	// incoming request must carry an "Authorization: Bearer <jwt>" whose claims
+	// validate (accepted Azure audience, un-expired "exp", a principal claim),
+	// and the resolved principal is attached to the request context. Missing,
+	// malformed, expired or wrong-audience tokens are rejected with 401
+	// InvalidAuthenticationToken. Off by default, which accepts any credentials
+	// exactly as before.
+	//
+	// Because cloudemu does not hold Azure AD's signing key, the token SIGNATURE
+	// is NOT verified — only its structure and claims are. This is a documented
+	// limitation, distinct from AWS SigV4 where the shared secret lets the
+	// emulator verify signatures. This gate is authentication only; RBAC
+	// authorization is a follow-up.
+	EnforceAuth bool
 }
 
 // defaultTenantID is reported when Drivers.TenantID is unset, so a caller
@@ -545,6 +560,14 @@ func New(d Drivers) http.Handler {
 	// ARM-specific resource handlers.
 	if d.BlobStorage != nil {
 		srv.Register(blobstorage.New(d.BlobStorage))
+	}
+
+	// Opt-in claims-based bearer authentication. Installed only when enabled, so
+	// the default request path is byte-for-byte unchanged. Registered on the raw
+	// server so the pre-dispatch gate runs before handler matching (and before
+	// the unmodeled-property overlay below wraps the response).
+	if d.EnforceAuth {
+		srv.SetPreDispatch(newAuthGate(config.RealClock{}))
 	}
 
 	return echoUnmodeledProperties(srv, newPropertyOverlay())

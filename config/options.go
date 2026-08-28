@@ -70,12 +70,16 @@ type Options struct {
 	// behavior). See internal/settle.
 	AsyncSettle bool
 
-	// EnforceAuth, when true, makes the AWS wire server verify the SigV4
-	// signature on each incoming request against a registered IAM access key and
-	// reject bad/missing signatures with 403. It also gates JSON-RPC operations
-	// through IAM authorization (see WithEnforceAuth for the exact scope and
-	// limitations). Default false, which accepts any credentials exactly as
-	// before (the historical behavior).
+	// EnforceAuth, when true, turns on request authentication for every provider
+	// wire server. AWS verifies the SigV4 signature on each request against a
+	// registered IAM access key (rejecting bad/missing signatures with 403) and
+	// gates JSON-RPC operations through IAM authorization. Azure validates each
+	// request's Bearer token claims (audience, expiry, principal) and rejects
+	// missing/malformed/expired/wrong-audience tokens with 401 — the token
+	// signature is NOT verified, because cloudemu has no Azure AD signing key, so
+	// Azure enforcement is claims-based authentication only. See WithEnforceAuth
+	// for the exact scope and limitations. Default false, which accepts any
+	// credentials exactly as before (the historical behavior).
 	EnforceAuth bool
 }
 
@@ -192,28 +196,43 @@ func WithAsyncSettle() Option {
 	}
 }
 
-// WithEnforceAuth turns on AWS SigV4 request authentication and IAM
-// authorization: the wire server verifies each request's signature against a
-// registered IAM access key (rejecting bad/missing signatures with 403) and then
-// checks the caller's IAM policies before dispatch. Off by default, which accepts
-// any credentials (the historical behavior).
+// WithEnforceAuth turns on request authentication for every provider wire
+// server. Off by default, which accepts any credentials (the historical
+// behavior).
 //
-// Authentication scope: long-term (AKIA) access-key signatures are verified; STS
-// temporary (ASIA) credentials are accepted without signature verification (a
-// follow-up), and request timestamps are not checked for expiry.
+// AWS — SigV4 authentication and IAM authorization: the wire server verifies
+// each request's signature against a registered IAM access key (rejecting
+// bad/missing signatures with 403) and then checks the caller's IAM policies
+// before dispatch.
+//   - Authentication scope: long-term (AKIA) access-key signatures are verified;
+//     STS temporary (ASIA) credentials are accepted without signature
+//     verification (a follow-up), and request timestamps are not checked for
+//     expiry.
+//   - Authorization scope: enforced for JSON-RPC services (DynamoDB, KMS, SQS,
+//     …), where the operation is bound to the X-Amz-Target header the dispatcher
+//     routes on. Query and REST services are authenticated only — their executed
+//     operation's IAM service cannot be soundly determined before dispatch, so
+//     action+resource authorization for them is a follow-up. Authorization is
+//     action-level (resource "*").
+//   - Foundation limitation: authorization applies only to principals that have
+//     IAM policies defined. A valid IAM user or role with NO policies is left
+//     unrestricted here (real AWS implicit-denies a policy-less principal), and
+//     the account-admin/root and ASIA bootstrap identities are always allowed.
 //
-// Authorization scope: enforced for JSON-RPC services (DynamoDB, KMS, SQS, …),
-// where the operation is bound to the X-Amz-Target header the dispatcher routes
-// on. Query and REST services are authenticated only — their executed operation's
-// IAM service cannot be soundly determined before dispatch (query routing is by
-// action name and the SigV4 credential scope is client-controlled), so
-// action+resource authorization for them is a follow-up. Authorization is
-// action-level (resource "*").
-//
-// Foundation limitation: authorization applies only to principals that have IAM
-// policies defined. A valid IAM user or role with NO policies is left
-// unrestricted here (real AWS implicit-denies a policy-less principal), and the
-// account-admin/root and ASIA bootstrap identities are always allowed.
+// Azure — claims-based bearer authentication: the wire server requires an
+// "Authorization: Bearer <jwt>" on each request, validates the token's claims
+// (a well-formed three-part JWT, an accepted Azure audience, an un-expired
+// "exp", and a principal claim — oid, appid/azp or sub), resolves the principal
+// onto the request context, and rejects missing/malformed/expired/wrong-audience
+// tokens with 401 InvalidAuthenticationToken.
+//   - Documented limitation: the token SIGNATURE is NOT verified. Azure tokens
+//     are signed by Azure AD's private key, which the emulator does not hold, so
+//     (unlike AWS SigV4) it cannot cryptographically verify a real Azure token.
+//     Azure enforcement therefore validates token structure and claims only;
+//     signature verification / emulator-issued tokens are a possible later
+//     enhancement.
+//   - This is authentication only. Azure RBAC (role-assignment) authorization is
+//     a follow-up.
 func WithEnforceAuth() Option {
 	return func(o *Options) {
 		o.EnforceAuth = true

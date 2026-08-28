@@ -115,10 +115,12 @@ func runServe(args []string) error {
 	fs.BoolVar(&c.persistMetaOnly, "persist-metadata-only", false, "persist resource structure but omit object bodies (smaller snapshot)")
 	fs.StringVar(&c.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
 	fs.BoolVar(&c.enforceAuth, "enforce-auth", false,
-		"verify the AWS SigV4 signature on each request against a registered IAM access key (403 on failure) and enforce IAM "+
-			"authorization; off by default. Long-term (AKIA) keys are verified; STS temporary (ASIA) credentials are accepted "+
-			"unverified for now. Authorization is enforced for JSON-RPC services only (query/REST are authenticated only) and "+
-			"applies only to principals that have IAM policies (a policy-less user and the admin/root identity are unrestricted)")
+		"require authentication on each request; off by default. AWS: verify the SigV4 signature against a registered IAM access "+
+			"key (403 on failure) and enforce IAM authorization — long-term (AKIA) keys are verified, STS temporary (ASIA) "+
+			"credentials are accepted unverified for now, authorization is enforced for JSON-RPC services only, and applies only to "+
+			"principals that have IAM policies. Azure: validate each request's Bearer token claims (accepted audience, expiry, a "+
+			"principal claim) and reject missing/malformed/expired/wrong-audience tokens with 401 — the token SIGNATURE is NOT "+
+			"verified (no Azure AD signing key), so this is claims-based authentication only; RBAC authorization is a follow-up")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()
