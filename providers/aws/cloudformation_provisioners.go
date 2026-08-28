@@ -37,7 +37,7 @@ func cloudformationRegistry(p *Provider) cfn.Registry {
 
 // physicalName returns an explicit name property when set, otherwise a
 // CloudFormation-style generated name (StackName-LogicalId-<random>).
-func physicalName(req cfn.ResourceRequest, key string, lower bool) string {
+func physicalName(req *cfn.ResourceRequest, key string, lower bool) string {
 	if v := cfn.PropString(req.Properties, key); v != "" {
 		return v
 	}
@@ -54,8 +54,9 @@ func physicalName(req cfn.ResourceRequest, key string, lower bool) string {
 
 type s3BucketProvisioner struct{ s3 storagedriver.Bucket }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p s3BucketProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "BucketName", true)
+	name := physicalName(&req, "BucketName", true)
 	if err := p.s3.CreateBucket(ctx, name); err != nil {
 		return nil, err
 	}
@@ -79,8 +80,9 @@ func (p s3BucketProvisioner) Delete(ctx context.Context, physicalID string, _ ma
 
 type dynamoTableProvisioner struct{ db dbdriver.Database }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p dynamoTableProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "TableName", false)
+	name := physicalName(&req, "TableName", false)
 
 	cfg := dynamoTableConfig(name, req.Properties)
 	if err := p.db.CreateTable(ctx, cfg); err != nil {
@@ -139,8 +141,9 @@ func dynamoTableConfig(name string, props map[string]any) dbdriver.TableConfig {
 
 type sqsQueueProvisioner struct{ sqs mqdriver.MessageQueue }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p sqsQueueProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "QueueName", false)
+	name := physicalName(&req, "QueueName", false)
 
 	cfg := mqdriver.QueueConfig{
 		Name:              name,
@@ -170,8 +173,9 @@ func (p sqsQueueProvisioner) Delete(ctx context.Context, physicalID string, _ ma
 
 type snsTopicProvisioner struct{ sns notifdriver.Notification }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p snsTopicProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "TopicName", false)
+	name := physicalName(&req, "TopicName", false)
 
 	info, err := p.sns.CreateTopic(ctx, notifdriver.TopicConfig{
 		Name:        name,
@@ -198,8 +202,9 @@ func (p snsTopicProvisioner) Delete(ctx context.Context, deleteID string, _ map[
 
 type lambdaFunctionProvisioner struct{ lambda serverlessdriver.Serverless }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p lambdaFunctionProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "FunctionName", false)
+	name := physicalName(&req, "FunctionName", false)
 
 	cfg := serverlessdriver.FunctionConfig{
 		Name:        name,
@@ -255,8 +260,9 @@ func lambdaCode(props map[string]any) []byte {
 
 type iamRoleProvisioner struct{ iam iamdriver.IAM }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p iamRoleProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "RoleName", false)
+	name := physicalName(&req, "RoleName", false)
 
 	info, err := p.iam.CreateRole(ctx, iamdriver.RoleConfig{
 		Name:                name,
@@ -283,8 +289,9 @@ func (p iamRoleProvisioner) Delete(ctx context.Context, physicalID string, _ map
 
 type secretProvisioner struct{ secrets secretsdriver.Secrets }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p secretProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "Name", false)
+	name := physicalName(&req, "Name", false)
 
 	info, err := p.secrets.CreateSecret(ctx, secretsdriver.SecretConfig{
 		Name:        name,
@@ -311,8 +318,9 @@ func (p secretProvisioner) Delete(ctx context.Context, deleteID string, _ map[st
 
 type ssmParameterProvisioner struct{ ssm psdriver.ParameterStore }
 
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p ssmParameterProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(req, "Name", false)
+	name := physicalName(&req, "Name", false)
 
 	ptype := cfn.PropString(req.Properties, "Type")
 	if ptype == "" {
@@ -333,7 +341,7 @@ func (p ssmParameterProvisioner) Create(ctx context.Context, req cfn.ResourceReq
 
 	return &cfn.ProvisionedResource{
 		PhysicalID: name,
-		Attributes: map[string]string{"Type": ptype, "Value": value, "Arn": ssmParameterARN(req, name)},
+		Attributes: map[string]string{"Type": ptype, "Value": value, "Arn": ssmParameterARN(&req, name)},
 	}, nil
 }
 
@@ -341,7 +349,7 @@ func (p ssmParameterProvisioner) Delete(ctx context.Context, physicalID string, 
 	return p.ssm.DeleteParameter(ctx, physicalID)
 }
 
-func ssmParameterARN(req cfn.ResourceRequest, name string) string {
+func ssmParameterARN(req *cfn.ResourceRequest, name string) string {
 	resource := "parameter/" + name
 	if strings.HasPrefix(name, "/") {
 		resource = "parameter" + name

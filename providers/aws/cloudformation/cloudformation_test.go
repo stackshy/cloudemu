@@ -2,6 +2,8 @@ package cloudformation
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -340,5 +342,134 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 
 	if body == "" {
 		t.Fatal("restored template body is empty")
+	}
+}
+
+// TestUpdateStackFailureRollsBack proves a failing update reverses its forward
+// changes: resources it created are deleted, resources it deleted/replaced are
+// restored, unrelated kept resources are untouched, and the stack ends
+// UPDATE_ROLLBACK_COMPLETE (guards the data-loss bug where the failure path only
+// emitted rollback events).
+func TestUpdateStackFailureRollsBack(t *testing.T) {
+	ctx := context.Background()
+	store := newBacking()
+	m := newTestMock(store)
+
+	initial := `{"Resources":{
+		"Keeper":{"Type":"Test::Bucket","Properties":{"Name":"keeper"}},
+		"MyTopic":{"Type":"Test::Topic","Properties":{"Name":"topic-v1"}}
+	}}`
+
+	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "demo", TemplateBody: initial})
+	requireNoError(t, err)
+
+	// The update replaces MyTopic, adds NewThing, then a failing resource
+	// (ordered last via DependsOn) aborts the update.
+	failing := `{"Resources":{
+		"Keeper":{"Type":"Test::Bucket","Properties":{"Name":"keeper"}},
+		"MyTopic":{"Type":"Test::Topic","Properties":{"Name":"topic-v2"}},
+		"NewThing":{"Type":"Test::Bucket","Properties":{"Name":"new-bucket"}},
+		"Boom":{"Type":"Test::Boom","Properties":{"Name":"boom"},"DependsOn":["NewThing","MyTopic"]}
+	}}`
+
+	stack, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "demo", TemplateBody: failing})
+	requireNoError(t, err)
+	assertEqual(t, stack.Status, cfn.StatusUpdateRollbackComplete, "rollback status")
+
+	if !store.items["keeper"] {
+		t.Fatal("unchanged Keeper must survive the failed update")
+	}
+
+	if !store.items["topic-v1"] {
+		t.Fatal("replaced resource must be restored to its pre-update version (topic-v1)")
+	}
+
+	if store.items["topic-v2"] {
+		t.Fatal("the update's replacement (topic-v2) must be rolled back")
+	}
+
+	if store.items["new-bucket"] {
+		t.Fatal("the update's newly-created resource (new-bucket) must be rolled back (leak)")
+	}
+
+	// The stack template reverted to the pre-update template.
+	body, err := m.GetTemplate(ctx, "demo")
+	requireNoError(t, err)
+
+	if body != initial {
+		t.Fatal("template body should revert to the pre-update template after rollback")
+	}
+}
+
+// TestUpdateReplacementPropagates proves that replacing a resource forces
+// re-provisioning of the resources that reference it, so their resolved
+// references pick up the new physical id.
+func TestUpdateReplacementPropagates(t *testing.T) {
+	ctx := context.Background()
+	store := newBacking()
+	m := newTestMock(store)
+
+	initial := `{"Resources":{
+		"Bucket":{"Type":"Test::Bucket","Properties":{"Name":"bucket-v1"}},
+		"Topic":{"Type":"Test::Topic","Properties":{"Name":{"Fn::Sub":"${Bucket}-events"}}}
+	}}`
+
+	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "demo", TemplateBody: initial})
+	requireNoError(t, err)
+
+	if !store.items["bucket-v1-events"] {
+		t.Fatal("topic should initially resolve to bucket-v1-events")
+	}
+
+	updated := `{"Resources":{
+		"Bucket":{"Type":"Test::Bucket","Properties":{"Name":"bucket-v2"}},
+		"Topic":{"Type":"Test::Topic","Properties":{"Name":{"Fn::Sub":"${Bucket}-events"}}}
+	}}`
+
+	stack, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "demo", TemplateBody: updated})
+	requireNoError(t, err)
+	assertEqual(t, stack.Status, cfn.StatusUpdateComplete, "update status")
+
+	if !store.items["bucket-v2"] || !store.items["bucket-v2-events"] {
+		t.Fatalf("expected bucket-v2 and bucket-v2-events after replacement, got %v", store.items)
+	}
+
+	if store.items["bucket-v1"] || store.items["bucket-v1-events"] {
+		t.Fatalf("stale v1 resources must be gone after replacement, got %v", store.items)
+	}
+}
+
+// TestConcurrentCreateStackSameName proves the atomic slot claim: many
+// concurrent CreateStack calls for one name yield exactly one success (run under
+// -race to catch the check-then-set data race).
+func TestConcurrentCreateStackSameName(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock(newBacking())
+
+	body := `{"Resources":{"B":{"Type":"Test::Bucket","Properties":{"Name":"b"}}}}`
+
+	const goroutines = 20
+
+	var (
+		wg        sync.WaitGroup
+		successes atomic.Int32
+	)
+
+	wg.Add(goroutines)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+
+			if _, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "race", TemplateBody: body}); err == nil {
+				successes.Add(1)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if got := successes.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 successful CreateStack, got %d", got)
 	}
 }

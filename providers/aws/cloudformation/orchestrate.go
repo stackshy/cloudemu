@@ -36,10 +36,6 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		return nil, err
 	}
 
-	if existing, ok := m.stacks.Get(in.StackName); ok && existing.status() != cfn.StatusDeleteComplete {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "Stack [%s] already exists", in.StackName)
-	}
-
 	now := m.clock.Now()
 	stackID := m.newStackID(in.StackName)
 	sd := &stackData{
@@ -52,7 +48,11 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 			CreationTime: now, LastUpdated: now,
 		},
 	}
-	m.stacks.Set(in.StackName, sd)
+
+	if !m.claimStackSlot(in.StackName, sd) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "Stack [%s] already exists", in.StackName)
+	}
+
 	m.emitStackEvent(sd, cfn.StatusCreateInProgress, "User Initiated")
 
 	resolver := m.newResolver(sd, paramValues)
@@ -67,10 +67,45 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 	return &out, nil
 }
 
+// claimStackSlot atomically inserts sd for name, or replaces a prior
+// DELETE_COMPLETE stack, returning false when an active stack already holds the
+// name. The atomicity (SetIfAbsent, otherwise a store-locked Update) closes the
+// concurrent-CreateStack race in which two callers both create the same name
+// and the second Set orphans the first's already-provisioned resources.
+func (m *Mock) claimStackSlot(name string, sd *stackData) bool {
+	if m.stacks.SetIfAbsent(name, sd) {
+		return true
+	}
+
+	claimed := false
+
+	m.stacks.Update(name, func(existing *stackData) *stackData {
+		if existing.status() == cfn.StatusDeleteComplete {
+			claimed = true
+			return sd
+		}
+
+		return existing
+	})
+
+	return claimed
+}
+
+// priorState captures the stack metadata an update overwrites, so a failed
+// update can revert it during rollback.
+type priorState struct {
+	templateBody string
+	params       []cfn.Parameter
+	description  string
+	outputs      []cfn.Output
+}
+
 // UpdateStack reconciles the stack to a new template: resources whose type or
-// properties are unchanged are kept (same physical id), changed ones are
-// replaced (delete + create), added ones are created, and removed ones are
-// deleted. A failure marks the stack UPDATE_ROLLBACK_COMPLETE.
+// properties are unchanged are kept (same physical id), changed ones — and any
+// resource that references a changed one — are replaced (delete + create), added
+// ones are created, and removed ones are deleted. A failure rolls the stack back
+// to its pre-update state (deleting what the update created, restoring what it
+// deleted) and marks it UPDATE_ROLLBACK_COMPLETE.
 func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.Stack, error) {
 	sd, err := m.activeStack(in.StackName)
 	if err != nil {
@@ -87,7 +122,14 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, err
 	}
 
-	oldT, err := cfn.ParseTemplate(sd.stack.TemplateBody)
+	prior := sd.priorState()
+
+	oldT, err := cfn.ParseTemplate(prior.templateBody)
+	if err != nil {
+		return nil, err
+	}
+
+	keep, create, remove, err := diffResources(oldT, newT)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +137,8 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 	m.emitStackEvent(sd, cfn.StatusUpdateInProgress, "User Initiated")
 	m.applyStackMeta(sd, in, params, newT.Description)
 
-	if err := m.reconcile(ctx, sd, oldT, newT, paramValues); err != nil {
-		m.emitStackEvent(sd, cfn.StatusUpdateRollbackInProgress, err.Error())
-		m.emitStackEvent(sd, cfn.StatusUpdateRollbackComplete, "")
+	if rerr := m.reconcile(ctx, sd, newT, paramValues, keep, create, remove); rerr != nil {
+		m.rollbackUpdate(ctx, sd, oldT, &prior, create, remove, rerr.Error())
 	} else {
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
 	}
@@ -105,6 +146,33 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 	out := sd.snapshotStack()
 
 	return &out, nil
+}
+
+// rollbackUpdate reverses a failed update: it deletes the resources the update
+// created and re-provisions (from the previous template) the resources the
+// update deleted or replaced, then reverts the stack metadata and outputs to
+// their pre-update values.
+func (m *Mock) rollbackUpdate(
+	ctx context.Context, sd *stackData, oldT *cfn.Template, prior *priorState, created, removed map[string]bool, reason string,
+) {
+	m.emitStackEvent(sd, cfn.StatusUpdateRollbackInProgress, reason)
+
+	m.teardown(ctx, sd, created)
+
+	resolver := m.newResolver(sd, paramValuesFrom(prior.params))
+
+	sd.mu.RLock()
+	for id, rr := range sd.resolved { // survivors kept through the update
+		resolver.Resources[id] = rr
+	}
+	sd.mu.RUnlock()
+
+	// Best-effort restore of the deleted/replaced resources from the old
+	// template; a restore failure still lands the stack in a terminal state.
+	_ = m.provision(ctx, sd, oldT, resolver, removed)
+
+	m.revertStackMeta(sd, prior)
+	m.emitStackEvent(sd, cfn.StatusUpdateRollbackComplete, "")
 }
 
 // DeleteStack tears down the stack's resources in reverse creation order and
@@ -128,12 +196,13 @@ func (m *Mock) DeleteStack(ctx context.Context, name string) error {
 	return nil
 }
 
-// reconcile applies an update diff: it deletes replaced/removed resources, then
-// creates added/replaced ones, seeding the resolver with the resources kept
-// unchanged so their references still resolve.
-func (m *Mock) reconcile(ctx context.Context, sd *stackData, oldT, newT *cfn.Template, paramValues map[string]string) error {
-	keep, create, remove := diffResources(oldT, newT)
-
+// reconcile applies a precomputed update diff: it deletes replaced/removed
+// resources, then creates added/replaced ones, seeding the resolver with the
+// resources kept unchanged so their references still resolve.
+func (m *Mock) reconcile(
+	ctx context.Context, sd *stackData, newT *cfn.Template,
+	paramValues map[string]string, keep, create, remove map[string]bool,
+) error {
 	m.teardown(ctx, sd, remove)
 
 	resolver := m.newResolver(sd, paramValues)
@@ -294,23 +363,71 @@ func (m *Mock) deleteOne(ctx context.Context, sd *stackData, id, rtype, physical
 }
 
 // diffResources classifies the update: keep (unchanged), create (added or
-// changed), remove (deleted or changed). A resource is unchanged iff its type
-// and decoded properties are identical.
-func diffResources(oldT, newT *cfn.Template) (keep, create, remove map[string]bool) {
-	keep, create, remove = map[string]bool{}, map[string]bool{}, map[string]bool{}
+// changed), remove (deleted or changed). A resource is directly changed iff its
+// type or decoded properties differ; the change then PROPAGATES — any resource
+// that references a changed one (Ref/Fn::GetAtt/Fn::Sub) is itself re-provisioned
+// so its resolved references pick up the replacement's new physical ids.
+func diffResources(oldT, newT *cfn.Template) (keep, create, remove map[string]bool, err error) {
+	changed := directlyChanged(oldT, newT)
+
+	// Processing in dependency order means each resource's dependencies are
+	// already marked before it is examined, so one pass reaches the fixpoint.
+	order, err := cfn.OrderResources(newT)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	propagateChanges(newT, order, changed)
+
+	keep, create, remove = classifyChanges(oldT, newT, changed)
+
+	return keep, create, remove, nil
+}
+
+// directlyChanged marks the resources whose type or decoded properties differ
+// from the previous template (added resources count as changed).
+func directlyChanged(oldT, newT *cfn.Template) map[string]bool {
+	changed := map[string]bool{}
 
 	for id, nr := range newT.Resources {
 		or, existed := oldT.Resources[id]
-		unchanged := existed && or.Type == nr.Type && reflect.DeepEqual(or.Properties, nr.Properties)
+		if !existed || or.Type != nr.Type || !reflect.DeepEqual(or.Properties, nr.Properties) {
+			changed[id] = true
+		}
+	}
 
-		if unchanged {
+	return changed
+}
+
+// propagateChanges marks any resource that references a changed one as changed
+// too, walking the dependency graph in creation order.
+func propagateChanges(newT *cfn.Template, order []string, changed map[string]bool) {
+	deps := cfn.Dependencies(newT)
+
+	for _, id := range order {
+		for _, d := range deps[id] {
+			if changed[d] {
+				changed[id] = true
+				break
+			}
+		}
+	}
+}
+
+// classifyChanges splits the resources into keep / create / remove sets from the
+// changed set and the old→new membership.
+func classifyChanges(oldT, newT *cfn.Template, changed map[string]bool) (keep, create, remove map[string]bool) {
+	keep, create, remove = map[string]bool{}, map[string]bool{}, map[string]bool{}
+
+	for id := range newT.Resources {
+		if !changed[id] {
 			keep[id] = true
 			continue
 		}
 
 		create[id] = true
 
-		if existed {
+		if _, existed := oldT.Resources[id]; existed {
 			remove[id] = true
 		}
 	}
@@ -482,6 +599,44 @@ func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, params []
 	if in.Capabilities != nil {
 		sd.stack.Capabilities = in.Capabilities
 	}
+}
+
+// priorState snapshots the metadata an update is about to overwrite, so a
+// failed update can revert to it.
+func (sd *stackData) priorState() priorState {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	return priorState{
+		templateBody: sd.stack.TemplateBody,
+		params:       append([]cfn.Parameter(nil), sd.stack.Parameters...),
+		description:  sd.stack.Description,
+		outputs:      append([]cfn.Output(nil), sd.stack.Outputs...),
+	}
+}
+
+// revertStackMeta restores the metadata and outputs captured before an update
+// that later failed.
+func (m *Mock) revertStackMeta(sd *stackData, prior *priorState) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	sd.stack.TemplateBody = prior.templateBody
+	sd.stack.Parameters = prior.params
+	sd.stack.Description = prior.description
+	sd.stack.Outputs = prior.outputs
+	sd.stack.LastUpdated = m.clock.Now()
+}
+
+// paramValuesFrom projects resolved stack parameters into the name→value map
+// the resolver consumes.
+func paramValuesFrom(params []cfn.Parameter) map[string]string {
+	out := make(map[string]string, len(params))
+	for _, p := range params {
+		out[p.Key] = p.Value
+	}
+
+	return out
 }
 
 func (*Mock) upsertResource(sd *stackData, res *cfn.StackResource) {

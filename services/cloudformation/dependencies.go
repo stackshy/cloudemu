@@ -13,13 +13,21 @@ import (
 // broken by logical-ID sort so the order — and the resulting event stream — is
 // stable across runs. A dependency cycle is an error.
 func OrderResources(t *Template) ([]string, error) {
+	return topoSort(Dependencies(t))
+}
+
+// Dependencies returns, for each resource logical ID, the other resource logical
+// IDs it directly depends on (via Ref / Fn::GetAtt / Fn::Sub references and
+// explicit DependsOn). Exported so an update planner can propagate a replacement
+// to the resources that reference the replaced one.
+func Dependencies(t *Template) map[string][]string {
 	deps := make(map[string][]string, len(t.Resources))
 
 	for id, r := range t.Resources {
 		deps[id] = resourceDeps(id, r, t.Resources)
 	}
 
-	return topoSort(deps)
+	return deps
 }
 
 // resourceDeps collects the logical IDs resource id depends on: every reference
