@@ -518,6 +518,59 @@ func TestAliasWeightedRoutingRejectsLatest(t *testing.T) {
 	assertError(t, err, true)
 }
 
+// TestAliasWeightedRoutingRejectsOutOfBoundsWeights proves each additional
+// version weight must lie in [0.0, 1.0] and the additional weights must sum to
+// at most 1.0 — real Lambda rejects violations as InvalidParameterValueException.
+func TestAliasWeightedRoutingRejectsOutOfBoundsWeights(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+
+	// A weight above 1.0 is rejected.
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "over", FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 1.5},
+		},
+	})
+	assertError(t, err, true)
+
+	// A negative weight is rejected.
+	_, err = m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "neg", FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": -0.1},
+		},
+	})
+	assertError(t, err, true)
+
+	// Additional weights that sum above 1.0 are rejected on UpdateAlias too.
+	_, err = m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "canary", FunctionVersion: "1",
+	})
+	requireNoError(t, err)
+
+	_, err = m.UpdateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "canary",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 0.7, "1": 0.6},
+		},
+	})
+	assertError(t, err, true)
+
+	// A valid in-bounds weight is still accepted.
+	alias, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "ok", FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 0.25},
+		},
+	})
+	requireNoError(t, err)
+	assertEqual(t, 0.25, alias.RoutingConfig.AdditionalVersionWeights["2"])
+}
+
 func TestAliasWeightedRoutingSplitsInvocations(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

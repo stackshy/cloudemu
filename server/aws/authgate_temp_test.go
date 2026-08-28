@@ -49,7 +49,10 @@ func TestVerifyTempCredential(t *testing.T) {
 	clock := config.NewFakeClock(now)
 	store := stssrv.NewSessionStore(clock)
 
-	issued := store.Mint(time.Hour) // Expiration = now + 1h
+	issued, err := store.Mint(time.Hour) // Expiration = now + 1h
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
 
 	newReq := func() *http.Request {
 		r, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
@@ -107,7 +110,10 @@ func TestVerifyTempCredential(t *testing.T) {
 	t.Run("expired-session", func(t *testing.T) {
 		shortClock := config.NewFakeClock(now)
 		shortStore := stssrv.NewSessionStore(shortClock)
-		short := shortStore.Mint(15 * time.Minute) // Expiration = now + 15m
+		short, err := shortStore.Mint(15 * time.Minute) // Expiration = now + 15m
+		if err != nil {
+			t.Fatalf("Mint: %v", err)
+		}
 
 		r := newReq()
 		signTemp(t, r, short.AccessKeyID, short.SecretAccessKey, short.SessionToken, now)

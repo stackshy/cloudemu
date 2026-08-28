@@ -659,7 +659,9 @@ func (m *Mock) DescribeParameters(_ context.Context) ([]driver.ParameterMetadata
 }
 
 // GetParameterHistory returns every version of a parameter, oldest first.
-func (m *Mock) GetParameterHistory(_ context.Context, name string) ([]driver.Parameter, error) {
+// withDecryption controls SecureString decryption, mirroring GetParameter: when
+// false each version's value is the opaque ciphertext blob.
+func (m *Mock) GetParameterHistory(ctx context.Context, name string, withDecryption bool) ([]driver.Parameter, error) {
 	pd, ok := m.params.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "parameter %q not found", name)
@@ -672,11 +674,16 @@ func (m *Mock) GetParameterHistory(_ context.Context, name string) ([]driver.Par
 
 	out := make([]driver.Parameter, 0, len(pd.versions))
 	for _, v := range pd.versions {
+		value, err := m.revealValue(ctx, v, withDecryption)
+		if err != nil {
+			return nil, err
+		}
+
 		labels := append([]string(nil), v.labels...)
 		out = append(out, driver.Parameter{
 			Name:             pd.name,
 			Type:             v.typ,
-			Value:            v.value,
+			Value:            value,
 			Version:          v.version,
 			ARN:              m.arn(pd.name),
 			DataType:         v.dataType,

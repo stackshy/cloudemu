@@ -34,6 +34,17 @@ func (m *Mock) CreateResource(_ context.Context, restAPIID, parentID, pathPart s
 			"Another resource with the same parent already has this name: %s", pathPart)
 	}
 
+	// A parent may have at most one variable (path-parameter) child. Real API
+	// Gateway rejects a second variable sibling with a different name as a
+	// ConflictException; allowing both ({id} then {name}) would make matchRoute
+	// nondeterministic (it depends on Go map iteration order).
+	if isPathParam(pathPart) {
+		if sib := findVariableSibling(ad.resources, parentID); sib != nil && sib.PathPart != pathPart {
+			return nil, cerrors.Newf(cerrors.AlreadyExists,
+				"A sibling (%s) of this resource already has a variable path part -- only one is allowed", sib.PathPart)
+		}
+	}
+
 	res := &driver.Resource{
 		ID: genID(), RestAPIID: restAPIID, ParentID: parentID,
 		PathPart: pathPart, Path: fullPath, Methods: map[string]*driver.Method{},
@@ -97,6 +108,24 @@ func joinPath(parentPath, pathPart string) string {
 func findByPath(resources map[string]*driver.Resource, path string) *driver.Resource {
 	for _, r := range resources {
 		if r.Path == path {
+			return r
+		}
+	}
+
+	return nil
+}
+
+// isPathParam reports whether a pathPart is a variable segment — a "{param}"
+// placeholder or a "{proxy+}" greedy segment — rather than a literal.
+func isPathParam(pathPart string) bool {
+	return strings.HasPrefix(pathPart, "{") && strings.HasSuffix(pathPart, "}")
+}
+
+// findVariableSibling returns an existing child of parentID whose pathPart is a
+// variable segment, or nil. A parent may have at most one such child.
+func findVariableSibling(resources map[string]*driver.Resource, parentID string) *driver.Resource {
+	for _, r := range resources {
+		if r.ParentID == parentID && isPathParam(r.PathPart) {
 			return r
 		}
 	}

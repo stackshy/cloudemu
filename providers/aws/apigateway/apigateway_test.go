@@ -340,3 +340,30 @@ func TestInvokeRouteMalformedLambdaResponse(t *testing.T) {
 		t.Fatalf("malformed lambda response should be 502, got %d", resp.StatusCode)
 	}
 }
+
+// TestCreateResourceRejectsSecondVariableSibling proves a parent may have at
+// most one variable (path-parameter) child: creating {name} after {id} under the
+// same parent is a ConflictException (AlreadyExists), since two variable siblings
+// would make route matching depend on map iteration order.
+func TestCreateResourceRejectsSecondVariableSibling(t *testing.T) {
+	m := newMock(t)
+
+	api, err := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "petstore"})
+	if err != nil {
+		t.Fatalf("CreateRestAPI: %v", err)
+	}
+
+	if _, err = m.CreateResource(ctx(), api.ID, api.RootResourceID, "{id}"); err != nil {
+		t.Fatalf("CreateResource({id}): %v", err)
+	}
+
+	// A second variable sibling with a different name is rejected.
+	if _, err = m.CreateResource(ctx(), api.ID, api.RootResourceID, "{name}"); !errors.IsAlreadyExists(err) {
+		t.Fatalf("CreateResource({name}) error = %v, want AlreadyExists (ConflictException)", err)
+	}
+
+	// A literal sibling alongside the variable child is still allowed.
+	if _, err = m.CreateResource(ctx(), api.ID, api.RootResourceID, "pets"); err != nil {
+		t.Fatalf("CreateResource(pets) alongside {id}: %v", err)
+	}
+}

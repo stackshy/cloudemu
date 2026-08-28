@@ -170,6 +170,22 @@ func TestVerifyUnsignedPayloadSkipsBodyBinding(t *testing.T) {
 	}
 }
 
+// TestCheckExpiryFailsClosedOnUnparseableDate proves the skew/expiry check fails
+// closed under EnforceAuth: an X-Amz-Date the server cannot parse is rejected
+// rather than silently skipped (which would let a captured signature replay).
+func TestCheckExpiryFailsClosedOnUnparseableDate(t *testing.T) {
+	if aerr := checkExpiry(&signInputs{amzDate: "not-a-real-date"}, config.RealClock{}); aerr == nil {
+		t.Fatal("unparseable X-Amz-Date should fail closed (rejected), got nil")
+	}
+
+	// A well-formed date within skew still passes.
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	good := &signInputs{amzDate: now.Format(amzDateFormat)}
+	if aerr := checkExpiry(good, config.NewFakeClock(now)); aerr != nil {
+		t.Fatalf("well-formed date rejected: %v", aerr)
+	}
+}
+
 // TestIsHexSHA256 covers the sentinel/real-hash discriminator.
 func TestIsHexSHA256(t *testing.T) {
 	real := hex.EncodeToString(func() []byte { s := sha256.Sum256([]byte("x")); return s[:] }())

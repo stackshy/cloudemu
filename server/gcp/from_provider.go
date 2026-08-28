@@ -39,6 +39,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		AlloyDB:           nil,
 		ResourceDiscovery: p.ResourceDiscovery,
 		ProjectID:         p.ProjectID,
+		Clock:             p.Clock,
 	}
 }
 

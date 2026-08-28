@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
@@ -30,7 +30,7 @@ const (
 // observer. Read-only requests (GET) and Cloud Logging's own operations are
 // skipped — Admin Activity logs record writes/deletes/actions, and recording
 // logging reads/writes would flood the log with its own traffic.
-func recordAuditLogEvent(logs logdriver.Logging, r *http.Request) {
+func recordAuditLogEvent(logs logdriver.Logging, r *http.Request, clock config.Clock) {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return
 	}
@@ -56,7 +56,7 @@ func recordAuditLogEvent(logs logdriver.Logging, r *http.Request) {
 	}
 
 	ctx := context.Background()
-	now := time.Now()
+	now := clock.Now().UTC()
 
 	_, _ = logs.CreateLogGroup(ctx, logdriver.LogGroupConfig{Name: auditLogGroup})
 	_, _ = logs.CreateLogStream(ctx, auditLogGroup, service)

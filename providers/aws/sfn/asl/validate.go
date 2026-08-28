@@ -64,12 +64,14 @@ func validateSubMachines(st *State) error {
 }
 
 // validateRetriers rejects out-of-range Retrier fields at create time:
-// IntervalSeconds and MaxAttempts must be >= 0, and BackoffRate must be >= 1.0.
+// IntervalSeconds must be > 0 (positive) and MaxAttempts must be >= 0
+// (non-negative), and BackoffRate must be >= 1.0 — matching the ASL spec, which
+// allows a zero MaxAttempts (retry disabled) but requires a positive interval.
 func validateRetriers(st *State) error {
 	for i, r := range st.Retry {
 		switch {
-		case r.IntervalSeconds != nil && *r.IntervalSeconds < 0:
-			return aslErrf("state %q Retry[%d] 'IntervalSeconds' must be >= 0", st.name, i)
+		case r.IntervalSeconds != nil && *r.IntervalSeconds <= 0:
+			return aslErrf("state %q Retry[%d] 'IntervalSeconds' must be > 0", st.name, i)
 		case r.MaxAttempts != nil && *r.MaxAttempts < 0:
 			return aslErrf("state %q Retry[%d] 'MaxAttempts' must be >= 0", st.name, i)
 		case r.BackoffRate != nil && *r.BackoffRate < minBackoffRate:

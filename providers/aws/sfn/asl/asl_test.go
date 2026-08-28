@@ -213,3 +213,45 @@ func TestRunHonorsContextCancellation(t *testing.T) {
 		t.Fatalf("cancelled run: status=%q error=%q, want FAILED/CloudEmu.ExecutionCanceled", res.Status, res.Error)
 	}
 }
+
+// TestRetrierIntervalSecondsMustBePositive proves the create-time validator
+// rejects a zero IntervalSeconds (the ASL spec requires a positive interval;
+// only MaxAttempts may be zero).
+func TestRetrierIntervalSecondsMustBePositive(t *testing.T) {
+	zero := `{"StartAt":"T","States":{"T":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke",` +
+		`"Retry":[{"ErrorEquals":["States.ALL"],"IntervalSeconds":0}],"End":true}}}`
+	if _, err := Parse(zero); err == nil {
+		t.Fatal("Parse should reject Retry.IntervalSeconds = 0 (must be > 0)")
+	}
+
+	// A positive interval (and a zero MaxAttempts) is accepted.
+	ok := `{"StartAt":"T","States":{"T":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke",` +
+		`"Retry":[{"ErrorEquals":["States.ALL"],"IntervalSeconds":1,"MaxAttempts":0}],"End":true}}}`
+	if _, err := Parse(ok); err != nil {
+		t.Fatalf("Parse(valid retrier) = %v", err)
+	}
+}
+
+// TestExecutionNestingLimitExceeded trips the Parallel/Map nesting guard: a
+// definition nesting Parallel-in-Parallel past the depth limit fails the
+// execution with CloudEmu.ExecutionNestingLimitExceeded rather than exhausting
+// the Go stack.
+func TestExecutionNestingLimitExceeded(t *testing.T) {
+	// Wrap a Pass in more nested Parallel states than the interpreter's nesting
+	// limit (defaultMaxNesting = 32), so entering the innermost trips the guard.
+	def := `{"StartAt":"P","States":{"P":{"Type":"Pass","End":true}}}`
+	for i := 0; i < 40; i++ {
+		def = `{"StartAt":"P","States":{"P":{"Type":"Parallel","End":true,"Branches":[` + def + `]}}}`
+	}
+
+	parsed, err := Parse(def)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	res := Run(context.Background(), parsed, &RunInput{Input: `{}`, StartTime: time.Unix(0, 0)})
+	if res.Status != "FAILED" || res.Error != "CloudEmu.ExecutionNestingLimitExceeded" {
+		t.Fatalf("deeply nested run: status=%q error=%q, want FAILED/CloudEmu.ExecutionNestingLimitExceeded",
+			res.Status, res.Error)
+	}
+}

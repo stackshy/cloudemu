@@ -2627,25 +2627,50 @@ returned unchanged by `DescribeStateMachine`.
 | Definition tooling | TestState, ValidateStateMachineDefinition |
 | Tags | TagResource, UntagResource, ListTagsForResource |
 
-**No ASL interpreter — a deliberate simplification.** The emulator does not
-execute the Amazon States Language. `StartExecution` (and `StartSyncExecution`)
-complete the execution immediately: it transitions `RUNNING → SUCCEEDED` with
-output echoing the input, and `GetExecutionHistory` synthesises a minimal but
-valid event list (`ExecutionStarted → PassStateEntered → PassStateExited →
-ExecutionSucceeded`). Because nothing schedules real work, `GetActivityTask`
-returns an empty task token (the same long-poll-empty result real clients see),
-and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`. This
-keeps behaviour deterministic and dependency-free while preserving the SDK wire
-shapes for build-and-orchestrate testing.
+**A real ASL interpreter runs executions.** `StartExecution` and
+`StartSyncExecution` actually interpret the Amazon States Language definition
+against the input rather than echoing it. The interpreter executes **Pass,
+Choice, Wait, Task, Parallel, Map, Succeed, and Fail** states, following
+`Next`/`End` transitions to a terminal state and producing the real
+`GetExecutionHistory` event sequence for the path taken (state Entered/Exited,
+Task Scheduled/Started/Succeeded/Failed, Parallel/Map iteration events, and the
+terminal `ExecutionSucceeded`/`ExecutionFailed`). Supported semantics:
 
-Consistent with the no-interpreter model: `RedriveExecution` records a fresh
-redrive date on an existing execution rather than re-running it; `TestState`
-succeeds for any non-empty definition and echoes the input as output;
-`ValidateStateMachineDefinition` returns `OK` for a non-empty, valid-JSON
-definition and `FAIL` with a diagnostic otherwise (no semantic ASL validation).
-Distributed-map Map Runs are never produced by execution, so `ListMapRuns`
-returns empty for ordinary executions; `DescribeMapRun`/`UpdateMapRun` operate on
-Map Run records seeded through the provider's `SeedMapRun` helper.
+- **I/O processing** — `InputPath`, `Parameters`, `ResultSelector`,
+  `ResultPath`, and `OutputPath` with JSONPath evaluation, including the `.$`
+  reference form and merge-onto-input `ResultPath` semantics.
+- **Choice rules** — string/numeric/boolean/timestamp comparators and the
+  `And`/`Or`/`Not` combinators (including the `...Path` variants), with `Default`.
+- **Error handling** — `Retry` (with `IntervalSeconds`/`MaxAttempts`/`BackoffRate`
+  and `ErrorEquals` matching) and `Catch` (routing to a fallback state with the
+  error carried on `ResultPath`).
+- **Intrinsic functions** — `States.Format`, `States.Array`,
+  `States.ArrayGetItem`, `States.StringToJson`, `States.JsonToString`, and
+  `States.UUID`.
+- **The context object** — `$$` resolves the execution/state context
+  (`Execution.Name`, `StateMachine`, `State.EnteredTime`, …).
+- **Task → Lambda** — a `Task` whose `Resource` is `arn:aws:states:::lambda:invoke`
+  (payload from `Parameters.Payload`) or a direct Lambda function ARN really
+  invokes the wired Lambda backend; a `FunctionError` feeds `Retry`/`Catch`.
+
+Definitions are **validated at create time**: `CreateStateMachine` (and
+`ValidateStateMachineDefinition`) parse the ASL and reject structural errors —
+unknown `Type`, missing `Next`/`End`, a `Next`/`Default` that names no state,
+result-shaping fields on states that don't support them, malformed Choice rules,
+and out-of-range `Retry` fields. `TestState` runs a single state through the
+interpreter and returns its real output (or error). Bounded guards protect the
+host: executions cap total state transitions (`CloudEmu.StateTransitionLimitExceeded`)
+and Parallel/Map nesting depth (`CloudEmu.ExecutionNestingLimitExceeded`).
+
+**Deferred (not yet interpreted):** the **JSONata** query language is rejected at
+create time (JSONPath only); the **`.sync`** and **`.waitForTaskToken`**
+service-integration patterns; and **service integrations other than Lambda** —
+including **Activity** tasks, so `GetActivityTask` still returns an empty token
+and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`.
+`RedriveExecution` records a fresh redrive date rather than re-running.
+Distributed-map Map Runs are not produced by ordinary executions, so
+`ListMapRuns` returns empty and `DescribeMapRun`/`UpdateMapRun` operate on Map Run
+records seeded through the provider's `SeedMapRun` helper.
 
 **Total: 36 operations.**
 
@@ -2887,9 +2912,10 @@ AWS-only. Real `aws-sdk-go-v2/service/cloudtrail` clients (and the
 (`awsserver.Drivers{CloudTrail: cloud.CloudTrail}`). Broad operation coverage
 across trails, event data stores, channels, dashboards, imports, event/insight
 selectors, ad-hoc CloudTrail Lake queries, resource policies, and tags. The
-control-plane CRUD/state paths are faithfully emulated; the analytics and
-event-stream surfaces are synthesized/limited (see below), since there is no real
-audit event stream behind the emulator.
+control-plane CRUD/state paths are faithfully emulated, and **management events
+are recorded from served API activity** so `LookupEvents` reflects real calls
+(see below); only the Lake analytics / Insights surfaces remain
+synthesized/limited.
 
 | Family | Operations |
 |--------|-----------|
@@ -2903,7 +2929,8 @@ audit event stream behind the emulator.
 | Resource policy / config | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy, PutEventConfiguration, GetEventConfiguration |
 | Organization | RegisterOrganizationDelegatedAdmin, DeregisterOrganizationDelegatedAdmin |
 | Tags | AddTags, RemoveTags, ListTags |
-| Read-only (synthesized) | LookupEvents, ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
+| Read-only (recorded) | LookupEvents |
+| Read-only (synthesized) | ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
 
 `CreateTrail` validates the trail name (3–128 chars, allowed charset, no
 adjacent separators, not an IP) → `InvalidTrailNameException`, claims the name
@@ -2915,14 +2942,19 @@ created `ENABLED` with an ARN; a malformed EDS ARN is
 `EventDataStoreNotFoundException`; `DeleteEventDataStore` is a soft delete
 (→ `PENDING_DELETION`) unless termination protection is on.
 
-**No real event stream — a deliberate simplification.** The emulator records no
-audit events, so the read-only analytics surfaces return synthesized/empty
-results: `LookupEvents`, `ListInsightsData`, `ListInsightsMetricData` and
-`ListPublicKeys` return empty pages; ad-hoc `StartQuery` is accepted, stored and
-immediately marked `FINISHED` with an empty result set; `SearchSampleQueries`
-returns a small fixed catalog of CloudTrail Lake sample queries. Emulated
-imports complete instantly with no failures. This preserves the SDK wire shapes
-for build-and-orchestrate testing without a dependency on real event data.
+**Management events are recorded; Lake analytics are synthesized.** A
+post-dispatch observer derives a CloudTrail management event from each served
+request (the operation name from `X-Amz-Target`/`Action`, the source service and
+access-key id from the SigV4 credential scope, and a read-only classification by
+verb prefix), so `LookupEvents` returns the real API activity — newest first,
+paginated, and filtered by the request's attribute/time selectors — rather than
+an empty page. CloudTrail's own read-only polling is not recorded, so a client
+tailing `LookupEvents` never crowds out the activity it is observing, and the log
+is bounded. The remaining analytics surfaces stay synthesized: `ListInsightsData`,
+`ListInsightsMetricData` and `ListPublicKeys` return empty pages; ad-hoc
+`StartQuery` is accepted, stored and immediately marked `FINISHED` with an empty
+result set; `SearchSampleQueries` returns a small fixed catalog of CloudTrail
+Lake sample queries; and emulated imports complete instantly with no failures.
 
 **Total: 60 operations.**
 
