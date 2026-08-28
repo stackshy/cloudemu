@@ -1721,6 +1721,42 @@
     }
   },
   {
+    "service": "cloudformation",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateStack"
+      },
+      {
+        "name": "DeleteStack"
+      },
+      {
+        "name": "DescribeStackEvents"
+      },
+      {
+        "name": "DescribeStackResources"
+      },
+      {
+        "name": "DescribeStacks"
+      },
+      {
+        "name": "GetTemplate"
+      },
+      {
+        "name": "ListStackResources"
+      },
+      {
+        "name": "ListStacks"
+      },
+      {
+        "name": "UpdateStack"
+      }
+    ],
+    "providers": {
+      "aws": "CloudFormation"
+    }
+  },
+  {
     "service": "cloudrun",
     "interface": "CloudRun",
     "operations": [

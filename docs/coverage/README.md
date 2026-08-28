@@ -21,6 +21,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `bigtable` | — | — | [Bigtable](./gcp/bigtable.md) | — | 38 |
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
 | `cloudasset` | — | — | [Cloudasset](./gcp/cloudasset.md) | — | 0 |
+| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | — | — | — | 9 |
 | `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 16 |
 | `cloudsql` | — | — | [CloudSQL](./gcp/cloudsql.md) | — | 21 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |

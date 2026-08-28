@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
@@ -180,6 +181,7 @@ type Provider struct {
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
 	APIGateway          *apigateway.Mock
+	CloudFormation      *cloudformation.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -244,6 +246,7 @@ func New(opts ...config.Option) *Provider {
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
 		APIGateway:          apigateway.New(o),
+		CloudFormation:      cloudformation.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 		EnforceAuth:         o.EnforceAuth,
@@ -332,6 +335,11 @@ func New(opts ...config.Option) *Provider {
 	// {statusCode,headers,body} as the HTTP response.
 	p.APIGateway.SetLambdaInvoker(p.Lambda)
 	wireLambdaEventSources(p)
+
+	// CloudFormation is an orchestrator: it provisions each stack resource by
+	// calling the matching service driver, so the registry is built from the
+	// live mocks rather than a store of its own.
+	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
