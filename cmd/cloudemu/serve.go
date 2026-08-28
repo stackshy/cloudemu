@@ -69,6 +69,7 @@ type serveConfig struct {
 	stateFile         string
 	persistMetaOnly   bool
 	initDir           string
+	enforceAuth       bool
 }
 
 // stringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -113,6 +114,9 @@ func runServe(args []string) error {
 	fs.StringVar(&c.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
 	fs.BoolVar(&c.persistMetaOnly, "persist-metadata-only", false, "persist resource structure but omit object bodies (smaller snapshot)")
 	fs.StringVar(&c.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
+	fs.BoolVar(&c.enforceAuth, "enforce-auth", false,
+		"verify the AWS SigV4 signature on each request against a registered IAM access key (403 on failure); off by default. "+
+			"Long-term (AKIA) keys are verified; STS temporary (ASIA) credentials are accepted unverified for now (a follow-up)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()
@@ -147,6 +151,9 @@ func runServe(args []string) error {
 	}
 	if c.latency > 0 {
 		opts = append(opts, config.WithLatency(c.latency))
+	}
+	if c.enforceAuth {
+		opts = append(opts, config.WithEnforceAuth())
 	}
 
 	var (

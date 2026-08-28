@@ -24,6 +24,10 @@ const defaultMaxSessionDuration = 3600
 // Compile-time check that Mock implements driver.IAM.
 var _ driver.IAM = (*Mock)(nil)
 
+// Compile-time check that Mock implements the optional access-key resolver used
+// by the AWS SigV4 authentication gate.
+var _ driver.AccessKeyResolver = (*Mock)(nil)
+
 // Mock is an in-memory mock implementation of the AWS IAM service.
 type Mock struct {
 	users            *memstore.Store[*userData]
@@ -1214,6 +1218,30 @@ func (m *Mock) ListAccessKeys(
 	}
 
 	return result, nil
+}
+
+// AccessKeyByID resolves an access key id to its secret and owning principal so
+// the wire layer's SigV4 authentication gate can verify a request signature. It
+// reports ok=false when no such key exists. The secret is returned only to the
+// in-process verifier and never surfaces on any wire response.
+func (m *Mock) AccessKeyByID(_ context.Context, id string) (driver.AccessKeyAuth, bool) {
+	ak, ok := m.accessKeys.Get(id)
+	if !ok {
+		return driver.AccessKeyAuth{}, false
+	}
+
+	var userARN string
+	if u, found := m.users.Get(ak.UserName); found {
+		userARN = u.ARN
+	}
+
+	return driver.AccessKeyAuth{
+		AccessKeyID:     ak.AccessKeyID,
+		SecretAccessKey: ak.SecretAccessKey,
+		UserName:        ak.UserName,
+		UserARN:         userARN,
+		AccountID:       m.opts.AccountID,
+	}, true
 }
 
 // CreateInstanceProfile creates a new instance profile.

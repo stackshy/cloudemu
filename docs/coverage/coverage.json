@@ -5314,6 +5314,17 @@
         "name": "SetDefaultPolicyVersion"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AccessKeyResolver",
+        "doc": "AccessKeyResolver is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "AccessKeyByID"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "IAM",
       "azure": "IAM",

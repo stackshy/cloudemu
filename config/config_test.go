@@ -138,6 +138,11 @@ func TestWithProjectID(t *testing.T) {
 	assert.Equal(t, "my-gcp-project", opts.ProjectID)
 }
 
+func TestWithEnforceAuth(t *testing.T) {
+	assert.False(t, NewOptions().EnforceAuth, "EnforceAuth must default to false")
+	assert.True(t, NewOptions(WithEnforceAuth()).EnforceAuth)
+}
+
 func TestMultipleOptions(t *testing.T) {
 	fc := NewFakeClock(time.Now())
 	opts := NewOptions(
