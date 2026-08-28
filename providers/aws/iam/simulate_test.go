@@ -28,7 +28,7 @@ func TestSimulatePrincipalPolicy(t *testing.T) {
 	requireNoError(t, m.AttachRolePolicy(ctx, "r", pol.ARN))
 
 	results, err := m.SimulatePrincipalPolicy(ctx, "arn:aws:iam::123456789012:role/r",
-		[]string{"s3:ListBucket", "s3:DeleteObject"}, []string{"arn:aws:s3:::b"}, nil)
+		[]string{"s3:ListBucket", "s3:DeleteObject"}, []string{"arn:aws:s3:::b"}, nil, nil)
 	requireNoError(t, err)
 
 	assertEqual(t, 2, len(results))
@@ -55,7 +55,7 @@ func TestSimulatePrincipalPolicyWithGroups(t *testing.T) {
 
 	// The user inherits the group's policy in the simulation.
 	results, err := m.SimulatePrincipalPolicy(ctx, "arn:aws:iam::123456789012:user/u",
-		[]string{"ec2:DescribeInstances"}, nil, nil)
+		[]string{"ec2:DescribeInstances"}, nil, nil, nil)
 	requireNoError(t, err)
 	assertEqual(t, "allowed", decisionOf(results, "ec2:DescribeInstances"))
 }
@@ -70,7 +70,7 @@ func TestSimulateCustomPolicyExplicitDeny(t *testing.T) {
 	})
 
 	results, err := m.SimulateCustomPolicy(ctx, []string{deny},
-		[]string{"s3:GetObject", "s3:DeleteObject"}, nil)
+		[]string{"s3:GetObject", "s3:DeleteObject"}, nil, nil)
 	requireNoError(t, err)
 
 	// No resources supplied -> defaults to "*".

@@ -756,9 +756,40 @@ type policyDoc struct {
 }
 
 type policyStatement struct {
-	Effect   string `json:"Effect"`
-	Action   any    `json:"Action"`
-	Resource any    `json:"Resource"`
+	Effect      string                    `json:"Effect"`
+	Action      any                       `json:"Action"`
+	NotAction   any                       `json:"NotAction"`
+	Resource    any                       `json:"Resource"`
+	NotResource any                       `json:"NotResource"`
+	Condition   map[string]map[string]any `json:"Condition"`
+}
+
+// actionMatches reports whether the statement applies to action. Action and
+// NotAction are mutually exclusive: NotAction matches every action EXCEPT those
+// listed. A statement carrying neither cannot match (AWS requires one).
+func (s *policyStatement) actionMatches(action string) bool {
+	switch {
+	case s.Action != nil:
+		return matchesAction(toStringSlice(s.Action), action)
+	case s.NotAction != nil:
+		return !matchesAction(toStringSlice(s.NotAction), action)
+	default:
+		return false
+	}
+}
+
+// resourceMatches reports whether the statement applies to resource. Resource
+// and NotResource are mutually exclusive: NotResource matches every resource
+// EXCEPT those listed. A statement carrying neither cannot match.
+func (s *policyStatement) resourceMatches(resource string) bool {
+	switch {
+	case s.Resource != nil:
+		return matchesResource(toStringSlice(s.Resource), resource)
+	case s.NotResource != nil:
+		return !matchesResource(toStringSlice(s.NotResource), resource)
+	default:
+		return false
+	}
 }
 
 func wildcardMatch(pattern, value string) bool {
@@ -829,21 +860,22 @@ func matchesResource(resources []string, resource string) bool {
 	return false
 }
 
-func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
+func evaluatePolicy(doc, action, resource string, cctx ConditionContext) (allow, deny bool) {
 	var pd policyDoc
 	if err := json.Unmarshal([]byte(doc), &pd); err != nil {
 		return false, false
 	}
 
 	for _, stmt := range pd.Statement {
-		actions := toStringSlice(stmt.Action)
-		resources := toStringSlice(stmt.Resource)
-
-		if !matchesAction(actions, action) {
+		if !stmt.actionMatches(action) {
 			continue
 		}
 
-		if !matchesResource(resources, resource) {
+		if !stmt.resourceMatches(resource) {
+			continue
+		}
+
+		if !evaluateConditions(stmt.Condition, cctx) {
 			continue
 		}
 
@@ -864,15 +896,28 @@ func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
 // when a permissions boundary is attached, intersects that set with the
 // boundary: the action must be allowed by BOTH the identity policies and the
 // boundary. An explicit Deny anywhere wins; the default is an implicit deny.
-func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
-	entityType := m.principalEntityType(principal)
+func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource string) (bool, error) {
+	return m.CheckPermissionWithContext(ctx, principal, action, resource, nil)
+}
 
-	if decide(m.gatherPrincipalDocs(entityType, principal), action, resource) != decisionAllowed {
+// CheckPermissionWithContext is CheckPermission with an explicit request
+// condition context (aws:SourceIp, aws:CurrentTime, aws:PrincipalArn, …) so
+// statements guarded by a Condition are evaluated against the real request. It
+// is the AWS-only ContextualAuthorizer capability the authorization gate reaches
+// via a type assertion; CheckPermission delegates here with an empty context, so
+// callers that supply no keys see today's behavior.
+func (m *Mock) CheckPermissionWithContext(
+	_ context.Context, principal, action, resource string, cctx map[string]string,
+) (bool, error) {
+	entityType := m.principalEntityType(principal)
+	ctxKeys := ConditionContext(cctx)
+
+	if decide(m.gatherPrincipalDocs(entityType, principal), action, resource, ctxKeys) != decisionAllowed {
 		return false, nil
 	}
 
 	if boundary, ok := m.permissionsBoundaryDoc(entityType, principal); ok &&
-		decide([]string{boundary}, action, resource) != decisionAllowed {
+		decide([]string{boundary}, action, resource, ctxKeys) != decisionAllowed {
 		return false, nil
 	}
 

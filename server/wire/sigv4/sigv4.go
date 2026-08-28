@@ -67,6 +67,19 @@ func AccessKeyID(r *http.Request) string {
 	return in.accessKeyID
 }
 
+// Region returns the AWS region from the request's SigV4 credential scope, or ""
+// when the request carries no parseable SigV4 material. The authorization gate
+// uses it to populate the aws:RequestedRegion condition key and to derive
+// region-qualified resource ARNs.
+func Region(r *http.Request) string {
+	in, err := parseInputs(r)
+	if err != nil {
+		return ""
+	}
+
+	return in.region
+}
+
 // Verify checks the request's SigV4 signature against the secret resolved for
 // its access key id. On success it returns the resolved principal; on failure a
 // typed AuthError (HTTP 403). body is the buffered request body (the gate reads

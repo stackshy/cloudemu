@@ -5325,6 +5325,15 @@
         ]
       },
       {
+        "name": "ContextualAuthorizer",
+        "doc": "ContextualAuthorizer is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "CheckPermissionWithContext"
+          }
+        ]
+      },
+      {
         "name": "PolicyInspector",
         "doc": "PolicyInspector is an optional capability: an IAM implementation that can",
         "operations": [
