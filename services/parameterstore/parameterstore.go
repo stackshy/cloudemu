@@ -206,9 +206,9 @@ func (p *ParameterStore) DescribeParameters(ctx context.Context) ([]driver.Param
 }
 
 // GetParameterHistory returns every version of a parameter, oldest first.
-func (p *ParameterStore) GetParameterHistory(ctx context.Context, name string) ([]driver.Parameter, error) {
+func (p *ParameterStore) GetParameterHistory(ctx context.Context, name string, withDecryption bool) ([]driver.Parameter, error) {
 	out, err := p.do(ctx, "GetParameterHistory", name, func() (any, error) {
-		return p.driver.GetParameterHistory(ctx, name)
+		return p.driver.GetParameterHistory(ctx, name, withDecryption)
 	})
 	if err != nil {
 		return nil, err

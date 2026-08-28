@@ -60,6 +60,47 @@ func TestSecureStringEncryptedAtRest(t *testing.T) {
 	}
 }
 
+// TestGetParameterHistoryDecryption verifies GetParameterHistory honors
+// WithDecryption like GetParameter: true returns the decrypted plaintext for
+// each version, false returns the opaque ciphertext blob.
+func TestGetParameterHistoryDecryption(t *testing.T) {
+	m, _ := newEncryptedMock(t)
+	ctx := context.Background()
+
+	const (
+		v1 = "secret-one"
+		v2 = "secret-two"
+	)
+
+	for _, val := range []string{v1, v2} {
+		if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+			Name: "/db/password", Value: val, Type: driver.TypeSecureString, Overwrite: true,
+		}); err != nil {
+			t.Fatalf("PutParameter(%q): %v", val, err)
+		}
+	}
+
+	dec, err := m.GetParameterHistory(ctx, "/db/password", true)
+	if err != nil {
+		t.Fatalf("GetParameterHistory(WithDecryption=true): %v", err)
+	}
+
+	if len(dec) != 2 || dec[0].Value != v1 || dec[1].Value != v2 {
+		t.Fatalf("decrypted history = %+v, want [%q %q]", dec, v1, v2)
+	}
+
+	opaque, err := m.GetParameterHistory(ctx, "/db/password", false)
+	if err != nil {
+		t.Fatalf("GetParameterHistory(WithDecryption=false): %v", err)
+	}
+
+	for i, p := range opaque {
+		if p.Value == v1 || p.Value == v2 || p.Value == "" {
+			t.Fatalf("history[%d] value %q is plaintext/empty; want opaque ciphertext", i, p.Value)
+		}
+	}
+}
+
 // TestStringParameterNotEncrypted verifies String parameters are untouched by
 // KMS: their value is returned in the clear regardless of WithDecryption.
 func TestStringParameterNotEncrypted(t *testing.T) {

@@ -54,16 +54,32 @@ const sessionTokenRandomLen = 32
 // Mint generates a unique temporary credential set valid for dur, records it,
 // and returns it. Each call yields a distinct access key id and a fresh
 // high-entropy secret, so a caller that does not hold the issued secret cannot
-// forge a valid signature.
-func (s *SessionStore) Mint(dur time.Duration) Session {
+// forge a valid signature. It fails closed on a crypto/rand read error rather
+// than issuing a predictable, forgeable credential.
+func (s *SessionStore) Mint(dur time.Duration) (Session, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
 
+	akid, err := randUpperAlnum(tempKeyRandomLen)
+	if err != nil {
+		return Session{}, err
+	}
+
+	secret, err := randUpperAlnum(secretLen)
+	if err != nil {
+		return Session{}, err
+	}
+
+	token, err := randUpperAlnum(sessionTokenRandomLen)
+	if err != nil {
+		return Session{}, err
+	}
+
 	sess := Session{
-		AccessKeyID:     tempCredentialPrefix + randUpperAlnum(tempKeyRandomLen),
-		SecretAccessKey: randUpperAlnum(secretLen),
-		SessionToken:    "cloudemu-session-" + randUpperAlnum(sessionTokenRandomLen),
+		AccessKeyID:     tempCredentialPrefix + akid,
+		SecretAccessKey: secret,
+		SessionToken:    "cloudemu-session-" + token,
 		Expiration:      s.clock.Now().UTC().Add(dur),
 	}
 
@@ -71,7 +87,7 @@ func (s *SessionStore) Mint(dur time.Duration) Session {
 	s.sessions[sess.AccessKeyID] = sess
 	s.mu.Unlock()
 
-	return sess
+	return sess, nil
 }
 
 // Lookup returns the recorded session for id, if any. Expiry is not filtered
@@ -95,22 +111,18 @@ const tempCredentialPrefix = "ASIA"
 const alnumUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 // randUpperAlnum returns n cryptographically-random uppercase-alphanumeric
-// characters. It draws from crypto/rand; on the practically-impossible read
-// error it falls back to the first alphabet character so the result is still
-// well-formed (an unverifiable-but-present credential, never a panic).
-func randUpperAlnum(n int) string {
+// characters drawn from crypto/rand. On the practically-impossible read error it
+// returns the error rather than a predictable fallback, so a caller never issues
+// a forgeable credential built from low-entropy bytes.
+func randUpperAlnum(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
-		for i := range buf {
-			buf[i] = alnumUpper[0]
-		}
-
-		return string(buf)
+		return "", err
 	}
 
 	for i := range buf {
 		buf[i] = alnumUpper[int(buf[i])%len(alnumUpper)]
 	}
 
-	return string(buf)
+	return string(buf), nil
 }

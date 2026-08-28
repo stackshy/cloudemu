@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/config"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
@@ -48,6 +50,39 @@ func TestAuditLogRecordsMutatingOp(t *testing.T) {
 
 	if !strings.Contains(joined, "AuditLog") || !strings.Contains(joined, "topics/audit-topic") {
 		t.Fatalf("audit entry missing expected fields: %s", joined)
+	}
+}
+
+// TestAuditLogUsesInjectedClock verifies the audit entry timestamp comes from
+// the provider's clock (a FakeClock here) rather than time.Now(), so the log is
+// deterministic.
+func TestAuditLogUsesInjectedClock(t *testing.T) {
+	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	p := cloudemu.NewGCP(config.WithClock(config.NewFakeClock(fixed)))
+	srv := gcpserver.New(gcpserver.DriversFrom(p))
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	code, _ := do(t, ts, http.MethodPut, "/v1/projects/demo/topics/clock-topic", `{}`)
+	if code < 200 || code >= 300 {
+		t.Fatalf("create topic: status %d", code)
+	}
+
+	events, err := p.CloudLogging.GetLogEvents(context.Background(), &logdriver.LogQueryInput{
+		LogGroup: auditLogName,
+	})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+
+	if len(events) == 0 {
+		t.Fatal("expected an audit log entry, got none")
+	}
+
+	if !events[len(events)-1].Timestamp.Equal(fixed) {
+		t.Fatalf("audit entry timestamp = %v, want the injected clock time %v",
+			events[len(events)-1].Timestamp, fixed)
 	}
 }
 

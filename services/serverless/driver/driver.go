@@ -66,6 +66,15 @@ type AliasConfig struct {
 	RoutingConfig   *AliasRoutingConfig // for weighted aliases
 }
 
+// Version-weight bounds real Lambda enforces on an alias's
+// AdditionalVersionWeights: each weight is a traffic fraction in [0.0, 1.0], and
+// the additional weights sum to at most 1.0 (the remainder is the primary
+// version's share).
+const (
+	MinVersionWeight = 0.0
+	MaxVersionWeight = 1.0
+)
+
 // AliasRoutingConfig defines weighted routing between versions. It mirrors the
 // AWS Lambda AliasRoutingConfiguration shape: AdditionalVersionWeights maps a
 // published version to the fraction of traffic (0.0-1.0) it receives; the

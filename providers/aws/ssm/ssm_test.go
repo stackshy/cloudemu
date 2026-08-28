@@ -43,7 +43,7 @@ func TestPutOverwriteAndHistory(t *testing.T) {
 		t.Fatalf("overwrite version = %d, want 2", v2)
 	}
 
-	hist, err := m.GetParameterHistory(ctx, "/a")
+	hist, err := m.GetParameterHistory(ctx, "/a", false)
 	if err != nil {
 		t.Fatalf("GetParameterHistory: %v", err)
 	}

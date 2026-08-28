@@ -188,12 +188,17 @@ func isHexSHA256(v string) bool {
 // checkExpiry rejects a request whose signing timestamp is outside the allowed
 // window. Header-signed requests must be within maxClockSkew of now in either
 // direction; presigned URLs must be within their X-Amz-Expires window (and not
-// dated in the future beyond the skew). An unparseable date is not evaluated
-// (the signature already matched), which never happens for real SDK requests.
+// dated in the future beyond the skew). Verify runs only under EnforceAuth, so
+// an unparseable date fails closed (rejected) rather than silently skipping the
+// skew/expiry check — a real SDK request always carries a parseable timestamp.
 func checkExpiry(in *signInputs, clock config.Clock) *AuthError {
 	signed, ok := parseAmzDate(in.amzDate)
 	if !ok {
-		return nil
+		return &AuthError{
+			Code:       "AccessDenied",
+			Message:    "Request timestamp is missing or could not be parsed",
+			HTTPStatus: unsignedStatus,
+		}
 	}
 
 	now := clock.Now().UTC()
