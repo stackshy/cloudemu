@@ -156,11 +156,39 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+      # embedded-postgres downloads its Postgres binary on first run; cache it so
+      # the CI-safe test tier (no docker socket needed — the E2E uses embedded
+      # Postgres, the degrade tests run WITHOUT docker) doesn't refetch each run.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.embedded-postgres-go
+          key: embedded-postgres-${{ runner.os }}
+      # Advisory (report-only), matching the contrib-* convention: these tests
+      # need no docker socket but the embedded-Postgres binary download can flake;
+      # promote to blocking once proven stable.
+      - name: go test (report-only)
+        working-directory: contrib/server
+        run: "go test -count=1 ./... || echo '::warning::contrib/server go test reported findings (advisory)'"
       - name: install golangci-lint v2
         run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
       - name: golangci-lint run (report-only)
         working-directory: contrib/server
         run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
+      # Only run the heavy multi-stage engines image build when the trees it is
+      # built from change, so it doesn't fire on every repo PR.
+      - name: filter engines-image paths
+        id: engines_paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            engines:
+              - 'contrib/server/**'
+              - 'contrib/realengine/**'
+              - 'contrib/dockerengine/**'
+              - 'server/serverkit/**'
+      - name: docker smoke build (engines image)
+        if: steps.engines_paths.outputs.engines == 'true'
+        run: docker build -f contrib/server/Dockerfile -t cloudemu-engines-test .
 
   contrib-terraform:
     name: Contrib (terraform)
