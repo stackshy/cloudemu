@@ -2,11 +2,15 @@
 // real data-plane engines wired in — the batteries-included variant of
 // `cloudemu serve`. The core `cloudemu` module stays dependency-free, so the
 // real engines live in contrib and are composed here in their own module.
+//
+// Assembly (provider construction, listener binding, the shutdown/snapshot
+// lifecycle, engine teardown) is delegated to the shared server/serverkit
+// package, so this binary and `cloudemu serve` don't drift; this module only adds
+// the real-engine selection.
 package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,13 +20,8 @@ import (
 	"time"
 )
 
-const (
-	// readHeaderTimeout bounds how long a client may take to send request
-	// headers, guarding the listeners against slow-header stalls.
-	readHeaderTimeout = 10 * time.Second
-	// defaultShutdownTimeout is the grace period for in-flight requests.
-	defaultShutdownTimeout = 10 * time.Second
-)
+// defaultShutdownTimeout is the grace period for in-flight requests.
+const defaultShutdownTimeout = 10 * time.Second
 
 // appConfig is the resolved flag/env configuration for one server run.
 type appConfig struct {
@@ -36,6 +35,7 @@ type appConfig struct {
 	region            string
 	projectID         string
 	shutdownTimeout   time.Duration
+	out               io.Writer // banner/diagnostics sink handed to serverkit
 }
 
 func main() {
@@ -45,13 +45,16 @@ func main() {
 	}
 }
 
-// run parses configuration, builds and starts the server, and blocks until a
-// termination signal (or a fatal serve error) arrives, then shuts down cleanly.
+// run parses configuration, builds the server, and blocks until a termination
+// signal (or a fatal serve error) arrives. serverkit owns the serve/shutdown
+// lifecycle, so run only wires the signal context and the engine banner.
 func run(args []string, stdout, stderr io.Writer) error {
 	cfg, err := parseFlags(args, os.Getenv, stderr)
 	if err != nil {
 		return err
 	}
+
+	cfg.out = stdout
 
 	a, err := newApp(&cfg)
 	if err != nil {
@@ -61,25 +64,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	errc := a.serve()
-	printBanner(a, stdout)
+	printEngines(&cfg, stdout)
 
-	var serveErr error
-
-	select {
-	case <-ctx.Done():
-		fmt.Fprintln(stdout, "\nshutting down…")
-	case serveErr = <-errc:
-		stop()
-	}
-
-	// Always shut down — HTTP servers then Provider.Close() (engine teardown) —
-	// on both a termination signal and a fatal post-bind serve error, so a real
-	// engine's containers/subprocesses are never left running.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.shutdownTimeout)
-	defer cancel()
-
-	return errors.Join(serveErr, a.shutdown(shutdownCtx))
+	// serverkit binds the listeners, prints the endpoint banner, and owns the
+	// graceful-shutdown → persistence-snapshot → engine-teardown ordering. Serve
+	// blocks until ctx is canceled (SIGINT/SIGTERM) or a listener fails fatally.
+	return a.Serve(ctx)
 }
 
 // parseFlags resolves the configuration from args, with environment-variable
@@ -131,15 +121,9 @@ func engineEnvOr(getenv func(string) string, key string) string {
 	return engineOff
 }
 
-// printBanner prints the resolved endpoints and a client-setup hint.
-func printBanner(a *app, w io.Writer) {
-	fmt.Fprintln(w, "cloudemu-server (batteries-included) listening:")
-
-	for _, s := range a.servers {
-		fmt.Fprintf(w, "  %-6s %s\n", s.name, s.url(a.displayHost))
-	}
-
+// printEngines prints the resolved real-engine selection. serverkit prints the
+// endpoint banner and SDK hints itself once the listeners are bound.
+func printEngines(cfg *appConfig, w io.Writer) {
 	fmt.Fprintf(w, "engines: db=%s cache=%s functions=%s compute=%s containers=%s\n",
-		a.cfg.engines.db, a.cfg.engines.cache, a.cfg.engines.functions, a.cfg.engines.compute, a.cfg.engines.containers)
-	fmt.Fprintln(w, `point your tools at these endpoints — e.g. run: eval "$(cloudemu env)"`)
+		cfg.engines.db, cfg.engines.cache, cfg.engines.functions, cfg.engines.compute, cfg.engines.containers)
 }
