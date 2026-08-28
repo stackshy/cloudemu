@@ -97,7 +97,7 @@ func TestInitDir(t *testing.T) {
 func mustOptions(t *testing.T, cfg *appConfig) []config.Option {
 	t.Helper()
 
-	opts, err := buildOptions(cfg)
+	opts, _, err := buildOptions(cfg, dockerAvailable)
 	if err != nil {
 		t.Fatalf("buildOptions: %v", err)
 	}
