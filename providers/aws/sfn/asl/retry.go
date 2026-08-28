@@ -1,7 +1,6 @@
 package asl
 
 import (
-	"context"
 	"math"
 	"time"
 )
@@ -11,6 +10,7 @@ const (
 	defaultRetryInterval = 1.0
 	defaultRetryMax      = 3
 	defaultBackoffRate   = 2.0
+	minBackoffRate       = 1.0
 	errAll               = "States.ALL"
 )
 
@@ -35,17 +35,16 @@ type Catcher struct {
 	ResultPath  pathField `json:"ResultPath"`
 }
 
-// invokeTaskWithRetry runs the Lambda invocation, retrying on a matching Retrier
-// until it succeeds or the matched Retrier's MaxAttempts is exhausted. Backoff
-// advances the virtual clock (config.Clock), so timing is FakeClock-deterministic
-// and folds into the settle window under AsyncSettle.
-func (it *interp) invokeTaskWithRetry(
-	ctx context.Context, st *State, funcRef string, payload []byte,
-) (any, *stateError) {
+// runWithRetry runs attempt, retrying on a matching Retrier until it succeeds or
+// the matched Retrier's MaxAttempts is exhausted. Backoff advances the virtual
+// clock (config.Clock), so timing is FakeClock-deterministic and folds into the
+// settle window under AsyncSettle. It is shared by Task (re-invoking the Lambda),
+// Parallel (re-running all branches), and Map (re-running all iterations).
+func (it *interp) runWithRetry(st *State, attempt func() (any, *stateError)) (any, *stateError) {
 	attempts := make([]int, len(st.Retry))
 
 	for {
-		result, se := it.invokeLambdaTask(ctx, st, funcRef, payload)
+		result, se := attempt()
 		if se == nil {
 			return result, nil
 		}

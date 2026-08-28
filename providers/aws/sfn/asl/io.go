@@ -109,6 +109,58 @@ func (it *interp) applyOutputPath(st *State, doc any) (any, error) {
 	return v, nil
 }
 
+// stateInput runs the input side of the pipeline (InputPath -> Parameters),
+// producing the value the state's work receives. Errors are returned as
+// *stateError so a Task/Parallel/Map I/O failure feeds Retry/Catch.
+func (it *interp) stateInput(st *State, raw any) (any, *stateError) {
+	filtered, err := it.applyInputPath(st, raw)
+	if err != nil {
+		return nil, asStateError(err)
+	}
+
+	params, err := it.applyParameters(st, filtered)
+	if err != nil {
+		return nil, asStateError(err)
+	}
+
+	return params, nil
+}
+
+// resultPipeline runs the result side of the pipeline (ResultSelector ->
+// ResultPath onto the RAW input -> OutputPath) on a state's work result. Errors
+// are returned as *stateError so they are catchable, consistent with Task.
+func (it *interp) resultPipeline(st *State, raw, result any) (any, *stateError) {
+	selected, err := it.applyResultSelector(st, result)
+	if err != nil {
+		return nil, asStateError(err)
+	}
+
+	merged, err := it.applyResultPath(st, raw, selected)
+	if err != nil {
+		return nil, asStateError(err)
+	}
+
+	out, err := it.applyOutputPath(st, merged)
+	if err != nil {
+		return nil, asStateError(err)
+	}
+
+	return out, nil
+}
+
+// catchOrFail routes a state failure to a matching Catcher (transitioning to its
+// Next with the {Error,Cause} error output merged at its ResultPath), or
+// propagates it to ExecutionFailed when no Catcher matches. It is shared by
+// Task/Parallel/Map, so their own I/O-pipeline errors are catchable exactly like
+// their work failures.
+func catchOrFail(st *State, raw any, se *stateError) (out any, next string, terminal bool, err error) {
+	if caughtOut, catchNext, ok := tryCatch(st, raw, se); ok {
+		return caughtOut, catchNext, false, nil
+	}
+
+	return nil, "", false, se
+}
+
 // passThroughOutput is the output pipeline for states with no result to merge
 // (Choice, Wait, Succeed): the effective output is OutputPath applied to the
 // InputPath-filtered input.

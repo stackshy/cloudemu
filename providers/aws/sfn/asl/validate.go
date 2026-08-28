@@ -19,29 +19,99 @@ func validateState(states map[string]*State, st *State) error {
 		return err
 	}
 
+	if err := validateRetriers(st); err != nil {
+		return err
+	}
+
 	if st.Type == TypeChoice {
 		return validateChoice(states, st)
 	}
 
+	if err := validateSubMachines(st); err != nil {
+		return err
+	}
+
 	return validateTransitions(states, st)
+}
+
+// validateSubMachines validates the nested state machines a Parallel (Branches)
+// or Map (ItemProcessor/Iterator) state carries, mirroring the create-time
+// structural checks AWS applies to the top-level definition.
+func validateSubMachines(st *State) error {
+	switch st.Type {
+	case TypeParallel:
+		if len(st.Branches) == 0 {
+			return aslErrf("Parallel state %q must have a non-empty 'Branches' array", st.name)
+		}
+
+		for i, br := range st.Branches {
+			if err := validateStates(br); err != nil {
+				return aslErrf("Parallel state %q branch %d: %s", st.name, i, err.Error())
+			}
+		}
+	case TypeMap:
+		proc := st.processor()
+		if proc == nil {
+			return aslErrf("Map state %q must have an 'ItemProcessor' (or 'Iterator')", st.name)
+		}
+
+		if err := validateStates(proc); err != nil {
+			return aslErrf("Map state %q processor: %s", st.name, err.Error())
+		}
+	}
+
+	return nil
+}
+
+// validateRetriers rejects out-of-range Retrier fields at create time:
+// IntervalSeconds and MaxAttempts must be >= 0, and BackoffRate must be >= 1.0.
+func validateRetriers(st *State) error {
+	for i, r := range st.Retry {
+		switch {
+		case r.IntervalSeconds != nil && *r.IntervalSeconds < 0:
+			return aslErrf("state %q Retry[%d] 'IntervalSeconds' must be >= 0", st.name, i)
+		case r.MaxAttempts != nil && *r.MaxAttempts < 0:
+			return aslErrf("state %q Retry[%d] 'MaxAttempts' must be >= 0", st.name, i)
+		case r.BackoffRate != nil && *r.BackoffRate < minBackoffRate:
+			return aslErrf("state %q Retry[%d] 'BackoffRate' must be >= 1.0", st.name, i)
+		}
+	}
+
+	return nil
 }
 
 // validateFieldApplicability rejects result-shaping fields on the state types
 // that do not support them (Wait, Choice, Succeed, Fail), matching AWS's
 // create-time rejection.
 func validateFieldApplicability(st *State) error {
-	// Pass supports Parameters/Result/ResultPath but not ResultSelector, which
-	// is valid only on Task/Parallel/Map (matching AWS's create-time rejection).
-	if st.Type == TypePass && st.ResultSelector != nil {
-		return aslErrf("state %q (%s) does not support the 'ResultSelector' field", st.name, st.Type)
-	}
-
 	switch st.Type {
+	case TypePass:
+		return validatePassFields(st)
 	case TypeWait, TypeChoice, TypeSucceed, TypeFail:
+		return validateNonResultFields(st)
 	default:
 		return nil
 	}
+}
 
+// validatePassFields rejects the result-shaping fields a Pass state does not
+// support: ResultSelector, Retry, and Catch (Task/Parallel/Map only).
+func validatePassFields(st *State) error {
+	switch {
+	case st.ResultSelector != nil:
+		return aslErrf("state %q (%s) does not support the 'ResultSelector' field", st.name, st.Type)
+	case len(st.Retry) > 0:
+		return aslErrf("state %q (%s) does not support the 'Retry' field", st.name, st.Type)
+	case len(st.Catch) > 0:
+		return aslErrf("state %q (%s) does not support the 'Catch' field", st.name, st.Type)
+	}
+
+	return nil
+}
+
+// validateNonResultFields rejects every result-shaping field on the state types
+// (Wait, Choice, Succeed, Fail) that support none of them.
+func validateNonResultFields(st *State) error {
 	switch {
 	case st.Parameters != nil:
 		return aslErrf("state %q (%s) does not support the 'Parameters' field", st.name, st.Type)

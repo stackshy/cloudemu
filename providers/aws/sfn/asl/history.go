@@ -7,14 +7,17 @@ import "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 // The event set for this build is:
 //
 //	ExecutionStarted
-//	<Type>StateEntered / <Type>StateExited   (Pass, Choice, Wait, Succeed, Task)
+//	<Type>StateEntered / <Type>StateExited   (Pass, Choice, Wait, Succeed, Task,
+//	                                           Parallel, Map)
 //	FailStateEntered                          (Fail — terminal, no exit)
 //	LambdaFunctionScheduled / LambdaFunctionStarted /
 //	LambdaFunctionSucceeded / LambdaFunctionFailed   (Task->Lambda sub-events)
 //	ExecutionSucceeded / ExecutionFailed / ExecutionAborted
 //
-// Richer AWS sub-events (MapIteration*, evaluation events) are out of scope
-// until the Parallel/Map handlers land.
+// A Parallel/Map's nested branch/iteration states emit their own
+// <Type>StateEntered/Exited events inline between the Parallel/Map enter and
+// exit. Richer AWS sub-events (MapIterationStarted/Succeeded, per-branch
+// evaluation events) are out of scope.
 
 // historyFail builds the FailStateEntered event for a Fail state.
 func historyFail(st *State) *driver.HistoryEvent {

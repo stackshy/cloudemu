@@ -17,60 +17,23 @@ const lambdaInvokeResource = "arn:aws:states:::lambda:invoke"
 // reports.
 const lambdaOKStatus = 200
 
-// taskHandler runs a Task state. It resolves the Lambda call from the Resource
-// ARN and the InputPath->Parameters-shaped payload, invokes the function through
-// the recursion-guarded seam under Retry, and on success runs the result through
-// ResultSelector->ResultPath->OutputPath. A failure that no Catcher handles
-// propagates to ExecutionFailed; a caught failure transitions to the Catcher's
-// Next with the {Error,Cause} error output merged at its ResultPath.
+// taskHandler runs a Task state. The whole state — its InputPath/Parameters
+// input pipeline, the recursion-guarded Lambda invoke, and its
+// ResultSelector/ResultPath/OutputPath result pipeline — runs under Retry, so a
+// matching Retrier re-runs the state (re-invoking the function) exactly as real
+// AWS does. Any failure the Retriers do not recover, INCLUDING a state-internal
+// I/O-pipeline error (States.ParameterPathFailure / States.ResultPathMatchFailure
+// / an unsupported Resource), is routed through the state's Catch: a matching
+// Catcher transitions to its Next with the {Error,Cause} error output merged at
+// its ResultPath; otherwise it propagates to ExecutionFailed.
 func taskHandler(ctx context.Context, it *interp, st *State, raw any) (out any, next string, terminal bool, err error) {
 	it.enterState(st, raw)
 
-	funcRef, payload, perr := it.prepareTask(st, raw)
-	if perr != nil {
-		return nil, "", false, perr
-	}
-
-	result, se := it.invokeTaskWithRetry(ctx, st, funcRef, payload)
+	out, se := it.runWithRetry(st, func() (any, *stateError) {
+		return it.runTaskOnce(ctx, st, raw)
+	})
 	if se != nil {
-		return handleTaskError(st, raw, se)
-	}
-
-	return it.finishTask(st, raw, result)
-}
-
-// prepareTask runs the input pipeline (InputPath->Parameters) and resolves the
-// target function reference and the payload delivered to it.
-func (it *interp) prepareTask(st *State, raw any) (funcRef string, payload []byte, err error) {
-	filtered, ferr := it.applyInputPath(st, raw)
-	if ferr != nil {
-		return "", nil, ferr
-	}
-
-	params, perr := it.applyParameters(st, filtered)
-	if perr != nil {
-		return "", nil, perr
-	}
-
-	return resolveLambdaCall(st, params)
-}
-
-// finishTask runs the result pipeline on a successful task result and emits the
-// TaskStateExited event.
-func (it *interp) finishTask(st *State, raw, result any) (out any, next string, terminal bool, err error) {
-	selected, err := it.applyResultSelector(st, result)
-	if err != nil {
-		return nil, "", false, err
-	}
-
-	merged, err := it.applyResultPath(st, raw, selected)
-	if err != nil {
-		return nil, "", false, err
-	}
-
-	out, err = it.applyOutputPath(st, merged)
-	if err != nil {
-		return nil, "", false, err
+		return catchOrFail(st, raw, se)
 	}
 
 	it.exitState(st, out)
@@ -78,14 +41,26 @@ func (it *interp) finishTask(st *State, raw, result any) (out any, next string, 
 	return out, st.Next, st.End, nil
 }
 
-// handleTaskError routes a task failure to a matching Catcher (transitioning to
-// its Next), or propagates it to ExecutionFailed when no Catcher matches.
-func handleTaskError(st *State, raw any, se *stateError) (out any, next string, terminal bool, err error) {
-	if caughtOut, catchNext, ok := tryCatch(st, raw, se); ok {
-		return caughtOut, catchNext, false, nil
+// runTaskOnce is one Task attempt: it runs the input pipeline, resolves and
+// invokes the Lambda through the recursion-guarded seam, then runs the result
+// pipeline. Every failure (I/O or invoke) is a *stateError so Retry/Catch see it.
+func (it *interp) runTaskOnce(ctx context.Context, st *State, raw any) (any, *stateError) {
+	input, se := it.stateInput(st, raw)
+	if se != nil {
+		return nil, se
 	}
 
-	return nil, "", false, se
+	funcRef, payload, err := resolveLambdaCall(st, input)
+	if err != nil {
+		return nil, asStateError(err)
+	}
+
+	result, se := it.invokeLambdaTask(ctx, st, funcRef, payload)
+	if se != nil {
+		return nil, se
+	}
+
+	return it.resultPipeline(st, raw, result)
 }
 
 // invokeLambdaTask performs one Lambda invocation attempt, emitting the
