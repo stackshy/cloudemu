@@ -27,7 +27,18 @@ const maxRunTaskCount = 10
 //nolint:gocritic // in is passed by value to satisfy the driver.ECS interface; the copy is cheap for a mock.
 func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Task, []driver.Failure, error) {
 	cluster := resolveClusterName(in.Cluster)
-	clusterARN := m.arnIn(regionctx.RegionOr(ctx, m.opts.Region), "cluster/"+cluster)
+
+	// A task is a child of its cluster, so its cluster/task ARNs must carry the
+	// cluster's region — the region the cluster was created in — not the region
+	// this RunTask request happens to be signed for. Derive it from the stored
+	// cluster's ARN; only the implicit (never-created) default cluster has no
+	// stored ARN, so it falls back to the request region.
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+	if c, ok := m.clusters.Get(cluster); ok {
+		region = arnRegion(c.ARN, region)
+	}
+
+	clusterARN := m.arnIn(region, "cluster/"+cluster)
 
 	if !m.clusterActive(cluster) {
 		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", cluster)

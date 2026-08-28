@@ -11,6 +11,7 @@ import (
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	awseks "github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	awselasticache "github.com/aws/aws-sdk-go-v2/service/elasticache"
@@ -332,6 +333,111 @@ func TestRegionAwarenessAWSCompat(t *testing.T) {
 		}
 		if strings.Contains(arn, regionTokyo) {
 			t.Fatalf("iam: global ARN %q was wrongly stamped with a region", arn)
+		}
+	})
+}
+
+// TestRegionAwarenessCrossRegionChild is the adversarial case the same-region
+// suite cannot catch: it creates a PARENT with a client in one region, then
+// issues the CHILD-creating call with a client signed for a DIFFERENT region,
+// and asserts the child's ARN carries the PARENT's region, not the request's.
+// A child must inherit its parent's region (from the parent's stored ARN), per
+// the PR's child-ARN-inheritance contract. These cases FAIL against code that
+// reconstructs the child region from the request.
+func TestRegionAwarenessCrossRegionChild(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	sess := compat.BootAWS(t, awsserver.Drivers{ECS: cloud.ECS, ElastiCache: cloud.ElastiCache})
+
+	ctx := context.Background()
+	cfg := sess.Config()
+	endpoint := sess.Endpoint()
+
+	// ECS: a task created in ap-northeast-1 against a cluster that lives in
+	// us-east-1 must carry the cluster's region on both its cluster and task ARN.
+	t.Run("ecs_runtask_inherits_cluster_region", func(t *testing.T) {
+		home := awsecs.NewFromConfig(cfg, func(o *awsecs.Options) {
+			o.Region = regionDefault
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+		if _, err := home.CreateCluster(ctx, &awsecs.CreateClusterInput{
+			ClusterName: aws.String("xr-cluster"),
+		}); err != nil {
+			t.Fatalf("CreateCluster: %v", err)
+		}
+		if _, err := home.RegisterTaskDefinition(ctx, &awsecs.RegisterTaskDefinitionInput{
+			Family:                  aws.String("xr-td"),
+			NetworkMode:             ecstypes.NetworkModeAwsvpc,
+			RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+			Cpu:                     aws.String("256"),
+			Memory:                  aws.String("512"),
+			ContainerDefinitions: []ecstypes.ContainerDefinition{{
+				Name: aws.String("app"), Image: aws.String("nginx:latest"), Essential: aws.Bool(true),
+			}},
+		}); err != nil {
+			t.Fatalf("RegisterTaskDefinition: %v", err)
+		}
+
+		// RunTask from a DIFFERENT region than the cluster was created in.
+		away := awsecs.NewFromConfig(cfg, func(o *awsecs.Options) {
+			o.Region = regionTokyo
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+		run, err := away.RunTask(ctx, &awsecs.RunTaskInput{
+			Cluster:        aws.String("xr-cluster"),
+			TaskDefinition: aws.String("xr-td"),
+			LaunchType:     ecstypes.LaunchTypeFargate,
+			NetworkConfiguration: &ecstypes.NetworkConfiguration{
+				AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-1"}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("RunTask: %v", err)
+		}
+		if len(run.Tasks) != 1 {
+			t.Fatalf("RunTask returned %d tasks, want 1", len(run.Tasks))
+		}
+
+		clusterARN := aws.ToString(run.Tasks[0].ClusterArn)
+		taskARN := aws.ToString(run.Tasks[0].TaskArn)
+		assertRegion(t, "ecs task's clusterArn", clusterARN, regionDefault)
+		assertRegion(t, "ecs task ARN", taskARN, regionDefault)
+		if strings.Contains(clusterARN, regionTokyo) || strings.Contains(taskARN, regionTokyo) {
+			t.Fatalf("ecs: child ARNs leaked the request region: clusterArn=%q taskArn=%q", clusterARN, taskARN)
+		}
+	})
+
+	// ElastiCache: a snapshot taken in ap-northeast-1 of a cache cluster that
+	// lives in us-east-1 must carry the cluster's region.
+	t.Run("elasticache_snapshot_inherits_cluster_region", func(t *testing.T) {
+		home := awselasticache.NewFromConfig(cfg, func(o *awselasticache.Options) {
+			o.Region = regionDefault
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+		if _, err := home.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+			CacheClusterId: aws.String("xr-cache"),
+			Engine:         aws.String("redis"),
+			CacheNodeType:  aws.String("cache.t3.micro"),
+			NumCacheNodes:  aws.Int32(1),
+		}); err != nil {
+			t.Fatalf("CreateCacheCluster: %v", err)
+		}
+
+		// CreateSnapshot from a DIFFERENT region than the cache cluster.
+		away := awselasticache.NewFromConfig(cfg, func(o *awselasticache.Options) {
+			o.Region = regionTokyo
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+		out, err := away.CreateSnapshot(ctx, &awselasticache.CreateSnapshotInput{
+			CacheClusterId: aws.String("xr-cache"),
+			SnapshotName:   aws.String("xr-snap"),
+		})
+		if err != nil {
+			t.Fatalf("CreateSnapshot: %v", err)
+		}
+		arn := aws.ToString(out.Snapshot.ARN)
+		assertRegion(t, "elasticache snapshot", arn, regionDefault)
+		if strings.Contains(arn, regionTokyo) {
+			t.Fatalf("elasticache: snapshot ARN %q leaked the request region", arn)
 		}
 	})
 }

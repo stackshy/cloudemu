@@ -30,6 +30,10 @@ func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfi
 			"SnapshotAlreadyExistsFault: snapshot %q already exists", name)
 	}
 
+	// A snapshot is a child of the cluster or replication group it backs up, so
+	// it inherits that source's region. The request region is only a fallback for
+	// the (AWS-invalid) case where no source is given.
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	snap := cachedriver.Snapshot{
 		Name:          name,
 		Status:        statusAvailable,
@@ -37,10 +41,10 @@ func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfi
 		Port:          defaultRedisPort,
 		NumCacheNodes: 1,
 		CreatedAt:     m.opts.Clock.Now().UTC(),
-		ARN:           m.snapshotARN(regionctx.RegionOr(ctx, m.opts.Region), name),
+		ARN:           m.snapshotARN(region, name),
 	}
 
-	if err := m.fillSnapshotSource(cfg, &snap); err != nil {
+	if err := m.fillSnapshotSource(cfg, &snap, region); err != nil {
 		return nil, err
 	}
 
@@ -50,8 +54,11 @@ func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfi
 }
 
 // fillSnapshotSource resolves the snapshot's source cluster or replication group
-// and copies its identity onto snap.
-func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedriver.Snapshot) error {
+// and copies its identity onto snap, including stamping the snapshot's ARN with
+// the source's region (from its stored ARN) so the child inherits the parent's
+// region rather than the request's. fallbackRegion is used only if the source's
+// stored ARN is malformed.
+func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedriver.Snapshot, fallbackRegion string) error {
 	switch {
 	case cfg.CacheClusterID != "":
 		cd, ok := m.caches.Get(cfg.CacheClusterID)
@@ -69,6 +76,7 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.EngineVersion = cd.info.EngineVersion
 		snap.NodeType = cd.info.NodeType
 		snap.ParameterGroupName = paramGroupName(cd.info.Engine)
+		snap.ARN = m.snapshotARN(arnRegion(cd.info.ARN, fallbackRegion), snap.Name)
 
 		if cd.info.NumCacheNodes > 0 {
 			snap.NumCacheNodes = cd.info.NumCacheNodes
@@ -85,6 +93,7 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.EngineVersion = rg.EngineVersion
 		snap.NodeType = rg.NodeType
 		snap.ParameterGroupName = paramGroupName(rg.Engine)
+		snap.ARN = m.snapshotARN(arnRegion(rg.ARN, fallbackRegion), snap.Name)
 
 		if rg.PrimaryPort != 0 {
 			snap.Port = rg.PrimaryPort
