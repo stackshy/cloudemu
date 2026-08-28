@@ -47,11 +47,12 @@ func newAppFromOptions(cfg *appConfig, opts []config.Option) (*app, error) {
 }
 
 // serverkitConfig maps the resolved flag configuration onto a serverkit.Config.
-// This build runs aws/azure/gcp with the real-engine BaseOptions and no
-// admin/persist/k8s surface — that parity arrives in later PRs. The swap from
-// awsserver.NewFromProvider to serverkit (which builds via <provider>server.
-// DriversFrom) is identity-preserving: DriversFrom copies AccountID/Region/
-// EnforceAuth verbatim, and with k8s disabled K8sAPI is nil on both paths.
+// This build runs aws/azure/gcp with the real-engine BaseOptions plus the admin
+// control plane, persistence, and init-dir seeding — k8s/oci/tls parity arrives
+// in later PRs. The swap from awsserver.NewFromProvider to serverkit (which
+// builds via <provider>server.DriversFrom) is identity-preserving: DriversFrom
+// copies AccountID/Region/EnforceAuth verbatim, and with k8s disabled K8sAPI is
+// nil on both paths.
 func serverkitConfig(cfg *appConfig, opts []config.Option) *serverkit.Config {
 	return &serverkit.Config{
 		Providers: []string{providerAWS, providerAzure, providerGCP},
@@ -61,10 +62,15 @@ func serverkitConfig(cfg *appConfig, opts []config.Option) *serverkit.Config {
 			providerAzure: cfg.azurePort,
 			providerGCP:   cfg.gcpPort,
 		},
-		AzureSubscription: cfg.azureSubscription,
-		BaseOptions:       opts,
-		ShutdownTimeout:   cfg.shutdownTimeout,
-		Out:               cfg.out,
+		AzureSubscription:   cfg.azureSubscription,
+		Admin:               cfg.admin,
+		Persist:             cfg.persist,
+		StateFile:           cfg.stateFile,
+		PersistMetadataOnly: cfg.persistMetaOnly,
+		InitDir:             cfg.initDir,
+		BaseOptions:         opts,
+		ShutdownTimeout:     cfg.shutdownTimeout,
+		Out:                 cfg.out,
 	}
 }
 

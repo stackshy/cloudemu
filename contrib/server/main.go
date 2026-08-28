@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +24,9 @@ import (
 // defaultShutdownTimeout is the grace period for in-flight requests.
 const defaultShutdownTimeout = 10 * time.Second
 
+// errStateFileRequired is returned when --persist is set without --state-file.
+var errStateFileRequired = errors.New("--persist requires --state-file")
+
 // appConfig is the resolved flag/env configuration for one server run.
 type appConfig struct {
 	engines           engineSelection
@@ -34,6 +38,11 @@ type appConfig struct {
 	azureSubscription string
 	region            string
 	projectID         string
+	admin             bool
+	persist           bool
+	stateFile         string
+	persistMetaOnly   bool
+	initDir           string
 	shutdownTimeout   time.Duration
 	out               io.Writer // banner/diagnostics sink handed to serverkit
 }
@@ -98,6 +107,15 @@ func parseFlags(args []string, getenv func(string) string, out io.Writer) (appCo
 		"Azure subscription id reported by the emulator (a GUID)")
 	fs.StringVar(&cfg.region, "region", "us-east-1", "default region reported by the emulator")
 	fs.StringVar(&cfg.projectID, "project-id", "cloudemu-local", "GCP project ID reported by the emulator")
+
+	fs.BoolVar(&cfg.admin, "admin", true, "mount the /_cloudemu control plane (reset, health) for test isolation")
+	fs.BoolVar(&cfg.persist, "persist", false,
+		"save state to --state-file on shutdown and restore it on startup (includes object bodies)")
+	fs.StringVar(&cfg.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
+	fs.BoolVar(&cfg.persistMetaOnly, "persist-metadata-only", false,
+		"persist resource structure but omit object bodies (smaller snapshot)")
+	fs.StringVar(&cfg.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
+
 	fs.DurationVar(&cfg.shutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "grace period for in-flight requests on shutdown")
 
 	if err := fs.Parse(args); err != nil {
@@ -106,6 +124,10 @@ func parseFlags(args []string, getenv func(string) string, out io.Writer) (appCo
 
 	if allReal {
 		cfg.engines.applyAllReal()
+	}
+
+	if cfg.persist && cfg.stateFile == "" {
+		return appConfig{}, errStateFileRequired
 	}
 
 	return cfg, nil

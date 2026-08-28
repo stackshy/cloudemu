@@ -85,6 +85,34 @@ not on `PATH`.
 | `--project-id`        | `cloudemu-local`                         | GCP project id                             |
 | `--shutdown-timeout`  | `10s`                                    | grace period for in-flight requests        |
 
+## Admin, persistence & seeding
+
+At parity with `cloudemu serve`, these flags are threaded through to the shared
+`server/serverkit` assembly:
+
+| Flag                     | Default | Meaning                                                            |
+|--------------------------|---------|--------------------------------------------------------------------|
+| `--admin`                | `true`  | mount the `/_cloudemu` control plane (`reset`, `health`, `seed`, `snapshot`) for test isolation |
+| `--persist`              | `false` | restore state from `--state-file` on startup and save it on shutdown (includes object bodies) |
+| `--state-file`           | *(none)*| path to the JSON state snapshot (**required** with `--persist`)     |
+| `--persist-metadata-only`| `false` | persist resource structure but omit object bodies (smaller snapshot)|
+| `--init-dir`             | *(none)*| apply every `*.json` seed fixture in this directory on startup      |
+
+```bash
+# Isolated test runs: POST /_cloudemu/reset between suites to wipe state.
+go run . --admin
+
+# Persist state across restarts:
+go run . --persist --state-file ./state.json
+
+# Seed fixtures on boot:
+go run . --init-dir ./fixtures
+```
+
+`--admin` is on by default; on a non-loopback `--host` it prints a warning, since
+`POST /_cloudemu/reset` wipes all state and `GET /_cloudemu/snapshot` dumps it
+(secrets included) to any caller. Pass `--admin=false` to disable it.
+
 The Azure endpoint serves HTTPS with an in-memory self-signed certificate
 (covering `localhost` and the loopback IPs); clients must trust it or skip
 verification.
