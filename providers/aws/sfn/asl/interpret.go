@@ -81,7 +81,11 @@ type interp struct {
 // Run interprets def against the execution input, returning the terminal status,
 // output (or error/cause), the full event history, and the accumulated Wait
 // duration (used to extend the settle window under AsyncSettle).
-func Run(_ context.Context, def *StateMachineDef, in *RunInput) *RunResult {
+func Run(ctx context.Context, def *StateMachineDef, in *RunInput) *RunResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	maxSteps := in.MaxSteps
 	if maxSteps <= 0 {
 		maxSteps = defaultMaxSteps
@@ -103,7 +107,7 @@ func Run(_ context.Context, def *StateMachineDef, in *RunInput) *RunResult {
 	it.emit(&driver.HistoryEvent{Type: "ExecutionStarted", Timestamp: in.StartTime, Input: emptyOr(in.Input)})
 	it.offset = in.SettleBase
 
-	res := it.walk(context.Background(), input)
+	res := it.walk(ctx, input)
 	res.History = it.hist
 	res.WaitTotal = it.waitTotal
 
@@ -130,6 +134,12 @@ func (it *interp) walk(ctx context.Context, input any) *RunResult {
 	raw := input
 
 	for {
+		// Honor cancellation of the calling request (the ctx is also what the
+		// PR2 Task->Lambda recursion guard rides on).
+		if err := ctx.Err(); err != nil {
+			return it.fail("CloudEmu.ExecutionCanceled", err.Error())
+		}
+
 		it.steps++
 		if it.steps > it.maxSteps {
 			return it.fail("CloudEmu.StateTransitionLimitExceeded",

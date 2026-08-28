@@ -1,6 +1,7 @@
 package asl
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -140,6 +141,8 @@ func TestParseAcceptsAndRejects(t *testing.T) {
 		`{"StartAt":"A","States":{"A":{"Type":"Wait","Seconds":1,"Result":{},"End":true}}}`,
 		`{"StartAt":"Missing","States":{"A":{"Type":"Pass","End":true}}}`,
 		`{"QueryLanguage":"JSONata","StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}`,
+		// Pass does not support ResultSelector (Task/Parallel/Map only).
+		`{"StartAt":"A","States":{"A":{"Type":"Pass","ResultSelector":{"x.$":"$.y"},"End":true}}}`,
 	}
 
 	for _, def := range bad {
@@ -171,5 +174,23 @@ func TestResultPathMergesOntoRaw(t *testing.T) {
 
 	if out["meta"] != "keep" {
 		t.Fatalf("sibling 'meta' lost: %v", out)
+	}
+}
+
+// TestRunHonorsContextCancellation proves the ctx actually reaches the walk loop
+// (if Run discarded it, a cancelled ctx would be unobserved and the run would
+// SUCCEED) — the plumbing the PR2 Task->Lambda recursion guard relies on.
+func TestRunHonorsContextCancellation(t *testing.T) {
+	def, err := Parse(`{"StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res := Run(ctx, def, &RunInput{Input: `{}`, StartTime: time.Unix(0, 0)})
+	if res.Status != "FAILED" || res.Error != "CloudEmu.ExecutionCanceled" {
+		t.Fatalf("cancelled run: status=%q error=%q, want FAILED/CloudEmu.ExecutionCanceled", res.Status, res.Error)
 	}
 }

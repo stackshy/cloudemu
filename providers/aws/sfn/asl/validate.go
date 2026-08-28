@@ -30,6 +30,12 @@ func validateState(states map[string]*State, st *State) error {
 // that do not support them (Wait, Choice, Succeed, Fail), matching AWS's
 // create-time rejection.
 func validateFieldApplicability(st *State) error {
+	// Pass supports Parameters/Result/ResultPath but not ResultSelector, which
+	// is valid only on Task/Parallel/Map (matching AWS's create-time rejection).
+	if st.Type == TypePass && st.ResultSelector != nil {
+		return aslErrf("state %q (%s) does not support the 'ResultSelector' field", st.name, st.Type)
+	}
+
 	switch st.Type {
 	case TypeWait, TypeChoice, TypeSucceed, TypeFail:
 	default:
