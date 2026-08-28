@@ -25,7 +25,11 @@ const testStateName = "__TestState__"
 // the Next it would transition to (the selected branch for a Choice; empty for a
 // terminal state), and SUCCEEDED/FAILED. A structurally-invalid state is a
 // parse error the caller maps to its own validation surface.
-func TestOne(definition string, in *RunInput) (*StateResult, error) {
+func TestOne(ctx context.Context, definition string, in *RunInput) (*StateResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var st State
 	if err := json.Unmarshal([]byte(definition), &st); err != nil {
 		return nil, fmt.Errorf("state definition is not valid JSON: %w", err)
@@ -37,12 +41,15 @@ func TestOne(definition string, in *RunInput) (*StateResult, error) {
 
 	st.name = testStateName
 
-	it := &interp{baseTime: in.StartTime, offset: in.SettleBase, maxSteps: 1, handlers: buildHandlers()}
+	it := &interp{
+		baseTime: in.StartTime, offset: in.SettleBase, maxSteps: 1,
+		handlers: buildHandlers(), invokeLambda: in.InvokeLambda,
+	}
 	input := parseInput(in.Input)
 	it.buildContext(in, input)
 	it.enterStateContext(&st)
 
-	out, next, terminal, err := it.handlers[st.Type](context.Background(), it, &st, input)
+	out, next, terminal, err := it.handlers[st.Type](ctx, it, &st, input)
 	if err != nil {
 		se := asStateError(err)
 

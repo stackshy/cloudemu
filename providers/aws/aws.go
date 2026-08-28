@@ -318,6 +318,24 @@ func New(opts ...config.Option) *Provider {
 	p.EventBridge.SetLambdaInvoker(p.Lambda)
 	p.EventBridge.SetSNSPublisher(p.SNS)
 	p.EventBridge.SetStepFunctionsStarter(p.SFN)
+	// Step Functions -> Lambda: a Task state (arn:aws:states:::lambda:invoke or a
+	// bare Lambda function ARN) invokes the function synchronously through the
+	// recursion-guarded InvokeSync seam, so a Task->Lambda->StartExecution->Task
+	// cycle terminates at recursionguard.MaxDepth instead of overflowing.
+	p.SFN.SetLambdaSyncInvoker(p.Lambda)
+	wireLambdaEventSources(p)
+
+	p.ResourceDiscovery = resourcediscovery.New(
+		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
+	)
+
+	return p
+}
+
+// wireLambdaEventSources wires the services that deliver events to Lambda
+// through the shared InvokeExternal choke point. It is split out of New so the
+// factory stays within the function-length budget.
+func wireLambdaEventSources(p *Provider) {
 	// S3 event notifications deliver to their configured targets: SQS queues,
 	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
@@ -338,12 +356,6 @@ func New(opts ...config.Option) *Provider {
 	// subscription filter's pattern are delivered (gzipped awslogs payload) to
 	// the filter's Lambda destination on PutLogEvents.
 	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
-
-	p.ResourceDiscovery = resourcediscovery.New(
-		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
-	)
-
-	return p
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's

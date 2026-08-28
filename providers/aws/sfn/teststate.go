@@ -11,14 +11,17 @@ import (
 // TestState evaluates a single state definition through the interpreter: it runs
 // the state's I/O pipeline and handler once (following a Choice to its selected
 // branch without executing it) and returns the resulting Output/Status/NextState,
-// or Error/Cause on failure. ctx is accepted for parity with the Task->Lambda
-// seam a later PR threads through the same handlers.
-func (m *Mock) TestState(_ context.Context, in driver.TestStateInput) (*driver.TestStateResult, error) {
+// or Error/Cause on failure. ctx is threaded into the same Task->Lambda seam
+// StartExecution uses, so a single Task state under test carries recursionguard
+// depth consistently.
+func (m *Mock) TestState(ctx context.Context, in driver.TestStateInput) (*driver.TestStateResult, error) {
 	if strings.TrimSpace(in.Definition) == "" {
 		return nil, invalidName("definition is required")
 	}
 
-	res, err := asl.TestOne(in.Definition, &asl.RunInput{Input: in.Input, StartTime: m.now()})
+	res, err := asl.TestOne(ctx, in.Definition, &asl.RunInput{
+		Input: in.Input, StartTime: m.now(), InvokeLambda: m.lambdaInvoker(),
+	})
 	if err != nil {
 		return nil, invalidDefinition(err.Error())
 	}

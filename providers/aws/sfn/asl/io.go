@@ -48,19 +48,36 @@ func (it *interp) applyParameters(st *State, input any) (any, error) {
 	return it.applyPayloadTemplate(st.Parameters, input)
 }
 
-// applyResultPath merges the result onto the RAW input. Absent ResultPath
-// defaults to "$" (the result replaces the document); an explicit null discards
-// the result and passes the raw input through; a path splices the result in.
-func (*interp) applyResultPath(st *State, raw, result any) (any, error) {
-	if !st.ResultPath.set || st.ResultPath.path == "$" {
+// applyResultSelector reshapes a Task/Parallel/Map result via a payload template
+// before ResultPath merges it. Absent ResultSelector passes the result through.
+func (it *interp) applyResultSelector(st *State, result any) (any, error) {
+	if st.ResultSelector == nil {
 		return result, nil
 	}
 
-	if st.ResultPath.null {
+	return it.applyPayloadTemplate(st.ResultSelector, result)
+}
+
+// applyResultPath merges the result onto the RAW input using the state's
+// ResultPath. Absent ResultPath defaults to "$" (the result replaces the
+// document); an explicit null discards the result and passes the raw input
+// through; a path splices the result in.
+func (*interp) applyResultPath(st *State, raw, result any) (any, error) {
+	return mergeResultPath(st.ResultPath, raw, result)
+}
+
+// mergeResultPath splices result into raw at the given ResultPath (the shared
+// semantic used by both a state's ResultPath and a Catcher's ResultPath).
+func mergeResultPath(rp pathField, raw, result any) (any, error) {
+	if !rp.set || rp.path == "$" {
+		return result, nil
+	}
+
+	if rp.null {
 		return raw, nil
 	}
 
-	fields, err := objectFieldPath(st.ResultPath.path)
+	fields, err := objectFieldPath(rp.path)
 	if err != nil {
 		return nil, err
 	}

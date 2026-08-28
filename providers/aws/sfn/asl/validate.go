@@ -51,6 +51,10 @@ func validateFieldApplicability(st *State) error {
 		return aslErrf("state %q (%s) does not support the 'ResultSelector' field", st.name, st.Type)
 	case st.ResultPath.set:
 		return aslErrf("state %q (%s) does not support the 'ResultPath' field", st.name, st.Type)
+	case len(st.Retry) > 0:
+		return aslErrf("state %q (%s) does not support the 'Retry' field", st.name, st.Type)
+	case len(st.Catch) > 0:
+		return aslErrf("state %q (%s) does not support the 'Catch' field", st.name, st.Type)
 	}
 
 	return nil

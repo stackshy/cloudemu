@@ -42,6 +42,14 @@ func asStateError(err error) *stateError {
 	return &stateError{Code: "States.Runtime", Cause: err.Error()}
 }
 
+// LambdaInvoker invokes a Lambda function synchronously for a Task state. It
+// returns the function's output payload; a non-empty functionError when the
+// function ran but raised (mapped upstream to States.TaskFailed, feeding
+// Retry/Catch); or a transport err. The sfn Mock wires a recursion-guarded
+// adapter here so a Task->Lambda->StartExecution->Task cycle terminates at
+// recursionguard.MaxDepth instead of overflowing the stack.
+type LambdaInvoker func(ctx context.Context, functionARN string, payload []byte) (output []byte, functionError string, err error)
+
 // RunInput carries the per-execution context the interpreter needs.
 type RunInput struct {
 	Input      string
@@ -53,6 +61,9 @@ type RunInput struct {
 	StartTime  time.Time
 	SettleBase time.Duration
 	MaxSteps   int
+	// InvokeLambda is the Task->Lambda seam. When nil (library-only
+	// construction), a Task echoes its input so existing behavior is preserved.
+	InvokeLambda LambdaInvoker
 }
 
 // RunResult is the outcome of interpreting a definition against an input.
@@ -76,6 +87,9 @@ type interp struct {
 	lastID    int64
 	ctxObj    map[string]any
 	handlers  map[string]handler
+
+	// invokeLambda is the Task->Lambda seam; nil means echo-input fallback.
+	invokeLambda LambdaInvoker
 }
 
 // Run interprets def against the execution input, returning the terminal status,
@@ -92,10 +106,11 @@ func Run(ctx context.Context, def *StateMachineDef, in *RunInput) *RunResult {
 	}
 
 	it := &interp{
-		def:      def,
-		baseTime: in.StartTime,
-		maxSteps: maxSteps,
-		handlers: buildHandlers(),
+		def:          def,
+		baseTime:     in.StartTime,
+		maxSteps:     maxSteps,
+		handlers:     buildHandlers(),
+		invokeLambda: in.InvokeLambda,
 	}
 
 	input := parseInput(in.Input)
@@ -121,7 +136,7 @@ func buildHandlers() map[string]handler {
 		TypeWait:     waitHandler,
 		TypeSucceed:  succeedHandler,
 		TypeFail:     failHandler,
-		TypeTask:     unsupportedHandler,
+		TypeTask:     taskHandler,
 		TypeParallel: unsupportedHandler,
 		TypeMap:      unsupportedHandler,
 	}

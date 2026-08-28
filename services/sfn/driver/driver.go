@@ -142,6 +142,9 @@ type HistoryEvent struct {
 	// FailStateEntered, ExecutionAborted, LambdaFunctionFailed).
 	Error string
 	Cause string
+	// Resource names the integration a task sub-event targets (e.g. the Task
+	// Resource ARN on a LambdaFunctionScheduled event).
+	Resource string
 }
 
 // Activity is a task worker registration.
