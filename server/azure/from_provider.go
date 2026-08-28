@@ -73,6 +73,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 
 		ResourceDiscovery: p.ResourceDiscovery,
 		SubscriptionID:    p.SubscriptionID,
+		EnforceAuth:       p.EnforceAuth,
 	}
 }
 
