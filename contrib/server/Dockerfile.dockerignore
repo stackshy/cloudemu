@@ -1,0 +1,11 @@
+# Build context for the batteries-included engines image (contrib/server/Dockerfile).
+# BuildKit uses this in place of the repo-root .dockerignore when building with
+# `-f contrib/server/Dockerfile`. Unlike the root ignore, it KEEPS contrib/ —
+# the engines build needs contrib/server, contrib/realengine and
+# contrib/dockerengine (the module's relative `replace` targets).
+.git
+.github
+.claude
+docs
+*.md
+docker-compose.yml
