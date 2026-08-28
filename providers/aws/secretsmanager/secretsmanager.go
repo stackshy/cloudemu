@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -43,10 +44,21 @@ const (
 	defaultRecoveryWindowDays = 30
 )
 
+// KMSKeyResolver validates that a customer-managed KMS key referenced by a
+// secret actually exists. The KMS mock satisfies it via DescribeKey (which
+// resolves a key id, ARN, or alias), so CreateSecret can reject a KmsKeyId that
+// names no key — mirroring how EC2 resolves an IAM instance profile through IAM.
+type KMSKeyResolver interface {
+	DescribeKey(ctx context.Context, keyID string) (*kmsdriver.KeyMetadata, error)
+}
+
 // Mock is an in-memory mock implementation of the AWS Secrets Manager service.
 type Mock struct {
 	secrets *memstore.Store[*secretData]
-	opts    *config.Options
+	// kmsResolver, when wired via SetKMSKeyResolver, validates a caller-supplied
+	// KmsKeyId against KMS on CreateSecret. Nil leaves the reference unchecked.
+	kmsResolver KMSKeyResolver
+	opts        *config.Options
 }
 
 // New creates a new Secrets Manager mock with the given configuration options.
@@ -57,10 +69,29 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
+// SetKMSKeyResolver wires the KMS backend so a KmsKeyId passed to CreateSecret
+// is validated to exist, matching real Secrets Manager.
+func (m *Mock) SetKMSKeyResolver(r KMSKeyResolver) {
+	m.kmsResolver = r
+}
+
 // CreateSecret creates a new secret with an initial value.
-func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
+//
+//nolint:gocritic // hugeParam: cfg matches the driver.Secrets interface signature.
+func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
+	}
+
+	// A customer-supplied KmsKeyId must reference a key that exists; real Secrets
+	// Manager rejects an unknown key with InvalidParameterException rather than
+	// storing a dangling reference. The default aws/secretsmanager key (used when
+	// KmsKeyId is empty) always exists, so only an explicit reference is checked.
+	if cfg.KMSKeyID != "" && m.kmsResolver != nil {
+		if _, err := m.kmsResolver.DescribeKey(ctx, cfg.KMSKeyID); err != nil {
+			return nil, errors.Newf(errors.InvalidArgument,
+				"KMS key %q does not exist or is not accessible", cfg.KMSKeyID)
+		}
 	}
 
 	if existing, ok := m.secrets.Get(cfg.Name); ok {

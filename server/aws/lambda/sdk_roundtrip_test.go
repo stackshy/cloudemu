@@ -176,6 +176,53 @@ func TestSDKLambdaInvokeOnMissingFunction(t *testing.T) {
 	}
 }
 
+// TestSDKLambdaDryRunValidatesQualifier verifies a DryRun invoke validates the
+// Qualifier: a known alias returns 204 No Content while an unknown alias/version
+// is ResourceNotFoundException rather than a spurious 204.
+func TestSDKLambdaDryRunValidatesQualifier(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+	createBasicFunction(t, client, "dry")
+
+	if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
+		FunctionName: aws.String("dry"),
+	}); err != nil {
+		t.Fatalf("PublishVersion: %v", err)
+	}
+
+	if _, err := client.CreateAlias(ctx, &awslambda.CreateAliasInput{
+		FunctionName: aws.String("dry"), Name: aws.String("prod"), FunctionVersion: aws.String("1"),
+	}); err != nil {
+		t.Fatalf("CreateAlias: %v", err)
+	}
+
+	// A DryRun against a valid alias validates and returns 204 with no payload.
+	resp, err := client.Invoke(ctx, &awslambda.InvokeInput{
+		FunctionName:   aws.String("dry"),
+		InvocationType: lambdatypes.InvocationTypeDryRun,
+		Qualifier:      aws.String("prod"),
+	})
+	if err != nil {
+		t.Fatalf("DryRun(prod): %v", err)
+	}
+
+	if resp.StatusCode != 204 {
+		t.Fatalf("DryRun(prod) StatusCode = %d, want 204", resp.StatusCode)
+	}
+
+	// A DryRun against an unknown qualifier is ResourceNotFoundException, not 204.
+	_, err = client.Invoke(ctx, &awslambda.InvokeInput{
+		FunctionName:   aws.String("dry"),
+		InvocationType: lambdatypes.InvocationTypeDryRun,
+		Qualifier:      aws.String("missing"),
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ResourceNotFoundException" {
+		t.Fatalf("DryRun(missing) err = %v, want ResourceNotFoundException", err)
+	}
+}
+
 func TestSDKLambdaConcurrencyRoundtrip(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()

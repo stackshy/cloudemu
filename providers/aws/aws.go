@@ -268,6 +268,9 @@ func New(opts ...config.Option) *Provider {
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)
+	// A KmsKeyId passed to CreateSecret is validated against KMS, so a secret
+	// can't reference a key that doesn't exist.
+	p.SecretsManager.SetKMSKeyResolver(p.KMS)
 	p.SSM.SetInstanceResolver(p.EC2)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
@@ -314,6 +317,10 @@ func New(opts ...config.Option) *Provider {
 	// event-source-mapping target(s), deleting the message on success or
 	// leaving it for DLQ redrive on failure (mirrors the DynamoDB Streams wiring).
 	p.SQS.SetEventSourceInvoker(p.Lambda)
+	// Kinesis -> Lambda: records written to a stream (PutRecord/PutRecords)
+	// deliver a Kinesis-shaped event batch to the stream's event-source-mapping
+	// target(s) (mirrors the DynamoDB Streams -> Lambda wiring).
+	p.Kinesis.SetLambdaInvoker(p.Lambda)
 	// CloudWatch Logs subscription filters -> Lambda: log events matching a
 	// subscription filter's pattern are delivered (gzipped awslogs payload) to
 	// the filter's Lambda destination on PutLogEvents.

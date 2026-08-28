@@ -159,31 +159,45 @@ func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig
 		return nil
 	}
 
-	cp := *rc
+	if len(rc.AdditionalVersionWeights) == 0 {
+		return &driver.AliasRoutingConfig{}
+	}
 
-	return &cp
+	weights := make(map[string]float64, len(rc.AdditionalVersionWeights))
+	for v, w := range rc.AdditionalVersionWeights {
+		weights[v] = w
+	}
+
+	return &driver.AliasRoutingConfig{AdditionalVersionWeights: weights}
 }
 
 // validateRoutingConfig enforces the RoutingConfig.AdditionalVersionWeights
-// rules real Lambda applies: neither the alias's own version nor the additional
-// version can be $LATEST (InvalidParameterValueException), and the additional
+// rules real Lambda applies: neither the alias's own version nor any additional
+// version can be $LATEST (InvalidParameterValueException), and every additional
 // version must exist (ResourceNotFoundException). effectiveVersion is the alias's
-// own FunctionVersion after the operation. An absent additional version is a no-op.
+// own FunctionVersion after the operation. An empty weights map is a no-op.
 func (m *Mock) validateRoutingConfig(fd *funcData, effectiveVersion string, rc *driver.AliasRoutingConfig) error {
-	if rc == nil || rc.AdditionalVersion == "" {
+	if rc == nil || len(rc.AdditionalVersionWeights) == 0 {
 		return nil
 	}
 
 	// A weighted alias cannot point to $LATEST — this restriction applies to the
-	// alias's own FunctionVersion (the primary target) as well as the additional
-	// version. Both must be published.
-	if effectiveVersion == latestVersion || rc.AdditionalVersion == latestVersion {
+	// alias's own FunctionVersion (the primary target) as well as every
+	// additional version. All must be published.
+	if effectiveVersion == latestVersion {
 		return cerrors.New(cerrors.InvalidArgument,
 			"Alias with weights can not be created with function version $LATEST")
 	}
 
-	if !m.versionExists(fd, rc.AdditionalVersion) {
-		return cerrors.Newf(cerrors.NotFound, "version %s not found", rc.AdditionalVersion)
+	for version := range rc.AdditionalVersionWeights {
+		if version == latestVersion {
+			return cerrors.New(cerrors.InvalidArgument,
+				"Alias with weights can not be created with function version $LATEST")
+		}
+
+		if !m.versionExists(fd, version) {
+			return cerrors.Newf(cerrors.NotFound, "version %s not found", version)
+		}
 	}
 
 	return nil
