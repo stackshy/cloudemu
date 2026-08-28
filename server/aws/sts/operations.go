@@ -215,12 +215,25 @@ func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// synthCredentials builds a deterministic set of temporary credentials with an
-// expiration in the future. cloudemu does not validate signatures, so any
-// non-empty values satisfy SDK clients.
+// synthCredentials builds a set of temporary credentials with an expiration in
+// the future. When a session store is wired (EnforceAuth on) it mints unique,
+// verifiable credentials and records their secret so the auth gate can verify a
+// signature made with them; otherwise it returns the fixed synthetic values it
+// always has (default, auth-off behavior is byte-for-byte unchanged).
 func (h *Handler) synthCredentials(dur time.Duration) credentials {
 	if dur <= 0 {
 		dur = sessionDuration
+	}
+
+	if h.sessions != nil {
+		sess := h.sessions.Mint(dur)
+
+		return credentials{
+			AccessKeyID:     sess.AccessKeyID,
+			SecretAccessKey: sess.SecretAccessKey,
+			SessionToken:    sess.SessionToken,
+			Expiration:      sess.Expiration.Format(time.RFC3339),
+		}
 	}
 
 	return credentials{

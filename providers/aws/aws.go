@@ -183,6 +183,10 @@ type Provider struct {
 	// EnforceAuth mirrors config.Options.EnforceAuth: when true the AWS wire
 	// server verifies each request's SigV4 signature. Off by default.
 	EnforceAuth bool
+	// Clock mirrors config.Options.Clock: it drives SigV4 timestamp-expiry and
+	// STS temporary-credential expiry when EnforceAuth is on. Threaded to the
+	// wire server so a FakeClock stays deterministic there too.
+	Clock config.Clock
 
 	// engineClosers holds any wired real engines that implement io.Closer, so
 	// Close can cascade teardown to them. Empty for the in-memory default.
@@ -239,6 +243,7 @@ func New(opts ...config.Option) *Provider {
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 		EnforceAuth:         o.EnforceAuth,
+		Clock:               o.Clock,
 		engineClosers:       o.EngineClosers(),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)

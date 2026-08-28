@@ -64,7 +64,17 @@ type Handler struct {
 	accountID string
 	region    string
 	trust     roleTrustEvaluator
+	// sessions, when set, records the temporary credentials this handler mints
+	// so the SigV4 authentication gate can verify signatures made with them. It
+	// is wired only when EnforceAuth is on; left nil the handler returns the
+	// fixed synthetic credentials it always has (auth-off byte-for-byte).
+	sessions *SessionStore
 }
+
+// SetSessions wires the temporary-credential store. When set, AssumeRole /
+// GetSessionToken / GetFederationToken (and the other credential-minting
+// operations) issue unique, verifiable credentials recorded in the store.
+func (h *Handler) SetSessions(s *SessionStore) { h.sessions = s }
 
 // New returns an STS handler that reports the given accountID and region. Empty
 // values fall back to sensible defaults so a well-formed identity is always
