@@ -164,17 +164,12 @@ func requestConditionContext(r *http.Request, p authctx.Principal) map[string]st
 	return ctx
 }
 
-// clientIP extracts the caller's source IP, preferring the first X-Forwarded-For
-// hop and falling back to the connection's RemoteAddr (port stripped).
+// clientIP extracts the caller's source IP for the aws:SourceIp condition key.
+// It uses ONLY the connection's RemoteAddr (port stripped) — never the
+// caller-controlled X-Forwarded-For header. The wire server has no trusted
+// reverse proxy in front of it, so honoring X-Forwarded-For would let any
+// client spoof its source IP and defeat the IpAddress/NotIpAddress conditions.
 func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		if i := strings.IndexByte(fwd, ','); i >= 0 {
-			return strings.TrimSpace(fwd[:i])
-		}
-
-		return strings.TrimSpace(fwd)
-	}
-
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}
