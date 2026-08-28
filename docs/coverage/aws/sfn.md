@@ -36,7 +36,7 @@ AWS's `sfn` service · portable interface `driver.SFN` · [AWS index](./README.m
 | `SendTaskSuccess` |  |
 | `StartExecution` | Executions. |
 | `StartSyncExecution` |  |
-| `StopExecution` |  |
+| `StopExecution` | StopExecution aborts a still-settling execution, persisting the caller's |
 | `TagResource` | Tags. |
 | `TestState` | Definition tooling. |
 | `UntagResource` |  |

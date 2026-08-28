@@ -11093,7 +11093,8 @@
         "name": "StartSyncExecution"
       },
       {
-        "name": "StopExecution"
+        "name": "StopExecution",
+        "doc": "StopExecution aborts a still-settling execution, persisting the caller's"
       },
       {
         "name": "TagResource",
