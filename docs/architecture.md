@@ -124,7 +124,7 @@ So the rule for any entity that is stored as a pointer and mutated after it is f
 
 Never do `v, _ := store.Get(k); mutate(v); store.Set(k, v)` as a way to "update" shared state. Beyond the field-level race, `Get`-then-`Set` is a **lost-update** race: two callers read the same value, each mutates its copy, and the second `Set` silently clobbers the first. This is a logical check-then-act race that the `-race` detector does **not** catch (no conflicting memory access on the same address), so it will not show up in CI — use `Update` or a per-entity lock instead.
 
-An advisory `go test -race ./...` job runs in CI while the per-entity locking is rolled out mock by mock (see #587).
+A blocking `go test -race ./...` job runs in CI (the `Race` gate): the tree is race-clean, so any newly introduced data race fails the build (#587).
 
 ## Fourth provider: OCI (in progress)
 

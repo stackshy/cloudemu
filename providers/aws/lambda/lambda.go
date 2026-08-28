@@ -76,6 +76,7 @@ type versionData struct {
 }
 
 type aliasData struct {
+	mu    sync.Mutex // guards alias, mutated in place after the entity is stored
 	alias driver.Alias
 }
 
