@@ -2,6 +2,8 @@
 
 Guidance for AI agents working in the cloudemu repository. (Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md).)
 
+> **Integrating cloudemu into an existing service = an endpoint override on the already-running service** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), **NOT a new `_test.go` file.** Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is only for Go unit tests written inside cloudemu-aware code. Details: [docs/integration.md](docs/integration.md).
+
 ## What cloudemu is
 
 Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. It runs three ways: as a standalone server (the `cloudemu serve` binary or the `ghcr.io/stackshy/cloudemu` Docker image) that any app in any language points at, and in-process from Go via either the SDK-compat HTTP server or the typed mock API. It emulates control surfaces, not a real cloud — it does not run workloads/containers, serve real traffic, authenticate requests, or enforce quotas. State is in-memory and resettable, so it is ephemeral by default (lost on process exit unless saved); persistence is opt-in — the whole emulator's state can be snapshotted to one JSON file and restored identity-preservingly across all four providers (`--persist`, `snapshot save`/`load`, the `/_cloudemu/snapshot` endpoint, the `persist` package). See the [README](README.md) for the full framing and scope.
