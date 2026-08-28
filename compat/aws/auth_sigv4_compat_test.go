@@ -132,10 +132,15 @@ func TestCompatAWSSigV4AuthEnabled(t *testing.T) {
 		}
 	})
 
-	t.Run("TempCredentialAccepted", func(t *testing.T) {
+	t.Run("ForgedTempCredentialRejected", func(t *testing.T) {
+		// ASIA temporary credentials are now verified against STS-issued
+		// sessions, so a forged one that STS never minted is rejected rather
+		// than trusted (a real assumed-role credential is covered by the STS
+		// session-store tests).
 		client := iamClientAt(t, sess.Endpoint(), "ASIATEMPCREDENTIAL00", "any-synthetic-secret", "session-token")
-		if _, err := client.ListUsers(ctx, &iam.ListUsersInput{}); err != nil {
-			t.Fatalf("STS-style temporary (ASIA) credential should pass through, got: %v", err)
+		_, err := client.ListUsers(ctx, &iam.ListUsersInput{})
+		if code := apiErrorCode(t, err); code != "InvalidClientTokenId" {
+			t.Fatalf("forged temp credential: want InvalidClientTokenId, got %q", code)
 		}
 	})
 

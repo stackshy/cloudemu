@@ -234,8 +234,9 @@ type Drivers struct {
 	// implement the optional access-key resolver; without it every signed request
 	// fails to resolve its key (InvalidClientTokenId).
 	//
-	// Long-term (AKIA) keys are verified; STS temporary (ASIA) credentials are
-	// accepted without signature verification (a follow-up).
+	// Long-term (AKIA) keys and STS temporary (ASIA) credentials are both
+	// verified — ASIA against the secret STS minted for that session (rejected
+	// if forged or expired).
 	//
 	// It also enforces IAM authorization for JSON-RPC services (the operation is
 	// bound to the X-Amz-Target header the dispatcher routes on); query and REST
