@@ -58,6 +58,7 @@ func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, 
 	res := interpret(ctx, definition, &asl.RunInput{
 		Input: in.Input, ExecArn: arn, ExecName: name, SMArn: in.StateMachineArn,
 		SMName: smName, RoleArn: roleArn, StartTime: now, SettleBase: settle.DefaultExecutionSettle,
+		InvokeLambda: m.lambdaInvoker(),
 	})
 
 	exec := execFromResult(arn, name, in, now, res)
@@ -78,6 +79,17 @@ func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, 
 	out := observedExec(&exec, window, now)
 
 	return &out, nil
+}
+
+// lambdaInvoker returns the Task->Lambda seam as the interpreter's callback, or
+// nil when no Lambda backend is wired (library-only construction), in which case
+// a Task echoes its input.
+func (m *Mock) lambdaInvoker() asl.LambdaInvoker {
+	if m.lambdaSync == nil {
+		return nil
+	}
+
+	return m.lambdaSync.InvokeSync
 }
 
 // interpret parses and runs a definition. A definition accepted at create time

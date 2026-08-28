@@ -5,13 +5,15 @@
 // per-state event history. It is driven by config.Clock so Wait timing is
 // deterministic under a FakeClock.
 //
-// Supported in this build: Pass, Choice, Wait, Succeed, Fail; the full
-// InputPath -> Parameters -> Result -> ResultSelector -> ResultPath -> OutputPath
-// I/O pipeline; a reference/selection JSONPath subset; the $$ context object; and
-// a first-wave intrinsic set. Task, Parallel and Map parse (so a definition
-// containing them is accepted at create time) but fail loudly at run time until
-// their handlers land. JSONata query language, and JSONPath filters/wildcards/
-// recursive-descent, are rejected rather than silently mis-run.
+// Supported in this build: Pass, Choice, Wait, Succeed, Fail, and Task (the
+// arn:aws:states:::lambda:invoke and bare Lambda-function-ARN forms, with Retry
+// and Catch); the full InputPath -> Parameters -> Result -> ResultSelector ->
+// ResultPath -> OutputPath I/O pipeline; a reference/selection JSONPath subset;
+// the $$ context object; and a first-wave intrinsic set. Parallel and Map parse
+// (so a definition containing them is accepted at create time) but fail loudly
+// at run time until their handlers land. JSONata query language, and JSONPath
+// filters/wildcards/recursive-descent, are rejected rather than silently
+// mis-run.
 package asl
 
 import (
@@ -83,8 +85,10 @@ type State struct {
 	Error string `json:"Error"`
 	Cause string `json:"Cause"`
 
-	// Task (parsed; handled in a later PR).
-	Resource string `json:"Resource"`
+	// Task.
+	Resource string     `json:"Resource"`
+	Retry    []*Retrier `json:"Retry"`
+	Catch    []*Catcher `json:"Catch"`
 }
 
 // StateMachineDef is a parsed ASL definition.
