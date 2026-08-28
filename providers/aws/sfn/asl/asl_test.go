@@ -132,17 +132,36 @@ func TestPayloadTemplateWithContext(t *testing.T) {
 }
 
 func TestParseAcceptsAndRejects(t *testing.T) {
-	good := `{"StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}`
-	if _, err := Parse(good); err != nil {
-		t.Fatalf("Parse(valid) = %v", err)
+	goods := []string{
+		`{"StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}`,
+		`{"StartAt":"P","States":{"P":{"Type":"Parallel","End":true,"Branches":[` +
+			`{"StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}]}}}`,
+		`{"StartAt":"M","States":{"M":{"Type":"Map","ItemsPath":"$.n","End":true,"MaxConcurrency":2,` +
+			`"ItemProcessor":{"StartAt":"I","States":{"I":{"Type":"Pass","End":true}}}}}}`,
+	}
+	for _, good := range goods {
+		if _, err := Parse(good); err != nil {
+			t.Fatalf("Parse(valid) = %v (%s)", err, good)
+		}
 	}
 
 	bad := []string{
 		`{"StartAt":"A","States":{"A":{"Type":"Wait","Seconds":1,"Result":{},"End":true}}}`,
 		`{"StartAt":"Missing","States":{"A":{"Type":"Pass","End":true}}}`,
 		`{"QueryLanguage":"JSONata","StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}`,
-		// Pass does not support ResultSelector (Task/Parallel/Map only).
+		// Pass does not support ResultSelector/Retry/Catch (Task/Parallel/Map only).
 		`{"StartAt":"A","States":{"A":{"Type":"Pass","ResultSelector":{"x.$":"$.y"},"End":true}}}`,
+		`{"StartAt":"A","States":{"A":{"Type":"Pass","Retry":[{"ErrorEquals":["States.ALL"]}],"End":true}}}`,
+		`{"StartAt":"A","States":{"A":{"Type":"Pass","Catch":[{"ErrorEquals":["States.ALL"],"Next":"A"}],"End":true}}}`,
+		// Out-of-range Retrier fields are rejected at create time.
+		`{"StartAt":"T","States":{"T":{"Type":"Task","Resource":"arn:aws:states:::lambda:invoke",` +
+			`"Retry":[{"ErrorEquals":["States.ALL"],"BackoffRate":0.5}],"End":true}}}`,
+		// Parallel with no branches, and a Parallel branch that is itself invalid.
+		`{"StartAt":"P","States":{"P":{"Type":"Parallel","Branches":[],"End":true}}}`,
+		`{"StartAt":"P","States":{"P":{"Type":"Parallel","End":true,"Branches":[` +
+			`{"StartAt":"X","States":{"Y":{"Type":"Pass","End":true}}}]}}}`,
+		// Map with no ItemProcessor/Iterator.
+		`{"StartAt":"M","States":{"M":{"Type":"Map","ItemsPath":"$.n","End":true}}}`,
 	}
 
 	for _, def := range bad {

@@ -15,6 +15,11 @@ import (
 // make, so a Choice/Next cycle fails loudly instead of spinning forever.
 const defaultMaxSteps = 10000
 
+// defaultMaxNesting bounds how deeply Parallel/Map sub-state-machines may nest,
+// so a pathological Parallel-in-Parallel definition fails loudly instead of
+// exhausting the Go stack.
+const defaultMaxNesting = 32
+
 // handler evaluates one state. It returns the state's effective output, the name
 // of the next state (empty when terminal), whether the execution terminates
 // here (SUCCEEDED), or an error (mapped to ExecutionFailed). Each handler emits
@@ -77,16 +82,18 @@ type RunResult struct {
 }
 
 type interp struct {
-	def       *StateMachineDef
-	baseTime  time.Time
-	offset    time.Duration
-	waitTotal time.Duration
-	steps     int
-	maxSteps  int
-	hist      []driver.HistoryEvent
-	lastID    int64
-	ctxObj    map[string]any
-	handlers  map[string]handler
+	def        *StateMachineDef
+	baseTime   time.Time
+	offset     time.Duration
+	waitTotal  time.Duration
+	steps      int
+	maxSteps   int
+	depth      int
+	maxNesting int
+	hist       []driver.HistoryEvent
+	lastID     int64
+	ctxObj     map[string]any
+	handlers   map[string]handler
 
 	// invokeLambda is the Task->Lambda seam; nil means echo-input fallback.
 	invokeLambda LambdaInvoker
@@ -109,6 +116,7 @@ func Run(ctx context.Context, def *StateMachineDef, in *RunInput) *RunResult {
 		def:          def,
 		baseTime:     in.StartTime,
 		maxSteps:     maxSteps,
+		maxNesting:   defaultMaxNesting,
 		handlers:     buildHandlers(),
 		invokeLambda: in.InvokeLambda,
 	}
@@ -137,48 +145,74 @@ func buildHandlers() map[string]handler {
 		TypeSucceed:  succeedHandler,
 		TypeFail:     failHandler,
 		TypeTask:     taskHandler,
-		TypeParallel: unsupportedHandler,
-		TypeMap:      unsupportedHandler,
+		TypeParallel: parallelHandler,
+		TypeMap:      mapHandler,
 	}
 }
 
-// walk runs the state graph from StartAt following Next/End until a terminal
-// state, an unrecovered error, or the step guard trips.
+// walk runs the top-level state graph and maps its outcome to a RunResult with
+// the terminal ExecutionSucceeded/ExecutionFailed event.
 func (it *interp) walk(ctx context.Context, input any) *RunResult {
-	cur := it.def.StartAt
+	out, se := it.runGraph(ctx, it.def.StartAt, it.def.States, input)
+	if se != nil {
+		return it.fail(se.Code, se.Cause)
+	}
+
+	return it.succeed(out)
+}
+
+// runGraph walks a state graph from startAt following Next/End until a terminal
+// state, an unrecovered error, or a guard trips. It is shared by the top-level
+// execution and by nested Parallel branches / Map iterations, so the step budget
+// and history accumulator are common across the whole run and ctx (carrying the
+// recursion-guard depth) threads into every handler.
+func (it *interp) runGraph(ctx context.Context, startAt string, states map[string]*State, input any) (any, *stateError) {
+	cur := startAt
 	raw := input
 
 	for {
 		// Honor cancellation of the calling request (the ctx is also what the
-		// PR2 Task->Lambda recursion guard rides on).
+		// Task->Lambda recursion guard rides on).
 		if err := ctx.Err(); err != nil {
-			return it.fail("CloudEmu.ExecutionCanceled", err.Error())
+			return nil, &stateError{Code: "CloudEmu.ExecutionCanceled", Cause: err.Error()}
 		}
 
 		it.steps++
 		if it.steps > it.maxSteps {
-			return it.fail("CloudEmu.StateTransitionLimitExceeded",
-				fmt.Sprintf("execution exceeded the %d state-transition limit", it.maxSteps))
+			return nil, &stateError{Code: "CloudEmu.StateTransitionLimitExceeded",
+				Cause: fmt.Sprintf("execution exceeded the %d state-transition limit", it.maxSteps)}
 		}
 
-		st := it.def.States[cur]
+		st := states[cur]
 		it.enterStateContext(st)
 
 		out, next, terminal, err := it.handlers[st.Type](ctx, it, st, raw)
 		if err != nil {
-			se := asStateError(err)
-
-			return it.fail(se.Code, se.Cause)
+			return nil, asStateError(err)
 		}
 
 		if terminal {
-			return it.succeed(out)
+			return out, nil
 		}
 
 		raw = out
 		cur = next
 	}
 }
+
+// enterNesting bounds Parallel/Map nesting depth, failing loudly before the Go
+// stack can be exhausted by a pathological definition.
+func (it *interp) enterNesting() *stateError {
+	it.depth++
+	if it.depth > it.maxNesting {
+		return &stateError{Code: "CloudEmu.ExecutionNestingLimitExceeded",
+			Cause: fmt.Sprintf("execution exceeded the %d Parallel/Map nesting limit", it.maxNesting)}
+	}
+
+	return nil
+}
+
+func (it *interp) leaveNesting() { it.depth-- }
 
 func (it *interp) succeed(out any) *RunResult {
 	s := toJSON(out)

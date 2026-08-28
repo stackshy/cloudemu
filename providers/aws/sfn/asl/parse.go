@@ -5,15 +5,15 @@
 // per-state event history. It is driven by config.Clock so Wait timing is
 // deterministic under a FakeClock.
 //
-// Supported in this build: Pass, Choice, Wait, Succeed, Fail, and Task (the
+// Supported in this build: Pass, Choice, Wait, Succeed, Fail, Task (the
 // arn:aws:states:::lambda:invoke and bare Lambda-function-ARN forms, with Retry
-// and Catch); the full InputPath -> Parameters -> Result -> ResultSelector ->
-// ResultPath -> OutputPath I/O pipeline; a reference/selection JSONPath subset;
-// the $$ context object; and a first-wave intrinsic set. Parallel and Map parse
-// (so a definition containing them is accepted at create time) but fail loudly
-// at run time until their handlers land. JSONata query language, and JSONPath
-// filters/wildcards/recursive-descent, are rejected rather than silently
-// mis-run.
+// and Catch), Parallel (branches run sequentially to completion), and Map
+// (iterations run sequentially over the resolved items; MaxConcurrency is parsed
+// but not honored); the full InputPath -> Parameters -> Result -> ResultSelector
+// -> ResultPath -> OutputPath I/O pipeline; a reference/selection JSONPath
+// subset; the $$ context object; and a first-wave intrinsic set. JSONata query
+// language, and JSONPath filters/wildcards/recursive-descent, are rejected
+// rather than silently mis-run.
 package asl
 
 import (
@@ -89,6 +89,28 @@ type State struct {
 	Resource string     `json:"Resource"`
 	Retry    []*Retrier `json:"Retry"`
 	Catch    []*Catcher `json:"Catch"`
+
+	// Parallel: each branch is its own sub-state-machine run on the same input.
+	Branches []*StateMachineDef `json:"Branches"`
+
+	// Map: the ItemProcessor (or legacy Iterator) sub-state-machine runs once per
+	// resolved item. MaxConcurrency is parsed but sequential execution is used.
+	ItemProcessor  *StateMachineDef `json:"ItemProcessor"`
+	Iterator       *StateMachineDef `json:"Iterator"`
+	ItemsPath      string           `json:"ItemsPath"`
+	Items          json.RawMessage  `json:"Items"`
+	ItemSelector   json.RawMessage  `json:"ItemSelector"`
+	MaxConcurrency *int             `json:"MaxConcurrency"` // parsed; execution is sequential
+}
+
+// processor returns the Map state's sub-state-machine, preferring the modern
+// ItemProcessor over the legacy Iterator.
+func (s *State) processor() *StateMachineDef {
+	if s.ItemProcessor != nil {
+		return s.ItemProcessor
+	}
+
+	return s.Iterator
 }
 
 // StateMachineDef is a parsed ASL definition.
@@ -130,16 +152,34 @@ func Parse(definition string) (*StateMachineDef, error) {
 		return nil, aslErrf("definition is missing the required top-level 'States' object")
 	}
 
+	if err := validateStates(&def); err != nil {
+		return nil, err
+	}
+
+	return &def, nil
+}
+
+// validateStates populates each state's name and structurally validates it,
+// recursing into Parallel branches and Map processors.
+func validateStates(def *StateMachineDef) error {
+	if def.StartAt == "" {
+		return aslErrf("sub-state-machine is missing the required 'StartAt' field")
+	}
+
+	if len(def.States) == 0 {
+		return aslErrf("sub-state-machine is missing the required 'States' object")
+	}
+
 	if _, ok := def.States[def.StartAt]; !ok {
-		return nil, aslErrf("StartAt %q does not name a state in 'States'", def.StartAt)
+		return aslErrf("StartAt %q does not name a state in 'States'", def.StartAt)
 	}
 
 	for name, st := range def.States {
 		st.name = name
 		if err := validateState(def.States, st); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	return &def, nil
+	return nil
 }

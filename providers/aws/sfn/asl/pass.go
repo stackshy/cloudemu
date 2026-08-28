@@ -43,12 +43,3 @@ func passHandler(_ context.Context, it *interp, st *State, raw any) (out any, ne
 
 	return out, st.Next, st.End, nil
 }
-
-// unsupportedHandler fails an execution loudly when it reaches a state type
-// whose interpreter has not landed yet (Task, Parallel, Map).
-func unsupportedHandler(_ context.Context, _ *interp, st *State, _ any) (out any, next string, terminal bool, err error) {
-	return nil, "", false, &stateError{
-		Code:  "States.Runtime",
-		Cause: fmt.Sprintf("state type %q is not yet supported by the interpreter", st.Type),
-	}
-}
