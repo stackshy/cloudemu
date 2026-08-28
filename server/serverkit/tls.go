@@ -1,4 +1,4 @@
-package main
+package serverkit
 
 import (
 	"crypto/ecdsa"
@@ -14,27 +14,33 @@ import (
 	"time"
 )
 
+// certSerialBits is the bit length of the self-signed certificate serial number.
+const certSerialBits = 128
+
 // tlsConfig returns the TLS config for the Azure HTTPS endpoint. If the user
 // supplied a cert/key pair we load it; otherwise we mint a self-signed cert in
 // memory covering localhost, the loopback IPs, the bind host, and any extra
 // --tls-host SANs.
-func tlsConfig(c serveConfig, addr string) (*tls.Config, error) {
-	if c.tlsCert != "" {
-		cert, err := tls.LoadX509KeyPair(c.tlsCert, c.tlsKey)
+func tlsConfig(cfg *Config, addr string) (*tls.Config, error) {
+	if cfg.TLSCert != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 		if err != nil {
 			return nil, err
 		}
+
 		return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil
 	}
 
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		host = c.host
+		host = cfg.Host
 	}
-	cert, err := selfSignedCert(append([]string{"localhost", host}, c.tlsHosts...))
+
+	cert, err := selfSignedCert(append([]string{"localhost", host}, cfg.TLSHosts...))
 	if err != nil {
 		return nil, err
 	}
+
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil
 }
 
@@ -47,7 +53,7 @@ func selfSignedCert(hosts []string) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), certSerialBits))
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -62,13 +68,16 @@ func selfSignedCert(hosts []string) (tls.Certificate, error) {
 		BasicConstraintsValid: true,
 	}
 	// Always cover the loopback IPs so https://127.0.0.1 / [::1] verify.
-	tmpl.IPAddresses = append(tmpl.IPAddresses, net.IPv4(127, 0, 0, 1), net.IPv6loopback)
+	tmpl.IPAddresses = append(tmpl.IPAddresses, net.ParseIP(loopbackIPv4), net.IPv6loopback)
+
 	seen := map[string]bool{}
 	for _, h := range hosts {
 		if h == "" || seen[h] {
 			continue
 		}
+
 		seen[h] = true
+
 		if ip := net.ParseIP(h); ip != nil {
 			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
 		} else {
@@ -85,6 +94,7 @@ func selfSignedCert(hosts []string) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
@@ -92,5 +102,6 @@ func selfSignedCert(hosts []string) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("assemble keypair: %w", err)
 	}
+
 	return cert, nil
 }

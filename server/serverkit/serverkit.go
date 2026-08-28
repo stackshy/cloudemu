@@ -1,0 +1,729 @@
+// Package serverkit is the shared assembly layer for the standalone emulator.
+//
+// It builds every selected provider, fronts each with the /_cloudemu admin
+// control plane, wires the shared Kubernetes data-plane, persistence, seeding,
+// and TLS, binds the listeners, and owns the serve/shutdown/snapshot lifecycle.
+// It is the source of truth for cmd/cloudemu/serve.go, and the seam the
+// batteries-included contrib/server adopts in a follow-up so the two
+// entrypoints don't drift.
+//
+// Beyond moving serve's proven assembly, serverkit adds one capability the old
+// inline code lacked: it tracks the current live *Provider set and Close()es the
+// outgoing providers after every rebuild swap (reset/restore) and on final
+// shutdown after the snapshot, so real data-plane engines (embedded Postgres,
+// miniredis, Docker containers) are torn down rather than leaked. For the
+// engineless in-process providers cmd/cloudemu builds, Close is a no-op.
+package serverkit
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	cloudemu "github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/topology"
+	"github.com/stackshy/cloudemu/v2/persist"
+	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
+	"github.com/stackshy/cloudemu/v2/seed"
+	"github.com/stackshy/cloudemu/v2/server/admin"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+)
+
+// errUnsupportedSnapshot is returned when a posted snapshot has an unknown
+// schema version.
+var errUnsupportedSnapshot = errors.New("unsupported snapshot schema version")
+
+// defaultShutdownTimeout is the grace period applied when Config leaves
+// ShutdownTimeout unset.
+const defaultShutdownTimeout = 10 * time.Second
+
+// serverReadHeaderTimeout bounds how long a client may take to send request
+// headers, closing the Slowloris hole a zero timeout leaves open.
+const serverReadHeaderTimeout = 10 * time.Second
+
+// Provider names, shared by the build and bind switches.
+const (
+	providerAWS   = "aws"
+	providerAzure = "azure"
+	providerGCP   = "gcp"
+	providerOCI   = "oci"
+)
+
+// closer is the Close() surface of a *Provider, cascaded across rebuild swaps
+// and on shutdown to free the real engines (embedded Postgres, miniredis, Docker
+// containers) it wired. Close is idempotent and a no-op for engineless
+// providers, so tracking it is safe for cmd/cloudemu and correct for contrib.
+type closer interface{ Close() error }
+
+// Config is the flat data seam serverkit assembles a server from. Both
+// entrypoints fill it: cmd/cloudemu from its serve flags, contrib/server from
+// its engine flags. It carries no behavior.
+type Config struct {
+	Providers []string // selected providers, already parsed: aws,azure,gcp,oci
+
+	Host          string            // host/interface to bind
+	Ports         map[string]string // per-provider bind ports, keys aws/azure/gcp/oci (and optionally k8s)
+	K8sPort       string            // shared Kubernetes data-plane port; empty disables it
+	AdvertiseHost string            // host the Kubernetes endpoint is advertised at (default: derived from Host)
+
+	AzureSubscription string // Azure subscription GUID reported by the emulator (last-wins WithAccountID)
+
+	Admin bool // mount the /_cloudemu control plane
+
+	Persist             bool   // save/restore state around the process lifetime
+	StateFile           string // path to the JSON state snapshot
+	PersistMetadataOnly bool   // omit object bodies from the snapshot
+	InitDir             string // apply every *.json fixture in this dir on boot
+
+	TLSCert  string   // PEM cert for the Azure HTTPS endpoint (empty: self-signed)
+	TLSKey   string   // PEM key matching TLSCert
+	TLSHosts []string // extra SAN hosts for the generated self-signed cert
+
+	Latency     time.Duration // artificial latency added to every emulated call
+	LogRequests bool          // log every HTTP request
+	Quiet       bool          // suppress the startup banner
+	EnforceAuth bool          // require authentication on each request
+
+	EndpointsFile   string        // write resolved endpoints as JSON here
+	ShutdownTimeout time.Duration // grace period for in-flight requests on shutdown
+
+	BaseOptions []config.Option // identity + (for contrib) engine options every provider is built with
+	Out         io.Writer       // banner/diagnostics sink (default: os.Stdout)
+}
+
+// App is a fully-wired, not-yet-serving emulator. New builds and populates the
+// backends; Serve binds the listeners and runs until the context is canceled.
+type App struct {
+	cfg Config
+	out io.Writer
+
+	sel           []string
+	baseOpts      []config.Option
+	advertiseHost string
+	k8sPort       string
+
+	backends   map[string]*admin.Backend
+	k8sBackend *admin.Backend
+
+	// rebuildMu serializes resets so two concurrent /_cloudemu/reset calls can't
+	// interleave and leave providers wired to different Kubernetes instances. It
+	// also guards the current-state fields below and the live provider set.
+	rebuildMu   sync.Mutex
+	targets     map[string]seed.Target
+	snapTargets map[string]persist.Services
+	netEngine   *topology.Engine
+	discovery   map[string]*resourcediscovery.Engine
+	providers   []closer // current live providers, Close()d when swapped out
+}
+
+// New builds every selected provider behind its admin backend, restores any
+// persisted state, and applies init-dir fixtures — everything up to binding the
+// listeners. The returned App is ready to Serve.
+func New(cfg *Config) (*App, error) {
+	out := cfg.Out
+	if out == nil {
+		out = os.Stdout
+	}
+
+	k8sPort := cfg.K8sPort
+	if k8sPort == "" {
+		k8sPort = cfg.Ports["k8s"]
+	}
+
+	a := &App{
+		cfg:           *cfg,
+		out:           out,
+		sel:           cfg.Providers,
+		baseOpts:      baseOptsFor(cfg),
+		advertiseHost: advertiseHostFor(cfg.AdvertiseHost, cfg.Host),
+		k8sPort:       k8sPort,
+		backends:      make(map[string]*admin.Backend, len(cfg.Providers)),
+	}
+	for _, p := range cfg.Providers {
+		a.backends[p] = admin.NewBackend(nil)
+	}
+
+	if k8sPort != "" {
+		a.k8sBackend = admin.NewBackend(nil)
+	}
+
+	a.Rebuild() // populate the backends before serving
+
+	if err := a.applyBootState(); err != nil {
+		return nil, err
+	}
+
+	// reset wipes all state, so warn if it's reachable off the loopback — e.g. a
+	// shared instance bound with --host 0.0.0.0, where anyone on the network
+	// could POST /_cloudemu/reset.
+	if w := dangerWarning(cfg); w != "" {
+		fmt.Fprintln(os.Stderr, w)
+	}
+
+	return a, nil
+}
+
+// baseOptsFor clones Config.BaseOptions and appends the latency/auth options, so
+// the caller's slice is never mutated and buildProvider's Azure copy starts from
+// a stable base.
+func baseOptsFor(cfg *Config) []config.Option {
+	baseOpts := append([]config.Option(nil), cfg.BaseOptions...)
+
+	if cfg.Latency > 0 {
+		baseOpts = append(baseOpts, config.WithLatency(cfg.Latency))
+	}
+
+	if cfg.EnforceAuth {
+		baseOpts = append(baseOpts, config.WithEnforceAuth())
+	}
+
+	return baseOpts
+}
+
+// applyBootState restores persisted state and applies init-dir fixtures onto the
+// freshly-built providers before serving, so the first request already sees the
+// boot state. Restore runs first; init fixtures apply on top.
+func (a *App) applyBootState() error {
+	if a.cfg.Persist {
+		if err := restoreState(context.Background(), a.cfg.StateFile, a.snapTargets); err != nil {
+			return fmt.Errorf("restore persisted state: %w", err)
+		}
+	}
+
+	if a.cfg.InitDir != "" {
+		if err := applyInitDir(context.Background(), a.cfg.InitDir, a.targets); err != nil {
+			return fmt.Errorf("apply init dir: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Rebuild reconstructs a fresh Kubernetes server and every selected provider
+// from scratch and swaps them in atomically — this is what /_cloudemu/reset
+// calls to hand a test suite a clean slate without restarting the process. After
+// the swap it Close()es the providers it replaced (a no-op when no engine is
+// wired) so their real engines are freed rather than leaked.
+func (a *App) Rebuild() {
+	outgoing := a.swapFresh()
+	// Swap-then-close: the fresh handlers already serve new requests before the
+	// outgoing providers are torn down, so no request is ever routed to a
+	// half-closed engine. A request already in flight against the outgoing
+	// handler at the instant of the swap may still be mid-query when its
+	// provider's Close runs immediately after — an accepted best-effort tradeoff
+	// for a local dev/test tool, consistent with the destructive-reset
+	// philosophy, not an oversight. A short drain window is a possible future
+	// refinement.
+	a.closeProviders(outgoing)
+}
+
+// swapFresh builds every fresh handler, swaps them into the backends under the
+// rebuild lock, and returns the providers it displaced (for the caller to close
+// outside the lock). Building first means a construction panic leaves the
+// running set untouched, and all providers in one reset share the single new
+// Kubernetes data-plane.
+func (a *App) swapFresh() []closer {
+	a.rebuildMu.Lock()
+	defer a.rebuildMu.Unlock()
+
+	var k8s *kubernetes.APIServer
+	if a.k8sBackend != nil {
+		k8s = kubernetes.NewAPIServer()
+		// Tell the data plane the address it is reachable on, so the
+		// managed-Kubernetes control planes can advertise an endpoint that
+		// actually answers. https, because the listener is served with a cert
+		// signed by the CA DescribeCluster advertises.
+		k8s.SetBaseURL("https://" + net.JoinHostPort(a.advertiseHost, a.k8sPort))
+	}
+
+	fresh := make(map[string]http.Handler, len(a.sel))
+	freshTargets := make(map[string]seed.Target, len(a.sel))
+	freshSnapTargets := make(map[string]persist.Services, len(a.sel))
+	freshDiscovery := make(map[string]*resourcediscovery.Engine, len(a.sel))
+
+	var (
+		freshEngine    *topology.Engine
+		freshProviders []closer
+	)
+
+	for _, p := range a.sel {
+		b := a.buildProvider(p, k8s)
+		fresh[p] = b.handler
+		freshTargets[p] = b.target
+		freshSnapTargets[p] = b.snap
+
+		if b.discovery != nil {
+			freshDiscovery[p] = b.discovery
+		}
+
+		if b.engine != nil {
+			freshEngine = b.engine
+		}
+
+		if b.provider != nil {
+			freshProviders = append(freshProviders, b.provider)
+		}
+	}
+
+	if a.k8sBackend != nil {
+		a.k8sBackend.Swap(wrap(k8s, "kubernetes", a.cfg.LogRequests))
+	}
+
+	for p, h := range fresh {
+		a.backends[p].Swap(h)
+	}
+
+	a.targets = freshTargets
+	a.snapTargets = freshSnapTargets
+	a.netEngine = freshEngine
+	a.discovery = freshDiscovery
+
+	outgoing := a.providers
+	a.providers = freshProviders
+
+	return outgoing
+}
+
+// builtProvider is one freshly-constructed provider: its wire handler plus the
+// cross-cutting hooks (seed target, snapshot services, discovery/topology
+// engines, and the closer for engine teardown).
+type builtProvider struct {
+	handler   http.Handler
+	target    seed.Target
+	snap      persist.Services
+	discovery *resourcediscovery.Engine // nil for oci
+	engine    *topology.Engine          // non-nil only for aws (network topology)
+	provider  closer                    // nil for oci (no Close/engine teardown)
+}
+
+// buildProvider constructs one provider and its hooks. It shares the single new
+// Kubernetes data-plane k8s across every provider in a rebuild.
+func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
+	switch p {
+	case providerAWS:
+		cloud := cloudemu.NewAWS(a.baseOpts...)
+		d := awsserver.DriversFrom(cloud)
+		d.K8sAPI = k8s
+		// Drivers.K8sAPI is only the server's PATH ROUTING for /k8s/{uid}/...;
+		// the control-plane mock keeps its own reference and needs it
+		// separately, or EKS still advertises the sentinel.
+		cloud.EKS.SetK8sAPI(k8s)
+
+		return builtProvider{
+			handler:   wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests),
+			target:    seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2},
+			snap:      cloud.SnapshotServices(),
+			discovery: cloud.ResourceDiscovery,
+			engine:    topology.New(cloud.EC2, cloud.VPC, cloud.Route53),
+			provider:  cloud,
+		}
+	case providerGCP:
+		cloud := cloudemu.NewGCP(a.baseOpts...)
+		d := gcpserver.DriversFrom(cloud)
+		d.K8sAPI = k8s
+		cloud.GKE.SetK8sAPI(k8s)
+
+		return builtProvider{
+			handler:   wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests),
+			target:    seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE},
+			snap:      cloud.SnapshotServices(),
+			discovery: cloud.ResourceDiscovery,
+			provider:  cloud,
+		}
+	case providerAzure:
+		// Azure subscriptions are GUIDs, unlike the 12-digit AWS account id.
+		// Give the Azure provider its own subscription so resource ids and
+		// Resource Graph scoping use a real Azure GUID (WithAccountID is
+		// last-wins). Copy opts so the override never leaks into another
+		// provider's option list.
+		azureOpts := make([]config.Option, len(a.baseOpts), len(a.baseOpts)+1)
+		copy(azureOpts, a.baseOpts)
+		azureOpts = append(azureOpts, config.WithAccountID(a.cfg.AzureSubscription))
+		cloud := cloudemu.NewAzure(azureOpts...)
+		d := azureserver.DriversFrom(cloud)
+		d.K8sAPI = k8s
+		cloud.AKS.SetK8sAPI(k8s)
+
+		return builtProvider{
+			handler:   wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests),
+			target:    seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines},
+			snap:      cloud.SnapshotServices(),
+			discovery: cloud.ResourceDiscovery,
+			provider:  cloud,
+		}
+	case providerOCI:
+		cloud := cloudemu.NewOCI(a.baseOpts...)
+		d := ociserver.DriversFrom(cloud)
+		d.K8sAPI = k8s
+		// OCI has no managed-Kubernetes service, so no SetK8sAPI here, and its
+		// *Provider carries no engines to close.
+		return builtProvider{
+			handler: wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests),
+			target: seed.Target{
+				Storage: cloud.ObjectStorage, Database: cloud.NoSQL,
+				Secrets: cloud.Vault, Compute: cloud.Compute,
+			},
+			snap: cloud.SnapshotServices(),
+		}
+	}
+
+	return builtProvider{}
+}
+
+// closeProviders closes each provider best-effort, cascading engine teardown. It
+// runs after the swap (or after the shutdown snapshot), never before, and never
+// aborts on an error — a failed teardown is logged, not fatal.
+func (a *App) closeProviders(providers []closer) {
+	for _, p := range providers {
+		if err := p.Close(); err != nil {
+			fmt.Fprintf(a.out, "warning: closing provider engines: %v\n", err)
+		}
+	}
+}
+
+// seedFor applies a fixture body to a provider's current drivers. It shares
+// rebuildMu with reset so a seed and a reset can't run against each other's
+// half-built state.
+func (a *App) seedFor(provider string) func([]byte) (int, error) {
+	return func(fixture []byte) (int, error) {
+		f, err := seed.Load(fixture)
+		if err != nil {
+			return 0, err
+		}
+		// Read the current Target under the lock, but run Apply outside it: a
+		// large fixture (especially with --latency) must not hold the shared
+		// reset mutex for its whole duration.
+		a.rebuildMu.Lock()
+		t := a.targets[provider]
+		a.rebuildMu.Unlock()
+
+		if err := seed.Apply(context.Background(), f, t); err != nil {
+			return 0, err
+		}
+
+		return f.ResourceCount(), nil
+	}
+}
+
+// snapshot captures current state as JSON. It acts on the whole emulator, like
+// reset, so a call to any provider port covers every provider.
+func (a *App) snapshot() ([]byte, error) {
+	a.rebuildMu.Lock()
+	cur := a.snapTargets
+	a.rebuildMu.Unlock()
+
+	snap, err := persist.ExportAll(context.Background(), cur, persist.Options{IncludeAssets: true})
+	if err != nil {
+		return nil, err
+	}
+
+	return json.MarshalIndent(snap, "", "  ")
+}
+
+// restore rebuilds to empty then loads the posted state. The load is destructive
+// (reset semantics): rebuild wipes to empty first, so a RestoreAll that fails
+// partway leaves an empty store, not a half-old/half-new mix — acceptable for a
+// local emulator. The rebuild also Close()es the about-to-be-wiped providers,
+// reaping their engines.
+func (a *App) restore(body []byte) error {
+	var snap persist.Snapshot
+	if err := json.Unmarshal(body, &snap); err != nil {
+		return fmt.Errorf("parse snapshot: %w", err)
+	}
+
+	if snap.SchemaVersion != persist.SchemaVersion {
+		return fmt.Errorf("%w: got %d, want %d", errUnsupportedSnapshot, snap.SchemaVersion, persist.SchemaVersion)
+	}
+
+	a.Rebuild() // wipe to empty before loading
+
+	a.rebuildMu.Lock()
+	cur := a.snapTargets
+	a.rebuildMu.Unlock()
+
+	return persist.RestoreAll(context.Background(), &snap, cur)
+}
+
+// extraHandler serves the control-plane endpoints that plug into admin: network
+// reachability (/net/*, AWS-only, needs the topology engine) and cost estimation
+// (/cost, all providers, needs the discovery engines).
+func (a *App) extraHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, admin.Prefix) {
+		case "net/can-connect", "net/trace":
+			a.rebuildMu.Lock()
+			eng := a.netEngine
+			a.rebuildMu.Unlock()
+
+			if eng == nil {
+				writeNetErr(w, http.StatusServiceUnavailable, "network topology requires the aws provider")
+
+				return
+			}
+
+			if strings.HasSuffix(r.URL.Path, "trace") {
+				serveTrace(w, r, eng)
+			} else {
+				serveCanConnect(w, r, eng)
+			}
+		case "cost":
+			a.rebuildMu.Lock()
+			ds := a.discovery
+			a.rebuildMu.Unlock()
+
+			serveCost(w, r, ds)
+		default:
+			writeNetErr(w, http.StatusNotFound, "unknown control endpoint")
+		}
+	})
+}
+
+// handlerFor fronts a backend with the /_cloudemu control plane. With the admin
+// API off the backend serves directly. seedFn may be nil (e.g. the Kubernetes
+// port), which disables the seed endpoint.
+func (a *App) handlerFor(b *admin.Backend, seedFn func([]byte) (int, error)) http.Handler {
+	if a.cfg.Admin {
+		return admin.NewControl(b, a.Rebuild, seedFn, a.snapshot, a.restore, a.extraHandler())
+	}
+
+	return b
+}
+
+// Serve binds every listener, starts serving, and blocks until ctx is canceled
+// or a listener fails fatally. On cancellation it gracefully shuts the servers
+// down, writes the persistence snapshot (if enabled), then closes the live
+// providers.
+func (a *App) Serve(ctx context.Context) error {
+	servers, eps, err := a.buildServers()
+	if err != nil {
+		return err
+	}
+
+	listeners, err := bindListeners(servers)
+	if err != nil {
+		return err
+	}
+
+	errCh := serveAll(servers, listeners)
+
+	if !a.cfg.Quiet {
+		printBanner(a.out, &eps, a.cfg.Admin)
+	}
+
+	if a.cfg.EndpointsFile != "" {
+		if err := eps.writeFile(a.cfg.EndpointsFile); err != nil {
+			return fmt.Errorf("write endpoints file: %w", err)
+		}
+	}
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		if !a.cfg.Quiet {
+			fmt.Fprintln(a.out, "\nshutting down…")
+		}
+	}
+
+	return a.shutdown(servers)
+}
+
+// buildServers assembles the per-provider (and Kubernetes) HTTP servers and the
+// endpoint set advertised to clients.
+func (a *App) buildServers() ([]*namedServer, endpointSet, error) {
+	var servers []*namedServer
+
+	eps := endpointSet{}
+
+	for _, p := range a.sel {
+		var (
+			addr   string
+			tlsCfg *tls.Config
+			isTLS  bool
+		)
+
+		switch p {
+		case providerAWS:
+			addr = net.JoinHostPort(a.cfg.Host, a.cfg.Ports[providerAWS])
+			eps.AWS = fmt.Sprintf("http://%s", addr)
+		case providerGCP:
+			addr = net.JoinHostPort(a.cfg.Host, a.cfg.Ports[providerGCP])
+			eps.GCP = fmt.Sprintf("http://%s", addr)
+		case providerOCI:
+			addr = net.JoinHostPort(a.cfg.Host, a.cfg.Ports[providerOCI])
+			eps.OCI = fmt.Sprintf("http://%s", addr)
+		case providerAzure:
+			addr = net.JoinHostPort(a.cfg.Host, a.cfg.Ports[providerAzure])
+
+			var err error
+
+			if tlsCfg, err = tlsConfig(&a.cfg, addr); err != nil {
+				return nil, eps, fmt.Errorf("azure TLS: %w", err)
+			}
+
+			isTLS = true
+			eps.Azure = fmt.Sprintf("https://%s", addr)
+		}
+
+		servers = append(servers, &namedServer{
+			name: p,
+			srv: &http.Server{
+				Addr:              addr,
+				Handler:           a.handlerFor(a.backends[p], a.seedFor(p)),
+				TLSConfig:         tlsCfg,
+				ReadHeaderTimeout: serverReadHeaderTimeout,
+			},
+			tls: isTLS,
+		})
+	}
+
+	if a.k8sBackend != nil {
+		addr := net.JoinHostPort(a.cfg.Host, a.k8sPort)
+
+		// The cert must certify the advertised host (what clients dial), plus the
+		// loopback names, plus any extra --tls-host SANs. k8s uses its own eksprov
+		// cert — the --tls-cert override applies only to the Azure listener.
+		k8sTLS, err := eksprov.ServingTLSConfig(k8sCertHosts(a.advertiseHost, a.cfg.TLSHosts))
+		if err != nil {
+			return nil, eps, fmt.Errorf("kubernetes data-plane TLS: %w", err)
+		}
+
+		servers = append(servers, &namedServer{
+			name: "kubernetes",
+			srv: &http.Server{
+				Addr:              addr,
+				Handler:           a.handlerFor(a.k8sBackend, nil),
+				TLSConfig:         k8sTLS,
+				ReadHeaderTimeout: serverReadHeaderTimeout,
+			},
+			tls: true,
+		})
+		// Show the reachable (advertised) endpoint, not the bind address.
+		eps.Kubernetes = fmt.Sprintf("https://%s", net.JoinHostPort(a.advertiseHost, a.k8sPort))
+	}
+
+	return servers, eps, nil
+}
+
+// shutdown gracefully stops the servers, writes the persistence snapshot after
+// they are quiescent (so no in-flight request can mutate state mid-read), and
+// only then closes the live providers — engines must stay readable through the
+// snapshot.
+func (a *App) shutdown(servers []*namedServer) error {
+	to := a.cfg.ShutdownTimeout
+	if to <= 0 {
+		to = defaultShutdownTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), to)
+	defer cancel()
+
+	var shutErr error
+	for _, s := range servers {
+		if err := s.srv.Shutdown(ctx); err != nil && shutErr == nil {
+			shutErr = err
+		}
+	}
+
+	if a.cfg.Persist {
+		if err := snapshotState(context.Background(), a.cfg.StateFile, !a.cfg.PersistMetadataOnly, a.snapTargets); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save state to %s: %v\n", a.cfg.StateFile, err)
+		} else if !a.cfg.Quiet {
+			fmt.Fprintf(a.out, "state saved to %s\n", a.cfg.StateFile)
+		}
+	}
+
+	a.rebuildMu.Lock()
+	cur := a.providers
+	a.rebuildMu.Unlock()
+	a.closeProviders(cur)
+
+	return shutErr
+}
+
+// namedServer is one endpoint's HTTP server plus how it is served.
+type namedServer struct {
+	name string
+	srv  *http.Server
+	tls  bool
+}
+
+// bindListeners binds every listener up front so a port clash fails fast, before
+// a banner promises endpoints that never came up. A partial failure closes the
+// listeners already opened.
+func bindListeners(servers []*namedServer) ([]net.Listener, error) {
+	listeners := make([]net.Listener, len(servers))
+
+	var lc net.ListenConfig
+
+	for i, s := range servers {
+		ln, err := lc.Listen(context.Background(), "tcp", s.srv.Addr)
+		if err != nil {
+			for _, l := range listeners[:i] {
+				l.Close()
+			}
+
+			return nil, fmt.Errorf("bind %s (%s): %w", s.name, s.srv.Addr, err)
+		}
+
+		listeners[i] = ln
+	}
+
+	return listeners, nil
+}
+
+// serveAll starts every bound listener in its own goroutine and returns a
+// channel reporting the first fatal serve error.
+func serveAll(servers []*namedServer, listeners []net.Listener) <-chan error {
+	errCh := make(chan error, len(servers))
+
+	for i, s := range servers {
+		ln := listeners[i]
+
+		go func() {
+			var err error
+			if s.tls {
+				err = s.srv.ServeTLS(ln, "", "")
+			} else {
+				err = s.srv.Serve(ln)
+			}
+
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("%s: %w", s.name, err)
+			}
+		}()
+	}
+
+	return errCh
+}
+
+// dangerWarning returns the non-loopback admin warning, or "" when it doesn't
+// apply. reset wipes all state and snapshot dumps it (secrets included), so an
+// admin control plane reachable off the loopback is called out.
+func dangerWarning(cfg *Config) string {
+	if !cfg.Admin || isLoopbackHost(cfg.Host) {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"warning: --admin control plane is reachable on non-loopback host %q — "+
+			"POST /_cloudemu/reset wipes all state, and GET /_cloudemu/snapshot dumps "+
+			"all emulated state (including secret values) to any caller; "+
+			"pass --admin=false to disable it",
+		cfg.Host)
+}
