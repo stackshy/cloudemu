@@ -383,6 +383,16 @@ type stateExitedDetails struct {
 	Output string `json:"output,omitempty"`
 }
 
+type executionFailedDetails struct {
+	Error string `json:"error,omitempty"`
+	Cause string `json:"cause,omitempty"`
+}
+
+type executionAbortedDetails struct {
+	Error string `json:"error,omitempty"`
+	Cause string `json:"cause,omitempty"`
+}
+
 type historyEvent struct {
 	ID                        int64                      `json:"id"`
 	PreviousEventID           int64                      `json:"previousEventId"`
@@ -390,6 +400,8 @@ type historyEvent struct {
 	Timestamp                 *float64                   `json:"timestamp"`
 	ExecutionStartedDetails   *executionStartedDetails   `json:"executionStartedEventDetails,omitempty"`
 	ExecutionSucceededDetails *executionSucceededDetails `json:"executionSucceededEventDetails,omitempty"`
+	ExecutionFailedDetails    *executionFailedDetails    `json:"executionFailedEventDetails,omitempty"`
+	ExecutionAbortedDetails   *executionAbortedDetails   `json:"executionAbortedEventDetails,omitempty"`
 	StateEnteredDetails       *stateEnteredDetails       `json:"stateEnteredEventDetails,omitempty"`
 	StateExitedDetails        *stateExitedDetails        `json:"stateExitedEventDetails,omitempty"`
 }

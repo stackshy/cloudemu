@@ -1,9 +1,13 @@
 // Package sfn provides an in-memory mock implementation of AWS Step Functions.
 //
-// The mock stores each state machine's ASL definition verbatim but does not
-// interpret it: StartExecution completes the execution immediately (RUNNING
-// then SUCCEEDED) with output echoing the input, and GetExecutionHistory
-// synthesizes a minimal, valid event list (ExecutionStarted -> ExecutionSucceeded).
+// The mock stores each state machine's ASL definition verbatim and interprets
+// it with a real state-graph walker (see providers/aws/sfn/asl): StartExecution
+// walks from StartAt following Next/End, computes the terminal status/output,
+// and records the per-state event list GetExecutionHistory returns. Execution is
+// synchronous; the settle overlay keeps RUNNING observable under AsyncSettle.
+// ctx is threaded end-to-end so a later Task->Lambda seam carries recursionguard
+// depth. Pass, Choice, Wait, Succeed and Fail are supported; Task, Parallel and
+// Map parse but fail loudly at run time until their handlers land.
 package sfn
 
 import (

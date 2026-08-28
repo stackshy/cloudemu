@@ -199,6 +199,14 @@ func eventsToWire(events []sfndriver.HistoryEvent) []historyEvent {
 			he.ExecutionSucceededDetails = &executionSucceededDetails{Output: e.Output}
 		}
 
+		if e.Type == "ExecutionFailed" {
+			he.ExecutionFailedDetails = &executionFailedDetails{Error: e.Error, Cause: e.Cause}
+		}
+
+		if e.Type == "ExecutionAborted" {
+			he.ExecutionAbortedDetails = &executionAbortedDetails{Error: e.Error, Cause: e.Cause}
+		}
+
 		if strings.HasSuffix(e.Type, "StateEntered") {
 			he.StateEnteredDetails = &stateEnteredDetails{Name: e.StateName, Input: e.Input}
 		}
