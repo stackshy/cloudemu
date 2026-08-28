@@ -35,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
@@ -273,9 +274,13 @@ func New(opts ...config.Option) *Provider {
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)
-	// A KmsKeyId passed to CreateSecret is validated against KMS, so a secret
-	// can't reference a key that doesn't exist.
-	p.SecretsManager.SetKMSKeyResolver(p.KMS)
+	// Secrets Manager and SSM SecureString values are encrypted through real KMS
+	// (envelope encryption): a KmsKeyId is validated to exist, the value is stored
+	// as genuine ciphertext, and a later disabled/deleted key makes reads fail as
+	// in AWS. Both services share one Envelope over the KMS backend.
+	kmsCrypto := kmscrypto.New(p.KMS)
+	p.SecretsManager.SetKMSCrypto(kmsCrypto)
+	p.SSM.SetKMSCrypto(kmsCrypto)
 	p.SSM.SetInstanceResolver(p.EC2)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).

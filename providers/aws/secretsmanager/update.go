@@ -14,7 +14,7 @@ import (
 // SecretString/SecretBinary are optional). An empty description leaves the
 // existing one unchanged. It returns the created version's id (empty when no
 // value change created a version), which UpdateSecret echoes to the caller.
-func (m *Mock) UpdateSecret(_ context.Context, name, description string, value []byte) (*driver.SecretInfo, string, error) {
+func (m *Mock) UpdateSecret(ctx context.Context, name, description string, value []byte) (*driver.SecretInfo, string, error) {
 	sd, ok := m.secrets.Get(name)
 	if !ok {
 		return nil, "", errors.Newf(errors.NotFound, "secret %q not found", name)
@@ -37,13 +37,15 @@ func (m *Mock) UpdateSecret(_ context.Context, name, description string, value [
 	var versionID string
 
 	if value != nil {
-		data := make([]byte, len(value))
-		copy(data, value)
+		stored, err := m.encrypt(ctx, sd.info.KMSKeyID, value)
+		if err != nil {
+			return nil, "", err
+		}
 
 		versionID = idgen.UUID()
 		sd.versions = append(sd.versions, driver.SecretVersion{
 			VersionID: versionID,
-			Value:     data,
+			Value:     stored,
 			CreatedAt: now,
 		})
 		sd.promoteToCurrent(versionID)

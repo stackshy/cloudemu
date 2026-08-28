@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	"github.com/stretchr/testify/assert"
@@ -78,7 +79,7 @@ func TestCreateSecretValidatesKMSKey(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
 	k := kms.New(config.NewOptions(config.WithRegion("us-east-1")))
-	m.SetKMSKeyResolver(k)
+	m.SetKMSCrypto(kmscrypto.New(k))
 
 	// An explicit KmsKeyId that names no key is rejected.
 	_, err := m.CreateSecret(ctx, driver.SecretConfig{

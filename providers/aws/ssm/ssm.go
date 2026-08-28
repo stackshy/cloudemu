@@ -5,15 +5,19 @@
 // adds recording/metrics/rate-limiting/error-injection/latency lives in the
 // module-root parameterstore package (parameterstore/parameterstore.go).
 //
-// Values are stored verbatim regardless of Type; SecureString parameters are
-// NOT encrypted (there is no real KMS integration), so WithDecryption is a
-// no-op and the raw value is always returned. A SecureString's KeyId is still
-// recorded and round-tripped (defaulting to alias/aws/ssm) — the emulator
-// models the KeyId association without performing the encryption.
+// When a KMS backend is wired (SetKMSCrypto), a SecureString parameter's value
+// is encrypted through real KMS: PutParameter stores genuine ciphertext,
+// GetParameter/GetParameters with WithDecryption=true return the decrypted
+// value, and WithDecryption=false returns the opaque ciphertext blob (matching
+// AWS). Its KeyId is recorded and round-tripped (defaulting to alias/aws/ssm),
+// and a disabled/deleted key makes a decrypting read fail. String/StringList
+// values are never encrypted. Without KMS wired (library fallback) values are
+// stored verbatim and WithDecryption is a no-op.
 package ssm
 
 import (
 	"context"
+	"encoding/base64"
 	"regexp"
 	"sort"
 	"strconv"
@@ -54,12 +58,66 @@ type paramData struct {
 	mu          sync.RWMutex
 }
 
+// KMSCrypto is the KMS seam SSM uses to encrypt SecureString values. Encrypt
+// seals a value under a resolved key; Decrypt reverses it, surfacing a
+// disabled/deleted key as an error. The kmscrypto.Envelope adapter satisfies it.
+type KMSCrypto interface {
+	Encrypt(ctx context.Context, keyID string, plaintext []byte) ([]byte, error)
+	Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
+}
+
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
 	params           *memstore.Store[*paramData]
 	commands         *memstore.Store[driver.CommandInvocation]
 	instanceResolver InstanceResolver
-	opts             *config.Options
+	// kmsCrypto, when wired via SetKMSCrypto, encrypts SecureString values through
+	// real KMS. Nil stores them verbatim (library plaintext fallback).
+	kmsCrypto KMSCrypto
+	opts      *config.Options
+}
+
+// SetKMSCrypto wires the KMS backend so SecureString values are encrypted at
+// rest and decrypted on read when WithDecryption is set.
+func (m *Mock) SetKMSCrypto(c KMSCrypto) {
+	m.kmsCrypto = c
+}
+
+// sealValue encrypts a SecureString value under keyID, returning a base64
+// ciphertext blob (the opaque form AWS returns when WithDecryption is false).
+// Non-secure types and the no-KMS fallback return the value unchanged.
+func (m *Mock) sealValue(ctx context.Context, effectiveType, keyID, plaintext string) (string, error) {
+	if effectiveType != driver.TypeSecureString || m.kmsCrypto == nil {
+		return plaintext, nil
+	}
+
+	blob, err := m.kmsCrypto.Encrypt(ctx, keyID, []byte(plaintext))
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(blob), nil
+}
+
+// revealValue is the read-side inverse of sealValue. A SecureString is decrypted
+// only when WithDecryption is set and KMS is wired; otherwise the stored form
+// (opaque ciphertext, or plaintext in the fallback) is returned as-is.
+func (m *Mock) revealValue(ctx context.Context, v *version, withDecryption bool) (string, error) {
+	if v.typ != driver.TypeSecureString || m.kmsCrypto == nil || !withDecryption {
+		return v.value, nil
+	}
+
+	blob, err := base64.StdEncoding.DecodeString(v.value)
+	if err != nil {
+		return "", errors.New(errors.InvalidArgument, "invalid encrypted parameter value")
+	}
+
+	plaintext, err := m.kmsCrypto.Decrypt(ctx, blob)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
 }
 
 // New creates a new SSM Parameter Store mock.
@@ -214,7 +272,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	now := m.now()
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		return overwriteParameter(existing, &cfg, tier, dataType, now)
+		return m.overwriteParameter(ctx, existing, &cfg, tier, dataType, now)
 	}
 
 	return m.createParameter(ctx, &cfg, tier, dataType, now)
@@ -223,8 +281,8 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 // overwriteParameter appends a new version to an existing parameter (the
 // Overwrite path). Overwrite without the flag is rejected, and changing the
 // type is rejected via resolveOverwriteType.
-func overwriteParameter(
-	existing *paramData, cfg *driver.PutConfig, tier, dataType, now string,
+func (m *Mock) overwriteParameter(
+	ctx context.Context, existing *paramData, cfg *driver.PutConfig, tier, dataType, now string,
 ) (ver int64, assignedTier string, err error) {
 	existing.mu.Lock()
 	defer existing.mu.Unlock()
@@ -244,9 +302,14 @@ func overwriteParameter(
 		return 0, "", err
 	}
 
+	storedValue, err := m.sealValue(ctx, newType, keyID, cfg.Value)
+	if err != nil {
+		return 0, "", err
+	}
+
 	next := existing.latest + 1
 	existing.versions = append(existing.versions, &version{
-		value:          cfg.Value,
+		value:          storedValue,
 		typ:            newType,
 		dataType:       dataType,
 		version:        next,
@@ -272,13 +335,18 @@ func (m *Mock) createParameter(
 		return 0, "", err
 	}
 
+	storedValue, err := m.sealValue(ctx, newType, keyID, cfg.Value)
+	if err != nil {
+		return 0, "", err
+	}
+
 	pd := &paramData{
 		name:        cfg.Name,
 		description: cfg.Description,
 		tier:        tier,
 		latest:      1,
 		versions: []*version{{
-			value:          cfg.Value,
+			value:          storedValue,
 			typ:            newType,
 			dataType:       dataType,
 			version:        1,
@@ -349,22 +417,29 @@ func (pd *paramData) versionByNumber(n int64) (*version, bool) {
 	return nil, false
 }
 
-func (m *Mock) toParameter(pd *paramData, v *version, selector string) driver.Parameter {
+func (m *Mock) toParameter(
+	ctx context.Context, pd *paramData, v *version, selector string, withDecryption bool,
+) (driver.Parameter, error) {
 	name := pd.name
 	if selector != "" {
 		name = pd.name + ":" + selector
 	}
 
+	value, err := m.revealValue(ctx, v, withDecryption)
+	if err != nil {
+		return driver.Parameter{}, err
+	}
+
 	return driver.Parameter{
 		Name:         pd.name,
 		Type:         v.typ,
-		Value:        v.value,
+		Value:        value,
 		Version:      v.version,
 		ARN:          m.arn(pd.name),
 		DataType:     v.dataType,
 		LastModified: v.lastModified,
 		Selector:     selectorFor(name, pd.name),
-	}
+	}, nil
 }
 
 func selectorFor(requested, base string) string {
@@ -376,9 +451,9 @@ func selectorFor(requested, base string) string {
 }
 
 // GetParameter retrieves a single parameter by name, honoring an optional
-// ":version" or ":label" selector suffix. withDecryption is accepted but has no
-// effect: SecureString values are stored and returned in the clear.
-func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Parameter, error) {
+// ":version" or ":label" selector suffix. For a SecureString, withDecryption=true
+// returns the decrypted value; false returns the opaque ciphertext blob.
+func (m *Mock) GetParameter(ctx context.Context, name string, withDecryption bool) (*driver.Parameter, error) {
 	base, selector := resolveSelector(name)
 
 	// AWS-published parameters are readable from every account without having
@@ -401,14 +476,19 @@ func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Par
 		return nil, driver.ErrVersionNotFound
 	}
 
-	p := m.toParameter(pd, v, selector)
+	p, err := m.toParameter(ctx, pd, v, selector, withDecryption)
+	if err != nil {
+		return nil, err
+	}
 
 	return &p, nil
 }
 
 // GetParameters retrieves multiple parameters, reporting names that were not
 // found (or whose selector did not resolve) as invalid rather than erroring.
-func (m *Mock) GetParameters(_ context.Context, names []string, _ bool) ([]driver.Parameter, []string, error) {
+func (m *Mock) GetParameters(
+	ctx context.Context, names []string, withDecryption bool,
+) ([]driver.Parameter, []string, error) {
 	found := make([]driver.Parameter, 0, len(names))
 
 	var invalid []string
@@ -434,8 +514,14 @@ func (m *Mock) GetParameters(_ context.Context, names []string, _ bool) ([]drive
 			continue
 		}
 
-		found = append(found, m.toParameter(pd, v, selector))
+		p, err := m.toParameter(ctx, pd, v, selector, withDecryption)
 		pd.mu.RUnlock()
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		found = append(found, p)
 	}
 
 	return found, invalid, nil
@@ -444,7 +530,7 @@ func (m *Mock) GetParameters(_ context.Context, names []string, _ bool) ([]drive
 // GetParametersByPath returns the latest version of every parameter under a
 // hierarchical path. With Recursive false, only direct children are returned;
 // with Recursive true, the whole subtree is returned.
-func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) ([]driver.Parameter, error) {
+func (m *Mock) GetParametersByPath(ctx context.Context, in driver.GetByPathInput) ([]driver.Parameter, error) {
 	path := in.Path
 	if path == "" {
 		path = "/"
@@ -466,27 +552,50 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 	var out []driver.Parameter
 
 	for _, pd := range m.params.All() {
-		name := pd.name
-		if !strings.HasPrefix(name, prefix) {
-			continue
+		p, matched, err := m.pathParameter(ctx, pd, prefix, &in)
+		if err != nil {
+			return nil, err
 		}
 
-		rest := strings.TrimPrefix(name, prefix)
-		// Non-recursive: only direct children (no further "/" in the remainder).
-		if !in.Recursive && strings.Contains(rest, "/") {
-			continue
+		if matched {
+			out = append(out, p)
 		}
-
-		pd.mu.RLock()
-		if v, ok := pd.versionByNumber(pd.latest); ok && matchesByPathFilters(v, in.ParameterFilters) {
-			out = append(out, m.toParameter(pd, v, ""))
-		}
-		pd.mu.RUnlock()
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
+}
+
+// pathParameter renders pd's latest version for a GetParametersByPath result,
+// reporting matched=false when pd is out of the path's scope or filtered out.
+// SecureString values are decrypted only when in.WithDecryption is set.
+func (m *Mock) pathParameter(
+	ctx context.Context, pd *paramData, prefix string, in *driver.GetByPathInput,
+) (param driver.Parameter, matched bool, err error) {
+	if !strings.HasPrefix(pd.name, prefix) {
+		return driver.Parameter{}, false, nil
+	}
+
+	// Non-recursive: only direct children (no further "/" in the remainder).
+	if !in.Recursive && strings.Contains(strings.TrimPrefix(pd.name, prefix), "/") {
+		return driver.Parameter{}, false, nil
+	}
+
+	pd.mu.RLock()
+	defer pd.mu.RUnlock()
+
+	v, ok := pd.versionByNumber(pd.latest)
+	if !ok || !matchesByPathFilters(v, in.ParameterFilters) {
+		return driver.Parameter{}, false, nil
+	}
+
+	param, err = m.toParameter(ctx, pd, v, "", in.WithDecryption)
+	if err != nil {
+		return driver.Parameter{}, false, err
+	}
+
+	return param, true, nil
 }
 
 // DeleteParameter removes a parameter and all its versions. A ":version"/
