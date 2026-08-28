@@ -205,6 +205,16 @@ type AccessKeyResolver interface {
 	AccessKeyByID(ctx context.Context, id string) (AccessKeyAuth, bool)
 }
 
+// PolicyInspector is an optional capability: an IAM implementation that can
+// report whether a principal has any policies in effect. The AWS authorization
+// gate type-asserts for it so it can leave a principal with no policies defined
+// unrestricted (a dev-friendly bootstrap default), enforcing CheckPermission
+// only once policies exist. Like AccessKeyResolver it is AWS-only and therefore
+// not part of the shared IAM interface.
+type PolicyInspector interface {
+	PrincipalHasPolicies(ctx context.Context, name string) bool
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)

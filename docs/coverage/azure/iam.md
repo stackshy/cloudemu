@@ -60,6 +60,14 @@ AccessKeyResolver is an optional capability: an IAM implementation that can
 | --- | --- |
 | `AccessKeyByID` |  |
 
+### PolicyInspector
+
+PolicyInspector is an optional capability: an IAM implementation that can
+
+| Operation | Description |
+| --- | --- |
+| `PrincipalHasPolicies` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

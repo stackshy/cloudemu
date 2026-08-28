@@ -11,6 +11,14 @@ import (
 // portable driver; the wire layer reaches them via a type assertion on the
 // Mock. The evaluation reuses the same wildcard matcher CheckPermission uses.
 
+// Policy-evaluation decisions. These are the AWS SimulatePolicy EvalDecision
+// values and are shared by CheckPermission so authorization matches simulation.
+const (
+	decisionAllowed      = "allowed"
+	decisionExplicitDeny = "explicitDeny"
+	decisionImplicitDeny = "implicitDeny"
+)
+
 // SimulatePrincipalPolicy evaluates the policies attached to the principal
 // named by policySourceARN (plus any extra policy documents) against each
 // action/resource pair (IAM SimulatePrincipalPolicy).
@@ -74,11 +82,11 @@ func decide(docs []string, action, resource string) string {
 
 	switch {
 	case deny:
-		return "explicitDeny"
+		return decisionExplicitDeny
 	case allow:
-		return "allowed"
+		return decisionAllowed
 	default:
-		return "implicitDeny"
+		return decisionImplicitDeny
 	}
 }
 

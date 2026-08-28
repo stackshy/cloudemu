@@ -28,6 +28,10 @@ var _ driver.IAM = (*Mock)(nil)
 // by the AWS SigV4 authentication gate.
 var _ driver.AccessKeyResolver = (*Mock)(nil)
 
+// Compile-time check that Mock implements the optional policy inspector used by
+// the AWS IAM authorization gate.
+var _ driver.PolicyInspector = (*Mock)(nil)
+
 // Mock is an in-memory mock implementation of the AWS IAM service.
 type Mock struct {
 	users            *memstore.Store[*userData]
@@ -853,51 +857,89 @@ func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
 	return allow, deny
 }
 
-func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+// CheckPermission reports whether a principal (a user, role, or group friendly
+// name) is allowed to perform action on resource. It evaluates the principal's
+// full effective policy set — attached managed policies, inline policies, and
+// (for a user) the policies inherited from every group it belongs to — and,
+// when a permissions boundary is attached, intersects that set with the
+// boundary: the action must be allowed by BOTH the identity policies and the
+// boundary. An explicit Deny anywhere wins; the default is an implicit deny.
+func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
+	entityType := m.principalEntityType(principal)
 
-	policyARNs := make(map[string]bool)
-
-	for arn := range m.userPolicies[principal] {
-		policyARNs[arn] = true
+	if decide(m.gatherPrincipalDocs(entityType, principal), action, resource) != decisionAllowed {
+		return false, nil
 	}
 
-	for arn := range m.rolePolicies[principal] {
-		policyARNs[arn] = true
+	if boundary, ok := m.permissionsBoundaryDoc(entityType, principal); ok &&
+		decide([]string{boundary}, action, resource) != decisionAllowed {
+		return false, nil
 	}
 
-	return policyARNs
+	return true, nil
 }
 
-// CheckPermission evaluates attached policies to determine if a principal is allowed
-// to perform the given action on the given resource. Explicit Deny wins over Allow.
-func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
-	policyARNs := m.collectPolicyARNs(principal)
+// principalEntityType classifies an IAM principal named by its friendly name as
+// a user, role, or group (in that precedence), or "" when no such entity exists.
+func (m *Mock) principalEntityType(name string) string {
+	switch {
+	case m.users.Has(name):
+		return "user"
+	case m.roles.Has(name):
+		return "role"
+	case m.groups.Has(name):
+		return "group"
+	default:
+		return ""
+	}
+}
 
+// permissionsBoundaryDoc returns the policy document of the permissions boundary
+// attached to a user or role, and ok=false when none is set or it cannot be
+// resolved. Groups cannot carry a boundary.
+func (m *Mock) permissionsBoundaryDoc(entityType, name string) (string, bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
-	hasAllow := false
+	arn := ""
 
-	for arn := range policyARNs {
-		p, ok := m.policies.Get(arn)
-		if !ok || p.PolicyDocument == "" {
-			continue
+	switch entityType {
+	case "user":
+		if u, ok := m.users.Get(name); ok {
+			arn = u.permissionsBoundary
 		}
-
-		allow, deny := evaluatePolicy(p.PolicyDocument, action, resource)
-
-		if deny {
-			return false, nil
-		}
-
-		if allow {
-			hasAllow = true
+	case "role":
+		if rd, ok := m.roles.Get(name); ok {
+			arn = rd.permissionsBoundary
 		}
 	}
 
-	return hasAllow, nil
+	m.mu.RUnlock()
+
+	if arn == "" {
+		return "", false
+	}
+
+	if p, ok := m.policies.Get(arn); ok && p.PolicyDocument != "" {
+		return p.PolicyDocument, true
+	}
+
+	return "", false
+}
+
+// PrincipalHasPolicies reports whether a user or role has any identity policies
+// (attached, inline, or group-inherited) or a permissions boundary in effect.
+// The authorization gate uses it to leave a principal with no policies defined
+// unrestricted, enforcing CheckPermission only once policies exist.
+func (m *Mock) PrincipalHasPolicies(_ context.Context, name string) bool {
+	entityType := m.principalEntityType(name)
+
+	if len(m.gatherPrincipalDocs(entityType, name)) > 0 {
+		return true
+	}
+
+	_, hasBoundary := m.permissionsBoundaryDoc(entityType, name)
+
+	return hasBoundary
 }
 
 // CreateGroup creates a new IAM group.
