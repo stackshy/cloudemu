@@ -20,6 +20,7 @@ var (
 	_ driver.KeyVaultSecrets      = (*Mock)(nil)
 	_ driver.KeyVaultKeys         = (*Mock)(nil)
 	_ driver.KeyVaultCertificates = (*Mock)(nil)
+	_ driver.KeyVaultVaults       = (*Mock)(nil)
 )
 
 // purgeWindowDays is the soft-delete retention window Key Vault schedules
@@ -89,7 +90,12 @@ type Mock struct {
 	// surface, keyed by vault name, so secrets/keys are isolated per vault.
 	// vaults[defaultVault] aliases secrets/keys above.
 	vaults *memstore.Store[*vaultData]
-	opts   *config.Options
+	// armVaults backs the Azure-specific KeyVaultVaults control-plane (ARM)
+	// surface (Microsoft.KeyVault/vaults), keyed by vault name. It is the
+	// resource-manager record of a vault (location, scope, SKU, access policies),
+	// separate from the per-vault data-plane object stores in vaults above.
+	armVaults *memstore.Store[*driver.KVVaultInfo]
+	opts      *config.Options
 }
 
 // New creates a new Key Vault mock with the given configuration options.
@@ -101,10 +107,11 @@ func New(opts *config.Options) *Mock {
 	vaults.Set(defaultVault, &vaultData{secrets: secrets, keys: keys, certs: memstore.New[*certData]()})
 
 	return &Mock{
-		secrets: secrets,
-		keys:    keys,
-		vaults:  vaults,
-		opts:    opts,
+		secrets:   secrets,
+		keys:      keys,
+		vaults:    vaults,
+		armVaults: memstore.New[*driver.KVVaultInfo](),
+		opts:      opts,
 	}
 }
 

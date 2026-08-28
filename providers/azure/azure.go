@@ -244,6 +244,7 @@ func New(opts ...config.Option) *Provider {
 			ScaleSets:       vmssDiscovery{p.VirtualMachines},
 			AppServicePlans: appServicePlanDiscovery{p.Functions},
 			Secrets:         p.KeyVault,
+			KeyVaults:       p.KeyVault,
 			ContainerReg:    p.ACR,
 			MessageQueue:    p.ServiceBus,
 			Notification:    p.NotificationHubs,

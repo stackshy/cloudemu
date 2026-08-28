@@ -420,6 +420,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 	"secrets/Secret":                      "microsoft.keyvault/vaults/secrets",
+	"secrets/Vault":                       "microsoft.keyvault/vaults",
 	"containerregistry/Repository":        "microsoft.containerregistry/registries",
 	"messagequeue/Queue":                  "microsoft.servicebus/namespaces/queues",
 	"notification/Topic":                  "microsoft.notificationhubs/namespaces/notificationhubs",

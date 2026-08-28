@@ -19,6 +19,9 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // re-populates them through m.vault(name), which preserves that aliasing.
 type keyvaultSnapshot struct {
 	Vaults map[string]*vaultSnapshot `json:"vaults,omitempty"`
+	// ARMVaults is the control-plane (Microsoft.KeyVault/vaults) record of each
+	// vault. KVVaultInfo is fully exported, so it serializes directly.
+	ARMVaults map[string]*driver.KVVaultInfo `json:"armVaults,omitempty"`
 }
 
 type vaultSnapshot struct {
@@ -104,6 +107,13 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		}
 
 		snap.Vaults[name] = vs
+	}
+
+	if m.armVaults.Len() > 0 {
+		snap.ARMVaults = make(map[string]*driver.KVVaultInfo, m.armVaults.Len())
+		for name, info := range m.armVaults.All() {
+			snap.ARMVaults[name] = cloneVaultInfo(info)
+		}
 	}
 
 	return json.Marshal(snap)
@@ -192,6 +202,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 			vd.keys.Set(name, kd)
 		}
+	}
+
+	for name, info := range snap.ARMVaults {
+		m.armVaults.Set(name, cloneVaultInfo(info))
 	}
 
 	return nil

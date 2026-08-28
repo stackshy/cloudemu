@@ -10482,6 +10482,28 @@
             "name": "UpdateKeyVaultSecret"
           }
         ]
+      },
+      {
+        "name": "KeyVaultVaults",
+        "doc": "KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —",
+        "operations": [
+          {
+            "name": "CreateOrUpdateVault",
+            "doc": "CreateOrUpdateVault creates a vault, or replaces the properties/tags of an"
+          },
+          {
+            "name": "DeleteVault",
+            "doc": "DeleteVault removes a vault by name."
+          },
+          {
+            "name": "GetVault",
+            "doc": "GetVault returns the vault by name, regardless of scope. Scope enforcement"
+          },
+          {
+            "name": "ListVaults",
+            "doc": "ListVaults returns the vaults visible under the given scope filter (a zero"
+          }
+        ]
       }
     ],
     "providers": {

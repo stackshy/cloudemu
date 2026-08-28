@@ -9,6 +9,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -76,6 +77,7 @@ const (
 	TypeScaleSet          = "ScaleSet"
 	TypeAppServicePlan    = "AppServicePlan"
 	TypeSecret            = "Secret"
+	TypeVault             = "Vault"
 	TypeRepository        = "Repository"
 	TypeQueue             = "Queue"
 	TypeTopic             = "Topic"
@@ -905,6 +907,40 @@ func (e *Engine) walkSecrets(ctx context.Context) ([]Resource, error) {
 		func(i int) (string, string, map[string]string) {
 			return secrets[i].Name, secrets[i].ResourceID, secrets[i].Tags
 		}), nil
+}
+
+// walkKeyVaults surfaces Azure Key Vault vaults (Microsoft.KeyVault/vaults) so
+// a vault created via the ARM control plane appears in Resource Graph and the
+// inventory/search APIs, keyed by its ARM resource id.
+func (e *Engine) walkKeyVaults(ctx context.Context) ([]Resource, error) {
+	vaults, err := e.drivers.KeyVaults.ListVaults(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkKeyVaults: %w", err)
+	}
+
+	return e.emitSimple(ServiceSecrets, TypeVault, len(vaults),
+		func(i int) (string, string, map[string]string) {
+			return vaults[i].Name, keyVaultARMID(&vaults[i]), vaults[i].Tags
+		}), nil
+}
+
+// keyVaultARMID builds the Microsoft.KeyVault/vaults ARM id for a discovered
+// vault. The subscription is rewritten by the Resource Graph handler to the
+// queried subscription; the resource group must be present so the handler can
+// project it.
+func keyVaultARMID(v *secretsdriver.KVVaultInfo) string {
+	sub := v.Scope.Subscription
+	if sub == "" {
+		sub = azureDefaultResourceGroup
+	}
+
+	rg := v.Scope.ResourceGroup
+	if rg == "" {
+		rg = azureDefaultResourceGroup
+	}
+
+	return "/subscriptions/" + sub + "/resourceGroups/" + rg +
+		"/providers/Microsoft.KeyVault/vaults/" + v.Name
 }
 
 // walkContainerRegistry surfaces container repositories (ECR / Artifact Registry

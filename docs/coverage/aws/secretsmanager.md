@@ -95,6 +95,17 @@ KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version
 | `SetKeyVaultSecret` |  |
 | `UpdateKeyVaultSecret` |  |
 
+### KeyVaultVaults
+
+KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateVault` | CreateOrUpdateVault creates a vault, or replaces the properties/tags of an |
+| `DeleteVault` | DeleteVault removes a vault by name. |
+| `GetVault` | GetVault returns the vault by name, regardless of scope. Scope enforcement |
+| `ListVaults` | ListVaults returns the vaults visible under the given scope filter (a zero |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

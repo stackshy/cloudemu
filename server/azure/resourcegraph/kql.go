@@ -59,6 +59,7 @@ const (
 	azureTypeMySQLFlex = "microsoft.dbformysql/flexibleservers"
 	azureTypePgFlex    = "microsoft.dbforpostgresql/flexibleservers"
 	azureTypeSecret    = "microsoft.keyvault/vaults/secrets"
+	azureTypeVault     = "microsoft.keyvault/vaults"
 	azureTypeACR       = "microsoft.containerregistry/registries"
 	azureTypeSBQueue   = "microsoft.servicebus/namespaces/queues"
 	azureTypeNotifHub  = "microsoft.notificationhubs/namespaces/notificationhubs"
@@ -359,6 +360,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeMySQLFlex: {portableRelationalDB, "MySqlFlexibleServer"},
 	azureTypePgFlex:    {portableRelationalDB, "PostgresFlexibleServer"},
 	azureTypeSecret:    {portableSecrets, "Secret"},
+	azureTypeVault:     {portableSecrets, "Vault"},
 	azureTypeACR:       {portableContainer, "Repository"},
 	azureTypeSBQueue:   {portableQueue, "Queue"},
 	azureTypeNotifHub:  {portableNotif, "Topic"},
