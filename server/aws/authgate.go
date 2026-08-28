@@ -67,6 +67,10 @@ func newAuthGate(iamDriver iamdriver.IAM, accountID string) func(http.ResponseWr
 			return r, false
 		}
 
+		if !authorize(w, r, body, principal, iamDriver) {
+			return r, false
+		}
+
 		return withPrincipal(r, principal), true
 	}
 }
