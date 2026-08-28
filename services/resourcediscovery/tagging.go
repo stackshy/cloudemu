@@ -22,6 +22,7 @@ const (
 	awsServiceLogs        = "logs"
 	awsServiceRDS         = "rds"
 	awsServiceIAM         = "iam"
+	awsServiceRoute53     = "route53"
 )
 
 // DynamoDB resource type within a DynamoDB ARN.
@@ -79,22 +80,83 @@ const arnParts = 6
 // unparseable ARNs.
 func (e *Engine) TagResourceByARN(ctx context.Context, arn string, tags map[string]string) error {
 	res, err := parseSupportedARN(arn)
-	if err != nil {
-		return err
+	if err == nil {
+		return e.dispatchTag(ctx, res, tags, true /* set */, nil)
 	}
 
-	return e.dispatchTag(ctx, res, tags, true /* set */, nil)
+	// The ARN is not one of the built-in services above; try a provider-wired
+	// generic tagger keyed by the ARN's service token. When none is registered,
+	// surface the original "not yet supported" (or malformed-ARN) error.
+	if t := e.genericTagger(arn); t != nil {
+		return t.TagByARN(ctx, arn, tags)
+	}
+
+	return err
 }
 
 // UntagResourceByARN removes the given tag keys from the resource identified
 // by arn. ARN parsing rules match TagResourceByARN.
 func (e *Engine) UntagResourceByARN(ctx context.Context, arn string, keys []string) error {
 	res, err := parseSupportedARN(arn)
-	if err != nil {
-		return err
+	if err == nil {
+		return e.dispatchTag(ctx, res, nil, false /* set */, keys)
 	}
 
-	return e.dispatchTag(ctx, res, nil, false /* set */, keys)
+	if t := e.genericTagger(arn); t != nil {
+		return t.UntagByARN(ctx, arn, keys)
+	}
+
+	return err
+}
+
+// genericTagger returns the provider-wired ARNTagger for arn's service token,
+// or nil when none is registered. It also recognizes a Route 53 hosted-zone id
+// (a bare "Z…" identifier, not an arn:aws string), which the discovery walk
+// emits verbatim as a zone's identifier, so tagging a hosted zone round-trips
+// through GetResources.
+func (e *Engine) genericTagger(arn string) ARNTagger {
+	if e.drivers.Taggers == nil {
+		return nil
+	}
+
+	return e.drivers.Taggers[taggerServiceToken(arn)]
+}
+
+// taggerServiceToken returns the AWS service token used to look up a generic
+// tagger: segment 3 of an arn:aws:<service>:… ARN, or "route53" for a bare
+// hosted-zone id. It returns "" for anything else.
+func taggerServiceToken(arn string) string {
+	const prefix = "arn:aws:"
+	if strings.HasPrefix(arn, prefix) {
+		if svc, _, ok := strings.Cut(arn[len(prefix):], ":"); ok {
+			return svc
+		}
+
+		return ""
+	}
+
+	if looksLikeHostedZoneID(arn) {
+		return awsServiceRoute53
+	}
+
+	return ""
+}
+
+// looksLikeHostedZoneID reports whether s is a Route 53 hosted-zone id: a "Z"
+// followed by one or more alphanumerics (e.g. "Z1D633PJN98FT9"), the identifier
+// the DNS walk surfaces for a zone in place of an ARN.
+func looksLikeHostedZoneID(s string) bool {
+	if len(s) < 2 || s[0] != 'Z' {
+		return false
+	}
+
+	for _, r := range s[1:] {
+		if !(r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+
+	return true
 }
 
 // parsedARN holds the fragments TagResourceByARN needs to route a call.

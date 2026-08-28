@@ -348,8 +348,13 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 		LoadBalancer: p.ELB,
 		Monitoring:   p.CloudWatch,
 		IAM:          p.IAM,
+		// Taggers extends the Resource Groups Tagging API to every other AWS
+		// service that carries a tag store but has no discovery-driver hook here,
+		// routing each ARN to the service's own tag methods.
+		Taggers: awsTaggers(p),
 		Extra: []resourcediscovery.GenericResources{
 			sagemakerDiscovery{p.SageMaker},
+			taggedDiscovery{p},
 		},
 	}
 }

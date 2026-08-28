@@ -47,9 +47,32 @@ type Drivers struct {
 	Monitoring      monitoringdriver.Monitoring
 	IAM             iamdriver.IAM
 
+	// Taggers maps an AWS service token (segment 3 of an ARN — e.g. "kms",
+	// "ecs", "elasticloadbalancing") to an adapter that tags/untags a resource
+	// of that service by its full ARN. It extends the Resource Groups Tagging
+	// API (TagResourceByARN/UntagResourceByARN) to services that are not reached
+	// through the shared driver interfaces above, without widening every
+	// services/*/driver. The provider owns each adapter (it knows the concrete
+	// mock and how its tag store is keyed). A missing or nil entry degrades to
+	// "tagging service … is not yet supported"; nothing here ever panics.
+	Taggers map[string]ARNTagger
+
 	// Extra holds provider-projected capabilities for services that don't fit
 	// the shared driver interfaces (e.g. ML/GenAI). Each is walked generically.
 	Extra []GenericResources
+}
+
+// ARNTagger tags and untags a resource addressed by its full ARN (or, for
+// services whose Resource Groups Tagging identifier is not an arn:aws string —
+// e.g. a Route 53 hosted-zone id — that identifier). Each provider wires one per
+// taggable service that the shared driver interfaces do not already cover; the
+// adapter bridges the RGT ARN to whatever key the service's own tag store uses
+// (full ARN, bare name, or id) and calls the service's real tag method, so the
+// tag lands in that service's own store and is visible through its own
+// ListTagsForResource / Describe surface.
+type ARNTagger interface {
+	TagByARN(ctx context.Context, arn string, tags map[string]string) error
+	UntagByARN(ctx context.Context, arn string, keys []string) error
 }
 
 // GenericResources lets a provider project arbitrary services/resources into
