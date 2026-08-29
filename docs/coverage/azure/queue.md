@@ -3,10 +3,16 @@
 
 provider-native `queue` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (6)
 
 | Operation | Description |
 | --- | --- |
+| `Create` |  |
+| `Delete` |  |
+| `DeleteMessage` |  |
+| `DequeueMessages` |  |
+| `EnqueueMessage` |  |
+| `List` |  |
 
 ## Not in scope
 

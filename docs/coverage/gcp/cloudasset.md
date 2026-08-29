@@ -3,10 +3,21 @@
 
 provider-native `cloudasset` wire service (GCP-only) · no portable driver · [GCP index](./README.md)
 
-## Operations (0)
+## Operations (11)
 
 | Operation | Description |
 | --- | --- |
+| `BatchGetAssetsHistory` |  |
+| `CreateFeed` |  |
+| `DeleteFeed` |  |
+| `ExportAssets` |  |
+| `GetFeed` |  |
+| `GetOperation` |  |
+| `ListAssets` |  |
+| `ListFeeds` |  |
+| `SearchAllIamPolicies` |  |
+| `SearchAllResources` |  |
+| `UpdateFeed` |  |
 
 ## Not in scope
 

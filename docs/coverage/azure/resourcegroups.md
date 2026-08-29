@@ -3,10 +3,17 @@
 
 provider-native `resourcegroups` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (7)
 
 | Operation | Description |
 | --- | --- |
+| `CheckExistence` |  |
+| `CreateOrUpdate` |  |
+| `Delete` |  |
+| `ExportTemplate` |  |
+| `Get` |  |
+| `List` |  |
+| `Update` |  |
 
 ## Not in scope
 

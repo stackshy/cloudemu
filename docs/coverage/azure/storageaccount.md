@@ -3,10 +3,20 @@
 
 provider-native `storageaccount` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (10)
 
 | Operation | Description |
 | --- | --- |
+| `Create` |  |
+| `Delete` |  |
+| `GetProperties` |  |
+| `GetServiceProperties` |  |
+| `List` |  |
+| `ListByResourceGroup` |  |
+| `ListKeys` |  |
+| `RegenerateKey` |  |
+| `SetServiceProperties` |  |
+| `Update` |  |
 
 ## Not in scope
 

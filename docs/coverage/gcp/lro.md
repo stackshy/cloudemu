@@ -3,10 +3,11 @@
 
 provider-native `lro` wire service (GCP-only) · no portable driver · [GCP index](./README.md)
 
-## Operations (0)
+## Operations (1)
 
 | Operation | Description |
 | --- | --- |
+| `GetOperation` |  |
 
 ## Not in scope
 
