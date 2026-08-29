@@ -11,10 +11,26 @@ right tool for unit tests.
 
 ## Install & run
 
+Install the `cloudemu` CLI with whichever fits your setup, then `cloudemu serve`:
+
 ```sh
+# Homebrew (macOS / Linux)
+brew install stackshy/tap/cloudemu
+
+# One-line install script (downloads the release binary + verifies its checksum)
+curl -fsSL https://raw.githubusercontent.com/stackshy/cloudemu/HEAD/install.sh | sh
+
+# Go toolchain
 go install github.com/stackshy/cloudemu/v2/cmd/cloudemu@latest
+```
+
+```sh
 cloudemu serve
 ```
+
+The install script takes an optional version arg and an `INSTALL_DIR` override
+(`... | sh -s -- v2.5.0`, `INSTALL_DIR="$HOME/bin" ... | sh`). Prebuilt binaries
+for every OS/arch are on the [releases page](https://github.com/stackshy/cloudemu/releases).
 
 Or from a checkout:
 

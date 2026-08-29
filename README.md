@@ -32,6 +32,27 @@ It emulates the API **control surface** your code actually calls, not real infra
 2. **In-process SDK server** (Go) — a `httptest.NewServer` your tests point the real SDKs at. No container.
 3. **Typed Go API** — call the in-memory mocks directly: `cloud.EC2.RunInstances(ctx, …)`.
 
+## Install
+
+Get the `cloudemu` CLI — pick whichever fits your setup:
+
+```sh
+# Homebrew (macOS / Linux)
+brew install stackshy/tap/cloudemu
+
+# One-line install script (macOS / Linux) — downloads the release binary and verifies its checksum
+curl -fsSL https://raw.githubusercontent.com/stackshy/cloudemu/HEAD/install.sh | sh
+
+# Go toolchain
+go install github.com/stackshy/cloudemu/v2/cmd/cloudemu@latest
+
+# Docker — no install, just run the server
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
+  ghcr.io/stackshy/cloudemu:latest
+```
+
+Prebuilt binaries for every OS/arch are on the [releases page](https://github.com/stackshy/cloudemu/releases). The install script honours a version arg and an `INSTALL_DIR` override, e.g. `... | sh -s -- v2.5.0` or `INSTALL_DIR="$HOME/bin" ... | sh`. To use cloudemu as a Go library instead, see [Quickstart](#quickstart) below.
+
 ## Quickstart
 
 **To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint** (`AWS_ENDPOINT_URL` / `BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), then point your already-running app or services at it. Do **not** write a `_test.go` file to spin it up in-process for integration — that's library mode, for unit tests inside cloudemu-aware Go code (shown last).
