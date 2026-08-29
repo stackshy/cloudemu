@@ -31,3 +31,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pushes the Homebrew formula to github.com/stackshy/homebrew-tap.
+          # MAINTAINER PREREQUISITE (one-time): add a repo secret named
+          # HOMEBREW_TAP_TOKEN — a PAT with write access to the tap repo.
+          # Without it the release still publishes; only the brew push is skipped.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

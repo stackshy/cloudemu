@@ -67,3 +67,38 @@ changelog:
 release:
   draft: false
   prerelease: auto # a pre-release tag (v1.2.0-rc1) is marked pre-release
+
+# Publish a Homebrew cask to the tap repo on each stable `v*` tag, so users can
+# `brew install stackshy/tap/cloudemu`. GoReleaser v2 deprecated `brews`
+# (formulae) in favour of `homebrew_casks` for distributing prebuilt binaries —
+# `goreleaser check` is clean only with casks. A cask installs the downloaded
+# `cloudemu` binary directly (no source build); `binary "cloudemu"` is the cask
+# equivalent of a formula's `bin.install "cloudemu"`.
+#
+# Prerequisites the maintainer must set up ONCE (see .github/workflows/release.yml):
+#   1. The public tap repo github.com/stackshy/homebrew-tap must exist.
+#   2. A repo secret HOMEBREW_TAP_TOKEN (a PAT with write access to the tap)
+#      must be added to this repo — GoReleaser uses it to push the cask.
+homebrew_casks:
+  - name: cloudemu
+    binaries:
+      - cloudemu
+    ids:
+      - cloudemu
+    repository:
+      owner: stackshy
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://cloudemu.info/"
+    description: "In-memory emulator for AWS, Azure & GCP cloud APIs — run a local cloud, $0."
+    license: "MIT"
+    # Don't push a cask for pre-releases (rc/beta tags).
+    skip_upload: auto
+    # The binary is unsigned; strip Gatekeeper's quarantine flag on install so
+    # macOS doesn't block the first run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cloudemu"]
+          end
