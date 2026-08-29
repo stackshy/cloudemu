@@ -20,7 +20,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"syscall"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
@@ -200,10 +202,16 @@ func (s Snapshot) WriteFile(path string) error {
 		return err
 	}
 
-	// Write to a temp file in the same dir, then rename onto the target. Rename
-	// is atomic on the same filesystem, so an interrupted write (disk-full, OOM,
-	// SIGKILL) leaves the previous snapshot — or none — but never a truncated
-	// file that would fail the next start.
+	// Write to a temp file in the same dir, fsync it, then rename onto the
+	// target. The full ordering — temp-write → fsync file → rename → best-effort
+	// fsync parent dir — is what makes the write crash-safe: fsync forces the
+	// data blocks to disk before the rename publishes the name, so power loss can
+	// leave the previous snapshot (or none) but never a truncated/empty file, and
+	// rename is atomic on the same filesystem. The parent-dir fsync then makes the
+	// rename entry itself durable. Darwin caveat: Go's File.Sync issues fsync(2),
+	// which on macOS flushes to the drive but does NOT flush the drive's own write
+	// cache (a true device flush needs fcntl(F_FULLFSYNC), which is not issued
+	// here), so on darwin this is best-effort, not a hard power-loss guarantee.
 	tmp, err := os.CreateTemp(dir, ".snapshot-*.tmp")
 	if err != nil {
 		return err
@@ -212,6 +220,16 @@ func (s Snapshot) WriteFile(path string) error {
 	tmpName := tmp.Name()
 
 	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+
+		return err
+	}
+
+	// fsync the data to disk before the rename. This is the critical fix: without
+	// it the rename can be committed to the directory before the file's blocks
+	// reach disk, leaving an empty/truncated state file after a crash.
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 
@@ -230,7 +248,45 @@ func (s Snapshot) WriteFile(path string) error {
 		return err
 	}
 
+	// Make the rename entry itself durable. Best-effort by design (see fsyncDir).
+	if err := fsyncDir(dir); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// fsyncDir fsyncs a directory so a rename into it is durable across a crash. It
+// is best-effort: opening a directory handle for fsync fails on Windows, and
+// some filesystems reject a directory fsync with EINVAL/ENOTSUP. Those are
+// swallowed (there is nothing the caller can do and the file data is already
+// synced); genuinely unexpected errors are returned.
+func fsyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		// Windows has no fsync-the-directory concept; the rename is durable once
+		// the file was synced above.
+		return nil
+	}
+
+	d, err := os.Open(dir)
+	if err != nil {
+		// Cannot open the directory as a handle on this platform/FS; treat as
+		// unsupported rather than failing the whole write.
+		return nil
+	}
+
+	syncErr := d.Sync()
+
+	if closeErr := d.Close(); closeErr != nil && syncErr == nil {
+		syncErr = closeErr
+	}
+
+	if syncErr == nil || errors.Is(syncErr, syscall.EINVAL) || errors.Is(syncErr, syscall.ENOTSUP) {
+		// EINVAL/ENOTSUP: this filesystem does not support fsync on a directory.
+		return nil
+	}
+
+	return syncErr
 }
 
 // ReadFile loads a snapshot from disk, rejecting an incompatible schema version

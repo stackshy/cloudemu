@@ -54,6 +54,14 @@ By default the snapshot **includes object bodies** (an S3 object comes back with
 its contents). `--persist-metadata-only` keeps only the resource structure for a
 smaller file; restored objects then come back as zero-byte keys until re-uploaded.
 
+Snapshot writes are **crash-safe**: the file is written to a temp file, `fsync`ed,
+`rename`d atomically onto the target, and the parent directory is then `fsync`ed —
+so an interrupted or power-lost write leaves the previous snapshot (or none) but
+never a truncated/empty state file. On **macOS** this is best-effort: Go's
+`File.Sync` issues `fsync(2)`, which does not flush the drive's own write cache
+(a true device flush needs `fcntl(F_FULLFSYNC)`, not issued here), so darwin gives
+no hard power-loss guarantee.
+
 ## Named snapshots (`snapshot save` / `load` / `list` / `delete`)
 
 Where `--persist` auto-saves one state on stop, **named snapshots** capture, name,
