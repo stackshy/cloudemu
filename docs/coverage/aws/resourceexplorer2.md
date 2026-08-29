@@ -3,10 +3,20 @@
 
 provider-native `resourceexplorer2` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (0)
+## Operations (10)
 
 | Operation | Description |
 | --- | --- |
+| `CreateIndex` |  |
+| `CreateView` |  |
+| `DeleteView` |  |
+| `GetDefaultView` |  |
+| `GetIndex` |  |
+| `GetView` |  |
+| `ListIndexes` |  |
+| `ListResources` |  |
+| `ListViews` |  |
+| `Search` |  |
 
 ## Not in scope
 

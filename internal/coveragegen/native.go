@@ -84,6 +84,13 @@ func addNativeService(root, prov, pkg, display string, services map[string]*Serv
 		svc.Operations = nativeOperations(mockDir, services)
 	}
 
+	// A wire-only handler has no provider mock to read a method set from, so it
+	// falls back to its declared wire-served operations. Without this the
+	// service surfaces as "0 operations" (reads as a stub) despite working.
+	if len(svc.Operations) == 0 {
+		svc.Operations = wireServedOperations(prov, pkg)
+	}
+
 	services[name] = svc
 }
 

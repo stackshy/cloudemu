@@ -13,14 +13,14 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [ContainerInstances](./containerinstances.md) | `containerinstances` | 10 |
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
 | [CosmosPostgreSQL](./cosmospostgresql.md) | `cosmospostgresql` | 34 |
-| [Cosmosaccount](./cosmosaccount.md) | — (provider-native) | 0 |
+| [Cosmosaccount](./cosmosaccount.md) | — (provider-native) | 10 |
 | [DNS](./dns.md) | `dns` | 16 |
 | [Databricks](./databricks.md) | `databricks` | 46 |
-| [Disks](./disks.md) | — (provider-native) | 0 |
+| [Disks](./disks.md) | — (provider-native) | 7 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Functions](./functions.md) | `serverless` | 27 |
 | [IAM](./iam.md) | `iam` | 40 |
-| [Images](./images.md) | — (provider-native) | 0 |
+| [Images](./images.md) | — (provider-native) | 5 |
 | [KeyVault](./keyvault.md) | `secrets` | 7 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
 | [LogAnalytics](./loganalytics.md) | `logging` | 17 |
@@ -29,17 +29,17 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [MySQLFlex](./mysqlflex.md) | `relationaldb` | 21 |
 | [NotificationHubs](./notificationhubs.md) | `notification` | 9 |
 | [PostgresFlex](./postgresflex.md) | — (provider-native) | 21 |
-| [Queue](./queue.md) | — (provider-native) | 0 |
+| [Queue](./queue.md) | — (provider-native) | 6 |
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |
-| [Resourcegraph](./resourcegraph.md) | — (provider-native) | 0 |
-| [Resourcegroups](./resourcegroups.md) | — (provider-native) | 0 |
+| [Resourcegraph](./resourcegraph.md) | — (provider-native) | 3 |
+| [Resourcegroups](./resourcegroups.md) | — (provider-native) | 7 |
 | [SQL](./sql.md) | — (provider-native) | 21 |
 | [Search](./search.md) | `azuresearch` | 53 |
-| [Snapshots](./snapshots.md) | — (provider-native) | 0 |
-| [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 0 |
-| [Storageaccount](./storageaccount.md) | — (provider-native) | 0 |
-| [Subscriptions](./subscriptions.md) | — (provider-native) | 0 |
+| [Snapshots](./snapshots.md) | — (provider-native) | 5 |
+| [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 7 |
+| [Storageaccount](./storageaccount.md) | — (provider-native) | 10 |
+| [Subscriptions](./subscriptions.md) | — (provider-native) | 3 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 9 |
-| [Tenants](./tenants.md) | — (provider-native) | 0 |
+| [Tenants](./tenants.md) | — (provider-native) | 1 |
 | [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |

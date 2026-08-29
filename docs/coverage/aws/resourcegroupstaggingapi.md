@@ -3,10 +3,15 @@
 
 provider-native `resourcegroupstaggingapi` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (0)
+## Operations (5)
 
 | Operation | Description |
 | --- | --- |
+| `GetResources` |  |
+| `GetTagKeys` |  |
+| `GetTagValues` |  |
+| `TagResources` |  |
+| `UntagResources` |  |
 
 ## Not in scope
 

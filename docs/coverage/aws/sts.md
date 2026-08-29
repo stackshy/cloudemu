@@ -3,10 +3,18 @@
 
 provider-native `sts` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (0)
+## Operations (8)
 
 | Operation | Description |
 | --- | --- |
+| `AssumeRole` |  |
+| `AssumeRoleWithSAML` |  |
+| `AssumeRoleWithWebIdentity` |  |
+| `DecodeAuthorizationMessage` |  |
+| `GetAccessKeyInfo` |  |
+| `GetCallerIdentity` |  |
+| `GetFederationToken` |  |
+| `GetSessionToken` |  |
 
 ## Not in scope
 

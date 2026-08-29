@@ -3,10 +3,14 @@
 
 provider-native `workrequest` wire service (OCI-only) · no portable driver · [OCI index](./README.md)
 
-## Operations (0)
+## Operations (4)
 
 | Operation | Description |
 | --- | --- |
+| `GetWorkRequest` |  |
+| `ListWorkRequestErrors` |  |
+| `ListWorkRequestLogs` |  |
+| `ListWorkRequests` |  |
 
 ## Not in scope
 

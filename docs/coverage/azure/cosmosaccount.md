@@ -3,10 +3,20 @@
 
 provider-native `cosmosaccount` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (10)
 
 | Operation | Description |
 | --- | --- |
+| `CreateOrUpdate` |  |
+| `Delete` |  |
+| `FailoverPriorityChange` |  |
+| `Get` |  |
+| `List` |  |
+| `ListByResourceGroup` |  |
+| `ListConnectionStrings` |  |
+| `ListKeys` |  |
+| `ListReadOnlyKeys` |  |
+| `RegenerateKey` |  |
 
 ## Not in scope
 

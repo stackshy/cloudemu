@@ -3,10 +3,13 @@
 
 provider-native `resourcegraph` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (3)
 
 | Operation | Description |
 | --- | --- |
+| `Operations` |  |
+| `Resources` |  |
+| `ResourcesHistory` |  |
 
 ## Not in scope
 

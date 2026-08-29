@@ -3,10 +3,13 @@
 
 provider-native `servicenetworking` wire service (GCP-only) · no portable driver · [GCP index](./README.md)
 
-## Operations (0)
+## Operations (3)
 
 | Operation | Description |
 | --- | --- |
+| `CreateConnection` |  |
+| `DeleteConnection` |  |
+| `ListConnections` |  |
 
 ## Not in scope
 
