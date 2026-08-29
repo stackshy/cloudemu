@@ -171,6 +171,7 @@ func coreRegistryDefs() []*resourceDef {
 		{
 			group: "", version: "v1", kind: "Event", listKind: "EventList",
 			plural: "events", namespaced: true,
+			tableColumns: eventTableProjector(),
 		},
 		{
 			group: "", version: "v1", kind: "ResourceQuota", listKind: "ResourceQuotaList",

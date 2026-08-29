@@ -29,6 +29,12 @@ type tableProjector struct {
 	// object's creationTimestamp-relative age, precomputed from the cluster clock
 	// so it is deterministic under a FakeClock.
 	cells func(u *unstructured.Unstructured, age string) []any
+	// cellsAt is an optional clock-aware variant used by kinds whose columns are
+	// relative to a timestamp other than creationTimestamp (Events render "Last
+	// Seen"/"First Seen" from lastTimestamp/firstTimestamp). When set it takes
+	// precedence over cells. nowUnixNano is the cluster clock, so output stays
+	// deterministic under a FakeClock.
+	cellsAt func(u *unstructured.Unstructured, nowUnixNano int64) []any
 }
 
 // resourceVersionSetter is satisfied by every typed *…List (via the embedded
@@ -181,7 +187,16 @@ func (s *ClusterState) writeObjectWithColumns(w http.ResponseWriter, r *http.Req
 // tableRow builds one Table row: the projected cells plus the embedded object
 // (full object, PartialObjectMetadata, or nothing) per the includeObject mode.
 func (s *ClusterState) tableRow(u *unstructured.Unstructured, proj *tableProjector, mode string) metav1.TableRow {
-	row := metav1.TableRow{Cells: proj.cells(u, ageOf(u, s.now().Time.UnixNano()))}
+	now := s.now().Time.UnixNano()
+
+	var cells []any
+	if proj.cellsAt != nil {
+		cells = proj.cellsAt(u, now)
+	} else {
+		cells = proj.cells(u, ageOf(u, now))
+	}
+
+	row := metav1.TableRow{Cells: cells}
 
 	switch mode {
 	case includeObjectNone:
@@ -272,10 +287,31 @@ func resolveProjector(kind string, override *tableProjector) *tableProjector {
 func ageOf(u *unstructured.Unstructured, nowUnixNano int64) string {
 	ct := u.GetCreationTimestamp()
 	if ct.IsZero() {
-		return "<unknown>"
+		return cellUnknown
 	}
 
 	d := nowUnixNano - ct.UnixNano()
+	if d < 0 {
+		d = 0
+	}
+
+	return duration.HumanDuration(time.Duration(d))
+}
+
+// ageSince renders the human-readable age between an RFC3339 timestamp string
+// and now. Used by the Event projector's Last Seen / First Seen columns, which
+// are relative to lastTimestamp / firstTimestamp rather than creationTimestamp.
+func ageSince(tsStr string, nowUnixNano int64) string {
+	if tsStr == "" {
+		return cellUnknown
+	}
+
+	t, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		return cellUnknown
+	}
+
+	d := nowUnixNano - t.UnixNano()
 	if d < 0 {
 		d = 0
 	}
