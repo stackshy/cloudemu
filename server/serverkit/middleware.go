@@ -40,8 +40,11 @@ func (a *App) wrapDirty(h http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// defer, not sequential: a handler that mutates state and then panics
+		// (net/http recovers the connection but unwinds past this point) must still
+		// mark the mutation dirty, or a crash after the panic would silently lose it.
+		defer a.markDirty()
 		h.ServeHTTP(w, r)
-		a.markDirty()
 	})
 }
 

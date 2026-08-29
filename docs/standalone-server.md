@@ -125,8 +125,10 @@ a `kill -9`, panic, or power loss loses at most the last save interval — not
 everything since boot. Tune *when* it saves with `--persist-strategy`
 (`scheduled` (default, every `--persist-interval`, 15s) / `on-request` /
 `on-shutdown` / `manual`) and `--persist-interval`; both also read the env vars
-`CLOUDEMU_PERSIST_STRATEGY` and `CLOUDEMU_PERSIST_INTERVAL`. Periodic saves are
-metadata-only to bound cost, and the **Kubernetes data-plane is not persisted**.
+`CLOUDEMU_PERSIST_STRATEGY` and `CLOUDEMU_PERSIST_INTERVAL`. Every save —
+background, on-request, and on-shutdown — **includes object bodies** by default
+(pass `--persist-metadata-only` to drop them), so an S3 object is crash-safe with
+its contents intact; the **Kubernetes data-plane is not persisted**.
 See [persistence.md](persistence.md#save-strategy---persist-strategy---persist-interval)
 for the strategy matrix, crash-window semantics, the darwin `fsync` caveat, and
 the free-vs-paid LocalStack comparison.

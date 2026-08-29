@@ -140,6 +140,32 @@ func TestDirtySeamAdminMutationsMarkDirty(t *testing.T) {
 	}
 }
 
+// TestWrapDirtyMarksDirtyOnPanic asserts the request seam marks state dirty even
+// when the handler panics AFTER mutating state. net/http recovers the connection
+// and unwinds past wrapDirty, so a sequential mark (rather than a deferred one)
+// would silently drop the mutation flag and a later crash would lose the change.
+func TestWrapDirtyMarksDirtyOnPanic(t *testing.T) {
+	app := newPersistTestApp(t, []string{"aws"}, map[string]string{"aws": "0"})
+	app.flusher.dirty.Store(false)
+
+	// A handler that mutates then panics.
+	panicky := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		panic("boom after mutation")
+	})
+	h := app.wrapDirty(panicky)
+
+	// Stand in for net/http's per-request recover, so the panic doesn't fail the
+	// test — the point is that the deferred markDirty still ran during the unwind.
+	func() {
+		defer func() { _ = recover() }()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	}()
+
+	if !app.flusher.dirty.Load() {
+		t.Fatal("wrapDirty did not mark state dirty when the handler panicked; the deferred markDirty is missing")
+	}
+}
+
 // TestNormalizePersistDefaultsAndValidation locks the strategy defaults and the
 // invalid-strategy rejection.
 func TestNormalizePersistDefaultsAndValidation(t *testing.T) {

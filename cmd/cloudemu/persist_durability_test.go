@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -42,7 +43,7 @@ func buildServeBinary(t *testing.T) string {
 
 // durabilityPorts is one run's endpoint ports plus its persistent state file.
 type durabilityPorts struct {
-	aws, gcp, azure, state string
+	aws, gcp, azure, oci, state string
 }
 
 // startServe launches `cloudemu serve` with the given persistence settings and
@@ -52,9 +53,11 @@ func startServe(t *testing.T, bin string, p durabilityPorts, strategy, interval 
 
 	cmd := exec.Command(bin, "serve",
 		"--host", "127.0.0.1",
+		"--providers", "aws,azure,gcp,oci",
 		"--aws-port", p.aws,
 		"--gcp-port", p.gcp,
 		"--azure-port", p.azure,
+		"--oci-port", p.oci,
 		"--k8s-port", "",
 		"--quiet",
 		"--persist",
@@ -150,6 +153,15 @@ const durableBucketPolicy = `{"Version":"2012-10-17","Statement":[{"Sid":"AllowG
 
 const durableRolePolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`
 
+// durableObjectKey/Body is an S3 object WITH a non-empty body. It is the crux of
+// the object-body durability case: a metadata-only periodic save would restore
+// this key reporting its old Size via HEAD/List but return an EMPTY body via GET.
+// With bodies persisted by default, GET must return these exact bytes.
+const (
+	durableObjectKey  = "durable-object.txt"
+	durableObjectBody = "hello-durable-body-42"
+)
+
 // createDurableResources drives real SDK mutations across AWS/GCP/Azure,
 // including the S3 and IAM Get-then-mutate sub-resource writes the request seam
 // must catch (they never call a memstore mutator).
@@ -188,6 +200,14 @@ func createDurableResources(t *testing.T, p durabilityPorts) {
 		t.Fatalf("PutBucketEncryption: %v", err)
 	}
 
+	if _, err := s3c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String("durable"),
+		Key:    aws.String(durableObjectKey),
+		Body:   strings.NewReader(durableObjectBody),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
 	iamc := iamClient(t, p.aws)
 	if _, err := iamc.CreateRole(ctx, &iam.CreateRoleInput{
 		RoleName:                 aws.String("durable-role"),
@@ -212,6 +232,7 @@ func createDurableResources(t *testing.T, p durabilityPorts) {
 	}
 
 	createAzureContainer(t, p.azure)
+	createOCIVCN(t, p.oci)
 }
 
 // assertDurableResourcesSurvive re-reads every resource after a crash+restart and
@@ -234,6 +255,8 @@ func assertDurableResourcesSurvive(t *testing.T, p durabilityPorts) {
 		t.Fatalf("bucket encryption did not survive the crash: %v", err)
 	}
 
+	assertDurableObjectBodySurvives(t, s3c)
+
 	iamc := iamClient(t, p.aws)
 	if _, err := iamc.GetRolePolicy(ctx, &iam.GetRolePolicyInput{
 		RoleName: aws.String("durable-role"), PolicyName: aws.String("inline-durable"),
@@ -249,6 +272,120 @@ func assertDurableResourcesSurvive(t *testing.T, p durabilityPorts) {
 	}
 
 	assertAzureContainerExists(t, p.azure)
+	assertOCIVCNExists(t, p.oci)
+}
+
+// assertDurableObjectBodySurvives is the FIX-1 check: the restored object must
+// return its ORIGINAL bytes via GET (not an empty body), and HEAD/List must
+// report a size matching those bytes — no size/empty mismatch after a crash.
+func assertDurableObjectBodySurvives(t *testing.T, s3c *s3.Client) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	got, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("durable"), Key: aws.String(durableObjectKey)})
+	if err != nil {
+		t.Fatalf("GetObject after crash: %v", err)
+	}
+
+	body, err := io.ReadAll(got.Body)
+	_ = got.Body.Close()
+
+	if err != nil {
+		t.Fatalf("read restored object body: %v", err)
+	}
+
+	if string(body) != durableObjectBody {
+		t.Fatalf("restored object body = %q, want %q (bodies must be crash-safe by default)", body, durableObjectBody)
+	}
+
+	// HEAD size must match the restored body — the mismatch this fix closes.
+	head, err := s3c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("durable"), Key: aws.String(durableObjectKey)})
+	if err != nil {
+		t.Fatalf("HeadObject after crash: %v", err)
+	}
+
+	if aws.ToInt64(head.ContentLength) != int64(len(durableObjectBody)) {
+		t.Fatalf("HEAD size = %d, want %d (restored body length)", aws.ToInt64(head.ContentLength), len(durableObjectBody))
+	}
+
+	// List size must match too.
+	list, err := s3c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String("durable"), Prefix: aws.String(durableObjectKey)})
+	if err != nil {
+		t.Fatalf("ListObjectsV2 after crash: %v", err)
+	}
+
+	var found bool
+
+	for _, o := range list.Contents {
+		if aws.ToString(o.Key) == durableObjectKey {
+			found = true
+
+			if aws.ToInt64(o.Size) != int64(len(durableObjectBody)) {
+				t.Fatalf("List size = %d, want %d (restored body length)", aws.ToInt64(o.Size), len(durableObjectBody))
+			}
+		}
+	}
+
+	if !found {
+		t.Fatalf("restored object %q missing from List", durableObjectKey)
+	}
+}
+
+// createOCIVCN creates a VCN through the OCI wire REST API — the 4th wired
+// provider, whose wrapDirty + SnapshotServices path was previously untested for
+// SIGKILL durability.
+func createOCIVCN(t *testing.T, port string) {
+	t.Helper()
+
+	body := `{"compartmentId":"ocid1.compartment.oc1..durable","cidrBlock":"10.77.0.0/16","displayName":"oci-durable-vcn"}`
+
+	resp, err := http.Post("http://127.0.0.1:"+port+"/20160918/vcns", "application/json", strings.NewReader(body)) //nolint:noctx // short-lived test call
+	if err != nil {
+		t.Fatalf("OCI CreateVcn: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("OCI CreateVcn = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// assertOCIVCNExists lists VCNs in the durable compartment and fails if the one
+// created before the crash is gone. Compartment scope is itself persisted, so the
+// scoped list resolves after a restart.
+func assertOCIVCNExists(t *testing.T, port string) {
+	t.Helper()
+
+	url := "http://127.0.0.1:" + port + "/20160918/vcns?compartmentId=ocid1.compartment.oc1..durable"
+
+	resp, err := http.Get(url) //nolint:noctx // short-lived test call
+	if err != nil {
+		t.Fatalf("OCI ListVcns: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("OCI ListVcns = %d: %s", resp.StatusCode, b)
+	}
+
+	var vcns []struct {
+		DisplayName string `json:"displayName"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&vcns); err != nil {
+		t.Fatalf("decode OCI ListVcns: %v", err)
+	}
+
+	for _, v := range vcns {
+		if v.DisplayName == "oci-durable-vcn" {
+			return
+		}
+	}
+
+	t.Fatal("OCI VCN did not survive the crash")
 }
 
 // azblobClient builds an azblob service client for the emulator's self-signed
@@ -306,6 +443,7 @@ func TestPersistCrashDurability(t *testing.T) {
 				aws:   freePort(t),
 				gcp:   freePort(t),
 				azure: freePort(t),
+				oci:   freePort(t),
 				state: filepath.Join(t.TempDir(), "state.json"),
 			}
 
@@ -317,9 +455,11 @@ func TestPersistCrashDurability(t *testing.T) {
 			// policy must be on disk.
 			// Wait for a marker from every provider's last-created resource, so the
 			// save that landed captured them all before the hard kill.
+			waitFileContains(t, p.state, durableObjectKey, 5*time.Second)    // AWS (S3 object body)
 			waitFileContains(t, p.state, "inline-durable", 5*time.Second)    // AWS (S3 + IAM)
 			waitFileContains(t, p.state, "gcp-durable", 5*time.Second)       // GCP
 			waitFileContains(t, p.state, "durable-container", 5*time.Second) // Azure
+			waitFileContains(t, p.state, "oci-durable-vcn", 5*time.Second)   // OCI
 
 			killHard(t, cmd)
 
@@ -345,6 +485,7 @@ func TestPersistManualDoesNotAutoSave(t *testing.T) {
 		aws:   freePort(t),
 		gcp:   freePort(t),
 		azure: freePort(t),
+		oci:   freePort(t),
 		state: filepath.Join(t.TempDir(), "state.json"),
 	}
 
@@ -381,6 +522,7 @@ func TestPersistAdminRestoreSurvivesCrash(t *testing.T) {
 		aws:   freePort(t),
 		gcp:   freePort(t),
 		azure: freePort(t),
+		oci:   freePort(t),
 		state: filepath.Join(t.TempDir(), "state.json"),
 	}
 

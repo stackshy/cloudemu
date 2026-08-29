@@ -140,6 +140,15 @@ type App struct {
 	netEngine   *topology.Engine
 	discovery   map[string]*resourcediscovery.Engine
 	providers   []closer // current live providers, Close()d when swapped out
+
+	// exportMu guards an in-flight state export (flusher save or admin snapshot)
+	// against provider teardown: every export holds it for read across the whole
+	// ExportAll, and closeProviders takes it for write before Close()ing the
+	// outgoing providers. So a rebuild/reset can never tear down a real (contrib)
+	// embedded-Postgres/redis/Docker engine mid-export. It is a distinct lock from
+	// rebuildMu — held only for the export duration, never while swapping — so the
+	// two never form a cycle.
+	exportMu sync.RWMutex
 }
 
 // New builds every selected provider behind its admin backend, restores any
@@ -228,6 +237,12 @@ func normalizePersist(cfg *Config) error {
 // so a concurrent reset can't race the export.
 func (a *App) newFlusher() *flusher {
 	save := func(ctx context.Context, includeAssets bool) error {
+		// Hold the export read-guard across the whole save so a concurrent
+		// Rebuild()/reset cannot Close() the providers being exported (see
+		// exportMu). rebuildMu is taken only to read the current snapTargets.
+		a.exportMu.RLock()
+		defer a.exportMu.RUnlock()
+
 		a.rebuildMu.Lock()
 		targets := a.snapTargets
 		a.rebuildMu.Unlock()
@@ -238,7 +253,7 @@ func (a *App) newFlusher() *flusher {
 	return newFlusher(
 		a.cfg.PersistStrategy,
 		a.cfg.PersistInterval,
-		!a.cfg.PersistMetadataOnly, // final shutdown save honors the asset setting
+		!a.cfg.PersistMetadataOnly, // every save honors the asset setting (bodies on by default)
 		save,
 		a.out,
 		a.cfg.Quiet,
@@ -471,8 +486,14 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 
 // closeProviders closes each provider best-effort, cascading engine teardown. It
 // runs after the swap (or after the shutdown snapshot), never before, and never
-// aborts on an error — a failed teardown is logged, not fatal.
+// aborts on an error — a failed teardown is logged, not fatal. It takes exportMu
+// for write so it blocks until any in-flight export (flusher save or admin
+// snapshot) that may still be reading these providers has finished — a real
+// engine is never torn down mid-export.
 func (a *App) closeProviders(providers []closer) {
+	a.exportMu.Lock()
+	defer a.exportMu.Unlock()
+
 	for _, p := range providers {
 		if err := p.Close(); err != nil {
 			fmt.Fprintf(a.out, "warning: closing provider engines: %v\n", err)
@@ -507,6 +528,11 @@ func (a *App) seedFor(provider string) func([]byte) (int, error) {
 // snapshot captures current state as JSON. It acts on the whole emulator, like
 // reset, so a call to any provider port covers every provider.
 func (a *App) snapshot() ([]byte, error) {
+	// Same export read-guard as the flusher save: a concurrent reset must not tear
+	// down the providers this export reads (see exportMu).
+	a.exportMu.RLock()
+	defer a.exportMu.RUnlock()
+
 	a.rebuildMu.Lock()
 	cur := a.snapTargets
 	a.rebuildMu.Unlock()
@@ -654,6 +680,12 @@ func (a *App) Serve(ctx context.Context) error {
 
 	select {
 	case err := <-errCh:
+		// A listener failed fatally. Still tear down cleanly — stop the flusher
+		// (final save + drain) and close the providers — so the goroutine and any
+		// real engines aren't leaked; then surface the original serve error, not
+		// the shutdown error.
+		_ = a.shutdown(servers)
+
 		return err
 	case <-ctx.Done():
 		if !a.cfg.Quiet {

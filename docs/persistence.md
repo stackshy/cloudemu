@@ -86,11 +86,12 @@ A few properties worth knowing:
 - At most **one save is in flight** at a time; signals arriving mid-save are
   coalesced and re-checked when it returns, so a save slower than the interval
   never piles up.
-- Periodic/`on-request` saves default to **metadata-only** to bound the cost of
-  re-serializing large object bodies every interval; the final shutdown save
-  honors `--persist-metadata-only` as before. If you need object bodies to be
-  crash-durable at every save, this is a known limit (a content-addressed blob
-  store is a planned follow-up).
+- **Object bodies are persisted on every save by default** — background,
+  on-request, and shutdown saves all include object bodies, so an S3 object is
+  crash-safe (restored with its contents, not as an empty key), matching
+  LocalStack. Pass `--persist-metadata-only` to drop bodies from every save for a
+  smaller/faster snapshot; restored objects then come back as zero-byte keys until
+  re-uploaded.
 
 ### Crash-safe writes
 

@@ -53,11 +53,16 @@ type saveFunc func(ctx context.Context, includeAssets bool) error
 // flusher exists only when --persist is set; when nil, every method call site
 // short-circuits.
 type flusher struct {
-	strategy    string
-	interval    time.Duration
-	debounce    time.Duration
-	maxWait     time.Duration
-	finalAssets bool // asset behavior for the shutdown save (periodic is always metadata-only)
+	strategy string
+	interval time.Duration
+	debounce time.Duration
+	maxWait  time.Duration
+	// includeAssets governs whether object bodies are written on EVERY save —
+	// periodic, on-request, and the final shutdown save alike. It is
+	// !PersistMetadataOnly, so the default persists bodies on every save (matching
+	// LocalStack and the "crash-safe" expectation) and --persist-metadata-only is
+	// the metadata-only opt-out for cost.
+	includeAssets bool
 
 	save      saveFunc
 	out       io.Writer
@@ -79,21 +84,21 @@ type flusher struct {
 // newFlusher builds a flusher for the given config. All timing knobs get their
 // defaults here; tests construct a flusher directly to shrink them.
 func newFlusher(
-	strategy string, interval time.Duration, finalAssets bool,
+	strategy string, interval time.Duration, includeAssets bool,
 	save saveFunc, out io.Writer, quiet bool, stateFile string,
 ) *flusher {
 	return &flusher{
-		strategy:    strategy,
-		interval:    interval,
-		debounce:    defaultOnRequestDebounce,
-		maxWait:     defaultOnRequestMaxWait,
-		finalAssets: finalAssets,
-		save:        save,
-		out:         out,
-		quiet:       quiet,
-		stateFile:   stateFile,
-		signalCh:    make(chan struct{}, 1),
-		stopCh:      make(chan struct{}),
+		strategy:      strategy,
+		interval:      interval,
+		debounce:      defaultOnRequestDebounce,
+		maxWait:       defaultOnRequestMaxWait,
+		includeAssets: includeAssets,
+		save:          save,
+		out:           out,
+		quiet:         quiet,
+		stateFile:     stateFile,
+		signalCh:      make(chan struct{}, 1),
+		stopCh:        make(chan struct{}),
 	}
 }
 
@@ -206,13 +211,12 @@ func (f *flusher) coalesceAndSave() bool {
 	}
 }
 
-// runSave performs one metadata-only periodic save. On failure it re-marks
-// dirty so the next tick/cycle retries, and logs a warning.
+// runSave performs one periodic/on-request save. It honors the same
+// includeAssets as the final shutdown save, so object bodies are crash-safe on
+// every save by default (and dropped only under --persist-metadata-only). On
+// failure it re-marks dirty so the next tick/cycle retries, and logs a warning.
 func (f *flusher) runSave() {
-	// Periodic saves are metadata-only to bound the cost of re-serializing large
-	// object bodies every interval; the final shutdown save honors the asset
-	// setting.
-	if err := f.save(context.Background(), false); err != nil {
+	if err := f.save(context.Background(), f.includeAssets); err != nil {
 		f.dirty.Store(true)
 		fmt.Fprintf(f.out, "warning: failed to save state to %s: %v\n", f.stateFile, err)
 	}
@@ -234,7 +238,7 @@ func (f *flusher) Stop(ctx context.Context) {
 		return
 	}
 
-	if err := f.save(ctx, f.finalAssets); err != nil {
+	if err := f.save(ctx, f.includeAssets); err != nil {
 		fmt.Fprintf(f.out, "warning: failed to save state to %s: %v\n", f.stateFile, err)
 
 		return
