@@ -25,6 +25,26 @@ func wrap(h http.Handler, provider string, logReqs bool) http.Handler {
 	})
 }
 
+// wrapDirty marks the emulator state dirty after a cloud-provider request
+// returns, so the flusher persists it. It is applied ONLY to the four cloud
+// provider handlers (aws/azure/gcp/oci) — never the Kubernetes data-plane, which
+// is not part of persist.ExportAll, and never the admin/health plane, so
+// liveness probes don't keep an idle emulator perpetually dirty. When
+// persistence is off the handler is returned unchanged (zero overhead). Marking
+// after the handler runs (rather than classifying reads vs writes) is
+// deliberately coarse: a pure read triggers at most one extra save per
+// interval/cap, which is bounded and acceptable.
+func (a *App) wrapDirty(h http.Handler) http.Handler {
+	if !a.cfg.Persist {
+		return h
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r)
+		a.markDirty()
+	})
+}
+
 // statusWriter captures the first response status for logging while remaining a
 // transparent http.ResponseWriter. Write is not overridden — it promotes from
 // the embedded writer, so a handler that writes a body without an explicit

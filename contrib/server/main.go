@@ -21,6 +21,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/server/serverkit"
 )
 
 // defaultShutdownTimeout is the grace period for in-flight requests.
@@ -78,6 +80,8 @@ type appConfig struct {
 	persist         bool
 	stateFile       string
 	persistMetaOnly bool
+	persistStrategy string
+	persistInterval time.Duration
 	initDir         string
 	endpointsFile   string
 
@@ -181,11 +185,7 @@ func parseFlags(args []string, getenv func(string) string, out io.Writer) (appCo
 	fs.BoolVar(&cfg.logRequests, "log-requests", false, "log every HTTP request (method, path, status, duration)")
 	fs.BoolVar(&cfg.quiet, "quiet", false, "suppress the startup banner")
 	fs.BoolVar(&cfg.enforceAuth, "enforce-auth", false, "require authentication on each request; off by default")
-	fs.BoolVar(&cfg.persist, "persist", false,
-		"save state to --state-file on shutdown and restore it on startup (includes object bodies)")
-	fs.StringVar(&cfg.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
-	fs.BoolVar(&cfg.persistMetaOnly, "persist-metadata-only", false,
-		"persist resource structure but omit object bodies (smaller snapshot)")
+	registerPersistFlags(fs, &cfg, getenv)
 	fs.StringVar(&cfg.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
 	fs.StringVar(&cfg.endpointsFile, "endpoints-file", "", "write the resolved endpoints as JSON to this path")
 
@@ -214,6 +214,8 @@ func parseFlags(args []string, getenv func(string) string, out io.Writer) (appCo
 	if cfg.persist && cfg.stateFile == "" {
 		return appConfig{}, errStateFileRequired
 	}
+
+	warnPersistFlagsWithoutPersist(fs, &cfg, out)
 
 	return cfg, nil
 }
@@ -258,6 +260,66 @@ func engineEnvOr(getenv func(string) string, key string) string {
 	}
 
 	return engineOff
+}
+
+// registerPersistFlags registers the persistence flag group against cfg, keeping
+// parseFlags under the statement limit and grouping the knobs that only matter
+// with --persist.
+func registerPersistFlags(fs *flag.FlagSet, cfg *appConfig, getenv func(string) string) {
+	fs.BoolVar(&cfg.persist, "persist", false,
+		"save state to --state-file on shutdown and restore it on startup (includes object bodies)")
+	fs.StringVar(&cfg.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
+	fs.BoolVar(&cfg.persistMetaOnly, "persist-metadata-only", false,
+		"persist resource structure but omit object bodies (smaller snapshot)")
+	fs.StringVar(&cfg.persistStrategy, "persist-strategy",
+		envStrOr(getenv, "CLOUDEMU_PERSIST_STRATEGY", serverkit.DefaultPersistStrategy),
+		"when to save with --persist: scheduled|on-request|on-shutdown|manual (env CLOUDEMU_PERSIST_STRATEGY)")
+	fs.DurationVar(&cfg.persistInterval, "persist-interval",
+		envDurationOr(getenv, "CLOUDEMU_PERSIST_INTERVAL", serverkit.DefaultPersistInterval),
+		"save cadence for --persist-strategy=scheduled (env CLOUDEMU_PERSIST_INTERVAL)")
+}
+
+// envStrOr returns the environment value for key, or def when it is unset/empty.
+func envStrOr(getenv func(string) string, key, def string) string {
+	if v := getenv(key); v != "" {
+		return v
+	}
+
+	return def
+}
+
+// envDurationOr parses the environment value for key as a duration, or returns
+// def when it is unset/empty/unparseable.
+func envDurationOr(getenv func(string) string, key string, def time.Duration) time.Duration {
+	v := getenv(key)
+	if v == "" {
+		return def
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+
+	return d
+}
+
+// warnPersistFlagsWithoutPersist prints a warning for each persist-tuning flag
+// set explicitly while --persist is off, so the ignored knob is visible.
+func warnPersistFlagsWithoutPersist(fs *flag.FlagSet, cfg *appConfig, stderr io.Writer) {
+	if cfg.persist {
+		return
+	}
+
+	set := map[string]bool{}
+
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	for _, name := range []string{"persist-strategy", "persist-interval", "persist-metadata-only"} {
+		if set[name] {
+			fmt.Fprintf(stderr, "warning: --%s has no effect without --persist\n", name)
+		}
+	}
 }
 
 // printEngineModes prints the resolved per-capability engine MODE table.

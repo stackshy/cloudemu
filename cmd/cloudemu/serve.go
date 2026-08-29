@@ -44,6 +44,8 @@ type serveConfig struct {
 	persist           bool
 	stateFile         string
 	persistMetaOnly   bool
+	persistStrategy   string
+	persistInterval   time.Duration
 	initDir           string
 	enforceAuth       bool
 }
@@ -58,8 +60,46 @@ func (s *stringList) Set(v string) error {
 }
 
 func runServe(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var c serveConfig
+
+	fs := newServeFlagSet(&c)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if (c.tlsCert == "") != (c.tlsKey == "") {
+		return errors.New("--tls-cert and --tls-key must be given together")
+	}
+
+	if c.persist && c.stateFile == "" {
+		return errStateFileRequired
+	}
+
+	warnPersistFlagsWithoutPersist(fs, &c)
+
+	sel, err := parseProviders(c.providers)
+	if err != nil {
+		return err
+	}
+
+	cfg := c.toServerkitConfig(sel)
+
+	app, err := serverkit.New(&cfg)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	return app.Serve(ctx)
+}
+
+// newServeFlagSet registers every serve flag against c and returns the flag set.
+// Splitting registration out of runServe lets tests inspect flag names/defaults
+// (the cross-entrypoint parity guard) without executing a server.
+func newServeFlagSet(c *serveConfig) *flag.FlagSet {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	// OCI is not started by default: it stays opt-in until its services land, so
 	// the default set never binds a port that serves nothing.
 	fs.StringVar(&c.providers, "providers", "aws,azure,gcp", "comma-separated providers to start: aws,azure,gcp,oci")
@@ -89,6 +129,11 @@ func runServe(args []string) error {
 	fs.BoolVar(&c.persist, "persist", false, "save state to --state-file on shutdown and restore it on startup (includes object bodies)")
 	fs.StringVar(&c.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
 	fs.BoolVar(&c.persistMetaOnly, "persist-metadata-only", false, "persist resource structure but omit object bodies (smaller snapshot)")
+	fs.StringVar(&c.persistStrategy, "persist-strategy", envOr("CLOUDEMU_PERSIST_STRATEGY", serverkit.DefaultPersistStrategy),
+		"when to save with --persist: scheduled|on-request|on-shutdown|manual (env CLOUDEMU_PERSIST_STRATEGY)")
+	fs.DurationVar(&c.persistInterval, "persist-interval",
+		envDurationOr("CLOUDEMU_PERSIST_INTERVAL", serverkit.DefaultPersistInterval),
+		"save cadence for --persist-strategy=scheduled (env CLOUDEMU_PERSIST_INTERVAL)")
 	fs.StringVar(&c.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
 	fs.BoolVar(&c.enforceAuth, "enforce-auth", false,
 		"require authentication on each request; off by default. AWS: verify the SigV4 signature against a registered IAM access "+
@@ -101,22 +146,14 @@ func runServe(args []string) error {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if (c.tlsCert == "") != (c.tlsKey == "") {
-		return errors.New("--tls-cert and --tls-key must be given together")
-	}
-	if c.persist && c.stateFile == "" {
-		return errStateFileRequired
-	}
 
-	sel, err := parseProviders(c.providers)
-	if err != nil {
-		return err
-	}
+	return fs
+}
 
-	cfg := serverkit.Config{
+// toServerkitConfig maps the resolved serve flags onto a serverkit.Config for
+// the given provider selection.
+func (c *serveConfig) toServerkitConfig(sel []string) serverkit.Config {
+	return serverkit.Config{
 		Providers: sel,
 		Host:      c.host,
 		Ports: map[string]string{
@@ -132,6 +169,8 @@ func runServe(args []string) error {
 		Persist:             c.persist,
 		StateFile:           c.stateFile,
 		PersistMetadataOnly: c.persistMetaOnly,
+		PersistStrategy:     c.persistStrategy,
+		PersistInterval:     c.persistInterval,
 		InitDir:             c.initDir,
 		TLSCert:             c.tlsCert,
 		TLSKey:              c.tlsKey,
@@ -149,16 +188,49 @@ func runServe(args []string) error {
 		},
 		Out: os.Stdout,
 	}
+}
 
-	app, err := serverkit.New(&cfg)
-	if err != nil {
-		return err
+// warnPersistFlagsWithoutPersist prints a one-line warning when a persist-tuning
+// flag was set explicitly but --persist is off, so the ignored knob is visible.
+func warnPersistFlagsWithoutPersist(fs *flag.FlagSet, c *serveConfig) {
+	if c.persist {
+		return
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	set := map[string]bool{}
 
-	return app.Serve(ctx)
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	for _, name := range []string{"persist-strategy", "persist-interval", "persist-metadata-only"} {
+		if set[name] {
+			fmt.Fprintf(os.Stderr, "warning: --%s has no effect without --persist\n", name)
+		}
+	}
+}
+
+// envOr returns the environment value for key, or def when it is unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+
+	return def
+}
+
+// envDurationOr parses the environment value for key as a duration, or returns
+// def when it is unset/empty/unparseable.
+func envDurationOr(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+
+	return d
 }
 
 func parseProviders(s string) ([]string, error) {

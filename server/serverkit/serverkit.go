@@ -48,6 +48,10 @@ import (
 // schema version.
 var errUnsupportedSnapshot = errors.New("unsupported snapshot schema version")
 
+// errUnknownStrategy is returned when Config.PersistStrategy is not one of the
+// four supported values.
+var errUnknownStrategy = errors.New("unknown persist strategy (want scheduled, on-request, on-shutdown, or manual)")
+
 // defaultShutdownTimeout is the grace period applied when Config leaves
 // ShutdownTimeout unset.
 const defaultShutdownTimeout = 10 * time.Second
@@ -85,10 +89,12 @@ type Config struct {
 
 	Admin bool // mount the /_cloudemu control plane
 
-	Persist             bool   // save/restore state around the process lifetime
-	StateFile           string // path to the JSON state snapshot
-	PersistMetadataOnly bool   // omit object bodies from the snapshot
-	InitDir             string // apply every *.json fixture in this dir on boot
+	Persist             bool          // save/restore state around the process lifetime
+	StateFile           string        // path to the JSON state snapshot
+	PersistMetadataOnly bool          // omit object bodies from the snapshot
+	PersistStrategy     string        // when/how to save: scheduled|on-request|on-shutdown|manual (default scheduled)
+	PersistInterval     time.Duration // ticker cadence for the scheduled strategy (default 15s)
+	InitDir             string        // apply every *.json fixture in this dir on boot
 
 	TLSCert  string   // PEM cert for the Azure HTTPS endpoint (empty: self-signed)
 	TLSKey   string   // PEM key matching TLSCert
@@ -120,6 +126,11 @@ type App struct {
 	backends   map[string]*admin.Backend
 	k8sBackend *admin.Backend
 
+	// flusher owns every automatic persistence save (nil unless --persist). Its
+	// dirty flag is flipped by the request-boundary seam and the mutating admin
+	// ops.
+	flusher *flusher
+
 	// rebuildMu serializes resets so two concurrent /_cloudemu/reset calls can't
 	// interleave and leave providers wired to different Kubernetes instances. It
 	// also guards the current-state fields below and the live provider set.
@@ -135,6 +146,10 @@ type App struct {
 // persisted state, and applies init-dir fixtures — everything up to binding the
 // listeners. The returned App is ready to Serve.
 func New(cfg *Config) (*App, error) {
+	if err := normalizePersist(cfg); err != nil {
+		return nil, err
+	}
+
 	out := cfg.Out
 	if out == nil {
 		out = os.Stdout
@@ -162,6 +177,10 @@ func New(cfg *Config) (*App, error) {
 		a.k8sBackend = admin.NewBackend(nil)
 	}
 
+	if cfg.Persist {
+		a.flusher = a.newFlusher()
+	}
+
 	a.Rebuild() // populate the backends before serving
 
 	if err := a.applyBootState(); err != nil {
@@ -176,6 +195,71 @@ func New(cfg *Config) (*App, error) {
 	}
 
 	return a, nil
+}
+
+// normalizePersist fills in the persistence-strategy defaults and validates the
+// strategy. It is a no-op when --persist is off. Defaulting here means both
+// entrypoints (and library callers) get the same scheduled/15s behavior without
+// each repeating it.
+func normalizePersist(cfg *Config) error {
+	if !cfg.Persist {
+		return nil
+	}
+
+	if cfg.PersistStrategy == "" {
+		cfg.PersistStrategy = DefaultPersistStrategy
+	}
+
+	switch cfg.PersistStrategy {
+	case StrategyScheduled, StrategyOnRequest, StrategyOnShutdown, StrategyManual:
+	default:
+		return fmt.Errorf("%w: %q", errUnknownStrategy, cfg.PersistStrategy)
+	}
+
+	if cfg.PersistInterval <= 0 {
+		cfg.PersistInterval = DefaultPersistInterval
+	}
+
+	return nil
+}
+
+// newFlusher builds the App's flusher, injecting a save closure that reads the
+// live snapshot targets under rebuildMu (the same guard swapFresh/shutdown use)
+// so a concurrent reset can't race the export.
+func (a *App) newFlusher() *flusher {
+	save := func(ctx context.Context, includeAssets bool) error {
+		a.rebuildMu.Lock()
+		targets := a.snapTargets
+		a.rebuildMu.Unlock()
+
+		return snapshotState(ctx, a.cfg.StateFile, includeAssets, targets)
+	}
+
+	return newFlusher(
+		a.cfg.PersistStrategy,
+		a.cfg.PersistInterval,
+		!a.cfg.PersistMetadataOnly, // final shutdown save honors the asset setting
+		save,
+		a.out,
+		a.cfg.Quiet,
+		a.cfg.StateFile,
+	)
+}
+
+// markDirty records a state mutation for the flusher. It is a no-op when
+// persistence is off (flusher nil), so callers need no guard.
+func (a *App) markDirty() {
+	a.flusher.markDirty()
+}
+
+// persistBanner is the persistence summary shown in the startup banner.
+func (a *App) persistBanner() persistInfo {
+	return persistInfo{
+		on:        a.cfg.Persist,
+		strategy:  a.cfg.PersistStrategy,
+		interval:  a.cfg.PersistInterval,
+		stateFile: a.cfg.StateFile,
+	}
 }
 
 // baseOptsFor clones Config.BaseOptions and appends the latency/auth options, so
@@ -325,7 +409,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.EKS.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests),
+			handler:   a.wrapDirty(wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests)),
 			target:    seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -339,7 +423,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.GKE.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests),
+			handler:   a.wrapDirty(wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests)),
 			target:    seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -360,7 +444,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.AKS.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests),
+			handler:   a.wrapDirty(wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests)),
 			target:    seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -373,7 +457,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		// OCI has no managed-Kubernetes service, so no SetK8sAPI here, and its
 		// *Provider carries no engines to close.
 		return builtProvider{
-			handler: wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests),
+			handler: a.wrapDirty(wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests)),
 			target: seed.Target{
 				Storage: cloud.ObjectStorage, Database: cloud.NoSQL,
 				Secrets: cloud.Vault, Compute: cloud.Compute,
@@ -456,7 +540,15 @@ func (a *App) restore(body []byte) error {
 	cur := a.snapTargets
 	a.rebuildMu.Unlock()
 
-	return persist.RestoreAll(context.Background(), &snap, cur)
+	if err := persist.RestoreAll(context.Background(), &snap, cur); err != nil {
+		return err
+	}
+
+	// Mark dirty so a restore-then-crash with no subsequent provider request
+	// still persists the freshly-restored state on the next tick/final save.
+	a.markDirty()
+
+	return nil
 }
 
 // extraHandler serves the control-plane endpoints that plug into admin: network
@@ -497,11 +589,36 @@ func (a *App) extraHandler() http.Handler {
 // API off the backend serves directly. seedFn may be nil (e.g. the Kubernetes
 // port), which disables the seed endpoint.
 func (a *App) handlerFor(b *admin.Backend, seedFn func([]byte) (int, error)) http.Handler {
-	if a.cfg.Admin {
-		return admin.NewControl(b, a.Rebuild, seedFn, a.snapshot, a.restore, a.extraHandler())
+	if !a.cfg.Admin {
+		return b
 	}
 
-	return b
+	reset := a.Rebuild
+	// The admin plane bypasses the wrapDirty request seam (it dispatches inside
+	// Control before reaching the wrapped backend), so the three mutating admin
+	// ops must mark dirty themselves: reset and seed here, restore inside
+	// App.restore. Missing any of these means a mutate-then-crash silently loses
+	// the change. restore marks dirty on its own; wrap only reset and seed.
+	if a.cfg.Persist {
+		reset = func() {
+			a.Rebuild()
+			a.markDirty()
+		}
+
+		if seedFn != nil {
+			inner := seedFn
+			seedFn = func(fixture []byte) (int, error) {
+				n, err := inner(fixture)
+				if err == nil {
+					a.markDirty()
+				}
+
+				return n, err
+			}
+		}
+	}
+
+	return admin.NewControl(b, reset, seedFn, a.snapshot, a.restore, a.extraHandler())
 }
 
 // Serve binds every listener, starts serving, and blocks until ctx is canceled
@@ -521,8 +638,12 @@ func (a *App) Serve(ctx context.Context) error {
 
 	errCh := serveAll(servers, listeners)
 
+	// Start the background persistence flusher once the listeners are live, so
+	// scheduled/on-request saves run for the whole serving lifetime.
+	a.flusher.Start()
+
 	if !a.cfg.Quiet {
-		printBanner(a.out, &eps, a.cfg.Admin)
+		printBanner(a.out, &eps, a.cfg.Admin, a.persistBanner())
 	}
 
 	if a.cfg.EndpointsFile != "" {
@@ -640,13 +761,13 @@ func (a *App) shutdown(servers []*namedServer) error {
 		}
 	}
 
-	if a.cfg.Persist {
-		if err := snapshotState(context.Background(), a.cfg.StateFile, !a.cfg.PersistMetadataOnly, a.snapTargets); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save state to %s: %v\n", a.cfg.StateFile, err)
-		} else if !a.cfg.Quiet {
-			fmt.Fprintf(a.out, "state saved to %s\n", a.cfg.StateFile)
-		}
-	}
+	// The flusher owns every automatic save: Stop drains any in-flight periodic
+	// save, then performs the single deterministic final save (unless the
+	// strategy is manual). This replaces the old unconditional shutdown snapshot,
+	// so manual genuinely never saves and no stale tick can rename over the final
+	// write. The final save runs while the providers are still live (closed
+	// below), keeping the engines readable through the export.
+	a.flusher.Stop(ctx)
 
 	a.rebuildMu.Lock()
 	cur := a.providers
