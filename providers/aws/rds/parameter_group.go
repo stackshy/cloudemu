@@ -6,6 +6,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -84,7 +85,7 @@ func copyParams(src map[string]rdsdriver.Parameter) map[string]rdsdriver.Paramet
 
 // ---- DB parameter groups ----
 
-func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.ParameterGroupConfig) (*rdsdriver.ParameterGroup, error) {
+func (m *Mock) CreateDBParameterGroup(ctx context.Context, cfg rdsdriver.ParameterGroupConfig) (*rdsdriver.ParameterGroup, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBParameterGroupName is required")
 	}
@@ -108,7 +109,7 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 		Name:        cfg.Name,
 		Family:      cfg.Family,
 		Description: cfg.Description,
-		ARN:         parameterGroupARN(m.opts.Region, m.opts.AccountID, cfg.Name),
+		ARN:         parameterGroupARN(regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, cfg.Name),
 		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.paramGroups.Set(cfg.Name, pg)
@@ -265,7 +266,7 @@ func (m *Mock) CopyDBParameterGroup(_ context.Context, source, target, descripti
 		Name:        target,
 		Family:      src.Family,
 		Description: description,
-		ARN:         parameterGroupARN(m.opts.Region, m.opts.AccountID, target),
+		ARN:         parameterGroupARN(arnRegion(src.ARN, m.opts.Region), m.opts.AccountID, target),
 		Parameters:  copyParams(src.Parameters),
 	}
 	m.paramGroups.Set(target, pg)
@@ -278,7 +279,7 @@ func (m *Mock) CopyDBParameterGroup(_ context.Context, source, target, descripti
 // ---- DB cluster parameter groups ----
 
 func (m *Mock) CreateDBClusterParameterGroup(
-	_ context.Context, cfg rdsdriver.ParameterGroupConfig,
+	ctx context.Context, cfg rdsdriver.ParameterGroupConfig,
 ) (*rdsdriver.ClusterParameterGroup, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterParameterGroupName is required")
@@ -303,7 +304,7 @@ func (m *Mock) CreateDBClusterParameterGroup(
 		Name:        cfg.Name,
 		Family:      cfg.Family,
 		Description: cfg.Description,
-		ARN:         clusterParameterGroupARN(m.opts.Region, m.opts.AccountID, cfg.Name),
+		ARN:         clusterParameterGroupARN(regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, cfg.Name),
 		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.clusterParamGroups.Set(cfg.Name, pg)
@@ -452,7 +453,7 @@ func (m *Mock) CopyDBClusterParameterGroup(
 		Name:        target,
 		Family:      src.Family,
 		Description: description,
-		ARN:         clusterParameterGroupARN(m.opts.Region, m.opts.AccountID, target),
+		ARN:         clusterParameterGroupARN(arnRegion(src.ARN, m.opts.Region), m.opts.AccountID, target),
 		Parameters:  copyParams(src.Parameters),
 	}
 	m.clusterParamGroups.Set(target, pg)

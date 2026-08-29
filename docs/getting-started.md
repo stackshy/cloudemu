@@ -1,5 +1,27 @@
 # Getting Started
 
+## Integrate with an existing app (start here)
+
+**To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint, then point your already-running app or services at it** — its real code path runs against cloudemu end-to-end. Library mode (below) is for Go unit tests you write inside cloudemu-aware code.
+
+Run the server, then override the endpoint your existing client already builds:
+
+```bash
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+  ghcr.io/stackshy/cloudemu:latest   # Apple Silicon: add --platform linux/amd64 if needed
+```
+
+```bash
+# AWS CLI / any-language SDK — no code change, just the endpoint
+export AWS_ENDPOINT_URL=http://127.0.0.1:4566
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
+aws s3 mb s3://demo && aws s3 ls
+```
+
+The per-SDK endpoint seam (AWS `BaseEndpoint`, GCP `option.WithEndpoint`, Azure ARM override) and the "make it injectable" pattern are in [integration.md](integration.md). Server flags, ports, and TLS are in [standalone-server.md](standalone-server.md).
+
+Everything below is **library mode** — the typed Go API and in-process server, for unit tests you write inside cloudemu-aware Go code.
+
 ## Installation
 
 ```bash

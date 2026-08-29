@@ -9,8 +9,12 @@ import (
 )
 
 // redshiftClusters is the slice of the Redshift mock that discovery reads.
+// DescribeTags reads the ARN-keyed tag store (the target of CreateTags / the
+// Resource Groups Tagging API), which the shared cluster model does not carry,
+// so discovery reflects RGT-applied tags rather than only create-time ones.
 type redshiftClusters interface {
 	DescribeClusters(ctx context.Context, ids []string) ([]rdsdriver.Cluster, error)
+	DescribeTags(ctx context.Context, resourceName string) (map[string]string, error)
 }
 
 // rdsDiscovery adapts the RDS mock (plus Redshift) to the resourcediscovery
@@ -103,22 +107,63 @@ func (a rdsDiscovery) DiscoverDatabases(ctx context.Context) ([]resourcediscover
 		})
 	}
 
-	if a.redshift != nil {
-		clusters, err := a.redshift.DescribeClusters(ctx, nil)
+	redshift, err := a.discoverRedshift(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(out, redshift...), nil
+}
+
+// discoverRedshift projects Redshift clusters, merging each cluster's RGT tags
+// (the ARN-keyed store, read via DescribeTags) with its create-time tags.
+func (a rdsDiscovery) discoverRedshift(ctx context.Context) ([]resourcediscovery.DiscoveredDatabase, error) {
+	if a.redshift == nil {
+		return nil, nil
+	}
+
+	clusters, err := a.redshift.DescribeClusters(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredDatabase, 0, len(clusters))
+
+	for i := range clusters {
+		c := clusters[i]
+
+		tags, err := a.redshift.DescribeTags(ctx, c.ARN)
 		if err != nil {
 			return nil, err
 		}
 
-		for i := range clusters {
-			c := clusters[i]
-			out = append(out, resourcediscovery.DiscoveredDatabase{
-				Name: c.ID, ARN: c.ARN,
-				Type:    resourcediscovery.TypeCluster,
-				Service: resourcediscovery.ServiceRedshift,
-				Tags:    c.Tags,
-			})
-		}
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: c.ID, ARN: c.ARN,
+			Type:    resourcediscovery.TypeCluster,
+			Service: resourcediscovery.ServiceRedshift,
+			Tags:    mergeTags(c.Tags, tags),
+		})
 	}
 
 	return out, nil
+}
+
+// mergeTags overlays RGT-applied tags (from the ARN-keyed store) on the
+// create-time tags carried by the cluster model, so both are visible in
+// discovery. The overlay wins on key collisions. Returns nil when both empty.
+func mergeTags(base, overlay map[string]string) map[string]string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+
+	for k, v := range overlay {
+		out[k] = v
+	}
+
+	return out
 }

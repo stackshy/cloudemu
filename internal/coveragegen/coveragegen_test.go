@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/providers/aws"
@@ -63,14 +64,14 @@ func TestProviderNativeServicesSynthesized(t *testing.T) {
 		prov, native string
 		wantOps      bool
 	}{
-		"eks":         {"aws", "EKS", true},
-		"aks":         {"azure", "AKS", true},
-		"gke":         {"gcp", "GKE", true},
-		"sts":         {"aws", "STS", false},
-		"rds":         {"aws", "RDS", true},
-		"redshift":    {"", "", false}, // Redshift is the relationaldb native, not a synth service
-		"resourcegroups": {"azure", "Resourcegroups", false},
-		"workrequest": {"oci", "Workrequest", false},
+		"eks":            {"aws", "EKS", true},
+		"aks":            {"azure", "AKS", true},
+		"gke":            {"gcp", "GKE", true},
+		"sts":            {"aws", "STS", true}, // wire-only, ops from nativeWireOperations
+		"rds":            {"aws", "RDS", true},
+		"redshift":       {"", "", false}, // Redshift is the relationaldb native, not a synth service
+		"resourcegroups": {"azure", "Resourcegroups", true},
+		"workrequest":    {"oci", "Workrequest", true},
 	}
 
 	for name, want := range cases {
@@ -98,6 +99,58 @@ func TestProviderNativeServicesSynthesized(t *testing.T) {
 
 		if want.wantOps && len(svc.Operations) == 0 {
 			t.Errorf("%s has 0 operations; expected the backing mock's surface", name)
+		}
+	}
+}
+
+// TestProviderNativeServicesHaveOperations is the anti-undersell guard: every
+// provider-native service must report a non-empty operation surface. A wire-only
+// handler (no providers/<prov>/<pkg> mock) gets its operations from
+// nativeWireOperations; without an entry it surfaces as "0 operations" and reads
+// as a stub even though it works. This turns that regression into a failing test
+// so a newly added wire-only service must declare its operations.
+func TestProviderNativeServicesHaveOperations(t *testing.T) {
+	for name, svc := range loadAllServices(t) {
+		if svc.Interface != providerNativeInterface {
+			continue
+		}
+
+		if len(svc.Operations) == 0 {
+			t.Errorf("provider-native service %q has 0 operations; add its wire-served "+
+				"operations to nativeWireOperations in wireops.go", name)
+		}
+	}
+}
+
+// TestNativeWireOperationsAreRegistered guards against a stale nativeWireOperations
+// entry: every key must name a handler package the corresponding provider's
+// server actually registers, so a renamed or removed handler cannot leave dead
+// declared operations behind.
+func TestNativeWireOperationsAreRegistered(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+
+	registered := map[string]map[string]bool{}
+	for _, prov := range providerOrder {
+		pkgs, regErr := registeredHandlerPkgs(root, prov)
+		if regErr != nil {
+			t.Fatalf("registeredHandlerPkgs(%s): %v", prov, regErr)
+		}
+
+		registered[prov] = pkgs
+	}
+
+	for key := range nativeWireOperations {
+		prov, pkg, ok := strings.Cut(key, "/")
+		if !ok {
+			t.Errorf("nativeWireOperations key %q is not \"provider/package\"", key)
+			continue
+		}
+
+		if !registered[prov][pkg] {
+			t.Errorf("nativeWireOperations key %q names no handler registered by server/%s/%s.go", key, prov, prov)
 		}
 	}
 }

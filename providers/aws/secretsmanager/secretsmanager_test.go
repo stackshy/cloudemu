@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
+	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,6 +73,31 @@ func TestCreateSecret(t *testing.T) {
 			assert.NotEmpty(t, info.UpdatedAt)
 		})
 	}
+}
+
+func TestCreateSecretValidatesKMSKey(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	k := kms.New(config.NewOptions(config.WithRegion("us-east-1")))
+	m.SetKMSCrypto(kmscrypto.New(k))
+
+	// An explicit KmsKeyId that names no key is rejected.
+	_, err := m.CreateSecret(ctx, driver.SecretConfig{
+		Name: "bad-key", KMSKeyID: "arn:aws:kms:us-east-1:123456789012:key/does-not-exist",
+	}, []byte("v"))
+	require.Error(t, err)
+
+	// A KmsKeyId that resolves to a real key is accepted and reflected back.
+	key, err := k.CreateKey(ctx, kmsdriver.CreateKeyInput{})
+	require.NoError(t, err)
+
+	info, err := m.CreateSecret(ctx, driver.SecretConfig{Name: "good-key", KMSKeyID: key.KeyID}, []byte("v"))
+	require.NoError(t, err)
+	assert.Equal(t, key.KeyID, info.KMSKeyID)
+
+	// No KmsKeyId means the default aws/secretsmanager key: never validated.
+	_, err = m.CreateSecret(ctx, driver.SecretConfig{Name: "default-key"}, []byte("v"))
+	require.NoError(t, err)
 }
 
 func TestCreateSecretDuplicate(t *testing.T) {

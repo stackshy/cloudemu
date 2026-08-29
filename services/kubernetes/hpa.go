@@ -97,7 +97,7 @@ func (s *ClusterState) hpaComputeDesired(
 func (s *ClusterState) applyHPAScale(dep *appsv1.Deployment, desired int) {
 	r := int32(desired) //nolint:gosec // bounded by maxReplicas, a user-supplied HPA spec field.
 	dep.Spec.Replicas = &r
-	dep.ResourceVersion = bumpResourceVersion(dep.ResourceVersion)
+	dep.ResourceVersion = s.nextClusterRVLocked()
 	s.reconcileDeploymentLocked(dep)
 	s.wDeployments.publish(EventModified, dep.Namespace, *dep.DeepCopy())
 }

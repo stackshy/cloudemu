@@ -53,12 +53,10 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 		pod.Status.PodIPs = []corev1.PodIP{{IP: ip}}
 	}
 
+	s.scheduleNodeLocked(pod)
+
 	pod.Status.Phase = corev1.PodRunning
 	pod.Status.HostIP = nodeHostIP
-
-	if pod.Spec.NodeName == "" {
-		pod.Spec.NodeName = nodeName
-	}
 
 	if pod.Status.StartTime == nil {
 		pod.Status.StartTime = &now
@@ -87,6 +85,11 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 	}
 
 	pod.Status.ContainerStatuses = statuses
+
+	// kubelet "Started" event (deduped per Pod). The scheduler's "Scheduled"
+	// event is emitted by scheduleNodeLocked on node assignment.
+	s.recordEventLocked(objectReferenceForPod(pod), "Started",
+		"Started container "+firstContainerName(pod))
 }
 
 // buildControllerPod builds a Running Pod from a controller's PodTemplateSpec,
@@ -109,13 +112,13 @@ func (s *ClusterState) buildControllerPod(
 	labels[podTemplateHashLabel] = podTemplateHash(tmpl)
 
 	pod := &corev1.Pod{
-		TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
+		TypeMeta: metav1.TypeMeta{Kind: kindPod, APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
 			CreationTimestamp: s.now(),
-			ResourceVersion:   "1",
+			ResourceVersion:   s.nextClusterRVLocked(),
 			Labels:            labels,
 			Annotations:       tmpl.Annotations,
 			OwnerReferences:   []metav1.OwnerReference{owner},
@@ -196,6 +199,9 @@ func (s *ClusterState) syncScaledPods(
 		pod := s.buildControllerPod(namespace, baseName+"-"+shortID(), tmpl, owner)
 		s.pods[podKey(namespace, pod.Name)] = pod
 		s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
+		s.recordEventLocked(objectReferenceForOwner(owner, namespace),
+			"SuccessfulCreate", "Created pod: "+pod.Name)
+
 		owned = append(owned, pod)
 	}
 
@@ -229,6 +235,8 @@ func (s *ClusterState) syncStablePods(
 			pod := s.buildControllerPod(namespace, n, tmpl, owner)
 			s.pods[podKey(namespace, n)] = pod
 			s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
+			s.recordEventLocked(objectReferenceForOwner(owner, namespace),
+				"SuccessfulCreate", "Created pod: "+pod.Name)
 		}
 	}
 
@@ -282,6 +290,12 @@ func (s *ClusterState) matchingEndpointAddressesLocked(svc *corev1.Service) []co
 			continue
 		}
 
+		// A Pod being torn down (staged Terminating) is removed from Endpoints
+		// before it disappears, matching real endpoint-controller behavior.
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+
 		if !labelsMatch(svc.Spec.Selector, pod.Labels) {
 			continue
 		}
@@ -289,7 +303,7 @@ func (s *ClusterState) matchingEndpointAddressesLocked(svc *corev1.Service) []co
 		addrs = append(addrs, corev1.EndpointAddress{
 			IP:        pod.Status.PodIP,
 			NodeName:  strPtr(nodeName),
-			TargetRef: &corev1.ObjectReference{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID},
+			TargetRef: &corev1.ObjectReference{Kind: kindPod, Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID},
 		})
 	}
 
@@ -315,7 +329,7 @@ func (s *ClusterState) writeEndpointsLocked(svc *corev1.Service, subsets []corev
 	}
 
 	ep.Subsets = subsets
-	ep.ResourceVersion = bumpResourceVersion(ep.ResourceVersion)
+	ep.ResourceVersion = s.nextClusterRVLocked()
 	s.endpoints[key] = ep
 	s.wEndpoints.publish(EventModified, svc.Namespace, *ep.DeepCopy())
 
@@ -372,7 +386,7 @@ func (s *ClusterState) syncEndpointSliceLocked(svc *corev1.Service, addrs []core
 	slice.Object["addressType"] = "IPv4"
 	slice.Object["endpoints"] = endpoints
 	slice.Object["ports"] = ports
-	store.stampRVLocked(slice)
+	s.stampRegistryRVLocked(slice)
 	store.items[key] = slice
 	store.watch.publish(EventModified, svc.Namespace, *slice.DeepCopy())
 }
@@ -414,6 +428,8 @@ func labelsMatch(selector, labels map[string]string) bool {
 // ReplicaSet object is not yet materialized; Pods are owned by the Deployment
 // directly — a documented simplification.) Callers hold s.mu.
 func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
+	defaultDeploymentStrategy(dep)
+
 	requested := 1
 	if dep.Spec.Replicas != nil {
 		requested = int(*dep.Spec.Replicas)
@@ -422,9 +438,26 @@ func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 	desired := clampPodCount(requested)
 	noteClampMeta(&dep.ObjectMeta, requested, desired)
 
+	// Emit ScalingReplicaSet only on an actual replica-count change — this
+	// reconcile runs on every create/update/patch, so an ungated emit would fire
+	// on a no-op annotation patch (dedup absorbs volume, not the wrong semantics).
+	prevReplicas := dep.Status.Replicas
+
 	// Interpose a ReplicaSet (Deployment→RS→Pod) rather than owning Pods
 	// directly, matching real Deployment topology.
 	ready := s.syncDeploymentReplicaSetLocked(dep, desired)
+
+	if int32(desired) != prevReplicas { //nolint:gosec // desired is clampPodCount-bounded.
+		verb := "up"
+		if int32(desired) < prevReplicas { //nolint:gosec // bounded.
+			verb = "down"
+		}
+
+		rsName := dep.Name + "-" + podTemplateHash(dep.Spec.Template)
+		s.recordEventLocked(ownerReferenceForMeta(apiVersionAppsV1, "Deployment", &dep.ObjectMeta),
+			"ScalingReplicaSet",
+			fmt.Sprintf("Scaled %s replica set %s to %d", verb, rsName, desired))
+	}
 
 	dep.Status.Replicas = ready
 	dep.Status.ReadyReplicas = ready
@@ -453,6 +486,8 @@ func reconcileReplicaSet(s *ClusterState, obj *unstructured.Unstructured) {
 }
 
 func reconcileStatefulSet(s *ClusterState, obj *unstructured.Unstructured) {
+	defaultStatefulSetStrategy(obj)
+
 	requested := rawReplicasOf(obj)
 	desired := clampPodCount(requested)
 	noteClampUnstructured(obj, requested, desired)
@@ -469,6 +504,8 @@ func reconcileStatefulSet(s *ClusterState, obj *unstructured.Unstructured) {
 }
 
 func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
+	defaultDaemonSetStrategy(obj)
+
 	// A DaemonSet runs one Pod per node whose labels satisfy the template's
 	// nodeSelector. With a single synthetic node, a non-matching selector yields
 	// zero Pods (rather than the previous unconditional one).
@@ -598,6 +635,9 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 	if completions > 0 {
 		_ = unstructured.SetNestedSlice(obj.Object,
 			[]any{map[string]any{"type": "Complete", "status": "True"}}, "status", "conditions")
+
+		s.recordEventLocked(objectReferenceForUnstructured(obj), "Completed",
+			"Job completed")
 	}
 }
 
@@ -665,7 +705,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 			pvc.SetUID(types.UID(newUID()))
 			pvc.SetCreationTimestamp(s.now())
 			pvc.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(sts)})
-			store.stampRVLocked(pvc)
+			s.stampRegistryRVLocked(pvc)
 			store.items[key] = pvc
 			store.watch.publish(EventAdded, sts.GetNamespace(), *pvc.DeepCopy())
 		}
@@ -682,35 +722,6 @@ func ownerRefOf(obj *unstructured.Unstructured) metav1.OwnerReference {
 		UID:        obj.GetUID(),
 		Controller: boolPtr(true), BlockOwnerDeletion: boolPtr(true),
 	}
-}
-
-// newNodeObject builds the single synthetic Node the emulator schedules every
-// Pod onto. It is marked Ready with an InternalIP so tooling that inspects node
-// health or addresses (kubectl get nodes, scheduler-style field selectors) sees
-// a consistent, healthy node.
-func newNodeObject() *unstructured.Unstructured {
-	node := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Node",
-		"metadata": map[string]any{
-			"name":              nodeName,
-			"labels":            map[string]any{"kubernetes.io/hostname": nodeName},
-			"creationTimestamp": nil,
-		},
-		"status": map[string]any{
-			"conditions": []any{
-				map[string]any{"type": "Ready", "status": "True", "reason": "KubeletReady"},
-			},
-			"addresses": []any{
-				map[string]any{"type": "InternalIP", "address": nodeHostIP},
-				map[string]any{"type": "Hostname", "address": nodeName},
-			},
-		},
-	}}
-	node.SetUID(types.UID(newUID()))
-	node.SetResourceVersion("1")
-
-	return node
 }
 
 // maxReconciledPods caps how many Pods a single controller materializes. The

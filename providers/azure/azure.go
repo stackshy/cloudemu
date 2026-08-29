@@ -161,6 +161,13 @@ type Provider struct {
 	// Region is the Azure location this provider serves.
 	Region string
 
+	// EnforceAuth mirrors config.Options.EnforceAuth: when true the Azure wire
+	// server validates the claims of each request's Bearer token (audience,
+	// expiry, principal) and rejects bad/missing tokens with 401. The token
+	// signature is not verified (cloudemu has no Azure AD signing key). Off by
+	// default.
+	EnforceAuth bool
+
 	// engineClosers holds any wired real engines that implement io.Closer, so
 	// Close can cascade teardown to them. Empty for the in-memory default.
 	engineClosers []io.Closer
@@ -200,12 +207,16 @@ func New(opts ...config.Option) *Provider {
 		Search:             search.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
+		EnforceAuth:        o.EnforceAuth,
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.VirtualMachines.SetNICAttacher(p.VNet)
 	p.BlobStorage.SetMonitoring(p.Monitor)
 	p.CosmosDB.SetMonitoring(p.Monitor)
 	p.Functions.SetMonitoring(p.Monitor)
+	// Azure Functions invocations write execution logs (and captured stdout/
+	// stderr on the real-engine path) to Log Analytics.
+	p.Functions.SetLogSink(p.LogAnalytics)
 	p.ServiceBus.SetMonitoring(p.Monitor)
 	p.Cache.SetMonitoring(p.Monitor)
 	p.LogAnalytics.SetMonitoring(p.Monitor)
@@ -236,6 +247,7 @@ func New(opts ...config.Option) *Provider {
 			ScaleSets:       vmssDiscovery{p.VirtualMachines},
 			AppServicePlans: appServicePlanDiscovery{p.Functions},
 			Secrets:         p.KeyVault,
+			KeyVaults:       p.KeyVault,
 			ContainerReg:    p.ACR,
 			MessageQueue:    p.ServiceBus,
 			Notification:    p.NotificationHubs,

@@ -482,7 +482,10 @@ func TestTestState(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	res, err := m.TestState(ctx, driver.TestStateInput{Definition: definition, Input: `{"a":1}`})
+	// TestState evaluates a single state definition (not a whole machine).
+	res, err := m.TestState(ctx, driver.TestStateInput{
+		Definition: `{"Type":"Pass","End":true}`, Input: `{"a":1}`,
+	})
 	if err != nil {
 		t.Fatalf("TestState: %v", err)
 	}

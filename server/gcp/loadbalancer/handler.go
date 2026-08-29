@@ -34,6 +34,7 @@ package loadbalancer
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -73,12 +74,14 @@ func New(lb lbdriver.LoadBalancer) *Handler {
 // the compute handler's /operations poll route.
 func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
-// Matches returns true for /compute/v1/.../backendServices|forwardingRules
-// URLs. Disjoint from the compute (instances/operations/disks/…) and networks
-// (networks/subnetworks/firewalls) handlers, so registration order is
-// unconstrained.
+// Matches returns true for the load-balancing resource types — backendServices,
+// forwardingRules, healthChecks, targetPools, urlMaps, the L7 front-end chain
+// (targetHttpProxies, targetHttpsProxies, sslCertificates) and instanceGroups /
+// regionInstanceGroups. Disjoint from the compute (instances/operations/disks/…)
+// and networks (networks/subnetworks/firewalls) handlers, so registration order
+// is unconstrained.
 func (*Handler) Matches(r *http.Request) bool {
-	rp, ok := gcprest.ParsePath(r.URL.Path)
+	rp, ok := parseLBPath(r.URL.Path)
 	if !ok {
 		return false
 	}
@@ -92,7 +95,9 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	switch rp.ResourceType {
 	case resourceBackendServices, resourceForwardingRules,
-		resourceHealthChecks, resourceTargetPools, resourceURLMaps:
+		resourceHealthChecks, resourceTargetPools, resourceURLMaps,
+		resourceTargetHTTPProxies, resourceTargetHTTPSProxies, resourceSslCertificates,
+		resourceInstanceGroups, resourceRegionInstanceGroups:
 		return true
 	}
 
@@ -101,7 +106,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP routes the request based on resource type and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	rp, ok := gcprest.ParsePath(r.URL.Path)
+	rp, ok := parseLBPath(r.URL.Path)
 	if !ok {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed path")
 		return
@@ -114,6 +119,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeForwardingRules(w, r, rp)
 	case resourceHealthChecks, resourceTargetPools, resourceURLMaps:
 		h.routeGCPResource(w, r, rp)
+	case resourceTargetHTTPProxies, resourceTargetHTTPSProxies, resourceSslCertificates,
+		resourceInstanceGroups, resourceRegionInstanceGroups:
+		h.routeL7Resource(w, r, rp)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unknown resource type")
 	}
@@ -177,3 +185,45 @@ func (h *Handler) routeForwardingRules(w http.ResponseWriter, r *http.Request, r
 		gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 	}
 }
+
+// parseLBPath parses a load-balancing request path, adding one form the generic
+// gcprest.ParsePath deliberately rejects: the scopeless-global action URL the
+// compute SDK uses for a few global target-proxy actions, e.g.
+// /compute/v1/projects/{p}/targetHttpProxies/{name}/setUrlMap (no /global/
+// segment). Only the two global target-proxy types opt into that form; every
+// other path still goes through the strict parser unchanged.
+func parseLBPath(path string) (gcprest.ResourcePath, bool) {
+	if rp, ok := gcprest.ParsePath(path); ok {
+		return rp, true
+	}
+
+	const projects = gcprest.BasePrefix + "projects/"
+	if !strings.HasPrefix(path, projects) {
+		return gcprest.ResourcePath{}, false
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, projects), "/")
+	if len(parts) < scopelessMinParts {
+		return gcprest.ResourcePath{}, false
+	}
+
+	if parts[1] != resourceTargetHTTPProxies && parts[1] != resourceTargetHTTPSProxies {
+		return gcprest.ResourcePath{}, false
+	}
+
+	rp := gcprest.ResourcePath{
+		Project:      parts[0],
+		Scope:        gcprest.ScopeGlobal,
+		ResourceType: parts[1],
+		ResourceName: parts[2],
+	}
+	if len(parts) > scopelessMinParts {
+		rp.Action = parts[3]
+	}
+
+	return rp, true
+}
+
+// scopelessMinParts is the segment count of a scopeless-global named-resource
+// path (project / type / name).
+const scopelessMinParts = 3

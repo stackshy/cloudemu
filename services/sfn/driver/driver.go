@@ -3,11 +3,12 @@
 // verbatim), executions, execution history, activities, tags, and — where the
 // SDK exposes them — state-machine versions and aliases.
 //
-// The emulator does NOT interpret the Amazon States Language: StartExecution
-// completes an execution immediately (RUNNING then SUCCEEDED) with output
-// echoing the input, and GetExecutionHistory synthesizes a minimal but valid
-// event list. This keeps behavior deterministic and dependency-free while
-// preserving the SDK wire shapes.
+// The emulator interprets the Amazon States Language with a real state-graph
+// walker (see providers/aws/sfn/asl): StartExecution walks the definition from
+// StartAt following Next/End, computes the true terminal status and output, and
+// records a per-state event history. Execution completes synchronously; the
+// settle overlay keeps RUNNING->SUCCEEDED/FAILED observable under AsyncSettle.
+// The interpreter is dependency-free and deterministic (driven by config.Clock).
 package driver
 
 import (
@@ -120,6 +121,9 @@ type Execution struct {
 	Cause           string
 	StartDate       time.Time
 	StopDate        time.Time
+	// History is the full per-state event list the interpreter produced, stored
+	// on the execution so it round-trips through snapshot/persist for free.
+	History []HistoryEvent
 }
 
 // HistoryEvent is one entry in an execution's event history.
@@ -134,6 +138,13 @@ type HistoryEvent struct {
 	// ExecutionSucceeded and StateExited events.
 	Input  string
 	Output string
+	// Error and Cause are set on failure/abort events (ExecutionFailed,
+	// FailStateEntered, ExecutionAborted, LambdaFunctionFailed).
+	Error string
+	Cause string
+	// Resource names the integration a task sub-event targets (e.g. the Task
+	// Resource ARN on a LambdaFunctionScheduled event).
+	Resource string
 }
 
 // Activity is a task worker registration.
@@ -275,6 +286,8 @@ type SFN interface {
 	StartExecution(ctx context.Context, in StartExecutionInput) (*Execution, error)
 	StartSyncExecution(ctx context.Context, in StartExecutionInput) (*Execution, error)
 	DescribeExecution(ctx context.Context, arn string) (*Execution, error)
+	// StopExecution aborts a still-settling execution, persisting the caller's
+	// errCode/cause onto the execution's Error/Cause fields.
 	StopExecution(ctx context.Context, arn, errCode, cause string) (time.Time, error)
 	ListExecutions(ctx context.Context, stateMachineArn, statusFilter string) ([]Execution, error)
 	GetExecutionHistory(ctx context.Context, arn string, reverse bool) ([]HistoryEvent, error)

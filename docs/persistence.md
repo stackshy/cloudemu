@@ -18,7 +18,7 @@ Two properties make this more than a naive dump:
   EC2 instance keeps its `i-…` ID, not a freshly minted one.
 
 The snapshot is one human-readable, `git`-diffable JSON file that spans every
-provider (schema version 3).
+provider plus the shared Kubernetes data plane (schema version 4).
 
 ## Which surface should I use?
 
@@ -29,13 +29,13 @@ provider (schema version 3).
 | Export or replace the whole state over HTTP | `GET`/`POST /_cloudemu/snapshot` |
 | Save/restore state from Go code | the [`persist`](https://pkg.go.dev/github.com/stackshy/cloudemu/v2/persist) package |
 
-## `--persist` (auto save on stop, restore on start)
+## `--persist` (always-on durability)
 
 Pass `--persist` to the background server and your resources survive a
-`stop`→`start` cycle:
+`stop`→`start` cycle **and a crash**:
 
 ```sh
-cloudemu start --persist          # save on stop, restore on start
+cloudemu start --persist          # save periodically + on stop, restore on start
 # create buckets / tables / instances / secrets …
 cloudemu stop                     # writes <run-dir>/snapshot.json
 cloudemu start --persist          # your resources are back, same IDs
@@ -53,6 +53,82 @@ cloudemu serve --persist --state-file ./state.json --persist-metadata-only  # sk
 By default the snapshot **includes object bodies** (an S3 object comes back with
 its contents). `--persist-metadata-only` keeps only the resource structure for a
 smaller file; restored objects then come back as zero-byte keys until re-uploaded.
+
+### Save strategy (`--persist-strategy`, `--persist-interval`)
+
+`--persist` is **always-on** by default: it saves in the background while the
+server runs, so a `kill -9`, panic, OOM, or power loss loses **at most the last
+interval's** worth of changes — not everything since boot. Choose *when* to save
+with `--persist-strategy` (env `CLOUDEMU_PERSIST_STRATEGY`):
+
+| Strategy | When it saves | Loss window on a hard crash |
+|----------|---------------|-----------------------------|
+| `scheduled` *(default)* | every `--persist-interval` (default `15s`) if state changed, plus on shutdown | ≤ interval |
+| `on-request` | shortly after mutations settle, and at least once per second under a continuous write stream, plus on shutdown | ≤ ~1s |
+| `on-shutdown` | only on graceful shutdown (the pre-1.x behavior) | everything since boot |
+| `manual` | never automatically — only `snapshot`/`POST /_cloudemu/snapshot` | everything not manually saved |
+
+```sh
+cloudemu serve --persist --state-file ./state.json                        # scheduled, 15s
+cloudemu serve --persist --state-file ./state.json --persist-interval 5s  # scheduled, 5s
+cloudemu serve --persist --state-file ./state.json --persist-strategy on-request
+cloudemu serve --persist --state-file ./state.json --persist-strategy manual
+```
+
+The strategy flags are meaningful only with `--persist` (a warning is printed if
+they are set without it). Both `cloudemu serve` and the batteries-included
+`cloudemu-server` accept the same flags and env vars.
+
+A few properties worth knowing:
+
+- Saves run on a **background goroutine** — never in the request path, so
+  `on-request` (unlike LocalStack's `ON_REQUEST`) never blocks a client call.
+- At most **one save is in flight** at a time; signals arriving mid-save are
+  coalesced and re-checked when it returns, so a save slower than the interval
+  never piles up.
+- **Object bodies are persisted on every save by default** — background,
+  on-request, and shutdown saves all include object bodies, so an S3 object is
+  crash-safe (restored with its contents, not as an empty key), matching
+  LocalStack. Pass `--persist-metadata-only` to drop bodies from every save for a
+  smaller/faster snapshot; restored objects then come back as zero-byte keys until
+  re-uploaded.
+
+### Crash-safe writes
+
+Each save is written **atomically**: to a temp file, `fsync`ed, `rename`d onto the
+target, and the parent directory is then `fsync`ed — so an interrupted or
+power-lost write leaves the previous snapshot (or none) but never a
+truncated/empty state file. On **macOS** this is best-effort: Go's `File.Sync`
+issues `fsync(2)`, which does not flush the drive's own write cache (a true device
+flush needs `fcntl(F_FULLFSYNC)`, not issued here), so darwin gives no hard
+power-loss guarantee.
+
+### Kubernetes data-plane
+
+The shared **Kubernetes data-plane** is persisted too. Everything a client
+created against an EKS/AKS/GKE cluster's kubeconfig endpoint — Namespaces, Pods,
+Deployments, Services and their Endpoints, ConfigMaps/Secrets, every
+registry-backed kind (ReplicaSets, Jobs, Ingresses, …), and **CustomResource­
+Definitions with their custom resources** — survives a stop/start and a crash,
+**keyed by the same cluster UID the kubeconfig embeds**. So after a restart,
+`DescribeCluster` returns the *same* `…/k8s/<uid>` endpoint and that endpoint
+still answers with the pods/deployments it held before — a kubeconfig captured
+before the restart stays valid verbatim. The cluster-wide `resourceVersion` and
+the Service-ClusterIP / Pod-IP allocators round-trip as well, so a post-restore
+`kubectl` create advances from the restored state rather than colliding with it.
+
+**Emulation limit — watch resumption.** A restart severs the TLS connection, so a
+`kubectl`/informer watch that was open before the crash reconnects and **relists**
+(client-go's normal behavior on a dropped watch) rather than resuming from its
+last `resourceVersion` — the data plane keeps no cross-restart watch-event
+history. The relist returns the restored state correctly; only the in-flight
+event stream is not replayed.
+
+### vs LocalStack
+
+LocalStack gates state persistence behind its **paid** tier; CloudEmu's is
+**free**. The strategy matrix mirrors LocalStack's `SNAPSHOT_SAVE_STRATEGY`
+(`SCHEDULED`/`ON_REQUEST`/`ON_SHUTDOWN`/`MANUAL`) so the mental model carries over.
 
 ## Named snapshots (`snapshot save` / `load` / `list` / `delete`)
 

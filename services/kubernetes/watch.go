@@ -12,19 +12,43 @@ import (
 
 // serveWatch is the shared body of every typed watch handler: subscribe and
 // snapshot under one RLock (the ordering streamWatch's contract requires), then
-// stream selector-filtered events. collect runs under the held RLock.
+// stream selector-filtered events. collect runs under the held RLock. apiVersion
+// and kind identify the resource so a post-sync BOOKMARK can carry the current
+// list-level resourceVersion (client-go WatchList resume insurance).
 func serveWatch[T any](
 	s *ClusterState, w http.ResponseWriter, r *http.Request,
-	b *broadcaster, namespace string, collect func() []T, keep func(T) bool,
+	b *broadcaster, namespace, apiVersion, kind string, collect func() []T, keep func(T) bool,
 ) {
+	initial := watchSendInitialEvents(r)
+
 	s.mu.RLock()
 	sub := b.subscribe(namespace)
 	items := collect()
+	rv := s.clusterRVLocked()
 	s.mu.RUnlock()
 	streamWatch(r.Context(), w, sub, items, keep, watchOpts{
-		resume:    watchResume(r),
-		bookmarks: watchBookmarksEnabled(r),
+		resume:      watchResume(r) && !initial,
+		bookmarks:   watchBookmarksEnabled(r) || initial,
+		bookmarkObj: typedBookmark(apiVersion, kind, rv, initial),
 	})
+}
+
+// typedBookmark builds the minimal object a BOOKMARK watch event carries for a
+// typed kind: its apiVersion/kind and the current cluster resourceVersion. When
+// initialEvents is set (a WatchList streaming-list request), the object also
+// carries the k8s.io/initial-events-end annotation that tells a client-go
+// reflector the initial state has been fully replayed — without it modern
+// kubectl (rollout status / get -w / wait) blocks forever.
+func typedBookmark(apiVersion, kind, rv string, initialEvents bool) *metav1.PartialObjectMetadata {
+	bm := &metav1.PartialObjectMetadata{
+		TypeMeta:   metav1.TypeMeta{APIVersion: apiVersion, Kind: kind},
+		ObjectMeta: metav1.ObjectMeta{ResourceVersion: rv},
+	}
+	if initialEvents {
+		bm.Annotations = map[string]string{metav1.InitialEventsAnnotationKey: watchQueryValue}
+	}
+
+	return bm
 }
 
 // watchOpts carries the per-request watch behaviors parsed from the query.
@@ -40,8 +64,9 @@ type watchOpts struct {
 	bookmarks bool
 	// bookmarkObj, when non-nil and bookmarks is set, is emitted once after the
 	// initial sync as a BOOKMARK event carrying the current resourceVersion, so
-	// the client can resume from it without a relist. Only registry-backed kinds
-	// (which track a store resourceVersion) supply one.
+	// the client can resume from it without a relist. For a WatchList request
+	// (sendInitialEvents=true) it also carries the k8s.io/initial-events-end
+	// annotation marking the end of the initial-state replay.
 	bookmarkObj any
 }
 
@@ -56,6 +81,18 @@ func watchResume(r *http.Request) bool {
 // watchBookmarksEnabled reports whether the client opted into BOOKMARK events.
 func watchBookmarksEnabled(r *http.Request) bool {
 	return r.URL.Query().Get("allowWatchBookmarks") == watchQueryValue
+}
+
+// watchSendInitialEvents reports whether the request is a WatchList
+// streaming-list (`sendInitialEvents=true`): the current state is streamed as
+// ADDED events, then a terminal BOOKMARK carrying the initial-events-end
+// annotation is emitted. kubectl 1.30+ (rollout status / get -w / wait) and
+// modern client-go informers default to this protocol and block until they see
+// that annotated bookmark. resourceVersionMatch=NotOlderThan with an empty/"0"
+// resourceVersion means "current state then stream", so the initial replay is
+// always performed (resume is forced off by the caller).
+func watchSendInitialEvents(r *http.Request) bool {
+	return r.URL.Query().Get("sendInitialEvents") == watchQueryValue
 }
 
 // parseListSelectors extracts the labelSelector and fieldSelector from a list

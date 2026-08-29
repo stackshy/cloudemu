@@ -48,6 +48,34 @@ OCI's `iam` service · portable interface `driver.IAM` · [OCI index](./README.m
 | `RemoveUserFromGroup` |  |
 | `SetDefaultPolicyVersion` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AccessKeyResolver
+
+AccessKeyResolver is an optional capability: an IAM implementation that can
+
+| Operation | Description |
+| --- | --- |
+| `AccessKeyByID` |  |
+
+### ContextualAuthorizer
+
+ContextualAuthorizer is an optional capability: an IAM implementation that can
+
+| Operation | Description |
+| --- | --- |
+| `CheckPermissionWithContext` |  |
+
+### PolicyInspector
+
+PolicyInspector is an optional capability: an IAM implementation that can
+
+| Operation | Description |
+| --- | --- |
+| `PrincipalHasPolicies` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

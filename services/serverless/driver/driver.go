@@ -66,10 +66,21 @@ type AliasConfig struct {
 	RoutingConfig   *AliasRoutingConfig // for weighted aliases
 }
 
-// AliasRoutingConfig defines weighted routing between versions.
+// Version-weight bounds real Lambda enforces on an alias's
+// AdditionalVersionWeights: each weight is a traffic fraction in [0.0, 1.0], and
+// the additional weights sum to at most 1.0 (the remainder is the primary
+// version's share).
+const (
+	MinVersionWeight = 0.0
+	MaxVersionWeight = 1.0
+)
+
+// AliasRoutingConfig defines weighted routing between versions. It mirrors the
+// AWS Lambda AliasRoutingConfiguration shape: AdditionalVersionWeights maps a
+// published version to the fraction of traffic (0.0-1.0) it receives; the
+// remaining traffic goes to the alias's primary FunctionVersion.
 type AliasRoutingConfig struct {
-	AdditionalVersion string
-	Weight            float64 // 0.0-1.0, traffic percentage to additional version
+	AdditionalVersionWeights map[string]float64
 }
 
 // Alias represents a function alias.
@@ -222,7 +233,7 @@ type FunctionInfo struct {
 type InvokeInput struct {
 	FunctionName string
 	Payload      []byte
-	InvokeType   string // "RequestResponse" or "Event"
+	InvokeType   string // "RequestResponse", "Event", or "DryRun"
 	// Qualifier selects a published version (a numeric version string) or
 	// alias to invoke instead of the mutable $LATEST code. Empty invokes
 	// $LATEST, matching the AWS Lambda Invoke Qualifier parameter.
@@ -239,6 +250,11 @@ type InvokeOutput struct {
 	// names a version, or "$LATEST" for an unqualified invoke. Mirrors the
 	// AWS Lambda Invoke ExecutedVersion response field.
 	ExecutedVersion string
+	// Logs is the stdout/stderr the invocation produced on the real-engine
+	// path (empty for stub/handler invocations). It is surfaced to the log
+	// service (CloudWatch Logs / Cloud Logging / Log Analytics) rather than
+	// returned on the wire.
+	Logs string
 }
 
 // HandlerFunc is a function handler that processes invocations.

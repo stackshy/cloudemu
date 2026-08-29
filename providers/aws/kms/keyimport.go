@@ -190,7 +190,7 @@ func (m *Mock) ReplicateKey(_ context.Context, in driver.ReplicateKeyInput) (*dr
 
 	kd.meta.ReplicaRegions = appendUnique(kd.meta.ReplicaRegions, in.ReplicaRegion)
 	if kd.meta.PrimaryRegion == "" {
-		kd.meta.PrimaryRegion = m.opts.Region
+		kd.meta.PrimaryRegion = arnRegion(kd.meta.ARN, m.opts.Region)
 	}
 
 	desc := in.Description

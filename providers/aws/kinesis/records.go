@@ -111,7 +111,7 @@ func shardForHashKey(shards []*shardState, key *big.Int) *shardState {
 // it, returning the assigned shard id and sequence number.
 //
 //nolint:gocritic // in is the public PutRecord input, taken by value to match the driver API
-func (m *Mock) PutRecord(_ context.Context, in driver.PutRecordInput) (*driver.PutRecordResult, error) {
+func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver.PutRecordResult, error) {
 	if in.PartitionKey == "" {
 		return nil, invalidArg("PartitionKey is required")
 	}
@@ -122,28 +122,39 @@ func (m *Mock) PutRecord(_ context.Context, in driver.PutRecordInput) (*driver.P
 	}
 
 	sd.mu.Lock()
-	defer sd.mu.Unlock()
 
 	if limit := recordSizeLimit(sd); len(in.Data) > limit {
+		sd.mu.Unlock()
 		return nil, validationErr("record data of %d bytes exceeds the %d-byte limit", len(in.Data), limit)
 	}
 
 	shard, seq, err := m.appendRecord(sd, in.PartitionKey, in.ExplicitHashKey, in.Data)
 	if err != nil {
+		sd.mu.Unlock()
 		return nil, err
 	}
 
-	return &driver.PutRecordResult{
+	res := &driver.PutRecordResult{
 		ShardID:        shard,
 		SequenceNumber: seq,
 		EncryptionType: sd.desc.EncryptionType,
-	}, nil
+	}
+	esm := driver.LambdaEventRecord{
+		ShardID: shard, SequenceNumber: seq, PartitionKey: in.PartitionKey,
+		Data: in.Data, ArrivalTime: m.now(),
+	}
+	streamARN := m.streamARN(ctx, sd.desc.StreamName)
+	sd.mu.Unlock()
+
+	m.deliverToLambda(ctx, streamARN, []driver.LambdaEventRecord{esm})
+
+	return res, nil
 }
 
 // PutRecords appends a batch of records, returning a per-entry result (records
 // never fail individually in the emulator) and the failed count.
 func (m *Mock) PutRecords(
-	_ context.Context, name, arn string, entries []driver.PutRecordsRequestEntry,
+	ctx context.Context, name, arn string, entries []driver.PutRecordsRequestEntry,
 ) ([]driver.PutRecordsResultEntry, int32, error) {
 	if len(entries) == 0 {
 		return nil, 0, invalidArg("Records must contain at least one entry")
@@ -160,13 +171,14 @@ func (m *Mock) PutRecords(
 	}
 
 	sd.mu.Lock()
-	defer sd.mu.Unlock()
 
 	if err := validateBatchSize(sd, entries); err != nil {
+		sd.mu.Unlock()
 		return nil, 0, err
 	}
 
 	out := make([]driver.PutRecordsResultEntry, 0, len(entries))
+	esm := make([]driver.LambdaEventRecord, 0, len(entries))
 
 	for i := range entries {
 		if entries[i].PartitionKey == "" {
@@ -187,6 +199,10 @@ func (m *Mock) PutRecords(
 		}
 
 		out = append(out, driver.PutRecordsResultEntry{ShardID: shard, SequenceNumber: seq})
+		esm = append(esm, driver.LambdaEventRecord{
+			ShardID: shard, SequenceNumber: seq, PartitionKey: entries[i].PartitionKey,
+			Data: entries[i].Data, ArrivalTime: m.now(),
+		})
 	}
 
 	var failed int32
@@ -196,6 +212,11 @@ func (m *Mock) PutRecords(
 			failed++
 		}
 	}
+
+	streamARN := m.streamARN(ctx, sd.desc.StreamName)
+	sd.mu.Unlock()
+
+	m.deliverToLambda(ctx, streamARN, esm)
 
 	return out, failed, nil
 }

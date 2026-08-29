@@ -11,9 +11,11 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
@@ -35,6 +37,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
@@ -177,9 +180,18 @@ type Provider struct {
 	Glue                *glue.Mock
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
+	APIGateway          *apigateway.Mock
+	CloudFormation      *cloudformation.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
+	// EnforceAuth mirrors config.Options.EnforceAuth: when true the AWS wire
+	// server verifies each request's SigV4 signature. Off by default.
+	EnforceAuth bool
+	// Clock mirrors config.Options.Clock: it drives SigV4 timestamp-expiry and
+	// STS temporary-credential expiry when EnforceAuth is on. Threaded to the
+	// wire server so a FakeClock stays deterministic there too.
+	Clock config.Clock
 
 	// engineClosers holds any wired real engines that implement io.Closer, so
 	// Close can cascade teardown to them. Empty for the in-memory default.
@@ -233,8 +245,11 @@ func New(opts ...config.Option) *Provider {
 		Glue:                glue.New(o),
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
+		APIGateway:          apigateway.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
+		EnforceAuth:         o.EnforceAuth,
+		Clock:               o.Clock,
 		engineClosers:       o.EngineClosers(),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
@@ -264,12 +279,22 @@ func New(opts ...config.Option) *Provider {
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)
+	// Secrets Manager and SSM SecureString values are encrypted through real KMS
+	// (envelope encryption): a KmsKeyId is validated to exist, the value is stored
+	// as genuine ciphertext, and a later disabled/deleted key makes reads fail as
+	// in AWS. Both services share one Envelope over the KMS backend.
+	kmsCrypto := kmscrypto.New(p.KMS)
+	p.SecretsManager.SetKMSCrypto(kmsCrypto)
+	p.SSM.SetKMSCrypto(kmsCrypto)
 	p.SSM.SetInstanceResolver(p.EC2)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
 	p.ECS.SetManagedInstanceLauncher(p.EC2)
 	// Engine-backed ECS tasks push their awslogs container output to CloudWatch Logs.
 	p.ECS.SetLogSink(p.CloudWatchLogs)
+	// Lambda invocations write START/END/REPORT lines (and captured stdout/stderr
+	// on the real-engine path) to CloudWatch Logs under /aws/lambda/<name>.
+	p.Lambda.SetLogSink(p.CloudWatchLogs)
 	// A service's loadBalancers[] register/deregister RUNNING tasks with their
 	// ELBv2 target group as the scheduler converges/drains the service.
 	p.ECS.SetTargetRegistrar(p.ELB)
@@ -298,6 +323,31 @@ func New(opts ...config.Option) *Provider {
 	p.EventBridge.SetLambdaInvoker(p.Lambda)
 	p.EventBridge.SetSNSPublisher(p.SNS)
 	p.EventBridge.SetStepFunctionsStarter(p.SFN)
+	// Step Functions -> Lambda: a Task state (arn:aws:states:::lambda:invoke or a
+	// bare Lambda function ARN) invokes the function synchronously through the
+	// recursion-guarded InvokeSync seam, so a Task->Lambda->StartExecution->Task
+	// cycle terminates at recursionguard.MaxDepth instead of overflowing.
+	p.SFN.SetLambdaSyncInvoker(p.Lambda)
+	// API Gateway -> Lambda: a data-plane request to a deployed REST API resolves
+	// its AWS_PROXY integration to a Lambda ARN and invokes the function through
+	// the same recursion-guarded InvokeSync seam, returning the function's
+	// {statusCode,headers,body} as the HTTP response.
+	p.APIGateway.SetLambdaInvoker(p.Lambda)
+	wirePostBuildServices(o, p)
+
+	p.ResourceDiscovery = resourcediscovery.New(
+		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
+	)
+
+	return p
+}
+
+// wirePostBuildServices runs the cross-service wiring that must happen after
+// every service mock exists: the Lambda event-source delivery seams, and the
+// CloudFormation orchestrator, whose provisioner registry reads the live service
+// mocks. It is split out of New so the factory stays within the function-length
+// budget; the wiring-parity test scans this helper as if it were New().
+func wirePostBuildServices(o *config.Options, p *Provider) {
 	// S3 event notifications deliver to their configured targets: SQS queues,
 	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
@@ -310,16 +360,19 @@ func New(opts ...config.Option) *Provider {
 	// event-source-mapping target(s), deleting the message on success or
 	// leaving it for DLQ redrive on failure (mirrors the DynamoDB Streams wiring).
 	p.SQS.SetEventSourceInvoker(p.Lambda)
+	// Kinesis -> Lambda: records written to a stream (PutRecord/PutRecords)
+	// deliver a Kinesis-shaped event batch to the stream's event-source-mapping
+	// target(s) (mirrors the DynamoDB Streams -> Lambda wiring).
+	p.Kinesis.SetLambdaInvoker(p.Lambda)
 	// CloudWatch Logs subscription filters -> Lambda: log events matching a
 	// subscription filter's pattern are delivered (gzipped awslogs payload) to
 	// the filter's Lambda destination on PutLogEvents.
 	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
-
-	p.ResourceDiscovery = resourcediscovery.New(
-		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
-	)
-
-	return p
+	// CloudFormation is an orchestrator: it provisions each stack resource by
+	// calling the matching service driver, so its registry is built from the
+	// live mocks rather than a store of its own.
+	p.CloudFormation = cloudformation.New(o)
+	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's
@@ -344,8 +397,13 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 		LoadBalancer: p.ELB,
 		Monitoring:   p.CloudWatch,
 		IAM:          p.IAM,
+		// Taggers extends the Resource Groups Tagging API to every other AWS
+		// service that carries a tag store but has no discovery-driver hook here,
+		// routing each ARN to the service's own tag methods.
+		Taggers: awsTaggers(p),
 		Extra: []resourcediscovery.GenericResources{
 			sagemakerDiscovery{p.SageMaker},
+			taggedDiscovery{p},
 		},
 	}
 }

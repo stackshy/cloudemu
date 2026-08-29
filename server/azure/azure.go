@@ -9,6 +9,7 @@ package azure
 import (
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
@@ -175,6 +176,20 @@ type Drivers struct {
 	// TenantID is the Azure AD tenant reported by the subscriptions Get/List and
 	// the global tenants list. Empty falls back to defaultTenantID.
 	TenantID string
+	// EnforceAuth turns on Azure claims-based bearer authentication: each
+	// incoming request must carry an "Authorization: Bearer <jwt>" whose claims
+	// validate (accepted Azure audience, un-expired "exp", a principal claim),
+	// and the resolved principal is attached to the request context. Missing,
+	// malformed, expired or wrong-audience tokens are rejected with 401
+	// InvalidAuthenticationToken. Off by default, which accepts any credentials
+	// exactly as before.
+	//
+	// Because cloudemu does not hold Azure AD's signing key, the token SIGNATURE
+	// is NOT verified — only its structure and claims are. This is a documented
+	// limitation, distinct from AWS SigV4 where the shared secret lets the
+	// emulator verify signatures. This gate is authentication only; RBAC
+	// authorization is a follow-up.
+	EnforceAuth bool
 }
 
 // defaultTenantID is reported when Drivers.TenantID is unset, so a caller
@@ -269,6 +284,12 @@ func New(d Drivers) http.Handler {
 	if d.Monitor != nil {
 		srv.Register(monitor.NewMetricsHandler(d.Monitor))
 		srv.Register(monitor.NewDiagnosticSettingsHandler())
+		// Activity Log read API — registered only when the monitoring backend
+		// supports the recorder capability, so its suffix match wins over any
+		// resource handler for .../eventtypes/management/values.
+		if alh := monitor.NewActivityLogHandler(d.Monitor); alh != nil {
+			srv.Register(alh)
+		}
 	}
 
 	// Register more-specific compute resource handlers first so their
@@ -498,6 +519,14 @@ func New(d Drivers) http.Handler {
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
 		srv.Register(keyvaultsrv.New(d.KeyVault))
+		// Key Vault ARM control plane (Microsoft.KeyVault/vaults). A unique ARM
+		// provider name among Azure handlers, so registration order is
+		// unconstrained; registered only when the backend implements the
+		// KeyVaultVaults surface. Disjoint from the /secrets, /keys and
+		// /certificates data-plane handlers below.
+		if vaults, ok := d.KeyVault.(secretsdriver.KeyVaultVaults); ok {
+			srv.Register(keyvaultsrv.NewVaultARM(vaults))
+		}
 		// Keys data-plane matches /keys and /deletedkeys — disjoint from the
 		// /secrets surface above and from ARM. Registered only when the backend
 		// implements the KeyVaultKeys surface.
@@ -545,6 +574,22 @@ func New(d Drivers) http.Handler {
 	// ARM-specific resource handlers.
 	if d.BlobStorage != nil {
 		srv.Register(blobstorage.New(d.BlobStorage))
+	}
+
+	// Opt-in claims-based bearer authentication. Installed only when enabled, so
+	// the default request path is byte-for-byte unchanged. Registered on the raw
+	// server so the pre-dispatch gate runs before handler matching (and before
+	// the unmodeled-property overlay below wraps the response).
+	if d.EnforceAuth {
+		srv.SetPreDispatch(newAuthGate(config.RealClock{}))
+	}
+
+	// When the monitoring backend can record Activity Log events, observe every
+	// served ARM request and log a management event so the Activity Log API
+	// reflects real API activity. This is the Azure analog of the AWS
+	// CloudTrail observer.
+	if rec, ok := d.Monitor.(mondriver.ActivityLogRecorder); ok {
+		srv.SetObserver(func(r *http.Request) { recordActivityLogEvent(rec, r) })
 	}
 
 	return echoUnmodeledProperties(srv, newPropertyOverlay())

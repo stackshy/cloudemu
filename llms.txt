@@ -2,6 +2,8 @@
 
 > Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. Run it as a standalone server (binary or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go (SDK-compat HTTP server, or typed mocks driven directly) — no accounts, no network, no bill. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, or enforce quotas. State lives in memory and is resettable — ephemeral by default, so it is lost on process exit unless you save it — but the whole emulator's state can be snapshotted to a single JSON file and restored into a fresh instance (opt-in, identity-preserving across all providers), so resources survive a restart when you ask them to.
 
+**Agent hint (integration):** Integrating cloudemu into an existing service = an endpoint override on the already-running service (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override). Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is for Go unit tests written inside cloudemu-aware code.
+
 ## Capabilities (start here)
 
 - [Capability coverage index](docs/coverage/README.md): every service and the native name each provider exposes it under, generated from the driver interfaces so it cannot drift.

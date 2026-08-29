@@ -69,6 +69,18 @@ type Options struct {
 	// every resource reporting its terminal state immediately (the historical
 	// behavior). See internal/settle.
 	AsyncSettle bool
+
+	// EnforceAuth, when true, turns on request authentication for every provider
+	// wire server. AWS verifies the SigV4 signature on each request against a
+	// registered IAM access key (rejecting bad/missing signatures with 403) and
+	// gates JSON-RPC operations through IAM authorization. Azure validates each
+	// request's Bearer token claims (audience, expiry, principal) and rejects
+	// missing/malformed/expired/wrong-audience tokens with 401 — the token
+	// signature is NOT verified, because cloudemu has no Azure AD signing key, so
+	// Azure enforcement is claims-based authentication only. See WithEnforceAuth
+	// for the exact scope and limitations. Default false, which accepts any
+	// credentials exactly as before (the historical behavior).
+	EnforceAuth bool
 }
 
 // SettleDuration returns d when asynchronous state settling is enabled and 0
@@ -181,6 +193,49 @@ func WithClock(c Clock) Option {
 func WithAsyncSettle() Option {
 	return func(o *Options) {
 		o.AsyncSettle = true
+	}
+}
+
+// WithEnforceAuth turns on request authentication for every provider wire
+// server. Off by default, which accepts any credentials (the historical
+// behavior).
+//
+// AWS — SigV4 authentication and IAM authorization: the wire server verifies
+// each request's signature against a registered IAM access key (rejecting
+// bad/missing signatures with 403) and then checks the caller's IAM policies
+// before dispatch.
+//   - Authentication scope: long-term (AKIA) access-key signatures are verified;
+//     STS temporary (ASIA) credentials are accepted without signature
+//     verification (a follow-up), and request timestamps are not checked for
+//     expiry.
+//   - Authorization scope: enforced for JSON-RPC services (DynamoDB, KMS, SQS,
+//     …), where the operation is bound to the X-Amz-Target header the dispatcher
+//     routes on. Query and REST services are authenticated only — their executed
+//     operation's IAM service cannot be soundly determined before dispatch, so
+//     action+resource authorization for them is a follow-up. Authorization is
+//     action-level (resource "*").
+//   - Foundation limitation: authorization applies only to principals that have
+//     IAM policies defined. A valid IAM user or role with NO policies is left
+//     unrestricted here (real AWS implicit-denies a policy-less principal), and
+//     the account-admin/root and ASIA bootstrap identities are always allowed.
+//
+// Azure — claims-based bearer authentication: the wire server requires an
+// "Authorization: Bearer <jwt>" on each request, validates the token's claims
+// (a well-formed three-part JWT, an accepted Azure audience, an un-expired
+// "exp", and a principal claim — oid, appid/azp or sub), resolves the principal
+// onto the request context, and rejects missing/malformed/expired/wrong-audience
+// tokens with 401 InvalidAuthenticationToken.
+//   - Documented limitation: the token SIGNATURE is NOT verified. Azure tokens
+//     are signed by Azure AD's private key, which the emulator does not hold, so
+//     (unlike AWS SigV4) it cannot cryptographically verify a real Azure token.
+//     Azure enforcement therefore validates token structure and claims only;
+//     signature verification / emulator-issued tokens are a possible later
+//     enhancement.
+//   - This is authentication only. Azure RBAC (role-assignment) authorization is
+//     a follow-up.
+func WithEnforceAuth() Option {
+	return func(o *Options) {
+		o.EnforceAuth = true
 	}
 }
 

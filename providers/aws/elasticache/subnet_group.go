@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -44,7 +45,7 @@ func (m *Mock) CreateCacheSubnetGroup(
 		SubnetIDs:   append([]string(nil), cfg.SubnetIDs...),
 		VPCID:       m.resolveVPCID(ctx, cfg.SubnetIDs),
 		Status:      "Complete",
-		ARN: "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID +
+		ARN: "arn:aws:elasticache:" + regionctx.RegionOr(ctx, m.opts.Region) + ":" + m.opts.AccountID +
 			":subnetgroup:" + cfg.Name,
 	}
 	m.subnetGroups.Set(cfg.Name, sg)

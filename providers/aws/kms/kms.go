@@ -2,6 +2,7 @@
 package kms
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/kms/driver"
 )
 
@@ -101,12 +103,26 @@ func newKeyID() string {
 	return fmt.Sprintf("%s-0000-4000-8000-%012s", n, n)
 }
 
-func (m *Mock) keyARN(keyID string) string {
-	return idgen.AWSARN("kms", m.opts.Region, m.opts.AccountID, "key/"+keyID)
+func (m *Mock) keyARN(ctx context.Context, keyID string) string {
+	return idgen.AWSARN("kms", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "key/"+keyID)
 }
 
-func (m *Mock) aliasARN(name string) string {
-	return idgen.AWSARN("kms", m.opts.Region, m.opts.AccountID, name)
+func (m *Mock) aliasARN(ctx context.Context, name string) string {
+	return idgen.AWSARN("kms", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, name)
+}
+
+// arnRegion returns the region field of a KMS ARN
+// (arn:aws:kms:<region>:<account>:key/<id>), or fallback when the ARN is
+// malformed. A key's stored ARN is the source of truth for its region.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 func (m *Mock) now() time.Time {

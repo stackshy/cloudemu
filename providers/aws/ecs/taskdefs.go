@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
@@ -18,7 +19,7 @@ const sortDesc = "DESC"
 // the revision number (starting at 1).
 //
 //nolint:gocritic // in is passed by value to satisfy the driver.ECS interface; the copy is cheap for a mock.
-func (m *Mock) RegisterTaskDefinition(_ context.Context, in driver.RegisterTaskDefinitionInput) (*driver.TaskDefinition, error) {
+func (m *Mock) RegisterTaskDefinition(ctx context.Context, in driver.RegisterTaskDefinitionInput) (*driver.TaskDefinition, error) {
 	if in.Family == "" {
 		return nil, errors.New(errors.InvalidArgument, "family is required")
 	}
@@ -31,8 +32,9 @@ func (m *Mock) RegisterTaskDefinition(_ context.Context, in driver.RegisterTaskD
 	defer m.regMu.Unlock()
 
 	revision := m.nextRevision(in.Family)
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	td := &driver.TaskDefinition{
-		ARN:                     m.arn(fmt.Sprintf("task-definition/%s:%d", in.Family, revision)),
+		ARN:                     m.arnIn(region, fmt.Sprintf("task-definition/%s:%d", in.Family, revision)),
 		Family:                  in.Family,
 		Revision:                revision,
 		Status:                  statusActive,

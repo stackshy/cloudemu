@@ -138,7 +138,7 @@ func (m *Mock) MarkVersionBinary(_ context.Context, name, versionID string) erro
 // GetSecretValueStage returns a secret value addressed by version ID or by stage
 // label (AWSCURRENT/AWSPREVIOUS/custom). An empty versionID and stage returns the
 // current version.
-func (m *Mock) GetSecretValueStage(_ context.Context, name, versionID, stage string) (*driver.SecretVersion, error) {
+func (m *Mock) GetSecretValueStage(ctx context.Context, name, versionID, stage string) (*driver.SecretVersion, error) {
 	sd, ok := m.secrets.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
@@ -154,7 +154,7 @@ func (m *Mock) GetSecretValueStage(_ context.Context, name, versionID, stage str
 
 	if versionID != "" {
 		if v, found := sd.versionByID(versionID); found {
-			return copyVersion(v), nil
+			return m.decryptVersion(ctx, copyVersion(v))
 		}
 
 		return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", versionID, name)
@@ -175,7 +175,7 @@ func (m *Mock) GetSecretValueStage(_ context.Context, name, versionID, stage str
 		return nil, errors.Newf(errors.NotFound, "stage %q not found for secret %q", label, name)
 	}
 
-	return copyVersion(v), nil
+	return m.decryptVersion(ctx, copyVersion(v))
 }
 
 // SecretVersionStages returns the stage labels for each version ID, so

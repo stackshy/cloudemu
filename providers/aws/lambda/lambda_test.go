@@ -409,8 +409,7 @@ func TestUpdateAlias(t *testing.T) {
 			Name:            "atomic",
 			FunctionVersion: "2",
 			RoutingConfig: &driver.AliasRoutingConfig{
-				AdditionalVersion: "$LATEST",
-				Weight:            0.1,
+				AdditionalVersionWeights: map[string]float64{"$LATEST": 0.1},
 			},
 		})
 		assertError(t, err, true)
@@ -464,26 +463,23 @@ func TestAliasWeightedRouting(t *testing.T) {
 		Name:            "canary",
 		FunctionVersion: "1",
 		RoutingConfig: &driver.AliasRoutingConfig{
-			AdditionalVersion: "2",
-			Weight:            0.1,
+			AdditionalVersionWeights: map[string]float64{"2": 0.1},
 		},
 	})
 	requireNoError(t, err)
 	assertEqual(t, "1", alias.FunctionVersion)
-	assertEqual(t, "2", alias.RoutingConfig.AdditionalVersion)
-	assertEqual(t, 0.1, alias.RoutingConfig.Weight)
+	assertEqual(t, 0.1, alias.RoutingConfig.AdditionalVersionWeights["2"])
 
 	// Update routing config
 	updated, err := m.UpdateAlias(ctx, driver.AliasConfig{
 		FunctionName: "my-func",
 		Name:         "canary",
 		RoutingConfig: &driver.AliasRoutingConfig{
-			AdditionalVersion: "2",
-			Weight:            0.5,
+			AdditionalVersionWeights: map[string]float64{"2": 0.5},
 		},
 	})
 	requireNoError(t, err)
-	assertEqual(t, 0.5, updated.RoutingConfig.Weight)
+	assertEqual(t, 0.5, updated.RoutingConfig.AdditionalVersionWeights["2"])
 }
 
 func TestAliasWeightedRoutingRejectsLatest(t *testing.T) {
@@ -498,8 +494,7 @@ func TestAliasWeightedRoutingRejectsLatest(t *testing.T) {
 		Name:            "bad",
 		FunctionVersion: "$LATEST",
 		RoutingConfig: &driver.AliasRoutingConfig{
-			AdditionalVersion: "1",
-			Weight:            0.1,
+			AdditionalVersionWeights: map[string]float64{"1": 0.1},
 		},
 	})
 	assertError(t, err, true)
@@ -517,11 +512,173 @@ func TestAliasWeightedRoutingRejectsLatest(t *testing.T) {
 		FunctionName: "my-func",
 		Name:         "plain",
 		RoutingConfig: &driver.AliasRoutingConfig{
-			AdditionalVersion: "1",
-			Weight:            0.1,
+			AdditionalVersionWeights: map[string]float64{"1": 0.1},
 		},
 	})
 	assertError(t, err, true)
+}
+
+// TestAliasWeightedRoutingRejectsOutOfBoundsWeights proves each additional
+// version weight must lie in [0.0, 1.0] and the additional weights must sum to
+// at most 1.0 — real Lambda rejects violations as InvalidParameterValueException.
+func TestAliasWeightedRoutingRejectsOutOfBoundsWeights(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+
+	// A weight above 1.0 is rejected.
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "over", FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 1.5},
+		},
+	})
+	assertError(t, err, true)
+
+	// A negative weight is rejected.
+	_, err = m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "neg", FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": -0.1},
+		},
+	})
+	assertError(t, err, true)
+
+	// Additional weights that sum above 1.0 are rejected on UpdateAlias too.
+	_, err = m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "canary", FunctionVersion: "1",
+	})
+	requireNoError(t, err)
+
+	_, err = m.UpdateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "canary",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 0.7, "1": 0.6},
+		},
+	})
+	assertError(t, err, true)
+
+	// A valid in-bounds weight is still accepted.
+	alias, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "ok", FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 0.25},
+		},
+	})
+	requireNoError(t, err)
+	assertEqual(t, 0.25, alias.RoutingConfig.AdditionalVersionWeights["2"])
+}
+
+func TestAliasWeightedRoutingSplitsInvocations(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1") // version "1"
+	_, _ = m.PublishVersion(ctx, "my-func", "v2") // version "2"
+
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "canary",
+		FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 0.3},
+		},
+	})
+	requireNoError(t, err)
+
+	const n = 2000
+
+	counts := map[string]int{}
+
+	for i := 0; i < n; i++ {
+		out, invokeErr := m.Invoke(ctx, driver.InvokeInput{
+			FunctionName: "my-func",
+			Qualifier:    "canary",
+			Payload:      []byte(fmt.Sprintf("event-%d", i)),
+		})
+		requireNoError(t, invokeErr)
+		counts[out.ExecutedVersion]++
+	}
+
+	// Weighted routing is deterministic in the payload, so this split is stable
+	// across runs: both versions receive traffic and version 2 lands near its
+	// configured 30% weight.
+	if counts["1"] == 0 || counts["2"] == 0 {
+		t.Fatalf("expected both versions to receive traffic, got %+v", counts)
+	}
+
+	frac := float64(counts["2"]) / float64(n)
+	if frac < 0.25 || frac > 0.35 {
+		t.Fatalf("version 2 share = %.3f, want ~0.30 (counts %+v)", frac, counts)
+	}
+}
+
+func TestAliasWeightedRoutingIsDeterministicPerPayload(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "canary",
+		FunctionVersion: "1",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{"2": 0.5},
+		},
+	})
+	requireNoError(t, err)
+
+	first, err := m.Invoke(ctx, driver.InvokeInput{
+		FunctionName: "my-func", Qualifier: "canary", Payload: []byte("stable-key"),
+	})
+	requireNoError(t, err)
+
+	for i := 0; i < 20; i++ {
+		out, invokeErr := m.Invoke(ctx, driver.InvokeInput{
+			FunctionName: "my-func", Qualifier: "canary", Payload: []byte("stable-key"),
+		})
+		requireNoError(t, invokeErr)
+
+		if out.ExecutedVersion != first.ExecutedVersion {
+			t.Fatalf("same payload routed to %q then %q; must be deterministic",
+				first.ExecutedVersion, out.ExecutedVersion)
+		}
+	}
+}
+
+func TestInvokeDryRunValidatesQualifier(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.CreateAlias(ctx, driver.AliasConfig{FunctionName: "my-func", Name: "prod", FunctionVersion: "1"})
+
+	t.Run("valid alias returns 204 without running", func(t *testing.T) {
+		out, err := m.Invoke(ctx, driver.InvokeInput{
+			FunctionName: "my-func", InvokeType: "DryRun", Qualifier: "prod",
+		})
+		requireNoError(t, err)
+		assertEqual(t, 204, out.StatusCode)
+		assertEqual(t, "1", out.ExecutedVersion)
+	})
+
+	t.Run("unknown alias is ResourceNotFound", func(t *testing.T) {
+		_, err := m.Invoke(ctx, driver.InvokeInput{
+			FunctionName: "my-func", InvokeType: "DryRun", Qualifier: "missing",
+		})
+		assertError(t, err, true)
+	})
+
+	t.Run("unknown version is ResourceNotFound", func(t *testing.T) {
+		_, err := m.Invoke(ctx, driver.InvokeInput{
+			FunctionName: "my-func", InvokeType: "DryRun", Qualifier: "99",
+		})
+		assertError(t, err, true)
+	})
 }
 
 func TestPublishLayerVersion(t *testing.T) {
@@ -771,8 +928,7 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	_, _ = m.PublishVersion(ctx, "my-func", "v2")
 
 	rc := &driver.AliasRoutingConfig{
-		AdditionalVersion: "2",
-		Weight:            0.5,
+		AdditionalVersionWeights: map[string]float64{"2": 0.5},
 	}
 
 	_, err := m.CreateAlias(ctx, driver.AliasConfig{
@@ -783,12 +939,73 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	})
 	requireNoError(t, err)
 
-	// Mutate the original config
-	rc.Weight = 0.9
+	// Mutate the original config's map: the stored alias must be unaffected.
+	rc.AdditionalVersionWeights["2"] = 0.9
 
 	alias, err := m.GetAlias(ctx, "my-func", "deep-copy")
 	requireNoError(t, err)
-	assertEqual(t, 0.5, alias.RoutingConfig.Weight)
+	assertEqual(t, 0.5, alias.RoutingConfig.AdditionalVersionWeights["2"])
+}
+
+// TestConcurrentAliasRaceFree hammers a single alias with concurrent
+// UpdateAlias/GetAlias/ListAliases calls. Every one of these paths reads or
+// mutates fields on the shared *aliasData, so without per-entity
+// synchronization the -race detector flags a data race on alias.FunctionVersion
+// / Description / RoutingConfig. It must run clean under `go test -race`.
+func TestConcurrentAliasRaceFree(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "prod",
+		FunctionVersion: "1",
+	})
+	requireNoError(t, err)
+
+	const (
+		workers    = 8
+		iterations = 40
+	)
+
+	var wg sync.WaitGroup
+
+	run := func(fn func()) {
+		defer wg.Done()
+
+		for i := 0; i < iterations; i++ {
+			fn()
+		}
+	}
+
+	wg.Add(4 * workers)
+
+	for w := 0; w < workers; w++ {
+		go run(func() {
+			_, _ = m.UpdateAlias(ctx, driver.AliasConfig{
+				FunctionName: "my-func", Name: "prod", FunctionVersion: "1", Description: "a",
+			})
+		})
+		go run(func() {
+			_, _ = m.UpdateAlias(ctx, driver.AliasConfig{
+				FunctionName: "my-func", Name: "prod", FunctionVersion: "2", Description: "b",
+			})
+		})
+		go run(func() { _, _ = m.GetAlias(ctx, "my-func", "prod") })
+		go run(func() { _, _ = m.ListAliases(ctx, "my-func") })
+	}
+
+	wg.Wait()
+
+	alias, err := m.GetAlias(ctx, "my-func", "prod")
+	requireNoError(t, err)
+
+	if alias.FunctionVersion != "1" && alias.FunctionVersion != "2" {
+		t.Fatalf("alias left in inconsistent version %q", alias.FunctionVersion)
+	}
 }
 
 func requireNoError(t *testing.T, err error) {

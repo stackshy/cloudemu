@@ -3,10 +3,17 @@
 
 provider-native `sshpublickeys` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (7)
 
 | Operation | Description |
 | --- | --- |
+| `Create` |  |
+| `Delete` |  |
+| `GenerateKeyPair` |  |
+| `Get` |  |
+| `List` |  |
+| `ListByResourceGroup` |  |
+| `Update` |  |
 
 ## Not in scope
 

@@ -180,12 +180,16 @@ func parseWiredSetters(t *testing.T, path string) map[fieldMethod]bool {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 
+	funcs := map[string]*ast.FuncDecl{}
+
 	var newFn *ast.FuncDecl
 
 	for _, decl := range file.Decls {
-		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "New" {
-			newFn = fd
-			break
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil {
+			funcs[fd.Name.Name] = fd
+			if fd.Name.Name == "New" {
+				newFn = fd
+			}
 		}
 	}
 
@@ -200,7 +204,49 @@ func parseWiredSetters(t *testing.T, path string) map[fieldMethod]bool {
 
 	wired := map[fieldMethod]bool{}
 
+	// Scan New()'s body plus the bodies of the same-file helper functions New()
+	// calls (e.g. a wireXxx(p) helper extracted for length): wiring factored out
+	// of New() still counts. The acceptable base variable is New()'s provider var
+	// for New() itself, and the helper's parameter names for each helper.
+	scanBody(newFn.Body, map[string]bool{recv: true}, wired)
+
 	ast.Inspect(newFn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		id, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		helper, ok := funcs[id.Name]
+		if !ok || helper == newFn || helper.Body == nil {
+			return true
+		}
+
+		bases := map[string]bool{}
+		if helper.Type.Params != nil {
+			for _, p := range helper.Type.Params.List {
+				for _, nm := range p.Names {
+					bases[nm.Name] = true
+				}
+			}
+		}
+
+		scanBody(helper.Body, bases, wired)
+
+		return true
+	})
+
+	return wired
+}
+
+// scanBody records every `<base>.<Field>.Set<Method>()` wiring call in body
+// whose base identifier is one of the accepted provider variable names.
+func scanBody(body *ast.BlockStmt, bases map[string]bool, wired map[fieldMethod]bool) {
+	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -217,7 +263,7 @@ func parseWiredSetters(t *testing.T, path string) map[fieldMethod]bool {
 		}
 
 		base, ok := inner.X.(*ast.Ident)
-		if !ok || base.Name != recv {
+		if !ok || !bases[base.Name] {
 			return true
 		}
 
@@ -225,8 +271,6 @@ func parseWiredSetters(t *testing.T, path string) map[fieldMethod]bool {
 
 		return true
 	})
-
-	return wired
 }
 
 // providerReceiverName finds the local variable New() assigns `&Provider{}`

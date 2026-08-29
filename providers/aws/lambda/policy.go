@@ -44,8 +44,9 @@ func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, 
 	}
 
 	// A qualifier must name a version/alias that exists; a grant on a missing one
-	// is a ResourceNotFoundException, matching real Lambda.
-	if _, err := m.resolveQualifier(&fd, qualifier); err != nil {
+	// is a ResourceNotFoundException, matching real Lambda. Routing key is nil:
+	// this only validates existence, not which weighted version traffic hits.
+	if _, err := m.resolveQualifier(&fd, qualifier, nil); err != nil {
 		return err
 	}
 

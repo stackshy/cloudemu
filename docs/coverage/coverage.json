@@ -117,6 +117,61 @@
     }
   },
   {
+    "service": "apigateway",
+    "interface": "APIGateway",
+    "operations": [
+      {
+        "name": "CreateDeployment"
+      },
+      {
+        "name": "CreateResource"
+      },
+      {
+        "name": "CreateRestAPI"
+      },
+      {
+        "name": "CreateStage"
+      },
+      {
+        "name": "DeleteRestAPI"
+      },
+      {
+        "name": "GetIntegration"
+      },
+      {
+        "name": "GetMethod"
+      },
+      {
+        "name": "GetResource"
+      },
+      {
+        "name": "GetResources"
+      },
+      {
+        "name": "GetRestAPI"
+      },
+      {
+        "name": "GetRestAPIs"
+      },
+      {
+        "name": "GetStage"
+      },
+      {
+        "name": "InvokeRoute",
+        "doc": "InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's"
+      },
+      {
+        "name": "PutIntegration"
+      },
+      {
+        "name": "PutMethod"
+      }
+    ],
+    "providers": {
+      "aws": "APIGateway"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [
@@ -1660,9 +1715,79 @@
   {
     "service": "cloudasset",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "BatchGetAssetsHistory"
+      },
+      {
+        "name": "CreateFeed"
+      },
+      {
+        "name": "DeleteFeed"
+      },
+      {
+        "name": "ExportAssets"
+      },
+      {
+        "name": "GetFeed"
+      },
+      {
+        "name": "GetOperation"
+      },
+      {
+        "name": "ListAssets"
+      },
+      {
+        "name": "ListFeeds"
+      },
+      {
+        "name": "SearchAllIamPolicies"
+      },
+      {
+        "name": "SearchAllResources"
+      },
+      {
+        "name": "UpdateFeed"
+      }
+    ],
     "providers": {
       "gcp": "Cloudasset"
+    }
+  },
+  {
+    "service": "cloudformation",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateStack"
+      },
+      {
+        "name": "DeleteStack"
+      },
+      {
+        "name": "DescribeStackEvents"
+      },
+      {
+        "name": "DescribeStackResources"
+      },
+      {
+        "name": "DescribeStacks"
+      },
+      {
+        "name": "GetTemplate"
+      },
+      {
+        "name": "ListStackResources"
+      },
+      {
+        "name": "ListStacks"
+      },
+      {
+        "name": "UpdateStack"
+      }
+    ],
+    "providers": {
+      "aws": "CloudFormation"
     }
   },
   {
@@ -2893,7 +3018,38 @@
   {
     "service": "cosmosaccount",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "FailoverPriorityChange"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListConnectionStrings"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "ListReadOnlyKeys"
+      },
+      {
+        "name": "RegenerateKey"
+      }
+    ],
     "providers": {
       "azure": "Cosmosaccount"
     }
@@ -3416,7 +3572,29 @@
   {
     "service": "disks",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "GrantAccess"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "RevokeAccess"
+      }
+    ],
     "providers": {
       "azure": "Disks"
     }
@@ -5314,6 +5492,35 @@
         "name": "SetDefaultPolicyVersion"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AccessKeyResolver",
+        "doc": "AccessKeyResolver is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "AccessKeyByID"
+          }
+        ]
+      },
+      {
+        "name": "ContextualAuthorizer",
+        "doc": "ContextualAuthorizer is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "CheckPermissionWithContext"
+          }
+        ]
+      },
+      {
+        "name": "PolicyInspector",
+        "doc": "PolicyInspector is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "PrincipalHasPolicies"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "IAM",
       "azure": "IAM",
@@ -5324,7 +5531,23 @@
   {
     "service": "images",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      }
+    ],
     "providers": {
       "azure": "Images"
     }
@@ -6310,7 +6533,11 @@
   {
     "service": "lro",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "GetOperation"
+      }
+    ],
     "providers": {
       "gcp": "LRO"
     }
@@ -6667,6 +6894,20 @@
       },
       {
         "name": "SetAlarmState"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "ActivityLogRecorder",
+        "doc": "ActivityLogRecorder is an OPTIONAL capability, discovered by type assertion",
+        "operations": [
+          {
+            "name": "ListActivityLogEvents"
+          },
+          {
+            "name": "RecordActivityLogEvent"
+          }
+        ]
       }
     ],
     "providers": {
@@ -8264,7 +8505,26 @@
   {
     "service": "queue",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "Create"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DeleteMessage"
+      },
+      {
+        "name": "DequeueMessages"
+      },
+      {
+        "name": "EnqueueMessage"
+      },
+      {
+        "name": "List"
+      }
+    ],
     "providers": {
       "azure": "Queue"
     }
@@ -8980,7 +9240,38 @@
   {
     "service": "resourceexplorer2",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CreateIndex"
+      },
+      {
+        "name": "CreateView"
+      },
+      {
+        "name": "DeleteView"
+      },
+      {
+        "name": "GetDefaultView"
+      },
+      {
+        "name": "GetIndex"
+      },
+      {
+        "name": "GetView"
+      },
+      {
+        "name": "ListIndexes"
+      },
+      {
+        "name": "ListResources"
+      },
+      {
+        "name": "ListViews"
+      },
+      {
+        "name": "Search"
+      }
+    ],
     "providers": {
       "aws": "Resourceexplorer2"
     }
@@ -8988,7 +9279,17 @@
   {
     "service": "resourcegraph",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "Operations"
+      },
+      {
+        "name": "Resources"
+      },
+      {
+        "name": "ResourcesHistory"
+      }
+    ],
     "providers": {
       "azure": "Resourcegraph"
     }
@@ -8996,7 +9297,29 @@
   {
     "service": "resourcegroups",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CheckExistence"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "ExportTemplate"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "Update"
+      }
+    ],
     "providers": {
       "azure": "Resourcegroups"
     }
@@ -9004,7 +9327,23 @@
   {
     "service": "resourcegroupstaggingapi",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "GetResources"
+      },
+      {
+        "name": "GetTagKeys"
+      },
+      {
+        "name": "GetTagValues"
+      },
+      {
+        "name": "TagResources"
+      },
+      {
+        "name": "UntagResources"
+      }
+    ],
     "providers": {
       "aws": "Resourcegroupstaggingapi"
     }
@@ -10462,6 +10801,28 @@
             "name": "UpdateKeyVaultSecret"
           }
         ]
+      },
+      {
+        "name": "KeyVaultVaults",
+        "doc": "KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —",
+        "operations": [
+          {
+            "name": "CreateOrUpdateVault",
+            "doc": "CreateOrUpdateVault creates a vault, or replaces the properties/tags of an"
+          },
+          {
+            "name": "DeleteVault",
+            "doc": "DeleteVault removes a vault by name."
+          },
+          {
+            "name": "GetVault",
+            "doc": "GetVault returns the vault by name, regardless of scope. Scope enforcement"
+          },
+          {
+            "name": "ListVaults",
+            "doc": "ListVaults returns the vaults visible under the given scope filter (a zero"
+          }
+        ]
       }
     ],
     "providers": {
@@ -10570,7 +10931,17 @@
   {
     "service": "servicenetworking",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CreateConnection"
+      },
+      {
+        "name": "DeleteConnection"
+      },
+      {
+        "name": "ListConnections"
+      }
+    ],
     "providers": {
       "gcp": "Servicenetworking"
     }
@@ -11042,7 +11413,8 @@
         "name": "StartSyncExecution"
       },
       {
-        "name": "StopExecution"
+        "name": "StopExecution",
+        "doc": "StopExecution aborts a still-settling execution, persisting the caller's"
       },
       {
         "name": "TagResource",
@@ -11075,7 +11447,23 @@
   {
     "service": "snapshots",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      }
+    ],
     "providers": {
       "azure": "Snapshots"
     }
@@ -11159,7 +11547,29 @@
   {
     "service": "sshpublickeys",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "Create"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "GenerateKeyPair"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "Update"
+      }
+    ],
     "providers": {
       "azure": "Sshpublickeys"
     }
@@ -11702,7 +12112,38 @@
   {
     "service": "storageaccount",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "Create"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "GetProperties"
+      },
+      {
+        "name": "GetServiceProperties"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "RegenerateKey"
+      },
+      {
+        "name": "SetServiceProperties"
+      },
+      {
+        "name": "Update"
+      }
+    ],
     "providers": {
       "azure": "Storageaccount"
     }
@@ -11710,7 +12151,32 @@
   {
     "service": "sts",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "AssumeRole"
+      },
+      {
+        "name": "AssumeRoleWithSAML"
+      },
+      {
+        "name": "AssumeRoleWithWebIdentity"
+      },
+      {
+        "name": "DecodeAuthorizationMessage"
+      },
+      {
+        "name": "GetAccessKeyInfo"
+      },
+      {
+        "name": "GetCallerIdentity"
+      },
+      {
+        "name": "GetFederationToken"
+      },
+      {
+        "name": "GetSessionToken"
+      }
+    ],
     "providers": {
       "aws": "STS"
     }
@@ -11718,7 +12184,17 @@
   {
     "service": "subscriptions",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListLocations"
+      }
+    ],
     "providers": {
       "azure": "Subscriptions"
     }
@@ -11763,7 +12239,11 @@
   {
     "service": "tenants",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "List"
+      }
+    ],
     "providers": {
       "azure": "Tenants"
     }
@@ -12809,7 +13289,20 @@
   {
     "service": "workrequest",
     "interface": "provider-native",
-    "operations": [],
+    "operations": [
+      {
+        "name": "GetWorkRequest"
+      },
+      {
+        "name": "ListWorkRequestErrors"
+      },
+      {
+        "name": "ListWorkRequestLogs"
+      },
+      {
+        "name": "ListWorkRequests"
+      }
+    ],
     "providers": {
       "oci": "Workrequest"
     }

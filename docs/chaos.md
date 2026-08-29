@@ -8,6 +8,8 @@ This is something real cloud can't do (you can't ask AWS to fail S3 for 5 second
 
 Wrap any driver with the chaos engine before handing it to the portable API or the SDK-compat HTTP server. Then declare scenarios at runtime and the chaos applies to every call that hits the wrapped driver — Go API or SDK.
 
+Chaos is wired **in-process** (library mode): you wrap the driver in Go, so scenarios apply whether calls arrive through the typed Go API or an in-process SDK-compat server. This is distinct from how you integrate cloudemu with a running app — that's [server mode plus an SDK endpoint override](integration.md), the default for integration and E2E, which doesn't expose chaos. The `httptest.NewServer` below is that in-process wiring, not an instruction to spin cloudemu up in a `_test.go` for integration.
+
 ```go
 import (
     "github.com/stackshy/cloudemu/v2"

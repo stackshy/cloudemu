@@ -232,7 +232,7 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := h.store.GetParameterHistory(r.Context(), req.Name)
+	history, err := h.store.GetParameterHistory(r.Context(), req.Name, req.WithDecryption)
 	if err != nil {
 		writeErr(w, err)
 		return

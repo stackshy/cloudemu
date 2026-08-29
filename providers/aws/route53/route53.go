@@ -59,7 +59,32 @@ func (m *Mock) ChangeResourceTags(_ context.Context, resourceID string, add map[
 		delete(m.tagsByID[resourceID], k)
 	}
 
+	m.syncZoneTags(resourceID)
+
 	return nil
+}
+
+// syncZoneTags mirrors a hosted zone's authoritative tag store (tagsByID, the
+// target of ChangeTagsForResource / the Resource Groups Tagging API) onto the
+// zone's own Tags field, which discovery (ListZones) reads. Without this the
+// two stores drift — a tag applied via the tagging API would be invisible to
+// Resource Explorer / GetResources. A no-op when resourceID is not a zone (the
+// same tag API also addresses health checks). Callers hold m.tagsMu.
+func (m *Mock) syncZoneTags(resourceID string) {
+	if _, ok := m.zones.Get(resourceID); !ok {
+		return
+	}
+
+	tags := make(map[string]string, len(m.tagsByID[resourceID]))
+	for k, v := range m.tagsByID[resourceID] {
+		tags[k] = v
+	}
+
+	m.zones.Update(resourceID, func(z driver.ZoneInfo) driver.ZoneInfo {
+		z.Tags = tags
+
+		return z
+	})
 }
 
 // ListResourceTags returns the tags on a Route 53 resource by ID.
@@ -139,10 +164,30 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	}
 
 	m.zones.Set(id, zone)
+	m.seedZoneTags(id, tags)
 
 	result := zone
 
 	return &result, nil
+}
+
+// seedZoneTags copies a zone's create-time tags into the authoritative tag
+// store (tagsByID) so they and tags added later via ChangeTagsForResource / the
+// Resource Groups Tagging API share one source of truth (see syncZoneTags).
+func (m *Mock) seedZoneTags(id string, tags map[string]string) {
+	if len(tags) == 0 {
+		return
+	}
+
+	seeded := make(map[string]string, len(tags))
+	for k, v := range tags {
+		seeded[k] = v
+	}
+
+	m.tagsMu.Lock()
+	defer m.tagsMu.Unlock()
+
+	m.tagsByID[id] = seeded
 }
 
 // DeleteZone deletes a DNS hosted zone by ID.

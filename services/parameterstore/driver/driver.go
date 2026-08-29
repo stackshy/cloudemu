@@ -196,7 +196,9 @@ type ParameterStore interface {
 	DescribeParameters(ctx context.Context) ([]ParameterMetadata, error)
 
 	// GetParameterHistory returns every version of a parameter, oldest first.
-	GetParameterHistory(ctx context.Context, name string) ([]Parameter, error)
+	// withDecryption controls whether SecureString values are decrypted, mirroring
+	// GetParameter (false returns the opaque ciphertext blob).
+	GetParameterHistory(ctx context.Context, name string, withDecryption bool) ([]Parameter, error)
 	// LabelParameterVersion attaches labels to a specific version (0 = latest).
 	LabelParameterVersion(ctx context.Context, name string, version int64, labels []string) (appliedVersion int64, invalid []string, err error)
 }

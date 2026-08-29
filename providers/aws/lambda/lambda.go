@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
@@ -34,6 +38,12 @@ const (
 	timeFormat       = "2006-01-02T15:04:05Z"
 	// tracingModePassThrough is the AWS Lambda default X-Ray tracing mode.
 	tracingModePassThrough = "PassThrough"
+	// invokeTypeDryRun is the X-Amz-Invocation-Type value that validates
+	// parameters and permissions (including the Qualifier) without running the
+	// function.
+	invokeTypeDryRun = "DryRun"
+	// dryRunStatusCode is the HTTP 204 No Content a successful DryRun reports.
+	dryRunStatusCode = 204
 )
 
 // AWS Lambda create-time defaults applied when the client omits the field:
@@ -66,6 +76,7 @@ type versionData struct {
 }
 
 type aliasData struct {
+	mu    sync.Mutex // guards alias, mutated in place after the entity is stored
 	alias driver.Alias
 }
 
@@ -101,12 +112,21 @@ type Mock struct {
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
 	monitoring mondriver.Monitoring
-	mu         sync.Mutex // guards PublishVersion read-modify-write on funcData
+	logs       logdriver.Logging // optional: CloudWatch Logs sink for invocation logs
+	mu         sync.Mutex        // guards PublishVersion read-modify-write on funcData
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetLogSink wires the CloudWatch Logs target that Invoke writes each
+// invocation's START/END/REPORT lines (and any captured stdout/stderr) into,
+// under the conventional /aws/lambda/<name> log group. Safe to leave unset —
+// invocation-log surfacing is then skipped, so library users are unaffected.
+func (m *Mock) SetLogSink(l logdriver.Logging) {
+	m.logs = l
 }
 
 //nolint:unparam // value is always 1 today but kept for future metrics like batch invocation counts.
@@ -153,7 +173,7 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		return nil, err
 	}
 
-	arn := idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+cfg.Name)
+	arn := idgen.AWSARN("lambda", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
 		Role: cfg.Role, Description: cfg.Description,
@@ -293,9 +313,17 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", input.FunctionName)
 	}
 
-	executedVersion, err := m.resolveQualifier(&fd, input.Qualifier)
+	executedVersion, err := m.resolveQualifier(&fd, input.Qualifier, input.Payload)
 	if err != nil {
 		return nil, err
+	}
+
+	// A DryRun validates the function, qualifier, and permissions but runs
+	// nothing and emits no metrics: resolveQualifier above has already rejected
+	// an unknown alias/version with ResourceNotFoundException, so a DryRun that
+	// reaches here is valid and reports 204 No Content.
+	if input.InvokeType == invokeTypeDryRun {
+		return &driver.InvokeOutput{StatusCode: dryRunStatusCode, ExecutedVersion: executedVersion}, nil
 	}
 
 	dims := map[string]string{"FunctionName": input.FunctionName}
@@ -320,6 +348,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		// RegisterHandler to run real logic.
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Duration", 1.0, dims)
+		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
 		payload := input.Payload
 		if len(payload) == 0 {
@@ -333,6 +362,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	if err != nil {
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Errors", 1, dims)
+		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", err.Error())
 
 		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error(), ExecutedVersion: executedVersion}, nil
 	}
@@ -340,6 +370,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	m.emitMetric(ctx, "Invocations", 1, dims)
 	m.emitMetric(ctx, "Duration", 1.0, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
+	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
 }
@@ -347,17 +378,20 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 // resolveQualifier resolves an Invoke Qualifier (empty, "$LATEST", a numeric
 // published version, or an alias name) to the concrete version that should be
 // reported as ExecutedVersion, matching real Lambda's alias-resolution
-// semantics: an alias resolves one hop to its target FunctionVersion (aliases
-// can't point to other aliases); a version qualifier must name a version that
-// was actually published. An unknown qualifier is a ResourceNotFoundException,
+// semantics: an alias resolves one hop to a FunctionVersion (aliases can't
+// point to other aliases); a version qualifier must name a version that was
+// actually published. A weighted alias splits between its primary
+// FunctionVersion and the versions in RoutingConfig.AdditionalVersionWeights;
+// routingKey (the invoke payload) selects one deterministically (see
+// selectAliasVersion). An unknown qualifier is a ResourceNotFoundException,
 // the same error AWS returns for an alias or version that doesn't exist.
-func (m *Mock) resolveQualifier(fd *funcData, qualifier string) (string, error) {
+func (m *Mock) resolveQualifier(fd *funcData, qualifier string, routingKey []byte) (string, error) {
 	if qualifier == "" || qualifier == latestVersion {
 		return latestVersion, nil
 	}
 
 	if ad, ok := fd.aliases.Get(qualifier); ok {
-		return ad.alias.FunctionVersion, nil
+		return selectAliasVersion(&ad.alias, routingKey), nil
 	}
 
 	if m.versionExists(fd, qualifier) {
@@ -365,6 +399,50 @@ func (m *Mock) resolveQualifier(fd *funcData, qualifier string) (string, error) 
 	}
 
 	return "", cerrors.Newf(cerrors.NotFound, "function version/alias not found for %s", qualifier)
+}
+
+// selectAliasVersion picks the concrete version a weighted alias routes an
+// invocation to: the additional versions in RoutingConfig.AdditionalVersionWeights
+// receive their configured fractions of traffic, the alias's primary
+// FunctionVersion the remainder. The choice is deterministic in routingKey
+// (the invoke payload) — a given event always routes to the same version, and
+// across many distinct events the split approaches the configured weights — so
+// tests can assert the distribution without flakiness. An alias with no weights
+// always resolves to its primary FunctionVersion.
+func selectAliasVersion(a *driver.Alias, routingKey []byte) string {
+	rc := a.RoutingConfig
+	if rc == nil || len(rc.AdditionalVersionWeights) == 0 {
+		return a.FunctionVersion
+	}
+
+	// Iterate additional versions in a stable (sorted) order so the cumulative
+	// bands are reproducible; the primary version owns [sum,1).
+	versions := make([]string, 0, len(rc.AdditionalVersionWeights))
+	for v := range rc.AdditionalVersionWeights {
+		versions = append(versions, v)
+	}
+
+	sort.Strings(versions)
+
+	point := hashToUnitFloat(routingKey)
+	cumulative := 0.0
+
+	for _, v := range versions {
+		cumulative += rc.AdditionalVersionWeights[v]
+		if point < cumulative {
+			return v
+		}
+	}
+
+	return a.FunctionVersion
+}
+
+// hashToUnitFloat maps arbitrary bytes to a point in [0.0,1.0) via a SHA-256
+// digest, giving a stable, uniformly spread value for weighted-alias routing.
+func hashToUnitFloat(key []byte) float64 {
+	sum := sha256.Sum256(key)
+	// Divide a 64-bit prefix by 2^64 to land in [0,1).
+	return float64(binary.BigEndian.Uint64(sum[:8])) / (1 << 64)
 }
 
 // InvokeExternal asynchronously invokes the function identified by its ARN with
@@ -452,12 +530,14 @@ func (m *Mock) invokeEngine(
 
 	if out.Error != "" {
 		m.emitMetric(ctx, "Errors", 1, dims)
+		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, out.Error)
 
 		return out, nil
 	}
 
 	m.emitMetric(ctx, "Duration", 1.0, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
+	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, "")
 
 	return out, nil
 }

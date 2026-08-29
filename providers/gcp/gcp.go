@@ -91,6 +91,10 @@ type Provider struct {
 	// the options.
 	ProjectID string
 	Region    string
+	// Clock is the time source this provider was created with, exposed so a
+	// standalone server can drive time-stamped observers (e.g. the Cloud Audit
+	// Log recorder) off the same clock — deterministic under a FakeClock.
+	Clock config.Clock
 
 	// engineClosers holds any wired real engines that implement io.Closer, so
 	// Close can cascade teardown to them. Empty for the in-memory default.
@@ -125,11 +129,15 @@ func New(opts ...config.Option) *Provider {
 		VertexAI:         vertexai.New(o),
 		ProjectID:        o.ProjectID,
 		Region:           o.Region,
+		Clock:            o.Clock,
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
 	p.GCS.SetMonitoring(p.CloudMonitoring)
 	p.Firestore.SetMonitoring(p.CloudMonitoring)
 	p.CloudFunctions.SetMonitoring(p.CloudMonitoring)
+	// Cloud Functions invocations write execution logs (and captured stdout/
+	// stderr on the real-engine path) to Cloud Logging.
+	p.CloudFunctions.SetLogSink(p.CloudLogging)
 	p.PubSub.SetMonitoring(p.CloudMonitoring)
 	p.Memorystore.SetMonitoring(p.CloudMonitoring)
 	p.CloudLogging.SetMonitoring(p.CloudMonitoring)

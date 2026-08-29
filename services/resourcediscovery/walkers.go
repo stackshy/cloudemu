@@ -9,6 +9,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -76,6 +77,7 @@ const (
 	TypeScaleSet          = "ScaleSet"
 	TypeAppServicePlan    = "AppServicePlan"
 	TypeSecret            = "Secret"
+	TypeVault             = "Vault"
 	TypeRepository        = "Repository"
 	TypeQueue             = "Queue"
 	TypeTopic             = "Topic"
@@ -907,6 +909,40 @@ func (e *Engine) walkSecrets(ctx context.Context) ([]Resource, error) {
 		}), nil
 }
 
+// walkKeyVaults surfaces Azure Key Vault vaults (Microsoft.KeyVault/vaults) so
+// a vault created via the ARM control plane appears in Resource Graph and the
+// inventory/search APIs, keyed by its ARM resource id.
+func (e *Engine) walkKeyVaults(ctx context.Context) ([]Resource, error) {
+	vaults, err := e.drivers.KeyVaults.ListVaults(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkKeyVaults: %w", err)
+	}
+
+	return e.emitSimple(ServiceSecrets, TypeVault, len(vaults),
+		func(i int) (string, string, map[string]string) {
+			return vaults[i].Name, keyVaultARMID(&vaults[i]), vaults[i].Tags
+		}), nil
+}
+
+// keyVaultARMID builds the Microsoft.KeyVault/vaults ARM id for a discovered
+// vault. The subscription is rewritten by the Resource Graph handler to the
+// queried subscription; the resource group must be present so the handler can
+// project it.
+func keyVaultARMID(v *secretsdriver.KVVaultInfo) string {
+	sub := v.Scope.Subscription
+	if sub == "" {
+		sub = azureDefaultResourceGroup
+	}
+
+	rg := v.Scope.ResourceGroup
+	if rg == "" {
+		rg = azureDefaultResourceGroup
+	}
+
+	return "/subscriptions/" + sub + "/resourceGroups/" + rg +
+		"/providers/Microsoft.KeyVault/vaults/" + v.Name
+}
+
 // walkContainerRegistry surfaces container repositories (ECR / Artifact Registry
 // / ACR) so they appear in the inventory/search APIs.
 func (e *Engine) walkContainerRegistry(ctx context.Context) ([]Resource, error) {
@@ -1030,7 +1066,11 @@ func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
 
 	return e.emitSimple(ServiceMonitoring, TypeAlarm, len(alarms),
 		func(i int) (string, string, map[string]string) {
-			return alarms[i].Name, e.monitoringAlarmARN(alarms[i].Name), nil
+			// Tags come from the alarm's own tag store (AWS CloudWatch
+			// AddAlarmTags / the Resource Groups Tagging API), so a tagged alarm
+			// is filterable in GetResources. Non-AWS monitoring mocks leave it
+			// empty, matching the prior behavior.
+			return alarms[i].Name, e.monitoringAlarmARN(alarms[i].Name), alarms[i].Tags
 		}), nil
 }
 

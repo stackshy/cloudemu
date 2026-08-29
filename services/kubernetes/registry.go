@@ -6,11 +6,11 @@ import (
 	"io"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,6 +35,11 @@ type resourceDef struct {
 	// onDelete runs (under s.mu) after a successful delete. Used by the CRD kind
 	// to deregister the custom resource's store and cascade-delete its objects.
 	onDelete func(s *ClusterState, obj *unstructured.Unstructured)
+	// tableColumns, when non-nil, defines this kind's server-side Table
+	// projection (the columns `kubectl get` prints). Declared next to the kind
+	// in registry_defs.go so a new registry kind carries its columns with it;
+	// nil falls back to the generic NAME/AGE table.
+	tableColumns *tableProjector
 }
 
 func (d *resourceDef) apiVersion() string {
@@ -53,7 +58,6 @@ type registryStore struct {
 	def   *resourceDef
 	items map[string]*unstructured.Unstructured // key: "<ns>/<name>" ("" ns for cluster-scoped)
 	watch *broadcaster
-	rv    int // monotonic resourceVersion source, bumped on every mutation
 }
 
 // registry maps a group/version/plural to its store. The stores map is fixed at
@@ -101,22 +105,28 @@ func (r *registry) getStore(group, version, plural string) *registryStore {
 	return r.stores[regKey(group, version, plural)]
 }
 
-// addStore materializes a store for a (CRD-defined) kind if absent, returning
-// the store. Idempotent — re-applying a CRD keeps the existing store and its
-// objects.
-func (r *registry) addStore(d *resourceDef) *registryStore {
+// storeForKey returns the store registered under a composite group/version/plural
+// key (regKey), or nil. Used by snapshot restore, which carries the composite key
+// rather than the split components.
+func (r *registry) storeForKey(key string) *registryStore {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.stores[key]
+}
+
+// addStore materializes a store for a (CRD-defined) kind if absent. Idempotent —
+// re-applying a CRD keeps the existing store and its objects.
+func (r *registry) addStore(d *resourceDef) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	key := regKey(d.group, d.version, d.plural)
-	if st, ok := r.stores[key]; ok {
-		return st
+	if _, ok := r.stores[key]; ok {
+		return
 	}
 
-	st := &registryStore{def: d, items: make(map[string]*unstructured.Unstructured), watch: newBroadcaster()}
-	r.stores[key] = st
-
-	return st
+	r.stores[key] = &registryStore{def: d, items: make(map[string]*unstructured.Unstructured), watch: newBroadcaster()}
 }
 
 // removeStore drops a (CRD-defined) kind's store. Idempotent.
@@ -203,7 +213,7 @@ func (s *ClusterState) serveRegistry(w http.ResponseWriter, r *http.Request, rou
 func (s *ClusterState) serveRegistryItem(w http.ResponseWriter, r *http.Request, route *Route, st *registryStore) {
 	switch r.Method {
 	case http.MethodGet:
-		s.registryGet(w, st, route.Namespace, route.Name)
+		s.registryGet(w, r, st, route.Namespace, route.Name)
 	case http.MethodPut:
 		s.registryUpdate(w, r, st, route.Namespace, route.Name)
 	case http.MethodPatch:
@@ -222,15 +232,17 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 			return sel.Matches(labels.Set(u.GetLabels())) && matchesFields(&u, fields)
 		}
 
+		initial := watchSendInitialEvents(r)
+
 		s.mu.RLock()
 		sub := st.watch.subscribe(namespace)
 		items := st.snapshotLocked(namespace, r)
-		rv := st.rv
+		rv := s.clusterRVLocked()
 		s.mu.RUnlock()
 		streamWatch(r.Context(), w, sub, items, keep, watchOpts{
-			resume:      watchResume(r),
-			bookmarks:   watchBookmarksEnabled(r),
-			bookmarkObj: registryBookmark(st, rv),
+			resume:      watchResume(r) && !initial,
+			bookmarks:   watchBookmarksEnabled(r) || initial,
+			bookmarkObj: registryBookmark(st, rv, initial),
 		})
 
 		return
@@ -249,21 +261,28 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(st.def.apiVersion())
 	list.SetKind(st.def.listKind)
-	list.SetResourceVersion(strconv.Itoa(st.rv))
 	list.SetContinue(cont)
 	list.Items = items
 
-	writeJSON(w, http.StatusOK, list)
+	// writeList stamps the list-level resourceVersion from the cluster counter
+	// and renders server-side Table when the client's Accept asks for it.
+	s.writeListWithColumns(w, r, list, st.def.tableColumns)
 }
 
 // registryBookmark builds the minimal object a BOOKMARK watch event carries for
-// a registry-backed kind: just the kind's apiVersion/kind and the store's
-// current resourceVersion.
-func registryBookmark(st *registryStore, rv int) *unstructured.Unstructured {
+// a registry-backed kind: just the kind's apiVersion/kind and the current
+// cluster resourceVersion. When initialEvents is set (a WatchList request) it
+// also carries the k8s.io/initial-events-end annotation marking the end of the
+// initial-state replay, without which modern kubectl/informers hang.
+func registryBookmark(st *registryStore, rv string, initialEvents bool) *unstructured.Unstructured {
 	bm := &unstructured.Unstructured{}
 	bm.SetAPIVersion(st.def.apiVersion())
 	bm.SetKind(st.def.kind)
-	bm.SetResourceVersion(strconv.Itoa(rv))
+	bm.SetResourceVersion(rv)
+
+	if initialEvents {
+		bm.SetAnnotations(map[string]string{metav1.InitialEventsAnnotationKey: watchQueryValue})
+	}
 
 	return bm
 }
@@ -351,7 +370,7 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 			return
 		}
 
-		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		obj.SetResourceVersion(s.peekClusterRVLocked())
 		writeJSON(w, http.StatusCreated, obj)
 
 		return
@@ -364,7 +383,7 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 
-	st.stampRVLocked(obj)
+	s.stampRegistryRVLocked(obj)
 
 	st.items[key] = obj
 
@@ -376,7 +395,7 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	writeJSON(w, http.StatusCreated, obj)
 }
 
-func (s *ClusterState) registryGet(w http.ResponseWriter, st *registryStore, namespace, name string) {
+func (s *ClusterState) registryGet(w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -387,7 +406,7 @@ func (s *ClusterState) registryGet(w http.ResponseWriter, st *registryStore, nam
 		return
 	}
 
-	writeJSON(w, http.StatusOK, obj.DeepCopy())
+	s.writeObjectWithColumns(w, r, obj.DeepCopy(), st.def.tableColumns)
 }
 
 func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string) {
@@ -437,13 +456,13 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 	s.stampUpdateOwnership(in, managedFieldsOf(cur), updateFieldManager(r), st.def.apiVersion(), ownedLeaves(in.Object))
 
 	if isDryRun(r) {
-		in.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		in.SetResourceVersion(s.peekClusterRVLocked())
 		writeJSON(w, http.StatusOK, in)
 
 		return
 	}
 
-	st.stampRVLocked(in)
+	s.stampRegistryRVLocked(in)
 
 	// Last finalizer removed on a Terminating object → complete the delete
 	// (same teardown the immediate-delete path runs: cascade + onDelete + quota).
@@ -518,13 +537,13 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 	}
 
 	if isDryRun(r) {
-		patched.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		patched.SetResourceVersion(s.peekClusterRVLocked())
 		writeJSON(w, http.StatusOK, patched)
 
 		return
 	}
 
-	st.stampRVLocked(patched)
+	s.stampRegistryRVLocked(patched)
 
 	// A patch that removes the last finalizer from a Terminating object completes
 	// the delete (the patch was applied onto cur, so it inherits its
@@ -603,7 +622,7 @@ func (s *ClusterState) registryApplyCreateLocked(
 			return
 		}
 
-		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		obj.SetResourceVersion(s.peekClusterRVLocked())
 		writeJSON(w, http.StatusCreated, obj)
 
 		return
@@ -615,7 +634,7 @@ func (s *ClusterState) registryApplyCreateLocked(
 		return
 	}
 
-	st.stampRVLocked(obj)
+	s.stampRegistryRVLocked(obj)
 	st.items[objKey(obj.GetNamespace(), name)] = obj
 
 	if st.def.reconcile != nil {
@@ -649,14 +668,14 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st
 	// (deletionTimestamp stamped) and stays until the last finalizer is removed
 	// via a later update/patch, rather than being deleted now.
 	if s.markForDeletionUnstructured(obj) {
-		st.stampRVLocked(obj)
+		s.stampRegistryRVLocked(obj)
 		st.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
 		writeJSON(w, http.StatusOK, obj.DeepCopy())
 
 		return
 	}
 
-	st.bumpRVLocked()
+	s.stampRegistryRVLocked(obj)
 	s.teardownRegistryObjectLocked(st, key, obj)
 
 	st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
@@ -686,15 +705,6 @@ func (s *ClusterState) teardownRegistryObjectLocked(st *registryStore, key strin
 	// count (recompute so a cascade that removed several at once stays correct).
 	s.releaseQuotaLocked(obj.GetNamespace(), st.def.kind, st.def.plural)
 }
-
-// stampRVLocked bumps the store's resourceVersion counter and stamps it on obj.
-// bumpRVLocked bumps without an object (for deletes). Callers hold s.mu.
-func (st *registryStore) stampRVLocked(obj *unstructured.Unstructured) {
-	st.rv++
-	obj.SetResourceVersion(strconv.Itoa(st.rv))
-}
-
-func (st *registryStore) bumpRVLocked() { st.rv++ }
 
 // applyUnstructuredPatch merges a JSON-merge-patch body into cur and returns the
 // result. Strategic-merge and apply patches are accepted and treated as a merge

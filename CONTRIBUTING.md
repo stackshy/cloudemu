@@ -88,6 +88,27 @@ Fix all issues. If a `//nolint` directive is needed, always include an explanati
 - Include steps to reproduce for bug reports
 - Tag issues with appropriate labels (aws, azure, gcp, enhancement, bug)
 
+## Releases (maintainers)
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs
+GoReleaser to build cross-platform binaries, publish a GitHub Release with
+`checksums.txt`, and push a Homebrew cask to `github.com/stackshy/homebrew-tap`
+(so users can `brew install stackshy/tap/cloudemu`).
+
+One-time prerequisites for the Homebrew push:
+
+1. The public tap repo `github.com/stackshy/homebrew-tap` must exist.
+2. Add a repository secret named `HOMEBREW_TAP_TOKEN` — a Personal Access Token
+   with **write** access to the tap repo. GoReleaser uses it to commit the cask.
+   Without it, the release still publishes; only the Homebrew push is skipped.
+
+Validate config changes locally before tagging:
+
+```sh
+go run github.com/goreleaser/goreleaser/v2@latest check
+go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=publish
+```
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.

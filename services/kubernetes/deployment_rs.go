@@ -36,7 +36,7 @@ func (s *ClusterState) syncDeploymentReplicaSetLocked(dep *appsv1.Deployment, de
 	}
 
 	reconcileReplicaSet(s, rs)
-	st.stampRVLocked(rs)
+	s.stampRegistryRVLocked(rs)
 	st.watch.publish(EventModified, rs.GetNamespace(), *rs.DeepCopy())
 
 	ready, _, _ := unstructured.NestedInt64(rs.Object, "status", "replicas")
@@ -83,8 +83,8 @@ func (s *ClusterState) pruneStaleDeploymentRSLocked(st *registryStore, dep *apps
 			continue
 		}
 
+		s.stampRegistryRVLocked(rs)
 		delete(st.items, key)
-		st.bumpRVLocked()
 		s.garbageCollectLocked(rs.GetUID())
 		st.watch.publish(EventDeleted, rs.GetNamespace(), *rs.DeepCopy())
 	}

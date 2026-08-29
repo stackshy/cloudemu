@@ -757,18 +757,19 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 }
 
 // toRoutingConfig maps the wire AliasRoutingConfiguration (a map of additional
-// version -> weight) to the single-additional-version driver shape. Only the
-// first entry is honored, which matches the driver's model.
+// version -> weight) to the driver shape, preserving the full weights map so
+// every additional version reaches the backend's weighted-routing selection.
 func toRoutingConfig(rc *aliasRoutingConfig) *sdrv.AliasRoutingConfig {
 	if rc == nil || len(rc.AdditionalVersionWeights) == 0 {
 		return nil
 	}
 
+	weights := make(map[string]float64, len(rc.AdditionalVersionWeights))
 	for version, weight := range rc.AdditionalVersionWeights {
-		return &sdrv.AliasRoutingConfig{AdditionalVersion: version, Weight: weight}
+		weights[version] = weight
 	}
 
-	return nil
+	return &sdrv.AliasRoutingConfig{AdditionalVersionWeights: weights}
 }
 
 func toAliasResponse(a *sdrv.Alias) aliasResponse {
@@ -780,12 +781,13 @@ func toAliasResponse(a *sdrv.Alias) aliasResponse {
 		RevisionID:      a.RevisionID,
 	}
 
-	if a.RoutingConfig != nil {
-		resp.RoutingConfig = &aliasRoutingConfig{
-			AdditionalVersionWeights: map[string]float64{
-				a.RoutingConfig.AdditionalVersion: a.RoutingConfig.Weight,
-			},
+	if a.RoutingConfig != nil && len(a.RoutingConfig.AdditionalVersionWeights) > 0 {
+		weights := make(map[string]float64, len(a.RoutingConfig.AdditionalVersionWeights))
+		for version, weight := range a.RoutingConfig.AdditionalVersionWeights {
+			weights[version] = weight
 		}
+
+		resp.RoutingConfig = &aliasRoutingConfig{AdditionalVersionWeights: weights}
 	}
 
 	return resp
@@ -1145,10 +1147,17 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	invokeType := r.Header.Get("X-Amz-Invocation-Type")
 
 	// A DryRun invocation validates the request without executing the function:
-	// confirm the function exists, then return 204 No Content (real Lambda runs
-	// nothing and returns no payload).
+	// confirm the function AND the qualifier (alias/version) exist, then return
+	// 204 No Content (real Lambda runs nothing and returns no payload). Routing
+	// through Invoke reuses the driver's qualifier resolution, so an unknown
+	// alias/version fails with ResourceNotFoundException rather than a spurious
+	// 204.
 	if invokeType == invocationTypeDryRun {
-		if _, err = h.fn.GetFunction(r.Context(), functionName); err != nil {
+		if _, err = h.fn.Invoke(r.Context(), sdrv.InvokeInput{
+			FunctionName: functionName,
+			InvokeType:   invocationTypeDryRun,
+			Qualifier:    qualifier,
+		}); err != nil {
 			writeErr(w, err)
 			return
 		}

@@ -129,10 +129,11 @@ func (h *Handler) getBackendService(w http.ResponseWriter, r *http.Request, rp g
 
 // getBackendServiceHealth serves compute.backendServices.getHealth: POST
 // .../backendServices/{bs}/getHealth with a ResourceGroupReference body. The
-// backend service must exist (404 otherwise). The emulator does not model
-// instance-group membership or health probes, so it reports the referenced
-// group as HEALTHY when a group was named and an empty health set otherwise —
-// a valid BackendServiceGroupHealth shape the SDK/Terraform can read back.
+// backend service must exist (404 otherwise). It reports HEALTHY for each
+// instance actually registered in the referenced instance group (via
+// addInstances), so a real user sees the members they added; when the group has
+// no resolvable members it falls back to reporting the group itself as HEALTHY,
+// preserving a valid BackendServiceGroupHealth shape.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getBackendServiceHealth(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -148,13 +149,68 @@ func (h *Handler) getBackendServiceHealth(w http.ResponseWriter, r *http.Request
 
 	resp := backendServiceGroupHealth{Kind: "compute#backendServiceGroupHealth"}
 	if req.Group != "" {
-		resp.HealthStatus = []healthStatus{{
-			HealthState: "HEALTHY",
-			Instance:    req.Group,
-		}}
+		resp.HealthStatus = h.groupHealthStatus(r.Context(), req.Group)
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, resp)
+}
+
+// groupHealthStatus resolves an instance group reference to a HEALTHY entry per
+// registered member; when the group is unknown or empty it reports the group
+// reference itself as HEALTHY so the response is never empty for a named group.
+func (h *Handler) groupHealthStatus(ctx context.Context, group string) []healthStatus {
+	members := h.instanceGroupMembers(ctx, group)
+	if len(members) == 0 {
+		return []healthStatus{{HealthState: "HEALTHY", Instance: group}}
+	}
+
+	out := make([]healthStatus, 0, len(members))
+	for _, m := range members {
+		out = append(out, healthStatus{HealthState: "HEALTHY", Instance: m})
+	}
+
+	return out
+}
+
+// instanceGroupMembers resolves an instance-group reference (a zonal or regional
+// self-link / relative path) to its registered instance URLs, or nil when the
+// group is not an instance group this handler stores.
+func (h *Handler) instanceGroupMembers(ctx context.Context, group string) []string {
+	store, ok := h.gcpStore()
+	if !ok {
+		return nil
+	}
+
+	collection, scope, name := parseGroupRef(group)
+	if collection == "" {
+		return nil
+	}
+
+	res, err := store.GetGCPResource(ctx, collection, scope, name)
+	if err != nil {
+		return nil
+	}
+
+	return sortedMembers(membersOf(res.Body))
+}
+
+// parseGroupRef splits an instance-group reference into (collection, scope,
+// name). A ".../zones/{z}/instanceGroups/{n}" reference maps to the zonal
+// instanceGroups collection scoped by zone; ".../regions/{r}/instanceGroups/{n}"
+// to regionInstanceGroups scoped by region. Any other shape returns "".
+func parseGroupRef(ref string) (collection, scope, name string) {
+	parts := strings.Split(ref, "/")
+
+	for i := 0; i+1 < len(parts); i++ {
+		switch parts[i] {
+		case gcprest.ScopeZones:
+			return resourceInstanceGroups, parts[i+1], lastPathSegment(ref)
+		case gcprest.ScopeRegions:
+			return resourceRegionInstanceGroups, parts[i+1], lastPathSegment(ref)
+		}
+	}
+
+	return "", "", ""
 }
 
 //nolint:gocritic // rp is a request-scoped value

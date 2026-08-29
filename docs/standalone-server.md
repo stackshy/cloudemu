@@ -11,10 +11,26 @@ right tool for unit tests.
 
 ## Install & run
 
+Install the `cloudemu` CLI with whichever fits your setup, then `cloudemu serve`:
+
 ```sh
+# Homebrew (macOS / Linux)
+brew install stackshy/tap/cloudemu
+
+# One-line install script (downloads the release binary + verifies its checksum)
+curl -fsSL https://raw.githubusercontent.com/stackshy/cloudemu/HEAD/install.sh | sh
+
+# Go toolchain
 go install github.com/stackshy/cloudemu/v2/cmd/cloudemu@latest
+```
+
+```sh
 cloudemu serve
 ```
+
+The install script takes an optional version arg and an `INSTALL_DIR` override
+(`... | sh -s -- v2.5.0`, `INSTALL_DIR="$HOME/bin" ... | sh`). Prebuilt binaries
+for every OS/arch are on the [releases page](https://github.com/stackshy/cloudemu/releases).
 
 Or from a checkout:
 
@@ -94,15 +110,28 @@ lifecycle commands).
 ### Persistence across restarts
 
 By default the emulator starts empty every time. Pass `--persist` to `start` and
-your resources survive `stop`→`start`:
+your resources survive `stop`→`start` **and a crash**:
 
 ```sh
-cloudemu start --persist          # save on stop, restore on start
+cloudemu start --persist          # save periodically + on stop, restore on start
 # create buckets/tables/objects…
 cloudemu stop                     # writes ~/.cloudemu/<home>/snapshot.json
 cloudemu start --persist          # your resources are back
 cloudemu delete                   # also removes the snapshot + assets
 ```
+
+`--persist` is **always-on**: it saves in the background while the server runs, so
+a `kill -9`, panic, or power loss loses at most the last save interval — not
+everything since boot. Tune *when* it saves with `--persist-strategy`
+(`scheduled` (default, every `--persist-interval`, 15s) / `on-request` /
+`on-shutdown` / `manual`) and `--persist-interval`; both also read the env vars
+`CLOUDEMU_PERSIST_STRATEGY` and `CLOUDEMU_PERSIST_INTERVAL`. Every save —
+background, on-request, and on-shutdown — **includes object bodies** by default
+(pass `--persist-metadata-only` to drop them), so an S3 object is crash-safe with
+its contents intact; the **Kubernetes data-plane is not persisted**.
+See [persistence.md](persistence.md#save-strategy---persist-strategy---persist-interval)
+for the strategy matrix, crash-window semantics, the darwin `fsync` caveat, and
+the free-vs-paid LocalStack comparison.
 
 `start` manages the snapshot path for you (in the run dir). Persistence is
 **opt-in**; when on, it saves your resources *including* object bodies, so an S3
@@ -363,9 +392,11 @@ your client.
 | `--tls-cert` / `--tls-key` | — | supply your own Azure cert (else self-signed) |
 | `--tls-host` | — | extra SAN for the generated cert (repeatable) |
 | `--endpoints-file` | — | write resolved endpoints as JSON |
-| `--persist` | `false` | save state on shutdown and restore it on startup, including object bodies (requires `--state-file`) |
+| `--persist` | `false` | save state in the background + on shutdown, restore on startup, including object bodies (requires `--state-file`) |
 | `--state-file` | — | path to the JSON state snapshot (`start` manages this for you) |
 | `--persist-metadata-only` | `false` | persist resource structure but omit object bodies (smaller snapshot) |
+| `--persist-strategy` | `scheduled` | when to save with `--persist`: `scheduled` / `on-request` / `on-shutdown` / `manual` (env `CLOUDEMU_PERSIST_STRATEGY`) |
+| `--persist-interval` | `15s` | save cadence for `--persist-strategy=scheduled` (env `CLOUDEMU_PERSIST_INTERVAL`) |
 | `--log-requests` | `false` | log every request |
 | `--quiet` | `false` | suppress the startup banner |
 | `--shutdown-timeout` | `10s` | grace period for in-flight requests on Ctrl-C |

@@ -20,17 +20,22 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"syscall"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
-// SchemaVersion is the on-disk snapshot format version. Bumped to 3 for the
+// SchemaVersion is the on-disk snapshot format version. Bumped to 4 for the
+// shared Kubernetes data-plane (#868): a top-level "kubernetes" field now sits
+// alongside the per-provider state, so a v3 snapshot (which lacks it) can no
+// longer be read into a build that expects it. It was bumped to 3 for the
 // full-surface generic layout: every service captures itself under
 // ProviderState.Services and the bespoke per-kind arrays of the v2 layout are
-// gone, so a v2 (or older) snapshot can no longer be read. Snapshots are a
-// dev-only convenience, so a clean break with a clear error is acceptable.
-const SchemaVersion = 3
+// gone. Snapshots are a dev-only convenience, so a clean break with a clear
+// error is acceptable.
+const SchemaVersion = 4
 
 const dirPerm = 0o755
 
@@ -49,6 +54,16 @@ type Snapshot struct {
 	SchemaVersion int                      `json:"schemaVersion"`
 	Meta          *Meta                    `json:"meta,omitempty"`
 	Providers     map[string]ProviderState `json:"providers,omitempty"`
+
+	// Kubernetes is the serialized shared Kubernetes data-plane (APIServer
+	// state keyed by cluster UID). It is NOT part of any single provider —
+	// AWS/Azure/GCP all register clusters into the same data plane — so it lives
+	// at the top level rather than under Providers. It is populated and consumed
+	// by the caller (server/serverkit), NOT by the generic ExportAll/RestoreAll,
+	// which stay strictly provider-only: a direct ExportAll caller therefore gets
+	// a k8s-less snapshot and must attach/restore this field itself if it wires a
+	// data plane. Left nil (omitted) when no Kubernetes data plane is running.
+	Kubernetes json.RawMessage `json:"kubernetes,omitempty"`
 }
 
 // Meta is optional descriptive header for a named snapshot (the auto
@@ -200,10 +215,16 @@ func (s Snapshot) WriteFile(path string) error {
 		return err
 	}
 
-	// Write to a temp file in the same dir, then rename onto the target. Rename
-	// is atomic on the same filesystem, so an interrupted write (disk-full, OOM,
-	// SIGKILL) leaves the previous snapshot — or none — but never a truncated
-	// file that would fail the next start.
+	// Write to a temp file in the same dir, fsync it, then rename onto the
+	// target. The full ordering — temp-write → fsync file → rename → best-effort
+	// fsync parent dir — is what makes the write crash-safe: fsync forces the
+	// data blocks to disk before the rename publishes the name, so power loss can
+	// leave the previous snapshot (or none) but never a truncated/empty file, and
+	// rename is atomic on the same filesystem. The parent-dir fsync then makes the
+	// rename entry itself durable. Darwin caveat: Go's File.Sync issues fsync(2),
+	// which on macOS flushes to the drive but does NOT flush the drive's own write
+	// cache (a true device flush needs fcntl(F_FULLFSYNC), which is not issued
+	// here), so on darwin this is best-effort, not a hard power-loss guarantee.
 	tmp, err := os.CreateTemp(dir, ".snapshot-*.tmp")
 	if err != nil {
 		return err
@@ -212,6 +233,16 @@ func (s Snapshot) WriteFile(path string) error {
 	tmpName := tmp.Name()
 
 	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+
+		return err
+	}
+
+	// fsync the data to disk before the rename. This is the critical fix: without
+	// it the rename can be committed to the directory before the file's blocks
+	// reach disk, leaving an empty/truncated state file after a crash.
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 
@@ -230,7 +261,45 @@ func (s Snapshot) WriteFile(path string) error {
 		return err
 	}
 
+	// Make the rename entry itself durable. Best-effort by design (see fsyncDir).
+	if err := fsyncDir(dir); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// fsyncDir fsyncs a directory so a rename into it is durable across a crash. It
+// is best-effort: opening a directory handle for fsync fails on Windows, and
+// some filesystems reject a directory fsync with EINVAL/ENOTSUP. Those are
+// swallowed (there is nothing the caller can do and the file data is already
+// synced); genuinely unexpected errors are returned.
+func fsyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		// Windows has no fsync-the-directory concept; the rename is durable once
+		// the file was synced above.
+		return nil
+	}
+
+	d, err := os.Open(dir)
+	if err != nil {
+		// Cannot open the directory as a handle on this platform/FS; treat as
+		// unsupported rather than failing the whole write.
+		return nil
+	}
+
+	syncErr := d.Sync()
+
+	if closeErr := d.Close(); closeErr != nil && syncErr == nil {
+		syncErr = closeErr
+	}
+
+	if syncErr == nil || errors.Is(syncErr, syscall.EINVAL) || errors.Is(syncErr, syscall.ENOTSUP) {
+		// EINVAL/ENOTSUP: this filesystem does not support fsync on a directory.
+		return nil
+	}
+
+	return syncErr
 }
 
 // ReadFile loads a snapshot from disk, rejecting an incompatible schema version

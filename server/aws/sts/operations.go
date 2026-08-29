@@ -63,10 +63,15 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 
+	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	if !ok {
+		return
+	}
+
 	awsquery.WriteXMLResponse(w, assumeRoleResponse{
 		Xmlns: Namespace,
 		Result: assumeRoleResult{
-			Credentials: h.synthCredentials(durationFromForm(r)),
+			Credentials: creds,
 			AssumedRoleUser: assumedRoleUser{
 				AssumedRoleID: "AROACLOUDEMU0000000000:" + sessionName,
 				Arn:           assumedArn,
@@ -109,10 +114,15 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 		provider = "cloudemu.local"
 	}
 
+	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	if !ok {
+		return
+	}
+
 	awsquery.WriteXMLResponse(w, assumeRoleWithWebIdentityResponse{
 		Xmlns: Namespace,
 		Result: assumeRoleWithWebIdentityResult{
-			Credentials: h.synthCredentials(durationFromForm(r)),
+			Credentials: creds,
 			AssumedRoleUser: assumedRoleUser{
 				AssumedRoleID: "AROACLOUDEMU0000000000:" + sessionName,
 				Arn:           assumedArn,
@@ -132,10 +142,15 @@ func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 	sessionName := "cloudemu-saml-session"
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 
+	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	if !ok {
+		return
+	}
+
 	awsquery.WriteXMLResponse(w, assumeRoleWithSAMLResponse{
 		Xmlns: Namespace,
 		Result: assumeRoleWithSAMLResult{
-			Credentials: h.synthCredentials(durationFromForm(r)),
+			Credentials: creds,
 			AssumedRoleUser: assumedRoleUser{
 				AssumedRoleID: "AROACLOUDEMU0000000000:" + sessionName,
 				Arn:           assumedArn,
@@ -158,10 +173,15 @@ func (h *Handler) getFederationToken(w http.ResponseWriter, r *http.Request) {
 		name = "cloudemu-federated"
 	}
 
+	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	if !ok {
+		return
+	}
+
 	awsquery.WriteXMLResponse(w, getFederationTokenResponse{
 		Xmlns: Namespace,
 		Result: getFederationTokenResult{
-			Credentials: h.synthCredentials(durationFromForm(r)),
+			Credentials: creds,
 			FederatedUser: federatedUser{
 				FederatedUserID: h.accountID + ":" + name,
 				Arn:             "arn:aws:sts::" + h.accountID + ":federated-user/" + name,
@@ -208,19 +228,40 @@ func durationFromForm(r *http.Request) time.Duration {
 
 // getSessionToken returns synthetic temporary credentials.
 func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
+	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	if !ok {
+		return
+	}
+
 	awsquery.WriteXMLResponse(w, getSessionTokenResponse{
 		Xmlns:    Namespace,
-		Result:   getSessionTokenResult{Credentials: h.synthCredentials(durationFromForm(r))},
+		Result:   getSessionTokenResult{Credentials: creds},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
-// synthCredentials builds a deterministic set of temporary credentials with an
-// expiration in the future. cloudemu does not validate signatures, so any
-// non-empty values satisfy SDK clients.
-func (h *Handler) synthCredentials(dur time.Duration) credentials {
+// synthCredentials builds a set of temporary credentials with an expiration in
+// the future. When a session store is wired (EnforceAuth on) it mints unique,
+// verifiable credentials and records their secret so the auth gate can verify a
+// signature made with them; otherwise it returns the fixed synthetic values it
+// always has (default, auth-off behavior is byte-for-byte unchanged).
+func (h *Handler) synthCredentials(dur time.Duration) (credentials, error) {
 	if dur <= 0 {
 		dur = sessionDuration
+	}
+
+	if h.sessions != nil {
+		sess, err := h.sessions.Mint(dur)
+		if err != nil {
+			return credentials{}, err
+		}
+
+		return credentials{
+			AccessKeyID:     sess.AccessKeyID,
+			SecretAccessKey: sess.SecretAccessKey,
+			SessionToken:    sess.SessionToken,
+			Expiration:      sess.Expiration.Format(time.RFC3339),
+		}, nil
 	}
 
 	return credentials{
@@ -228,7 +269,22 @@ func (h *Handler) synthCredentials(dur time.Duration) credentials {
 		SecretAccessKey: "cloudemuSecretAccessKey0000000000000000",
 		SessionToken:    "cloudemu-session-token",
 		Expiration:      time.Now().UTC().Add(dur).Format(time.RFC3339),
+	}, nil
+}
+
+// mintCredentials builds temporary credentials for a handler, writing a
+// InternalFailure error response and reporting ok=false when credential
+// generation fails closed (a crypto/rand read error).
+func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration) (credentials, bool) {
+	creds, err := h.synthCredentials(dur)
+	if err != nil {
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure",
+			"could not generate temporary credentials")
+
+		return credentials{}, false
 	}
+
+	return creds, true
 }
 
 // roleNameFromArn extracts the role name (last path segment) from a role ARN

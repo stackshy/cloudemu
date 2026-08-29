@@ -8,7 +8,7 @@ import (
 )
 
 // RegisterStreamConsumer registers an enhanced fan-out consumer on a stream.
-func (m *Mock) RegisterStreamConsumer(_ context.Context, streamARN, consumerName string) (*driver.Consumer, error) {
+func (m *Mock) RegisterStreamConsumer(ctx context.Context, streamARN, consumerName string) (*driver.Consumer, error) {
 	if consumerName == "" {
 		return nil, invalidArg("ConsumerName is required")
 	}
@@ -27,7 +27,7 @@ func (m *Mock) RegisterStreamConsumer(_ context.Context, streamARN, consumerName
 
 	c := &driver.Consumer{
 		ConsumerName:              consumerName,
-		ConsumerARN:               m.consumerARN(sd.desc.StreamName, consumerName),
+		ConsumerARN:               m.consumerARN(ctx, sd.desc.StreamName, consumerName),
 		ConsumerStatus:            driver.ConsumerActive,
 		ConsumerCreationTimestamp: m.now(),
 		StreamARN:                 sd.desc.StreamARN,

@@ -9,13 +9,16 @@ package aws
 import (
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
+	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
+	cloudformationsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudformation"
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
@@ -58,10 +61,12 @@ import (
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
+	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	cfnsvc "github.com/stackshy/cloudemu/v2/services/cloudformation"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
@@ -165,6 +170,9 @@ type Drivers struct {
 
 	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
 	Kinesis kinesisdriver.Kinesis
+	// CloudFormation serves the CloudFormation query protocol (CreateStack,
+	// DescribeStacks, …) against the stack orchestrator.
+	CloudFormation cfnsvc.API
 	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
 	// "CloudTrail_20131101.") against the cloudtrail driver.
 	CloudTrail cloudtraildriver.CloudTrail
@@ -174,6 +182,12 @@ type Drivers struct {
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
+	// APIGateway serves the Amazon API Gateway REST API v1 protocol: the
+	// restJson1 control plane under /restapis (RestApi/Resource/Method/
+	// Integration/Deployment/Stage) plus the execute-api data plane, which routes
+	// a request to a deployed API by method+path to its Lambda proxy integration.
+	// It must register before the S3 catch-all.
+	APIGateway apigatewaydriver.APIGateway
 	// GuardDuty serves the Amazon GuardDuty REST-JSON API (path + method routing,
 	// no version prefix) against the guardduty driver. It must register before
 	// the S3 catch-all (see the GuardDuty handler's Matches doc).
@@ -226,6 +240,28 @@ type Drivers struct {
 	ResourceDiscovery *resourcediscovery.Engine
 	AccountID         string
 	Region            string
+	// EnforceAuth turns on SigV4 request authentication: each incoming request's
+	// signature is verified against a registered IAM access key (resolved via the
+	// IAM driver) and bad/missing signatures are rejected with 403. Off by
+	// default, which accepts any credentials exactly as before. Requires IAM to
+	// implement the optional access-key resolver; without it every signed request
+	// fails to resolve its key (InvalidClientTokenId).
+	//
+	// Long-term (AKIA) keys and STS temporary (ASIA) credentials are both
+	// verified — ASIA against the secret STS minted for that session (rejected
+	// if forged or expired).
+	//
+	// It also enforces IAM authorization for JSON-RPC services (the operation is
+	// bound to the X-Amz-Target header the dispatcher routes on); query and REST
+	// services are authenticated only, because their executed operation cannot be
+	// soundly bound to an IAM service before dispatch. Authorization applies only
+	// to principals that have IAM policies defined — a policy-less user/role and
+	// the account-admin/root and ASIA identities are left unrestricted.
+	EnforceAuth bool
+	// Clock drives SigV4 timestamp-expiry evaluation and STS temporary-credential
+	// expiry when EnforceAuth is on. Nil uses the real clock; tests inject a
+	// FakeClock for determinism. Ignored when EnforceAuth is off.
+	Clock config.Clock
 }
 
 // DriversFrom builds a Drivers bundle wiring every service handler to the
@@ -267,6 +303,8 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Glue:                p.Glue,
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
+		APIGateway:          p.APIGateway,
+		CloudFormation:      p.CloudFormation,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -283,6 +321,8 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ResourceDiscovery:   p.ResourceDiscovery,
 		AccountID:           p.AccountID,
 		Region:              p.Region,
+		EnforceAuth:         p.EnforceAuth,
+		Clock:               p.Clock,
 	}
 }
 
@@ -540,15 +580,41 @@ func New(d Drivers) *server.Server {
 		srv.Register(sns.New(d.SNS))
 	}
 
+	// CloudFormation also speaks the AWS query protocol; its action set
+	// (CreateStack, DescribeStacks, …) is disjoint from RDS, Redshift, IAM, SNS,
+	// and EC2, so no shadowing occurs. Registered before the EC2 catch-all.
+	if d.CloudFormation != nil {
+		srv.Register(cloudformationsrv.New(d.CloudFormation))
+	}
+
 	// STS also speaks the AWS query protocol; its action set (GetCallerIdentity,
 	// AssumeRole, GetSessionToken) is disjoint from RDS, Redshift, IAM, ELBv2,
 	// ElastiCache, SNS, and EC2, so no shadowing occurs. It has no driver, so
 	// it's gated on the STS bool. Registered before the EC2 catch-all.
+	// When EnforceAuth is on, STS records the temporary credentials it mints in a
+	// session store so the auth gate can verify signatures made with them (and
+	// reject expired sessions). Off, the store stays nil and STS returns its
+	// fixed synthetic credentials unchanged.
+	authClock := d.Clock
+	if authClock == nil {
+		authClock = config.RealClock{}
+	}
+
+	var stsSessions *stssrv.SessionStore
+	if d.EnforceAuth {
+		stsSessions = stssrv.NewSessionStore(authClock)
+	}
+
 	if d.STS {
 		// Pass the IAM driver so AssumeRole can enforce the target role's trust
 		// policy and existence. d.IAM may be nil (standalone STS-only), in which
 		// case AssumeRole stays permissive.
-		srv.Register(stssrv.New(d.AccountID, d.Region, d.IAM))
+		stsHandler := stssrv.New(d.AccountID, d.Region, d.IAM)
+		if stsSessions != nil {
+			stsHandler.SetSessions(stsSessions)
+		}
+
+		srv.Register(stsHandler)
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
@@ -579,6 +645,15 @@ func New(d Drivers) *server.Server {
 	// fall through to their own handlers.
 	if d.GuardDuty != nil {
 		srv.Register(guarddutysrv.New(d.GuardDuty))
+	}
+
+	// API Gateway REST v1: the restJson1 control plane roots at /restapis and the
+	// data plane matches either a "{apiId}.execute-api.<...>" Host or a
+	// /restapis/{id}/{stage}/_user_request_/... path. Both are disjoint from the
+	// Lambda control plane (/2015-03-31/functions) and must register before S3's
+	// permissive REST fallback, which would otherwise claim /restapis.
+	if d.APIGateway != nil {
+		srv.Register(apigatewaysrv.New(d.APIGateway))
 	}
 
 	// before S3 because S3 is the permissive REST fallback that would
@@ -651,5 +726,40 @@ func New(d Drivers) *server.Server {
 		srv.SetObserver(func(r *http.Request) { recordManagementEvent(rec, r) })
 	}
 
+	// Region awareness always runs; SigV4 authentication is opt-in. Both are
+	// pre-dispatch concerns, so they are composed into one hook: the region
+	// stamper first rewrites the request context with the caller's region (from
+	// the SigV4 credential scope), then the auth gate — when enabled — runs on
+	// that rewritten request. The region stamper does not depend on auth being
+	// on, and adds no request-path change beyond a context value.
+	var authGate func(http.ResponseWriter, *http.Request) (*http.Request, bool)
+	if d.EnforceAuth {
+		authGate = newAuthGate(d.IAM, d.AccountID, stsSessions, authClock)
+	}
+
+	srv.SetPreDispatch(composePreDispatch(newRegionStamp(), authGate))
+
 	return srv
+}
+
+// composePreDispatch chains pre-dispatch hooks left to right: each may rewrite
+// the request (the next hook sees the rewrite) and any may stop dispatch. Nil
+// hooks are skipped, so an absent auth gate adds nothing.
+func composePreDispatch(
+	hooks ...func(http.ResponseWriter, *http.Request) (*http.Request, bool),
+) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
+	return func(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+		for _, hook := range hooks {
+			if hook == nil {
+				continue
+			}
+
+			var proceed bool
+			if r, proceed = hook(w, r); !proceed {
+				return r, false
+			}
+		}
+
+		return r, true
+	}
 }

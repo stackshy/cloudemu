@@ -13,11 +13,15 @@ import (
 // excluded — real inventory APIs surface the standing resources, not job runs.
 type sagemakerDiscovery struct{ m smMock }
 
-// smMock is the subset of the SageMaker mock discovery reads.
+// smMock is the subset of the SageMaker mock discovery reads. ListTags reads
+// the authoritative ARN-keyed tag store (the target of AddTags / the Resource
+// Groups Tagging API), which is seeded with create-time tags too — so discovery
+// reflects tags applied through either path rather than the stale struct copy.
 type smMock interface {
 	ListModels(ctx context.Context) ([]sagemakerdriver.Model, error)
 	ListEndpoints(ctx context.Context) ([]sagemakerdriver.Endpoint, error)
 	ListNotebookInstances(ctx context.Context) ([]sagemakerdriver.NotebookInstance, error)
+	ListTags(ctx context.Context, resourceARN string) ([]sagemakerdriver.Tag, error)
 }
 
 func smTags(tags []sagemakerdriver.Tag) map[string]string {
@@ -55,25 +59,50 @@ func (a sagemakerDiscovery) DiscoverResources(
 		len(models)+len(endpoints)+len(notebooks))
 
 	for i := range models {
+		tags, err := a.liveTags(ctx, models[i].ModelARN)
+		if err != nil {
+			return nil, err
+		}
+
 		out = append(out, resourcediscovery.DiscoveredResource{
 			Service: resourcediscovery.ServiceSageMaker, Type: resourcediscovery.TypeModel,
-			ID: models[i].ModelName, ARN: models[i].ModelARN, Tags: smTags(models[i].Tags),
+			ID: models[i].ModelName, ARN: models[i].ModelARN, Tags: tags,
 		})
 	}
 
 	for i := range endpoints {
+		tags, err := a.liveTags(ctx, endpoints[i].EndpointARN)
+		if err != nil {
+			return nil, err
+		}
+
 		out = append(out, resourcediscovery.DiscoveredResource{
 			Service: resourcediscovery.ServiceSageMaker, Type: resourcediscovery.TypeEndpoint,
-			ID: endpoints[i].EndpointName, ARN: endpoints[i].EndpointARN, Tags: smTags(endpoints[i].Tags),
+			ID: endpoints[i].EndpointName, ARN: endpoints[i].EndpointARN, Tags: tags,
 		})
 	}
 
 	for i := range notebooks {
+		tags, err := a.liveTags(ctx, notebooks[i].ARN)
+		if err != nil {
+			return nil, err
+		}
+
 		out = append(out, resourcediscovery.DiscoveredResource{
 			Service: resourcediscovery.ServiceSageMaker, Type: resourcediscovery.TypeNotebookInstance,
-			ID: notebooks[i].Name, ARN: notebooks[i].ARN, Tags: smTags(notebooks[i].Tags),
+			ID: notebooks[i].Name, ARN: notebooks[i].ARN, Tags: tags,
 		})
 	}
 
 	return out, nil
+}
+
+// liveTags reads a resource's current tags from the ARN-keyed tag store.
+func (a sagemakerDiscovery) liveTags(ctx context.Context, arn string) (map[string]string, error) {
+	tags, err := a.m.ListTags(ctx, arn)
+	if err != nil {
+		return nil, err
+	}
+
+	return smTags(tags), nil
 }

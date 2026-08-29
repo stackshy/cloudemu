@@ -29,7 +29,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	}
 
 	aliasARN := idgen.AWSARN(
-		"lambda", m.opts.Region, m.opts.AccountID,
+		"lambda", arnRegion(fd.info.ARN, m.opts.Region), m.opts.AccountID,
 		"function:"+cfg.FunctionName+":"+cfg.Name,
 	)
 
@@ -62,6 +62,11 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", cfg.Name)
 	}
+
+	// ad is a shared pointer held in the store; guard the read-validate-mutate of
+	// its alias fields so a concurrent Update/Get/List cannot race it.
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
 
 	// Compute the prospective effective FunctionVersion without touching the
 	// live alias yet. UpdateAlias is atomic in real AWS: if any validation
@@ -97,8 +102,8 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 
 	ad.alias.RevisionID = newRevisionID()
 
-	fd.aliases.Set(cfg.Name, ad)
-
+	// ad is the shared pointer already held in the store, so the in-place
+	// mutations above are already visible — no re-Set needed.
 	result := ad.alias
 
 	return &result, nil
@@ -132,7 +137,9 @@ func (m *Mock) GetAlias(_ context.Context, functionName, aliasName string) (*dri
 		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", aliasName)
 	}
 
+	ad.mu.Lock()
 	result := ad.alias
+	ad.mu.Unlock()
 
 	return &result, nil
 }
@@ -148,7 +155,9 @@ func (m *Mock) ListAliases(_ context.Context, functionName string) ([]driver.Ali
 	aliases := make([]driver.Alias, 0, len(all))
 
 	for _, ad := range all {
+		ad.mu.Lock()
 		aliases = append(aliases, ad.alias)
+		ad.mu.Unlock()
 	}
 
 	return aliases, nil
@@ -159,31 +168,63 @@ func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig
 		return nil
 	}
 
-	cp := *rc
+	if len(rc.AdditionalVersionWeights) == 0 {
+		return &driver.AliasRoutingConfig{}
+	}
 
-	return &cp
+	weights := make(map[string]float64, len(rc.AdditionalVersionWeights))
+	for v, w := range rc.AdditionalVersionWeights {
+		weights[v] = w
+	}
+
+	return &driver.AliasRoutingConfig{AdditionalVersionWeights: weights}
 }
 
 // validateRoutingConfig enforces the RoutingConfig.AdditionalVersionWeights
-// rules real Lambda applies: neither the alias's own version nor the additional
-// version can be $LATEST (InvalidParameterValueException), and the additional
-// version must exist (ResourceNotFoundException). effectiveVersion is the alias's
-// own FunctionVersion after the operation. An absent additional version is a no-op.
+// rules real Lambda applies: neither the alias's own version nor any additional
+// version can be $LATEST (InvalidParameterValueException), every additional
+// version must exist (ResourceNotFoundException), each weight must be within
+// [0.0, 1.0], and the additional weights must sum to at most 1.0
+// (InvalidParameterValueException). effectiveVersion is the alias's own
+// FunctionVersion after the operation. An empty weights map is a no-op.
 func (m *Mock) validateRoutingConfig(fd *funcData, effectiveVersion string, rc *driver.AliasRoutingConfig) error {
-	if rc == nil || rc.AdditionalVersion == "" {
+	if rc == nil || len(rc.AdditionalVersionWeights) == 0 {
 		return nil
 	}
 
 	// A weighted alias cannot point to $LATEST — this restriction applies to the
-	// alias's own FunctionVersion (the primary target) as well as the additional
-	// version. Both must be published.
-	if effectiveVersion == latestVersion || rc.AdditionalVersion == latestVersion {
+	// alias's own FunctionVersion (the primary target) as well as every
+	// additional version. All must be published.
+	if effectiveVersion == latestVersion {
 		return cerrors.New(cerrors.InvalidArgument,
 			"Alias with weights can not be created with function version $LATEST")
 	}
 
-	if !m.versionExists(fd, rc.AdditionalVersion) {
-		return cerrors.Newf(cerrors.NotFound, "version %s not found", rc.AdditionalVersion)
+	var weightSum float64
+
+	for version, weight := range rc.AdditionalVersionWeights {
+		if version == latestVersion {
+			return cerrors.New(cerrors.InvalidArgument,
+				"Alias with weights can not be created with function version $LATEST")
+		}
+
+		if !m.versionExists(fd, version) {
+			return cerrors.Newf(cerrors.NotFound, "version %s not found", version)
+		}
+
+		if weight < driver.MinVersionWeight || weight > driver.MaxVersionWeight {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"Weight for version %s must be between 0.0 and 1.0", version)
+		}
+
+		weightSum += weight
+	}
+
+	// The additional weights share traffic with the primary version, so their
+	// sum cannot exceed 1.0 (the primary keeps the remainder).
+	if weightSum > driver.MaxVersionWeight {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Sum of the additional version weights must not exceed 1.0")
 	}
 
 	return nil

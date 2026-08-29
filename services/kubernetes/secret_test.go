@@ -79,9 +79,9 @@ func TestSecret_LifecycleAndStringDataMerge(t *testing.T) {
 		t.Fatalf("Type preserved on update: got %q", got.Type)
 	}
 
-	if got.ResourceVersion != "2" {
-		t.Fatalf("RV after update: got %q, want 2", got.ResourceVersion)
-	}
+	// One cluster-wide monotonic resourceVersion counter — a fresh, positive
+	// value on update (not a per-object "2").
+	assertRVGreater(t, got.ResourceVersion, "0")
 
 	// Patch
 	patch := []byte(`{"data":{"extra":"ZXh0cmEtdmFsdWU="}}`) // base64("extra-value")

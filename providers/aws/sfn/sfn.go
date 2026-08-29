@@ -1,12 +1,18 @@
 // Package sfn provides an in-memory mock implementation of AWS Step Functions.
 //
-// The mock stores each state machine's ASL definition verbatim but does not
-// interpret it: StartExecution completes the execution immediately (RUNNING
-// then SUCCEEDED) with output echoing the input, and GetExecutionHistory
-// synthesizes a minimal, valid event list (ExecutionStarted -> ExecutionSucceeded).
+// The mock stores each state machine's ASL definition verbatim and interprets
+// it with a real state-graph walker (see providers/aws/sfn/asl): StartExecution
+// walks from StartAt following Next/End, computes the terminal status/output,
+// and records the per-state event list GetExecutionHistory returns. Execution is
+// synchronous; the settle overlay keeps RUNNING observable under AsyncSettle.
+// ctx is threaded end-to-end so the Task->Lambda seam carries recursionguard
+// depth. Pass, Choice, Wait, Succeed, Fail and Task (Lambda, with Retry/Catch)
+// are supported; Parallel and Map parse but fail loudly at run time until their
+// handlers land.
 package sfn
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +26,17 @@ import (
 
 // Compile-time check that Mock implements driver.SFN.
 var _ driver.SFN = (*Mock)(nil)
+
+// LambdaSyncInvoker is the Task->Lambda seam a Task state uses to invoke a
+// function synchronously. It is deliberately named apart from the
+// InvokeExternal-shaped LambdaInvoker used by eventbridge/s3/sns: those are
+// fire-and-forget, whereas this returns the function output and a functionError
+// (mapped to States.TaskFailed). The lambda backend's adapter carries the
+// recursionguard depth so a Task->Lambda->StartExecution->Task cycle terminates
+// at recursionguard.MaxDepth instead of overflowing the stack.
+type LambdaSyncInvoker interface {
+	InvokeSync(ctx context.Context, functionARN string, payload []byte) (output []byte, functionError string, err error)
+}
 
 const (
 	// maxTags is the SFN cap on tags per resource.
@@ -47,7 +64,18 @@ type Mock struct {
 	tasksMu sync.RWMutex
 	tasks   map[string]string // taskToken -> executionArn (activity task bookkeeping)
 
+	// lambdaSync is the Task->Lambda seam; nil until SetLambdaSyncInvoker wires
+	// the Lambda backend (library-only construction leaves Task echoing input).
+	lambdaSync LambdaSyncInvoker
+
 	opts *config.Options
+}
+
+// SetLambdaSyncInvoker wires the Lambda backend so a Task state
+// (arn:aws:states:::lambda:invoke or a bare Lambda function ARN) invokes the
+// function synchronously through the recursion-guarded seam.
+func (m *Mock) SetLambdaSyncInvoker(i LambdaSyncInvoker) {
+	m.lambdaSync = i
 }
 
 // smData is a state machine plus its own lock.
@@ -101,24 +129,40 @@ func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
 }
 
-func (m *Mock) smARN(name string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "stateMachine:"+name)
+func (m *Mock) smARN(region, name string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "stateMachine:"+name)
 }
 
-func (m *Mock) execARN(smName, execName string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "execution:"+smName+":"+execName)
+func (m *Mock) execARN(region, smName, execName string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "execution:"+smName+":"+execName)
 }
 
-func (m *Mock) activityARN(name string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "activity:"+name)
+func (m *Mock) activityARN(region, name string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "activity:"+name)
 }
 
-func (m *Mock) aliasARN(smName, alias string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "stateMachine:"+smName+":"+alias)
+func (m *Mock) aliasARN(region, smName, alias string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "stateMachine:"+smName+":"+alias)
 }
 
-func (m *Mock) mapRunARN(smName, execName, id string) string {
-	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "mapRun:"+smName+"/"+execName+":"+id)
+func (m *Mock) mapRunARN(region, smName, execName, id string) string {
+	return idgen.AWSARN("states", region, m.opts.AccountID, "mapRun:"+smName+"/"+execName+":"+id)
+}
+
+// arnRegion returns the region field of a Step Functions ARN
+// (arn:aws:states:<region>:<account>:<resource>), or fallback when the ARN is
+// malformed. A parent resource's stored ARN is the source of truth for the
+// region of the child ARNs derived from it (executions, aliases, map runs), so
+// a child always shares its parent's region.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // smNameFromARN extracts the state machine name from a state machine ARN.

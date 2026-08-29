@@ -6,9 +6,11 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | AWS service | Portable service | Operations |
 | --- | --- | --- |
 | [ACM](./acm.md) | `acm` | 17 |
+| [APIGateway](./apigateway.md) | `apigateway` | 15 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
+| [CloudFormation](./cloudformation.md) | — (provider-native) | 9 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
@@ -35,8 +37,8 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [OpenSearch](./opensearch.md) | `opensearch` | 96 |
 | [RDS](./rds.md) | — (provider-native) | 21 |
 | [Redshift](./redshift.md) | `relationaldb` | 21 |
-| [Resourceexplorer2](./resourceexplorer2.md) | — (provider-native) | 0 |
-| [Resourcegroupstaggingapi](./resourcegroupstaggingapi.md) | — (provider-native) | 0 |
+| [Resourceexplorer2](./resourceexplorer2.md) | — (provider-native) | 10 |
+| [Resourcegroupstaggingapi](./resourcegroupstaggingapi.md) | — (provider-native) | 5 |
 | [Route53](./route53.md) | `dns` | 16 |
 | [Route53Resolver](./route53resolver.md) | `route53resolver` | 72 |
 | [S3](./s3.md) | `storage` | 35 |
@@ -45,7 +47,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [SNS](./sns.md) | `notification` | 9 |
 | [SQS](./sqs.md) | `messagequeue` | 14 |
 | [SSM](./ssm.md) | `parameterstore` | 9 |
-| [STS](./sts.md) | — (provider-native) | 0 |
+| [STS](./sts.md) | — (provider-native) | 8 |
 | [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
 | [VPC](./vpc.md) | `networking` | 57 |

@@ -2,34 +2,22 @@ package sfn
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sfn/asl"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
-// validateASL performs a minimal Amazon States Language structural check: the
-// definition must be a JSON object carrying a top-level "StartAt" string and a
-// non-empty "States" object. Real Step Functions rejects anything else with
-// InvalidDefinition. No full semantic validation is performed.
+// validateASL runs the ASL parser's structural validation so CreateStateMachine
+// rejects semantically-invalid definitions (unknown state Type, dangling Next,
+// Choice without Choices, unsupported fields on Wait/Choice/Succeed/Fail,
+// QueryLanguage JSONata) with InvalidDefinition, matching real Step Functions.
 func validateASL(definition string) error {
-	var doc struct {
-		StartAt string                     `json:"StartAt"`
-		States  map[string]json.RawMessage `json:"States"`
-	}
-
-	if err := json.Unmarshal([]byte(definition), &doc); err != nil {
-		return invalidDefinition("definition is not valid JSON")
-	}
-
-	if doc.StartAt == "" {
-		return invalidDefinition("definition is missing the required top-level 'StartAt' field")
-	}
-
-	if len(doc.States) == 0 {
-		return invalidDefinition("definition is missing the required top-level 'States' object")
+	if _, err := asl.Parse(definition); err != nil {
+		return invalidDefinition(err.Error())
 	}
 
 	return nil
@@ -53,7 +41,7 @@ func (m *Mock) getSM(arn string) (*smData, error) {
 //
 //nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
 func (m *Mock) CreateStateMachine(
-	_ context.Context, in driver.CreateStateMachineInput,
+	ctx context.Context, in driver.CreateStateMachineInput,
 ) (arn, versionArn string, created time.Time, err error) {
 	if in.Name == "" {
 		return "", "", time.Time{}, invalidName("state machine name is required")
@@ -78,7 +66,7 @@ func (m *Mock) CreateStateMachine(
 		smType = driver.TypeStandard
 	}
 
-	arn = m.smARN(in.Name)
+	arn = m.smARN(regionctx.RegionOr(ctx, m.opts.Region), in.Name)
 	now := m.now()
 	sm := driver.StateMachine{
 		ARN: arn, Name: in.Name, Definition: in.Definition, RoleArn: in.RoleArn,
@@ -184,28 +172,18 @@ func (m *Mock) UpdateStateMachine(
 			"UpdateStateMachine requires at least one of definition or roleArn")
 	}
 
+	// A new definition must be structurally valid, matching real SFN's update-time
+	// validation (and keeping run-time interpretation safe).
+	if in.Definition != "" {
+		if verr := validateASL(in.Definition); verr != nil {
+			return nil, verr
+		}
+	}
+
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	if in.Definition != "" {
-		sd.sm.Definition = in.Definition
-	}
-
-	if in.RoleArn != "" {
-		sd.sm.RoleArn = in.RoleArn
-	}
-
-	if in.LoggingConfigJSON != "" {
-		sd.sm.LoggingConfigJSON = in.LoggingConfigJSON
-	}
-
-	if in.TracingConfigJSON != "" {
-		sd.sm.TracingConfigJSON = in.TracingConfigJSON
-	}
-
-	if in.EncryptionCfgJSON != "" {
-		sd.sm.EncryptionCfgJSON = in.EncryptionCfgJSON
-	}
+	applyStateMachineUpdate(&sd.sm, in)
 
 	now := m.now()
 	sd.sm.RevisionID = idgen.GenerateID("")
@@ -216,6 +194,32 @@ func (m *Mock) UpdateStateMachine(
 	}
 
 	return res, nil
+}
+
+// applyStateMachineUpdate copies each supplied (non-empty) UpdateStateMachine
+// field onto the stored state machine. The caller holds sm's write lock.
+//
+//nolint:gocritic // in is a value to satisfy the driver.SFN interface signature.
+func applyStateMachineUpdate(sm *driver.StateMachine, in driver.UpdateStateMachineInput) {
+	if in.Definition != "" {
+		sm.Definition = in.Definition
+	}
+
+	if in.RoleArn != "" {
+		sm.RoleArn = in.RoleArn
+	}
+
+	if in.LoggingConfigJSON != "" {
+		sm.LoggingConfigJSON = in.LoggingConfigJSON
+	}
+
+	if in.TracingConfigJSON != "" {
+		sm.TracingConfigJSON = in.TracingConfigJSON
+	}
+
+	if in.EncryptionCfgJSON != "" {
+		sm.EncryptionCfgJSON = in.EncryptionCfgJSON
+	}
 }
 
 func (m *Mock) DeleteStateMachine(_ context.Context, arn string) error {

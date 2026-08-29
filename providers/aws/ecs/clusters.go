@@ -4,18 +4,19 @@ import (
 	"context"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
 // CreateCluster creates a cluster, defaulting the name to "default".
-func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*driver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, in driver.CreateClusterInput) (*driver.Cluster, error) {
 	name := in.Name
 	if name == "" {
 		name = defaultCluster
 	}
 
 	c := &driver.Cluster{
-		ARN:      m.arn("cluster/" + name),
+		ARN:      m.arnIn(regionctx.RegionOr(ctx, m.opts.Region), "cluster/"+name),
 		Name:     name,
 		Status:   statusActive,
 		Tags:     copyTags(in.Tags),
@@ -57,7 +58,7 @@ func (m *Mock) ListClusters(_ context.Context) ([]driver.Cluster, error) {
 
 // DescribeClusters resolves each id to a cluster; unresolved ids become
 // failures. An empty id list returns every cluster.
-func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]driver.Cluster, []driver.Failure, error) {
+func (m *Mock) DescribeClusters(ctx context.Context, ids []string) ([]driver.Cluster, []driver.Failure, error) {
 	if len(ids) == 0 {
 		all := m.clusters.SortedValues()
 
@@ -79,7 +80,10 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]driver.Clust
 			continue
 		}
 
-		failures = append(failures, driver.Failure{ARN: m.arn("cluster/" + name), Reason: "MISSING"})
+		failures = append(failures, driver.Failure{
+			ARN:    m.arnIn(regionctx.RegionOr(ctx, m.opts.Region), "cluster/"+name),
+			Reason: "MISSING",
+		})
 	}
 
 	return found, failures, nil

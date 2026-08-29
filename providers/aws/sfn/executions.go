@@ -7,17 +7,9 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sfn/asl"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
-
-// historyEventCount is the number of synthesized events per successful
-// execution (ExecutionStarted, PassStateEntered, PassStateExited,
-// ExecutionSucceeded).
-const historyEventCount = 4
-
-// passStateName is the synthetic Pass state name the emulator reports in
-// StateEntered/StateExited history events (no real ASL interpreter runs).
-const passStateName = "PassState"
 
 func (m *Mock) getExec(arn string) (*execData, error) {
 	if !validExecutionARN(arn) {
@@ -32,10 +24,14 @@ func (m *Mock) getExec(arn string) (*execData, error) {
 	return ed, nil
 }
 
-// runExecution builds and stores a synchronously-completed execution. The
-// emulator does not interpret the ASL definition: the execution starts RUNNING
-// and immediately transitions to SUCCEEDED with output echoing the input.
-func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.Execution, error) {
+// runExecution interprets the state machine's ASL definition, storing a
+// synchronously-completed execution: it walks the graph from StartAt computing
+// the terminal status/output (or Error/Cause on failure) and the full per-state
+// history. ctx is threaded into the interpreter so a Task->Lambda seam (a later
+// PR) carries recursionguard depth. The settle overlay keeps RUNNING observable
+// under AsyncSettle; its window is extended by any Wait durations the run
+// accumulated.
+func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, async bool) (*driver.Execution, error) {
 	sd, err := m.getSM(in.StateMachineArn)
 	if err != nil {
 		return nil, err
@@ -48,8 +44,7 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 	}
 
 	sd.mu.RLock()
-	smName := sd.sm.Name
-	smType := sd.sm.Type
+	smName, smType, definition, roleArn := sd.sm.Name, sd.sm.Type, sd.sm.Definition, sd.sm.RoleArn
 	sd.mu.RUnlock()
 
 	name := in.Name
@@ -57,27 +52,24 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 		name = idgen.GenerateID("exec-")
 	}
 
-	arn := m.execARN(smName, name)
+	arn := m.execARN(arnRegion(in.StateMachineArn, m.opts.Region), smName, name)
 	now := m.now()
 
-	output := in.Input
-	if output == "" {
-		output = emptyJSON
-	}
+	res := interpret(ctx, definition, &asl.RunInput{
+		Input: in.Input, ExecArn: arn, ExecName: name, SMArn: in.StateMachineArn,
+		SMName: smName, RoleArn: roleArn, StartTime: now, SettleBase: settle.DefaultExecutionSettle,
+		InvokeLambda: m.lambdaInvoker(),
+	})
 
-	exec := driver.Execution{
-		ARN: arn, Name: name, StateMachineArn: in.StateMachineArn,
-		Status: driver.ExecStatusSucceeded, Input: in.Input, Output: output,
-		StartDate: now, StopDate: now,
-	}
+	exec := execFromResult(arn, name, in, now, res)
 
 	// A synchronous execution (StartSyncExecution) returns its terminal result
 	// immediately, so it carries no settle window; only the asynchronous
-	// StartExecution settles RUNNING -> SUCCEEDED.
+	// StartExecution settles RUNNING -> terminal, over a window extended by Wait.
 	var window settle.Window
 	if async {
 		window = settle.Pending(driver.ExecStatusRunning, now,
-			m.opts.SettleDuration(settle.DefaultExecutionSettle))
+			m.opts.SettleDuration(settle.DefaultExecutionSettle+res.WaitTotal))
 	}
 
 	if !m.executions.SetIfAbsent(arn, &execData{exec: exec, settle: window}) {
@@ -87,6 +79,57 @@ func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.
 	out := observedExec(&exec, window, now)
 
 	return &out, nil
+}
+
+// lambdaInvoker returns the Task->Lambda seam as the interpreter's callback, or
+// nil when no Lambda backend is wired (library-only construction), in which case
+// a Task echoes its input.
+func (m *Mock) lambdaInvoker() asl.LambdaInvoker {
+	if m.lambdaSync == nil {
+		return nil
+	}
+
+	return m.lambdaSync.InvokeSync
+}
+
+// interpret parses and runs a definition. A definition accepted at create time
+// always parses; a parse failure here (e.g. after an UpdateStateMachine that
+// bypassed validation) fails the execution loudly rather than panicking.
+func interpret(ctx context.Context, definition string, in *asl.RunInput) *asl.RunResult {
+	def, err := asl.Parse(definition)
+	if err != nil {
+		return &asl.RunResult{
+			Status: driver.ExecStatusFailed, Error: "States.Runtime", Cause: err.Error(),
+			History: []driver.HistoryEvent{
+				{ID: 1, Type: "ExecutionStarted", Timestamp: in.StartTime, Input: emptyOr(in.Input)},
+				{ID: 2, PreviousEventID: 1, Type: "ExecutionFailed", Timestamp: in.StartTime,
+					Error: "States.Runtime", Cause: err.Error()},
+			},
+		}
+	}
+
+	return asl.Run(ctx, def, in)
+}
+
+// execFromResult assembles the stored execution record from an interpreter run.
+func execFromResult(
+	arn, name string, in driver.StartExecutionInput, now time.Time, res *asl.RunResult,
+) driver.Execution {
+	return driver.Execution{
+		ARN: arn, Name: name, StateMachineArn: in.StateMachineArn,
+		Status: res.Status, Input: in.Input, Output: res.Output,
+		Error: res.Error, Cause: res.Cause,
+		StartDate: now, StopDate: now, History: res.History,
+	}
+}
+
+// emptyOr returns "{}" for a blank execution input, else the input verbatim.
+func emptyOr(input string) string {
+	if input == "" {
+		return emptyJSON
+	}
+
+	return input
 }
 
 // idempotentReuse resolves a StartExecution name collision. StartExecution is
@@ -127,8 +170,8 @@ func observedExec(exec *driver.Execution, w settle.Window, now time.Time) driver
 	return out
 }
 
-func (m *Mock) StartExecution(_ context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
-	return m.runExecution(in, true)
+func (m *Mock) StartExecution(ctx context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
+	return m.runExecution(ctx, in, true)
 }
 
 // StartExternal starts a state-machine execution on behalf of a cross-service
@@ -149,8 +192,8 @@ func (m *Mock) StartExternal(ctx context.Context, stateMachineARN, input string)
 	return err
 }
 
-func (m *Mock) StartSyncExecution(_ context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
-	return m.runExecution(in, false)
+func (m *Mock) StartSyncExecution(ctx context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
+	return m.runExecution(ctx, in, false)
 }
 
 func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Execution, error) {
@@ -167,7 +210,7 @@ func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Executi
 	return &out, nil
 }
 
-func (m *Mock) StopExecution(_ context.Context, arn, _, _ string) (time.Time, error) {
+func (m *Mock) StopExecution(_ context.Context, arn, errCode, cause string) (time.Time, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return time.Time{}, err
@@ -179,17 +222,44 @@ func (m *Mock) StopExecution(_ context.Context, arn, _, _ string) (time.Time, er
 	now := m.now()
 
 	// While an execution is still settling (observably RUNNING under AsyncSettle),
-	// Stop aborts it: ABORTED with a stop date and no output, and the window is
-	// cleared so it stays aborted. An already-settled (terminal) execution is not
-	// re-stopped — StopExecution returns its recorded stop date.
+	// Stop aborts it: ABORTED with a stop date, no output, the caller's error/cause
+	// persisted, and the history trimmed to the events already visible plus a
+	// terminal ExecutionAborted. The window is cleared so it stays aborted. An
+	// already-settled (terminal) execution is not re-stopped.
 	if !ed.settle.Settled(now) {
 		ed.exec.Status = driver.ExecStatusAborted
 		ed.exec.StopDate = now
 		ed.exec.Output = ""
+		ed.exec.Error = errCode
+		ed.exec.Cause = cause
+		ed.exec.History = abortHistory(ed.exec.History, now, errCode, cause)
 		ed.settle = settle.Window{}
 	}
 
 	return ed.exec.StopDate, nil
+}
+
+// abortHistory trims an execution's history to the events already observable at
+// now (those whose Timestamp has elapsed) and appends a terminal ExecutionAborted
+// event, so an aborted run's history never shows its would-be terminal success.
+func abortHistory(events []driver.HistoryEvent, now time.Time, errCode, cause string) []driver.HistoryEvent {
+	visible := make([]driver.HistoryEvent, 0, len(events)+1)
+
+	for i := range events {
+		if !events[i].Timestamp.After(now) {
+			visible = append(visible, events[i])
+		}
+	}
+
+	var prev int64
+	if n := len(visible); n > 0 {
+		prev = visible[n-1].ID
+	}
+
+	return append(visible, driver.HistoryEvent{
+		ID: prev + 1, PreviousEventID: prev, Type: "ExecutionAborted",
+		Timestamp: now, Error: errCode, Cause: cause,
+	})
 }
 
 func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter string) ([]driver.Execution, error) {
@@ -221,37 +291,34 @@ func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter s
 	return out, nil
 }
 
-// GetExecutionHistory synthesizes a minimal but valid event list for a
-// completed execution: ExecutionStarted -> PassStateEntered -> PassStateExited
-// -> ExecutionSucceeded. No real ASL interpreter runs.
+// GetExecutionHistory returns the real per-state event list the interpreter
+// produced. While an execution is still observably RUNNING (settle window
+// unelapsed), the list is truncated to the events whose virtual Timestamp has
+// elapsed — generalizing the previous "only ExecutionStarted while RUNNING"
+// rule — so the terminal event is not yet visible. Reverse order is applied last.
 func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) ([]driver.HistoryEvent, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
 
+	now := m.now()
+
 	ed.mu.RLock()
-	exec := ed.exec
-	settled := ed.settle.Settled(m.now())
+	settled := ed.settle.Settled(now)
+	events := append([]driver.HistoryEvent(nil), ed.exec.History...)
 	ed.mu.RUnlock()
 
-	ts := exec.StartDate
-	// While an execution is still observably RUNNING, only the start event has
-	// happened; the terminal ExecutionSucceeded is not yet in the history,
-	// matching the RUNNING status the Describe surface reports.
 	if !settled {
-		events := []driver.HistoryEvent{
-			{ID: 1, PreviousEventID: 0, Type: "ExecutionStarted", Timestamp: ts, Input: exec.Input},
+		visible := events[:0]
+
+		for i := range events {
+			if !events[i].Timestamp.After(now) {
+				visible = append(visible, events[i])
+			}
 		}
 
-		return events, nil
-	}
-
-	events := []driver.HistoryEvent{
-		{ID: 1, PreviousEventID: 0, Type: "ExecutionStarted", Timestamp: ts, Input: exec.Input},
-		{ID: 2, PreviousEventID: 1, Type: "PassStateEntered", Timestamp: ts, StateName: passStateName, Input: exec.Input},
-		{ID: 3, PreviousEventID: 2, Type: "PassStateExited", Timestamp: ts, StateName: passStateName, Output: exec.Output},
-		{ID: historyEventCount, PreviousEventID: 3, Type: "ExecutionSucceeded", Timestamp: exec.StopDate, Output: exec.Output},
+		events = visible
 	}
 
 	if reverse {

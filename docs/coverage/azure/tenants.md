@@ -3,10 +3,11 @@
 
 provider-native `tenants` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (1)
 
 | Operation | Description |
 | --- | --- |
+| `List` |  |
 
 ## Not in scope
 

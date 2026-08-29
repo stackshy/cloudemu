@@ -179,24 +179,6 @@ func TestMergePatch_BadJSONReturnsError(t *testing.T) {
 	}
 }
 
-func TestBumpResourceVersion(t *testing.T) {
-	cases := map[string]string{
-		"":      "1",
-		"foo":   "1", // non-numeric resets to 1
-		"1":     "2",
-		"99":    "100",
-		"99999": "100000",
-	}
-
-	for in, want := range cases {
-		t.Run(in, func(t *testing.T) {
-			if got := bumpResourceVersion(in); got != want {
-				t.Fatalf("bumpResourceVersion(%q) = %q, want %q", in, got, want)
-			}
-		})
-	}
-}
-
 // brokenReader always errors on Read — used to drive applyJSONPatch's
 // io.ReadAll failure branch.
 type brokenReader struct{}

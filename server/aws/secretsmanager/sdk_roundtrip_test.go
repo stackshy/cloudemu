@@ -13,10 +13,22 @@ import (
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 
 	"github.com/stackshy/cloudemu/v2"
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func newSecretsClient(t *testing.T) *awssm.Client {
+	t.Helper()
+
+	client, _ := newSecretsClientWithCloud(t)
+
+	return client
+}
+
+// newSecretsClientWithCloud returns a Secrets Manager SDK client bound to a live
+// wire server plus the backing provider, so a test can seed cross-service state
+// (e.g. create a KMS key that a secret then references) via the Go API.
+func newSecretsClientWithCloud(t *testing.T) (*awssm.Client, *awsprovider.Provider) {
 	t.Helper()
 
 	cloud := cloudemu.NewAWS()
@@ -35,7 +47,7 @@ func newSecretsClient(t *testing.T) *awssm.Client {
 
 	return awssm.NewFromConfig(cfg, func(o *awssm.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
-	})
+	}), cloud
 }
 
 func TestSDKSecretLifecycle(t *testing.T) {

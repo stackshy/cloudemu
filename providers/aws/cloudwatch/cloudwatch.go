@@ -810,6 +810,11 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		dims[k] = v
 	}
 
+	tags := make(map[string]string, len(a.Tags))
+	for k, v := range a.Tags {
+		tags[k] = v
+	}
+
 	return driver.AlarmInfo{
 		Name:                    a.Name,
 		Namespace:               a.Namespace,
@@ -833,5 +838,6 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		AlarmDescription:        a.AlarmDescription,
 		AlarmArn:                a.AlarmArn,
 		Dimensions:              dims,
+		Tags:                    tags,
 	}
 }

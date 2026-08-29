@@ -24,6 +24,14 @@ const defaultMaxSessionDuration = 3600
 // Compile-time check that Mock implements driver.IAM.
 var _ driver.IAM = (*Mock)(nil)
 
+// Compile-time check that Mock implements the optional access-key resolver used
+// by the AWS SigV4 authentication gate.
+var _ driver.AccessKeyResolver = (*Mock)(nil)
+
+// Compile-time check that Mock implements the optional policy inspector used by
+// the AWS IAM authorization gate.
+var _ driver.PolicyInspector = (*Mock)(nil)
+
 // Mock is an in-memory mock implementation of the AWS IAM service.
 type Mock struct {
 	users            *memstore.Store[*userData]
@@ -748,9 +756,40 @@ type policyDoc struct {
 }
 
 type policyStatement struct {
-	Effect   string `json:"Effect"`
-	Action   any    `json:"Action"`
-	Resource any    `json:"Resource"`
+	Effect      string                    `json:"Effect"`
+	Action      any                       `json:"Action"`
+	NotAction   any                       `json:"NotAction"`
+	Resource    any                       `json:"Resource"`
+	NotResource any                       `json:"NotResource"`
+	Condition   map[string]map[string]any `json:"Condition"`
+}
+
+// actionMatches reports whether the statement applies to action. Action and
+// NotAction are mutually exclusive: NotAction matches every action EXCEPT those
+// listed. A statement carrying neither cannot match (AWS requires one).
+func (s *policyStatement) actionMatches(action string) bool {
+	switch {
+	case s.Action != nil:
+		return matchesAction(toStringSlice(s.Action), action)
+	case s.NotAction != nil:
+		return !matchesAction(toStringSlice(s.NotAction), action)
+	default:
+		return false
+	}
+}
+
+// resourceMatches reports whether the statement applies to resource. Resource
+// and NotResource are mutually exclusive: NotResource matches every resource
+// EXCEPT those listed. A statement carrying neither cannot match.
+func (s *policyStatement) resourceMatches(resource string) bool {
+	switch {
+	case s.Resource != nil:
+		return matchesResource(toStringSlice(s.Resource), resource)
+	case s.NotResource != nil:
+		return !matchesResource(toStringSlice(s.NotResource), resource)
+	default:
+		return false
+	}
 }
 
 func wildcardMatch(pattern, value string) bool {
@@ -821,21 +860,22 @@ func matchesResource(resources []string, resource string) bool {
 	return false
 }
 
-func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
+func evaluatePolicy(doc, action, resource string, cctx ConditionContext) (allow, deny bool) {
 	var pd policyDoc
 	if err := json.Unmarshal([]byte(doc), &pd); err != nil {
 		return false, false
 	}
 
 	for _, stmt := range pd.Statement {
-		actions := toStringSlice(stmt.Action)
-		resources := toStringSlice(stmt.Resource)
-
-		if !matchesAction(actions, action) {
+		if !stmt.actionMatches(action) {
 			continue
 		}
 
-		if !matchesResource(resources, resource) {
+		if !stmt.resourceMatches(resource) {
+			continue
+		}
+
+		if !evaluateConditions(stmt.Condition, cctx) {
 			continue
 		}
 
@@ -849,51 +889,102 @@ func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
 	return allow, deny
 }
 
-func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	policyARNs := make(map[string]bool)
-
-	for arn := range m.userPolicies[principal] {
-		policyARNs[arn] = true
-	}
-
-	for arn := range m.rolePolicies[principal] {
-		policyARNs[arn] = true
-	}
-
-	return policyARNs
+// CheckPermission reports whether a principal (a user, role, or group friendly
+// name) is allowed to perform action on resource. It evaluates the principal's
+// full effective policy set — attached managed policies, inline policies, and
+// (for a user) the policies inherited from every group it belongs to — and,
+// when a permissions boundary is attached, intersects that set with the
+// boundary: the action must be allowed by BOTH the identity policies and the
+// boundary. An explicit Deny anywhere wins; the default is an implicit deny.
+func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource string) (bool, error) {
+	return m.CheckPermissionWithContext(ctx, principal, action, resource, nil)
 }
 
-// CheckPermission evaluates attached policies to determine if a principal is allowed
-// to perform the given action on the given resource. Explicit Deny wins over Allow.
-func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
-	policyARNs := m.collectPolicyARNs(principal)
+// CheckPermissionWithContext is CheckPermission with an explicit request
+// condition context (aws:SourceIp, aws:CurrentTime, aws:PrincipalArn, …) so
+// statements guarded by a Condition are evaluated against the real request. It
+// is the AWS-only ContextualAuthorizer capability the authorization gate reaches
+// via a type assertion; CheckPermission delegates here with an empty context, so
+// callers that supply no keys see today's behavior.
+func (m *Mock) CheckPermissionWithContext(
+	_ context.Context, principal, action, resource string, cctx map[string]string,
+) (bool, error) {
+	entityType := m.principalEntityType(principal)
+	ctxKeys := ConditionContext(cctx)
 
+	if decide(m.gatherPrincipalDocs(entityType, principal), action, resource, ctxKeys) != decisionAllowed {
+		return false, nil
+	}
+
+	if boundary, ok := m.permissionsBoundaryDoc(entityType, principal); ok &&
+		decide([]string{boundary}, action, resource, ctxKeys) != decisionAllowed {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// principalEntityType classifies an IAM principal named by its friendly name as
+// a user, role, or group (in that precedence), or "" when no such entity exists.
+func (m *Mock) principalEntityType(name string) string {
+	switch {
+	case m.users.Has(name):
+		return "user"
+	case m.roles.Has(name):
+		return "role"
+	case m.groups.Has(name):
+		return "group"
+	default:
+		return ""
+	}
+}
+
+// permissionsBoundaryDoc returns the policy document of the permissions boundary
+// attached to a user or role, and ok=false when none is set or it cannot be
+// resolved. Groups cannot carry a boundary.
+func (m *Mock) permissionsBoundaryDoc(entityType, name string) (string, bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
-	hasAllow := false
+	arn := ""
 
-	for arn := range policyARNs {
-		p, ok := m.policies.Get(arn)
-		if !ok || p.PolicyDocument == "" {
-			continue
+	switch entityType {
+	case "user":
+		if u, ok := m.users.Get(name); ok {
+			arn = u.permissionsBoundary
 		}
-
-		allow, deny := evaluatePolicy(p.PolicyDocument, action, resource)
-
-		if deny {
-			return false, nil
-		}
-
-		if allow {
-			hasAllow = true
+	case "role":
+		if rd, ok := m.roles.Get(name); ok {
+			arn = rd.permissionsBoundary
 		}
 	}
 
-	return hasAllow, nil
+	m.mu.RUnlock()
+
+	if arn == "" {
+		return "", false
+	}
+
+	if p, ok := m.policies.Get(arn); ok && p.PolicyDocument != "" {
+		return p.PolicyDocument, true
+	}
+
+	return "", false
+}
+
+// PrincipalHasPolicies reports whether a user or role has any identity policies
+// (attached, inline, or group-inherited) or a permissions boundary in effect.
+// The authorization gate uses it to leave a principal with no policies defined
+// unrestricted, enforcing CheckPermission only once policies exist.
+func (m *Mock) PrincipalHasPolicies(_ context.Context, name string) bool {
+	entityType := m.principalEntityType(name)
+
+	if len(m.gatherPrincipalDocs(entityType, name)) > 0 {
+		return true
+	}
+
+	_, hasBoundary := m.permissionsBoundaryDoc(entityType, name)
+
+	return hasBoundary
 }
 
 // CreateGroup creates a new IAM group.
@@ -1214,6 +1305,30 @@ func (m *Mock) ListAccessKeys(
 	}
 
 	return result, nil
+}
+
+// AccessKeyByID resolves an access key id to its secret and owning principal so
+// the wire layer's SigV4 authentication gate can verify a request signature. It
+// reports ok=false when no such key exists. The secret is returned only to the
+// in-process verifier and never surfaces on any wire response.
+func (m *Mock) AccessKeyByID(_ context.Context, id string) (driver.AccessKeyAuth, bool) {
+	ak, ok := m.accessKeys.Get(id)
+	if !ok {
+		return driver.AccessKeyAuth{}, false
+	}
+
+	var userARN string
+	if u, found := m.users.Get(ak.UserName); found {
+		userARN = u.ARN
+	}
+
+	return driver.AccessKeyAuth{
+		AccessKeyID:     ak.AccessKeyID,
+		SecretAccessKey: ak.SecretAccessKey,
+		UserName:        ak.UserName,
+		UserARN:         userARN,
+		AccountID:       m.opts.AccountID,
+	}, true
 }
 
 // CreateInstanceProfile creates a new instance profile.

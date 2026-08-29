@@ -287,6 +287,105 @@
     "status": "green"
   },
   {
+    "service": "cloudformation",
+    "operation": "CreateStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "DeleteStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "DescribeStackEvents",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "DescribeStackResources",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "DescribeStacks",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "GetTemplate",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ListStackResources",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ListStacks",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "UpdateStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
     "service": "compute",
     "operation": "AttachVolume",
     "providers": {

@@ -1857,11 +1857,19 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Deterministic time**: every data-plane timestamp (creationTimestamp, pod start/conditions, managedFields) is sourced from an injectable clock (`APIServer.SetClock`); a `config.FakeClock` makes them fully deterministic for tests.
 
+**Persistence**: the data plane is part of the standalone server's [snapshot surface](persistence.md#kubernetes-data-plane) — every cluster's state (namespaces, pods, deployments, services/endpoints, all registry kinds, and CRDs + custom resources) is captured keyed by cluster UID, so a `--persist` stop/start or a crash restores each cluster under the same `/k8s/<uid>` endpoint with a pre-restart kubeconfig still valid. A watch open across the restart relists rather than resuming (no cross-restart event history).
+
 **Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, and the request's `labelSelector`/`fieldSelector` filters both the initial snapshot and live events, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) — including selective informers — just works. A fresh cluster bootstraps a synthetic Ready node (`cloudemu-node-0`), and each selector Service's endpoints are mirrored into a `discovery.k8s.io` **EndpointSlice** so EndpointSlice-mode consumers see the same backends as the `Endpoints` object.
 
 **Cascade**: deleting a Namespace or an owning controller publishes DELETED events for every child resource (garbage collection follows `ownerReferences`) — finalizer-bearing children instead go Terminating (MODIFIED) until drained.
 
-**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet — Pods are driven Running synthetically and `pods/log` is synthetic while `exec`/`attach`/`portforward` return a typed 501; no real scheduling beyond the single synthetic node (DaemonSet `nodeSelector` is honored, but affinity/taints/resource-fit are not); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob has no wall-clock timer (schedules are evaluated only when `TickCronJobs` is called) and supports only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
+**`kubectl` display fidelity**: list/get endpoints honor server-side **Table** printing (`Accept: application/json;as=Table;g=meta.k8s.io;v=v1`), returning a `meta.k8s.io/v1 Table` with the real per-kind columns — so `kubectl get pods/deployments/services/nodes/...` shows READY/STATUS/UP-TO-DATE/AVAILABLE/etc. (plus `-o wide` extras) instead of raw JSON, and unknown kinds fall back to NAME/AGE. Every list also carries a collection-level `resourceVersion` (a single monotonic cluster counter), so `client-go` reflectors and `kubectl rollout status` complete their List→Watch handshake rather than hanging.
+
+**Events**: controllers emit standard `core/v1` Events during reconcile — `ScalingReplicaSet` (Deployment, on an actual replica-count change), `SuccessfulCreate` (ReplicaSet/StatefulSet/DaemonSet/Job/CronJob pods), `Scheduled` (Pod placement), `Started`/`Completed` — deduplicated by `(involvedObject, reason, message, type)` with a rolling `count`, so `kubectl describe` and `kubectl get events` show real activity. The synthetic node reports a Ready condition, capacity/allocatable, and a `coordination.k8s.io` **Lease** in `kube-node-lease`.
+
+**Opt-in Pod lifecycle progression**: by default Pods are driven straight to Running (deterministic, no kubelet). Enabling `APIServer.SetLifecycleProgression(true)` — or `cloudemu serve --k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION`) — instead starts each Pod `Pending` and advances it `Pending → ContainerCreating → Running` (and `→ Terminating` on delete) on a logical clock, emitting the kubelet Event sequence at each step. In tests the transitions are driven explicitly via `Tick()` (fully deterministic under `FakeClock`); a live `cloudemu serve` runs a real-time ticker (`--k8s-progression-interval`, default 1s) so Pods visibly progress.
+
+**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet — Pods are driven Running synthetically (or through the opt-in staged progression above) and `pods/log` is synthetic while `exec`/`attach`/`portforward` return a typed 501; no real scheduling beyond the single synthetic node (DaemonSet `nodeSelector` is honored, but affinity/taints/resource-fit are not); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob has no wall-clock timer (schedules are evaluated only when `TickCronJobs` is called) and supports only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
 
 ---
 
@@ -2627,25 +2635,50 @@ returned unchanged by `DescribeStateMachine`.
 | Definition tooling | TestState, ValidateStateMachineDefinition |
 | Tags | TagResource, UntagResource, ListTagsForResource |
 
-**No ASL interpreter — a deliberate simplification.** The emulator does not
-execute the Amazon States Language. `StartExecution` (and `StartSyncExecution`)
-complete the execution immediately: it transitions `RUNNING → SUCCEEDED` with
-output echoing the input, and `GetExecutionHistory` synthesises a minimal but
-valid event list (`ExecutionStarted → PassStateEntered → PassStateExited →
-ExecutionSucceeded`). Because nothing schedules real work, `GetActivityTask`
-returns an empty task token (the same long-poll-empty result real clients see),
-and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`. This
-keeps behaviour deterministic and dependency-free while preserving the SDK wire
-shapes for build-and-orchestrate testing.
+**A real ASL interpreter runs executions.** `StartExecution` and
+`StartSyncExecution` actually interpret the Amazon States Language definition
+against the input rather than echoing it. The interpreter executes **Pass,
+Choice, Wait, Task, Parallel, Map, Succeed, and Fail** states, following
+`Next`/`End` transitions to a terminal state and producing the real
+`GetExecutionHistory` event sequence for the path taken (state Entered/Exited,
+Task Scheduled/Started/Succeeded/Failed, Parallel/Map iteration events, and the
+terminal `ExecutionSucceeded`/`ExecutionFailed`). Supported semantics:
 
-Consistent with the no-interpreter model: `RedriveExecution` records a fresh
-redrive date on an existing execution rather than re-running it; `TestState`
-succeeds for any non-empty definition and echoes the input as output;
-`ValidateStateMachineDefinition` returns `OK` for a non-empty, valid-JSON
-definition and `FAIL` with a diagnostic otherwise (no semantic ASL validation).
-Distributed-map Map Runs are never produced by execution, so `ListMapRuns`
-returns empty for ordinary executions; `DescribeMapRun`/`UpdateMapRun` operate on
-Map Run records seeded through the provider's `SeedMapRun` helper.
+- **I/O processing** — `InputPath`, `Parameters`, `ResultSelector`,
+  `ResultPath`, and `OutputPath` with JSONPath evaluation, including the `.$`
+  reference form and merge-onto-input `ResultPath` semantics.
+- **Choice rules** — string/numeric/boolean/timestamp comparators and the
+  `And`/`Or`/`Not` combinators (including the `...Path` variants), with `Default`.
+- **Error handling** — `Retry` (with `IntervalSeconds`/`MaxAttempts`/`BackoffRate`
+  and `ErrorEquals` matching) and `Catch` (routing to a fallback state with the
+  error carried on `ResultPath`).
+- **Intrinsic functions** — `States.Format`, `States.Array`,
+  `States.ArrayGetItem`, `States.StringToJson`, `States.JsonToString`, and
+  `States.UUID`.
+- **The context object** — `$$` resolves the execution/state context
+  (`Execution.Name`, `StateMachine`, `State.EnteredTime`, …).
+- **Task → Lambda** — a `Task` whose `Resource` is `arn:aws:states:::lambda:invoke`
+  (payload from `Parameters.Payload`) or a direct Lambda function ARN really
+  invokes the wired Lambda backend; a `FunctionError` feeds `Retry`/`Catch`.
+
+Definitions are **validated at create time**: `CreateStateMachine` (and
+`ValidateStateMachineDefinition`) parse the ASL and reject structural errors —
+unknown `Type`, missing `Next`/`End`, a `Next`/`Default` that names no state,
+result-shaping fields on states that don't support them, malformed Choice rules,
+and out-of-range `Retry` fields. `TestState` runs a single state through the
+interpreter and returns its real output (or error). Bounded guards protect the
+host: executions cap total state transitions (`CloudEmu.StateTransitionLimitExceeded`)
+and Parallel/Map nesting depth (`CloudEmu.ExecutionNestingLimitExceeded`).
+
+**Deferred (not yet interpreted):** the **JSONata** query language is rejected at
+create time (JSONPath only); the **`.sync`** and **`.waitForTaskToken`**
+service-integration patterns; and **service integrations other than Lambda** —
+including **Activity** tasks, so `GetActivityTask` still returns an empty token
+and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`.
+`RedriveExecution` records a fresh redrive date rather than re-running.
+Distributed-map Map Runs are not produced by ordinary executions, so
+`ListMapRuns` returns empty and `DescribeMapRun`/`UpdateMapRun` operate on Map Run
+records seeded through the provider's `SeedMapRun` helper.
 
 **Total: 36 operations.**
 
@@ -2887,9 +2920,10 @@ AWS-only. Real `aws-sdk-go-v2/service/cloudtrail` clients (and the
 (`awsserver.Drivers{CloudTrail: cloud.CloudTrail}`). Broad operation coverage
 across trails, event data stores, channels, dashboards, imports, event/insight
 selectors, ad-hoc CloudTrail Lake queries, resource policies, and tags. The
-control-plane CRUD/state paths are faithfully emulated; the analytics and
-event-stream surfaces are synthesized/limited (see below), since there is no real
-audit event stream behind the emulator.
+control-plane CRUD/state paths are faithfully emulated, and **management events
+are recorded from served API activity** so `LookupEvents` reflects real calls
+(see below); only the Lake analytics / Insights surfaces remain
+synthesized/limited.
 
 | Family | Operations |
 |--------|-----------|
@@ -2903,7 +2937,8 @@ audit event stream behind the emulator.
 | Resource policy / config | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy, PutEventConfiguration, GetEventConfiguration |
 | Organization | RegisterOrganizationDelegatedAdmin, DeregisterOrganizationDelegatedAdmin |
 | Tags | AddTags, RemoveTags, ListTags |
-| Read-only (synthesized) | LookupEvents, ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
+| Read-only (recorded) | LookupEvents |
+| Read-only (synthesized) | ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
 
 `CreateTrail` validates the trail name (3–128 chars, allowed charset, no
 adjacent separators, not an IP) → `InvalidTrailNameException`, claims the name
@@ -2915,14 +2950,19 @@ created `ENABLED` with an ARN; a malformed EDS ARN is
 `EventDataStoreNotFoundException`; `DeleteEventDataStore` is a soft delete
 (→ `PENDING_DELETION`) unless termination protection is on.
 
-**No real event stream — a deliberate simplification.** The emulator records no
-audit events, so the read-only analytics surfaces return synthesized/empty
-results: `LookupEvents`, `ListInsightsData`, `ListInsightsMetricData` and
-`ListPublicKeys` return empty pages; ad-hoc `StartQuery` is accepted, stored and
-immediately marked `FINISHED` with an empty result set; `SearchSampleQueries`
-returns a small fixed catalog of CloudTrail Lake sample queries. Emulated
-imports complete instantly with no failures. This preserves the SDK wire shapes
-for build-and-orchestrate testing without a dependency on real event data.
+**Management events are recorded; Lake analytics are synthesized.** A
+post-dispatch observer derives a CloudTrail management event from each served
+request (the operation name from `X-Amz-Target`/`Action`, the source service and
+access-key id from the SigV4 credential scope, and a read-only classification by
+verb prefix), so `LookupEvents` returns the real API activity — newest first,
+paginated, and filtered by the request's attribute/time selectors — rather than
+an empty page. CloudTrail's own read-only polling is not recorded, so a client
+tailing `LookupEvents` never crowds out the activity it is observing, and the log
+is bounded. The remaining analytics surfaces stay synthesized: `ListInsightsData`,
+`ListInsightsMetricData` and `ListPublicKeys` return empty pages; ad-hoc
+`StartQuery` is accepted, stored and immediately marked `FINISHED` with an empty
+result set; `SearchSampleQueries` returns a small fixed catalog of CloudTrail
+Lake sample queries; and emulated imports complete instantly with no failures.
 
 **Total: 60 operations.**
 

@@ -48,7 +48,7 @@ func (m *Mock) CreateFunctionURLConfig(_ context.Context, cfg driver.FunctionURL
 	url := &driver.FunctionURLConfig{
 		FunctionName: cfg.FunctionName,
 		FunctionArn:  fd.info.ARN,
-		FunctionURL:  m.functionURL(),
+		FunctionURL:  functionURL(arnRegion(fd.info.ARN, m.opts.Region)),
 		AuthType:     authType,
 		InvokeMode:   invokeMode,
 		Cors:         cfg.Cors,
@@ -155,11 +155,11 @@ func (m *Mock) ListFunctionURLConfigs(_ context.Context, functionName string) ([
 
 // functionURL synthesizes a Lambda Function URL of the real shape
 // https://<url-id>.lambda-url.<region>.on.aws/.
-func (m *Mock) functionURL() string {
+func functionURL(region string) string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("https://cloudemu.lambda-url.%s.on.aws/", m.opts.Region)
+		return fmt.Sprintf("https://cloudemu.lambda-url.%s.on.aws/", region)
 	}
 
-	return fmt.Sprintf("https://%s.lambda-url.%s.on.aws/", hex.EncodeToString(b[:8])+hex.EncodeToString(b[8:]), m.opts.Region)
+	return fmt.Sprintf("https://%s.lambda-url.%s.on.aws/", hex.EncodeToString(b[:8])+hex.EncodeToString(b[8:]), region)
 }

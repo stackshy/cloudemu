@@ -304,3 +304,48 @@ func TestSnapshotFileRoundTrip(t *testing.T) {
 		t.Fatal("ReadFile(unknown schema) = nil error, want rejection")
 	}
 }
+
+// TestWriteFileFreshNestedDirAndOverwrite exercises the durable-write path: a
+// write into a fresh multi-level directory (MkdirAll + file fsync + parent-dir
+// fsync) succeeds and round-trips, and a second write atomically replaces the
+// existing target rather than failing on the rename.
+func TestWriteFileFreshNestedDirAndOverwrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a", "b", "c", "snapshot.json")
+
+	snap := persist.Snapshot{
+		SchemaVersion: persist.SchemaVersion,
+		Providers: map[string]persist.ProviderState{
+			"aws": {Services: map[string]json.RawMessage{"s3": json.RawMessage(`{"one":1}`)}},
+		},
+	}
+	if err := snap.WriteFile(path); err != nil {
+		t.Fatalf("WriteFile (fresh nested dir): %v", err)
+	}
+
+	got, err := persist.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if len(got.Providers["aws"].Services) != 1 {
+		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+
+	// Overwrite the existing target: the rename must replace it atomically.
+	snap2 := persist.Snapshot{
+		SchemaVersion: persist.SchemaVersion,
+		Providers: map[string]persist.ProviderState{
+			"aws": {Services: map[string]json.RawMessage{"s3": json.RawMessage(`{"one":1}`), "ec2": json.RawMessage(`{"two":2}`)}},
+		},
+	}
+	if err := snap2.WriteFile(path); err != nil {
+		t.Fatalf("WriteFile (overwrite existing): %v", err)
+	}
+
+	got2, err := persist.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile after overwrite: %v", err)
+	}
+	if len(got2.Providers["aws"].Services) != 2 {
+		t.Fatalf("overwrite not reflected: %+v", got2)
+	}
+}

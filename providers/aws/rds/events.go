@@ -5,6 +5,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -36,7 +37,7 @@ var eventCategoryCatalog = map[string][]string{
 }
 
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateEventSubscription(_ context.Context, cfg rdsdriver.EventSubscriptionConfig) (*rdsdriver.EventSubscription, error) {
+func (m *Mock) CreateEventSubscription(ctx context.Context, cfg rdsdriver.EventSubscriptionConfig) (*rdsdriver.EventSubscription, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "SubscriptionName is required")
 	}
@@ -54,7 +55,7 @@ func (m *Mock) CreateEventSubscription(_ context.Context, cfg rdsdriver.EventSub
 
 	sub := rdsdriver.EventSubscription{
 		Name:            cfg.Name,
-		ARN:             eventSubscriptionARN(m.opts.Region, m.opts.AccountID, cfg.Name),
+		ARN:             eventSubscriptionARN(regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, cfg.Name),
 		CustomerAWSID:   m.opts.AccountID,
 		SnsTopicARN:     cfg.SnsTopicARN,
 		SourceType:      cfg.SourceType,

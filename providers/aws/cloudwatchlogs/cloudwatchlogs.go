@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -83,7 +84,7 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateLogGroup creates a new CloudWatch log group.
-func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
+func (m *Mock) CreateLogGroup(ctx context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "log group name is required")
 	}
@@ -95,7 +96,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 	// A log group created without a retention policy never expires: AWS leaves
 	// retentionInDays unset (nil on the SDK) rather than defaulting to 30 days.
 	// The zero value flows through to DescribeLogGroups, which omits the field.
-	arn := idgen.AWSARN("logs", m.opts.Region, m.opts.AccountID, "log-group:"+cfg.Name)
+	arn := idgen.AWSARN("logs", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "log-group:"+cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {

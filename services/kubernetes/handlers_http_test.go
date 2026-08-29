@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,6 +18,28 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
+
+// assertRVGreater asserts that a resourceVersion advanced: both parse as
+// integers and got > prev. The data plane uses one cluster-wide monotonic
+// resourceVersion counter, so an object's RV after a write is a fresh, larger
+// value (not a per-object "1"->"2"), and a later list's RV is >= every item's.
+func assertRVGreater(t *testing.T, got, prev string) {
+	t.Helper()
+
+	g, err := strconv.Atoi(got)
+	if err != nil {
+		t.Fatalf("resourceVersion %q is not an integer: %v", got, err)
+	}
+
+	p, err := strconv.Atoi(prev)
+	if err != nil {
+		t.Fatalf("prior resourceVersion %q is not an integer: %v", prev, err)
+	}
+
+	if g <= p {
+		t.Fatalf("resourceVersion did not advance: got %d, prev %d", g, p)
+	}
+}
 
 // newFixture spins up an APIServer with one registered cluster and returns
 // the test URL prefix for that cluster.
@@ -113,7 +136,9 @@ func TestNamespace_Update(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "stage"},
 	})
 	resp := do(t, http.MethodPost, base+"/api/v1/namespaces", body)
-	resp.Body.Close()
+
+	var created corev1.Namespace
+	mustDecode(t, resp.Body, &created)
 
 	// Update with new labels
 	updated := mustJSON(t, &corev1.Namespace{
@@ -132,9 +157,8 @@ func TestNamespace_Update(t *testing.T) {
 		t.Fatalf("label after update: got %q", got.Labels["team"])
 	}
 
-	if got.ResourceVersion != "2" {
-		t.Fatalf("resourceVersion after update: got %q, want 2", got.ResourceVersion)
-	}
+	// The cluster-wide resourceVersion counter must advance on the update.
+	assertRVGreater(t, got.ResourceVersion, created.ResourceVersion)
 }
 
 func TestNamespace_Patch(t *testing.T) {
@@ -304,11 +328,14 @@ func TestConfigMap_Update(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
 
-	do(t, http.MethodPost, base+"/api/v1/namespaces/default/configmaps",
+	createResp := do(t, http.MethodPost, base+"/api/v1/namespaces/default/configmaps",
 		mustJSON(t, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "u"},
 			Data:       map[string]string{"a": "1"},
-		})).Body.Close()
+		}))
+
+	var created corev1.ConfigMap
+	mustDecode(t, createResp.Body, &created)
 
 	resp := do(t, http.MethodPut, base+"/api/v1/namespaces/default/configmaps/u",
 		mustJSON(t, &corev1.ConfigMap{
@@ -326,9 +353,7 @@ func TestConfigMap_Update(t *testing.T) {
 		t.Fatalf("data after update: got %v", got.Data)
 	}
 
-	if got.ResourceVersion != "2" {
-		t.Fatalf("resourceVersion: got %q, want 2", got.ResourceVersion)
-	}
+	assertRVGreater(t, got.ResourceVersion, created.ResourceVersion)
 }
 
 func TestConfigMap_UpdateNameMismatchReturns400(t *testing.T) {

@@ -65,7 +65,7 @@ func putCronJob(t *testing.T, s *ClusterState, name, schedule, policy string, de
 
 	cj.SetUID(types.UID(newUID()))
 	cj.SetCreationTimestamp(s.now())
-	store.stampRVLocked(cj)
+	s.stampRegistryRVLocked(cj)
 	store.items[objKey("default", name)] = cj
 
 	return cj
@@ -89,7 +89,7 @@ func putActiveJob(t *testing.T, s *ClusterState, cj *unstructured.Unstructured, 
 	}}
 	job.SetUID(types.UID(newUID()))
 	job.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(cj)})
-	store.stampRVLocked(job)
+	s.stampRegistryRVLocked(job)
 	store.items[objKey("default", name)] = job
 }
 

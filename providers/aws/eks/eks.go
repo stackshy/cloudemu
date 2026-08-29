@@ -24,6 +24,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -184,19 +185,35 @@ func (m *Mock) recordUpdate(u *eksdriver.ClusterUpdate) *eksdriver.ClusterUpdate
 	return &out
 }
 
-func (m *Mock) clusterARN(name string) string {
-	return idgen.AWSARN("eks", m.opts.Region, m.opts.AccountID, "cluster/"+name)
+func (m *Mock) clusterARN(region, name string) string {
+	return idgen.AWSARN("eks", region, m.opts.AccountID, "cluster/"+name)
+}
+
+// arnRegion returns the region field of an EKS ARN
+// (arn:aws:eks:<region>:<account>:<resource>), or fallback when the ARN is
+// malformed. A cluster's stored ARN is the source of truth for the region of
+// its child resources (nodegroups, Fargate profiles, addons), so a child always
+// shares its cluster's region.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // oidcIssuer derives a stable OpenID Connect issuer URL for a cluster, matching
 // the real EKS shape https://oidc.eks.<region>.amazonaws.com/id/<32-hex>. The
 // id is a deterministic hash of account + cluster name so it does not change
 // between DescribeCluster calls.
-func (m *Mock) oidcIssuer(name string) string {
+func (m *Mock) oidcIssuer(region, name string) string {
 	sum := sha256.Sum256([]byte(m.opts.AccountID + "/" + name))
 	id := strings.ToUpper(hex.EncodeToString(sum[:16]))
 
-	return fmt.Sprintf("https://oidc.eks.%s.amazonaws.com/id/%s", m.opts.Region, id)
+	return fmt.Sprintf("https://oidc.eks.%s.amazonaws.com/id/%s", region, id)
 }
 
 // clusterSecurityGroupID synthesizes the deterministic cluster security group
@@ -209,18 +226,18 @@ func (m *Mock) clusterSecurityGroupID(name string) string {
 	return "sg-" + hex.EncodeToString(sum[:8])
 }
 
-func (m *Mock) nodegroupARN(clusterName, nodegroupName string) string {
-	return idgen.AWSARN("eks", m.opts.Region, m.opts.AccountID,
+func (m *Mock) nodegroupARN(region, clusterName, nodegroupName string) string {
+	return idgen.AWSARN("eks", region, m.opts.AccountID,
 		"nodegroup/"+clusterName+"/"+nodegroupName)
 }
 
-func (m *Mock) fargateARN(clusterName, profileName string) string {
-	return idgen.AWSARN("eks", m.opts.Region, m.opts.AccountID,
+func (m *Mock) fargateARN(region, clusterName, profileName string) string {
+	return idgen.AWSARN("eks", region, m.opts.AccountID,
 		"fargateprofile/"+clusterName+"/"+profileName)
 }
 
-func (m *Mock) addonARN(clusterName, addonName string) string {
-	return idgen.AWSARN("eks", m.opts.Region, m.opts.AccountID,
+func (m *Mock) addonARN(region, clusterName, addonName string) string {
+	return idgen.AWSARN("eks", region, m.opts.AccountID,
 		"addon/"+clusterName+"/"+addonName)
 }
 
@@ -472,16 +489,17 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 		version = defaultKubernetesVersion
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := eksdriver.Cluster{
 		Name:                 cfg.Name,
-		ARN:                  m.clusterARN(cfg.Name),
+		ARN:                  m.clusterARN(region, cfg.Name),
 		Version:              version,
 		PlatformVersion:      defaultPlatformVersion,
 		RoleArn:              cfg.RoleArn,
 		Endpoint:             wavePlaceholderEndpoint,
 		CertificateAuthority: stubCertificate(),
 		Status:               eksdriver.ClusterStatusActive,
-		OIDCIssuer:           m.oidcIssuer(cfg.Name),
+		OIDCIssuer:           m.oidcIssuer(region, cfg.Name),
 		VPCConfig: eksdriver.VPCConfig{
 			SubnetIDs:              copyStrings(cfg.VPCConfig.SubnetIDs),
 			SecurityGroupIDs:       copyStrings(cfg.VPCConfig.SecurityGroupIDs),
@@ -758,7 +776,8 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.clusters.Get(cfg.ClusterName); !ok {
+	parent, ok := m.clusters.Get(cfg.ClusterName)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.ClusterName)
 	}
 
@@ -792,7 +811,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 	ng := eksdriver.Nodegroup{
 		ClusterName:    cfg.ClusterName,
 		NodegroupName:  cfg.NodegroupName,
-		ARN:            m.nodegroupARN(cfg.ClusterName, cfg.NodegroupName),
+		ARN:            m.nodegroupARN(arnRegion(parent.ARN, m.opts.Region), cfg.ClusterName, cfg.NodegroupName),
 		NodeRole:       cfg.NodeRole,
 		Subnets:        copyStrings(cfg.Subnets),
 		InstanceTypes:  instanceTypes,
@@ -974,7 +993,8 @@ func (m *Mock) CreateFargateProfile(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.clusters.Get(cfg.ClusterName); !ok {
+	parent, ok := m.clusters.Get(cfg.ClusterName)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.ClusterName)
 	}
 
@@ -987,7 +1007,7 @@ func (m *Mock) CreateFargateProfile(
 	fp := eksdriver.FargateProfile{
 		ClusterName:        cfg.ClusterName,
 		FargateProfileName: cfg.FargateProfileName,
-		ARN:                m.fargateARN(cfg.ClusterName, cfg.FargateProfileName),
+		ARN:                m.fargateARN(arnRegion(parent.ARN, m.opts.Region), cfg.ClusterName, cfg.FargateProfileName),
 		PodExecutionRole:   cfg.PodExecutionRole,
 		Subnets:            copyStrings(cfg.Subnets),
 		Selectors:          append([]eksdriver.FargateProfileSelector(nil), cfg.Selectors...),
@@ -1081,7 +1101,8 @@ func (m *Mock) CreateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.clusters.Get(cfg.ClusterName); !ok {
+	parent, ok := m.clusters.Get(cfg.ClusterName)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.ClusterName)
 	}
 
@@ -1097,7 +1118,7 @@ func (m *Mock) CreateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 		ClusterName:           cfg.ClusterName,
 		AddonName:             cfg.AddonName,
 		AddonVersion:          cfg.AddonVersion,
-		ARN:                   m.addonARN(cfg.ClusterName, cfg.AddonName),
+		ARN:                   m.addonARN(arnRegion(parent.ARN, m.opts.Region), cfg.ClusterName, cfg.AddonName),
 		ServiceAccountRoleArn: cfg.ServiceAccountRoleArn,
 		ConfigurationValues:   cfg.ConfigurationValues,
 		Status:                eksdriver.AddonStatusActive,

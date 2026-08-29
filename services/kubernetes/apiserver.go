@@ -50,6 +50,11 @@ type APIServer struct {
 	// this server's options are threaded down.
 	admissionEnabled bool
 	admissionClient  *http.Client
+
+	// lifecycleProgression turns on KWOK-style staged Pod lifecycle for clusters
+	// registered after the call (see SetLifecycleProgression). Default false keeps
+	// the synchronous instant-Running behavior.
+	lifecycleProgression bool
 }
 
 // NewAPIServer returns an empty APIServer with no registered clusters.
@@ -77,11 +82,50 @@ func (s *APIServer) RegisterCluster() (string, *ClusterState) {
 	uid := newUID()
 
 	s.mu.Lock()
-	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient)
+	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient, s.lifecycleProgression)
 	s.clusters[uid] = state
 	s.mu.Unlock()
 
 	return uid, state
+}
+
+// SetLifecycleProgression turns KWOK-style staged Pod lifecycle on or off for
+// clusters registered after the call. Default is false: a directly-created Pod
+// is driven straight to Running on the same request (the existing synchronous,
+// deterministic behavior every test relies on). When true, Pods start Pending
+// and advance Pending->ContainerCreating->Running only as Tick() is called
+// (tests drive Tick explicitly under a FakeClock; `cloudemu serve` runs a
+// real-time ticker). Set before RegisterCluster.
+func (s *APIServer) SetLifecycleProgression(enabled bool) {
+	s.mu.Lock()
+	s.lifecycleProgression = enabled
+	s.mu.Unlock()
+}
+
+// TickAll advances the staged Pod lifecycle for every registered cluster. It
+// snapshots the cluster set under RLock, then Ticks each — the real-time serve
+// ticker calls this on an interval. A no-op for clusters without progression
+// enabled. It returns true when any cluster actually advanced a Pod this tick, so
+// the serve ticker can mark persistence state dirty only on a real change.
+func (s *APIServer) TickAll() bool {
+	s.mu.RLock()
+
+	states := make([]*ClusterState, 0, len(s.clusters))
+	for _, st := range s.clusters {
+		states = append(states, st)
+	}
+
+	s.mu.RUnlock()
+
+	changed := false
+
+	for _, st := range states {
+		if st.Tick() {
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 // SetAdmissionEnabled turns the admission webhook chain on or off for

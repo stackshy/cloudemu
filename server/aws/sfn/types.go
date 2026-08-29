@@ -383,15 +383,48 @@ type stateExitedDetails struct {
 	Output string `json:"output,omitempty"`
 }
 
+type executionFailedDetails struct {
+	Error string `json:"error,omitempty"`
+	Cause string `json:"cause,omitempty"`
+}
+
+type executionAbortedDetails struct {
+	Error string `json:"error,omitempty"`
+	Cause string `json:"cause,omitempty"`
+}
+
+type lambdaFunctionScheduledDetails struct {
+	Resource   string `json:"resource"`
+	Region     string `json:"region,omitempty"`
+	Parameters string `json:"parameters,omitempty"`
+}
+
+type lambdaFunctionStartedDetails struct{}
+
+type lambdaFunctionSucceededDetails struct {
+	Output string `json:"output,omitempty"`
+}
+
+type lambdaFunctionFailedDetails struct {
+	Error string `json:"error,omitempty"`
+	Cause string `json:"cause,omitempty"`
+}
+
 type historyEvent struct {
-	ID                        int64                      `json:"id"`
-	PreviousEventID           int64                      `json:"previousEventId"`
-	Type                      string                     `json:"type"`
-	Timestamp                 *float64                   `json:"timestamp"`
-	ExecutionStartedDetails   *executionStartedDetails   `json:"executionStartedEventDetails,omitempty"`
-	ExecutionSucceededDetails *executionSucceededDetails `json:"executionSucceededEventDetails,omitempty"`
-	StateEnteredDetails       *stateEnteredDetails       `json:"stateEnteredEventDetails,omitempty"`
-	StateExitedDetails        *stateExitedDetails        `json:"stateExitedEventDetails,omitempty"`
+	ID                             int64                           `json:"id"`
+	PreviousEventID                int64                           `json:"previousEventId"`
+	Type                           string                          `json:"type"`
+	Timestamp                      *float64                        `json:"timestamp"`
+	ExecutionStartedDetails        *executionStartedDetails        `json:"executionStartedEventDetails,omitempty"`
+	ExecutionSucceededDetails      *executionSucceededDetails      `json:"executionSucceededEventDetails,omitempty"`
+	ExecutionFailedDetails         *executionFailedDetails         `json:"executionFailedEventDetails,omitempty"`
+	ExecutionAbortedDetails        *executionAbortedDetails        `json:"executionAbortedEventDetails,omitempty"`
+	StateEnteredDetails            *stateEnteredDetails            `json:"stateEnteredEventDetails,omitempty"`
+	StateExitedDetails             *stateExitedDetails             `json:"stateExitedEventDetails,omitempty"`
+	LambdaFunctionScheduledDetails *lambdaFunctionScheduledDetails `json:"lambdaFunctionScheduledEventDetails,omitempty"`
+	LambdaFunctionStartedDetails   *lambdaFunctionStartedDetails   `json:"lambdaFunctionStartedEventDetails,omitempty"`
+	LambdaFunctionSucceededDetails *lambdaFunctionSucceededDetails `json:"lambdaFunctionSucceededEventDetails,omitempty"`
+	LambdaFunctionFailedDetails    *lambdaFunctionFailedDetails    `json:"lambdaFunctionFailedEventDetails,omitempty"`
 }
 
 type getExecutionHistoryResponse struct {

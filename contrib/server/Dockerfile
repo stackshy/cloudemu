@@ -28,9 +28,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Debian (glibc) so embedded-postgres' binaries run; the docker CLI is copied in
 # so the Docker-backed engines (--db=mysql|both, --compute=docker,
 # --containers=docker) can shell out. Mount the host's docker socket to use them.
+# python3 + nodejs are the interpreters the subprocess functions engine execs
+# (contrib/realengine/functions/functions_runtime.go) — without them
+# --functions=subprocess would be shipped but unusable.
 FROM debian:12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates python3 nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
@@ -42,10 +46,11 @@ ENV CLOUDEMU_DB=off \
     CLOUDEMU_CACHE=off \
     CLOUDEMU_FUNCTIONS=off \
     CLOUDEMU_COMPUTE=off \
-    CLOUDEMU_CONTAINERS=off
+    CLOUDEMU_CONTAINERS=off \
+    CLOUDEMU_STORAGE=off
 
-# AWS (LocalStack-compatible), Azure (HTTPS), GCP.
-EXPOSE 4566 4568 4569
+# AWS (LocalStack-compatible), Azure (HTTPS), GCP, Kubernetes (4570), OCI (4571).
+EXPOSE 4566 4568 4569 4570 4571
 
 # Bind all interfaces so the container is reachable from the host.
 ENTRYPOINT ["cloudemu-server"]

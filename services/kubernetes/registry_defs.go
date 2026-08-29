@@ -11,6 +11,7 @@ const (
 	apiGroupDiscovery             = "discovery.k8s.io"
 	apiGroupExtensions            = "apiextensions.k8s.io"
 	apiGroupAdmissionRegistration = "admissionregistration.k8s.io"
+	apiGroupCoordination          = "coordination.k8s.io"
 
 	// Plural resource segments for the two webhook config kinds — referenced
 	// by admission.go when it looks up the registry store to find configured
@@ -35,10 +36,20 @@ func registeredResources() []*resourceDef {
 		storageRegistryDefs(),
 		autoscalingRegistryDefs(),
 		discoveryRegistryDefs(),
+		coordinationRegistryDefs(),
 		coreRegistryDefs(),
 		crdRegistryDefs(),
 		admissionRegistryDefs(),
 	)
+}
+
+func coordinationRegistryDefs() []*resourceDef {
+	return []*resourceDef{
+		{
+			group: apiGroupCoordination, version: "v1", kind: "Lease", listKind: "LeaseList",
+			plural: "leases", namespaced: true,
+		},
+	}
 }
 
 func appsRegistryDefs() []*resourceDef {
@@ -46,14 +57,17 @@ func appsRegistryDefs() []*resourceDef {
 		{
 			group: apiGroupApps, version: "v1", kind: "ReplicaSet", listKind: "ReplicaSetList",
 			plural: "replicasets", namespaced: true, hasStatus: true, hasScale: true, reconcile: reconcileReplicaSet,
+			tableColumns: replicaSetTableProjector(),
 		},
 		{
 			group: apiGroupApps, version: "v1", kind: "StatefulSet", listKind: "StatefulSetList",
 			plural: "statefulsets", namespaced: true, hasStatus: true, hasScale: true, reconcile: reconcileStatefulSet,
+			tableColumns: statefulSetTableProjector(),
 		},
 		{
 			group: apiGroupApps, version: "v1", kind: "DaemonSet", listKind: "DaemonSetList",
 			plural: "daemonsets", namespaced: true, hasStatus: true, reconcile: reconcileDaemonSet,
+			tableColumns: daemonSetTableProjector(),
 		},
 	}
 }
@@ -63,6 +77,7 @@ func batchRegistryDefs() []*resourceDef {
 		{
 			group: apiGroupBatch, version: "v1", kind: "Job", listKind: "JobList",
 			plural: "jobs", namespaced: true, hasStatus: true, reconcile: reconcileJob,
+			tableColumns: jobTableProjector(),
 		},
 		{
 			group: apiGroupBatch, version: "v1", kind: "CronJob", listKind: "CronJobList",
@@ -142,6 +157,7 @@ func coreRegistryDefs() []*resourceDef {
 		{
 			group: "", version: "v1", kind: "PersistentVolumeClaim", listKind: "PersistentVolumeClaimList",
 			plural: "persistentvolumeclaims", namespaced: true, hasStatus: true, reconcile: reconcilePVC,
+			tableColumns: pvcTableProjector(),
 		},
 		{
 			group: "", version: "v1", kind: "PersistentVolume", listKind: "PersistentVolumeList",
@@ -150,10 +166,12 @@ func coreRegistryDefs() []*resourceDef {
 		{
 			group: "", version: "v1", kind: "Node", listKind: "NodeList",
 			plural: "nodes", namespaced: false, hasStatus: true,
+			tableColumns: nodeTableProjector(),
 		},
 		{
 			group: "", version: "v1", kind: "Event", listKind: "EventList",
 			plural: "events", namespaced: true,
+			tableColumns: eventTableProjector(),
 		},
 		{
 			group: "", version: "v1", kind: "ResourceQuota", listKind: "ResourceQuotaList",

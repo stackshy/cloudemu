@@ -34,6 +34,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
+      - name: Build timestamp
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -44,6 +48,58 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.date.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Batteries-included variant: the same wire server with the real data-plane
+  # engines compiled in (contrib/server/Dockerfile). Separate job because GHA
+  # permissions are per-job. Publishes the :engines moving tag alongside
+  # versioned :vX.Y.Z-engines / :X.Y-engines. It does NOT emit a plain :latest
+  # (that belongs to the root in-memory image above).
+  publish-engines:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # An explicit tags block, NOT a global flavor.suffix: a suffix flavor
+          # would append `-engines` to every tag (yielding `latest-engines`) and
+          # never produce a bare `engines` tag. v2.2.0 -> :engines, :2.2.0-engines,
+          # :2.2-engines.
+          tags: |
+            type=raw,value=engines
+            type=semver,pattern={{version}},suffix=-engines
+            type=semver,pattern={{major}}.{{minor}},suffix=-engines
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: contrib/server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=engines
+          cache-to: type=gha,mode=max,scope=engines

@@ -26,6 +26,12 @@ type Server struct {
 	// generic post-dispatch hook (protocol-agnostic) used, for example, to record
 	// API activity for CloudTrail. Nil by default, so it adds no behavior.
 	observer func(*http.Request)
+	// preDispatch, when set, runs before handler matching. It may authenticate
+	// the request, replace it (e.g. attaching a resolved principal to the
+	// context), and report whether dispatch should proceed. When it returns
+	// proceed=false it has already written the response. Nil by default, so it
+	// adds no behavior — the default request path is byte-for-byte unchanged.
+	preDispatch func(http.ResponseWriter, *http.Request) (*http.Request, bool)
 }
 
 // New creates a Server preloaded with the given handlers. Additional handlers
@@ -46,9 +52,25 @@ func (s *Server) SetObserver(fn func(*http.Request)) {
 	s.observer = fn
 }
 
+// SetPreDispatch installs a hook that runs before handler matching. It may
+// authenticate the request and return a replacement request (e.g. with a
+// principal on its context); returning proceed=false stops dispatch after the
+// hook has written the response. It is generic and optional; passing nil
+// disables it, restoring the default request path exactly.
+func (s *Server) SetPreDispatch(fn func(http.ResponseWriter, *http.Request) (*http.Request, bool)) {
+	s.preDispatch = fn
+}
+
 // ServeHTTP dispatches to the first handler whose Matches returns true, or
 // responds 501 Not Implemented if no handler matches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.preDispatch != nil {
+		var proceed bool
+		if r, proceed = s.preDispatch(w, r); !proceed {
+			return
+		}
+	}
+
 	for _, h := range s.handlers {
 		if h.Matches(r) {
 			h.ServeHTTP(w, r)

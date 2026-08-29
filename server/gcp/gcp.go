@@ -7,6 +7,9 @@
 package gcp
 
 import (
+	"net/http"
+
+	"github.com/stackshy/cloudemu/v2/config"
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -117,6 +120,10 @@ type Drivers struct {
 	// is used as the fallback.
 	ResourceDiscovery *resourcediscovery.Engine
 	ProjectID         string
+	// Clock drives time-stamped request observers (the Cloud Audit Log
+	// recorder). Leave nil to use the real clock; set it to the provider's clock
+	// so a FakeClock makes audit timestamps deterministic in tests.
+	Clock config.Clock
 }
 
 // New returns a server that speaks GCP's REST JSON wire protocol for every
@@ -128,7 +135,7 @@ type Drivers struct {
 // firestore, monitoring) ahead of GCS so first-match-wins keeps each on the
 // correct package.
 //
-//nolint:gocritic,gocyclo,funlen // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
+//nolint:gocritic,gocyclo,gocognit,funlen // Drivers is all interface fields; one if-per-driver, grows with the bundle.
 func New(d Drivers) *server.Server {
 	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
 	// paths, so enabling both would silently shadow one. Fail fast rather than
@@ -400,5 +407,26 @@ func New(d Drivers) *server.Server {
 		srv.Register(gcsHandler)
 	}
 
+	// When Cloud Logging is present, observe every served request and write a
+	// Cloud Audit Log Admin Activity entry for mutating operations, so the audit
+	// trail reflects real API activity. This is the GCP analog of the AWS
+	// CloudTrail observer.
+	installAuditObserver(srv, d.CloudLogging, d.Clock)
+
 	return srv
+}
+
+// installAuditObserver wires the Cloud Audit Log observer when Cloud Logging is
+// present. A nil sink leaves the server's request path unchanged; a nil clock
+// falls back to the real clock.
+func installAuditObserver(srv *server.Server, logs logdriver.Logging, clock config.Clock) {
+	if logs == nil {
+		return
+	}
+
+	if clock == nil {
+		clock = config.RealClock{}
+	}
+
+	srv.SetObserver(func(r *http.Request) { recordAuditLogEvent(logs, r, clock) })
 }

@@ -76,7 +76,7 @@ func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request
 
 func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wPods, namespace,
+	serveWatch(s, w, r, s.wPods, namespace, "v1", "Pod",
 		func() []corev1.Pod { return s.collectPodsLocked(namespace) },
 		func(p corev1.Pod) bool { return sel.Matches(labels.Set(p.Labels)) && podMatchesFields(&p, fields) })
 }
@@ -84,7 +84,7 @@ func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespa
 func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getPod(w, namespace, name)
+		s.getPod(w, r, namespace, name)
 	case http.MethodPut:
 		s.updatePod(w, r, namespace, name)
 	case http.MethodPatch:
@@ -129,8 +129,8 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
-	in.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
+	s.stamp(&in.ObjectMeta, r)
+	in.TypeMeta = metav1.TypeMeta{Kind: kindPod, APIVersion: "v1"}
 
 	// Admission webhooks (opt-in) validate/mutate before dry-run echoes or the
 	// object is persisted.
@@ -161,15 +161,29 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 	}
 
 	pod := in
-	// cloudemu has no kubelet; a directly-created Pod is driven Running (with a
-	// synthetic IP and ready containers) so it behaves like a scheduled Pod. A
-	// caller-supplied terminal phase (Succeeded/Failed) is preserved.
-	s.markPodRunningLocked(&pod)
+	s.materializeNewPodLocked(&pod)
+
 	s.pods[key] = &pod
 	// A new Pod may satisfy a Service selector — refresh endpoints.
 	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusCreated, &pod)
+}
+
+// materializeNewPodLocked drives a freshly-created Pod to its initial state.
+// cloudemu has no kubelet: a caller-supplied terminal phase (Succeeded/Failed)
+// is preserved; with opt-in lifecycle progression the Pod starts Pending and
+// advances on Tick(); otherwise it is driven straight to Running (synthetic IP,
+// ready containers) so it behaves like a scheduled Pod.
+func (s *ClusterState) materializeNewPodLocked(pod *corev1.Pod) {
+	switch {
+	case pod.Status.Phase != "":
+		s.markPodRunningLocked(pod)
+	case s.lifecycleProgression:
+		s.initPendingPodLocked(pod)
+	default:
+		s.markPodRunningLocked(pod)
+	}
 }
 
 func (s *ClusterState) listPods(w http.ResponseWriter, r *http.Request, namespace string) {
@@ -183,7 +197,7 @@ func (s *ClusterState) listPods(w http.ResponseWriter, r *http.Request, namespac
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.PodList{
+	s.writeList(w, r, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -201,7 +215,7 @@ func (s *ClusterState) listPodsAllNamespaces(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.PodList{
+	s.writeList(w, r, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -274,7 +288,7 @@ func (s *ClusterState) collectPodsLocked(namespace string) []corev1.Pod {
 	return items
 }
 
-func (s *ClusterState) getPod(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getPod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -285,7 +299,7 @@ func (s *ClusterState) getPod(w http.ResponseWriter, namespace, name string) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pod.DeepCopy())
+	s.writeObject(w, r, pod.DeepCopy())
 }
 
 func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -315,7 +329,7 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 	// deletionTimestamp is server-owned — preserve it across a PUT.
 	in.DeletionTimestamp = cur.DeletionTimestamp
@@ -375,7 +389,7 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
 	// must not resurrect a Terminating Pod — carry it (and uid/creation) forward,
 	// mirroring updatePod.
@@ -434,8 +448,18 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, r *http.Request, namespa
 	// Finalizer-gated deletion: a Pod with finalizers goes Terminating and is
 	// removed only when the last finalizer is dropped via update/patch.
 	if s.markForDeletion(&pod.ObjectMeta) {
-		pod.ResourceVersion = bumpResourceVersion(pod.ResourceVersion)
+		pod.ResourceVersion = s.nextClusterRVLocked()
 		s.wPods.publish(EventModified, namespace, *pod.DeepCopy())
+		writeJSON(w, http.StatusOK, pod.DeepCopy())
+
+		return
+	}
+
+	// With lifecycle progression on, a delete puts the Pod into a staged
+	// Terminating state reaped by a later Tick(), rather than vanishing at once.
+	if s.lifecycleProgression && pod.DeletionTimestamp == nil {
+		s.beginTerminatingLocked(pod)
+		s.resyncEndpointsForNamespaceLocked(namespace)
 		writeJSON(w, http.StatusOK, pod.DeepCopy())
 
 		return

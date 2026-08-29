@@ -96,6 +96,7 @@ func TestQueryProtocolHandlersWinBeforeEC2(t *testing.T) {
 		{"elasticache_before_ec2", "DescribeCacheClusters", "DescribeCacheClustersResponse"},
 		{"sns_before_ec2", "ListTopics", "ListTopicsResponse"},
 		{"sts_before_ec2", "GetCallerIdentity", "GetCallerIdentityResponse"},
+		{"cloudformation_before_ec2", "ListStacks", "ListStacksResponse"},
 	}
 
 	for _, tc := range cases {
@@ -133,6 +134,7 @@ func TestRESTHandlersWinBeforeS3(t *testing.T) {
 		{"route53_before_s3", "/2013-04-01/hostedzone", "ListHostedZonesResponse"},
 		{"efs_before_s3", "/2015-02-01/file-systems", "FileSystems"},
 		{"eks_before_s3", "/clusters", "clusters"},
+		{"apigateway_before_s3", "/restapis", "item"},
 	}
 
 	for _, tc := range cases {

@@ -28,9 +28,14 @@ const (
 //
 //nolint:gochecknoglobals // immutable lookup table, not mutable state
 var resourceKind = map[string]string{
-	resourceHealthChecks: "compute#healthCheck",
-	resourceTargetPools:  "compute#targetPool",
-	resourceURLMaps:      "compute#urlMap",
+	resourceHealthChecks:         "compute#healthCheck",
+	resourceTargetPools:          "compute#targetPool",
+	resourceURLMaps:              "compute#urlMap",
+	resourceTargetHTTPProxies:    "compute#targetHttpProxy",
+	resourceTargetHTTPSProxies:   "compute#targetHttpsProxy",
+	resourceSslCertificates:      "compute#sslCertificate",
+	resourceInstanceGroups:       "compute#instanceGroup",
+	resourceRegionInstanceGroups: "compute#instanceGroup",
 }
 
 // gcpStore returns the store capability, or false when the backing driver does
@@ -249,18 +254,17 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 		return
 	}
 
-	// A health check referenced by a backend service's healthChecks[] cannot be
-	// deleted in real GCP (400 resourceInUseByAnotherResource); deleting it here
-	// would leave the backend service pointing at a health check that no longer
-	// exists. (url-maps are pinned only by target-proxies, which are
-	// unimplemented, so no url-map delete guard is reachable yet.)
-	if rp.ResourceType == resourceHealthChecks {
-		if bs := h.healthCheckInUse(r.Context(), rp); bs != "" {
-			gcprest.WriteError(w, http.StatusBadRequest, reasonResourceInUse,
-				"The health_check resource '"+rp.ResourceName+"' is already being used by '"+bs+"'")
+	// Real GCP refuses to delete a resource still referenced by another (400
+	// resourceInUseByAnotherResource); deleting it here would orphan the
+	// dependent — a backend service pointing at a missing health check, a target
+	// proxy at a missing url-map, an https proxy at a missing certificate, a
+	// backend service at a missing instance group, or a forwarding rule at a
+	// missing proxy.
+	if ref := h.gcpResourceInUse(r.Context(), rp); ref != "" {
+		gcprest.WriteError(w, http.StatusBadRequest, reasonResourceInUse,
+			"The "+singularOf(rp.ResourceType)+" resource '"+rp.ResourceName+"' is already being used by '"+ref+"'")
 
-			return
-		}
+		return
 	}
 
 	if err := store.DeleteGCPResource(r.Context(), rp.ResourceType, scopeKeyOf(rp), rp.ResourceName); err != nil {
@@ -278,7 +282,14 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 //nolint:gocritic // rp is a request-scoped value
 func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host string) map[string]any {
 	out := make(map[string]any, len(res.Body)+internalFieldCount)
+
 	for k, v := range res.Body {
+		// Reserved internal members (e.g. instance-group membership) are stored in
+		// the body but must never leak onto the wire — they are not real GCP fields.
+		if strings.HasPrefix(k, reservedBodyPrefix) {
+			continue
+		}
+
 		out[k] = v
 	}
 
@@ -288,8 +299,17 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 	out["creationTimestamp"] = res.CreationTimestamp
 	out["selfLink"] = gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, res.Collection, res.Name)
 
-	if rp.Scope == gcprest.ScopeRegions {
+	switch rp.Scope {
+	case gcprest.ScopeRegions:
 		out["region"] = host + "/compute/v1/projects/" + rp.Project + "/regions/" + rp.ScopeName
+	case gcprest.ScopeZones:
+		out["zone"] = host + "/compute/v1/projects/" + rp.Project + "/zones/" + rp.ScopeName
+	}
+
+	// An instance group reports its member count as size, mirroring real GCP so a
+	// client can see membership changes without listing instances.
+	if res.Collection == resourceInstanceGroups || res.Collection == resourceRegionInstanceGroups {
+		out["size"] = len(membersOf(res.Body))
 	}
 
 	return out
@@ -297,8 +317,8 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 
 // internalFieldCount is the number of server-injected members gcpResourceJSON
 // adds on top of the stored body (kind, id, name, creationTimestamp, selfLink,
-// region).
-const internalFieldCount = 6
+// region/zone, size).
+const internalFieldCount = 7
 
 // healthCheckInUse returns the name of a same-scope backend service whose
 // healthChecks[] references the health check being deleted, or "" when none
@@ -352,5 +372,7 @@ func listScopeSegment(rp gcprest.ResourcePath) string {
 		return gcprest.ScopeGlobal
 	}
 
-	return gcprest.ScopeRegions + "/" + rp.ScopeName
+	// rp.Scope is already the collection segment ("zones" or "regions"); use it
+	// verbatim so a zonal list envelope's id isn't mislabeled as "regions/...".
+	return rp.Scope + "/" + rp.ScopeName
 }

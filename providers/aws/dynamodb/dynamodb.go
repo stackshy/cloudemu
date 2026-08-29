@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -322,7 +323,7 @@ func itemKey(cfg driver.TableConfig, item map[string]any) string {
 	return pk
 }
 
-func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
+func (m *Mock) CreateTable(ctx context.Context, cfg driver.TableConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -330,7 +331,7 @@ func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
 		return cerrors.Newf(cerrors.AlreadyExists, "table %s already exists", cfg.Name)
 	}
 
-	cfg.TableArn = idgen.AWSARN("dynamodb", m.opts.Region, m.opts.AccountID, "table/"+cfg.Name)
+	cfg.TableArn = idgen.AWSARN("dynamodb", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "table/"+cfg.Name)
 	cfg.CreatedAtUnix = float64(m.opts.Clock.Now().Unix())
 	cfg.TableID = uuidV4()
 
@@ -361,6 +362,22 @@ func (m *Mock) newStreamIdentity(tableArn string) (label, arn string) {
 	arn = tableArn + "/stream/" + label
 
 	return label, arn
+}
+
+// arnRegion returns the region field of a DynamoDB ARN
+// (arn:aws:dynamodb:<region>:<account>:table/<name>), or fallback when the ARN
+// is malformed. A table's stored ARN is the source of truth for its region, so
+// a stream-delivery event's region is derived from it rather than the configured
+// default.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
 }
 
 // uuidV4 returns a random RFC-4122 v4 UUID, the format a real DynamoDB TableId
@@ -1354,7 +1371,7 @@ func (m *Mock) queueStreamDelivery(td *tableData, rec *driver.StreamRecord) {
 
 	m.pendingStream = append(m.pendingStream, pendingStreamEvent{
 		streamARN: td.config.StreamArn,
-		region:    m.opts.Region,
+		region:    arnRegion(td.config.TableArn, m.opts.Region),
 		viewType:  td.streamConfig.ViewType,
 		rec:       *rec,
 	})

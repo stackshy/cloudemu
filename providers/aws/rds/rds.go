@@ -19,6 +19,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
@@ -245,6 +246,22 @@ func instanceARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "db:"+id)
 }
 
+// arnRegion returns the region field of an RDS ARN
+// (arn:aws:rds:<region>:<account>:<type>:<id>), or fallback when the ARN is
+// malformed. A source resource's stored ARN is the source of truth for the
+// region of a resource derived from it (a snapshot, a renamed instance), so the
+// two always share a region.
+func arnRegion(arn, fallback string) string {
+	const regionField, minFields = 3, 6
+
+	parts := strings.Split(arn, ":")
+	if len(parts) < minFields || parts[regionField] == "" {
+		return fallback
+	}
+
+	return parts[regionField]
+}
+
 // resourceID derives a stable, region-unique RDS resource id (e.g.
 // "db-ABCDEF...", "cluster-ABCDEF...") from a prefix and the resource id. Real
 // AWS assigns an opaque immutable id; a deterministic hash keeps it stable
@@ -358,7 +375,7 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		return nil, err
 	}
 
-	inst, plan, err := m.reserveInstance(cfg)
+	inst, plan, err := m.reserveInstance(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +401,7 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 // the provisioning plan snapshotted while the lock is held.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance, createPlan, error) {
+func (m *Mock) reserveInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (rdsdriver.Instance, createPlan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -398,7 +415,7 @@ func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance
 		}
 	}
 
-	inst := m.newInstance(cfg)
+	inst := m.newInstance(ctx, cfg)
 	m.instances.Set(cfg.ID, inst)
 	m.instSettle[cfg.ID] = settle.Pending(rdsdriver.StateCreating, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultDBInstanceSettle))
@@ -417,7 +434,7 @@ func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance
 // endpoint. The caller holds the lock.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
+func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 	port := cfg.Port
 	if port == 0 {
 		port = defaultPortFor(cfg.Engine)
@@ -443,9 +460,11 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		engineVersion = defaultEngineVersion(cfg.Engine)
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+
 	return rdsdriver.Instance{
 		ID:                         cfg.ID,
-		ARN:                        instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ARN:                        instanceARN(region, m.opts.AccountID, cfg.ID),
 		Engine:                     cfg.Engine,
 		EngineVersion:              engineVersion,
 		InstanceClass:              instanceClass,
@@ -453,7 +472,7 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		StorageType:                storageType,
 		MasterUsername:             cfg.MasterUsername,
 		DBName:                     cfg.DBName,
-		Endpoint:                   endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
+		Endpoint:                   endpointFor(cfg.ID, region, "abcd1234"),
 		Port:                       port,
 		State:                      rdsdriver.StateAvailable,
 		MultiAZ:                    cfg.MultiAZ,
@@ -811,7 +830,7 @@ func (m *Mock) renameInstance(oldID, newID string, inst rdsdriver.Instance) (*rd
 	}
 
 	inst.ID = newID
-	inst.ARN = instanceARN(m.opts.Region, m.opts.AccountID, newID)
+	inst.ARN = instanceARN(arnRegion(inst.ARN, m.opts.Region), m.opts.AccountID, newID)
 
 	m.instances.Delete(oldID)
 	m.instances.Set(newID, inst)
@@ -985,7 +1004,7 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 // CreateCluster creates an Aurora-style cluster.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*rdsdriver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (*rdsdriver.Cluster, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterIdentifier is required")
 	}
@@ -1016,15 +1035,16 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		allocatedStorage = auroraAllocatedStorage
 	}
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := rdsdriver.Cluster{
 		ID:                          cfg.ID,
-		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ARN:                         clusterARN(region, m.opts.AccountID, cfg.ID),
 		Engine:                      cfg.Engine,
 		EngineVersion:               cfg.EngineVersion,
 		MasterUsername:              cfg.MasterUsername,
 		DatabaseName:                cfg.DatabaseName,
-		Endpoint:                    endpointFor(cfg.ID, m.opts.Region, "cluster"),
-		ReaderEndpoint:              endpointFor(cfg.ID, m.opts.Region, "cluster-ro"),
+		Endpoint:                    endpointFor(cfg.ID, region, "cluster"),
+		ReaderEndpoint:              endpointFor(cfg.ID, region, "cluster-ro"),
 		Port:                        port,
 		State:                       rdsdriver.StateAvailable,
 		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
@@ -1036,7 +1056,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		StorageEncrypted:            cfg.StorageEncrypted,
 		KmsKeyID:                    resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
 		DeletionProtection:          cfg.DeletionProtection,
-		AvailabilityZones:           availabilityZones(m.opts.Region),
+		AvailabilityZones:           availabilityZones(region),
 		CreatedAt:                   m.opts.Clock.Now().UTC(),
 		Tags:                        copyTags(cfg.Tags),
 	}
@@ -1226,7 +1246,7 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 
 	snap := rdsdriver.Snapshot{
 		ID:               cfg.ID,
-		ARN:              snapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ARN:              snapshotARN(arnRegion(inst.ARN, m.opts.Region), m.opts.AccountID, cfg.ID),
 		InstanceID:       cfg.InstanceID,
 		Engine:           inst.Engine,
 		EngineVersion:    inst.EngineVersion,
@@ -1333,9 +1353,10 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	password := m.rootPasswords[snap.InstanceID]
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	inst := rdsdriver.Instance{
 		ID:               input.NewInstanceID,
-		ARN:              instanceARN(m.opts.Region, m.opts.AccountID, input.NewInstanceID),
+		ARN:              instanceARN(region, m.opts.AccountID, input.NewInstanceID),
 		Engine:           snap.Engine,
 		EngineVersion:    snap.EngineVersion,
 		InstanceClass:    instanceClass,
@@ -1343,7 +1364,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		StorageType:      defaultStorageType,
 		MasterUsername:   username,
 		DBName:           dbName,
-		Endpoint:         endpointFor(input.NewInstanceID, m.opts.Region, "abcd1234"),
+		Endpoint:         endpointFor(input.NewInstanceID, region, "abcd1234"),
 		Port:             port,
 		State:            rdsdriver.StateAvailable,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
@@ -1448,7 +1469,7 @@ func (m *Mock) CreateClusterSnapshot(
 
 	snap := rdsdriver.ClusterSnapshot{
 		ID:            cfg.ID,
-		ARN:           clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ARN:           clusterSnapshotARN(arnRegion(cluster.ARN, m.opts.Region), m.opts.AccountID, cfg.ID),
 		ClusterID:     cfg.ClusterID,
 		Engine:        cluster.Engine,
 		EngineVersion: cluster.EngineVersion,
@@ -1533,14 +1554,15 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	// database is reachable and future members provision consistently.
 	creds := m.clusterCreds[snap.ClusterID]
 
+	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := rdsdriver.Cluster{
 		ID:             input.NewClusterID,
-		ARN:            clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
+		ARN:            clusterARN(region, m.opts.AccountID, input.NewClusterID),
 		Engine:         snap.Engine,
 		EngineVersion:  snap.EngineVersion,
 		MasterUsername: creds.user,
-		Endpoint:       endpointFor(input.NewClusterID, m.opts.Region, "cluster"),
-		ReaderEndpoint: endpointFor(input.NewClusterID, m.opts.Region, "cluster-ro"),
+		Endpoint:       endpointFor(input.NewClusterID, region, "cluster"),
+		ReaderEndpoint: endpointFor(input.NewClusterID, region, "cluster-ro"),
 		Port:           defaultPortFor(snap.Engine),
 		State:          rdsdriver.StateAvailable,
 		CreatedAt:      m.opts.Clock.Now().UTC(),

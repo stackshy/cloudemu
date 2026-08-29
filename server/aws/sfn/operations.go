@@ -191,26 +191,55 @@ func eventsToWire(events []sfndriver.HistoryEvent) []historyEvent {
 			ID: e.ID, PreviousEventID: e.PreviousEventID, Type: e.Type, Timestamp: epoch(e.Timestamp),
 		}
 
-		if e.Type == "ExecutionStarted" {
-			he.ExecutionStartedDetails = &executionStartedDetails{Input: e.Input}
-		}
-
-		if e.Type == "ExecutionSucceeded" {
-			he.ExecutionSucceededDetails = &executionSucceededDetails{Output: e.Output}
-		}
-
-		if strings.HasSuffix(e.Type, "StateEntered") {
-			he.StateEnteredDetails = &stateEnteredDetails{Name: e.StateName, Input: e.Input}
-		}
-
-		if strings.HasSuffix(e.Type, "StateExited") {
-			he.StateExitedDetails = &stateExitedDetails{Name: e.StateName, Output: e.Output}
-		}
+		populateEventDetails(&he, e)
 
 		out = append(out, he)
 	}
 
 	return out
+}
+
+// populateEventDetails fills the type-specific detail struct on a wire history
+// event. The *StateEntered/*StateExited suffixes generalize across state types
+// (Pass/Choice/Wait/Succeed/Task), while the execution- and Lambda-specific
+// events map by exact Type.
+func populateEventDetails(he *historyEvent, e *sfndriver.HistoryEvent) {
+	populateExecutionDetails(he, e)
+	populateLambdaDetails(he, e)
+
+	if strings.HasSuffix(e.Type, "StateEntered") {
+		he.StateEnteredDetails = &stateEnteredDetails{Name: e.StateName, Input: e.Input}
+	}
+
+	if strings.HasSuffix(e.Type, "StateExited") {
+		he.StateExitedDetails = &stateExitedDetails{Name: e.StateName, Output: e.Output}
+	}
+}
+
+func populateExecutionDetails(he *historyEvent, e *sfndriver.HistoryEvent) {
+	switch e.Type {
+	case "ExecutionStarted":
+		he.ExecutionStartedDetails = &executionStartedDetails{Input: e.Input}
+	case "ExecutionSucceeded":
+		he.ExecutionSucceededDetails = &executionSucceededDetails{Output: e.Output}
+	case "ExecutionFailed":
+		he.ExecutionFailedDetails = &executionFailedDetails{Error: e.Error, Cause: e.Cause}
+	case "ExecutionAborted":
+		he.ExecutionAbortedDetails = &executionAbortedDetails{Error: e.Error, Cause: e.Cause}
+	}
+}
+
+func populateLambdaDetails(he *historyEvent, e *sfndriver.HistoryEvent) {
+	switch e.Type {
+	case "LambdaFunctionScheduled":
+		he.LambdaFunctionScheduledDetails = &lambdaFunctionScheduledDetails{Resource: e.Resource, Parameters: e.Input}
+	case "LambdaFunctionStarted":
+		he.LambdaFunctionStartedDetails = &lambdaFunctionStartedDetails{}
+	case "LambdaFunctionSucceeded":
+		he.LambdaFunctionSucceededDetails = &lambdaFunctionSucceededDetails{Output: e.Output}
+	case "LambdaFunctionFailed":
+		he.LambdaFunctionFailedDetails = &lambdaFunctionFailedDetails{Error: e.Error, Cause: e.Cause}
+	}
 }
 
 func (h *Handler) describeStateMachineForExecution(w http.ResponseWriter, r *http.Request) {

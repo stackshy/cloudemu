@@ -3,10 +3,15 @@
 
 provider-native `images` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (0)
+## Operations (5)
 
 | Operation | Description |
 | --- | --- |
+| `CreateOrUpdate` |  |
+| `Delete` |  |
+| `Get` |  |
+| `List` |  |
+| `ListByResourceGroup` |  |
 
 ## Not in scope
 
