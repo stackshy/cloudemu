@@ -105,8 +105,9 @@ func (s *APIServer) SetLifecycleProgression(enabled bool) {
 // TickAll advances the staged Pod lifecycle for every registered cluster. It
 // snapshots the cluster set under RLock, then Ticks each — the real-time serve
 // ticker calls this on an interval. A no-op for clusters without progression
-// enabled.
-func (s *APIServer) TickAll() {
+// enabled. It returns true when any cluster actually advanced a Pod this tick, so
+// the serve ticker can mark persistence state dirty only on a real change.
+func (s *APIServer) TickAll() bool {
 	s.mu.RLock()
 
 	states := make([]*ClusterState, 0, len(s.clusters))
@@ -116,9 +117,15 @@ func (s *APIServer) TickAll() {
 
 	s.mu.RUnlock()
 
+	changed := false
+
 	for _, st := range states {
-		st.Tick()
+		if st.Tick() {
+			changed = true
+		}
 	}
+
+	return changed
 }
 
 // SetAdmissionEnabled turns the admission webhook chain on or off for

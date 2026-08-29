@@ -27,12 +27,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
-// SchemaVersion is the on-disk snapshot format version. Bumped to 3 for the
+// SchemaVersion is the on-disk snapshot format version. Bumped to 4 for the
+// shared Kubernetes data-plane (#868): a top-level "kubernetes" field now sits
+// alongside the per-provider state, so a v3 snapshot (which lacks it) can no
+// longer be read into a build that expects it. It was bumped to 3 for the
 // full-surface generic layout: every service captures itself under
 // ProviderState.Services and the bespoke per-kind arrays of the v2 layout are
-// gone, so a v2 (or older) snapshot can no longer be read. Snapshots are a
-// dev-only convenience, so a clean break with a clear error is acceptable.
-const SchemaVersion = 3
+// gone. Snapshots are a dev-only convenience, so a clean break with a clear
+// error is acceptable.
+const SchemaVersion = 4
 
 const dirPerm = 0o755
 
@@ -51,6 +54,16 @@ type Snapshot struct {
 	SchemaVersion int                      `json:"schemaVersion"`
 	Meta          *Meta                    `json:"meta,omitempty"`
 	Providers     map[string]ProviderState `json:"providers,omitempty"`
+
+	// Kubernetes is the serialized shared Kubernetes data-plane (APIServer
+	// state keyed by cluster UID). It is NOT part of any single provider —
+	// AWS/Azure/GCP all register clusters into the same data plane — so it lives
+	// at the top level rather than under Providers. It is populated and consumed
+	// by the caller (server/serverkit), NOT by the generic ExportAll/RestoreAll,
+	// which stay strictly provider-only: a direct ExportAll caller therefore gets
+	// a k8s-less snapshot and must attach/restore this field itself if it wires a
+	// data plane. Left nil (omitted) when no Kubernetes data plane is running.
+	Kubernetes json.RawMessage `json:"kubernetes,omitempty"`
 }
 
 // Meta is optional descriptive header for a named snapshot (the auto

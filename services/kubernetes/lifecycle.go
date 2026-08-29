@@ -49,13 +49,16 @@ func (s *ClusterState) initPendingPodLocked(pod *corev1.Pod) {
 
 // Tick advances every staged Pod whose next transition is due. Tests call it
 // explicitly after advancing a FakeClock; the serve ticker calls it on the real
-// clock. A no-op when progression is off. Safe for external callers.
-func (s *ClusterState) Tick() {
+// clock. A no-op when progression is off. Safe for external callers. It returns
+// true when at least one Pod actually advanced a stage this tick, so the serve
+// ticker (which bypasses the HTTP dirty seam) can mark persistence state dirty
+// only on a real change rather than on every idle tick.
+func (s *ClusterState) Tick() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.lifecycleProgression {
-		return
+		return false
 	}
 
 	now := s.now().Time
@@ -68,6 +71,7 @@ func (s *ClusterState) Tick() {
 	sort.Strings(keys)
 
 	touched := map[string]bool{}
+	changed := false
 
 	for _, k := range keys {
 		pod, ok := s.pods[k]
@@ -75,7 +79,12 @@ func (s *ClusterState) Tick() {
 			continue
 		}
 
-		if s.advancePodLocked(pod, now) {
+		advanced, affectsEndpoints := s.advancePodLocked(pod, now)
+		if advanced {
+			changed = true
+		}
+
+		if affectsEndpoints {
 			touched[pod.Namespace] = true
 		}
 	}
@@ -85,36 +94,42 @@ func (s *ClusterState) Tick() {
 	for ns := range touched {
 		s.resyncEndpointsForNamespaceLocked(ns)
 	}
+
+	return changed
 }
 
 // advancePodLocked moves one Pod forward by at most one stage if its transition
-// is due, returning true when the change may affect Service endpoints (a Pod
-// reached Running or was reaped). Callers hold s.mu.
-func (s *ClusterState) advancePodLocked(pod *corev1.Pod, now time.Time) bool {
+// is due. advanced is true when a stage transition actually happened (a
+// persistence-relevant change); affectsEndpoints is true when that change may
+// alter which addresses back a Service (a Pod reached Running or was reaped).
+// Callers hold s.mu.
+func (s *ClusterState) advancePodLocked(pod *corev1.Pod, now time.Time) (advanced, affectsEndpoints bool) {
 	if pod.DeletionTimestamp != nil {
-		return s.reapTerminatingLocked(pod, now)
+		reaped := s.reapTerminatingLocked(pod, now)
+
+		return reaped, reaped
 	}
 
 	stage := pod.Annotations[lifecycleStageAnn]
 	if stage == "" || stage == stageRunning {
-		return false
+		return false, false
 	}
 
 	if !stageDue(pod, now) {
-		return false
+		return false, false
 	}
 
 	switch stage {
 	case stagePending:
 		s.toContainerCreatingLocked(pod, now)
 
-		return false
+		return true, false
 	case stageContainerCreating:
 		s.toRunningLocked(pod)
 
-		return true
+		return true, true
 	default:
-		return false
+		return false, false
 	}
 }
 

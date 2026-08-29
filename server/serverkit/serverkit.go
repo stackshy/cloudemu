@@ -258,15 +258,20 @@ func (a *App) newFlusher() *flusher {
 	save := func(ctx context.Context, includeAssets bool) error {
 		// Hold the export read-guard across the whole save so a concurrent
 		// Rebuild()/reset cannot Close() the providers being exported (see
-		// exportMu). rebuildMu is taken only to read the current snapTargets.
+		// exportMu). rebuildMu is taken only to read the current snapshot targets.
 		a.exportMu.RLock()
 		defer a.exportMu.RUnlock()
 
+		// Capture the provider targets AND the Kubernetes data plane in ONE
+		// rebuildMu section: reading them under separate locks could pair a stale
+		// a.k8s from before a reset with fresh targets after it (a dangling-UID
+		// hazard). exportSnapshot then captures providers before k8s.
 		a.rebuildMu.Lock()
 		targets := a.snapTargets
+		k8s := a.k8s
 		a.rebuildMu.Unlock()
 
-		return snapshotState(ctx, a.cfg.StateFile, includeAssets, targets)
+		return snapshotState(ctx, a.cfg.StateFile, includeAssets, targets, k8s)
 	}
 
 	return newFlusher(
@@ -318,7 +323,10 @@ func baseOptsFor(cfg *Config) []config.Option {
 // boot state. Restore runs first; init fixtures apply on top.
 func (a *App) applyBootState() error {
 	if a.cfg.Persist {
-		if err := restoreState(context.Background(), a.cfg.StateFile, a.snapTargets); err != nil {
+		// New() runs this single-threaded before Serve binds listeners, so reading
+		// a.snapTargets / a.k8s (both set by the Rebuild() in New) without rebuildMu
+		// is safe here.
+		if err := restoreState(context.Background(), a.cfg.StateFile, a.snapTargets, a.k8s); err != nil {
 			return fmt.Errorf("restore persisted state: %w", err)
 		}
 	}
@@ -407,7 +415,15 @@ func (a *App) swapFresh() []closer {
 	}
 
 	if a.k8sBackend != nil {
-		a.k8sBackend.Swap(wrap(k8s, "kubernetes", a.cfg.LogRequests))
+		// Wrap the data-plane handler in the dirty seam HERE — at the same point
+		// the four cloud providers are wrapped, BEFORE the admin Control fronts it
+		// in buildServers. Since #868 makes the Kubernetes data plane part of the
+		// persisted surface, a pure-kubectl mutation (which never touches a
+		// provider port) must mark state dirty so scheduled/on-request saves catch
+		// it. Wrapping here (not in buildServers) keeps admin/health probes — which
+		// Control answers before reaching this backend — from dirtying an idle
+		// emulator.
+		a.k8sBackend.Swap(a.wrapDirty(wrap(k8s, "kubernetes", a.cfg.LogRequests)))
 	}
 
 	for p, h := range fresh {
@@ -560,11 +576,16 @@ func (a *App) snapshot() ([]byte, error) {
 	a.exportMu.RLock()
 	defer a.exportMu.RUnlock()
 
+	// Capture provider targets AND the Kubernetes data plane in one rebuildMu
+	// section (see the flusher save's note); exportSnapshot enforces the
+	// providers-before-Kubernetes ordering, shared with the flusher path so the
+	// two never drift.
 	a.rebuildMu.Lock()
 	cur := a.snapTargets
+	k8s := a.k8s
 	a.rebuildMu.Unlock()
 
-	snap, err := persist.ExportAll(context.Background(), cur, persist.Options{IncludeAssets: true})
+	snap, err := exportSnapshot(context.Background(), cur, k8s, true)
 	if err != nil {
 		return nil, err
 	}
@@ -589,11 +610,19 @@ func (a *App) restore(body []byte) error {
 
 	a.Rebuild() // wipe to empty before loading
 
+	// Capture the (post-Rebuild) provider targets AND the fresh Kubernetes data
+	// plane in one rebuildMu section, so the k8s-restore step below targets the
+	// SAME APIServer instance the providers were just wired to.
 	a.rebuildMu.Lock()
 	cur := a.snapTargets
+	k8s := a.k8s
 	a.rebuildMu.Unlock()
 
 	if err := persist.RestoreAll(context.Background(), &snap, cur); err != nil {
+		return err
+	}
+
+	if err := restoreKubernetes(context.Background(), &snap, k8s); err != nil {
 		return err
 	}
 
@@ -873,8 +902,12 @@ func (a *App) startK8sTicker() {
 				k8s := a.k8s
 				a.rebuildMu.Unlock()
 
-				if k8s != nil {
-					k8s.TickAll()
+				// The ticker mutates Pods from this background goroutine, bypassing
+				// the HTTP dirty seam, so mark dirty here when a Pod actually
+				// advanced a stage — otherwise a --k8s-progression save could lag
+				// the live staged state. Only on real change, never on an idle tick.
+				if k8s != nil && k8s.TickAll() {
+					a.markDirty()
 				}
 			}
 		}

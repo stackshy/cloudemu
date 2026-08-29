@@ -25,15 +25,19 @@ func wrap(h http.Handler, provider string, logReqs bool) http.Handler {
 	})
 }
 
-// wrapDirty marks the emulator state dirty after a cloud-provider request
-// returns, so the flusher persists it. It is applied ONLY to the four cloud
-// provider handlers (aws/azure/gcp/oci) — never the Kubernetes data-plane, which
-// is not part of persist.ExportAll, and never the admin/health plane, so
-// liveness probes don't keep an idle emulator perpetually dirty. When
-// persistence is off the handler is returned unchanged (zero overhead). Marking
-// after the handler runs (rather than classifying reads vs writes) is
-// deliberately coarse: a pure read triggers at most one extra save per
-// interval/cap, which is bounded and acceptable.
+// wrapDirty marks the emulator state dirty after a request returns, so the
+// flusher persists it. It is applied to the four cloud provider handlers
+// (aws/azure/gcp/oci) AND — since #868 made the shared Kubernetes data plane part
+// of the persisted surface — the Kubernetes data-plane handler, so a pure-kubectl
+// mutation that never touches a provider port is still saved. It is applied at
+// backend-swap time (swapFresh), BEFORE the admin Control fronts the backend, so
+// the admin/health plane never reaches it and liveness probes don't keep an idle
+// emulator perpetually dirty. When persistence is off the handler is returned
+// unchanged (zero overhead). Marking after the handler runs (rather than
+// classifying reads vs writes) is deliberately coarse: a pure read triggers at
+// most one extra save per interval/cap, which is bounded and acceptable — the
+// Kubernetes port's chatty reflector list/watch traffic makes this coarseness
+// more visible under on-request, but it stays bounded by the debounce cap.
 func (a *App) wrapDirty(h http.Handler) http.Handler {
 	if !a.cfg.Persist {
 		return h
