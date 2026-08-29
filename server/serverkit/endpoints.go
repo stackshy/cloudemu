@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 // endpointsFileMode is the permission for the written endpoints file: a
@@ -52,9 +53,31 @@ func (e *endpointSet) sdkHints() []struct{ label, url, hint string } {
 	}
 }
 
+// persistInfo is the persistence summary shown in the startup banner.
+type persistInfo struct {
+	on        bool
+	strategy  string
+	interval  time.Duration
+	stateFile string
+}
+
+// line renders the one-line persistence summary, or "" when persistence is off.
+func (p persistInfo) line() string {
+	if !p.on {
+		return ""
+	}
+
+	switch p.strategy {
+	case StrategyScheduled:
+		return fmt.Sprintf("Persistence: %s every %s → %s", p.strategy, p.interval, p.stateFile)
+	default:
+		return fmt.Sprintf("Persistence: %s → %s", p.strategy, p.stateFile)
+	}
+}
+
 // printBanner writes the startup summary: the live endpoints and copy-paste
 // snippets for pointing each SDK at them.
-func printBanner(w io.Writer, e *endpointSet, adminOn bool) {
+func printBanner(w io.Writer, e *endpointSet, adminOn bool, persist persistInfo) {
 	fmt.Fprintln(w, "cloudemu — standalone server")
 	fmt.Fprintln(w, "────────────────────────────")
 
@@ -62,6 +85,11 @@ func printBanner(w io.Writer, e *endpointSet, adminOn bool) {
 		if row.url != "" {
 			fmt.Fprintf(w, "  %-11s %s%s\n", row.label, row.url, row.note)
 		}
+	}
+
+	if line := persist.line(); line != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, line)
 	}
 
 	fmt.Fprintln(w)

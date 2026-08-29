@@ -61,6 +61,8 @@ func serverkitConfig(cfg *appConfig, opts []config.Option) *serverkit.Config {
 		Persist:             cfg.persist,
 		StateFile:           cfg.stateFile,
 		PersistMetadataOnly: cfg.persistMetaOnly,
+		PersistStrategy:     cfg.persistStrategy,
+		PersistInterval:     cfg.persistInterval,
 		InitDir:             cfg.initDir,
 		TLSCert:             cfg.tlsCert,
 		TLSKey:              cfg.tlsKey,
