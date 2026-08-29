@@ -5,8 +5,10 @@
 package kubernetes_test
 
 import (
+	"bytes"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -101,6 +103,84 @@ func TestDryRun_RegistryCreateNotPersisted(t *testing.T) {
 	list := decodeMap(t, pods.Body)
 	if items, ok := list["items"].([]any); ok && len(items) != 0 {
 		t.Fatalf("dry-run job left %d pods behind", len(items))
+	}
+}
+
+// TestDryRun_TypedWritesDoNotAdvanceClusterRV guards that a server dry-run
+// create/update/patch on a typed kind (ConfigMap) is side-effect-free with
+// respect to the cluster resourceVersion counter — it echoes the would-be RV
+// (the peeked value) but must not consume it, mirroring the registry kinds.
+func TestDryRun_TypedWritesDoNotAdvanceClusterRV(t *testing.T) {
+	base, done := newFixture(t)
+	defer done()
+
+	cmURL := base + "/api/v1/namespaces/default/configmaps"
+
+	cmBody := func(name string) []byte {
+		return mustJSON(t, map[string]any{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": name},
+			"data":     map[string]any{"k": "v"},
+		})
+	}
+
+	rvOf := func(resp *http.Response) int {
+		t.Helper()
+
+		var obj struct {
+			Metadata struct {
+				ResourceVersion string `json:"resourceVersion"`
+			} `json:"metadata"`
+		}
+		mustDecode(t, resp.Body, &obj)
+
+		n, err := strconv.Atoi(obj.Metadata.ResourceVersion)
+		if err != nil {
+			t.Fatalf("resourceVersion %q not an integer: %v", obj.Metadata.ResourceVersion, err)
+		}
+
+		return n
+	}
+
+	// A real create advances the cluster resourceVersion; capture what it stamped.
+	rvA := rvOf(do(t, http.MethodPost, cmURL, cmBody("a")))
+
+	// Every server dry-run write echoes the would-be RV (the peeked rvA+1) but
+	// must NOT consume the counter.
+	if got := rvOf(do(t, http.MethodPost, cmURL+"?dryRun=All", cmBody("b"))); got != rvA+1 {
+		t.Fatalf("dry-run create echoed RV %d, want peeked %d", got, rvA+1)
+	}
+
+	if got := rvOf(do(t, http.MethodPut, cmURL+"/a?dryRun=All", cmBody("a"))); got != rvA+1 {
+		t.Fatalf("dry-run update echoed RV %d, want peeked %d", got, rvA+1)
+	}
+
+	patchReq, err := http.NewRequest(http.MethodPatch, cmURL+"/a?dryRun=All",
+		bytes.NewReader([]byte(`{"data":{"k2":"v2"}}`)))
+	if err != nil {
+		t.Fatalf("new patch request: %v", err)
+	}
+
+	patchReq.Header.Set("Content-Type", "application/merge-patch+json")
+
+	drPatch, err := http.DefaultClient.Do(patchReq)
+	if err != nil {
+		t.Fatalf("dry-run patch: %v", err)
+	}
+
+	if got := rvOf(drPatch); got != rvA+1 {
+		t.Fatalf("dry-run patch echoed RV %d, want peeked %d", got, rvA+1)
+	}
+
+	// None of the three dry-runs consumed the counter: the next REAL create is
+	// exactly one past "a" (rvA+1), not rvA+4.
+	if rvC := rvOf(do(t, http.MethodPost, cmURL, cmBody("c"))); rvC != rvA+1 {
+		t.Fatalf("real create after 3 dry-runs: RV=%d, want %d — a dry-run advanced the cluster RV", rvC, rvA+1)
+	}
+
+	// A real update advances by exactly one more.
+	if rvU := rvOf(do(t, http.MethodPut, cmURL+"/a", cmBody("a"))); rvU != rvA+2 {
+		t.Fatalf("real update RV=%d, want %d", rvU, rvA+2)
 	}
 }
 

@@ -104,7 +104,7 @@ func (s *ClusterState) createPDB(w http.ResponseWriter, r *http.Request, route *
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 
 	// Real PDB status is computed by the disruption controller from live pods.
@@ -158,7 +158,7 @@ func (s *ClusterState) replacePDB(w http.ResponseWriter, r *http.Request, route 
 	in.Namespace, in.Name = route.Namespace, route.Name
 	in.CreationTimestamp = existing.CreationTimestamp
 	in.UID = existing.UID
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 	in.Status = existing.Status
 

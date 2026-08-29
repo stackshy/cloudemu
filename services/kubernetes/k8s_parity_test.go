@@ -382,6 +382,104 @@ func TestK8sParity_ProgressionOffInstantRunning(t *testing.T) {
 	}
 }
 
+// TestK8sParity_DeleteGoesTerminatingBeforeDrain covers the opt-in progression
+// invariant that deleting a Running Pod modifies it into Terminating
+// (deletionTimestamp set, still GETtable) rather than hard-deleting it — it
+// drains only on a later Tick past the grace period.
+func TestK8sParity_DeleteGoesTerminatingBeforeDrain(t *testing.T) {
+	f, cleanup := newProgressionFixture(t)
+	defer cleanup()
+
+	podsURL := f.base + "/api/v1/namespaces/default/pods"
+
+	podBody := mustJSON(t, map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": "doomed"},
+		"spec":     map[string]any{"containers": []any{map[string]any{"name": "c", "image": "busybox"}}},
+	})
+	doAccept(t, http.MethodPost, podsURL, "", podBody).Body.Close()
+
+	// Drive the staged Pod to Running (Pending -> ContainerCreating -> Running).
+	f.clock.Advance(2 * time.Second)
+	f.state.Tick()
+	f.clock.Advance(2 * time.Second)
+	f.state.Tick()
+
+	if got := podStatusColumn(t, f, "doomed"); got != "Running" {
+		t.Fatalf("pod before delete: STATUS %q, want Running", got)
+	}
+
+	// Delete under progression: the Pod is MODIFIED into Terminating
+	// (deletionTimestamp set), not hard-deleted.
+	delResp := doAccept(t, http.MethodDelete, podsURL+"/doomed", "", nil)
+	if delResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete: status %d", delResp.StatusCode)
+	}
+
+	var deleted corev1.Pod
+	mustDecode(t, delResp.Body, &deleted)
+
+	if deleted.DeletionTimestamp == nil {
+		t.Fatal("delete response has nil deletionTimestamp; Pod did not enter Terminating")
+	}
+
+	// It has not drained yet: GET still finds it, rendered Terminating.
+	if got := podStatusColumn(t, f, "doomed"); got != "Terminating" {
+		t.Fatalf("pod after delete: STATUS %q, want Terminating (before drain)", got)
+	}
+
+	// A Tick past the grace period reaps it.
+	f.clock.Advance(2 * time.Second)
+	f.state.Tick()
+
+	get := doAccept(t, http.MethodGet, podsURL+"/doomed", "", nil)
+	if get.StatusCode != http.StatusNotFound {
+		t.Fatalf("pod after drain Tick: GET status %d, want 404", get.StatusCode)
+	}
+	get.Body.Close()
+}
+
+// TestK8sParity_ServiceAndNamespaceTable covers server-side Table rendering for
+// Service and Namespace: kubectl's columns render and the rows carry the
+// expected cells.
+func TestK8sParity_ServiceAndNamespaceTable(t *testing.T) {
+	base, cleanup := newFixture(t)
+	t.Cleanup(cleanup)
+
+	svcBody := mustJSON(t, map[string]any{
+		"apiVersion": "v1", "kind": "Service",
+		"metadata": map[string]any{"name": "web"},
+		"spec": map[string]any{
+			"selector": map[string]any{"app": "web"},
+			"ports":    []any{map[string]any{"port": 80}},
+		},
+	})
+	doAccept(t, http.MethodPost, base+"/api/v1/namespaces/default/services", "", svcBody).Body.Close()
+
+	svcTable := getTable(t, base+"/api/v1/namespaces/default/services")
+	svcCells := tableRowByName(t, svcTable, "web")
+
+	if got := svcCells[columnIndex(t, svcTable, "Type")]; got != "ClusterIP" {
+		t.Fatalf("Service TYPE: got %v, want ClusterIP", got)
+	}
+
+	if got := svcCells[columnIndex(t, svcTable, "Cluster-IP")]; got == "" || got == "<none>" {
+		t.Fatalf("Service CLUSTER-IP: got %v, want an allocated IP", got)
+	}
+
+	if got := svcCells[columnIndex(t, svcTable, "Port(s)")]; got != "80/TCP" {
+		t.Fatalf("Service PORT(S): got %v, want 80/TCP", got)
+	}
+
+	// Namespace Table: the bootstrap "default" namespace renders Active.
+	nsTable := getTable(t, base+"/api/v1/namespaces")
+	nsCells := tableRowByName(t, nsTable, "default")
+
+	if got := nsCells[columnIndex(t, nsTable, "Status")]; got != "Active" {
+		t.Fatalf("Namespace STATUS: got %v, want Active", got)
+	}
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func hasTrueCondition(conds []struct{ Type, Status string }, typ string) bool {

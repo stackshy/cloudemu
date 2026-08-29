@@ -130,7 +130,7 @@ func (s *ClusterState) createSecretLocked(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Secret", APIVersion: "v1"}
 
 	if in.Type == "" {
@@ -243,7 +243,7 @@ func (s *ClusterState) updateSecret(w http.ResponseWriter, r *http.Request, name
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 
 	if in.Type == "" {
@@ -297,7 +297,7 @@ func (s *ClusterState) patchSecret(w http.ResponseWriter, r *http.Request, names
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)

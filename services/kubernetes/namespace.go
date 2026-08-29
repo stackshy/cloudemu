@@ -192,7 +192,7 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 	// deletionTimestamp is server-owned — carry it forward so a finalizer-removing
 	// PUT can't resurrect a Terminating namespace.
@@ -237,7 +237,7 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
 	// must not resurrect a Terminating namespace — carry it (and uid/creation)
 	// forward, mirroring updateNamespace.

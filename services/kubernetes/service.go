@@ -134,7 +134,7 @@ func (s *ClusterState) createServiceLocked(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}
 
 	if in.Spec.Type == "" {
@@ -266,7 +266,7 @@ func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, nam
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 
 	// ClusterIP is immutable after Create (kubernetes apiserver semantics).
@@ -324,7 +324,7 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 	// Same ClusterIP-immutable rule as updateService.
 	patched.Spec.ClusterIP = cur.Spec.ClusterIP
 	patched.Spec.ClusterIPs = cur.Spec.ClusterIPs

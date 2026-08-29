@@ -144,7 +144,7 @@ func (s *ClusterState) createDeploymentLocked(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	in.Generation = 1
 
@@ -259,7 +259,7 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 	in.Generation = generationFor(cur.Generation, &in.Spec, &cur.Spec)
 
@@ -307,7 +307,7 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 	patched.Generation = generationFor(cur.Generation, &patched.Spec, &cur.Spec)
 
 	if isDryRun(r) {

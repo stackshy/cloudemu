@@ -216,6 +216,18 @@ func (s *ClusterState) peekClusterRVLocked() string {
 	return strconv.FormatUint(s.rv+1, 10)
 }
 
+// rvForRequestLocked returns the resourceVersion a typed create/update/patch
+// should stamp on its object. A real write advances the cluster counter; a
+// server dry-run must be side-effect-free, so it peeks the would-be value
+// without consuming it. Callers hold s.mu.
+func (s *ClusterState) rvForRequestLocked(r *http.Request) string {
+	if isDryRun(r) {
+		return s.peekClusterRVLocked()
+	}
+
+	return s.nextClusterRVLocked()
+}
+
 // clusterRVLocked returns the current cluster resourceVersion (the highest one
 // handed out so far), stamped as the list-level resourceVersion of every list
 // response. It is >= every item's resourceVersion. Callers hold s.mu.

@@ -134,7 +134,7 @@ func (s *ClusterState) createConfigMapLocked(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
 
 	if isDryRun(r) {
@@ -246,7 +246,7 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 
 	if isDryRun(r) {
@@ -296,7 +296,7 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
@@ -367,9 +367,11 @@ func configMapKey(namespace, name string) string {
 }
 
 // stamp fills in the implicit fields a real apiserver writes on Create:
-// UID, creationTimestamp (from the cluster clock), resourceVersion.
-func (s *ClusterState) stamp(om *metav1.ObjectMeta) {
+// UID, creationTimestamp (from the cluster clock), resourceVersion. The
+// resourceVersion is peeked (not consumed) for a server dry-run so the create
+// echo has no side effect on the cluster counter.
+func (s *ClusterState) stamp(om *metav1.ObjectMeta, r *http.Request) {
 	om.UID = types.UID(newUID())
 	om.CreationTimestamp = s.now()
-	om.ResourceVersion = s.nextClusterRVLocked()
+	om.ResourceVersion = s.rvForRequestLocked(r)
 }

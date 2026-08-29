@@ -129,7 +129,7 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: kindPod, APIVersion: "v1"}
 
 	// Admission webhooks (opt-in) validate/mutate before dry-run echoes or the
@@ -329,7 +329,7 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 	// deletionTimestamp is server-owned — preserve it across a PUT.
 	in.DeletionTimestamp = cur.DeletionTimestamp
@@ -389,7 +389,7 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
 	// must not resurrect a Terminating Pod — carry it (and uid/creation) forward,
 	// mirroring updatePod.

@@ -124,7 +124,7 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta, r)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ServiceAccount", APIVersion: "v1"}
 
 	if isDryRun(r) {
@@ -231,7 +231,7 @@ func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Reque
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = s.nextClusterRVLocked()
+	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
 
 	if isDryRun(r) {
@@ -266,7 +266,7 @@ func (s *ClusterState) patchServiceAccount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	patched.ResourceVersion = s.nextClusterRVLocked()
+	patched.ResourceVersion = s.rvForRequestLocked(r)
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
