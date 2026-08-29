@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -231,15 +232,17 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 			return sel.Matches(labels.Set(u.GetLabels())) && matchesFields(&u, fields)
 		}
 
+		initial := watchSendInitialEvents(r)
+
 		s.mu.RLock()
 		sub := st.watch.subscribe(namespace)
 		items := st.snapshotLocked(namespace, r)
 		rv := s.clusterRVLocked()
 		s.mu.RUnlock()
 		streamWatch(r.Context(), w, sub, items, keep, watchOpts{
-			resume:      watchResume(r),
-			bookmarks:   watchBookmarksEnabled(r),
-			bookmarkObj: registryBookmark(st, rv),
+			resume:      watchResume(r) && !initial,
+			bookmarks:   watchBookmarksEnabled(r) || initial,
+			bookmarkObj: registryBookmark(st, rv, initial),
 		})
 
 		return
@@ -268,12 +271,18 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 
 // registryBookmark builds the minimal object a BOOKMARK watch event carries for
 // a registry-backed kind: just the kind's apiVersion/kind and the current
-// cluster resourceVersion.
-func registryBookmark(st *registryStore, rv string) *unstructured.Unstructured {
+// cluster resourceVersion. When initialEvents is set (a WatchList request) it
+// also carries the k8s.io/initial-events-end annotation marking the end of the
+// initial-state replay, without which modern kubectl/informers hang.
+func registryBookmark(st *registryStore, rv string, initialEvents bool) *unstructured.Unstructured {
 	bm := &unstructured.Unstructured{}
 	bm.SetAPIVersion(st.def.apiVersion())
 	bm.SetKind(st.def.kind)
 	bm.SetResourceVersion(rv)
+
+	if initialEvents {
+		bm.SetAnnotations(map[string]string{metav1.InitialEventsAnnotationKey: watchQueryValue})
+	}
 
 	return bm
 }

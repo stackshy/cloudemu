@@ -21,6 +21,7 @@ import (
 // keep the projections consistent).
 const (
 	cellNone        = "<none>"
+	cellUnknown     = "<unknown>"
 	condTypeReady   = "Ready"
 	condStatusTrue  = "True"
 	jobCondComplete = "Complete"
@@ -359,6 +360,74 @@ func orNone(s string) string {
 	}
 
 	return s
+}
+
+// eventTableProjector renders core/v1 Events into kubectl's default LAST SEEN /
+// TYPE / REASON / OBJECT / MESSAGE columns (plus the `-o wide` extras Subobject,
+// Source, First Seen, Count, Name), mirroring real kubectl. Last Seen / First
+// Seen are relative to lastTimestamp / firstTimestamp, so it uses the
+// clock-aware cellsAt variant instead of the creationTimestamp-based age.
+func eventTableProjector() *tableProjector {
+	return &tableProjector{
+		columns: []metav1.TableColumnDefinition{
+			col("Last Seen", "string"),
+			col("Type", "string"),
+			col("Reason", "string"),
+			col("Object", "string"),
+			wideCol("Subobject"),
+			wideCol("Source"),
+			col("Message", "string"),
+			wideCol("First Seen"),
+			wideCol("Count"),
+			{Name: "Name", Type: "string", Format: "name", Priority: 1},
+		},
+		cellsAt: func(u *unstructured.Unstructured, now int64) []any {
+			return []any{
+				ageSince(ustr(u, "lastTimestamp"), now),
+				orNone(ustr(u, "type")),
+				orNone(ustr(u, "reason")),
+				eventObjectRef(u),
+				orNone(ustr(u, "involvedObject", "fieldPath")),
+				orNone(eventSourceString(u)),
+				strings.TrimSpace(ustr(u, "message")),
+				ageSince(ustr(u, "firstTimestamp"), now),
+				uint64at(u, "count"),
+				u.GetName(),
+			}
+		},
+	}
+}
+
+// eventObjectRef is the Event's OBJECT column: "<lowercase kind>/<name>", the
+// same shape real kubectl prints (e.g. "deployment/web", "pod/web-abc123").
+func eventObjectRef(u *unstructured.Unstructured) string {
+	kind := strings.ToLower(ustr(u, "involvedObject", "kind"))
+	name := ustr(u, "involvedObject", "name")
+
+	switch {
+	case name == "":
+		return orNone(kind)
+	case kind == "":
+		return name
+	default:
+		return kind + "/" + name
+	}
+}
+
+// eventSourceString is the Event's SOURCE column: the reporting component and,
+// when present, the host — matching kubectl's formatEventSource.
+func eventSourceString(u *unstructured.Unstructured) string {
+	comp := ustr(u, "source", "component")
+	host := ustr(u, "source", "host")
+
+	switch {
+	case host == "":
+		return comp
+	case comp == "":
+		return host
+	default:
+		return comp + ", " + host
+	}
 }
 
 func orClusterIP(s string) string {
