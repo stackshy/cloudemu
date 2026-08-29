@@ -49,7 +49,7 @@ func (s *ClusterState) serveNamespaceCollection(w http.ResponseWriter, r *http.R
 func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getNamespace(w, name)
+		s.getNamespace(w, r, name)
 	case http.MethodPut:
 		s.updateNamespace(w, r, name)
 	case http.MethodPatch:
@@ -63,7 +63,7 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 
 func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wNamespaces, "",
+	serveWatch(s, w, r, s.wNamespaces, "", "v1", "Namespace",
 		s.collectNamespacesLocked,
 		func(n corev1.Namespace) bool {
 			return sel.Matches(labels.Set(n.Labels)) && metaFieldsMatch(n.Name, n.Namespace, fields)
@@ -147,14 +147,14 @@ func (s *ClusterState) listNamespaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.NamespaceList{
+	s.writeList(w, r, &corev1.NamespaceList{
 		TypeMeta: metav1.TypeMeta{Kind: "NamespaceList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) getNamespace(w http.ResponseWriter, name string) {
+func (s *ClusterState) getNamespace(w http.ResponseWriter, r *http.Request, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -165,7 +165,7 @@ func (s *ClusterState) getNamespace(w http.ResponseWriter, name string) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ns.DeepCopy())
+	s.writeObject(w, r, ns.DeepCopy())
 }
 
 func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, name string) {
@@ -192,7 +192,7 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = cur.TypeMeta
 	// deletionTimestamp is server-owned — carry it forward so a finalizer-removing
 	// PUT can't resurrect a Terminating namespace.
@@ -237,7 +237,7 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.nextClusterRVLocked()
 	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
 	// must not resurrect a Terminating namespace — carry it (and uid/creation)
 	// forward, mirroring updateNamespace.
@@ -285,7 +285,7 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, r *http.Request, n
 	// Finalizer-gated deletion: a namespace with finalizers goes Terminating and
 	// is only removed once the last finalizer is dropped via update/patch.
 	if s.markForDeletion(&ns.ObjectMeta) {
-		ns.ResourceVersion = bumpResourceVersion(ns.ResourceVersion)
+		ns.ResourceVersion = s.nextClusterRVLocked()
 		s.wNamespaces.publish(EventModified, "", *ns.DeepCopy())
 		writeJSON(w, http.StatusOK, ns.DeepCopy())
 
@@ -347,7 +347,7 @@ func cascadeDeleteWithEvents[V any, P deepCopier[V]](s *ClusterState, m map[stri
 				v.SetDeletionTimestamp(&t)
 			}
 
-			v.SetResourceVersion(bumpResourceVersion(v.GetResourceVersion()))
+			v.SetResourceVersion(s.nextClusterRVLocked())
 			b.publish(EventModified, ns, *v.DeepCopy())
 
 			continue
@@ -367,7 +367,7 @@ func (s *ClusterState) newNamespaceObject(name string) *corev1.Namespace {
 			Name:              name,
 			UID:               types.UID(newUID()),
 			CreationTimestamp: s.now(),
-			ResourceVersion:   "1",
+			ResourceVersion:   s.nextClusterRVLocked(),
 		},
 		Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
 	}

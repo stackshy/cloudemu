@@ -61,7 +61,7 @@ func (s *ClusterState) serveEndpoints(w http.ResponseWriter, r *http.Request, ro
 		return
 	}
 
-	s.getEndpoints(w, route.Namespace, route.Name)
+	s.getEndpoints(w, r, route.Namespace, route.Name)
 }
 
 func (s *ClusterState) serveEndpointsCollection(w http.ResponseWriter, r *http.Request, namespace string) {
@@ -89,7 +89,7 @@ func (s *ClusterState) listEndpoints(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.EndpointsList{
+	s.writeList(w, r, &corev1.EndpointsList{
 		TypeMeta: metav1.TypeMeta{Kind: "EndpointsList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -105,7 +105,7 @@ func (s *ClusterState) listEndpointsAllNamespaces(w http.ResponseWriter, r *http
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.EndpointsList{
+	s.writeList(w, r, &corev1.EndpointsList{
 		TypeMeta: metav1.TypeMeta{Kind: "EndpointsList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -131,7 +131,7 @@ func (s *ClusterState) collectEndpointsLocked(namespace string) []corev1.Endpoin
 	return items
 }
 
-func (s *ClusterState) getEndpoints(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getEndpoints(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -142,12 +142,12 @@ func (s *ClusterState) getEndpoints(w http.ResponseWriter, namespace, name strin
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ep.DeepCopy())
+	s.writeObject(w, r, ep.DeepCopy())
 }
 
 func (s *ClusterState) watchEndpoints(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wEndpoints, namespace,
+	serveWatch(s, w, r, s.wEndpoints, namespace, "v1", "Endpoints",
 		func() []corev1.Endpoints { return s.collectEndpointsLocked(namespace) },
 		func(ep corev1.Endpoints) bool {
 			return sel.Matches(labels.Set(ep.Labels)) && metaFieldsMatch(ep.Name, ep.Namespace, fields)
@@ -170,7 +170,7 @@ func (s *ClusterState) newEndpointsObject(namespace, name string) *corev1.Endpoi
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
 			CreationTimestamp: s.now(),
-			ResourceVersion:   "1",
+			ResourceVersion:   s.nextClusterRVLocked(),
 		},
 	}
 }

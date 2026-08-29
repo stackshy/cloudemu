@@ -81,7 +81,7 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 
 func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wServices, namespace,
+	serveWatch(s, w, r, s.wServices, namespace, "v1", "Service",
 		func() []corev1.Service { return s.collectServicesLocked(namespace) },
 		func(svc corev1.Service) bool {
 			return sel.Matches(labels.Set(svc.Labels)) && metaFieldsMatch(svc.Name, svc.Namespace, fields)
@@ -91,7 +91,7 @@ func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, nam
 func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getService(w, namespace, name)
+		s.getService(w, r, namespace, name)
 	case http.MethodPut:
 		s.updateService(w, r, namespace, name)
 	case http.MethodPatch:
@@ -183,7 +183,7 @@ func (s *ClusterState) listServices(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.ServiceList{
+	s.writeList(w, r, &corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -199,7 +199,7 @@ func (s *ClusterState) listServicesAllNamespaces(w http.ResponseWriter, r *http.
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.ServiceList{
+	s.writeList(w, r, &corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -225,7 +225,7 @@ func (s *ClusterState) collectServicesLocked(namespace string) []corev1.Service 
 	return items
 }
 
-func (s *ClusterState) getService(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getService(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -236,7 +236,7 @@ func (s *ClusterState) getService(w http.ResponseWriter, namespace, name string)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, svc.DeepCopy())
+	s.writeObject(w, r, svc.DeepCopy())
 }
 
 func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -266,7 +266,7 @@ func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, nam
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = cur.TypeMeta
 
 	// ClusterIP is immutable after Create (kubernetes apiserver semantics).
@@ -324,7 +324,7 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.nextClusterRVLocked()
 	// Same ClusterIP-immutable rule as updateService.
 	patched.Spec.ClusterIP = cur.Spec.ClusterIP
 	patched.Spec.ClusterIPs = cur.Spec.ClusterIPs
@@ -372,7 +372,7 @@ func (s *ClusterState) deleteService(w http.ResponseWriter, r *http.Request, nam
 	// Finalizer-gated deletion: a Service with finalizers goes Terminating and is
 	// removed only when the last finalizer is dropped via update/patch.
 	if s.markForDeletion(&svc.ObjectMeta) {
-		svc.ResourceVersion = bumpResourceVersion(svc.ResourceVersion)
+		svc.ResourceVersion = s.nextClusterRVLocked()
 		s.wServices.publish(EventModified, namespace, *svc.DeepCopy())
 		writeJSON(w, http.StatusOK, svc.DeepCopy())
 

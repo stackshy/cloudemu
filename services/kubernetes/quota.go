@@ -52,7 +52,7 @@ func (s *ClusterState) checkAndReserveQuota(namespace, kind, resourcePlural stri
 	}
 
 	for _, m := range matches {
-		bumpQuotaUsedLocked(store, m.obj, m.key, count+1)
+		s.bumpQuotaUsedLocked(store, m.obj, m.key, count+1)
 	}
 
 	return nil
@@ -106,7 +106,7 @@ func (s *ClusterState) releaseQuotaLocked(namespace, kind, resourcePlural string
 	keys := quotaHardKeys(resourcePlural, group)
 
 	for _, m := range matchingQuotas(store, namespace, keys) {
-		bumpQuotaUsedLocked(store, m.obj, m.key, count)
+		s.bumpQuotaUsedLocked(store, m.obj, m.key, count)
 	}
 }
 
@@ -170,7 +170,7 @@ func quotaCountKey(resourcePlural, group string) string {
 // counted from s.pods; everything else is looked up in the registry by
 // plural. Callers hold s.mu.
 func (s *ClusterState) quotaTargetCountLocked(namespace, kind, resourcePlural string) (count int, group string) {
-	if kind == "Pod" {
+	if kind == kindPod {
 		for _, p := range s.pods {
 			if p.Namespace == namespace {
 				count++
@@ -217,7 +217,7 @@ func quotaExceededStatus(quotaName, resourcePlural, group string, used, limit in
 // status.used (mirroring spec.hard into status.hard, as a real quota
 // controller does) and publishes the change to the resourcequotas watch.
 // Callers hold s.mu.
-func bumpQuotaUsedLocked(store *registryStore, obj *unstructured.Unstructured, hardKey string, newUsed int) {
+func (s *ClusterState) bumpQuotaUsedLocked(store *registryStore, obj *unstructured.Unstructured, hardKey string, newUsed int) {
 	if hard, _, err := unstructured.NestedStringMap(obj.Object, "spec", "hard"); err == nil && hard != nil {
 		_ = unstructured.SetNestedStringMap(obj.Object, hard, "status", "hard")
 	}
@@ -230,6 +230,6 @@ func bumpQuotaUsedLocked(store *registryStore, obj *unstructured.Unstructured, h
 	used[hardKey] = strconv.Itoa(newUsed)
 	_ = unstructured.SetNestedStringMap(obj.Object, used, "status", "used")
 
-	store.stampRVLocked(obj)
+	s.stampRegistryRVLocked(obj)
 	store.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
 }

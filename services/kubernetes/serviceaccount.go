@@ -77,7 +77,7 @@ func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *h
 
 func (s *ClusterState) watchServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wServiceAccounts, namespace,
+	serveWatch(s, w, r, s.wServiceAccounts, namespace, "v1", "ServiceAccount",
 		func() []corev1.ServiceAccount { return s.collectServiceAccountsLocked(namespace) },
 		func(sa corev1.ServiceAccount) bool {
 			return sel.Matches(labels.Set(sa.Labels)) && metaFieldsMatch(sa.Name, sa.Namespace, fields)
@@ -87,7 +87,7 @@ func (s *ClusterState) watchServiceAccounts(w http.ResponseWriter, r *http.Reque
 func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getServiceAccount(w, namespace, name)
+		s.getServiceAccount(w, r, namespace, name)
 	case http.MethodPut:
 		s.updateServiceAccount(w, r, namespace, name)
 	case http.MethodPatch:
@@ -148,7 +148,7 @@ func (s *ClusterState) listServiceAccounts(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
+	s.writeList(w, r, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -164,7 +164,7 @@ func (s *ClusterState) listServiceAccountsAllNamespaces(w http.ResponseWriter, r
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
+	s.writeList(w, r, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -190,7 +190,7 @@ func (s *ClusterState) collectServiceAccountsLocked(namespace string) []corev1.S
 	return items
 }
 
-func (s *ClusterState) getServiceAccount(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getServiceAccount(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -201,7 +201,7 @@ func (s *ClusterState) getServiceAccount(w http.ResponseWriter, namespace, name 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sa.DeepCopy())
+	s.writeObject(w, r, sa.DeepCopy())
 }
 
 func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -231,7 +231,7 @@ func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Reque
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = cur.TypeMeta
 
 	if isDryRun(r) {
@@ -266,7 +266,7 @@ func (s *ClusterState) patchServiceAccount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.nextClusterRVLocked()
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
@@ -319,7 +319,7 @@ func (s *ClusterState) newServiceAccountObject(namespace, name string) *corev1.S
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
 			CreationTimestamp: s.now(),
-			ResourceVersion:   "1",
+			ResourceVersion:   s.nextClusterRVLocked(),
 		},
 	}
 }

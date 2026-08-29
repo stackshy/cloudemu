@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/stackshy/cloudemu/v2/config"
 )
@@ -25,10 +27,26 @@ import (
 type ClusterState struct {
 	mu sync.RWMutex
 
+	// rv is the cluster-wide monotonic resourceVersion counter. Every mutating
+	// write (create/update/patch/delete, across the typed maps AND the registry
+	// stores) sources its object resourceVersion from nextClusterRVLocked at
+	// write time, and every list stamps its list-level resourceVersion from the
+	// current value — so a list's resourceVersion is always >= every item's, the
+	// invariant client-go reflectors rely on to start a watch. It is a plain
+	// value field guarded by mu (snapshot-friendly for #868).
+	rv uint64
+
 	// clock sources every timestamp the data plane stamps (creationTimestamp,
 	// pod start/condition times). A FakeClock makes all of them deterministic;
 	// defaults to config.RealClock.
 	clock config.Clock
+
+	// lifecycleProgression, when true, makes directly-created Pods start Pending
+	// and advance Pending->ContainerCreating->Running only as Tick() is called
+	// (KWOK-style staged lifecycle on a logical clock). Default false keeps the
+	// synchronous instant-Running behavior every existing test relies on. Set
+	// once at registration (see APIServer.SetLifecycleProgression).
+	lifecycleProgression bool
 
 	// namespaces is cluster-scoped — keyed by namespace name.
 	namespaces map[string]*corev1.Namespace
@@ -75,6 +93,15 @@ type ClusterState struct {
 	// hand-written handler (ReplicaSet, StatefulSet, DaemonSet, …).
 	reg *registry
 
+	// eventIndex deduplicates emitted Events: it maps an aggregation key
+	// (involvedObject + reason + message + type) to the "<ns>/<name>" store key of
+	// the Event carrying that aggregation, so a repeated event increments count +
+	// lastTimestamp instead of spamming the store (real k8s aggregates the same
+	// way). The Event objects themselves live in the registry Event store like
+	// every other kind; this is only the find-and-increment index. Plain
+	// string->string map so it snapshots cleanly for #868.
+	eventIndex map[string]string
+
 	// admissionEnabled and admissionClient configure the opt-in admission
 	// webhook chain (see APIServer.SetAdmissionEnabled and admission.go).
 	// Set once at registration; admissionClient is never nil.
@@ -103,7 +130,9 @@ const firstClusterIPOffset uint32 = 1
 // namespaces (default, kube-system, kube-public) and a "default"
 // ServiceAccount in each, matching the bootstrap state of a fresh real
 // cluster.
-func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient *http.Client) *ClusterState {
+func newClusterState(
+	clock config.Clock, admissionEnabled bool, admissionClient *http.Client, lifecycleProgression bool,
+) *ClusterState {
 	if clock == nil {
 		clock = config.RealClock{}
 	}
@@ -113,32 +142,34 @@ func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient 
 	}
 
 	s := &ClusterState{
-		clock:            clock,
-		namespaces:       make(map[string]*corev1.Namespace),
-		configMaps:       make(map[string]*corev1.ConfigMap),
-		pods:             make(map[string]*corev1.Pod),
-		secrets:          make(map[string]*corev1.Secret),
-		serviceAccounts:  make(map[string]*corev1.ServiceAccount),
-		services:         make(map[string]*corev1.Service),
-		deployments:      make(map[string]*appsv1.Deployment),
-		pdbs:             make(map[string]*policyv1.PodDisruptionBudget),
-		endpoints:        make(map[string]*corev1.Endpoints),
-		nextClusterIP:    firstClusterIPOffset,
-		nextPodIP:        1,
-		reg:              newRegistry(registeredResources()),
-		admissionEnabled: admissionEnabled,
-		admissionClient:  admissionClient,
-		wNamespaces:      newBroadcaster(),
-		wConfigMaps:      newBroadcaster(),
-		wPods:            newBroadcaster(),
-		wSecrets:         newBroadcaster(),
-		wServiceAccounts: newBroadcaster(),
-		wServices:        newBroadcaster(),
-		wDeployments:     newBroadcaster(),
-		wEndpoints:       newBroadcaster(),
+		clock:                clock,
+		lifecycleProgression: lifecycleProgression,
+		namespaces:           make(map[string]*corev1.Namespace),
+		configMaps:           make(map[string]*corev1.ConfigMap),
+		pods:                 make(map[string]*corev1.Pod),
+		secrets:              make(map[string]*corev1.Secret),
+		serviceAccounts:      make(map[string]*corev1.ServiceAccount),
+		services:             make(map[string]*corev1.Service),
+		deployments:          make(map[string]*appsv1.Deployment),
+		pdbs:                 make(map[string]*policyv1.PodDisruptionBudget),
+		endpoints:            make(map[string]*corev1.Endpoints),
+		eventIndex:           make(map[string]string),
+		nextClusterIP:        firstClusterIPOffset,
+		nextPodIP:            1,
+		reg:                  newRegistry(registeredResources()),
+		admissionEnabled:     admissionEnabled,
+		admissionClient:      admissionClient,
+		wNamespaces:          newBroadcaster(),
+		wConfigMaps:          newBroadcaster(),
+		wPods:                newBroadcaster(),
+		wSecrets:             newBroadcaster(),
+		wServiceAccounts:     newBroadcaster(),
+		wServices:            newBroadcaster(),
+		wDeployments:         newBroadcaster(),
+		wEndpoints:           newBroadcaster(),
 	}
 
-	for _, name := range []string{"default", "kube-system", "kube-public"} {
+	for _, name := range []string{"default", "kube-system", "kube-public", "kube-node-lease"} {
 		s.namespaces[name] = s.newNamespaceObject(name)
 		// Real apiserver auto-creates a "default" ServiceAccount in every
 		// namespace. We do the same so `kubectl get sa default` works in
@@ -152,8 +183,11 @@ func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient 
 	// nodes` is empty on a fresh cluster and Pods/DaemonSets reference a Node
 	// object that doesn't exist.
 	if store := s.reg.getStore("", "v1", "nodes"); store != nil {
-		node := newNodeObject()
+		node := s.newNodeObject()
+		s.stampRegistryRVLocked(node)
 		store.items[objKey("", node.GetName())] = node
+
+		s.seedNodeLeaseLocked()
 	}
 
 	return s
@@ -164,6 +198,37 @@ func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient 
 // deterministic for tests.
 func (s *ClusterState) now() metav1.Time {
 	return metav1.NewTime(s.clock.Now())
+}
+
+// nextClusterRVLocked advances the cluster-wide resourceVersion counter and
+// returns the new value as a string. Every mutating write stamps its object's
+// resourceVersion from this at write time. Callers hold s.mu (write lock).
+func (s *ClusterState) nextClusterRVLocked() string {
+	s.rv++
+
+	return strconv.FormatUint(s.rv, 10)
+}
+
+// peekClusterRVLocked returns what the next resourceVersion WOULD be without
+// advancing the counter. Used only by the dry-run echo paths, which must have
+// zero side effects. Callers hold s.mu.
+func (s *ClusterState) peekClusterRVLocked() string {
+	return strconv.FormatUint(s.rv+1, 10)
+}
+
+// clusterRVLocked returns the current cluster resourceVersion (the highest one
+// handed out so far), stamped as the list-level resourceVersion of every list
+// response. It is >= every item's resourceVersion. Callers hold s.mu.
+func (s *ClusterState) clusterRVLocked() string {
+	return strconv.FormatUint(s.rv, 10)
+}
+
+// stampRegistryRVLocked stamps a fresh cluster resourceVersion onto a
+// registry-backed (unstructured) object. It replaces the old per-store counter
+// so registry kinds share the same monotonic sequence as the typed kinds.
+// Callers hold s.mu.
+func (s *ClusterState) stampRegistryRVLocked(obj *unstructured.Unstructured) {
+	obj.SetResourceVersion(s.nextClusterRVLocked())
 }
 
 // ServeHTTP dispatches a Kubernetes REST request into the per-resource

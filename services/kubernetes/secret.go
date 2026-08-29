@@ -75,7 +75,7 @@ func (s *ClusterState) serveSecretCollection(w http.ResponseWriter, r *http.Requ
 
 func (s *ClusterState) watchSecrets(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wSecrets, namespace,
+	serveWatch(s, w, r, s.wSecrets, namespace, "v1", "Secret",
 		func() []corev1.Secret { return s.collectSecretsLocked(namespace) },
 		func(sec corev1.Secret) bool {
 			return sel.Matches(labels.Set(sec.Labels)) && metaFieldsMatch(sec.Name, sec.Namespace, fields)
@@ -85,7 +85,7 @@ func (s *ClusterState) watchSecrets(w http.ResponseWriter, r *http.Request, name
 func (s *ClusterState) serveSecretItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getSecret(w, namespace, name)
+		s.getSecret(w, r, namespace, name)
 	case http.MethodPut:
 		s.updateSecret(w, r, namespace, name)
 	case http.MethodPatch:
@@ -158,7 +158,7 @@ func (s *ClusterState) listSecrets(w http.ResponseWriter, r *http.Request, names
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.SecretList{
+	s.writeList(w, r, &corev1.SecretList{
 		TypeMeta: metav1.TypeMeta{Kind: "SecretList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -174,7 +174,7 @@ func (s *ClusterState) listSecretsAllNamespaces(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.SecretList{
+	s.writeList(w, r, &corev1.SecretList{
 		TypeMeta: metav1.TypeMeta{Kind: "SecretList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -200,7 +200,7 @@ func (s *ClusterState) collectSecretsLocked(namespace string) []corev1.Secret {
 	return items
 }
 
-func (s *ClusterState) getSecret(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getSecret(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -211,7 +211,7 @@ func (s *ClusterState) getSecret(w http.ResponseWriter, namespace, name string) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sec.DeepCopy())
+	s.writeObject(w, r, sec.DeepCopy())
 }
 
 func (s *ClusterState) updateSecret(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -243,7 +243,7 @@ func (s *ClusterState) updateSecret(w http.ResponseWriter, r *http.Request, name
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = cur.TypeMeta
 
 	if in.Type == "" {
@@ -297,7 +297,7 @@ func (s *ClusterState) patchSecret(w http.ResponseWriter, r *http.Request, names
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.nextClusterRVLocked()
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
@@ -342,7 +342,7 @@ func (s *ClusterState) deleteSecret(w http.ResponseWriter, r *http.Request, name
 	// Finalizer-gated deletion: a Secret with finalizers goes Terminating and is
 	// removed only when the last finalizer is dropped via update/patch.
 	if s.markForDeletion(&sec.ObjectMeta) {
-		sec.ResourceVersion = bumpResourceVersion(sec.ResourceVersion)
+		sec.ResourceVersion = s.nextClusterRVLocked()
 		s.wSecrets.publish(EventModified, namespace, *sec.DeepCopy())
 		writeJSON(w, http.StatusOK, sec.DeepCopy())
 

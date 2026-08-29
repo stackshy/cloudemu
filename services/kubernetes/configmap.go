@@ -78,7 +78,7 @@ func (s *ClusterState) serveConfigMapCollection(w http.ResponseWriter, r *http.R
 
 func (s *ClusterState) watchConfigMaps(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wConfigMaps, namespace,
+	serveWatch(s, w, r, s.wConfigMaps, namespace, "v1", "ConfigMap",
 		func() []corev1.ConfigMap { return s.collectConfigMapsLocked(namespace) },
 		func(cm corev1.ConfigMap) bool {
 			return sel.Matches(labels.Set(cm.Labels)) && metaFieldsMatch(cm.Name, cm.Namespace, fields)
@@ -88,7 +88,7 @@ func (s *ClusterState) watchConfigMaps(w http.ResponseWriter, r *http.Request, n
 func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getConfigMap(w, namespace, name)
+		s.getConfigMap(w, r, namespace, name)
 	case http.MethodPut:
 		s.updateConfigMap(w, r, namespace, name)
 	case http.MethodPatch:
@@ -158,7 +158,7 @@ func (s *ClusterState) listConfigMaps(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
+	s.writeList(w, r, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -174,7 +174,7 @@ func (s *ClusterState) listConfigMapsAllNamespaces(w http.ResponseWriter, r *htt
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
+	s.writeList(w, r, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -202,7 +202,7 @@ func (s *ClusterState) collectConfigMapsLocked(namespace string) []corev1.Config
 	return items
 }
 
-func (s *ClusterState) getConfigMap(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getConfigMap(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -213,7 +213,7 @@ func (s *ClusterState) getConfigMap(w http.ResponseWriter, namespace, name strin
 		return
 	}
 
-	writeJSON(w, http.StatusOK, cm.DeepCopy())
+	s.writeObject(w, r, cm.DeepCopy())
 }
 
 func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -246,7 +246,7 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = cur.TypeMeta
 
 	if isDryRun(r) {
@@ -296,7 +296,7 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.nextClusterRVLocked()
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
@@ -341,7 +341,7 @@ func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, r *http.Request, n
 	// Finalizer-gated deletion: a ConfigMap with finalizers goes Terminating and
 	// is removed only when the last finalizer is dropped via update/patch.
 	if s.markForDeletion(&cm.ObjectMeta) {
-		cm.ResourceVersion = bumpResourceVersion(cm.ResourceVersion)
+		cm.ResourceVersion = s.nextClusterRVLocked()
 		s.wConfigMaps.publish(EventModified, namespace, *cm.DeepCopy())
 		writeJSON(w, http.StatusOK, cm.DeepCopy())
 
@@ -371,5 +371,5 @@ func configMapKey(namespace, name string) string {
 func (s *ClusterState) stamp(om *metav1.ObjectMeta) {
 	om.UID = types.UID(newUID())
 	om.CreationTimestamp = s.now()
-	om.ResourceVersion = "1"
+	om.ResourceVersion = s.nextClusterRVLocked()
 }

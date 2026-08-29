@@ -69,7 +69,7 @@ func (s *ClusterState) servePDBCollection(w http.ResponseWriter, r *http.Request
 func (s *ClusterState) servePDBItem(w http.ResponseWriter, r *http.Request, route *Route) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getPDB(w, route)
+		s.getPDB(w, r, route)
 	case http.MethodPut:
 		s.replacePDB(w, r, route)
 	case http.MethodDelete:
@@ -123,7 +123,7 @@ func (s *ClusterState) createPDB(w http.ResponseWriter, r *http.Request, route *
 	writeJSON(w, http.StatusCreated, &in)
 }
 
-func (s *ClusterState) getPDB(w http.ResponseWriter, route *Route) {
+func (s *ClusterState) getPDB(w http.ResponseWriter, r *http.Request, route *Route) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -134,7 +134,7 @@ func (s *ClusterState) getPDB(w http.ResponseWriter, route *Route) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pdb)
+	s.writeObject(w, r, pdb)
 }
 
 func (s *ClusterState) replacePDB(w http.ResponseWriter, r *http.Request, route *Route) {
@@ -158,7 +158,7 @@ func (s *ClusterState) replacePDB(w http.ResponseWriter, r *http.Request, route 
 	in.Namespace, in.Name = route.Namespace, route.Name
 	in.CreationTimestamp = existing.CreationTimestamp
 	in.UID = existing.UID
-	in.ResourceVersion = bumpResourceVersion(existing.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 	in.Status = existing.Status
 
@@ -221,7 +221,7 @@ func (s *ClusterState) listPDBs(w http.ResponseWriter, r *http.Request, namespac
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &policyv1.PodDisruptionBudgetList{
+	s.writeList(w, r, &policyv1.PodDisruptionBudgetList{
 		TypeMeta: metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudgetList"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,

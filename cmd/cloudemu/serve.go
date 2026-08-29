@@ -48,6 +48,8 @@ type serveConfig struct {
 	persistInterval   time.Duration
 	initDir           string
 	enforceAuth       bool
+	k8sProgression    bool
+	k8sProgInterval   time.Duration
 }
 
 // stringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -135,6 +137,12 @@ func newServeFlagSet(c *serveConfig) *flag.FlagSet {
 		envDurationOr("CLOUDEMU_PERSIST_INTERVAL", serverkit.DefaultPersistInterval),
 		"save cadence for --persist-strategy=scheduled (env CLOUDEMU_PERSIST_INTERVAL)")
 	fs.StringVar(&c.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
+	fs.BoolVar(&c.k8sProgression, "k8s-progression", envBoolOr("CLOUDEMU_K8S_PROGRESSION", false),
+		"Kubernetes: client-created Pods start Pending and visibly progress to Running on a ticker "+
+			"(default off = instant Running; env CLOUDEMU_K8S_PROGRESSION)")
+	fs.DurationVar(&c.k8sProgInterval, "k8s-progression-interval",
+		envDurationOr("CLOUDEMU_K8S_PROGRESSION_INTERVAL", time.Second),
+		"cadence of the --k8s-progression Pod-lifecycle ticker (env CLOUDEMU_K8S_PROGRESSION_INTERVAL)")
 	fs.BoolVar(&c.enforceAuth, "enforce-auth", false,
 		"require authentication on each request; off by default. AWS: verify the SigV4 signature against a registered IAM access "+
 			"key (403 on failure) and enforce IAM authorization — long-term (AKIA) keys are verified, STS temporary (ASIA) "+
@@ -142,6 +150,7 @@ func newServeFlagSet(c *serveConfig) *flag.FlagSet {
 			"principals that have IAM policies. Azure: validate each request's Bearer token claims (accepted audience, expiry, a "+
 			"principal claim) and reject missing/malformed/expired/wrong-audience tokens with 401 — the token SIGNATURE is NOT "+
 			"verified (no Azure AD signing key), so this is claims-based authentication only; RBAC authorization is a follow-up")
+
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()
@@ -162,25 +171,27 @@ func (c *serveConfig) toServerkitConfig(sel []string) serverkit.Config {
 			"gcp":   c.gcpPort,
 			"oci":   c.ociPort,
 		},
-		K8sPort:             c.k8sPort,
-		AdvertiseHost:       c.advertiseHost,
-		AzureSubscription:   c.azureSubscription,
-		Admin:               c.admin,
-		Persist:             c.persist,
-		StateFile:           c.stateFile,
-		PersistMetadataOnly: c.persistMetaOnly,
-		PersistStrategy:     c.persistStrategy,
-		PersistInterval:     c.persistInterval,
-		InitDir:             c.initDir,
-		TLSCert:             c.tlsCert,
-		TLSKey:              c.tlsKey,
-		TLSHosts:            c.tlsHosts,
-		Latency:             c.latency,
-		LogRequests:         c.logReqs,
-		Quiet:               c.quiet,
-		EnforceAuth:         c.enforceAuth,
-		EndpointsFile:       c.endpoints,
-		ShutdownTimeout:     c.shutdownTO,
+		K8sPort:                c.k8sPort,
+		AdvertiseHost:          c.advertiseHost,
+		K8sProgression:         c.k8sProgression,
+		K8sProgressionInterval: c.k8sProgInterval,
+		AzureSubscription:      c.azureSubscription,
+		Admin:                  c.admin,
+		Persist:                c.persist,
+		StateFile:              c.stateFile,
+		PersistMetadataOnly:    c.persistMetaOnly,
+		PersistStrategy:        c.persistStrategy,
+		PersistInterval:        c.persistInterval,
+		InitDir:                c.initDir,
+		TLSCert:                c.tlsCert,
+		TLSKey:                 c.tlsKey,
+		TLSHosts:               c.tlsHosts,
+		Latency:                c.latency,
+		LogRequests:            c.logReqs,
+		Quiet:                  c.quiet,
+		EnforceAuth:            c.enforceAuth,
+		EndpointsFile:          c.endpoints,
+		ShutdownTimeout:        c.shutdownTO,
 		BaseOptions: []config.Option{
 			config.WithAccountID(c.accountID),
 			config.WithRegion(c.region),
@@ -233,24 +244,44 @@ func envDurationOr(key string, def time.Duration) time.Duration {
 	return d
 }
 
+// envBoolOr reads the environment value for key as a boolean (1/true/yes/on,
+// case-insensitive), or returns def when it is unset/empty/unrecognized.
+func envBoolOr(key string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
+}
+
 func parseProviders(s string) ([]string, error) {
 	seen := map[string]bool{}
+
 	var out []string
+
 	for _, raw := range strings.Split(s, ",") {
 		p := strings.TrimSpace(strings.ToLower(raw))
 		if p == "" {
 			continue
 		}
+
 		if p != "aws" && p != "azure" && p != "gcp" && p != "oci" {
 			return nil, fmt.Errorf("unknown provider %q (want aws, azure, gcp, or oci)", p)
 		}
+
 		if !seen[p] {
 			seen[p] = true
+
 			out = append(out, p)
 		}
 	}
+
 	if len(out) == 0 {
 		return nil, errors.New("no providers selected")
 	}
+
 	return out, nil
 }

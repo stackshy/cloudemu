@@ -12,19 +12,32 @@ import (
 
 // serveWatch is the shared body of every typed watch handler: subscribe and
 // snapshot under one RLock (the ordering streamWatch's contract requires), then
-// stream selector-filtered events. collect runs under the held RLock.
+// stream selector-filtered events. collect runs under the held RLock. apiVersion
+// and kind identify the resource so a post-sync BOOKMARK can carry the current
+// list-level resourceVersion (client-go WatchList resume insurance).
 func serveWatch[T any](
 	s *ClusterState, w http.ResponseWriter, r *http.Request,
-	b *broadcaster, namespace string, collect func() []T, keep func(T) bool,
+	b *broadcaster, namespace, apiVersion, kind string, collect func() []T, keep func(T) bool,
 ) {
 	s.mu.RLock()
 	sub := b.subscribe(namespace)
 	items := collect()
+	rv := s.clusterRVLocked()
 	s.mu.RUnlock()
 	streamWatch(r.Context(), w, sub, items, keep, watchOpts{
-		resume:    watchResume(r),
-		bookmarks: watchBookmarksEnabled(r),
+		resume:      watchResume(r),
+		bookmarks:   watchBookmarksEnabled(r),
+		bookmarkObj: typedBookmark(apiVersion, kind, rv),
 	})
+}
+
+// typedBookmark builds the minimal object a BOOKMARK watch event carries for a
+// typed kind: its apiVersion/kind and the current cluster resourceVersion.
+func typedBookmark(apiVersion, kind, rv string) *metav1.PartialObjectMetadata {
+	return &metav1.PartialObjectMetadata{
+		TypeMeta:   metav1.TypeMeta{APIVersion: apiVersion, Kind: kind},
+		ObjectMeta: metav1.ObjectMeta{ResourceVersion: rv},
+	}
 }
 
 // watchOpts carries the per-request watch behaviors parsed from the query.

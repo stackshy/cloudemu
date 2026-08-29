@@ -25,6 +25,10 @@ const resourceDeployments = "deployments"
 // and the pod subresource (log/exec) router.
 const resourcePods = "pods"
 
+// kindPod is the Pod object Kind, used in TypeMeta/ObjectReference and kind
+// dispatch across the package.
+const kindPod = "Pod"
+
 // serveDeployments dispatches /apis/apps/v1/{namespaces/{ns}/deployments|
 // deployments} requests. Deployments are the first apps/v1 resource so the
 // route group check is different from the core/v1 handlers.
@@ -87,7 +91,7 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 
 func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	serveWatch(s, w, r, s.wDeployments, namespace,
+	serveWatch(s, w, r, s.wDeployments, namespace, apiVersionAppsV1, "Deployment",
 		func() []appsv1.Deployment { return s.collectDeploymentsLocked(namespace) },
 		func(d appsv1.Deployment) bool {
 			return sel.Matches(labels.Set(d.Labels)) && metaFieldsMatch(d.Name, d.Namespace, fields)
@@ -97,7 +101,7 @@ func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, 
 func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	switch r.Method {
 	case http.MethodGet:
-		s.getDeployment(w, namespace, name)
+		s.getDeployment(w, r, namespace, name)
 	case http.MethodPut:
 		s.updateDeployment(w, r, namespace, name)
 	case http.MethodPatch:
@@ -172,7 +176,7 @@ func (s *ClusterState) listDeployments(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
+	s.writeList(w, r, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -188,7 +192,7 @@ func (s *ClusterState) listDeploymentsAllNamespaces(w http.ResponseWriter, r *ht
 		return
 	}
 
-	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
+	s.writeList(w, r, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
@@ -214,7 +218,7 @@ func (s *ClusterState) collectDeploymentsLocked(namespace string) []appsv1.Deplo
 	return items
 }
 
-func (s *ClusterState) getDeployment(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) getDeployment(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -225,7 +229,7 @@ func (s *ClusterState) getDeployment(w http.ResponseWriter, namespace, name stri
 		return
 	}
 
-	writeJSON(w, http.StatusOK, dep.DeepCopy())
+	s.writeObject(w, r, dep.DeepCopy())
 }
 
 func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -255,7 +259,7 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
-	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	in.ResourceVersion = s.nextClusterRVLocked()
 	in.TypeMeta = cur.TypeMeta
 	in.Generation = generationFor(cur.Generation, &in.Spec, &cur.Spec)
 
@@ -303,7 +307,7 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.ResourceVersion = s.nextClusterRVLocked()
 	patched.Generation = generationFor(cur.Generation, &patched.Spec, &cur.Spec)
 
 	if isDryRun(r) {
@@ -362,7 +366,7 @@ func (s *ClusterState) deleteDeployment(w http.ResponseWriter, r *http.Request, 
 	// Finalizer-gated deletion: a Deployment with finalizers goes Terminating and
 	// is removed only when the last finalizer is dropped via update/patch.
 	if s.markForDeletion(&dep.ObjectMeta) {
-		dep.ResourceVersion = bumpResourceVersion(dep.ResourceVersion)
+		dep.ResourceVersion = s.nextClusterRVLocked()
 		s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 		writeJSON(w, http.StatusOK, dep.DeepCopy())
 

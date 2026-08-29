@@ -40,7 +40,7 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 				// finalizer-gated delete), not hard-reaped. It keeps owning its own
 				// children until drained, so it is not enqueued as a deleted owner.
 				if s.markForDeletionUnstructured(obj) {
-					st.stampRVLocked(obj)
+					s.stampRegistryRVLocked(obj)
 					st.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
 
 					continue
@@ -51,8 +51,8 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 
 				queue = append(queue, uid)
 
+				s.stampRegistryRVLocked(obj)
 				delete(st.items, key)
-				st.bumpRVLocked()
 				st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
 			}
 		}
@@ -68,7 +68,7 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 		// Same finalizer gating for owned Pods: a Pod with finalizers is marked
 		// Terminating and left in place until its finalizers drain.
 		if s.markForDeletion(&pod.ObjectMeta) {
-			pod.ResourceVersion = bumpResourceVersion(pod.ResourceVersion)
+			pod.ResourceVersion = s.nextClusterRVLocked()
 			s.wPods.publish(EventModified, pod.Namespace, *pod.DeepCopy())
 
 			continue
@@ -158,7 +158,7 @@ func (s *ClusterState) registryStatus(w http.ResponseWriter, r *http.Request, st
 		// Only the status stanza is persisted through /status.
 		status, _, _ := unstructured.NestedFieldCopy(in.Object, "status")
 		_ = unstructured.SetNestedField(cur.Object, status, "status")
-		st.stampRVLocked(cur)
+		s.stampRegistryRVLocked(cur)
 		st.watch.publish(EventModified, cur.GetNamespace(), *cur.DeepCopy())
 		writeJSON(w, http.StatusOK, cur.DeepCopy())
 	case http.MethodPatch:
@@ -169,7 +169,7 @@ func (s *ClusterState) registryStatus(w http.ResponseWriter, r *http.Request, st
 		// Keep spec/metadata from cur; only status moves through this endpoint.
 		status, _, _ := unstructured.NestedFieldCopy(patched.Object, "status")
 		_ = unstructured.SetNestedField(cur.Object, status, "status")
-		st.stampRVLocked(cur)
+		s.stampRegistryRVLocked(cur)
 		st.watch.publish(EventModified, cur.GetNamespace(), *cur.DeepCopy())
 		writeJSON(w, http.StatusOK, cur.DeepCopy())
 	default:
@@ -206,7 +206,7 @@ func (s *ClusterState) registryScale(w http.ResponseWriter, r *http.Request, st 
 			cur.SetGeneration(cur.GetGeneration() + 1)
 		}
 
-		st.stampRVLocked(cur)
+		s.stampRegistryRVLocked(cur)
 
 		if st.def.reconcile != nil {
 			st.def.reconcile(s, cur)
