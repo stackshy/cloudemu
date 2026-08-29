@@ -46,9 +46,14 @@ const (
 	cmdEnv      = "env"
 )
 
-// version is overridable at build time with
-// -ldflags "-X main.version=vX.Y.Z".
-var version = "dev"
+// Build metadata, overridden at release time by GoReleaser ldflags
+// (-X main.version=... etc.); the defaults apply to `go run` and dev builds.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -88,7 +93,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version", "-v", "--version":
-		fmt.Println("cloudemu", version)
+		fmt.Printf("cloudemu %s (commit %s, built %s by %s)\n", version, commit, date, builtBy)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:

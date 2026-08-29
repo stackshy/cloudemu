@@ -30,6 +30,22 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 
 **cache verified via Go SDK:** AWS 5/17 · Azure 5/17 · GCP 5/17.
 
+## cloudformation
+
+| Operation | AWS (CloudFormation) |
+|---|---|
+| CreateStack | ✅ |
+| DeleteStack | ✅ |
+| DescribeStackEvents | ✅ |
+| DescribeStackResources | ✅ |
+| DescribeStacks | ✅ |
+| GetTemplate | ✅ |
+| ListStackResources | ✅ |
+| ListStacks | ✅ |
+| UpdateStack | ✅ |
+
+**cloudformation verified via Go SDK:** AWS 9/9.
+
 ## compute
 
 | Operation | AWS (EC2) | Azure (VirtualMachines) | GCP (GCE) |
