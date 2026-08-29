@@ -18,7 +18,7 @@ Two properties make this more than a naive dump:
   EC2 instance keeps its `i-…` ID, not a freshly minted one.
 
 The snapshot is one human-readable, `git`-diffable JSON file that spans every
-provider (schema version 3).
+provider plus the shared Kubernetes data plane (schema version 4).
 
 ## Which surface should I use?
 
@@ -103,13 +103,26 @@ issues `fsync(2)`, which does not flush the drive's own write cache (a true devi
 flush needs `fcntl(F_FULLFSYNC)`, not issued here), so darwin gives no hard
 power-loss guarantee.
 
-### Known limit: Kubernetes data-plane
+### Kubernetes data-plane
 
-Crash-safety covers **cloud-provider state** (AWS/Azure/GCP/OCI). The shared
-**Kubernetes data-plane** (pods/deployments created via EKS/AKS/GKE) is not part
-of the snapshot surface and is **not persisted** — before or after a crash. This
-is a pre-existing coverage gap; making the data-plane snapshottable is tracked
-separately.
+The shared **Kubernetes data-plane** is persisted too. Everything a client
+created against an EKS/AKS/GKE cluster's kubeconfig endpoint — Namespaces, Pods,
+Deployments, Services and their Endpoints, ConfigMaps/Secrets, every
+registry-backed kind (ReplicaSets, Jobs, Ingresses, …), and **CustomResource­
+Definitions with their custom resources** — survives a stop/start and a crash,
+**keyed by the same cluster UID the kubeconfig embeds**. So after a restart,
+`DescribeCluster` returns the *same* `…/k8s/<uid>` endpoint and that endpoint
+still answers with the pods/deployments it held before — a kubeconfig captured
+before the restart stays valid verbatim. The cluster-wide `resourceVersion` and
+the Service-ClusterIP / Pod-IP allocators round-trip as well, so a post-restore
+`kubectl` create advances from the restored state rather than colliding with it.
+
+**Emulation limit — watch resumption.** A restart severs the TLS connection, so a
+`kubectl`/informer watch that was open before the crash reconnects and **relists**
+(client-go's normal behavior on a dropped watch) rather than resuming from its
+last `resourceVersion` — the data plane keeps no cross-restart watch-event
+history. The relist returns the restored state correctly; only the in-flight
+event stream is not replayed.
 
 ### vs LocalStack
 

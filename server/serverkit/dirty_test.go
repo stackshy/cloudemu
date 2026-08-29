@@ -69,10 +69,13 @@ func TestDirtySeamProviderRequestMarksDirty(t *testing.T) {
 	}
 }
 
-// TestDirtySeamExcludesKubernetes asserts the Kubernetes data-plane handler is
-// deliberately NOT wrapped: k8s state is not part of persist.ExportAll, so
-// wrapping it would generate no-op saves and imply false crash-safety.
-func TestDirtySeamExcludesKubernetes(t *testing.T) {
+// TestDirtySeamIncludesKubernetes asserts the Kubernetes data-plane handler IS
+// wrapped in the dirty seam: since #868 made the shared data plane part of the
+// persisted surface, a pure-kubectl mutation (which never touches a provider
+// port) must mark state dirty so scheduled/on-request saves capture it. The wrap
+// sits inside the swapped backend, BEFORE the admin Control, so admin/health
+// probes on the k8s port (answered by Control) still never dirty an idle server.
+func TestDirtySeamIncludesKubernetes(t *testing.T) {
 	app := newPersistTestApp(t, []string{"aws"}, map[string]string{"aws": "0", "k8s": "0"})
 
 	if app.k8sBackend == nil {
@@ -84,8 +87,24 @@ func TestDirtySeamExcludesKubernetes(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.k8sBackend.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/namespaces", nil))
 
+	if !app.flusher.dirty.Load() {
+		t.Fatal("a Kubernetes request did not mark state dirty; the k8s data plane must be in the dirty seam")
+	}
+
+	// A health probe fronted by the admin Control must still NOT dirty: Control
+	// answers it before the wrapped backend is reached.
+	app.flusher.dirty.Store(false)
+
+	h := app.handlerFor(app.k8sBackend, nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_cloudemu/health", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("k8s health probe status = %d, want 200", rec.Code)
+	}
+
 	if app.flusher.dirty.Load() {
-		t.Fatal("a Kubernetes request marked state dirty; k8s must be excluded from the dirty seam")
+		t.Fatal("a health probe on the k8s port marked state dirty; the admin/health plane must not")
 	}
 }
 

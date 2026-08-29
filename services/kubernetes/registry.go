@@ -104,22 +104,28 @@ func (r *registry) getStore(group, version, plural string) *registryStore {
 	return r.stores[regKey(group, version, plural)]
 }
 
-// addStore materializes a store for a (CRD-defined) kind if absent, returning
-// the store. Idempotent — re-applying a CRD keeps the existing store and its
-// objects.
-func (r *registry) addStore(d *resourceDef) *registryStore {
+// storeForKey returns the store registered under a composite group/version/plural
+// key (regKey), or nil. Used by snapshot restore, which carries the composite key
+// rather than the split components.
+func (r *registry) storeForKey(key string) *registryStore {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.stores[key]
+}
+
+// addStore materializes a store for a (CRD-defined) kind if absent. Idempotent —
+// re-applying a CRD keeps the existing store and its objects.
+func (r *registry) addStore(d *resourceDef) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	key := regKey(d.group, d.version, d.plural)
-	if st, ok := r.stores[key]; ok {
-		return st
+	if _, ok := r.stores[key]; ok {
+		return
 	}
 
-	st := &registryStore{def: d, items: make(map[string]*unstructured.Unstructured), watch: newBroadcaster()}
-	r.stores[key] = st
-
-	return st
+	r.stores[key] = &registryStore{def: d, items: make(map[string]*unstructured.Unstructured), watch: newBroadcaster()}
 }
 
 // removeStore drops a (CRD-defined) kind's store. Idempotent.
