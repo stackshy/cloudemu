@@ -161,9 +161,9 @@ func TestPod_AllNamespacesListAndUpdate(t *testing.T) {
 		t.Fatalf("image after PUT: got %q", got.Spec.Containers[0].Image)
 	}
 
-	if got.ResourceVersion != "2" {
-		t.Fatalf("resourceVersion after PUT: got %q, want 2", got.ResourceVersion)
-	}
+	// One cluster-wide monotonic resourceVersion counter: a PUT stamps a fresh,
+	// positive value (not a per-object "2").
+	assertRVGreater(t, got.ResourceVersion, "0")
 }
 
 func TestPod_ErrorPaths(t *testing.T) {

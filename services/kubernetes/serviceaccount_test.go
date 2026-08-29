@@ -133,9 +133,10 @@ func TestServiceAccount_AllNamespacesList(t *testing.T) {
 	var list corev1.ServiceAccountList
 	mustDecode(t, resp.Body, &list)
 
-	// 3 bootstrap namespaces × 1 default SA = 3.
-	if len(list.Items) != 3 {
-		t.Fatalf("all-ns list: got %d items, want 3 bootstrap default SAs", len(list.Items))
+	// 4 bootstrap namespaces (default, kube-system, kube-public, kube-node-lease)
+	// × 1 auto-created default SA = 4.
+	if len(list.Items) != 4 {
+		t.Fatalf("all-ns list: got %d items, want 4 bootstrap default SAs", len(list.Items))
 	}
 }
 

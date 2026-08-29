@@ -77,6 +77,8 @@ type appConfig struct {
 	logRequests     bool
 	quiet           bool
 	enforceAuth     bool
+	k8sProgression  bool
+	k8sProgInterval time.Duration
 	persist         bool
 	stateFile       string
 	persistMetaOnly bool
@@ -185,6 +187,12 @@ func parseFlags(args []string, getenv func(string) string, out io.Writer) (appCo
 	fs.BoolVar(&cfg.logRequests, "log-requests", false, "log every HTTP request (method, path, status, duration)")
 	fs.BoolVar(&cfg.quiet, "quiet", false, "suppress the startup banner")
 	fs.BoolVar(&cfg.enforceAuth, "enforce-auth", false, "require authentication on each request; off by default")
+	fs.BoolVar(&cfg.k8sProgression, "k8s-progression", envBoolOr(getenv, "CLOUDEMU_K8S_PROGRESSION", false),
+		"Kubernetes: client-created Pods start Pending and visibly progress to Running on a ticker "+
+			"(default off = instant Running; env CLOUDEMU_K8S_PROGRESSION)")
+	fs.DurationVar(&cfg.k8sProgInterval, "k8s-progression-interval",
+		envDurationOr(getenv, "CLOUDEMU_K8S_PROGRESSION_INTERVAL", time.Second),
+		"cadence of the --k8s-progression Pod-lifecycle ticker (env CLOUDEMU_K8S_PROGRESSION_INTERVAL)")
 	registerPersistFlags(fs, &cfg, getenv)
 	fs.StringVar(&cfg.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
 	fs.StringVar(&cfg.endpointsFile, "endpoints-file", "", "write the resolved endpoints as JSON to this path")
@@ -286,6 +294,19 @@ func envStrOr(getenv func(string) string, key, def string) string {
 	}
 
 	return def
+}
+
+// envBoolOr reads the environment value for key as a boolean (1/true/yes/on,
+// case-insensitive), or returns def when it is unset/empty/unrecognized.
+func envBoolOr(getenv func(string) string, key string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 // envDurationOr parses the environment value for key as a duration, or returns

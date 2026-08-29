@@ -199,8 +199,8 @@ func jobTerminal(job *unstructured.Unstructured) bool {
 // deleteJobLocked removes a Job and cascade-collects its Pods (Replace policy).
 // Callers hold s.mu.
 func (s *ClusterState) deleteJobLocked(job *unstructured.Unstructured, jobStore *registryStore) {
+	s.stampRegistryRVLocked(job)
 	delete(jobStore.items, objKey(job.GetNamespace(), job.GetName()))
-	jobStore.bumpRVLocked()
 	s.garbageCollectLocked(job.GetUID())
 	jobStore.watch.publish(EventDeleted, job.GetNamespace(), *job.DeepCopy())
 }
@@ -226,10 +226,12 @@ func (s *ClusterState) fireCronJobLocked(cj *unstructured.Unstructured, jobStore
 	job.SetCreationTimestamp(s.now())
 	job.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(cj)})
 
-	jobStore.stampRVLocked(job)
+	s.stampRegistryRVLocked(job)
 	jobStore.items[objKey(ns, jobName)] = job
 	reconcileJob(s, job)
 	jobStore.watch.publish(EventAdded, ns, *job.DeepCopy())
+	s.recordEventLocked(objectReferenceForUnstructured(cj), "SuccessfulCreate",
+		"Created job "+jobName)
 
 	setLastScheduleTime(cj, fireTime)
 }

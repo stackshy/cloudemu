@@ -58,7 +58,7 @@ func (s *ClusterState) deploymentScale(w http.ResponseWriter, r *http.Request, n
 		}
 
 		dep.Spec.Replicas = &replicas
-		dep.ResourceVersion = bumpResourceVersion(dep.ResourceVersion)
+		dep.ResourceVersion = s.nextClusterRVLocked()
 		s.reconcileDeploymentLocked(dep)
 		s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 		writeJSON(w, http.StatusOK, deploymentScaleObject(dep))
@@ -88,7 +88,7 @@ func (s *ClusterState) deploymentStatus(w http.ResponseWriter, r *http.Request, 
 		}
 
 		dep.Status = in.Status
-		dep.ResourceVersion = bumpResourceVersion(dep.ResourceVersion)
+		dep.ResourceVersion = s.nextClusterRVLocked()
 		s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 		writeJSON(w, http.StatusOK, dep.DeepCopy())
 	case http.MethodPatch:
@@ -98,7 +98,7 @@ func (s *ClusterState) deploymentStatus(w http.ResponseWriter, r *http.Request, 
 		}
 		// Only the status stanza is persisted through /status.
 		dep.Status = patched.Status
-		dep.ResourceVersion = bumpResourceVersion(dep.ResourceVersion)
+		dep.ResourceVersion = s.nextClusterRVLocked()
 		s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 		writeJSON(w, http.StatusOK, dep.DeepCopy())
 	default:

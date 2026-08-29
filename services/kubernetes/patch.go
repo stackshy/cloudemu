@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
@@ -164,17 +163,4 @@ func mergeRFC7396(target, patch any) any {
 	}
 
 	return targetObj
-}
-
-// bumpResourceVersion increments cur as an integer. Real apiserver uses
-// etcd's modification index; for our in-memory backend a monotonic counter
-// per object is enough to give client-go a non-zero, ever-increasing
-// resourceVersion to track.
-func bumpResourceVersion(cur string) string {
-	n, err := strconv.Atoi(cur)
-	if err != nil {
-		return "1"
-	}
-
-	return strconv.Itoa(n + 1)
 }

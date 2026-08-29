@@ -56,6 +56,10 @@ var errUnknownStrategy = errors.New("unknown persist strategy (want scheduled, o
 // ShutdownTimeout unset.
 const defaultShutdownTimeout = 10 * time.Second
 
+// defaultK8sProgressionInterval is the real-time cadence at which the staged
+// Pod lifecycle ticker advances Pods when Config leaves the interval unset.
+const defaultK8sProgressionInterval = time.Second
+
 // serverReadHeaderTimeout bounds how long a client may take to send request
 // headers, closing the Slowloris hole a zero timeout leaves open.
 const serverReadHeaderTimeout = 10 * time.Second
@@ -84,6 +88,13 @@ type Config struct {
 	Ports         map[string]string // per-provider bind ports, keys aws/azure/gcp/oci (and optionally k8s)
 	K8sPort       string            // shared Kubernetes data-plane port; empty disables it
 	AdvertiseHost string            // host the Kubernetes endpoint is advertised at (default: derived from Host)
+
+	// K8sProgression enables KWOK-style staged Pod lifecycle on the data plane:
+	// client-created Pods start Pending and visibly advance to Running on a
+	// real-time ticker. Default off keeps Pods instant-Running. Controller Pods
+	// (Deployments etc.) always come up Running.
+	K8sProgression         bool
+	K8sProgressionInterval time.Duration // ticker cadence for staged progression (default 1s)
 
 	AzureSubscription string // Azure subscription GUID reported by the emulator (last-wins WithAccountID)
 
@@ -125,6 +136,14 @@ type App struct {
 
 	backends   map[string]*admin.Backend
 	k8sBackend *admin.Backend
+
+	// k8s is the current Kubernetes data-plane server (rebuilt on reset, guarded
+	// by rebuildMu). The progression ticker reads it each tick.
+	k8s *kubernetes.APIServer
+	// k8sTickStop/k8sTickDone manage the opt-in real-time progression ticker
+	// goroutine (started in Serve, stopped in shutdown, like the persist flusher).
+	k8sTickStop chan struct{}
+	k8sTickDone chan struct{}
 
 	// flusher owns every automatic persistence save (nil unless --persist). Its
 	// dirty flag is flipped by the request-boundary seam and the mutating admin
@@ -348,7 +367,15 @@ func (a *App) swapFresh() []closer {
 		// actually answers. https, because the listener is served with a cert
 		// signed by the CA DescribeCluster advertises.
 		k8s.SetBaseURL("https://" + net.JoinHostPort(a.advertiseHost, a.k8sPort))
+
+		// Opt-in staged Pod lifecycle: enable it on every cluster this data plane
+		// registers, so the real-time ticker (started in Serve) can advance them.
+		if a.cfg.K8sProgression {
+			k8s.SetLifecycleProgression(true)
+		}
 	}
+
+	a.k8s = k8s
 
 	fresh := make(map[string]http.Handler, len(a.sel))
 	freshTargets := make(map[string]seed.Target, len(a.sel))
@@ -668,6 +695,10 @@ func (a *App) Serve(ctx context.Context) error {
 	// scheduled/on-request saves run for the whole serving lifetime.
 	a.flusher.Start()
 
+	// Start the opt-in Kubernetes staged-lifecycle ticker (default off). Like the
+	// flusher, it is lifecycle-managed: started here, stopped in shutdown.
+	a.startK8sTicker()
+
 	if !a.cfg.Quiet {
 		printBanner(a.out, &eps, a.cfg.Admin, a.persistBanner())
 	}
@@ -800,6 +831,7 @@ func (a *App) shutdown(servers []*namedServer) error {
 	// write. The final save runs while the providers are still live (closed
 	// below), keeping the engines readable through the export.
 	a.flusher.Stop(ctx)
+	a.stopK8sTicker()
 
 	a.rebuildMu.Lock()
 	cur := a.providers
@@ -807,6 +839,58 @@ func (a *App) shutdown(servers []*namedServer) error {
 	a.closeProviders(cur)
 
 	return shutErr
+}
+
+// startK8sTicker launches the real-time staged-lifecycle ticker when progression
+// is enabled. Each tick snapshots the current data-plane server under rebuildMu
+// (a reset swaps it) and advances every cluster's Pods. No-op when progression
+// is off or the data plane is disabled.
+func (a *App) startK8sTicker() {
+	if !a.cfg.K8sProgression || a.k8sBackend == nil {
+		return
+	}
+
+	interval := a.cfg.K8sProgressionInterval
+	if interval <= 0 {
+		interval = defaultK8sProgressionInterval
+	}
+
+	a.k8sTickStop = make(chan struct{})
+	a.k8sTickDone = make(chan struct{})
+
+	go func() {
+		defer close(a.k8sTickDone)
+
+		t := time.NewTicker(interval)
+		defer t.Stop()
+
+		for {
+			select {
+			case <-a.k8sTickStop:
+				return
+			case <-t.C:
+				a.rebuildMu.Lock()
+				k8s := a.k8s
+				a.rebuildMu.Unlock()
+
+				if k8s != nil {
+					k8s.TickAll()
+				}
+			}
+		}
+	}()
+}
+
+// stopK8sTicker stops the progression ticker and waits for it to drain.
+// Idempotent — a no-op when the ticker was never started.
+func (a *App) stopK8sTicker() {
+	if a.k8sTickStop == nil {
+		return
+	}
+
+	close(a.k8sTickStop)
+	<-a.k8sTickDone
+	a.k8sTickStop = nil
 }
 
 // namedServer is one endpoint's HTTP server plus how it is served.
