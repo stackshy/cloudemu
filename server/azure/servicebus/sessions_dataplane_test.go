@@ -110,6 +110,72 @@ func TestSessionReceiveAcceptNextAndState(t *testing.T) {
 	}
 }
 
+// TestSessionPeekLockSettlement confirms a peek-locked session message can be
+// completed via its advertised Location header (the message-lock URL), after
+// which the session has no more messages.
+func TestSessionPeekLockSettlement(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	createSessionQueue(t, srv, "sq")
+
+	sessionSend(t, srv, "sq", "s1", "a1")
+
+	acc := doRequest(t, srv, http.MethodPost, "/"+nsName+"/sq/sessions/head", "")
+	if acc.StatusCode != http.StatusCreated {
+		t.Fatalf("accept-next = %d, want 201", acc.StatusCode)
+	}
+
+	_ = readBody(t, acc)
+
+	owner := acc.Header.Get(sessOwnerHeader)
+
+	loc := acc.Header.Get("Location")
+	if loc == "" {
+		t.Fatal("peek-lock response missing Location header")
+	}
+
+	// The Location must route back to complete (delete) the locked message.
+	done := doRequest(t, srv, http.MethodDelete, loc, "")
+	if done.StatusCode != http.StatusOK {
+		t.Fatalf("complete via Location %q = %d, want 200 (unroutable settlement URL?)", loc, done.StatusCode)
+	}
+
+	// The same session holder now sees no more messages (the session lock is
+	// still held, so the accept must reuse the granted owner token).
+	empty := doRequest(t, srv, http.MethodPost, "/"+nsName+"/sq/sessions/s1/head", "",
+		map[string]string{sessOwnerHeader: owner})
+	if empty.StatusCode != http.StatusNoContent {
+		t.Fatalf("session receive after complete = %d, want 204", empty.StatusCode)
+	}
+}
+
+// TestSessionReceiveAndDelete confirms a DELETE on .../sessions/{sid}/head
+// receives and removes the message in one step.
+func TestSessionReceiveAndDelete(t *testing.T) {
+	srv, _ := newTestServer(t)
+	seedNamespace(t, srv)
+	createSessionQueue(t, srv, "sq")
+
+	sessionSend(t, srv, "sq", "s1", "a1")
+
+	owner := map[string]string{sessOwnerHeader: "o1"}
+
+	got := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/sq/sessions/s1/head", "", owner)
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("receive-and-delete = %d, want 200", got.StatusCode)
+	}
+
+	if body := readBody(t, got); body != "a1" {
+		t.Fatalf("receive-and-delete body = %q, want a1", body)
+	}
+
+	// Message is gone (same session holder, so the lock is not the blocker).
+	empty := doRequest(t, srv, http.MethodPost, "/"+nsName+"/sq/sessions/s1/head", "", owner)
+	if empty.StatusCode != http.StatusNoContent {
+		t.Fatalf("session receive after delete = %d, want 204", empty.StatusCode)
+	}
+}
+
 // TestSessionLockExclusivity confirms a session locked by one receiver cannot be
 // accepted by another until the lock is released or expires.
 func TestSessionLockExclusivity(t *testing.T) {

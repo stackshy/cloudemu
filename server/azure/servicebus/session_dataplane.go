@@ -155,7 +155,10 @@ func serveSessionReceive(
 	owner := sessionOwner(r)
 	peekLock := r.Method == http.MethodPost
 
-	sid, msgs, err := sess.ReceiveSession(r.Context(), url, sessionID, owner, 1, lockSecs, peekLock)
+	// The accepted session id travels back in BrokerProperties (SessionId,
+	// preserved from the send), so an accept-next caller learns which session it
+	// holds without a separate field.
+	_, msgs, err := sess.ReceiveSession(r.Context(), url, sessionID, owner, 1, lockSecs, peekLock)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -177,8 +180,11 @@ func serveSessionReceive(
 		lockToken = msg.ReceiptHandle
 		status = http.StatusCreated
 
+		// Settle a peek-locked session message via the plain message-lock URL: the
+		// message lock is separate from the session lock, and a /sessions/{sid}
+		// infix would not route back to serveLockedMessage for completion.
 		w.Header().Set("Location",
-			"/"+sessionEntityBase(url)+"/"+segSessions+"/"+sid+"/"+segMessages+"/"+msg.MessageID+"/"+msg.ReceiptHandle)
+			"/"+sessionEntityBase(url)+"/"+segMessages+"/"+msg.MessageID+"/"+msg.ReceiptHandle)
 	}
 
 	w.Header().Set("BrokerProperties", brokerPropertiesHeader(&msg, lockToken))
