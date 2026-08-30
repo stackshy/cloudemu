@@ -1250,9 +1250,18 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 	return describeResources(m.snapshots, ids), nil
 }
 
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "VM %q not found", cfg.InstanceID)
+	switch {
+	case cfg.InstanceID != "":
+		if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "VM %q not found", cfg.InstanceID)
+		}
+	case cfg.OSDiskID != "":
+		// Disk-sourced image: OSDiskID is the source disk's ARM ID, not a driver
+		// volume key, so the wire handler owns disk-existence validation.
+	default:
+		return nil, cerrors.New(cerrors.InvalidArgument, "image requires a source VM or OS disk")
 	}
 
 	id := fmt.Sprintf("/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/images/img-%d",
@@ -1260,8 +1269,12 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 
 	img := &driver.ImageInfo{
 		ID: id, Name: cfg.Name, State: stateAvailable, Description: cfg.Description,
-		CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:      copyTags(cfg.Tags),
+		CreatedAt:  m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:       copyTags(cfg.Tags),
+		OSDiskID:   cfg.OSDiskID,
+		OSType:     cfg.OSType,
+		OSState:    cfg.OSState,
+		DiskSizeGB: cfg.DiskSizeGB,
 	}
 	m.images.Set(id, img)
 

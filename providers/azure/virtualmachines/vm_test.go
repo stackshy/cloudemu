@@ -1614,6 +1614,65 @@ func TestCreateImage(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
+
+	t.Run("from disk", func(t *testing.T) {
+		m := newTestMock()
+
+		img, err := m.CreateImage(ctx, driver.ImageConfig{
+			Name:       "disk-image",
+			OSDiskID:   "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/os-disk",
+			OSType:     "Linux",
+			OSState:    "Generalized",
+			DiskSizeGB: 64,
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, "disk-image", img.Name)
+		assert.Equal(t, "Linux", img.OSType)
+		assert.Equal(t, "Generalized", img.OSState)
+		assert.Equal(t, 64, img.DiskSizeGB)
+		assert.Contains(t, img.OSDiskID, "os-disk")
+	})
+
+	t.Run("no source", func(t *testing.T) {
+		m := newTestMock()
+		_, err := m.CreateImage(ctx, driver.ImageConfig{Name: "no-source"})
+		require.Error(t, err)
+	})
+}
+
+// TestSnapshotRestoreDiskImageFields verifies the disk-sourced image fields
+// (OSDiskID/OSType/OSState/DiskSizeGB) survive a snapshot/restore round trip —
+// the images store is already in the mock's dumps list, so the new exported
+// ImageInfo fields must persist without an extra store entry.
+func TestSnapshotRestoreDiskImageFields(t *testing.T) {
+	ctx := context.Background()
+	src := newTestMock()
+
+	_, err := src.CreateImage(ctx, driver.ImageConfig{
+		Name:       "disk-image",
+		OSDiskID:   "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/os-disk",
+		OSType:     "Windows",
+		OSState:    "Specialized",
+		DiskSizeGB: 128,
+	})
+	require.NoError(t, err)
+
+	blob, err := src.Snapshot(ctx, false)
+	require.NoError(t, err)
+
+	dst := newTestMock()
+	require.NoError(t, dst.Restore(ctx, blob))
+
+	imgs, err := dst.DescribeImages(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, imgs, 1)
+
+	assert.Equal(t, "disk-image", imgs[0].Name)
+	assert.Contains(t, imgs[0].OSDiskID, "os-disk")
+	assert.Equal(t, "Windows", imgs[0].OSType)
+	assert.Equal(t, "Specialized", imgs[0].OSState)
+	assert.Equal(t, 128, imgs[0].DiskSizeGB)
 }
 
 func TestDeregisterImage(t *testing.T) {

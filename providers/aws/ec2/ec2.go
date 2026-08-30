@@ -1819,6 +1819,8 @@ func containsPermission[T comparable](set []T, want T) bool {
 }
 
 // CreateImage creates a machine image from an instance.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)

@@ -481,6 +481,18 @@ type ImageConfig struct {
 	Name        string
 	Description string
 	Tags        map[string]string
+	// OSDiskID is the source OS managed-disk ID an image is created from
+	// directly (Azure managed-image-from-disk), an alternative to InstanceID /
+	// VM capture. Exactly one of InstanceID or OSDiskID is set.
+	OSDiskID string
+	// OSType is the guest OS family ("Linux"/"Windows") recorded on the image's
+	// OS disk when it is built from a disk (VM capture derives it from the VM).
+	OSType string
+	// OSState is the image OS state ("Generalized"/"Specialized") for a
+	// disk-sourced image.
+	OSState string
+	// DiskSizeGB is the source OS disk size captured onto a disk-sourced image.
+	DiskSizeGB int
 }
 
 // ImageInfo describes a machine image.
@@ -512,6 +524,17 @@ type ImageInfo struct {
 	// LaunchPermissions holds the launchPermission attribute set by
 	// ModifyImageAttribute (AMI sharing). Empty means private.
 	LaunchPermissions []ImageLaunchPermission
+	// OSDiskID is the source OS managed-disk ID an Azure image was created from
+	// directly (managed-image-from-disk). Empty for VM-captured images. The
+	// json tags on these Azure-only fields keep VM-captured images byte-stable
+	// in snapshots (zero values are omitted).
+	OSDiskID string `json:"osDiskId,omitempty"`
+	// OSType is the guest OS family recorded on a disk-sourced image's OS disk.
+	OSType string `json:"osType,omitempty"`
+	// OSState is the OS state ("Generalized"/"Specialized") of a disk-sourced image.
+	OSState string `json:"osState,omitempty"`
+	// DiskSizeGB is the OS disk size captured onto a disk-sourced image.
+	DiskSizeGB int `json:"diskSizeGB,omitempty"`
 }
 
 // ImageLaunchPermission is one launchPermission grant on an AMI: either a Group

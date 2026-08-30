@@ -754,6 +754,7 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 	return describeResources(m.snapshots, ids), nil
 }
 
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	// GCP images are created from a disk, snapshot, or import — not from a
 	// source instance. An empty InstanceID is one of those source-based paths,
