@@ -31,7 +31,7 @@ func newSecretsClient(t *testing.T) *azsecrets.Client {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
-	client, err := azsecrets.NewClient(ts.URL, fakeCred{}, &azsecrets.ClientOptions{
+	client, err := azsecrets.NewClient(ts.URL+"/default", fakeCred{}, &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: ts.Client(),
 			Retry:     policy.RetryOptions{MaxRetries: -1},

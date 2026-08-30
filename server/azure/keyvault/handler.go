@@ -63,16 +63,21 @@ func New(s secretsdriver.Secrets) *Handler {
 // Matches claims /secrets and /deletedsecrets data-plane requests. Disjoint
 // from ARM (/subscriptions/…) and the Databricks secrets API (/api/{ver}/…).
 func (*Handler) Matches(r *http.Request) bool {
-	p := r.URL.Path
+	_, p, ok := vaultScope(r)
+	if !ok {
+		return false
+	}
 
 	return p == pathPrefix || strings.HasPrefix(p, pathPrefix+"/") ||
 		p == deletedPrefix || strings.HasPrefix(p, deletedPrefix+"/")
 }
 
 // ServeHTTP answers the bearer challenge for unauthenticated requests, then
-// routes on the path and method.
+// routes on the vault-stripped path and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	serveDataPlane(w, r, h.kv == nil, "Key Vault secrets backend unavailable", dataPlaneRoutes{
+	_, kvPath, _ := vaultScope(r)
+
+	serveDataPlane(w, r, kvPath, h.kv == nil, "Key Vault secrets backend unavailable", dataPlaneRoutes{
 		deletedPrefix: deletedPrefix,
 		mainPrefix:    pathPrefix,
 		routeDeleted:  func(tail string) { h.routeDeleted(w, r, tail) },
@@ -92,7 +97,11 @@ type dataPlaneRoutes struct {
 // serveDataPlane runs the shared Key Vault data-plane preamble — bearer
 // challenge, backend-availability check, then dispatch to the deleted or main
 // path space — used by both the secrets and keys handlers.
-func serveDataPlane(w http.ResponseWriter, r *http.Request, backendUnavailable bool, unavailableMsg string, routes dataPlaneRoutes) {
+// path is the vault-stripped Key Vault data-plane path (from vaultScope), so a
+// bare-host /{vault}/secrets/… routes identically to a vault-host /secrets/….
+func serveDataPlane(
+	w http.ResponseWriter, r *http.Request, path string, backendUnavailable bool, unavailableMsg string, routes dataPlaneRoutes,
+) {
 	if bearerChallenge(w, r) {
 		return
 	}
@@ -102,12 +111,12 @@ func serveDataPlane(w http.ResponseWriter, r *http.Request, backendUnavailable b
 		return
 	}
 
-	if r.URL.Path == routes.deletedPrefix || strings.HasPrefix(r.URL.Path, routes.deletedPrefix+"/") {
-		routes.routeDeleted(strings.Trim(strings.TrimPrefix(r.URL.Path, routes.deletedPrefix), "/"))
+	if path == routes.deletedPrefix || strings.HasPrefix(path, routes.deletedPrefix+"/") {
+		routes.routeDeleted(strings.Trim(strings.TrimPrefix(path, routes.deletedPrefix), "/"))
 		return
 	}
 
-	routes.routeMain(strings.Trim(strings.TrimPrefix(r.URL.Path, routes.mainPrefix), "/"))
+	routes.routeMain(strings.Trim(strings.TrimPrefix(path, routes.mainPrefix), "/"))
 }
 
 // routeSecrets dispatches /secrets[...] requests.
@@ -205,21 +214,74 @@ var vaultSuffixes = []string{
 	".managedhsm.usgovcloudapi.net",
 }
 
-// vaultFromRequest extracts the vault name that scopes secret/key isolation
-// for r, so that a secret or key created in one vault is never visible
-// through another. Real Key Vault clients address a vault via its unique
-// {vault-name}.vault.azure.net (or Managed HSM equivalent) subdomain; a
-// request whose Host carries none of those suffixes (a bare host, as in a
-// test pointed directly at this server without DisableChallengeResourceVerification-style
-// vault URLs) falls back to a single "default" vault, matching this server's
-// pre-multi-vault behavior.
-func vaultFromRequest(r *http.Request) string {
-	host, _, _ := strings.Cut(r.Host, ":")
+// kvDataPlaneKeywords are the leading path segments of the Key Vault data-plane
+// surface. A request is a Key Vault data-plane request only when its
+// vault-stripped path begins with one of these.
+//
+//nolint:gochecknoglobals // read-only lookup set, not mutable state
+var kvDataPlaneKeywords = map[string]bool{
+	"secrets": true, "deletedsecrets": true,
+	"keys": true, "deletedkeys": true,
+	"certificates": true, "deletedcertificates": true,
+}
 
+// vaultScope resolves the vault that scopes isolation for r and the Key Vault
+// data-plane path with any vault-selecting prefix stripped, reporting whether r
+// is a Key Vault data-plane request at all. Two addressing forms are supported:
+//
+//   - Vault host: r.Host carries a {vault}.vault.azure.net (or Managed HSM / Gov
+//     / China) suffix — the real-cloud form. The vault is the host's leading
+//     label and the path is unchanged. On this form Key Vault always wins, so it
+//     never shadows a blob container of the same name.
+//   - Bare host (a local `serve` on localhost:PORT): the vault is the leading
+//     path segment, i.e. /{vault}/secrets/…, so multiple vaults isolate. A bare
+//     /secrets (no vault segment) is NOT a Key Vault request and falls through to
+//     blob storage — which is what lets a blob container literally named
+//     "secrets"/"keys"/"certificates" be created.
+func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
+	path := r.URL.Path
+
+	host, _, _ := strings.Cut(r.Host, ":")
 	for _, suffix := range vaultSuffixes {
 		if i := strings.Index(host, suffix); i > 0 {
-			return host[:i]
+			if !kvDataPlaneKeywords[firstSegment(path)] {
+				return "", "", false
+			}
+
+			return host[:i], path, true
 		}
+	}
+
+	// Bare host: /{vault}/{keyword}/… — the vault is the leading segment. A bare
+	// /{keyword} (no vault) or a reserved leading segment is not a KV request.
+	seg, rest, hasRest := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	if !hasRest || seg == "" || seg == "subscriptions" || kvDataPlaneKeywords[seg] {
+		return "", "", false
+	}
+
+	if !kvDataPlaneKeywords[firstSegment("/"+rest)] {
+		return "", "", false
+	}
+
+	return seg, "/" + rest, true
+}
+
+// firstSegment returns the first '/'-separated segment of path.
+func firstSegment(path string) string {
+	seg, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+
+	return seg
+}
+
+// vaultFromRequest returns the vault name that scopes secret/key/certificate
+// isolation for r, so a secret created in one vault is never visible through
+// another. It delegates to vaultScope; operation handlers call it only after
+// Matches has confirmed the request is a Key Vault data-plane request, so the
+// scope always resolves. The "default" fallback is unreachable in that path and
+// kept only as a defensive value.
+func vaultFromRequest(r *http.Request) string {
+	if v, _, ok := vaultScope(r); ok {
+		return v
 	}
 
 	return "default"
