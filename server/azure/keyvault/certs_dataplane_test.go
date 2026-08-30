@@ -77,7 +77,7 @@ func TestCertificatesRoundTrip(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	client := ts.Client()
-	base := ts.URL
+	base := ts.URL + "/default"
 
 	// Create.
 	status, ct, raw := certRoundTrip(t, client, http.MethodPost, base+"/certificates/mycert/create", selfSignedPolicy)
@@ -169,7 +169,7 @@ func TestCertificateNotFoundIs404(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
-	status, _, raw := certRoundTrip(t, ts.Client(), http.MethodGet, ts.URL+"/certificates/does-not-exist", "")
+	status, _, raw := certRoundTrip(t, ts.Client(), http.MethodGet, ts.URL+"/default/certificates/does-not-exist", "")
 	if status != http.StatusNotFound {
 		t.Fatalf("get missing certificate status = %d, want 404\nbody: %s", status, raw)
 	}
@@ -203,7 +203,7 @@ func TestCertificatesNotMisroutedToStorage(t *testing.T) {
 
 	// POST create must land in Key Vault (202 + cert operation), not the Table
 	// Storage handler's 400 odata.error.
-	status, ct, raw := certRoundTrip(t, client, http.MethodPost, ts.URL+"/certificates/mycert/create", selfSignedPolicy)
+	status, ct, raw := certRoundTrip(t, client, http.MethodPost, ts.URL+"/default/certificates/mycert/create", selfSignedPolicy)
 	if status != http.StatusAccepted {
 		t.Fatalf("full-server create status = %d (%s), want 202 — cert request mis-routed to storage?\nbody: %s", status, ct, raw)
 	}
@@ -218,7 +218,7 @@ func TestCertificatesNotMisroutedToStorage(t *testing.T) {
 
 	// GET /certificates must likewise reach Key Vault (200 list), not the
 	// Blob/Queue handler's XML 400.
-	status, ct, raw = certRoundTrip(t, client, http.MethodGet, ts.URL+"/certificates", "")
+	status, ct, raw = certRoundTrip(t, client, http.MethodGet, ts.URL+"/default/certificates", "")
 	if status != http.StatusOK {
 		t.Fatalf("full-server list status = %d (%s), want 200 — mis-routed to storage?\nbody: %s", status, ct, raw)
 	}

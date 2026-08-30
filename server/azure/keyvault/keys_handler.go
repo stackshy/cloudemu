@@ -69,16 +69,21 @@ func NewKeys(s secretsdriver.Secrets) *KeysHandler {
 // Matches claims /keys and /deletedkeys data-plane requests. Disjoint from ARM
 // (/subscriptions/…) and from the secrets surface (/secrets, /deletedsecrets).
 func (*KeysHandler) Matches(r *http.Request) bool {
-	p := r.URL.Path
+	_, p, ok := vaultScope(r)
+	if !ok {
+		return false
+	}
 
 	return p == keysPrefix || strings.HasPrefix(p, keysPrefix+"/") ||
 		p == deletedKeysPrefix || strings.HasPrefix(p, deletedKeysPrefix+"/")
 }
 
 // ServeHTTP answers the bearer challenge for unauthenticated requests, then
-// routes on the path and method.
+// routes on the vault-stripped path and method.
 func (h *KeysHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	serveDataPlane(w, r, h.kv == nil, "Key Vault keys backend unavailable", dataPlaneRoutes{
+	_, kvPath, _ := vaultScope(r)
+
+	serveDataPlane(w, r, kvPath, h.kv == nil, "Key Vault keys backend unavailable", dataPlaneRoutes{
 		deletedPrefix: deletedKeysPrefix,
 		mainPrefix:    keysPrefix,
 		routeDeleted:  func(tail string) { h.routeDeleted(w, r, tail) },

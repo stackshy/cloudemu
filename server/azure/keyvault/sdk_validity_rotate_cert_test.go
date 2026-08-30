@@ -214,13 +214,13 @@ func TestKeyVaultCertificateMintsSecretAndKey(t *testing.T) {
 	httpClient := ts.Client()
 
 	// Create the certificate over raw REST (no cert SDK in this module).
-	status, _, raw := certRoundTrip(t, httpClient, http.MethodPost, ts.URL+"/certificates/tls-cert/create", selfSignedPolicy)
+	status, _, raw := certRoundTrip(t, httpClient, http.MethodPost, ts.URL+"/default/certificates/tls-cert/create", selfSignedPolicy)
 	if status != http.StatusAccepted {
 		t.Fatalf("create cert status = %d, want 202\nbody: %s", status, raw)
 	}
 
 	// The certificate bundle advertises SID/KID pointing at the backing objects.
-	status, _, raw = certRoundTrip(t, httpClient, http.MethodGet, ts.URL+"/certificates/tls-cert", "")
+	status, _, raw = certRoundTrip(t, httpClient, http.MethodGet, ts.URL+"/default/certificates/tls-cert", "")
 	if status != http.StatusOK {
 		t.Fatalf("get cert status = %d, want 200\nbody: %s", status, raw)
 	}
@@ -237,7 +237,7 @@ func TestKeyVaultCertificateMintsSecretAndKey(t *testing.T) {
 	ctx := context.Background()
 
 	// The addressable secret returns the certificate value and is managed.
-	secrets, err := azsecrets.NewClient(ts.URL, fakeCred{}, &azsecrets.ClientOptions{
+	secrets, err := azsecrets.NewClient(ts.URL+"/default", fakeCred{}, &azsecrets.ClientOptions{
 		ClientOptions:                        azcore.ClientOptions{Transport: httpClient, Retry: policy.RetryOptions{MaxRetries: -1}},
 		DisableChallengeResourceVerification: true,
 	})
@@ -259,7 +259,7 @@ func TestKeyVaultCertificateMintsSecretAndKey(t *testing.T) {
 	}
 
 	// The addressable key exposes the certificate's key and is managed.
-	keys, err := azkeys.NewClient(ts.URL, fakeCred{}, &azkeys.ClientOptions{
+	keys, err := azkeys.NewClient(ts.URL+"/default", fakeCred{}, &azkeys.ClientOptions{
 		ClientOptions:                        azcore.ClientOptions{Transport: httpClient, Retry: policy.RetryOptions{MaxRetries: -1}},
 		DisableChallengeResourceVerification: true,
 	})
