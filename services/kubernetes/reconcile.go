@@ -40,7 +40,9 @@ func (s *ClusterState) allocatePodIPLocked() string {
 
 // markPodRunningLocked synthesizes the status of a scheduled, running Pod: a Pod
 // IP, ready containers, and the standard conditions. Terminal Pods are left
-// alone. Callers hold s.mu.
+// alone. When scheduling fails (multi-node: no node satisfies the pod's
+// nodeSelector/taints/requests) the pod is left Pending with a PodScheduled=False
+// condition and no Pod IP, matching a real unschedulable pod. Callers hold s.mu.
 func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 		return
@@ -48,16 +50,20 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 
 	now := s.now()
 
+	if !s.scheduleNodeLocked(pod) {
+		markPodUnschedulableLocked(pod, now)
+
+		return
+	}
+
 	if pod.Status.PodIP == "" {
 		ip := s.allocatePodIPLocked()
 		pod.Status.PodIP = ip
 		pod.Status.PodIPs = []corev1.PodIP{{IP: ip}}
 	}
 
-	s.scheduleNodeLocked(pod)
-
 	pod.Status.Phase = corev1.PodRunning
-	pod.Status.HostIP = nodeHostIP
+	pod.Status.HostIP = s.nodeInternalIPLocked(pod.Spec.NodeName)
 
 	if pod.Status.StartTime == nil {
 		pod.Status.StartTime = &now
@@ -93,11 +99,28 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 		"Started container "+firstContainerName(pod))
 }
 
-// buildControllerPod builds a Running Pod from a controller's PodTemplateSpec,
-// owned by that controller. Callers hold s.mu.
+// markPodUnschedulableLocked leaves a Pod Pending with a PodScheduled=False
+// condition (reason Unschedulable) and no Pod IP — the state a real pod sits in
+// when no node can accept it. The FailedScheduling event is emitted by
+// scheduleNodeLocked. Callers hold s.mu.
+func markPodUnschedulableLocked(pod *corev1.Pod, now metav1.Time) {
+	pod.Status.Phase = corev1.PodPending
+	pod.Status.Conditions = []corev1.PodCondition{
+		{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+			Reason: "Unschedulable", Message: "no node is available for scheduling",
+			LastTransitionTime: now,
+		},
+	}
+}
+
+// newControllerPod builds a Pod object from a controller's PodTemplateSpec,
+// owned by that controller, WITHOUT scheduling it. The pod-template-hash is
+// computed from tmpl so a later template change is detected as a rolling update.
+// Callers hold s.mu.
 //
 //nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
-func (s *ClusterState) buildControllerPod(
+func (s *ClusterState) newControllerPod(
 	namespace, name string, tmpl corev1.PodTemplateSpec, owner metav1.OwnerReference,
 ) *corev1.Pod {
 	// Copy the template labels so stamping pod-template-hash can't mutate the
@@ -112,7 +135,7 @@ func (s *ClusterState) buildControllerPod(
 
 	labels[podTemplateHashLabel] = podTemplateHash(tmpl)
 
-	pod := &corev1.Pod{
+	return &corev1.Pod{
 		TypeMeta: metav1.TypeMeta{Kind: kindPod, APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
@@ -126,6 +149,16 @@ func (s *ClusterState) buildControllerPod(
 		},
 		Spec: *tmpl.Spec.DeepCopy(),
 	}
+}
+
+// buildControllerPod builds a Running Pod from a controller's PodTemplateSpec,
+// owned by that controller. Callers hold s.mu.
+//
+//nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
+func (s *ClusterState) buildControllerPod(
+	namespace, name string, tmpl corev1.PodTemplateSpec, owner metav1.OwnerReference,
+) *corev1.Pod {
+	pod := s.newControllerPod(namespace, name, tmpl, owner)
 	s.markPodRunningLocked(pod)
 
 	return pod
@@ -168,13 +201,29 @@ func (s *ClusterState) podsOwnedByLocked(namespace string, owner types.UID) []*c
 	return owned
 }
 
+// countRunningOwnedLocked returns how many of owner's Pods are actually Running.
+// Workload status uses this (rather than the materialized count) so a Pod left
+// Pending by a failed schedule is not counted as ready. Callers hold s.mu.
+func (s *ClusterState) countRunningOwnedLocked(namespace string, owner types.UID) int {
+	running := 0
+
+	for _, pod := range s.pods {
+		if pod.Namespace == namespace && ownedBy(pod.OwnerReferences, owner) && pod.Status.Phase == corev1.PodRunning {
+			running++
+		}
+	}
+
+	return running
+}
+
 // syncScaledPods brings the owner's Pods to desired count using random-suffixed
-// names (ReplicaSet / Deployment semantics). Returns the live count.
+// names (ReplicaSet / Deployment semantics). Returns the materialized count and
+// how many of those are actually Running.
 //
 //nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
 func (s *ClusterState) syncScaledPods(
 	namespace, baseName string, owner metav1.OwnerReference, tmpl corev1.PodTemplateSpec, desired int,
-) int {
+) (total, ready int) {
 	// Rolling update: drop Pods whose template hash no longer matches the
 	// controller's current template, so the top-up below recreates them on the
 	// new template. cloudemu converges instantly (no surge/unavailable pacing).
@@ -206,16 +255,17 @@ func (s *ClusterState) syncScaledPods(
 		owned = append(owned, pod)
 	}
 
-	return len(owned)
+	return len(owned), s.countRunningOwnedLocked(namespace, owner.UID)
 }
 
 // syncStablePods reconciles the owner's Pods to exactly the named set (stable
-// identity — StatefulSet / DaemonSet). Returns the live count.
+// identity — StatefulSet). Returns the materialized count and how many of those
+// are actually Running.
 //
 //nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
 func (s *ClusterState) syncStablePods(
 	namespace string, owner metav1.OwnerReference, tmpl corev1.PodTemplateSpec, names []string,
-) int {
+) (total, ready int) {
 	want := make(map[string]bool, len(names))
 	for _, n := range names {
 		want[n] = true
@@ -241,7 +291,7 @@ func (s *ClusterState) syncStablePods(
 		}
 	}
 
-	return len(names)
+	return len(names), s.countRunningOwnedLocked(namespace, owner.UID)
 }
 
 // --- Endpoints controller ---------------------------------------------------
@@ -303,7 +353,7 @@ func (s *ClusterState) matchingEndpointAddressesLocked(svc *corev1.Service) []co
 
 		addrs = append(addrs, corev1.EndpointAddress{
 			IP:        pod.Status.PodIP,
-			NodeName:  strPtr(nodeName),
+			NodeName:  strPtr(pod.Spec.NodeName),
 			TargetRef: &corev1.ObjectReference{Kind: kindPod, Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID},
 		})
 	}
@@ -351,11 +401,17 @@ func (s *ClusterState) syncEndpointSliceLocked(svc *corev1.Service, addrs []core
 	}
 
 	endpoints := make([]any, 0, len(addrs))
+
 	for _, a := range addrs {
+		node := nodeName
+		if a.NodeName != nil && *a.NodeName != "" {
+			node = *a.NodeName
+		}
+
 		endpoints = append(endpoints, map[string]any{
 			"addresses":  []any{a.IP},
 			"conditions": map[string]any{"ready": true},
-			"nodeName":   nodeName,
+			"nodeName":   node,
 			"targetRef": map[string]any{
 				"kind": "Pod", "namespace": a.TargetRef.Namespace, "name": a.TargetRef.Name, "uid": string(a.TargetRef.UID),
 			},
@@ -446,7 +502,7 @@ func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 
 	// Interpose a ReplicaSet (Deployment→RS→Pod) rather than owning Pods
 	// directly, matching real Deployment topology.
-	ready := s.syncDeploymentReplicaSetLocked(dep, desired)
+	total, ready := s.syncDeploymentReplicaSetLocked(dep, desired)
 
 	if int32(desired) != prevReplicas { //nolint:gosec // desired is clampPodCount-bounded.
 		verb := "up"
@@ -460,10 +516,10 @@ func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 			fmt.Sprintf("Scaled %s replica set %s to %d", verb, rsName, desired))
 	}
 
-	dep.Status.Replicas = ready
+	dep.Status.Replicas = total
 	dep.Status.ReadyReplicas = ready
 	dep.Status.AvailableReplicas = ready
-	dep.Status.UpdatedReplicas = ready
+	dep.Status.UpdatedReplicas = total
 	dep.Status.ObservedGeneration = dep.Generation
 	dep.Status.Conditions = []appsv1.DeploymentCondition{
 		{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue, Reason: "MinimumReplicasAvailable"},
@@ -480,9 +536,9 @@ func reconcileReplicaSet(s *ClusterState, obj *unstructured.Unstructured) {
 	desired := clampPodCount(requested)
 	noteClampUnstructured(obj, requested, desired)
 
-	ready := s.syncScaledPods(obj.GetNamespace(), obj.GetName(), ownerRefOf(obj),
+	total, ready := s.syncScaledPods(obj.GetNamespace(), obj.GetName(), ownerRefOf(obj),
 		podTemplateFromUnstructured(obj), desired)
-	setWorkloadStatus(obj, ready)
+	setWorkloadStatus(obj, total, ready)
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
 }
 
@@ -499,8 +555,8 @@ func reconcileStatefulSet(s *ClusterState, obj *unstructured.Unstructured) {
 	}
 
 	s.syncStatefulSetPVCsLocked(obj, desired)
-	ready := s.syncStablePods(obj.GetNamespace(), ownerRefOf(obj), podTemplateFromUnstructured(obj), names)
-	setWorkloadStatus(obj, ready)
+	total, ready := s.syncStablePods(obj.GetNamespace(), ownerRefOf(obj), podTemplateFromUnstructured(obj), names)
+	setWorkloadStatus(obj, total, ready)
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
 }
 
@@ -508,14 +564,13 @@ func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
 	defaultDaemonSetStrategy(obj)
 
 	// A DaemonSet runs one Pod per node whose labels satisfy the template's
-	// nodeSelector. With a single synthetic node, a non-matching selector yields
-	// zero Pods (rather than the previous unconditional one).
-	var names []string
-	if s.daemonSetSchedulesToNode(obj) {
-		names = []string{obj.GetName() + "-" + nodeName}
-	}
+	// nodeSelector AND whose taints the template tolerates — one Pod per matching
+	// node, N automatically once multi-node scheduling is on. A non-matching
+	// selector (or an untolerated taint) yields zero Pods for that node.
+	tmpl := podTemplateFromUnstructured(obj)
+	placements := s.daemonSetPlacementsLocked(obj.GetName(), tmpl)
 
-	ready := int64(s.syncStablePods(obj.GetNamespace(), ownerRefOf(obj), podTemplateFromUnstructured(obj), names))
+	ready := int64(s.syncDaemonSetPods(obj.GetNamespace(), ownerRefOf(obj), tmpl, placements))
 
 	set := func(field string) { _ = unstructured.SetNestedField(obj.Object, ready, "status", field) }
 	set("desiredNumberScheduled")
@@ -528,39 +583,73 @@ func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
 }
 
-// daemonSetSchedulesToNode reports whether the DaemonSet's template nodeSelector
-// matches the single synthetic node's labels (empty selector always matches).
-func (s *ClusterState) daemonSetSchedulesToNode(obj *unstructured.Unstructured) bool {
-	sel, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "spec", "nodeSelector")
-	if len(sel) == 0 {
-		return true
+// dsPlacement pins one DaemonSet Pod ("<ds>-<node>") to a specific node.
+type dsPlacement struct{ podName, nodeName string }
+
+// daemonSetPlacementsLocked returns the per-node DaemonSet Pod placements: one
+// entry per node (sorted by name) whose labels satisfy the template's
+// nodeSelector and whose taints the template tolerates. Callers hold s.mu.
+//
+//nolint:gocritic // hugeParam: k8s template struct, read-only.
+func (s *ClusterState) daemonSetPlacementsLocked(dsName string, tmpl corev1.PodTemplateSpec) []dsPlacement {
+	nodes := s.nodesLocked()
+
+	var out []dsPlacement
+
+	for i := range nodes {
+		n := &nodes[i]
+		if !labelsMatch(tmpl.Spec.NodeSelector, n.labels) {
+			continue
+		}
+
+		if !podToleratesTaints(tmpl.Spec.Tolerations, n.taints) {
+			continue
+		}
+
+		out = append(out, dsPlacement{podName: dsName + "-" + n.name, nodeName: n.name})
 	}
 
-	labels := s.nodeLabels()
-	for k, v := range sel {
-		if labels[k] != v {
-			return false
+	return out
+}
+
+// syncDaemonSetPods reconciles a DaemonSet's Pods to exactly the pinned
+// placements: it deletes Pods that are no longer wanted or whose template hash is
+// stale, then creates one Pod per placement pinned to its node (spec.nodeName set
+// before scheduling, so the scheduler assigns it directly). Returns the placement
+// count. Callers hold s.mu.
+//
+//nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
+func (s *ClusterState) syncDaemonSetPods(
+	namespace string, owner metav1.OwnerReference, tmpl corev1.PodTemplateSpec, placements []dsPlacement,
+) int {
+	want := make(map[string]bool, len(placements))
+	for _, p := range placements {
+		want[p.podName] = true
+	}
+
+	hash := podTemplateHash(tmpl)
+	for _, pod := range s.podsOwnedByLocked(namespace, owner.UID) {
+		if !want[pod.Name] || pod.Labels[podTemplateHashLabel] != hash {
+			delete(s.pods, podKey(namespace, pod.Name))
+			s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())
 		}
 	}
 
-	return true
-}
+	for _, p := range placements {
+		if _, ok := s.pods[podKey(namespace, p.podName)]; ok {
+			continue
+		}
 
-// nodeLabels returns the synthetic node's labels (nil if the node is absent).
-func (s *ClusterState) nodeLabels() map[string]string {
-	st := s.reg.getStore("", "v1", "nodes")
-	if st == nil {
-		return nil
+		pod := s.newControllerPod(namespace, p.podName, tmpl, owner)
+		pod.Spec.NodeName = p.nodeName // pin before scheduling: scheduleNodeLocked bypasses to this node
+		s.markPodRunningLocked(pod)
+		s.pods[podKey(namespace, p.podName)] = pod
+		s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
+		s.recordEventLocked(objectReferenceForOwner(owner, namespace),
+			"SuccessfulCreate", "Created pod: "+pod.Name)
 	}
 
-	node := st.items[objKey("", nodeName)]
-	if node == nil {
-		return nil
-	}
-
-	labels, _, _ := unstructured.NestedStringMap(node.Object, "metadata", "labels")
-
-	return labels
+	return len(placements)
 }
 
 // reconcilePVC marks a PersistentVolumeClaim Bound — cloudemu dynamically
@@ -649,11 +738,21 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 		owned = append(owned, pod)
 	}
 
-	succeeded := int64(len(owned))
-	_ = unstructured.SetNestedField(obj.Object, succeeded, "status", "succeeded")
-	_ = unstructured.SetNestedField(obj.Object, int64(0), "status", "active")
+	// Count Pods that actually reached Succeeded — a Pod left Pending by a failed
+	// schedule (multi-node: infeasible requests) is not a completion, so a Job
+	// that can't place its Pods is not reported Complete.
+	succeeded := 0
 
-	if completions > 0 {
+	for _, p := range owned {
+		if p.Status.Phase == corev1.PodSucceeded {
+			succeeded++
+		}
+	}
+
+	_ = unstructured.SetNestedField(obj.Object, int64(succeeded), "status", "succeeded")
+	_ = unstructured.SetNestedField(obj.Object, int64(len(owned)-succeeded), "status", "active")
+
+	if completions > 0 && succeeded >= completions {
 		_ = unstructured.SetNestedSlice(obj.Object,
 			[]any{map[string]any{"type": "Complete", "status": "True"}}, "status", "conditions")
 
@@ -663,9 +762,16 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 }
 
 // markPodSucceededLocked drives a Pod to the completed (Succeeded) terminal
-// state used by Job pods. Callers hold s.mu.
+// state used by Job pods — but only if it actually scheduled. A Pod that failed
+// to schedule (multi-node: no feasible node) is left Pending/Unschedulable by
+// markPodRunningLocked and must NOT be forced Succeeded, or reconcileJob would
+// falsely report an unschedulable Job complete. Callers hold s.mu.
 func (s *ClusterState) markPodSucceededLocked(pod *corev1.Pod) {
 	s.markPodRunningLocked(pod)
+
+	if pod.Spec.NodeName == "" {
+		return
+	}
 
 	now := s.now()
 	pod.Status.Phase = corev1.PodSucceeded
@@ -905,11 +1011,18 @@ func podTemplateFromUnstructured(obj *unstructured.Unstructured) corev1.PodTempl
 	return tmpl
 }
 
-// setWorkloadStatus mirrors the live replica count onto the standard workload
-// status fields (ReplicaSet/StatefulSet share these names).
-func setWorkloadStatus(obj *unstructured.Unstructured, ready int) {
-	r := int64(ready)
-	for _, f := range []string{"replicas", "readyReplicas", "availableReplicas", "currentReplicas", "updatedReplicas"} {
+// setWorkloadStatus mirrors the workload's replica counts onto the standard
+// status fields (ReplicaSet/StatefulSet share these names). total is the
+// materialized Pod count; ready is how many are actually Running — they differ
+// only when a Pod failed to schedule and sits Pending, so readyReplicas/
+// availableReplicas reflect capacity rather than mere existence.
+func setWorkloadStatus(obj *unstructured.Unstructured, total, ready int) {
+	t, r := int64(total), int64(ready)
+	for _, f := range []string{"replicas", "currentReplicas", "updatedReplicas"} {
+		_ = unstructured.SetNestedField(obj.Object, t, "status", f)
+	}
+
+	for _, f := range []string{"readyReplicas", "availableReplicas"} {
 		_ = unstructured.SetNestedField(obj.Object, r, "status", f)
 	}
 
