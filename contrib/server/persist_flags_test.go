@@ -18,12 +18,12 @@ func TestPersistFlagDefaults(t *testing.T) {
 		t.Fatalf("parseFlags: %v", err)
 	}
 
-	if cfg.persistStrategy != serverkit.DefaultPersistStrategy {
-		t.Fatalf("default strategy = %q, want %q", cfg.persistStrategy, serverkit.DefaultPersistStrategy)
+	if cfg.PersistStrategy != serverkit.DefaultPersistStrategy {
+		t.Fatalf("default strategy = %q, want %q", cfg.PersistStrategy, serverkit.DefaultPersistStrategy)
 	}
 
-	if cfg.persistInterval != serverkit.DefaultPersistInterval {
-		t.Fatalf("default interval = %v, want %v", cfg.persistInterval, serverkit.DefaultPersistInterval)
+	if cfg.PersistInterval != serverkit.DefaultPersistInterval {
+		t.Fatalf("default interval = %v, want %v", cfg.PersistInterval, serverkit.DefaultPersistInterval)
 	}
 
 	// Overrides flow through.
@@ -32,12 +32,12 @@ func TestPersistFlagDefaults(t *testing.T) {
 		t.Fatalf("parseFlags(override): %v", err)
 	}
 
-	if over.persistStrategy != "manual" {
-		t.Fatalf("override strategy = %q, want manual", over.persistStrategy)
+	if over.PersistStrategy != "manual" {
+		t.Fatalf("override strategy = %q, want manual", over.PersistStrategy)
 	}
 
-	if over.persistInterval.String() != "7s" {
-		t.Fatalf("override interval = %v, want 7s", over.persistInterval)
+	if over.PersistInterval.String() != "7s" {
+		t.Fatalf("override interval = %v, want 7s", over.PersistInterval)
 	}
 
 	// Env fallback is honored when the flag is absent.
@@ -57,11 +57,11 @@ func TestPersistFlagDefaults(t *testing.T) {
 		t.Fatalf("parseFlags(env): %v", err)
 	}
 
-	if fromEnv.persistStrategy != "on-request" {
-		t.Fatalf("env strategy = %q, want on-request", fromEnv.persistStrategy)
+	if fromEnv.PersistStrategy != "on-request" {
+		t.Fatalf("env strategy = %q, want on-request", fromEnv.PersistStrategy)
 	}
 
-	if fromEnv.persistInterval.String() != "2s" {
-		t.Fatalf("env interval = %v, want 2s", fromEnv.persistInterval)
+	if fromEnv.PersistInterval.String() != "2s" {
+		t.Fatalf("env interval = %v, want 2s", fromEnv.PersistInterval)
 	}
 }

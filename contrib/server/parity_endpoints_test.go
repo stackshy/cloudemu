@@ -15,17 +15,17 @@ import (
 // dependency): any HTTP status proves the listener is up and the handler runs.
 func TestOCIEndpointBinds(t *testing.T) {
 	cfg := testConfig(t, allEnginesOff())
-	cfg.providers = []string{providerAWS, providerOCI}
-	cfg.ociPort = freePortStr(t)
+	cfg.providers = []string{"aws", "oci"}
+	cfg.OCIPort = freePortStr(t)
 
 	_, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 	defer stop()
 
 	// The AWS listener answering (startAWS waited on it) does not prove OCI bound;
 	// wait for the OCI port explicitly, then hit it.
-	waitListening(t, cfg.host, cfg.ociPort)
+	waitListening(t, cfg.Host, cfg.OCIPort)
 
-	url := "http://" + net.JoinHostPort(cfg.host, cfg.ociPort) + "/"
+	url := "http://" + net.JoinHostPort(cfg.Host, cfg.OCIPort) + "/"
 
 	resp, err := http.Get(url) //nolint:noctx // short-lived in-process test call
 	if err != nil {
@@ -48,13 +48,13 @@ func TestOCIEndpointBinds(t *testing.T) {
 // verification; any HTTP status proves the TLS listener is up.
 func TestKubernetesEndpointReachable(t *testing.T) {
 	cfg := testConfig(t, allEnginesOff())
-	cfg.providers = []string{providerAWS}
-	cfg.k8sPort = freePortStr(t)
+	cfg.providers = []string{"aws"}
+	cfg.K8sPort = freePortStr(t)
 
 	_, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 	defer stop()
 
-	waitListening(t, cfg.host, cfg.k8sPort)
+	waitListening(t, cfg.Host, cfg.K8sPort)
 
 	client := &http.Client{
 		Timeout: 5 * time.Second,
@@ -63,7 +63,7 @@ func TestKubernetesEndpointReachable(t *testing.T) {
 		},
 	}
 
-	url := "https://" + net.JoinHostPort(cfg.host, cfg.k8sPort) + "/"
+	url := "https://" + net.JoinHostPort(cfg.Host, cfg.K8sPort) + "/"
 
 	resp, err := client.Get(url) //nolint:noctx // short-lived in-process test call
 	if err != nil {

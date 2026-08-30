@@ -16,7 +16,7 @@ import (
 func TestEnforceAuthRejectsInvalidSignature(t *testing.T) {
 	t.Run("enforced rejects", func(t *testing.T) {
 		cfg := testConfig(t, allEnginesOff())
-		cfg.enforceAuth = true
+		cfg.EnforceAuth = true
 
 		awsURL, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 		defer stop()
@@ -35,7 +35,7 @@ func TestEnforceAuthRejectsInvalidSignature(t *testing.T) {
 
 	t.Run("not enforced passes", func(t *testing.T) {
 		cfg := testConfig(t, allEnginesOff())
-		cfg.enforceAuth = false
+		cfg.EnforceAuth = false
 
 		awsURL, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 		defer stop()

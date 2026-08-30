@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stackshy/cloudemu/v2/server/serveflags"
 )
 
 // TestServeEngineFlagsPointToEnginesImage verifies that engine flags/env passed
@@ -45,15 +47,15 @@ func TestServeEngineFlagsPointToEnginesImage(t *testing.T) {
 // pointer must NOT trigger. This proves the stub-flags+fs.Visit approach (a raw
 // os.Args pre-scan would wrongly fire here).
 func TestServeAccountIDValueIsNotAnEngineFlag(t *testing.T) {
-	var c serveConfig
+	var c serveflags.CommonConfig
 
 	fs := newServeFlagSet(&c)
 	if err := fs.Parse([]string{"--account-id", "--db"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 
-	if c.accountID != "--db" {
-		t.Fatalf("account-id = %q, want %q (--db consumed as its value)", c.accountID, "--db")
+	if c.AccountID != "--db" {
+		t.Fatalf("account-id = %q, want %q (--db consumed as its value)", c.AccountID, "--db")
 	}
 
 	if enginesRequested(fs, func(string) string { return "" }) {
@@ -64,7 +66,7 @@ func TestServeAccountIDValueIsNotAnEngineFlag(t *testing.T) {
 // TestServeNoEngineFlagsNotTriggered confirms a plain serve invocation with no
 // engine flag/env is not misread as an engine request.
 func TestServeNoEngineFlagsNotTriggered(t *testing.T) {
-	var c serveConfig
+	var c serveflags.CommonConfig
 
 	fs := newServeFlagSet(&c)
 	if err := fs.Parse([]string{"--quiet", "--region", "eu-west-1"}); err != nil {
@@ -87,7 +89,7 @@ func TestServeEngineFlagSyntaxes(t *testing.T) {
 	}
 
 	for _, args := range syntaxes {
-		var c serveConfig
+		var c serveflags.CommonConfig
 
 		fs := newServeFlagSet(&c)
 		if err := fs.Parse(args); err != nil {
@@ -100,7 +102,7 @@ func TestServeEngineFlagSyntaxes(t *testing.T) {
 	}
 
 	// Env form, no flag set.
-	var c serveConfig
+	var c serveflags.CommonConfig
 
 	fs := newServeFlagSet(&c)
 	if err := fs.Parse(nil); err != nil {
