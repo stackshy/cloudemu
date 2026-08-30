@@ -357,10 +357,12 @@ func toAzureNIC(n *nicData) driver.AzureNIC {
 	configs := make([]driver.AzureIPConfig, len(n.IPConfigs))
 	copy(configs, n.IPConfigs)
 
-	// Deep-copy each ipConfiguration's backend-pool membership so a caller
-	// mutating the returned slice cannot reach back into stored state.
+	// Deep-copy each ipConfiguration's backend-pool and application-security-group
+	// membership so a caller mutating the returned slice cannot reach back into
+	// stored state.
 	for i := range configs {
 		configs[i].LBBackendPoolIDs = append([]string(nil), n.IPConfigs[i].LBBackendPoolIDs...)
+		configs[i].ASGIDs = append([]string(nil), n.IPConfigs[i].ASGIDs...)
 	}
 
 	return driver.AzureNIC{

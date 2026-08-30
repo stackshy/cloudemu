@@ -79,6 +79,9 @@ type Mock struct {
 	// replaces the vnet's metadata wholesale) never clobbers peerings created
 	// through the dedicated peerings sub-resource CRUD.
 	azureVNetPeerings *memstore.Store[[]driver.AzureVNetPeering]
+	// azureASGs holds the Azure-only application security groups (tag-like
+	// groupings with no cross-cloud equivalent), keyed by (resourceGroup, name).
+	azureASGs *memstore.Store[driver.AzureApplicationSecurityGroup]
 	// nicMu serializes network-interface create/update, whose private-IP
 	// allocation is a read-modify-write across the nics store (memstore is
 	// per-op safe but can't make that sequence atomic).
@@ -106,6 +109,7 @@ func New(opts *config.Options) *Mock {
 		azureNSGMeta:        memstore.New[driver.AzureNSGMetadata](),
 		azureRouteTableMeta: memstore.New[driver.AzureRouteTableMetadata](),
 		azureVNetPeerings:   memstore.New[[]driver.AzureVNetPeering](),
+		azureASGs:           memstore.New[driver.AzureApplicationSecurityGroup](),
 		opts:                opts,
 	}
 }

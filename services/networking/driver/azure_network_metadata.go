@@ -34,6 +34,13 @@ type AzureNSGRule struct {
 	Access                   string
 	Direction                string
 	Priority                 int
+	// SourceASGs / DestinationASGs are the ARM resource ids of the application
+	// security groups a rule matches on (properties.sourceApplicationSecurityGroups
+	// / destinationApplicationSecurityGroups), an alternative to the address-prefix
+	// fields. Kept verbatim so a Get round-trips exactly what the caller sent;
+	// empty when none were submitted, so an address-prefix rule is byte-unchanged.
+	SourceASGs      []string
+	DestinationASGs []string
 }
 
 // AzureNSGMetadata holds the Azure-only network-security-group fields (region

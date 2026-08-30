@@ -42,6 +42,7 @@ type nicIPConfigRequestProps struct {
 	Subnet                          *armIDRef  `json:"subnet,omitempty"`
 	PublicIPAddress                 *armIDRef  `json:"publicIPAddress,omitempty"`
 	LoadBalancerBackendAddressPools []armIDRef `json:"loadBalancerBackendAddressPools,omitempty"`
+	ApplicationSecurityGroups       []armIDRef `json:"applicationSecurityGroups,omitempty"`
 }
 
 type armIDRef struct {
@@ -81,6 +82,7 @@ type nicIPConfigResponseProps struct {
 	Subnet                          *armIDRef  `json:"subnet,omitempty"`
 	PublicIPAddress                 *armIDRef  `json:"publicIPAddress,omitempty"`
 	LoadBalancerBackendAddressPools []armIDRef `json:"loadBalancerBackendAddressPools,omitempty"`
+	ApplicationSecurityGroups       []armIDRef `json:"applicationSecurityGroups,omitempty"`
 }
 
 type nicListResponse struct {
@@ -267,7 +269,8 @@ func (h *Handler) buildIPConfigs(
 			PrivateIP:        p.PrivateIPAddress,
 			AllocationMethod: p.PrivateIPAllocationMethod,
 			Primary:          p.Primary,
-			LBBackendPoolIDs: backendPoolIDs(p.LoadBalancerBackendAddressPools),
+			LBBackendPoolIDs: refIDs(p.LoadBalancerBackendAddressPools),
+			ASGIDs:           refIDs(p.ApplicationSecurityGroups),
 		}
 
 		if p.Subnet != nil {
@@ -309,11 +312,11 @@ func (h *Handler) buildIPConfigs(
 	return out, nil
 }
 
-// backendPoolIDs extracts the referenced load-balancer backend-pool ARM ids
-// from an ipConfiguration's loadBalancerBackendAddressPools, dropping empty
-// references. It returns nil when none are present so an unassociated
-// ipConfiguration carries no membership.
-func backendPoolIDs(refs []armIDRef) []string {
+// refIDs extracts the non-empty ARM resource ids from a slice of id references
+// (an ipConfiguration's loadBalancerBackendAddressPools or
+// applicationSecurityGroups), dropping empty references. It returns nil when
+// none are present so an unassociated ipConfiguration carries no membership.
+func refIDs(refs []armIDRef) []string {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -328,6 +331,22 @@ func backendPoolIDs(refs []armIDRef) []string {
 
 	if len(out) == 0 {
 		return nil
+	}
+
+	return out
+}
+
+// toIDRefs wraps ARM resource id strings back into id references for the wire
+// response, the inverse of refIDs. It returns nil for an empty input so a
+// reference-less field stays omitted.
+func toIDRefs(ids []string) []armIDRef {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	out := make([]armIDRef, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, armIDRef{ID: id})
 	}
 
 	return out
@@ -505,6 +524,11 @@ func toNICResponse(nic *netdriver.AzureNIC, rp azurearm.ResourcePath) nicRespons
 		for _, poolID := range c.LBBackendPoolIDs {
 			rc.Properties.LoadBalancerBackendAddressPools = append(
 				rc.Properties.LoadBalancerBackendAddressPools, armIDRef{ID: poolID})
+		}
+
+		for _, asgID := range c.ASGIDs {
+			rc.Properties.ApplicationSecurityGroups = append(
+				rc.Properties.ApplicationSecurityGroups, armIDRef{ID: asgID})
 		}
 
 		out.Properties.IPConfigurations = append(out.Properties.IPConfigurations, rc)

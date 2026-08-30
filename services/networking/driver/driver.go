@@ -409,6 +409,11 @@ type AzureIPConfig struct {
 	// backendIPConfigurations by reverse-lookup against this field, so both
 	// sides of the association resolve consistently from one stored reference.
 	LBBackendPoolIDs []string
+	// ASGIDs are the ARM resource ids of the application security groups this
+	// ipConfiguration is a member of (properties.applicationSecurityGroups). Kept
+	// verbatim so a NIC GET round-trips the caller's references; empty when none
+	// were submitted, so an unassociated ipConfiguration is byte-unchanged.
+	ASGIDs []string
 }
 
 // AzureNICConfig is the create-or-update payload for an Azure network interface.

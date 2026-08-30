@@ -107,7 +107,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typeNIC, typeNATGateway, typeLocations:
+	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typeNIC, typeNATGateway, typeASG, typeLocations:
 		return true
 	}
 
@@ -122,12 +122,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rp.ResourceType == typeLocations && rp.SubResource == "operationStatuses" {
-		azurearm.WriteJSON(w, http.StatusOK, map[string]string{
-			"name":   rp.SubResourceName,
-			"status": "Succeeded",
-		})
-
+	if serveLocationsOperationStatus(w, rp) {
 		return
 	}
 
@@ -144,10 +139,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeNIC(w, r, rp)
 	case typeNATGateway:
 		h.routeNATGateway(w, r, rp)
+	case typeASG:
+		h.routeASG(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)
 	}
+}
+
+// serveLocationsOperationStatus answers the locations/operationStatuses poll
+// URL that async (202) operations point at, reporting Succeeded. It returns true
+// when it handled the request. Split out of ServeHTTP so the main dispatch stays
+// under the cyclomatic-complexity gate as resource types are added.
+//
+//nolint:gocritic // rp is a request-scoped value
+func serveLocationsOperationStatus(w http.ResponseWriter, rp azurearm.ResourcePath) bool {
+	if rp.ResourceType != typeLocations || rp.SubResource != "operationStatuses" {
+		return false
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, map[string]string{
+		"name":   rp.SubResourceName,
+		"status": "Succeeded",
+	})
+
+	return true
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -612,6 +628,7 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	recordErr(h.purgeVNets(ctx, resourceGroup))
 	recordErr(h.purgeNSGs(ctx, resourceGroup))
 	recordErr(h.purgeRouteTables(ctx, resourceGroup))
+	h.purgeASGs(ctx, resourceGroup)
 
 	return firstErr
 }

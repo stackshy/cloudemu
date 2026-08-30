@@ -69,6 +69,17 @@ Azure's `networking` service · portable interface `driver.Networking` · [Azure
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureApplicationSecurityGroups
+
+AzureApplicationSecurityGroups is the Azure-only application-security-group
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzureApplicationSecurityGroup` | DeleteAzureApplicationSecurityGroup removes the ASG, reporting whether it |
+| `GetAzureApplicationSecurityGroup` | GetAzureApplicationSecurityGroup returns the ASG identified by |
+| `ListAzureApplicationSecurityGroups` | ListAzureApplicationSecurityGroups returns the ASGs in a resource group, or |
+| `PutAzureApplicationSecurityGroup` | PutAzureApplicationSecurityGroup creates or replaces an ASG in place (a |
+
 ### AzureNetworkInterfaces
 
 AzureNetworkInterfaces is the Azure-specific network-interface surface,

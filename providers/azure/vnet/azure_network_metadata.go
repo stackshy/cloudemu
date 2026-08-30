@@ -180,12 +180,19 @@ func cloneVNetMeta(meta driver.AzureVNetMetadata) driver.AzureVNetMetadata {
 	return out
 }
 
-// cloneNSGMeta deep-copies the rule slice so stored and returned values never
-// alias a caller's slice.
+// cloneNSGMeta deep-copies the rule slice — and each rule's application-security-group
+// reference slices — so stored and returned values never alias a caller's slice.
 func cloneNSGMeta(meta driver.AzureNSGMetadata) driver.AzureNSGMetadata {
 	out := driver.AzureNSGMetadata{Location: meta.Location}
+
 	if len(meta.SecurityRules) > 0 {
-		out.SecurityRules = append([]driver.AzureNSGRule(nil), meta.SecurityRules...)
+		rules := append([]driver.AzureNSGRule(nil), meta.SecurityRules...)
+		for i := range rules {
+			rules[i].SourceASGs = append([]string(nil), rules[i].SourceASGs...)
+			rules[i].DestinationASGs = append([]string(nil), rules[i].DestinationASGs...)
+		}
+
+		out.SecurityRules = rules
 	}
 
 	return out

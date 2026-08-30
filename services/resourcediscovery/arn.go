@@ -62,6 +62,7 @@ const (
 	netKindInternetGW    = "internet-gateway"
 	netKindPeering       = "vpc-peering-connection"
 	netKindRouteTable    = "route-table"
+	netKindAppSecGroup   = "application-security-group"
 )
 
 // computeInstanceARN builds the canonical identifier for a compute instance.
@@ -158,29 +159,28 @@ func (e *Engine) networkARN(kind, id, resourceGroup string) string {
 	}
 }
 
+// azureNetworkTypeByKind maps each network resource kind to its Microsoft.Network
+// ARM type segment. A map keeps azureNetworkType under the cyclomatic-complexity
+// gate as kinds are added.
+var azureNetworkTypeByKind = map[string]string{ //nolint:gochecknoglobals // static lookup table
+	netKindVPC:           "virtualNetworks",
+	netKindSubnet:        "subnets",
+	netKindSecurityGroup: "networkSecurityGroups",
+	netKindNetworkIface:  "networkInterfaces",
+	netKindElasticIP:     "publicIPAddresses",
+	netKindNATGateway:    "natGateways",
+	netKindInternetGW:    "internetGateways",
+	netKindPeering:       "virtualNetworkPeerings",
+	netKindRouteTable:    "routeTables",
+	netKindAppSecGroup:   "applicationSecurityGroups",
+}
+
 func azureNetworkType(kind string) string {
-	switch kind {
-	case netKindVPC:
-		return "virtualNetworks"
-	case netKindSubnet:
-		return "subnets"
-	case netKindSecurityGroup:
-		return "networkSecurityGroups"
-	case netKindNetworkIface:
-		return "networkInterfaces"
-	case netKindElasticIP:
-		return "publicIPAddresses"
-	case netKindNATGateway:
-		return "natGateways"
-	case netKindInternetGW:
-		return "internetGateways"
-	case netKindPeering:
-		return "virtualNetworkPeerings"
-	case netKindRouteTable:
-		return "routeTables"
-	default:
-		return kind
+	if t, ok := azureNetworkTypeByKind[kind]; ok {
+		return t
 	}
+
+	return kind
 }
 
 func gcpNetworkCollection(kind string) string {
