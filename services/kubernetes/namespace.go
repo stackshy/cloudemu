@@ -314,6 +314,41 @@ func (s *ClusterState) deleteNamespaceLocked(ns *corev1.Namespace) {
 	cascadeDeleteWithEvents(s, s.services, prefix, name, s.wServices)
 	cascadeDeleteWithEvents(s, s.deployments, prefix, name, s.wDeployments)
 	cascadeDeleteWithEvents(s, s.endpoints, prefix, name, s.wEndpoints)
+
+	// The typed maps above hold only 7 built-in kinds. Registry-backed namespaced
+	// objects (PVCs, StatefulSets, Ingresses, custom resources, …) live in
+	// s.reg.stores and were previously leaked on namespace delete. Sweep them too
+	// so a namespace delete removes everything inside it, matching real k8s.
+	s.cascadeRegistryStoresLocked(name)
+}
+
+// cascadeRegistryStoresLocked deletes every registry-backed namespaced object in
+// the named namespace, mirroring the typed cascade above (finalizer-gated:
+// finalizer-bearing objects go Terminating, the rest are removed with a DELETED
+// event). Cluster-scoped registry objects (PVs, Nodes, CRDs) carry an empty
+// namespace and never match. Callers hold s.mu — the set of stores only changes
+// under s.mu, so ranging s.reg.stores directly is safe (see garbageCollectLocked).
+func (s *ClusterState) cascadeRegistryStoresLocked(namespace string) {
+	prefix := namespace + "/"
+
+	for _, st := range s.reg.stores {
+		for key, obj := range st.items {
+			if !strings.HasPrefix(key, prefix) || obj.GetNamespace() != namespace {
+				continue
+			}
+
+			if s.markForDeletionUnstructured(obj) {
+				s.stampRegistryRVLocked(obj)
+				st.watch.publish(EventModified, namespace, *obj.DeepCopy())
+
+				continue
+			}
+
+			s.stampRegistryRVLocked(obj)
+			delete(st.items, key)
+			st.watch.publish(EventDeleted, namespace, *obj.DeepCopy())
+		}
+	}
 }
 
 // deepCopier constrains the element type of a per-resource map: it must be

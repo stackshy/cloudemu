@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -679,8 +680,23 @@ func (s *ClusterState) markPodSucceededLocked(pod *corev1.Pod) {
 	}
 }
 
+// PVC retention-policy values (spec.persistentVolumeClaimRetentionPolicy).
+const (
+	pvcRetentionRetain = "Retain"
+	pvcRetentionDelete = "Delete"
+)
+
 // syncStatefulSetPVCsLocked creates a Bound PVC per (volumeClaimTemplate,
-// ordinal) named "<template>-<sts>-<ordinal>", owned by the StatefulSet.
+// ordinal) named "<template>-<sts>-<ordinal>". Ownership and scale-down deletion
+// honor spec.persistentVolumeClaimRetentionPolicy (default Retain/Retain):
+//   - whenDeleted=Delete stamps the StatefulSet as the PVC owner so
+//     garbageCollectLocked reaps the PVCs when the StatefulSet is deleted. The
+//     default (Retain) leaves NO owner ref, so the volumes survive a delete /
+//     helm uninstall — matching real k8s, where data is not lost on uninstall.
+//   - whenScaled=Delete removes the PVCs whose ordinal falls outside the new
+//     replica count. This is an EXPLICIT reap: StatefulSet scale-down deletes
+//     Pods with a bare delete that never invokes garbageCollectLocked, so a Pod
+//     owner ref would be inert here.
 func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured, replicas int) {
 	templates, found, _ := unstructured.NestedSlice(sts.Object, "spec", "volumeClaimTemplates")
 	if !found {
@@ -692,6 +708,8 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 		return
 	}
 
+	whenDeleted, whenScaled := statefulSetPVCRetentionPolicy(sts)
+
 	for _, raw := range templates {
 		tmpl, ok := raw.(map[string]any)
 		if !ok {
@@ -699,6 +717,10 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 		}
 
 		tmplName, _, _ := unstructured.NestedString(tmpl, "metadata", "name")
+
+		if whenScaled == pvcRetentionDelete {
+			s.reapScaledStatefulSetPVCsLocked(store, sts.GetNamespace(), tmplName, sts.GetName(), replicas)
+		}
 
 		for i := range replicas {
 			name := fmt.Sprintf("%s-%s-%d", tmplName, sts.GetName(), i)
@@ -724,11 +746,65 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 			}}
 			pvc.SetUID(types.UID(newUID()))
 			pvc.SetCreationTimestamp(s.now())
-			pvc.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(sts)})
+
+			// Only whenDeleted=Delete stamps the owner ref — the one case where the
+			// STS-delete cascade should reap the PVC. Under the Retain default the
+			// PVC is deliberately ownerless so it outlives the StatefulSet.
+			if whenDeleted == pvcRetentionDelete {
+				pvc.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(sts)})
+			}
+
 			s.stampRegistryRVLocked(pvc)
 			store.items[key] = pvc
 			store.watch.publish(EventAdded, sts.GetNamespace(), *pvc.DeepCopy())
 		}
+	}
+}
+
+// statefulSetPVCRetentionPolicy reads spec.persistentVolumeClaimRetentionPolicy,
+// defaulting either field to Retain when unset — the apiserver default.
+func statefulSetPVCRetentionPolicy(sts *unstructured.Unstructured) (whenDeleted, whenScaled string) {
+	whenDeleted, whenScaled = pvcRetentionRetain, pvcRetentionRetain
+
+	if v, ok, _ := unstructured.NestedString(
+		sts.Object, "spec", "persistentVolumeClaimRetentionPolicy", "whenDeleted"); ok && v != "" {
+		whenDeleted = v
+	}
+
+	if v, ok, _ := unstructured.NestedString(
+		sts.Object, "spec", "persistentVolumeClaimRetentionPolicy", "whenScaled"); ok && v != "" {
+		whenScaled = v
+	}
+
+	return whenDeleted, whenScaled
+}
+
+// reapScaledStatefulSetPVCsLocked deletes the volumeClaimTemplate PVCs whose
+// ordinal is >= replicas — the whenScaled=Delete behavior. It scans the PVC
+// store for "<template>-<sts>-<ordinal>" names in the namespace and reaps the
+// out-of-range ones explicitly, because StatefulSet scale-down never runs the
+// ownerReference garbage collector.
+func (s *ClusterState) reapScaledStatefulSetPVCsLocked(
+	store *registryStore, namespace, tmplName, stsName string, replicas int,
+) {
+	prefix := fmt.Sprintf("%s-%s-", tmplName, stsName)
+
+	for key, pvc := range store.items {
+		if pvc.GetNamespace() != namespace {
+			continue
+		}
+
+		name := pvc.GetName()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		ordinal, err := strconv.Atoi(name[len(prefix):])
+		if err != nil || ordinal < replicas {
+			continue
+		}
+
+		s.reapRegistryObjectLocked(store, key, pvc)
 	}
 }
 
