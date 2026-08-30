@@ -35,7 +35,7 @@ func (h *Handler) serveSubCollection(w http.ResponseWriter, r *http.Request, sp 
 
 	h.mu.RUnlock()
 
-	azurearm.WriteJSON(w, http.StatusOK, paginate(resources))
+	azurearm.WriteJSON(w, http.StatusOK, paginate(r, resources))
 }
 
 func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, sp sbPath, topic, name string) {

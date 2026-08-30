@@ -220,7 +220,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case kind == kindCheckName:
 		h.checkNameAvailability(w, r)
 	case sp.namespace == "":
-		h.listNamespaces(w, sp)
+		h.listNamespaces(w, r, sp)
 	case len(sp.segs) == 0:
 		h.serveNamespace(w, r, sp)
 	default:
@@ -266,7 +266,7 @@ func (h *Handler) listChildren(w http.ResponseWriter, r *http.Request, sp sbPath
 	resources := collect(ns)
 	h.mu.RUnlock()
 
-	azurearm.WriteJSON(w, http.StatusOK, paginate(resources))
+	azurearm.WriteJSON(w, http.StatusOK, paginate(r, resources))
 }
 
 // nsKey normalizes a namespace name to its store key. Service Bus namespace
