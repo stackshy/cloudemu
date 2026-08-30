@@ -105,7 +105,7 @@ func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request, rp az
 		ConnectivityType: "public",
 	}
 
-	allocationID, err := h.resolveNATGatewayAllocation(r.Context(), req.Properties.PublicIPAddresses)
+	allocationID, err := h.resolveNATGatewayAllocation(r.Context(), rp, req.Properties.PublicIPAddresses)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -149,8 +149,14 @@ func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request, rp az
 // body's properties.publicIpAddresses to the driver Elastic IP allocation id
 // CreateNATGateway expects. Real Azure supports multiple public IPs per NAT
 // gateway; this mock binds only the first, matching the cross-cloud driver
-// model's single AllocationID.
-func (h *Handler) resolveNATGatewayAllocation(ctx context.Context, publicIPAddresses []armIDRef) (string, error) {
+// model's single AllocationID. It rejects a public IP already claimed by a NIC
+// or another NAT gateway (a static public IP binds to one owner), excluding this
+// NAT gateway on an idempotent re-PUT.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) resolveNATGatewayAllocation(
+	ctx context.Context, rp azurearm.ResourcePath, publicIPAddresses []armIDRef,
+) (string, error) {
 	if len(publicIPAddresses) == 0 {
 		return "", nil
 	}
@@ -165,6 +171,13 @@ func (h *Handler) resolveNATGatewayAllocation(ctx context.Context, publicIPAddre
 	pip, err := findPublicIPByName(ctx, h.net, pipRP.ResourceGroup, pipRP.ResourceName)
 	if err != nil {
 		return "", err
+	}
+
+	if kind, owner, claimed := h.publicIPClaimant(
+		ctx, pipID, pip.AllocationID, claimKindNAT, rp.ResourceGroup, rp.ResourceName,
+	); claimed {
+		return "", cerrors.Newf(cerrors.FailedPrecondition,
+			"public IP %q is already associated with %s %q", pipID, kind, owner)
 	}
 
 	return pip.AllocationID, nil
