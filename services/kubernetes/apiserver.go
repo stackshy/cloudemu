@@ -55,6 +55,11 @@ type APIServer struct {
 	// registered after the call (see SetLifecycleProgression). Default false keeps
 	// the synchronous instant-Running behavior.
 	lifecycleProgression bool
+
+	// nodeCount is how many synthetic Nodes each cluster registered after the call
+	// seeds (see SetNodeCount). Default 0 is treated as 1 (single node). >1 opts
+	// clusters into the multi-node first-fit scheduler.
+	nodeCount int
 }
 
 // NewAPIServer returns an empty APIServer with no registered clusters.
@@ -82,7 +87,7 @@ func (s *APIServer) RegisterCluster() (string, *ClusterState) {
 	uid := newUID()
 
 	s.mu.Lock()
-	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient, s.lifecycleProgression)
+	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient, s.lifecycleProgression, s.nodeCount)
 	s.clusters[uid] = state
 	s.mu.Unlock()
 
@@ -99,6 +104,19 @@ func (s *APIServer) RegisterCluster() (string, *ClusterState) {
 func (s *APIServer) SetLifecycleProgression(enabled bool) {
 	s.mu.Lock()
 	s.lifecycleProgression = enabled
+	s.mu.Unlock()
+}
+
+// SetNodeCount sets how many synthetic Nodes clusters registered after the call
+// seed. Default (0 or 1) is a single control-plane node onto which every Pod
+// schedules — the historical behavior every single-node test relies on. N>1
+// seeds one control-plane node (tainted NoSchedule) plus N-1 workers and turns
+// on the deterministic first-fit scheduler (nodeSelector/taints/tolerations/
+// resource requests). Node count is fixed at cluster creation and immutable for
+// the cluster's lifetime. Set before RegisterCluster.
+func (s *APIServer) SetNodeCount(n int) {
+	s.mu.Lock()
+	s.nodeCount = n
 	s.mu.Unlock()
 }
 

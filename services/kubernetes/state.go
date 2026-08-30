@@ -48,6 +48,13 @@ type ClusterState struct {
 	// once at registration (see APIServer.SetLifecycleProgression).
 	lifecycleProgression bool
 
+	// nodeCount is how many synthetic Nodes this cluster seeds at creation
+	// (default 1). It is fixed for the cluster's lifetime — node membership is
+	// immutable. N>1 opts into the multi-node first-fit scheduler; N=1 keeps the
+	// single-node instant-schedule behavior. Set once at registration (see
+	// APIServer.SetNodeCount).
+	nodeCount int
+
 	// namespaces is cluster-scoped — keyed by namespace name.
 	namespaces map[string]*corev1.Namespace
 
@@ -131,7 +138,7 @@ const firstClusterIPOffset uint32 = 1
 // ServiceAccount in each, matching the bootstrap state of a fresh real
 // cluster.
 func newClusterState(
-	clock config.Clock, admissionEnabled bool, admissionClient *http.Client, lifecycleProgression bool,
+	clock config.Clock, admissionEnabled bool, admissionClient *http.Client, lifecycleProgression bool, nodeCount int,
 ) *ClusterState {
 	if clock == nil {
 		clock = config.RealClock{}
@@ -141,9 +148,14 @@ func newClusterState(
 		admissionClient = &http.Client{Timeout: defaultAdmissionTimeout}
 	}
 
+	if nodeCount < 1 {
+		nodeCount = 1
+	}
+
 	s := &ClusterState{
 		clock:                clock,
 		lifecycleProgression: lifecycleProgression,
+		nodeCount:            nodeCount,
 		namespaces:           make(map[string]*corev1.Namespace),
 		configMaps:           make(map[string]*corev1.ConfigMap),
 		pods:                 make(map[string]*corev1.Pod),
@@ -178,16 +190,20 @@ func newClusterState(
 		s.serviceAccounts[serviceAccountKey(name, "default")] = sa
 	}
 
-	// Bootstrap the single synthetic Node every reconciler-materialized Pod is
-	// scheduled onto (spec.nodeName=cloudemu-node-0). Without it `kubectl get
-	// nodes` is empty on a fresh cluster and Pods/DaemonSets reference a Node
-	// object that doesn't exist.
+	// Bootstrap the synthetic Node(s) reconciler-materialized Pods schedule onto.
+	// Node 0 (cloudemu-node-0) is the control-plane; with --k8s-nodes>1 it is
+	// tainted NoSchedule and cloudemu-node-1.. are workers. Without a Node object
+	// `kubectl get nodes` is empty and Pods/DaemonSets reference a missing node.
 	if store := s.reg.getStore("", "v1", "nodes"); store != nil {
-		node := s.newNodeObject()
-		s.stampRegistryRVLocked(node)
-		store.items[objKey("", node.GetName())] = node
+		tainted := s.nodeCount > 1
 
-		s.seedNodeLeaseLocked()
+		for i := range s.nodeCount {
+			node := s.newNodeObject(i, tainted)
+			s.stampRegistryRVLocked(node)
+			store.items[objKey("", node.GetName())] = node
+
+			s.seedNodeLeaseLocked(node.GetName())
+		}
 	}
 
 	// Seed the standard kube-system add-ons (coredns, kube-dns Service,

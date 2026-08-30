@@ -7,8 +7,8 @@
 // drift between the two mains. The engine selectors are a single shared list
 // (EngineFlags) both sides range over.
 //
-// The package imports only flag, os, strings, time, the core config package, and
-// serverkit; it NEVER imports an engine constructor or a contrib package (guarded
+// The package imports only flag, os, strconv, strings, time, the core config
+// package, and serverkit; it NEVER imports an engine constructor or a contrib package (guarded
 // by a dep test), so the lean binary stays free of the heavy engine dependencies.
 package serveflags
 
@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,7 @@ type CommonConfig struct {
 
 	K8sProgression         bool
 	K8sProgressionInterval time.Duration
+	K8sNodes               int
 }
 
 // RegisterCommon registers every common serve flag against c. getenv is injected
@@ -154,6 +156,10 @@ func registerK8sProgressionFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(
 	fs.DurationVar(&c.K8sProgressionInterval, "k8s-progression-interval",
 		envDurationOr(getenv, "CLOUDEMU_K8S_PROGRESSION_INTERVAL", defaultK8sProgressionInterval),
 		"cadence of the --k8s-progression Pod-lifecycle ticker (env CLOUDEMU_K8S_PROGRESSION_INTERVAL)")
+	fs.IntVar(&c.K8sNodes, "k8s-nodes", envIntOr(getenv, "CLOUDEMU_K8S_NODES", 1),
+		"Kubernetes: number of synthetic nodes each cluster seeds, fixed at creation (default 1 = single node; "+
+			">1 seeds a tainted control-plane node plus workers and turns on the first-fit scheduler with "+
+			"nodeSelector/taints/resource-request placement; env CLOUDEMU_K8S_NODES)")
 }
 
 // registerEnforceAuthFlag registers --enforce-auth with the full SigV4/Bearer
@@ -200,6 +206,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		AdvertiseHost:          c.AdvertiseHost,
 		K8sProgression:         c.K8sProgression,
 		K8sProgressionInterval: c.K8sProgressionInterval,
+		K8sNodes:               c.K8sNodes,
 		AzureSubscription:      c.AzureSubscription,
 		Admin:                  c.Admin,
 		Persist:                c.Persist,
@@ -280,6 +287,22 @@ func envDurationOr(getenv func(string) string, key string, def time.Duration) ti
 	}
 
 	return d
+}
+
+// envIntOr reads the environment value for key as a base-10 integer, or returns
+// def when it is unset/empty/unparseable.
+func envIntOr(getenv func(string) string, key string, def int) int {
+	v := strings.TrimSpace(getenv(key))
+	if v == "" {
+		return def
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+
+	return n
 }
 
 // envBoolOr reads the environment value for key as a boolean (1/true/yes/on,
