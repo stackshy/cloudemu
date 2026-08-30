@@ -32,18 +32,6 @@ AWS's `database` service · portable interface `driver.Database` · [AWS index](
 | `UpdateStreamConfig` | Streams / Change Feed |
 | `UpdateTTL` | TTL |
 
-## Optional capabilities
-
-Discovered by type assertion; only some providers implement these.
-
-### TableAttributes
-
-TableAttributes is an OPTIONAL capability, discovered by type assertion (like
-
-| Operation | Description |
-| --- | --- |
-| `TableAttributes` |  |
-
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

@@ -33,51 +33,6 @@ Azure's `relationaldb` service · portable interface `driver.RelationalDB` · [A
 
 Discovered by type assertion; only some providers implement these.
 
-### AADAdmins
-
-AADAdmins is an OPTIONAL Azure SQL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `DeleteAADAdmin` |  |
-| `GetAADAdmin` |  |
-| `ListAADAdmins` |  |
-| `SetAADAdmin` |  |
-
-### AdvancedRestore
-
-AdvancedRestore is an OPTIONAL capability covering snapshot copy and
-
-| Operation | Description |
-| --- | --- |
-| `CopyDBClusterSnapshot` |  |
-| `CopyDBSnapshot` |  |
-| `RestoreDBClusterToPointInTime` |  |
-| `RestoreDBInstanceToPointInTime` |  |
-
-### AlloyDB
-
-AlloyDB is an OPTIONAL capability for AlloyDB-specific cluster/instance
-
-| Operation | Description |
-| --- | --- |
-| `AlloyDBClusterInfo` |  |
-| `AlloyDBInstanceInfo` |  |
-| `CreateAlloyDBCluster` |  |
-| `CreateAlloyDBInstance` |  |
-| `CreateSecondaryCluster` |  |
-| `FailoverInstance` |  |
-| `PromoteCluster` |  |
-| `RestartInstance` |  |
-
-### BackupRestorer
-
-BackupRestorer is an OPTIONAL capability for restoring a backup in place
-
-| Operation | Description |
-| --- | --- |
-| `RestoreBackup` |  |
-
 ### BatchConfigurations
 
 BatchConfigurations is an OPTIONAL capability for applying several server
@@ -85,33 +40,6 @@ BatchConfigurations is an OPTIONAL capability for applying several server
 | Operation | Description |
 | --- | --- |
 | `BatchSetConfigurations` |  |
-
-### Clonable
-
-Clonable is an OPTIONAL capability that copies an instance to a new one
-
-| Operation | Description |
-| --- | --- |
-| `CloneInstance` |  |
-
-### ClusterEndpoints
-
-ClusterEndpoints is an OPTIONAL capability for Aurora custom cluster
-
-| Operation | Description |
-| --- | --- |
-| `CreateDBClusterEndpoint` |  |
-| `DeleteDBClusterEndpoint` |  |
-| `DescribeDBClusterEndpoints` |  |
-| `ModifyDBClusterEndpoint` |  |
-
-### ClusterFailover
-
-ClusterFailover is an OPTIONAL capability to fail a cluster over to a
-
-| Operation | Description |
-| --- | --- |
-| `FailoverDBCluster` |  |
 
 ### Configurations
 
@@ -122,29 +50,6 @@ Configurations is an OPTIONAL capability for reading and setting server
 | `GetConfiguration` |  |
 | `ListConfigurations` |  |
 | `SetConfiguration` |  |
-
-### DBProxies
-
-DBProxies is an OPTIONAL capability for RDS Proxy, discovered by type
-
-| Operation | Description |
-| --- | --- |
-| `CreateDBProxy` |  |
-| `DeleteDBProxy` |  |
-| `DeregisterDBProxyTargets` |  |
-| `DescribeDBProxies` |  |
-| `DescribeDBProxyTargetGroups` |  |
-| `DescribeDBProxyTargets` |  |
-| `ModifyDBProxy` |  |
-| `RegisterDBProxyTargets` |  |
-
-### DatabaseUpdater
-
-DatabaseUpdater is an OPTIONAL capability for updating a logical database's
-
-| Operation | Description |
-| --- | --- |
-| `UpdateDatabase` |  |
 
 ### Databases
 
@@ -157,31 +62,6 @@ Databases is an OPTIONAL capability for managing the logical databases inside
 | `GetDatabase` |  |
 | `ListDatabases` |  |
 
-### ElasticPools
-
-ElasticPools is an OPTIONAL Azure SQL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `CreateElasticPool` |  |
-| `DeleteElasticPool` |  |
-| `GetElasticPool` |  |
-| `ListElasticPools` |  |
-| `UpdateElasticPool` |  |
-
-### EventSubscriptions
-
-EventSubscriptions is an OPTIONAL capability for RDS event subscriptions and
-
-| Operation | Description |
-| --- | --- |
-| `CreateEventSubscription` |  |
-| `DeleteEventSubscription` |  |
-| `DescribeEventCategories` |  |
-| `DescribeEventSubscriptions` |  |
-| `DescribeEvents` |  |
-| `ModifyEventSubscription` |  |
-
 ### Failover
 
 Failover is an OPTIONAL capability that triggers a server failover to its
@@ -189,19 +69,6 @@ Failover is an OPTIONAL capability that triggers a server failover to its
 | Operation | Description |
 | --- | --- |
 | `FailoverInstance` |  |
-
-### FailoverGroups
-
-FailoverGroups is an OPTIONAL Azure SQL capability, discovered by type
-
-| Operation | Description |
-| --- | --- |
-| `CreateFailoverGroup` |  |
-| `DeleteFailoverGroup` |  |
-| `FailoverFailoverGroup` |  |
-| `GetFailoverGroup` |  |
-| `ListFailoverGroups` |  |
-| `UpdateFailoverGroup` |  |
 
 ### FirewallRules
 
@@ -214,97 +81,6 @@ FirewallRules is an OPTIONAL capability for managing server firewall rules,
 | `GetFirewallRule` |  |
 | `ListFirewallRules` |  |
 
-### GlobalClusters
-
-GlobalClusters is an OPTIONAL capability for Aurora global clusters,
-
-| Operation | Description |
-| --- | --- |
-| `CreateGlobalCluster` |  |
-| `DeleteGlobalCluster` |  |
-| `DescribeGlobalClusters` |  |
-| `ModifyGlobalCluster` |  |
-| `RemoveFromGlobalCluster` |  |
-
-### ManagedInstances
-
-ManagedInstances is an OPTIONAL Azure SQL capability covering SQL Managed
-
-| Operation | Description |
-| --- | --- |
-| `CreateManagedDatabase` |  |
-| `CreateManagedInstance` |  |
-| `DeleteManagedDatabase` |  |
-| `DeleteManagedInstance` |  |
-| `FailoverManagedInstance` |  |
-| `GetManagedDatabase` |  |
-| `GetManagedInstance` |  |
-| `ListManagedDatabases` |  |
-| `ListManagedInstances` |  |
-| `StartManagedInstance` |  |
-| `StopManagedInstance` |  |
-| `UpdateManagedInstance` |  |
-
-### Metadata
-
-Metadata is an OPTIONAL capability exposing the engine-version and
-
-| Operation | Description |
-| --- | --- |
-| `DescribeDBEngineVersions` |  |
-| `DescribeOrderableDBInstanceOptions` |  |
-
-### OptionGroups
-
-OptionGroups is an OPTIONAL capability. Option groups are an AWS-only
-
-| Operation | Description |
-| --- | --- |
-| `CopyOptionGroup` |  |
-| `CreateOptionGroup` |  |
-| `DeleteOptionGroup` |  |
-| `DescribeOptionGroupOptions` |  |
-| `DescribeOptionGroups` |  |
-| `ModifyOptionGroup` |  |
-
-### ParameterGroups
-
-ParameterGroups is an OPTIONAL capability covering both DB parameter groups
-
-| Operation | Description |
-| --- | --- |
-| `CopyDBClusterParameterGroup` |  |
-| `CopyDBParameterGroup` |  |
-| `CreateDBClusterParameterGroup` |  |
-| `CreateDBParameterGroup` |  |
-| `DeleteDBClusterParameterGroup` |  |
-| `DeleteDBParameterGroup` |  |
-| `DescribeDBClusterParameterGroups` |  |
-| `DescribeDBClusterParameters` |  |
-| `DescribeDBParameterGroups` |  |
-| `DescribeDBParameters` |  |
-| `ModifyDBClusterParameterGroup` |  |
-| `ModifyDBParameterGroup` |  |
-| `ResetDBClusterParameterGroup` |  |
-| `ResetDBParameterGroup` |  |
-
-### ReadReplicas
-
-ReadReplicas is an OPTIONAL capability for creating and promoting read
-
-| Operation | Description |
-| --- | --- |
-| `CreateDBInstanceReadReplica` |  |
-| `PromoteReadReplica` |  |
-
-### ReplicaPromotion
-
-ReplicaPromotion is an OPTIONAL capability that promotes a read replica to a
-
-| Operation | Description |
-| --- | --- |
-| `PromoteReplica` |  |
-
 ### ScopedDelete
 
 ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
@@ -312,60 +88,6 @@ ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
 | Operation | Description |
 | --- | --- |
 | `DeleteInstanceInScope` |  |
-
-### SslCerts
-
-SslCerts is an OPTIONAL capability for managing client SSL certificates,
-
-| Operation | Description |
-| --- | --- |
-| `CreateSslCert` |  |
-| `DeleteSslCert` |  |
-| `GetSslCert` |  |
-| `ListSslCerts` |  |
-
-### SubnetGroups
-
-SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —
-
-| Operation | Description |
-| --- | --- |
-| `CreateDBSubnetGroup` |  |
-| `DeleteDBSubnetGroup` |  |
-| `DescribeDBSubnetGroups` |  |
-
-### Tagging
-
-Tagging is an OPTIONAL capability for resource-level tag operations,
-
-| Operation | Description |
-| --- | --- |
-| `AddTagsToResource` |  |
-| `ListTagsForResource` |  |
-| `RemoveTagsFromResource` |  |
-
-### Users
-
-Users is an OPTIONAL capability for managing database user accounts,
-
-| Operation | Description |
-| --- | --- |
-| `CreateUser` |  |
-| `DeleteUser` |  |
-| `GetUser` |  |
-| `ListUsers` |  |
-| `UpdateUser` |  |
-
-### VNetRules
-
-VNetRules is an OPTIONAL Azure SQL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `CreateVNetRule` |  |
-| `DeleteVNetRule` |  |
-| `GetVNetRule` |  |
-| `ListVNetRules` |  |
 
 ## Not in scope
 
