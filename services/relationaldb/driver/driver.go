@@ -592,6 +592,43 @@ type DatabaseUpdater interface {
 	UpdateDatabase(ctx context.Context, cfg DatabaseConfig) (*Database, error)
 }
 
+// Transparent-data-encryption states, matching Microsoft.Sql's
+// TransparentDataEncryptionState. Azure SQL databases are encrypted at rest by
+// default, so a freshly created database reports TDEStateEnabled.
+const (
+	TDEStateEnabled  = "Enabled"
+	TDEStateDisabled = "Disabled"
+)
+
+// TransparentDataEncryptionConfig sets a logical database's TDE state.
+type TransparentDataEncryptionConfig struct {
+	Server   string
+	Database string
+	State    string
+}
+
+// TransparentDataEncryption is a logical database's transparent-data-encryption
+// configuration. Azure models it as a single "current" sub-resource of the
+// database, so it is keyed by (server, database) and carries just the state.
+type TransparentDataEncryption struct {
+	Server   string
+	Database string
+	State    string
+}
+
+// TransparentDataEncryptions is an OPTIONAL Azure SQL capability, discovered by
+// type assertion. It exposes the database transparentDataEncryption/current
+// sub-resource (set/get/list). A TDE record is materialized as Enabled when a
+// database is created, so a database always has one. Drivers that do not
+// implement it answer InvalidAction.
+type TransparentDataEncryptions interface {
+	SetTransparentDataEncryption(
+		ctx context.Context, cfg TransparentDataEncryptionConfig,
+	) (*TransparentDataEncryption, error)
+	GetTransparentDataEncryption(ctx context.Context, server, database string) (*TransparentDataEncryption, error)
+	ListTransparentDataEncryption(ctx context.Context, server, database string) ([]TransparentDataEncryption, error)
+}
+
 // FirewallRuleConfig describes a server firewall rule to create or replace.
 type FirewallRuleConfig struct {
 	Server         string

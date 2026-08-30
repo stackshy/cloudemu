@@ -27,6 +27,7 @@ type sqlSnapshot struct {
 	ManagedInstances json.RawMessage `json:"managedInstances,omitempty"`
 	ManagedDatabases json.RawMessage `json:"managedDatabases,omitempty"`
 	Databases        json.RawMessage `json:"databases,omitempty"`
+	TDE              json.RawMessage `json:"tde,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -56,6 +57,7 @@ func (m *Mock) snapshotStores(snap *sqlSnapshot) error {
 		{&snap.ManagedInstances, m.managedInstances.Snapshot},
 		{&snap.ManagedDatabases, m.managedDatabases.Snapshot},
 		{&snap.Databases, m.databases.Snapshot},
+		{&snap.TDE, m.tde.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -93,6 +95,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		{snap.ManagedInstances, m.managedInstances.LoadSnapshot},
 		{snap.ManagedDatabases, m.managedDatabases.LoadSnapshot},
 		{snap.Databases, m.databases.LoadSnapshot},
+		{snap.TDE, m.tde.LoadSnapshot},
 	}
 
 	for _, l := range loads {
