@@ -176,6 +176,10 @@ type publicIPReqProps struct {
 	PublicIPAllocationMethod string                  `json:"publicIPAllocationMethod,omitempty"`
 	IdleTimeoutInMinutes     int                     `json:"idleTimeoutInMinutes,omitempty"`
 	DNSSettings              *publicIPDNSSettingsReq `json:"dnsSettings,omitempty"`
+	// PublicIPPrefix is the optional prefix a public IP is drawn from. The mock
+	// only stores the reference (child-IP allocation from the prefix range is
+	// deferred); the prefix's publicIPAddresses[] back-reference is rebuilt from it.
+	PublicIPPrefix *armIDRef `json:"publicIPPrefix,omitempty"`
 }
 
 type publicIPDNSSettingsReq struct {
@@ -202,6 +206,9 @@ type publicIPRespProps struct {
 	// IPConfiguration is the back-reference to the NIC ipConfiguration a real
 	// publicIPAddresses GET reports once a NIC attaches the address.
 	IPConfiguration *armIDRef `json:"ipConfiguration,omitempty"`
+	// PublicIPPrefix echoes the prefix this public IP was created from, when one
+	// was supplied on the create.
+	PublicIPPrefix *armIDRef `json:"publicIPPrefix,omitempty"`
 }
 
 type publicIPDNSSettings struct {

@@ -107,7 +107,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typeNIC, typeNATGateway, typeASG, typeLocations:
+	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typePublicIPPrefix, typeNIC, typeNATGateway, typeASG, typeLocations:
 		return true
 	}
 
@@ -126,6 +126,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.routeByResourceType(w, r, rp)
+}
+
+// routeByResourceType dispatches to the per-type router. Split out of ServeHTTP
+// so the dispatch stays under the cyclomatic-complexity gate as resource types
+// are added (the same reason serveLocationsOperationStatus is separate).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeByResourceType(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	switch rp.ResourceType {
 	case typeVNet:
 		h.routeVNet(w, r, rp)
@@ -135,6 +144,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeRouteTable(w, r, rp)
 	case typePublicIP:
 		h.routePublicIP(w, r, rp)
+	case typePublicIPPrefix:
+		h.routePublicIPPrefix(w, r, rp)
 	case typeNIC:
 		h.routeNIC(w, r, rp)
 	case typeNATGateway:
@@ -629,6 +640,7 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	recordErr(h.purgeNSGs(ctx, resourceGroup))
 	recordErr(h.purgeRouteTables(ctx, resourceGroup))
 	h.purgeASGs(ctx, resourceGroup)
+	h.purgePublicIPPrefixes(ctx, resourceGroup)
 
 	return firstErr
 }
@@ -1364,6 +1376,13 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
 	tags = mergeTags(tags, armPublicIPRGTag, rp.ResourceGroup)
 
+	// A public IP may be drawn from a public IP prefix. The mock only records the
+	// reference (deferred child-IP allocation); the prefix rebuilds its read-only
+	// publicIPAddresses[] back-reference by scanning for this internal tag.
+	if req.Properties.PublicIPPrefix != nil && req.Properties.PublicIPPrefix.ID != "" {
+		tags = mergeTags(tags, armPublicIPPrefixTag, req.Properties.PublicIPPrefix.ID)
+	}
+
 	cfg := netdriver.ElasticIPConfig{
 		SKU:                sku,
 		AllocationMethod:   req.Properties.PublicIPAllocationMethod,
@@ -1868,6 +1887,10 @@ func (h *Handler) toPublicIPResponse(
 	}
 
 	out.Properties.IPConfiguration = h.publicIPConfigurationRef(ctx, rp.Subscription, id)
+
+	if prefixID := tagOr(info.Tags, armPublicIPPrefixTag, ""); prefixID != "" {
+		out.Properties.PublicIPPrefix = &armIDRef{ID: prefixID}
+	}
 
 	return out
 }

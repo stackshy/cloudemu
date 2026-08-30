@@ -63,6 +63,7 @@ const (
 	netKindPeering       = "vpc-peering-connection"
 	netKindRouteTable    = "route-table"
 	netKindAppSecGroup   = "application-security-group"
+	netKindPubIPPrefix   = "public-ip-prefix"
 )
 
 // computeInstanceARN builds the canonical identifier for a compute instance.
@@ -173,6 +174,7 @@ var azureNetworkTypeByKind = map[string]string{ //nolint:gochecknoglobals // sta
 	netKindPeering:       "virtualNetworkPeerings",
 	netKindRouteTable:    "routeTables",
 	netKindAppSecGroup:   "applicationSecurityGroups",
+	netKindPubIPPrefix:   "publicIPPrefixes",
 }
 
 func azureNetworkType(kind string) string {

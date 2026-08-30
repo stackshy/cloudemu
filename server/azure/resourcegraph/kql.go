@@ -72,6 +72,7 @@ const (
 	azureTypeRoleDef   = "microsoft.authorization/roledefinitions"
 	azureTypeNATGw     = "microsoft.network/natgateways"
 	azureTypeASG       = "microsoft.network/applicationsecuritygroups"
+	azureTypePubIPPfx  = "microsoft.network/publicipprefixes"
 	azureTypeRouteTbl  = "microsoft.network/routetables"
 	azureTypeVNetPeer  = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
 	azureTypeMLWorkspc = "microsoft.machinelearningservices/workspaces"
@@ -374,6 +375,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeRoleDef:   {portableIAM, "Role"},
 	azureTypeNATGw:     {portableNetworking, "NatGateway"},
 	azureTypeASG:       {portableNetworking, "ApplicationSecurityGroup"},
+	azureTypePubIPPfx:  {portableNetworking, "PublicIPPrefix"},
 	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},
 	azureTypeVNetPeer:  {portableNetworking, "PeeringConnection"},
 	azureTypeMLWorkspc: {portableAzureML, "Workspace"},

@@ -95,6 +95,7 @@ const (
 	TypePeeringConnection = "PeeringConnection"
 	TypeRouteTable        = "RouteTable"
 	TypeAppSecurityGroup  = "ApplicationSecurityGroup"
+	TypePublicIPPrefix    = "PublicIPPrefix"
 	TypeModel             = "Model"
 	TypeEndpoint          = "Endpoint"
 	TypeNotebookInstance  = "NotebookInstance"
@@ -438,12 +439,48 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 
 	out = append(out, ifaces...)
 
-	return append(out, e.walkApplicationSecurityGroups(ctx)...), nil
+	out = append(out, e.walkApplicationSecurityGroups(ctx)...)
+
+	return append(out, e.walkPublicIPPrefixes(ctx)...), nil
+}
+
+// walkPublicIPPrefixes adds Azure public IP prefixes when the driver models them
+// (an optional, type-asserted capability only the Azure provider implements).
+// AWS/GCP fail the assertion and contribute nothing.
+//
+//nolint:dupl // mirrors walkApplicationSecurityGroups over a distinct type-asserted Azure capability
+func (e *Engine) walkPublicIPPrefixes(ctx context.Context) []Resource {
+	svc, ok := e.drivers.Networking.(netdriver.AzurePublicIPPrefixes)
+	if !ok {
+		return nil
+	}
+
+	prefixes := svc.ListAzurePublicIPPrefixes(ctx, "")
+
+	out := make([]Resource, 0, len(prefixes))
+
+	for i := range prefixes {
+		region := prefixes[i].Location
+		if region == "" {
+			region = e.region
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypePublicIPPrefix,
+			ID:     prefixes[i].Name,
+			ARN:    e.networkARN(netKindPubIPPrefix, prefixes[i].Name, prefixes[i].ResourceGroup),
+			Region: region, Tags: copyTags(prefixes[i].Tags),
+		})
+	}
+
+	return out
 }
 
 // walkApplicationSecurityGroups adds Azure application security groups when the
 // driver models them (an optional, type-asserted capability only the Azure
 // provider implements). AWS/GCP fail the assertion and contribute nothing.
+//
+//nolint:dupl // mirrors walkPublicIPPrefixes over a distinct type-asserted Azure capability
 func (e *Engine) walkApplicationSecurityGroups(ctx context.Context) []Resource {
 	svc, ok := e.drivers.Networking.(netdriver.AzureApplicationSecurityGroups)
 	if !ok {

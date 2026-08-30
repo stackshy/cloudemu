@@ -38,6 +38,11 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 		Name: "asg1", ResourceGroup: "rg1", Location: "eastus", Tags: map[string]string{"env": "prod"},
 	})
 
+	storedPrefix := src.PutAzurePublicIPPrefix(ctx, driver.AzurePublicIPPrefix{
+		Name: "pfx1", ResourceGroup: "rg1", Location: "eastus", PrefixLength: 28,
+		SKUName: "Standard", SKUTier: "Regional", Tags: map[string]string{"team": "net"},
+	})
+
 	data, err := src.Snapshot(ctx, true)
 	require.NoError(t, err)
 
@@ -70,6 +75,14 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	asg, ok := dst.GetAzureApplicationSecurityGroup(ctx, "rg1", "asg1")
 	require.True(t, ok, "ASG must survive snapshot/restore")
 	assert.Equal(t, "prod", asg.Tags["env"])
+
+	// The public IP prefix survives with its synthesized CIDR and sku intact.
+	pfx, ok := dst.GetAzurePublicIPPrefix(ctx, "rg1", "pfx1")
+	require.True(t, ok, "public IP prefix must survive snapshot/restore")
+	assert.Equal(t, storedPrefix.IPPrefix, pfx.IPPrefix, "synthesized ipPrefix must round-trip")
+	assert.Equal(t, int32(28), pfx.PrefixLength)
+	assert.Equal(t, "Standard", pfx.SKUName)
+	assert.Equal(t, "net", pfx.Tags["team"])
 }
 
 // TestSnapshotEmpty confirms a fresh mock snapshots and restores without error.

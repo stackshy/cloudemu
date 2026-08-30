@@ -51,7 +51,7 @@ func (h *Handler) asgCap() (netdriver.AzureApplicationSecurityGroups, bool) {
 // ApplicationSecurityGroupsClient pollers complete on a synchronous terminal
 // 200, so create/get/delete all answer sync-200 (no 202 async plumbing).
 //
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; capability-gated dispatch mirrored by routePublicIPPrefix over a distinct type
 func (h *Handler) routeASG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	svc, ok := h.asgCap()
 	if !ok {

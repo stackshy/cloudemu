@@ -82,11 +82,23 @@ type Mock struct {
 	// azureASGs holds the Azure-only application security groups (tag-like
 	// groupings with no cross-cloud equivalent), keyed by (resourceGroup, name).
 	azureASGs *memstore.Store[driver.AzureApplicationSecurityGroup]
+	// azurePrefixes holds the Azure-only public IP prefixes (a reserved CIDR range
+	// with no cross-cloud equivalent), keyed by (resourceGroup, name).
+	azurePrefixes *memstore.Store[driver.AzurePublicIPPrefix]
 	// nicMu serializes network-interface create/update, whose private-IP
 	// allocation is a read-modify-write across the nics store (memstore is
 	// per-op safe but can't make that sequence atomic).
 	nicMu sync.RWMutex
-	opts  *config.Options
+	// prefixMu serializes public-IP-prefix create/update: the CIDR allocation is a
+	// read-modify-write across nextPrefixBlock and the azurePrefixes store that
+	// memstore cannot make atomic on its own.
+	prefixMu sync.Mutex
+	// nextPrefixBlock is the monotonic /24 block index the CIDR allocator hands out.
+	// It is intentionally not serialized: each prefix persists its own synthesized
+	// IPPrefix, so a restore preserves every allocation, and the counter only needs
+	// to be unique within a running process.
+	nextPrefixBlock uint32
+	opts            *config.Options
 }
 
 // New creates a new Azure Virtual Network mock.
@@ -110,6 +122,7 @@ func New(opts *config.Options) *Mock {
 		azureRouteTableMeta: memstore.New[driver.AzureRouteTableMetadata](),
 		azureVNetPeerings:   memstore.New[[]driver.AzureVNetPeering](),
 		azureASGs:           memstore.New[driver.AzureApplicationSecurityGroup](),
+		azurePrefixes:       memstore.New[driver.AzurePublicIPPrefix](),
 		opts:                opts,
 	}
 }
