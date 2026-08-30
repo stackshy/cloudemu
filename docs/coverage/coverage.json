@@ -6845,6 +6845,27 @@
             "doc": "UpdateMessage updates a message's content (when body is non-nil) and its"
           }
         ]
+      },
+      {
+        "name": "AzureSessionQueue",
+        "doc": "AzureSessionQueue is the optional Azure Service Bus session surface, discovered",
+        "operations": [
+          {
+            "name": "GetSessionState",
+            "doc": "GetSessionState and SetSessionState read and write a session's opaque state."
+          },
+          {
+            "name": "ReceiveSession",
+            "doc": "ReceiveSession returns up to maxMessages currently-visible messages for a"
+          },
+          {
+            "name": "RenewSessionLock",
+            "doc": "RenewSessionLock extends the session lock held by lockOwner."
+          },
+          {
+            "name": "SetSessionState"
+          }
+        ]
       }
     ],
     "providers": {
