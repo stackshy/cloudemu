@@ -41,6 +41,47 @@ func TestServeEngineFlagsPointToEnginesImage(t *testing.T) {
 	}
 }
 
+// TestEnginesHintSharedBetweenServeAndDoctor asserts serve and doctor surface the
+// one canonical enginesImagePointer in their actual output, so a future edit to
+// the const changes every code path and none can silently hardcode a divergent
+// hint. It exercises all three call sites: serve's error, serve's --help footer,
+// and the doctor report.
+func TestEnginesHintSharedBetweenServeAndDoctor(t *testing.T) {
+	// serve's engines-pointer error.
+	if !strings.Contains(errEnginesNotInLeanBinary.Error(), enginesImagePointer) {
+		t.Fatalf("serve error %q does not contain the shared hint %q",
+			errEnginesNotInLeanBinary.Error(), enginesImagePointer)
+	}
+
+	// serve's --help footer.
+	var c serveflags.CommonConfig
+
+	fs := newServeFlagSet(&c)
+
+	var help strings.Builder
+
+	fs.SetOutput(&help)
+	fs.Usage()
+
+	if !strings.Contains(help.String(), enginesImagePointer) {
+		t.Fatalf("serve --help footer does not contain the shared hint %q:\n%s",
+			enginesImagePointer, help.String())
+	}
+
+	// doctor's report footer.
+	var report strings.Builder
+
+	writeDoctorReport(&report, "127.0.0.1",
+		[]portCheck{{"AWS", "4566", true}},
+		func(string) bool { return true },
+		func(string) (string, error) { return "", errors.New("not found") })
+
+	if !strings.Contains(report.String(), enginesImagePointer) {
+		t.Fatalf("doctor report does not contain the shared hint %q:\n%s",
+			enginesImagePointer, report.String())
+	}
+}
+
 // TestServeAccountIDValueIsNotAnEngineFlag is the false-positive guard: with
 // `serve --account-id --db`, `--db` is the VALUE of --account-id (a string flag),
 // not a set flag. fs.Visit reports account-id set and db not set, so the engines

@@ -25,10 +25,8 @@ const (
 	markFail = "[fail]"
 )
 
-// enginesImagePointer is the one-line pointer at the :engines image, kept
-// identical to the message serve prints (errEnginesNotInLeanBinary) so the CLI
-// speaks with one voice about where the real engines live.
-const enginesImagePointer = "docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:engines --all-real"
+// The doctor echoes serve's canonical enginesImagePointer (defined in serve.go)
+// so the two commands can't drift on where the real engines live.
 
 // portCheck is one default endpoint the emulator would bind. required marks a
 // port the default provider set (aws,azure,gcp) plus the k8s data-plane bind on
