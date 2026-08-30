@@ -18,6 +18,39 @@ import (
 // errStateFileRequired is returned when --persist is set without --state-file.
 var errStateFileRequired = errors.New("--persist requires --state-file")
 
+// errEnginesNotInLeanBinary is returned when engine flags/env are passed to the
+// lean cloudemu binary, which deliberately does not compile the real engines
+// (postgres/redis/subprocess/docker/localfs) — those heavy deps live only in the
+// :engines image (contrib/server). Rather than silently ignore the intent, serve
+// points the user at the batteries image.
+var errEnginesNotInLeanBinary = errors.New(
+	"real engines (postgres/redis/subprocess/docker/localfs) aren't compiled into the lean cloudemu binary.\n" +
+		"run the batteries image:  docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:engines --all-real\n" +
+		"(or build ./contrib/server from a repo checkout). see https://cloudemu.info/docs/standalone-server")
+
+// engineFlag names a real-engine selector understood by the :engines image
+// (contrib/server) but only stubbed in the lean binary. Env is its environment
+// form ("" when it has none). This single iterable list is the source of truth
+// PR-2 will promote into server/serveflags; both the stub registration and the
+// detector range over it, so a new engine capability is one line here.
+type engineFlag struct{ Name, Env string }
+
+// engineAllRealFlag is the one boolean engine flag; every other engine flag
+// takes a string value.
+const engineAllRealFlag = "all-real"
+
+//nolint:gochecknoglobals // single source of truth for engine flag names/envs; promoted to server/serveflags in PR-2
+var engineFlags = []engineFlag{
+	{"db", "CLOUDEMU_DB"},
+	{"cache", "CLOUDEMU_CACHE"},
+	{"functions", "CLOUDEMU_FUNCTIONS"},
+	{"compute", "CLOUDEMU_COMPUTE"},
+	{"containers", "CLOUDEMU_CONTAINERS"},
+	{"storage", "CLOUDEMU_STORAGE"},
+	{"storage-dir", ""},
+	{engineAllRealFlag, ""},
+}
+
 // serveConfig holds the resolved serve flags.
 type serveConfig struct {
 	providers         string
@@ -69,6 +102,12 @@ func runServe(args []string) error {
 		return err
 	}
 
+	// The lean binary can't run real engines; point the user at the :engines
+	// image before binding listeners or building providers.
+	if enginesRequested(fs, os.Getenv) {
+		return errEnginesNotInLeanBinary
+	}
+
 	if (c.tlsCert == "") != (c.tlsKey == "") {
 		return errors.New("--tls-cert and --tls-key must be given together")
 	}
@@ -102,6 +141,86 @@ func runServe(args []string) error {
 // (the cross-entrypoint parity guard) without executing a server.
 func newServeFlagSet(c *serveConfig) *flag.FlagSet {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	registerRealServeFlags(fs, c)
+	// Register the engine flags as inert stubs so the REAL parser handles every
+	// syntax (--db=x, --db x, -db) and an engine name that appears as another
+	// flag's value stays a value. runServe detects intent via fs.Visit.
+	registerEngineStubs(fs)
+
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintf(out, "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
+		// Hide the engine stubs from --help: render from a real-only clone so the
+		// output matches stdlib's exact formatting without the engine flags, then
+		// point at the :engines image in a footer.
+		realOnly := flag.NewFlagSet("serve", flag.ContinueOnError)
+		realOnly.SetOutput(out)
+		registerRealServeFlags(realOnly, &serveConfig{})
+		realOnly.PrintDefaults()
+		fmt.Fprintf(out, "\nReal engines (postgres/redis/subprocess/docker/localfs) live in the "+
+			"cloudemu:engines image, not this lean binary:\n"+
+			"  docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:engines --all-real\n")
+	}
+
+	return fs
+}
+
+// registerEngineStubs registers each engine flag as an inert stub whose target is
+// discarded. Their only purpose is to let the flag tokenizer accept the flag in
+// any form; detection is done afterwards via fs.Visit, never these values.
+func registerEngineStubs(fs *flag.FlagSet) {
+	for _, f := range engineFlags {
+		if f.Name == engineAllRealFlag {
+			_ = fs.Bool(f.Name, false, "")
+
+			continue
+		}
+
+		_ = fs.String(f.Name, "", "")
+	}
+}
+
+// isEngineFlag reports whether name is one of the real-engine selector flags.
+func isEngineFlag(name string) bool {
+	for _, f := range engineFlags {
+		if f.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// enginesRequested reports whether the user asked for a real engine — either by
+// setting an engine flag on the command line (detected via fs.Visit after a real
+// parse, so an engine name that is another flag's value does not count) or via a
+// non-empty engine env var.
+func enginesRequested(fs *flag.FlagSet, getenv func(string) string) bool {
+	set := false
+
+	fs.Visit(func(f *flag.Flag) {
+		if isEngineFlag(f.Name) {
+			set = true
+		}
+	})
+
+	if set {
+		return true
+	}
+
+	for _, f := range engineFlags {
+		if f.Env != "" && getenv(f.Env) != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// registerRealServeFlags registers every real serve flag against c. It is called
+// both for the live flag set and (with a throwaway config) to render --help
+// without the engine stubs.
+func registerRealServeFlags(fs *flag.FlagSet, c *serveConfig) {
 	// OCI is not started by default: it stays opt-in until its services land, so
 	// the default set never binds a port that serves nothing.
 	fs.StringVar(&c.providers, "providers", "aws,azure,gcp", "comma-separated providers to start: aws,azure,gcp,oci")
@@ -150,13 +269,6 @@ func newServeFlagSet(c *serveConfig) *flag.FlagSet {
 			"principals that have IAM policies. Azure: validate each request's Bearer token claims (accepted audience, expiry, a "+
 			"principal claim) and reject missing/malformed/expired/wrong-audience tokens with 401 — the token SIGNATURE is NOT "+
 			"verified (no Azure AD signing key), so this is claims-based authentication only; RBAC authorization is a follow-up")
-
-	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
-		fs.PrintDefaults()
-	}
-
-	return fs
 }
 
 // toServerkitConfig maps the resolved serve flags onto a serverkit.Config for
