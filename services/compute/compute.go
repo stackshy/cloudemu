@@ -435,6 +435,8 @@ func (c *Compute) DescribeSnapshots(ctx context.Context, ids []string) ([]driver
 }
 
 // CreateImage creates a machine image from an instance.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (c *Compute) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	out, err := c.do(ctx, "CreateImage", cfg, func() (any, error) { return c.driver.CreateImage(ctx, cfg) })
 	if err != nil {
