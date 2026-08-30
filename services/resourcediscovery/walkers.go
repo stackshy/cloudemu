@@ -94,6 +94,7 @@ const (
 	TypeInternetGateway   = "InternetGateway"
 	TypePeeringConnection = "PeeringConnection"
 	TypeRouteTable        = "RouteTable"
+	TypeAppSecurityGroup  = "ApplicationSecurityGroup"
 	TypeModel             = "Model"
 	TypeEndpoint          = "Endpoint"
 	TypeNotebookInstance  = "NotebookInstance"
@@ -429,7 +430,39 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		return nil, fmt.Errorf("walkNetworking interfaces: %w", err)
 	}
 
-	return append(out, ifaces...), nil
+	out = append(out, ifaces...)
+
+	return append(out, e.walkApplicationSecurityGroups(ctx)...), nil
+}
+
+// walkApplicationSecurityGroups adds Azure application security groups when the
+// driver models them (an optional, type-asserted capability only the Azure
+// provider implements). AWS/GCP fail the assertion and contribute nothing.
+func (e *Engine) walkApplicationSecurityGroups(ctx context.Context) []Resource {
+	svc, ok := e.drivers.Networking.(netdriver.AzureApplicationSecurityGroups)
+	if !ok {
+		return nil
+	}
+
+	asgs := svc.ListAzureApplicationSecurityGroups(ctx, "")
+
+	out := make([]Resource, 0, len(asgs))
+
+	for i := range asgs {
+		region := asgs[i].Location
+		if region == "" {
+			region = e.region
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeAppSecurityGroup,
+			ID:     asgs[i].Name,
+			ARN:    e.networkARN(netKindAppSecGroup, asgs[i].Name, asgs[i].ResourceGroup),
+			Region: region, Tags: copyTags(asgs[i].Tags),
+		})
+	}
+
+	return out
 }
 
 // walkNetworkInterfaces adds interfaces when the driver models them.

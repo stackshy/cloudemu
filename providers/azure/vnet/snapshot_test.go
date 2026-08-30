@@ -34,6 +34,10 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	src.PutAzureApplicationSecurityGroup(ctx, driver.AzureApplicationSecurityGroup{
+		Name: "asg1", ResourceGroup: "rg1", Location: "eastus", Tags: map[string]string{"env": "prod"},
+	})
+
 	data, err := src.Snapshot(ctx, true)
 	require.NoError(t, err)
 
@@ -61,6 +65,11 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	require.Len(t, got.IPConfigs, 1)
 	assert.Equal(t, subnet.ID, got.IPConfigs[0].SubnetID)
 	assert.Equal(t, nic.MACAddress, got.MACAddress)
+
+	// The application security group survives under its ARM addressing pair.
+	asg, ok := dst.GetAzureApplicationSecurityGroup(ctx, "rg1", "asg1")
+	require.True(t, ok, "ASG must survive snapshot/restore")
+	assert.Equal(t, "prod", asg.Tags["env"])
 }
 
 // TestSnapshotEmpty confirms a fresh mock snapshots and restores without error.

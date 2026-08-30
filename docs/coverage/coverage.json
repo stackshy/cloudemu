@@ -7204,6 +7204,28 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureApplicationSecurityGroups",
+        "doc": "AzureApplicationSecurityGroups is the Azure-only application-security-group",
+        "operations": [
+          {
+            "name": "DeleteAzureApplicationSecurityGroup",
+            "doc": "DeleteAzureApplicationSecurityGroup removes the ASG, reporting whether it"
+          },
+          {
+            "name": "GetAzureApplicationSecurityGroup",
+            "doc": "GetAzureApplicationSecurityGroup returns the ASG identified by"
+          },
+          {
+            "name": "ListAzureApplicationSecurityGroups",
+            "doc": "ListAzureApplicationSecurityGroups returns the ASGs in a resource group, or"
+          },
+          {
+            "name": "PutAzureApplicationSecurityGroup",
+            "doc": "PutAzureApplicationSecurityGroup creates or replaces an ASG in place (a"
+          }
+        ]
+      },
+      {
         "name": "AzureNetworkInterfaces",
         "doc": "AzureNetworkInterfaces is the Azure-specific network-interface surface,",
         "operations": [

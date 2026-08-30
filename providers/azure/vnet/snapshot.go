@@ -36,6 +36,7 @@ type vnetSnapshot struct {
 	AzureNSGMeta        json.RawMessage `json:"azureNsgMeta,omitempty"`
 	AzureRouteTableMeta json.RawMessage `json:"azureRouteTableMeta,omitempty"`
 	AzureVNetPeerings   json.RawMessage `json:"azureVnetPeerings,omitempty"`
+	AzureASGs           json.RawMessage `json:"azureAsgs,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -72,6 +73,7 @@ func (m *Mock) snapshotStores(snap *vnetSnapshot) error {
 		{&snap.AzureNSGMeta, m.azureNSGMeta.Snapshot},
 		{&snap.AzureRouteTableMeta, m.azureRouteTableMeta.Snapshot},
 		{&snap.AzureVNetPeerings, m.azureVNetPeerings.Snapshot},
+		{&snap.AzureASGs, m.azureASGs.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -120,6 +122,7 @@ func (m *Mock) restoreStores(snap *vnetSnapshot) error {
 		{snap.AzureNSGMeta, m.azureNSGMeta.LoadSnapshot},
 		{snap.AzureRouteTableMeta, m.azureRouteTableMeta.LoadSnapshot},
 		{snap.AzureVNetPeerings, m.azureVNetPeerings.LoadSnapshot},
+		{snap.AzureASGs, m.azureASGs.LoadSnapshot},
 	}
 
 	for _, l := range loads {

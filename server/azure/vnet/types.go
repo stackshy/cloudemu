@@ -85,16 +85,18 @@ type securityRule struct {
 }
 
 type securityRuleProps struct {
-	Description              string `json:"description,omitempty"`
-	Protocol                 string `json:"protocol,omitempty"`
-	SourceAddressPrefix      string `json:"sourceAddressPrefix,omitempty"`
-	DestinationAddressPrefix string `json:"destinationAddressPrefix,omitempty"`
-	SourcePortRange          string `json:"sourcePortRange,omitempty"`
-	DestinationPortRange     string `json:"destinationPortRange,omitempty"`
-	Access                   string `json:"access,omitempty"`
-	Priority                 int    `json:"priority,omitempty"`
-	Direction                string `json:"direction,omitempty"`
-	ProvisioningState        string `json:"provisioningState,omitempty"`
+	Description                          string     `json:"description,omitempty"`
+	Protocol                             string     `json:"protocol,omitempty"`
+	SourceAddressPrefix                  string     `json:"sourceAddressPrefix,omitempty"`
+	DestinationAddressPrefix             string     `json:"destinationAddressPrefix,omitempty"`
+	SourcePortRange                      string     `json:"sourcePortRange,omitempty"`
+	DestinationPortRange                 string     `json:"destinationPortRange,omitempty"`
+	SourceApplicationSecurityGroups      []armIDRef `json:"sourceApplicationSecurityGroups,omitempty"`
+	DestinationApplicationSecurityGroups []armIDRef `json:"destinationApplicationSecurityGroups,omitempty"`
+	Access                               string     `json:"access,omitempty"`
+	Priority                             int        `json:"priority,omitempty"`
+	Direction                            string     `json:"direction,omitempty"`
+	ProvisioningState                    string     `json:"provisioningState,omitempty"`
 }
 
 type nsgResponse struct {

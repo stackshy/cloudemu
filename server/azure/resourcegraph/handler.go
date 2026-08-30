@@ -465,6 +465,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"iam/User":                            "microsoft.managedidentity/userassignedidentities",
 	"iam/Role":                            "microsoft.authorization/roledefinitions",
 	"networking/NatGateway":               "microsoft.network/natgateways",
+	"networking/ApplicationSecurityGroup": "microsoft.network/applicationsecuritygroups",
 	"networking/RouteTable":               "microsoft.network/routetables",
 	"networking/PeeringConnection":        "microsoft.network/virtualnetworks/virtualnetworkpeerings",
 	"machinelearningservices/Workspace":   "microsoft.machinelearningservices/workspaces",
