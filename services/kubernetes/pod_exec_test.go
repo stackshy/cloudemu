@@ -6,6 +6,7 @@ package kubernetes_test
 
 import (
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,76 @@ func TestPodExec_Deterministic(t *testing.T) {
 		if string(first[ch]) != string(second[ch]) {
 			t.Fatalf("channel %d not deterministic:\n  %q\n  %q", ch, first[ch], second[ch])
 		}
+	}
+}
+
+// dialBadExec dials an exec stream requesting a subprotocol the server does not
+// register, so the wsstream handshake is rejected and conn.Open returns an
+// error. This is the failed-handshake path that used to leave a deferred
+// conn.Close() blocked forever on <-conn.ready. The client dial is expected to
+// fail; the point of interest is the server goroutine.
+func dialBadExec(t *testing.T, base, path string) {
+	t.Helper()
+
+	wsURL := strings.Replace(base+path, "http://", "ws://", 1)
+
+	cfg, err := websocket.NewConfig(wsURL, "http://localhost")
+	if err != nil {
+		t.Fatalf("websocket config: %v", err)
+	}
+	cfg.Protocol = []string{"cloudemu.unsupported.v0"}
+
+	ws, err := websocket.DialConfig(cfg)
+	if err == nil {
+		ws.Close()
+		t.Fatalf("bad-subprotocol exec dial unexpectedly succeeded; want a rejected handshake")
+	}
+}
+
+// waitGoroutinesAtMost polls (running GC first) until the live goroutine count
+// is <= limit or the window elapses. Returns true if it settled at/below limit.
+func waitGoroutinesAtMost(limit int, within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for {
+		runtime.GC()
+		if runtime.NumGoroutine() <= limit {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestPodExec_FailedHandshakeDoesNotLeakGoroutine is a regression test for the
+// leak where runSyntheticExecSession registered `defer conn.Close()` before
+// conn.Open. On a failed WebSocket handshake conn.ready is never closed, so
+// Close() (which blocks on <-conn.ready) hung forever, leaking one request
+// goroutine per bad handshake. The fix defers Close only after Open succeeds.
+func TestPodExec_FailedHandshakeDoesNotLeakGoroutine(t *testing.T) {
+	base, done := newFixture(t)
+	defer done()
+
+	createPodNamed(t, base, "wsleak")
+
+	path := "/api/v1/namespaces/default/pods/wsleak/exec?command=echo&stdout=true"
+
+	// Warm up so one-time server/client goroutines exist before the baseline.
+	dialBadExec(t, base, path)
+	waitGoroutinesAtMost(0, 500*time.Millisecond) // best-effort settle
+	baseline := runtime.NumGoroutine()
+
+	const n = 25
+	for range n {
+		dialBadExec(t, base, path)
+	}
+
+	// A correct handler returns every request goroutine; the pre-fix code
+	// leaks one per bad handshake and never settles.
+	if !waitGoroutinesAtMost(baseline+n/2, 3*time.Second) {
+		t.Fatalf("goroutines did not return after %d failed exec handshakes: baseline=%d now=%d "+
+			"(leak in the failed-handshake path)", n, baseline, runtime.NumGoroutine())
 	}
 }
 

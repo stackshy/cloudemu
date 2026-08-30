@@ -63,14 +63,18 @@ func execChannelProtocols() map[string]wsstream.ChannelProtocolConfig {
 func runSyntheticExecSession(w http.ResponseWriter, r *http.Request, route *Route) {
 	conn := wsstream.NewConn(execChannelProtocols())
 	conn.SetIdleTimeout(execStreamIdleTimeout)
-	defer conn.Close()
 
 	_, streams, err := conn.Open(w, r)
 	if err != nil {
 		// The upgrade failed (e.g. an unsupported subprotocol). The ws server
-		// already wrote the rejection, so there is nothing typed to add.
+		// already wrote the rejection, so there is nothing typed to add. Do NOT
+		// defer conn.Close() here: on a failed handshake conn.ready is never
+		// closed, so Close() would block on <-conn.ready forever and leak this
+		// request goroutine.
 		return
 	}
+	// Handshake succeeded (conn.ready is closed), so Close() won't block.
+	defer conn.Close()
 
 	// Drain stdin and resize so an interactive client isn't blocked — there is no
 	// container to receive them. Both unblock when conn.Close closes the streams.
