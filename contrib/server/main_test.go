@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	realpostgres "github.com/stackshy/cloudemu/v2/contrib/realengine/postgres"
 	realredis "github.com/stackshy/cloudemu/v2/contrib/realengine/redis"
+	"github.com/stackshy/cloudemu/v2/server/serveflags"
 )
 
 // TestBatteriesServerE2E starts the batteries-included server in-process — now
@@ -42,9 +43,9 @@ func TestBatteriesServerE2E(t *testing.T) {
 	// Build the engines directly so the Postgres server binds a known free port,
 	// making the post-shutdown release assertion deterministic.
 	opts := []config.Option{
-		config.WithAccountID(cfg.accountID),
-		config.WithRegion(cfg.region),
-		config.WithProjectID(cfg.projectID),
+		config.WithAccountID(cfg.AccountID),
+		config.WithRegion(cfg.Region),
+		config.WithProjectID(cfg.ProjectID),
 		config.WithDatabaseEngine(realpostgres.New(pgPort)),
 		config.WithCacheEngine(realredis.New()),
 	}
@@ -86,8 +87,8 @@ func TestBatteriesServerIdentityPreserved(t *testing.T) {
 	)
 
 	cfg := testConfig(t, allEnginesOff())
-	cfg.accountID = wantAccount
-	cfg.region = wantRegion
+	cfg.AccountID = wantAccount
+	cfg.Region = wantRegion
 
 	opts, _, err := buildOptions(&cfg, dockerAvailable)
 	if err != nil {
@@ -162,8 +163,8 @@ func startAWS(t *testing.T, cfg appConfig, opts []config.Option) (string, func()
 
 	go func() { done <- a.Serve(ctx) }()
 
-	awsURL := "http://" + net.JoinHostPort(cfg.host, cfg.awsPort)
-	waitListening(t, cfg.host, cfg.awsPort)
+	awsURL := "http://" + net.JoinHostPort(cfg.Host, cfg.AWSPort)
+	waitListening(t, cfg.Host, cfg.AWSPort)
 
 	var stopped bool
 
@@ -195,18 +196,20 @@ func testConfig(t *testing.T, engines engineSelection) appConfig {
 	t.Helper()
 
 	return appConfig{
-		engines:           engines,
-		providers:         []string{providerAWS, providerAzure, providerGCP},
-		host:              "127.0.0.1",
-		awsPort:           freePortStr(t),
-		azurePort:         freePortStr(t),
-		gcpPort:           freePortStr(t),
-		accountID:         "000000000000",
-		azureSubscription: "00000000-0000-0000-0000-000000000000",
-		region:            "us-east-1",
-		projectID:         "cloudemu-local",
-		shutdownTimeout:   10 * time.Second,
-		out:               io.Discard,
+		CommonConfig: serveflags.CommonConfig{
+			Host:              "127.0.0.1",
+			AWSPort:           freePortStr(t),
+			AzurePort:         freePortStr(t),
+			GCPPort:           freePortStr(t),
+			AccountID:         "000000000000",
+			AzureSubscription: "00000000-0000-0000-0000-000000000000",
+			Region:            "us-east-1",
+			ProjectID:         "cloudemu-local",
+			ShutdownTimeout:   10 * time.Second,
+		},
+		engines:   engines,
+		providers: []string{"aws", "azure", "gcp"},
+		out:       io.Discard,
 	}
 }
 
