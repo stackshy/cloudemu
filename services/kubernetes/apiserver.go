@@ -120,6 +120,11 @@ func (s *APIServer) TickAll() bool {
 	changed := false
 
 	for _, st := range states {
+		// CronJob firing is opt-in time-driven behavior like the staged Pod
+		// lifecycle — both are gated on progression (Tick and TickCronJobs
+		// self-gate), so the real-time serve ticker drives them together.
+		st.TickCronJobs()
+
 		if st.Tick() {
 			changed = true
 		}
