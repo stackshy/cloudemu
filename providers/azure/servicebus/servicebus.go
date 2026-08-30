@@ -37,7 +37,11 @@ type sbMessage struct {
 	Attributes      map[string]string
 	// SystemProps carries Azure Service Bus brokered-message system properties
 	// (MessageId, CorrelationId, Label, SessionId, ...) preserved from the send.
-	SystemProps   map[string]string
+	SystemProps map[string]string
+	// SessionID is the message's Service Bus SessionId, promoted from
+	// SystemProps["SessionId"] at enqueue so session receive can filter on it in
+	// FIFO order. Empty on a non-session entity.
+	SessionID     string
 	ReceiptHandle string
 	VisibleAt     time.Time
 	SentAt        time.Time
@@ -73,6 +77,21 @@ type queueData struct {
 	// instead of dropping it (Service Bus deadLetteringOnMessageExpiration).
 	deadLetterOnExpiration bool
 	metadata               map[string]string
+	// requiresSession enables Service Bus sessions on the entity: every message
+	// must carry a SessionId, and messages are consumed per session. sessions
+	// tracks each session's lock and state, keyed by SessionId; it is allocated
+	// only for a session entity.
+	requiresSession bool
+	sessions        map[string]*sessionState
+}
+
+// sessionState tracks a single Service Bus session's lock ownership and its
+// opaque state blob. Fields are exported so it snapshots directly like
+// sbMessage. A zero LockOwner means the session is unlocked.
+type sessionState struct {
+	LockOwner   string    // opaque receiver/lock id holding the session; "" = unlocked
+	LockedUntil time.Time // session-lock expiry
+	State       string    // opaque session-state blob (get/set session state)
 }
 
 // FunctionTrigger is a function that gets called when a message is sent to a queue.
@@ -230,6 +249,11 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		dlqConfig:              cfg.DeadLetterQueue,
 		deadLetterOnExpiration: cfg.DeadLetterOnExpiration,
 		metadata:               metadata,
+		requiresSession:        cfg.RequiresSession,
+	}
+
+	if cfg.RequiresSession {
+		qd.sessions = make(map[string]*sessionState)
 	}
 
 	m.queues.Set(url, qd)
@@ -306,21 +330,53 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		return nil, err
 	}
 
+	// A session-enabled entity requires every message to carry a SessionId (real
+	// Azure rejects a session-less send with InvalidOperation → 400).
+	sessionID := input.SystemProperties["SessionId"]
+	if qd.requiresSession && sessionID == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "SessionId is required for a session-enabled entity")
+	}
+
 	now := m.opts.Clock.Now()
 
-	// FIFO deduplication: check if same DeduplicationID was sent within 5-min window.
-	if existingID, found := findDuplicate(qd, &input, now); found {
+	// A repeat DeduplicationID (FIFO) or MessageId (Service Bus dup-detection)
+	// inside the window is silently accepted but not re-enqueued.
+	if existingID, found := findSendDuplicate(qd, &input, now); found {
 		return &driver.SendMessageOutput{MessageID: existingID}, nil
 	}
 
-	// Service Bus duplicate detection: a repeat MessageId inside the configured
-	// window is silently accepted but not re-enqueued.
-	if existingID, found := findMessageIDDuplicate(qd, &input, now); found {
-		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	msg := buildSendMessage(&input, sessionID, now, qd.delaySeconds)
+	qd.messages = append(qd.messages, msg)
+	recordSendDedup(qd, &input, now)
+
+	m.fireTrigger(input.QueueURL, msg)
+
+	m.emitMetric(qd.info.Name, map[string]float64{
+		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	})
+
+	return &driver.SendMessageOutput{
+		MessageID:  msg.ID,
+		ExpiresAt:  msg.ExpiresAt,
+		PopReceipt: msg.ReceiptHandle,
+	}, nil
+}
+
+// findSendDuplicate reports an already-accepted message id when input is a FIFO
+// (DeduplicationID) or Service Bus (MessageId) duplicate within the dedup window.
+func findSendDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
+	if id, found := findDuplicate(qd, input, now); found {
+		return id, true
 	}
 
-	msgID := idgen.GenerateID("sb-msg-")
+	return findMessageIDDuplicate(qd, input, now)
+}
 
+// buildSendMessage constructs the stored message from a send, copying the caller
+// maps and resolving the effective visibility/expiry. TimeToLive is measured
+// from the message's active time (visibleAt), so a scheduled message with a TTL
+// shorter than its delay still survives until at least its scheduled enqueue.
+func buildSendMessage(input *driver.SendMessageInput, sessionID string, now time.Time, queueDelay int) *sbMessage {
 	attrs := make(map[string]string, len(input.Attributes))
 	for k, v := range input.Attributes {
 		attrs[k] = v
@@ -333,74 +389,58 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	delaySeconds := input.DelaySeconds
 	if delaySeconds == 0 {
-		delaySeconds = qd.delaySeconds
+		delaySeconds = queueDelay
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
-	// TimeToLive is measured from when the message becomes active (its enqueue
-	// time), not from submit. For a scheduled message (ScheduledEnqueueTimeUtc in
-	// the future, carried here as a delivery delay) the effective enqueue time is
-	// visibleAt, so a message scheduled for T+delay with a TTL shorter than the
-	// delay still survives until at least T+delay and then lives for its full TTL.
-	// For a non-scheduled send visibleAt == now, so this is unchanged.
-	expiresAt := computeExpiry(visibleAt, input.MessageTTLSeconds)
 
-	// Mint a pop receipt at enqueue time so the message can be deleted or updated
-	// with the Put Message-returned receipt before its first dequeue, as Azure
-	// Queue Storage allows. A subsequent dequeue issues a fresh receipt that
-	// supersedes this one.
-	receiptHandle := idgen.GenerateID("sb-lock-")
-
-	msg := &sbMessage{
-		ID:              msgID,
+	return &sbMessage{
+		ID:              idgen.GenerateID("sb-msg-"),
 		Body:            input.Body,
 		GroupID:         input.GroupID,
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
 		SystemProps:     sysProps,
-		ReceiptHandle:   receiptHandle,
-		VisibleAt:       visibleAt,
-		SentAt:          now,
-		ExpiresAt:       expiresAt,
+		SessionID:       sessionID,
+		// A pop receipt minted at enqueue lets the message be deleted/updated with
+		// the Put Message-returned receipt before its first dequeue.
+		ReceiptHandle: idgen.GenerateID("sb-lock-"),
+		VisibleAt:     visibleAt,
+		SentAt:        now,
+		ExpiresAt:     computeExpiry(visibleAt, input.MessageTTLSeconds),
 	}
+}
 
-	qd.messages = append(qd.messages, msg)
-
+// recordSendDedup updates the FIFO and Service Bus duplicate-detection indexes
+// for a just-enqueued message.
+func recordSendDedup(qd *queueData, input *driver.SendMessageInput, now time.Time) {
 	if qd.info.FIFO && input.DeduplicationID != "" {
 		qd.deduplicationIndex[input.DeduplicationID] = now
 	}
 
 	if qd.requiresDupDetection {
-		if mid := messageIDOf(&input); mid != "" {
+		if mid := messageIDOf(input); mid != "" {
 			qd.dedupByMessageID[mid] = now
 		}
 	}
+}
 
-	// Fire Function trigger if registered.
+// fireTrigger invokes any registered Function trigger for the queue.
+func (m *Mock) fireTrigger(queueURL string, msg *sbMessage) {
 	m.mu.RLock()
-	trigger := m.triggers[input.QueueURL]
+	trigger := m.triggers[queueURL]
 	m.mu.RUnlock()
 
-	if trigger != nil {
-		triggerMsg := driver.Message{
-			MessageID:  msgID,
-			Body:       input.Body,
-			Attributes: attrs,
-			GroupID:    input.GroupID,
-		}
-
-		trigger(input.QueueURL, triggerMsg)
+	if trigger == nil {
+		return
 	}
 
-	m.emitMetric(qd.info.Name, map[string]float64{
-		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	trigger(queueURL, driver.Message{
+		MessageID:  msg.ID,
+		Body:       msg.Body,
+		Attributes: msg.Attributes,
+		GroupID:    msg.GroupID,
 	})
-
-	return &driver.SendMessageOutput{
-		MessageID:  msgID,
-		ExpiresAt:  expiresAt,
-		PopReceipt: receiptHandle,
-	}, nil
 }
 
 func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) error {
@@ -500,13 +540,9 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	}
 
 	now := m.opts.Clock.Now()
-	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now)
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now, plainReceiveAccept(qd))
 
-	// Remove DLQ-moved and expired messages in reverse order.
-	for i := len(toRemove) - 1; i >= 0; i-- {
-		idx := toRemove[i]
-		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
-	}
+	removeByIndices(qd, toRemove)
 
 	if results == nil {
 		results = []driver.Message{}
@@ -518,6 +554,19 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	})
 
 	return results, nil
+}
+
+// plainReceiveAccept is the predicate for a plain (non-session) receive. On a
+// session entity it accepts nothing — Service Bus sessions are consumed only via
+// the session receiver, so a plain REST receive against a session queue returns
+// empty, matching real Azure (where session receive is not available over REST).
+// On a non-session entity it returns nil, accepting every message unchanged.
+func plainReceiveAccept(qd *queueData) func(*sbMessage) bool {
+	if !qd.requiresSession {
+		return nil
+	}
+
+	return func(*sbMessage) bool { return false }
 }
 
 func clampMaxMessages(maxMessages int) int {
@@ -532,8 +581,13 @@ func clampMaxMessages(maxMessages int) int {
 	return maxMessages
 }
 
+// collectVisibleMessages gathers up to maxMessages visible messages that pass
+// the accept predicate (nil accepts every message), reaping expired ones and
+// dead-lettering exhausted ones. The predicate lets the plain and session
+// receive paths share one collector: the plain path skips session messages on a
+// session entity, the session path selects a single SessionId.
 func (m *Mock) collectVisibleMessages(
-	qd *queueData, maxMessages, visibilityTimeout int, now time.Time,
+	qd *queueData, maxMessages, visibilityTimeout int, now time.Time, accept func(*sbMessage) bool,
 ) (messages []driver.Message, dlqIndices []int) {
 	var results []driver.Message
 
@@ -542,6 +596,10 @@ func (m *Mock) collectVisibleMessages(
 	for i, msg := range qd.messages {
 		if len(results) >= maxMessages {
 			break
+		}
+
+		if accept != nil && !accept(msg) {
+			continue
 		}
 
 		if m.reapExpired(qd, msg, now) {
@@ -792,7 +850,7 @@ func (m *Mock) ReceiveMessagesWithOptions(
 	}
 
 	now := m.opts.Clock.Now()
-	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now)
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now, plainReceiveAccept(qd))
 
 	removeByIndices(qd, toRemove)
 

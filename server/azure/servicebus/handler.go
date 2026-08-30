@@ -169,9 +169,45 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return h.claimsDataPlane(r.URL.Path)
 	}
 
+	if isSessionPlanePath(r.URL.Path) {
+		return h.claimsSessionPlane(r.URL.Path)
+	}
+
 	_, _, ok := parseSBPath(r.URL.Path)
 
 	return ok
+}
+
+// claimsSessionPlane reports whether a /{entity}/sessions/… URL addresses a
+// Service Bus entity this handler holds, mirroring claimsDataPlane. The session
+// data plane has no Queue Storage counterpart, but the entity-resolution guard
+// keeps an unknown entity from being wrongly claimed.
+func (h *Handler) claimsSessionPlane(p string) bool {
+	tgt, ok := parseSessionPath(p)
+	if !ok || tgt.entity == "" {
+		return false
+	}
+
+	return h.holdsEntity(tgt.namespace, tgt.entity, tgt.sub)
+}
+
+// holdsEntity reports whether this handler holds the addressed Service Bus
+// entity: a subscription's parent topic when sub is set, else a flat queue or
+// topic of that name.
+func (h *Handler) holdsEntity(namespace, entity, sub string) bool {
+	if sub != "" {
+		_, ok := h.resolveTopicSubURLs(namespace, entity)
+
+		return ok
+	}
+
+	if _, ok := h.resolveQueue(namespace, entity); ok {
+		return true
+	}
+
+	_, isTopic := h.resolveTopicSubURLs(namespace, entity)
+
+	return isTopic
 }
 
 // claimsDataPlane reports whether a data-plane URL addresses a Service Bus
@@ -185,28 +221,23 @@ func (h *Handler) claimsDataPlane(p string) bool {
 		return false
 	}
 
-	if tgt.sub != "" {
-		// A "/{topic}/subscriptions/{sub}/messages" request is Service Bus's to
-		// serve whenever the parent topic exists (Queue Storage has no such
-		// shape). serveSubscriptionData then 404s a missing subscription.
-		_, ok := h.resolveTopicSubURLs(tgt.namespace, tgt.entity)
-
-		return ok
-	}
-
-	if _, ok := h.resolveQueue(tgt.namespace, tgt.entity); ok {
-		return true
-	}
-
-	_, isTopic := h.resolveTopicSubURLs(tgt.namespace, tgt.entity)
-
-	return isTopic
+	// A "/{topic}/subscriptions/{sub}/messages" request is Service Bus's to serve
+	// whenever the parent topic exists (Queue Storage has no such shape);
+	// serveSubscriptionData then 404s a missing subscription. A flat
+	// "/{entity}/messages" is claimed only when the entity resolves to a known
+	// queue/topic, so an unknown entity falls through to Queue Storage.
+	return h.holdsEntity(tgt.namespace, tgt.entity, tgt.sub)
 }
 
 // ServeHTTP routes by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isDataPlanePath(r.URL.Path) {
 		h.serveDataPlane(w, r)
+		return
+	}
+
+	if isSessionPlanePath(r.URL.Path) {
+		h.serveSessionPlane(w, r)
 		return
 	}
 
