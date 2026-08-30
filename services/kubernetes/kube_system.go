@@ -159,6 +159,10 @@ func (s *ClusterState) seedKubeProxyDaemonSetLocked() {
 				"metadata": map[string]any{"labels": labels},
 				"spec": map[string]any{
 					"containers": []any{map[string]any{"name": kubeProxyName, "image": kubeProxyImage}},
+					// Real kube-proxy tolerates every taint (operator: Exists) so it
+					// runs on every node, control-plane included — so its per-node
+					// fan-out yields one Pod per node (N) once --k8s-nodes>1.
+					"tolerations": []any{map[string]any{"operator": "Exists"}},
 				},
 			},
 		},

@@ -24,7 +24,7 @@ func noEnv(string) string { return "" }
 //nolint:gochecknoglobals // test fixture: the pinned common-flag name set
 var commonFlagNames = []string{
 	"account-id", "admin", "advertise-host", "aws-port", "azure-port", "azure-subscription",
-	"endpoints-file", "enforce-auth", "gcp-port", "host", "init-dir", "k8s-port",
+	"endpoints-file", "enforce-auth", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
 	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
 	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tls-cert", "tls-host",
@@ -69,6 +69,7 @@ func TestRegisterCommonDefaults(t *testing.T) {
 		"persist-interval":         serverkit.DefaultPersistInterval.String(),
 		"k8s-progression":          "false",
 		"k8s-progression-interval": time.Second.String(),
+		"k8s-nodes":                "1",
 		"providers":                "aws,azure,gcp",
 		"aws-port":                 "4566",
 		"shutdown-timeout":         defaultShutdownTimeout.String(),
@@ -146,7 +147,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--persist", "--state-file", "/s.json", "--persist-metadata-only",
 		"--persist-strategy", "manual", "--persist-interval", "7s",
 		"--init-dir", "/seeds",
-		"--k8s-progression", "--k8s-progression-interval", "4s",
+		"--k8s-progression", "--k8s-progression-interval", "4s", "--k8s-nodes", "3",
 	}
 	if err := fs.Parse(args); err != nil {
 		t.Fatalf("parse: %v", err)
@@ -188,6 +189,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "init-dir", sk.InitDir, "/seeds")
 	assertEqual(t, "k8s-progression", sk.K8sProgression, true)
 	assertEqual(t, "k8s-progression-interval", sk.K8sProgressionInterval, 4*time.Second)
+	assertEqual(t, "k8s-nodes", sk.K8sNodes, 3)
 
 	if !reflect.DeepEqual([]string(sk.TLSHosts), []string{"a", "b"}) {
 		t.Fatalf("tls-hosts = %v, want [a b]", sk.TLSHosts)

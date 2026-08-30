@@ -96,6 +96,11 @@ type Config struct {
 	K8sProgression         bool
 	K8sProgressionInterval time.Duration // ticker cadence for staged progression (default 1s)
 
+	// K8sNodes is the number of synthetic Nodes each cluster seeds, fixed at
+	// creation. Default (0 or 1) is a single node. >1 opts clusters into the
+	// multi-node first-fit scheduler (nodeSelector/taints/resource requests).
+	K8sNodes int
+
 	AzureSubscription string // Azure subscription GUID reported by the emulator (last-wins WithAccountID)
 
 	Admin bool // mount the /_cloudemu control plane
@@ -380,6 +385,12 @@ func (a *App) swapFresh() []closer {
 		// registers, so the real-time ticker (started in Serve) can advance them.
 		if a.cfg.K8sProgression {
 			k8s.SetLifecycleProgression(true)
+		}
+
+		// Opt-in multi-node: seed N synthetic nodes per cluster (fixed at
+		// creation) so the first-fit scheduler places Pods across them.
+		if a.cfg.K8sNodes > 1 {
+			k8s.SetNodeCount(a.cfg.K8sNodes)
 		}
 	}
 
