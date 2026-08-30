@@ -338,6 +338,137 @@ func TestNoDeadWireHandlers(t *testing.T) {
 	}
 }
 
+// renderedCapabilities returns the optional-capability names that
+// renderProviderPage actually emits for a service on a provider page, parsed
+// from the rendered markdown (the "### <Name>" headers under the "## Optional
+// capabilities" section). This exercises the real render path, so a regression
+// that un-gates the loop (listing every capability on every page) is caught.
+func renderedCapabilities(t *testing.T, outDir, prov string, svc *Service) map[string]bool {
+	t.Helper()
+
+	page := renderProviderPage(outDir, prov, svc.Providers[prov], svc)
+
+	out := map[string]bool{}
+	inCaps := false
+
+	for _, line := range strings.Split(page, "\n") {
+		switch {
+		case strings.HasPrefix(line, "## Optional capabilities"):
+			inCaps = true
+		case strings.HasPrefix(line, "## "):
+			inCaps = false
+		case inCaps && strings.HasPrefix(line, "### "):
+			out[strings.TrimSpace(strings.TrimPrefix(line, "### "))] = true
+		}
+	}
+
+	return out
+}
+
+// TestOptionalCapabilitiesGatedToImplementers is the honesty guarantee for
+// optional capabilities (#394, #498): a provider page lists a capability only
+// when that provider's mock implements the capability's FULL method set. Before
+// this gate, every provider page listed every capability of the service — so
+// oci/vcn.md falsely claimed AWS-only TransitGateways/IPAM, gcp/gce.md claimed
+// ImageRegistrar/VolumeModifier, etc.
+func TestOptionalCapabilitiesGatedToImplementers(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+
+	outDir := filepath.Join(root, "docs", "coverage")
+	services := loadServices(t)
+
+	for name, svc := range services {
+		if len(svc.Capabilities) == 0 {
+			continue
+		}
+
+		for prov := range svc.Providers {
+			rendered := renderedCapabilities(t, outDir, prov, svc)
+
+			// Every rendered capability must be one the provider's mock covers,
+			// and every covered capability must render — the page reflects the
+			// mock's method set exactly, never more, never less.
+			for _, capability := range svc.Capabilities {
+				covered := covers(svc.providerMethods[prov], capability.Operations)
+				if covered != rendered[capability.Name] {
+					t.Errorf("%s/%s capability %q: covered=%v but rendered=%v",
+						prov, name, capability.Name, covered, rendered[capability.Name])
+				}
+			}
+		}
+	}
+}
+
+// TestOptionalCapabilityVanishRemainAnchors pins the exact capabilities that
+// must disappear from (and remain on) specific provider pages after the gate,
+// so a future change to the resolution or gating logic cannot silently
+// reintroduce a false claim or drop a real one.
+func TestOptionalCapabilityVanishRemainAnchors(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+
+	outDir := filepath.Join(root, "docs", "coverage")
+	services := loadServices(t)
+
+	type anchor struct {
+		svc, prov, capability string
+		want                  bool // true: must render, false: must not
+	}
+
+	anchors := []anchor{
+		// Vanish: AWS-only network capabilities off the OCI VCN page.
+		{"networking", "oci", "TransitGateways", false},
+		{"networking", "oci", "IPAM", false},
+		{"networking", "oci", "AzureNetworkInterfaces", false},
+		// Vanish: AWS-only / Azure-only compute capabilities off the GCP GCE page.
+		{"compute", "gcp", "ImageRegistrar", false},
+		{"compute", "gcp", "VolumeModifier", false},
+		{"compute", "gcp", "SnapshotCopier", false},
+		{"compute", "gcp", "AzureVMController", false},
+		// Vanish: AWS-only compute capabilities off the Azure VM page.
+		{"compute", "azure", "ImageRegistrar", false},
+		{"compute", "azure", "VolumeModifier", false},
+		{"compute", "azure", "SnapshotCopier", false},
+		// Vanish: Azure-only network capability off the AWS VPC page.
+		{"networking", "aws", "AzureNetworkInterfaces", false},
+
+		// Remain: AWS network capabilities on the AWS VPC page.
+		{"networking", "aws", "IPAM", true},
+		{"networking", "aws", "TransitGateways", true},
+		// Remain: Azure compute controller on the Azure VM page.
+		{"compute", "azure", "AzureVMController", true},
+		// Remain: Azure network interfaces on the Azure VNet page.
+		{"networking", "azure", "AzureNetworkInterfaces", true},
+		// Remain: AWS compute capabilities on the AWS EC2 page.
+		{"compute", "aws", "ImageRegistrar", true},
+		{"compute", "aws", "VolumeModifier", true},
+		// Remain: ConsoleReader is implemented by all three, so it stays on every
+		// compute page — the exact case #498's crude "AWS-page-only" filter got
+		// wrong, and why the fix must be a per-provider method-set gate.
+		{"compute", "aws", "ConsoleReader", true},
+		{"compute", "azure", "ConsoleReader", true},
+		{"compute", "gcp", "ConsoleReader", true},
+	}
+
+	for _, a := range anchors {
+		svc, ok := services[a.svc]
+		if !ok {
+			t.Fatalf("service %q not found", a.svc)
+		}
+
+		rendered := renderedCapabilities(t, outDir, a.prov, svc)
+		if rendered[a.capability] != a.want {
+			t.Errorf("%s/%s capability %q rendered=%v, want %v",
+				a.prov, a.svc, a.capability, rendered[a.capability], a.want)
+		}
+	}
+}
+
 // TestFullyImplementedProvidersHaveServices makes sure the constructed-field
 // gate did not over-filter AWS/Azure/GCP down to nothing.
 func TestFullyImplementedProvidersHaveServices(t *testing.T) {

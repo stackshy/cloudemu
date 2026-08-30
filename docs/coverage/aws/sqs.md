@@ -22,22 +22,6 @@ AWS's `messagequeue` service · portable interface `driver.MessageQueue` · [AWS
 | `SendMessageBatch` | Batch operations |
 | `SetQueueAttributes` |  |
 
-## Optional capabilities
-
-Discovered by type assertion; only some providers implement these.
-
-### AzureQueueStorage
-
-AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,
-
-| Operation | Description |
-| --- | --- |
-| `DequeueMessages` | DequeueMessages retrieves up to maxMessages visible messages, hiding them |
-| `GetQueueMetadata` | GetQueueMetadata reports the approximate message count and user metadata. |
-| `PeekMessages` | PeekMessages returns up to maxMessages visible messages without altering |
-| `SetQueueMetadata` | SetQueueMetadata replaces the queue's user metadata. |
-| `UpdateMessage` | UpdateMessage updates a message's content (when body is non-nil) and its |
-
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

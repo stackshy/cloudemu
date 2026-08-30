@@ -49,43 +49,6 @@ AWS's `compute` service · portable interface `driver.Compute` · [AWS index](./
 
 Discovered by type assertion; only some providers implement these.
 
-### AzureDiskAccessor
-
-AzureDiskAccessor is an optional Azure-only capability for the managed-disk
-
-| Operation | Description |
-| --- | --- |
-| `GrantDiskAccess` | GrantDiskAccess issues a time-bounded SAS URI granting the requested |
-| `RevokeDiskAccess` | RevokeDiskAccess revokes any SAS access previously granted to the disk. |
-
-### AzureDiskUpdater
-
-AzureDiskUpdater is an optional Azure-only capability for an in-place managed
-
-| Operation | Description |
-| --- | --- |
-| `UpdateVolume` | UpdateVolume mutates the existing volume id in place from cfg (size, sku/ |
-
-### AzureSSHKeyUpdater
-
-AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys
-
-| Operation | Description |
-| --- | --- |
-| `UpdateKeyPair` | UpdateKeyPair updates the public key and/or tags of an existing key pair. |
-
-### AzureVMController
-
-AzureVMController is an optional Azure-only capability supporting the ARM
-
-| Operation | Description |
-| --- | --- |
-| `Deallocate` | Deallocate stops the guest and releases the allocated compute |
-| `GeneralizeInstance` | GeneralizeInstance marks an instance as generalized (Azure Generalize |
-| `PatchInstance` | PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an |
-| `PowerOff` | PowerOff stops the guest OS while keeping the VM allocated |
-| `UpdateInstance` | UpdateInstance overwrites the mutable configuration of an existing |
-
 ### ConsoleReader
 
 ConsoleReader is an optional capability a Compute implementation may provide
@@ -137,14 +100,6 @@ InstanceMetadataModifier is an optional AWS-only capability for
 | Operation | Description |
 | --- | --- |
 | `ModifyInstanceMetadataOptions` |  |
-
-### KeyPairGenerator
-
-KeyPairGenerator is an optional Azure-only capability for the ARM
-
-| Operation | Description |
-| --- | --- |
-| `GenerateKeyPair` |  |
 
 ### KeyPairImporter
 

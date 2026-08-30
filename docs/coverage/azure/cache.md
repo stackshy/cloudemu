@@ -38,36 +38,6 @@ AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure
 | `ListCacheKeys` | ListCacheKeys returns the cache's current primary and secondary access |
 | `RegenerateCacheKey` | RegenerateCacheKey rotates the requested key ("Primary" or "Secondary") |
 
-### ReplicationGroups
-
-ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `CreateReplicationGroup` |  |
-| `DeleteReplicationGroup` |  |
-| `DescribeReplicationGroups` |  |
-| `ModifyReplicationGroup` |  |
-
-### Snapshots
-
-Snapshots is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `CreateSnapshot` |  |
-| `DescribeSnapshots` |  |
-
-### SubnetGroups
-
-SubnetGroups is an OPTIONAL capability, discovered by type assertion. Cache
-
-| Operation | Description |
-| --- | --- |
-| `CreateCacheSubnetGroup` |  |
-| `DeleteCacheSubnetGroup` |  |
-| `DescribeCacheSubnetGroups` |  |
-
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
