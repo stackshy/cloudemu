@@ -275,7 +275,7 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 ## 3. Database
 
 **Driver interface:** `services/database/driver/driver.go`
-**AWS:** DynamoDB | **Azure:** Cosmos DB | **GCP:** Firestore
+**AWS:** DynamoDB | **Azure:** Cosmos DB | **GCP:** Firestore | **OCI:** NoSQL Database
 
 ### Table Operations
 
@@ -334,6 +334,65 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 | `ListIndexes` | `(ctx, table) ([]IndexInfo, error)` |
 
 **Total: 21 operations**
+
+### OCI NoSQL Database
+
+**Optional capability:** `server/oci/nosql.Extras` — OCI creates a table from a
+DDL statement rather than a key list, gives it an OCID, a compartment and
+capacity limits, and addresses rows by typed primary key columns, none of which
+the portable model carries. Its value types live in `providers/oci/nosql`.
+**Provider:** `providers/oci/nosql` | **Wire:** `server/oci/nosql`
+
+| Operation | Route |
+|-----------|-------|
+| `CreateTable` | `POST /20190828/tables` |
+| `ListTables` | `GET /20190828/tables` |
+| `GetTable` | `GET /20190828/tables/{tableNameOrId}` |
+| `UpdateTable` | `PUT /20190828/tables/{tableNameOrId}` |
+| `DeleteTable` | `DELETE /20190828/tables/{tableNameOrId}` |
+| `ChangeTableCompartment` | `POST /20190828/tables/{tableNameOrId}/actions/changeCompartment` |
+| `CreateIndex` | `POST /20190828/tables/{tableNameOrId}/indexes` |
+| `ListIndexes` | `GET /20190828/tables/{tableNameOrId}/indexes` |
+| `GetIndex` | `GET /20190828/tables/{tableNameOrId}/indexes/{indexName}` |
+| `DeleteIndex` | `DELETE /20190828/tables/{tableNameOrId}/indexes/{indexName}` |
+| `GetRow` | `GET /20190828/tables/{tableNameOrId}/rows` |
+| `UpdateRow` | `PUT /20190828/tables/{tableNameOrId}/rows` |
+| `DeleteRow` | `DELETE /20190828/tables/{tableNameOrId}/rows` |
+| `Query` | `POST /20190828/query` |
+
+A table is addressed by name or OCID. Both list routes require `compartmentId`
+and paginate with `limit` / `page`, returning the cursor as `opc-next-page`;
+real OCI marks it optional on `ListIndexes`, and CloudEmu requires it so every
+list is compartment-scoped. Table and index mutations are asynchronous in real
+OCI, so they answer `202` with an `opc-work-request-id`; row writes are
+synchronous and answer `200`.
+
+The DDL is parsed, not stored and ignored. `CreateTable` reads `CREATE TABLE`
+and `UpdateTable` reads `ALTER TABLE` — scalar and `JSON` column types, `NOT
+NULL`, `DEFAULT`, `PRIMARY KEY` with an optional `SHARD`, `USING TTL <n> DAYS`,
+and `ADD` / `DROP` on a non-key column. Everything else is refused with the
+construct named: primary keys of more than two columns and composite shard
+keys, which the portable partition/sort key pair cannot identify a row by;
+`ARRAY`, `MAP`, `RECORD` and `ENUM` columns; generated, `MR_COUNTER` and
+`UUID` modifiers; `USING TTL` in `HOURS`, which OCI's own `Schema` model
+reports only in days; `MODIFY` and schema freezing; and JSON-path index keys.
+
+`Query` runs `SELECT *` and `DELETE FROM` over one table with AND-ed equality
+conditions — the REST API has no `MultiDelete`, so `DELETE FROM … WHERE` is how
+several rows go at once. Column projections, aggregates, joins, `ORDER BY` and
+range conditions are rejected rather than silently reinterpreted.
+
+`/tables/{id}/usage` answers `501`: CloudEmu does not meter read, write and
+storage consumption, so a row of zeros would read as real telemetry. So do
+`/query/prepare` and `/query/summarize`, which hand back a prepared-statement
+handle there is nothing to bind. **OCI NoSQL publishes no change stream** — it
+has no DynamoDB-Streams or Cosmos-change-feed equivalent — so
+`UpdateStreamConfig` and `GetStreamRecords` report `Unimplemented` rather than
+returning an empty iterator that would read as "no changes yet".
+
+Tables report `ACTIVE` from creation: every CloudEmu mutation is synchronous,
+so the `CREATING` and `DELETING` states an SDK waiter may poll for are never
+observable.
 
 ---
 
