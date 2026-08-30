@@ -464,8 +464,10 @@ func exportResourceEntry(r *resourcediscovery.Resource) map[string]any {
 		entry["properties"] = r.Properties
 	}
 
-	if len(r.Tags) > 0 {
-		entry["tags"] = r.Tags
+	// Drop the internal "cloudemu:" ARM-bookkeeping tags so the exported template
+	// carries only real user tags, matching what Resource Graph renders.
+	if tags := resourcegraph.StripInternalTags(r.Tags); len(tags) > 0 {
+		entry["tags"] = tags
 	}
 
 	return entry

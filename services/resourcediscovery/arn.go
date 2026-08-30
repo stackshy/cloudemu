@@ -14,6 +14,43 @@ import (
 
 const azureDefaultResourceGroup = "default"
 
+// Azure ARM resource-group tag keys. The Azure wire handlers stamp the owning
+// resource group onto each resource's tags under these keys, because the
+// cross-cloud driver models carry no resource-group field. They are duplicated
+// here rather than imported because the services layer must not depend on the
+// server layer; they are stable wire-contract strings. A resource carries at
+// most one of them.
+const (
+	azureVNetRGTag       = "cloudemu:azureVNetResourceGroup"
+	azureNSGRGTag        = "cloudemu:azureNSGResourceGroup"
+	azurePublicIPRGTag   = "cloudemu:azurePublicIPResourceGroup"
+	azureNATGatewayRGTag = "cloudemu:azureNatGatewayResourceGroup"
+	azureRouteTableRGTag = "cloudemu:azureRouteTableResourceGroup"
+	azureDiskRGTag       = "cloudemu:azureRG"
+)
+
+// azureRGFromTags returns the Azure resource group recorded on a resource's ARM
+// tags, or "" when none is present (a portable-API creation that recorded no
+// group, or a non-Azure provider whose tags never carry these keys). A resource
+// carries at most one of the keys, so the first match wins. Callers gate this on
+// the Azure provider so AWS/GCP ARNs stay byte-unchanged.
+func (e *Engine) azureRGFromTags(tags map[string]string) string {
+	if e.provider != ProviderAzure {
+		return ""
+	}
+
+	for _, k := range []string{
+		azureVNetRGTag, azureNSGRGTag, azurePublicIPRGTag,
+		azureNATGatewayRGTag, azureRouteTableRGTag, azureDiskRGTag,
+	} {
+		if v := tags[k]; v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
 // Network resource kind constants used by per-provider ARN routing.
 const (
 	netKindVPC           = "vpc"
@@ -48,8 +85,9 @@ func (e *Engine) computeInstanceARN(id, resourceGroup string) string {
 // computeVolumeARN canonicalizes a block-volume id. When the driver already
 // hands back a fully-qualified id (an Azure managed-disk ARM path, a GCP
 // self-link, or an AWS ARN) it is used verbatim; otherwise a per-provider id
-// is built from the short id.
-func (e *Engine) computeVolumeARN(id string) string {
+// is built from the short id. resourceGroup is the Azure managed-disk group
+// (empty falls back to the default); AWS/GCP ignore it.
+func (e *Engine) computeVolumeARN(id, resourceGroup string) string {
 	if isQualifiedID(id) {
 		return id
 	}
@@ -58,7 +96,7 @@ func (e *Engine) computeVolumeARN(id string) string {
 	case ProviderAWS:
 		return idgen.AWSARN("ec2", e.region, e.accountID, "volume/"+id)
 	case ProviderAzure:
-		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "disks", id)
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup), "Microsoft.Compute", "disks", id)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, "zones/"+e.region+"/disks", id)
 	default:
@@ -68,7 +106,9 @@ func (e *Engine) computeVolumeARN(id string) string {
 
 // computeSnapshotARN canonicalizes a block-storage snapshot id, using an
 // already-qualified id verbatim and otherwise building a per-provider one.
-func (e *Engine) computeSnapshotARN(id string) string {
+// resourceGroup is the Azure snapshot group (empty falls back to the default);
+// AWS/GCP ignore it.
+func (e *Engine) computeSnapshotARN(id, resourceGroup string) string {
 	if isQualifiedID(id) {
 		return id
 	}
@@ -77,7 +117,7 @@ func (e *Engine) computeSnapshotARN(id string) string {
 	case ProviderAWS:
 		return idgen.AWSARN("ec2", e.region, e.accountID, "snapshot/"+id)
 	case ProviderAzure:
-		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "snapshots", id)
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup), "Microsoft.Compute", "snapshots", id)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, "global/snapshots", id)
 	default:
@@ -100,13 +140,17 @@ func isQualifiedID(id string) bool {
 	}
 }
 
-func (e *Engine) networkARN(kind, id string) string {
+// networkARN builds the canonical identifier for a network resource.
+// resourceGroup is the Azure resource group the resource belongs to (empty
+// falls back to the default group); AWS/GCP ignore it, so their ARNs are
+// byte-unchanged.
+func (e *Engine) networkARN(kind, id, resourceGroup string) string {
 	switch e.provider {
 	case ProviderAWS:
 		return idgen.AWSARN("ec2", e.region, e.accountID, kind+"/"+id)
 	case ProviderAzure:
 		azureType := azureNetworkType(kind)
-		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Network", azureType, id)
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup), "Microsoft.Network", azureType, id)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, gcpNetworkCollection(kind), id)
 	default:
@@ -164,12 +208,15 @@ func gcpNetworkCollection(kind string) string {
 	}
 }
 
-func (e *Engine) storageBucketARN(name string) string {
+// storageBucketARN builds the canonical identifier for a storage bucket/account.
+// resourceGroup is the Azure storage-account group (empty falls back to the
+// default); AWS/GCP ignore it.
+func (e *Engine) storageBucketARN(name, resourceGroup string) string {
 	switch e.provider {
 	case ProviderAWS:
 		return fmt.Sprintf("arn:aws:s3:::%s", name)
 	case ProviderAzure:
-		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Storage",
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup), "Microsoft.Storage",
 			"storageAccounts/default/blobServices/default/containers", name)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, "buckets", name)
@@ -178,12 +225,15 @@ func (e *Engine) storageBucketARN(name string) string {
 	}
 }
 
-func (e *Engine) databaseTableARN(name string) string {
+// databaseTableARN builds the canonical identifier for a database table/account.
+// resourceGroup is the Azure Cosmos DB account group (empty falls back to the
+// default); AWS/GCP ignore it.
+func (e *Engine) databaseTableARN(name, resourceGroup string) string {
 	switch e.provider {
 	case ProviderAWS:
 		return idgen.AWSARN("dynamodb", e.region, e.accountID, "table/"+name)
 	case ProviderAzure:
-		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.DocumentDB",
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup), "Microsoft.DocumentDB",
 			"databaseAccounts/default/sqlDatabases/default/containers", name)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, "databases/(default)/collections", name)
