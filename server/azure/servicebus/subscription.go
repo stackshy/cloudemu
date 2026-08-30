@@ -192,6 +192,7 @@ func (h *Handler) createSubQueue(
 		DeadLetterOnExpiration:     props.DeadLetteringOnExpiration,
 		RequiresDuplicateDetection: dup.enabled,
 		DuplicateDetectionWindow:   dup.window,
+		RequiresSession:            props.RequiresSession,
 	})
 	if err != nil && !cerrors.IsAlreadyExists(err) {
 		return "", "", err
