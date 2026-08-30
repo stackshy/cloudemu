@@ -73,6 +73,8 @@ type Mock struct {
 
 	// logical databases on a SQL server, key = "server/name"
 	databases *memstore.Store[rdsdriver.Database]
+	// transparent-data-encryption records, key = "server/database"
+	tde *memstore.Store[rdsdriver.TransparentDataEncryption]
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -90,6 +92,7 @@ func New(opts *config.Options) *Mock {
 		failoverGroups:   memstore.New[rdsdriver.FailoverGroup](),
 		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
 		databases:        memstore.New[rdsdriver.Database](),
+		tde:              memstore.New[rdsdriver.TransparentDataEncryption](),
 		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
 		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
 		opts:             opts,
@@ -580,6 +583,7 @@ func (m *Mock) deleteChildren(server string) {
 	prefix := server + "/"
 
 	deleteByPrefix(m.databases, prefix)
+	deleteByPrefix(m.tde, prefix)
 	deleteByPrefix(m.firewallRules, prefix)
 	deleteByPrefix(m.vnetRules, prefix)
 	deleteByPrefix(m.elasticPools, prefix)

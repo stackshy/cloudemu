@@ -65,6 +65,15 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	}
 	m.databases.Set(key, db)
 
+	// Azure SQL databases are encrypted at rest by default: a create
+	// materializes the transparentDataEncryption/current sub-resource as
+	// Enabled so a Get on it round-trips without a separate PUT.
+	m.tde.Set(key, rdsdriver.TransparentDataEncryption{
+		Server:   cfg.Server,
+		Database: cfg.Name,
+		State:    rdsdriver.TDEStateEnabled,
+	})
+
 	out := db
 
 	return &out, nil
@@ -113,6 +122,8 @@ func (m *Mock) DeleteDatabase(_ context.Context, server, name string) error {
 	if !m.databases.Delete(dbKey(server, name)) {
 		return cerrors.Newf(cerrors.NotFound, "database %q not found on server %q", name, server)
 	}
+
+	m.tde.Delete(dbKey(server, name))
 
 	return nil
 }

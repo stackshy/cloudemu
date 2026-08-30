@@ -9192,6 +9192,21 @@
         ]
       },
       {
+        "name": "TransparentDataEncryptions",
+        "doc": "TransparentDataEncryptions is an OPTIONAL Azure SQL capability, discovered by",
+        "operations": [
+          {
+            "name": "GetTransparentDataEncryption"
+          },
+          {
+            "name": "ListTransparentDataEncryption"
+          },
+          {
+            "name": "SetTransparentDataEncryption"
+          }
+        ]
+      },
+      {
         "name": "Users",
         "doc": "Users is an OPTIONAL capability for managing database user accounts,",
         "operations": [
