@@ -24,6 +24,7 @@ Usage:
   cloudemu net ...           Check network reachability (can-connect, trace)
   cloudemu cost              Estimate the monthly cost of the current resources
   cloudemu env               Print shell exports to point SDKs/CLIs at a running server
+  cloudemu doctor            Preflight check: version, default ports free, docker
   cloudemu serve [flags]     Run the server in the foreground (see: cloudemu serve -h)
   cloudemu version           Print the version
   cloudemu help              Show this message
@@ -44,6 +45,7 @@ const (
 	cmdNet      = "net"
 	cmdCost     = "cost"
 	cmdEnv      = "env"
+	cmdDoctor   = "doctor"
 )
 
 // Build metadata, overridden at release time by GoReleaser ldflags
@@ -89,6 +91,11 @@ func main() {
 		}
 	case cmdEnv:
 		if err := runEnv(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "cloudemu:", err)
+			os.Exit(1)
+		}
+	case cmdDoctor:
+		if err := runDoctor(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "cloudemu:", err)
 			os.Exit(1)
 		}
