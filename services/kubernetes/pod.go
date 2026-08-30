@@ -481,9 +481,10 @@ func podKey(namespace, name string) string {
 // servePodSubresource serves the pod subresources kubectl reaches for. `log`
 // returns synthetic container output (there are no real containers, but a
 // clean 200 with a deterministic line keeps `kubectl logs` and log-scraping
-// clients working). `exec`/`attach`/`portforward` require a streaming protocol
-// upgrade the emulator does not implement and return a typed 501 Status so
-// client-go surfaces a clear error rather than a raw connection failure.
+// clients working). `exec`/`attach` complete a WebSocket upgrade and run a
+// deterministic synthetic session (`kubectl exec` no longer 501s). `portforward`
+// still returns a typed 501 Status (deferred) so client-go surfaces a clear
+// error rather than a raw connection failure.
 func (s *ClusterState) servePodSubresource(w http.ResponseWriter, r *http.Request, route *Route) {
 	s.mu.RLock()
 	pod, ok := s.pods[podKey(route.Namespace, route.Name)]
@@ -503,7 +504,9 @@ func (s *ClusterState) servePodSubresource(w http.ResponseWriter, r *http.Reques
 	switch route.Subresource {
 	case subresourcePodLog:
 		servePodLog(w, r, route, container)
-	case subresourcePodExec, subresourcePodAttach, subresourcePodPortForward:
+	case subresourcePodExec, subresourcePodAttach:
+		serveExecAttach(w, r, route)
+	case subresourcePodPortForward:
 		writeStreamingUnsupported(w, route)
 	case subresourceEviction:
 		s.evictPod(w, r, route.Namespace, route.Name)
@@ -536,8 +539,8 @@ func servePodLog(w http.ResponseWriter, r *http.Request, route *Route, defaultCo
 		route.Namespace, route.Name, container)
 }
 
-// writeStreamingUnsupported returns a typed 501 for the pod subresources that
-// need a SPDY/WebSocket upgrade cloudemu does not implement.
+// writeStreamingUnsupported returns a typed 501 for pods/portforward, whose
+// streaming upgrade cloudemu does not yet implement (deferred).
 func writeStreamingUnsupported(w http.ResponseWriter, route *Route) {
 	writeStatus(w, http.StatusNotImplemented, metav1.StatusReason("NotImplemented"),
 		"k8s api: pods/"+route.Subresource+" requires a streaming connection upgrade cloudemu does not implement")
