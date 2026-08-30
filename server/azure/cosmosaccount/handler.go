@@ -212,6 +212,14 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		attrs.Capabilities = capabilityNames(body.Properties.Capabilities)
 		attrs.Locations = toAccountLocations(body.Properties.Locations)
 		attrs.EnableMultipleWriteLocations = body.Properties.EnableMultipleWriteLocations
+
+		if cp := body.Properties.ConsistencyPolicy; cp != nil {
+			attrs.ConsistencyPolicy = dbdriver.ConsistencyPolicy{
+				DefaultConsistencyLevel: cp.DefaultConsistencyLevel,
+				MaxIntervalInSeconds:    cp.MaxIntervalInSeconds,
+				MaxStalenessPrefix:      cp.MaxStalenessPrefix,
+			}
+		}
 	}
 
 	if h.attrs != nil {
@@ -345,8 +353,28 @@ func renderAccount(subscription, base, name string, attrs dbdriver.AccountAttrib
 			ReadLocations:            all,
 			WriteLocations:           writeLocs,
 			FailoverPolicies:         toFailoverPolicies(name, locations),
+			ConsistencyPolicy:        renderConsistencyPolicy(attrs.ConsistencyPolicy),
 		},
 	}
+}
+
+// renderConsistencyPolicy echoes the stored consistency policy, defaulting to
+// Cosmos's Session level when none was submitted (matching real Azure, which
+// always returns a consistencyPolicy). The staleness bounds are surfaced only
+// for BoundedStaleness, where they are meaningful.
+func renderConsistencyPolicy(cp dbdriver.ConsistencyPolicy) *armConsistencyPolicy {
+	level := cp.DefaultConsistencyLevel
+	if level == "" {
+		level = "Session"
+	}
+
+	out := &armConsistencyPolicy{DefaultConsistencyLevel: level}
+	if strings.EqualFold(level, "BoundedStaleness") {
+		out.MaxIntervalInSeconds = cp.MaxIntervalInSeconds
+		out.MaxStalenessPrefix = cp.MaxStalenessPrefix
+	}
+
+	return out
 }
 
 // toAccountLocations converts the ARM create-request locations into the
