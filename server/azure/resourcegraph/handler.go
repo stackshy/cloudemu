@@ -19,6 +19,12 @@ const (
 	pathOperations       = "/providers/Microsoft.ResourceGraph/operations"
 )
 
+// internalTagPrefix is the marker the Azure wire handlers use for internal ARM
+// bookkeeping tags (resource name, resource group, disk name, …). These are an
+// implementation detail of how the cross-cloud driver models are mapped to ARM
+// and must never appear on a resource row a client reads.
+const internalTagPrefix = "cloudemu:"
+
 // Handler serves Azure Resource Graph ARM-JSON requests.
 type Handler struct {
 	engine         *resourcediscovery.Engine
@@ -351,12 +357,39 @@ func resourceGroupOrDefault(id string) string {
 	return rest
 }
 
+// tagsOrEmpty renders a resource's tags for the ARG row, dropping the internal
+// "cloudemu:"-prefixed tags the Azure wire handlers stamp on resources (e.g. the
+// ARM name and resource-group markers) so they never leak to a client, while
+// preserving every real user tag. A nil/all-internal map renders as {}.
 func tagsOrEmpty(tags map[string]string) map[string]string {
-	if tags == nil {
-		return map[string]string{}
+	if out := StripInternalTags(tags); out != nil {
+		return out
 	}
 
-	return tags
+	return map[string]string{}
+}
+
+// StripInternalTags returns tags with the internal "cloudemu:"-prefixed markers
+// removed, preserving every real user tag; it returns nil when nothing remains.
+// Exported so other Azure handlers that render resourcediscovery.Resource tags
+// (e.g. the resource-group exportTemplate) drop the same internal bookkeeping
+// tags Resource Graph does, rather than leaking them.
+func StripInternalTags(tags map[string]string) map[string]string {
+	var out map[string]string
+
+	for k, v := range tags {
+		if strings.HasPrefix(k, internalTagPrefix) {
+			continue
+		}
+
+		if out == nil {
+			out = make(map[string]string, len(tags))
+		}
+
+		out[k] = v
+	}
+
+	return out
 }
 
 // extractSubscription pulls /subscriptions/<id>/... out of an Azure resource

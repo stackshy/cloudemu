@@ -195,7 +195,7 @@ func (e *Engine) walkSnapshots(ctx context.Context) ([]Resource, error) {
 
 	return e.emitSimple(ServiceCompute, TypeSnapshot, len(snaps),
 		func(i int) (string, string, map[string]string) {
-			return shortName(snaps[i].ID), e.computeSnapshotARN(snaps[i].ID), snaps[i].Tags
+			return shortName(snaps[i].ID), e.computeSnapshotARN(snaps[i].ID, e.azureRGFromTags(snaps[i].Tags)), snaps[i].Tags
 		}), nil
 }
 
@@ -225,12 +225,14 @@ func (e *Engine) walkVolumes(ctx context.Context, rgByInstance map[string]string
 		}
 
 		out = append(out, Resource{
-			Provider:   e.provider,
-			Service:    ServiceCompute,
-			Type:       TypeVolume,
-			ID:         shortName(v.ID),
-			ARN:        e.computeVolumeARN(v.ID),
-			Region:     e.region,
+			Provider: e.provider,
+			Service:  ServiceCompute,
+			Type:     TypeVolume,
+			ID:       shortName(v.ID),
+			ARN:      e.computeVolumeARN(v.ID, e.azureRGFromTags(v.Tags)),
+			// Azure managed disks record their region on VolumeInfo.Location; it is
+			// empty for AWS/GCP, so those fall back to e.region unchanged.
+			Region:     firstNonEmpty(v.Location, e.region),
 			Tags:       copyTags(v.Tags),
 			SKU:        v.VolumeType,
 			SKUTier:    v.Tier,
@@ -243,8 +245,53 @@ func (e *Engine) walkVolumes(ctx context.Context, rgByInstance map[string]string
 	return out, nil
 }
 
+// azureNetLocation returns the Azure region recorded in the optional
+// AzureNetworkMetadata capability for a virtual network, network security group
+// or route table. It falls back to the engine region when the provider is not
+// Azure, the capability is absent, or no metadata was stored (a portable-API
+// creation) — which is also what every non-Azure provider gets, so their rows
+// are unchanged. This is where the real per-resource region lives: the
+// cross-cloud VPCInfo/SecurityGroupInfo/RouteTable models carry none.
+func (e *Engine) azureNetLocation(ctx context.Context, azMeta netdriver.AzureNetworkMetadata, kind, id string) string {
+	if azMeta == nil {
+		return e.region
+	}
+
+	if loc := azureMetaLocation(ctx, azMeta, kind, id); loc != "" {
+		return loc
+	}
+
+	return e.region
+}
+
+// azureMetaLocation returns the stored region for one Azure network resource, or
+// "" when the kind carries no metadata region or none was recorded. A not-found
+// lookup yields a zero-value metadata whose Location is "", which the caller
+// treats the same as "no region".
+func azureMetaLocation(ctx context.Context, azMeta netdriver.AzureNetworkMetadata, kind, id string) string {
+	switch kind {
+	case netKindVPC:
+		md, _ := azMeta.GetAzureVNetMetadata(ctx, id)
+		return md.Location
+	case netKindSecurityGroup:
+		md, _ := azMeta.GetAzureNSGMetadata(ctx, id)
+		return md.Location
+	case netKindRouteTable:
+		md, _ := azMeta.GetAzureRouteTableMetadata(ctx, id)
+		return md.Location
+	default:
+		return ""
+	}
+}
+
 func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	out := []Resource{}
+
+	// AzureNetworkMetadata is an optional, type-asserted capability (only the
+	// Azure provider implements it) that records the per-resource region the
+	// cross-cloud models cannot. AWS/GCP fail the assertion, so azMeta is nil and
+	// every row keeps e.region.
+	azMeta, _ := e.drivers.Networking.(netdriver.AzureNetworkMetadata)
 
 	vpcs, err := e.drivers.Networking.DescribeVPCs(ctx, nil)
 	if err != nil {
@@ -260,8 +307,8 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeVPC,
 			ID:     v.ID,
-			ARN:    e.networkARN(netKindVPC, v.ID),
-			Region: e.region, Tags: copyTags(v.Tags),
+			ARN:    e.networkARN(netKindVPC, v.ID, e.azureRGFromTags(v.Tags)),
+			Region: e.azureNetLocation(ctx, azMeta, netKindVPC, v.ID), Tags: copyTags(v.Tags),
 			Properties: props,
 		})
 	}
@@ -280,7 +327,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeSubnet,
 			ID:     s.ID,
-			ARN:    e.networkARN(netKindSubnet, s.ID),
+			ARN:    e.networkARN(netKindSubnet, s.ID, e.azureRGFromTags(s.Tags)),
 			Region: e.region, Tags: copyTags(s.Tags),
 			Properties: props,
 		})
@@ -295,8 +342,8 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeSecurityGroup,
 			ID:     sg.ID,
-			ARN:    e.networkARN(netKindSecurityGroup, sg.ID),
-			Region: e.region, Tags: copyTags(sg.Tags),
+			ARN:    e.networkARN(netKindSecurityGroup, sg.ID, e.azureRGFromTags(sg.Tags)),
+			Region: e.azureNetLocation(ctx, azMeta, netKindSecurityGroup, sg.ID), Tags: copyTags(sg.Tags),
 		})
 	}
 
@@ -314,7 +361,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeElasticIP,
 			ID:     eip.AllocationID,
-			ARN:    e.networkARN(netKindElasticIP, eip.AllocationID),
+			ARN:    e.networkARN(netKindElasticIP, eip.AllocationID, e.azureRGFromTags(eip.Tags)),
 			Region: e.region, Tags: copyTags(eip.Tags),
 			SKU:        eip.SKU,
 			Properties: props,
@@ -330,7 +377,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeNATGateway,
 			ID:     ng.ID,
-			ARN:    e.networkARN(netKindNATGateway, ng.ID),
+			ARN:    e.networkARN(netKindNATGateway, ng.ID, e.azureRGFromTags(ng.Tags)),
 			Region: e.region, Tags: copyTags(ng.Tags),
 		})
 	}
@@ -344,7 +391,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeInternetGateway,
 			ID:     igw.ID,
-			ARN:    e.networkARN(netKindInternetGW, igw.ID),
+			ARN:    e.networkARN(netKindInternetGW, igw.ID, e.azureRGFromTags(igw.Tags)),
 			Region: e.region, Tags: copyTags(igw.Tags),
 		})
 	}
@@ -358,7 +405,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypePeeringConnection,
 			ID:     pc.ID,
-			ARN:    e.networkARN(netKindPeering, pc.ID),
+			ARN:    e.networkARN(netKindPeering, pc.ID, e.azureRGFromTags(pc.Tags)),
 			Region: e.region, Tags: copyTags(pc.Tags),
 		})
 	}
@@ -372,8 +419,8 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeRouteTable,
 			ID:     rt.ID,
-			ARN:    e.networkARN(netKindRouteTable, rt.ID),
-			Region: e.region, Tags: copyTags(rt.Tags),
+			ARN:    e.networkARN(netKindRouteTable, rt.ID, e.azureRGFromTags(rt.Tags)),
+			Region: e.azureNetLocation(ctx, azMeta, netKindRouteTable, rt.ID), Tags: copyTags(rt.Tags),
 		})
 	}
 
@@ -410,7 +457,7 @@ func (e *Engine) walkNetworkInterfaces(ctx context.Context) ([]Resource, error) 
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeNetworkIface,
 			ID:     eni.ID,
-			ARN:    e.networkARN(netKindNetworkIface, eni.ID),
+			ARN:    e.networkARN(netKindNetworkIface, eni.ID, e.azureRGFromTags(eni.Tags)),
 			Region: e.region, Tags: copyTags(eni.Tags),
 		})
 	}
@@ -447,33 +494,53 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 		res := Resource{
 			Provider: e.provider, Service: ServiceStorage, Type: TypeBucket,
 			ID:     b.Name,
-			ARN:    e.storageBucketARN(b.Name),
+			ARN:    e.storageBucketARN(b.Name, ""),
 			Region: region, Tags: tags,
 		}
 
-		// Optional capability: providers whose buckets carry storage-account
-		// attributes (Azure) project SKU/kind/access-tier for cost discovery.
-		// A non-nil error here is load-bearing: silently dropping it would leave
-		// the cost fields absent — the exact failure this projection closes — so
-		// propagate it rather than swallow.
-		if attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes); ok {
-			a, aErr := attrer.BucketAttributes(ctx, b.Name)
-			if aErr != nil {
-				return nil, fmt.Errorf("walkStorage attributes %q: %w", b.Name, aErr)
-			}
-
-			res.SKU = a.SKU
-			res.Kind = a.Kind
-
-			if a.AccessTier != "" {
-				res.Properties = map[string]any{"accessTier": a.AccessTier}
-			}
+		if err := e.applyStorageAttrs(ctx, &res, b.Name); err != nil {
+			return nil, err
 		}
 
 		out = append(out, res)
 	}
 
 	return out, nil
+}
+
+// applyStorageAttrs folds a bucket's optional storage-account attributes onto
+// res: SKU/kind/access-tier for cost discovery, plus (for Azure) the account's
+// real resource group and region — the cross-cloud bucket carries neither, so
+// these keep ARG / exportTemplate from reporting "default"/us-east-1. A non-nil
+// error is load-bearing (a silent drop would lose the cost fields), so it
+// propagates. Providers without the capability leave res unchanged.
+func (e *Engine) applyStorageAttrs(ctx context.Context, res *Resource, name string) error {
+	attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes)
+	if !ok {
+		return nil
+	}
+
+	a, err := attrer.BucketAttributes(ctx, name)
+	if err != nil {
+		return fmt.Errorf("walkStorage attributes %q: %w", name, err)
+	}
+
+	res.SKU = a.SKU
+	res.Kind = a.Kind
+
+	if a.ResourceGroup != "" {
+		res.ARN = e.storageBucketARN(name, a.ResourceGroup)
+	}
+
+	if a.Location != "" {
+		res.Region = a.Location
+	}
+
+	if a.AccessTier != "" {
+		res.Properties = map[string]any{"accessTier": a.AccessTier}
+	}
+
+	return nil
 }
 
 func (e *Engine) walkDatabase(ctx context.Context) ([]Resource, error) {
@@ -500,46 +567,67 @@ func (e *Engine) walkDatabase(ctx context.Context) ([]Resource, error) {
 		res := Resource{
 			Provider: e.provider, Service: ServiceDatabase, Type: TypeTable,
 			ID:     name,
-			ARN:    e.databaseTableARN(name),
+			ARN:    e.databaseTableARN(name, ""),
 			Region: e.region, Tags: tags,
 		}
 
-		// Optional capability: providers whose tables map to a richer account
-		// resource (Azure Cosmos DB) project the account's cost attributes.
-		// A non-nil error here is load-bearing: silently dropping it would leave
-		// the cost attributes absent — the exact failure this projection closes —
-		// so propagate it rather than swallow.
-		if attrer, ok := e.drivers.Database.(dbdriver.TableAttributes); ok {
-			a, aErr := attrer.TableAttributes(ctx, name)
-			if aErr != nil {
-				return nil, fmt.Errorf("walkDatabase attributes %q: %w", name, aErr)
-			}
-
-			res.Kind = a.Kind
-
-			props := map[string]any{}
-			putStr(props, "databaseAccountOfferType", a.OfferType)
-
-			if len(a.Capabilities) > 0 {
-				caps := make([]any, 0, len(a.Capabilities))
-				for _, c := range a.Capabilities {
-					caps = append(caps, map[string]any{"name": c})
-				}
-
-				props["capabilities"] = caps
-			}
-
-			if a.EnableFreeTier {
-				props["enableFreeTier"] = true
-			}
-
-			res.Properties = orNilProps(props)
+		if err := e.applyDatabaseAttrs(ctx, &res, name); err != nil {
+			return nil, err
 		}
 
 		out = append(out, res)
 	}
 
 	return out, nil
+}
+
+// applyDatabaseAttrs folds a table's optional account attributes onto res: kind,
+// offer type, capabilities and free-tier for cost discovery, plus (for Azure
+// Cosmos DB) the account's real resource group and region — the cross-cloud
+// table carries neither, so these keep ARG / exportTemplate from reporting
+// "default"/us-east-1. A non-nil error is load-bearing (a silent drop would lose
+// the cost attributes), so it propagates. Providers without the capability leave
+// res unchanged.
+func (e *Engine) applyDatabaseAttrs(ctx context.Context, res *Resource, name string) error {
+	attrer, ok := e.drivers.Database.(dbdriver.TableAttributes)
+	if !ok {
+		return nil
+	}
+
+	a, err := attrer.TableAttributes(ctx, name)
+	if err != nil {
+		return fmt.Errorf("walkDatabase attributes %q: %w", name, err)
+	}
+
+	res.Kind = a.Kind
+
+	if a.ResourceGroup != "" {
+		res.ARN = e.databaseTableARN(name, a.ResourceGroup)
+	}
+
+	if a.Location != "" {
+		res.Region = a.Location
+	}
+
+	props := map[string]any{}
+	putStr(props, "databaseAccountOfferType", a.OfferType)
+
+	if len(a.Capabilities) > 0 {
+		caps := make([]any, 0, len(a.Capabilities))
+		for _, c := range a.Capabilities {
+			caps = append(caps, map[string]any{"name": c})
+		}
+
+		props["capabilities"] = caps
+	}
+
+	if a.EnableFreeTier {
+		props["enableFreeTier"] = true
+	}
+
+	res.Properties = orNilProps(props)
+
+	return nil
 }
 
 func (e *Engine) walkServerless(ctx context.Context) ([]Resource, error) {
