@@ -316,6 +316,19 @@ type AccountAttributes struct {
 	// EnableMultipleWriteLocations mirrors the ARM property of the same name:
 	// when true every declared location accepts writes, not just priority 0.
 	EnableMultipleWriteLocations bool
+	// ConsistencyPolicy is the account's default consistency level (and, for
+	// BoundedStaleness, its staleness bounds). Empty DefaultConsistencyLevel
+	// means the account uses Cosmos's Session default.
+	ConsistencyPolicy ConsistencyPolicy
+}
+
+// ConsistencyPolicy mirrors the ARM Cosmos `consistencyPolicy` shape: the
+// account's default consistency level, plus the staleness bounds that apply
+// only when the level is BoundedStaleness.
+type ConsistencyPolicy struct {
+	DefaultConsistencyLevel string // Session (default) / Strong / BoundedStaleness / Eventual / ConsistentPrefix
+	MaxIntervalInSeconds    int32  // BoundedStaleness only
+	MaxStalenessPrefix      int64  // BoundedStaleness only
 }
 
 // TableAttributes is an OPTIONAL capability, discovered by type assertion (like

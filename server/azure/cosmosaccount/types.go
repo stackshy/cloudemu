@@ -11,11 +11,20 @@ type armAccountCreate struct {
 }
 
 type armAccountCreateProps struct {
-	DatabaseAccountOfferType     string          `json:"databaseAccountOfferType,omitempty"`
-	EnableFreeTier               bool            `json:"enableFreeTier,omitempty"`
-	Capabilities                 []armCapability `json:"capabilities,omitempty"`
-	Locations                    []armLocation   `json:"locations,omitempty"`
-	EnableMultipleWriteLocations bool            `json:"enableMultipleWriteLocations,omitempty"`
+	DatabaseAccountOfferType     string                `json:"databaseAccountOfferType,omitempty"`
+	EnableFreeTier               bool                  `json:"enableFreeTier,omitempty"`
+	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
+	Locations                    []armLocation         `json:"locations,omitempty"`
+	EnableMultipleWriteLocations bool                  `json:"enableMultipleWriteLocations,omitempty"`
+	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
+}
+
+// armConsistencyPolicy is the ARM Cosmos consistencyPolicy shape. The staleness
+// bounds are meaningful only for the BoundedStaleness level.
+type armConsistencyPolicy struct {
+	DefaultConsistencyLevel string `json:"defaultConsistencyLevel,omitempty"`
+	MaxIntervalInSeconds    int32  `json:"maxIntervalInSeconds,omitempty"`
+	MaxStalenessPrefix      int64  `json:"maxStalenessPrefix,omitempty"`
 }
 
 // armCapability is the ARM capability shape ([{name}]).
@@ -35,15 +44,16 @@ type armAccount struct {
 }
 
 type armAccountProps struct {
-	DatabaseAccountOfferType string          `json:"databaseAccountOfferType,omitempty"`
-	EnableFreeTier           bool            `json:"enableFreeTier,omitempty"`
-	Capabilities             []armCapability `json:"capabilities,omitempty"`
-	ProvisioningState        string          `json:"provisioningState,omitempty"`
-	DocumentEndpoint         string          `json:"documentEndpoint,omitempty"`
-	Locations                []armLocation   `json:"locations,omitempty"`
-	ReadLocations            []armLocation   `json:"readLocations,omitempty"`
-	WriteLocations           []armLocation   `json:"writeLocations,omitempty"`
-	FailoverPolicies         []armFailover   `json:"failoverPolicies,omitempty"`
+	DatabaseAccountOfferType string                `json:"databaseAccountOfferType,omitempty"`
+	EnableFreeTier           bool                  `json:"enableFreeTier,omitempty"`
+	Capabilities             []armCapability       `json:"capabilities,omitempty"`
+	ProvisioningState        string                `json:"provisioningState,omitempty"`
+	DocumentEndpoint         string                `json:"documentEndpoint,omitempty"`
+	Locations                []armLocation         `json:"locations,omitempty"`
+	ReadLocations            []armLocation         `json:"readLocations,omitempty"`
+	WriteLocations           []armLocation         `json:"writeLocations,omitempty"`
+	FailoverPolicies         []armFailover         `json:"failoverPolicies,omitempty"`
+	ConsistencyPolicy        *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
 }
 
 // armLocation is a region entry in a database account's location arrays.

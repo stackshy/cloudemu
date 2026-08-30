@@ -287,3 +287,59 @@ func TestSDKDatabaseAccountList(t *testing.T) {
 	assert.True(t, rgNames["acct-a1"] && rgNames["acct-a2"], "rg-a list missing accounts: %v", rgNames)
 	assert.False(t, rgNames["acct-b1"], "rg-a list must not include rg-b's account")
 }
+
+// A submitted consistencyPolicy must round-trip on create and GET, including the
+// BoundedStaleness bounds. Real Azure always returns a consistencyPolicy, so an
+// account created without one must default to Session.
+func TestSDKDatabaseAccountConsistencyPolicy(t *testing.T) {
+	ctx := context.Background()
+	client := newDatabaseAccountsClient(t)
+
+	poller, err := client.BeginCreateOrUpdate(ctx, "rg-1", "cosmos-bs", armcosmos.DatabaseAccountCreateUpdateParameters{
+		Location: to.Ptr("westus2"),
+		Properties: &armcosmos.DatabaseAccountCreateUpdateProperties{
+			DatabaseAccountOfferType: to.Ptr("Standard"),
+			Locations: []*armcosmos.Location{
+				{LocationName: to.Ptr("westus2"), FailoverPriority: to.Ptr[int32](0)},
+			},
+			ConsistencyPolicy: &armcosmos.ConsistencyPolicy{
+				DefaultConsistencyLevel: to.Ptr(armcosmos.DefaultConsistencyLevelBoundedStaleness),
+				MaxIntervalInSeconds:    to.Ptr[int32](300),
+				MaxStalenessPrefix:      to.Ptr[int64](100000),
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assertBoundedStaleness(t, created.Properties)
+
+	// ... and survives an independent GET.
+	got, err := client.Get(ctx, "rg-1", "cosmos-bs", nil)
+	require.NoError(t, err)
+	assertBoundedStaleness(t, got.Properties)
+
+	// An account created with no policy defaults to Session (real Azure always
+	// returns a consistencyPolicy).
+	createAccount(t, client, "rg-1", "cosmos-def", "westus2")
+	def, err := client.Get(ctx, "rg-1", "cosmos-def", nil)
+	require.NoError(t, err)
+	require.NotNil(t, def.Properties)
+	require.NotNil(t, def.Properties.ConsistencyPolicy)
+	require.NotNil(t, def.Properties.ConsistencyPolicy.DefaultConsistencyLevel)
+	assert.Equal(t, armcosmos.DefaultConsistencyLevelSession, *def.Properties.ConsistencyPolicy.DefaultConsistencyLevel)
+}
+
+func assertBoundedStaleness(t *testing.T, props *armcosmos.DatabaseAccountGetProperties) {
+	t.Helper()
+
+	require.NotNil(t, props)
+	require.NotNil(t, props.ConsistencyPolicy)
+	require.NotNil(t, props.ConsistencyPolicy.DefaultConsistencyLevel)
+	assert.Equal(t, armcosmos.DefaultConsistencyLevelBoundedStaleness, *props.ConsistencyPolicy.DefaultConsistencyLevel)
+	require.NotNil(t, props.ConsistencyPolicy.MaxIntervalInSeconds)
+	assert.Equal(t, int32(300), *props.ConsistencyPolicy.MaxIntervalInSeconds)
+	require.NotNil(t, props.ConsistencyPolicy.MaxStalenessPrefix)
+	assert.Equal(t, int64(100000), *props.ConsistencyPolicy.MaxStalenessPrefix)
+}
