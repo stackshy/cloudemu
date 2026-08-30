@@ -369,7 +369,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeRedis:     {portableCache, "CacheCluster"},
 	azureTypeLB:        {portableLB, "LoadBalancer"},
 	azureTypeAlert:     {portableMonitoring, "Alarm"},
-	azureTypeIdentity:  {portableIAM, "User"},
+	azureTypeIdentity:  {portableIAM, "UserAssignedIdentity"},
 	azureTypeRoleDef:   {portableIAM, "Role"},
 	azureTypeNATGw:     {portableNetworking, "NatGateway"},
 	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},

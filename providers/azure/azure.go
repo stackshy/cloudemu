@@ -26,6 +26,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
@@ -151,6 +152,7 @@ type Provider struct {
 	Databricks         *databricks.Mock
 	AI                 *ai.Mock
 	Search             *search.Mock
+	ManagedIdentity    *managedidentity.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -205,6 +207,7 @@ func New(opts ...config.Option) *Provider {
 		Databricks:         databricks.New(o),
 		AI:                 ai.New(o),
 		Search:             search.New(o),
+		ManagedIdentity:    managedidentity.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -259,6 +262,7 @@ func New(opts ...config.Option) *Provider {
 			IAM:             p.IAM,
 			Extra: []resourcediscovery.GenericResources{
 				azureMLDiscovery{p.AI},
+				managedIdentityDiscovery{p.ManagedIdentity},
 			},
 		},
 	)

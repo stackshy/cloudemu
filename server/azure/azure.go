@@ -45,6 +45,7 @@ import (
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
+	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
@@ -126,8 +127,10 @@ type Drivers struct {
 	PostgresFlex     rdbdriver.RelationalDB
 	MySQLFlex        rdbdriver.RelationalDB
 	AKS              aksserver.Backend
-	IAM              iamdriver.IAM
-	ACR              crdriver.ContainerRegistry
+	// ManagedIdentity serves Microsoft.ManagedIdentity/userAssignedIdentities.
+	ManagedIdentity managedidentitysrv.Store
+	IAM             iamdriver.IAM
+	ACR             crdriver.ContainerRegistry
 	// ContainerInstances serves the Azure Container Instances
 	// (Microsoft.ContainerInstance/containerGroups) ARM API against the
 	// containerinstances driver.
@@ -270,6 +273,14 @@ func New(d Drivers) http.Handler {
 	if d.BlobStorage != nil {
 		storageHandler = storageaccountsrv.New(d.BlobStorage)
 		rgPurgers = append(rgPurgers, storageHandler)
+	}
+
+	// User-assigned managed identities: a resource-group-scoped resource, so its
+	// handler joins the purge cascade. Registered further below.
+	var managedIdentityHandler *managedidentitysrv.Handler
+	if d.ManagedIdentity != nil {
+		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
+		rgPurgers = append(rgPurgers, managedIdentityHandler)
 	}
 
 	// Resource groups have no driver of their own: they are containers, and the
@@ -485,6 +496,14 @@ func New(d Drivers) http.Handler {
 		// Generic Microsoft.Resources listing (az resource list) at subscription
 		// and resource-group scope, backed by the same discovery engine.
 		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
+	}
+
+	// Managed identities claim Microsoft.ManagedIdentity/userAssignedIdentities —
+	// a distinct ARM provider name from every other Azure handler, so
+	// registration order is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if managedIdentityHandler != nil {
+		srv.Register(managedIdentityHandler)
 	}
 
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}

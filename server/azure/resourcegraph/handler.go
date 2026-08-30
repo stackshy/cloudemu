@@ -462,7 +462,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"cache/CacheCluster":                  "microsoft.cache/redis",
 	"loadbalancer/LoadBalancer":           "microsoft.network/loadbalancers",
 	"monitoring/Alarm":                    "microsoft.insights/metricalerts",
-	"iam/User":                            "microsoft.managedidentity/userassignedidentities",
+	"iam/UserAssignedIdentity":            "microsoft.managedidentity/userassignedidentities",
 	"iam/Role":                            "microsoft.authorization/roledefinitions",
 	"networking/NatGateway":               "microsoft.network/natgateways",
 	"networking/RouteTable":               "microsoft.network/routetables",

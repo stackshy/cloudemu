@@ -25,6 +25,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [LB](./lb.md) | `loadbalancer` | 19 |
 | [LogAnalytics](./loganalytics.md) | `logging` | 17 |
 | [ManagedCassandra](./managedcassandra.md) | `managedcassandra` | 15 |
+| [ManagedIdentity](./managedidentity.md) | — (provider-native) | 8 |
 | [Monitor](./monitor.md) | `monitoring` | 12 |
 | [MySQLFlex](./mysqlflex.md) | `relationaldb` | 21 |
 | [NotificationHubs](./notificationhubs.md) | `notification` | 9 |
