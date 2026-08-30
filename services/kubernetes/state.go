@@ -190,6 +190,10 @@ func newClusterState(
 		s.seedNodeLeaseLocked()
 	}
 
+	// Seed the standard kube-system add-ons (coredns, kube-dns Service,
+	// kube-proxy DaemonSet) so a fresh cluster looks managed, not empty.
+	s.seedKubeSystemLocked()
+
 	return s
 }
 

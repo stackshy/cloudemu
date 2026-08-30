@@ -21,6 +21,8 @@ func TestTickCronJobs_MaterializesJob(t *testing.T) {
 	// 5-minute boundary where "*/5 * * * *" is actually due.
 	clock := config.NewFakeClock(time.Date(2026, time.January, 1, 0, 0, 30, 0, time.UTC))
 	api.SetClock(clock)
+	// TickCronJobs self-gates on progression (opt-in time-driven firing).
+	api.SetLifecycleProgression(true)
 	uid, state := api.RegisterCluster()
 	ts := httptest.NewServer(api)
 
