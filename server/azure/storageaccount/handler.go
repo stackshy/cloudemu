@@ -289,6 +289,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		h.encryption.SetAccountEncryption(name, encryption)
 	}
 
+	// Storage account create-or-update is a long-running operation in the ARM
+	// SDK: armstorage AccountsClient.BeginCreate accepts only 200 (synchronous
+	// terminal) or 202 (async) as the initial status and rejects 201. So this
+	// path answers 200 with the terminal resource on both create and update —
+	// do not "fix" it to 201, which would break the real SDK poller.
 	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
 }
 
