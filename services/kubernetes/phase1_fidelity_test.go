@@ -267,6 +267,73 @@ func TestPodExec_TypedNotImplemented(t *testing.T) {
 	}
 }
 
+func TestJobPodLabels(t *testing.T) {
+	base, done := newFixture(t)
+	defer done()
+
+	body := mustJSON(t, map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": "labeljob"},
+		"spec": map[string]any{
+			"completions": 1,
+			"template": map[string]any{"spec": map[string]any{
+				"containers": []any{map[string]any{"name": "c", "image": "img"}},
+			}},
+		},
+	})
+
+	resp := do(t, http.MethodPost, base+"/apis/batch/v1/namespaces/default/jobs", body)
+	created := decodeMap(t, resp.Body)
+	resp.Body.Close()
+
+	createdMeta, _ := created["metadata"].(map[string]any)
+	jobUID, _ := createdMeta["uid"].(string)
+	if jobUID == "" {
+		t.Fatalf("created Job has empty metadata.uid")
+	}
+
+	pods := do(t, http.MethodGet, base+"/api/v1/namespaces/default/pods", nil)
+	defer pods.Body.Close()
+
+	list := decodeMap(t, pods.Body)
+	items, _ := list["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("job pod count: got %d, want 1", len(items))
+	}
+
+	pod, _ := items[0].(map[string]any)
+	podMeta, _ := pod["metadata"].(map[string]any)
+	rawLabels, _ := podMeta["labels"].(map[string]any)
+
+	labels := map[string]string{}
+	for k, v := range rawLabels {
+		s, _ := v.(string)
+		labels[k] = s
+	}
+
+	want := map[string]string{
+		"batch.kubernetes.io/job-name":       "labeljob",
+		"job-name":                           "labeljob",
+		"batch.kubernetes.io/controller-uid": jobUID,
+		"controller-uid":                     jobUID,
+	}
+	for k, v := range want {
+		if labels[k] != v {
+			t.Fatalf("pod label %q: got %q, want %q", k, labels[k], v)
+		}
+	}
+
+	if labels["batch.kubernetes.io/job-name"] != labels["job-name"] {
+		t.Fatalf("job-name aliases disagree: %q vs %q",
+			labels["batch.kubernetes.io/job-name"], labels["job-name"])
+	}
+
+	if labels["batch.kubernetes.io/controller-uid"] != labels["controller-uid"] {
+		t.Fatalf("controller-uid aliases disagree: %q vs %q",
+			labels["batch.kubernetes.io/controller-uid"], labels["controller-uid"])
+	}
+}
+
 func TestJobReconcile_ShrinkCorrectsSucceeded(t *testing.T) {
 	base, done := newFixture(t)
 	defer done()

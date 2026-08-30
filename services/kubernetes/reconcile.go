@@ -589,6 +589,18 @@ func reconcileIngress(_ *ClusterState, obj *unstructured.Unstructured) {
 		[]any{map[string]any{"ip": ingressLBIP}}, "status", "loadBalancer", "ingress")
 }
 
+// Job-controller Pod labels stamped by reconcileJob. These mirror the real
+// upstream Job controller: the batch.kubernetes.io/* keys are GA (job-name
+// since 1.27), and the bare job-name/controller-uid keys are the legacy
+// aliases kept for compatibility. They are stamped only on Job Pods (not in
+// the shared buildControllerPod, which also serves RS/STS/DS).
+const (
+	jobNameLabel                = "batch.kubernetes.io/job-name"
+	jobNameLegacyLabel          = "job-name"
+	jobControllerUIDLabel       = "batch.kubernetes.io/controller-uid"
+	jobControllerUIDLegacyLabel = "controller-uid"
+)
+
 // reconcileJob runs a Job to completion: it reconciles the Job's owned Pods to
 // exactly `completions` (default 1) Succeeded Pods and marks the Job Complete.
 // Reconciling to the exact count — rather than only topping up — means a lowered
@@ -622,6 +634,14 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 	// Top up the rest with Pods driven straight to Succeeded.
 	for len(owned) < completions {
 		pod := s.buildControllerPod(ns, obj.GetName()+"-"+shortID(), tmpl, owner)
+		// Stamp the real Job-controller Pod labels (GA + legacy aliases). Done
+		// here, not in buildControllerPod, so RS/STS/DS Pods are left untouched.
+		jobName := obj.GetName()
+		jobUID := string(owner.UID)
+		pod.Labels[jobNameLabel] = jobName
+		pod.Labels[jobNameLegacyLabel] = jobName
+		pod.Labels[jobControllerUIDLabel] = jobUID
+		pod.Labels[jobControllerUIDLegacyLabel] = jobUID
 		s.markPodSucceededLocked(pod)
 		s.pods[podKey(ns, pod.Name)] = pod
 		s.wPods.publish(EventAdded, ns, *pod.DeepCopy())
