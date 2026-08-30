@@ -339,19 +339,44 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	now := m.opts.Clock.Now()
 
-	// FIFO deduplication: check if same DeduplicationID was sent within 5-min window.
-	if existingID, found := findDuplicate(qd, &input, now); found {
+	// A repeat DeduplicationID (FIFO) or MessageId (Service Bus dup-detection)
+	// inside the window is silently accepted but not re-enqueued.
+	if existingID, found := findSendDuplicate(qd, &input, now); found {
 		return &driver.SendMessageOutput{MessageID: existingID}, nil
 	}
 
-	// Service Bus duplicate detection: a repeat MessageId inside the configured
-	// window is silently accepted but not re-enqueued.
-	if existingID, found := findMessageIDDuplicate(qd, &input, now); found {
-		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	msg := buildSendMessage(&input, sessionID, now, qd.delaySeconds)
+	qd.messages = append(qd.messages, msg)
+	recordSendDedup(qd, &input, now)
+
+	m.fireTrigger(input.QueueURL, msg)
+
+	m.emitMetric(qd.info.Name, map[string]float64{
+		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	})
+
+	return &driver.SendMessageOutput{
+		MessageID:  msg.ID,
+		ExpiresAt:  msg.ExpiresAt,
+		PopReceipt: msg.ReceiptHandle,
+	}, nil
+}
+
+// findSendDuplicate reports an already-accepted message id when input is a FIFO
+// (DeduplicationID) or Service Bus (MessageId) duplicate within the dedup window.
+func findSendDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
+	if id, found := findDuplicate(qd, input, now); found {
+		return id, true
 	}
 
-	msgID := idgen.GenerateID("sb-msg-")
+	return findMessageIDDuplicate(qd, input, now)
+}
 
+// buildSendMessage constructs the stored message from a send, copying the caller
+// maps and resolving the effective visibility/expiry. TimeToLive is measured
+// from the message's active time (visibleAt), so a scheduled message with a TTL
+// shorter than its delay still survives until at least its scheduled enqueue.
+func buildSendMessage(input *driver.SendMessageInput, sessionID string, now time.Time, queueDelay int) *sbMessage {
 	attrs := make(map[string]string, len(input.Attributes))
 	for k, v := range input.Attributes {
 		attrs[k] = v
@@ -364,75 +389,58 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	delaySeconds := input.DelaySeconds
 	if delaySeconds == 0 {
-		delaySeconds = qd.delaySeconds
+		delaySeconds = queueDelay
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
-	// TimeToLive is measured from when the message becomes active (its enqueue
-	// time), not from submit. For a scheduled message (ScheduledEnqueueTimeUtc in
-	// the future, carried here as a delivery delay) the effective enqueue time is
-	// visibleAt, so a message scheduled for T+delay with a TTL shorter than the
-	// delay still survives until at least T+delay and then lives for its full TTL.
-	// For a non-scheduled send visibleAt == now, so this is unchanged.
-	expiresAt := computeExpiry(visibleAt, input.MessageTTLSeconds)
 
-	// Mint a pop receipt at enqueue time so the message can be deleted or updated
-	// with the Put Message-returned receipt before its first dequeue, as Azure
-	// Queue Storage allows. A subsequent dequeue issues a fresh receipt that
-	// supersedes this one.
-	receiptHandle := idgen.GenerateID("sb-lock-")
-
-	msg := &sbMessage{
-		ID:              msgID,
+	return &sbMessage{
+		ID:              idgen.GenerateID("sb-msg-"),
 		Body:            input.Body,
 		GroupID:         input.GroupID,
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
 		SystemProps:     sysProps,
 		SessionID:       sessionID,
-		ReceiptHandle:   receiptHandle,
-		VisibleAt:       visibleAt,
-		SentAt:          now,
-		ExpiresAt:       expiresAt,
+		// A pop receipt minted at enqueue lets the message be deleted/updated with
+		// the Put Message-returned receipt before its first dequeue.
+		ReceiptHandle: idgen.GenerateID("sb-lock-"),
+		VisibleAt:     visibleAt,
+		SentAt:        now,
+		ExpiresAt:     computeExpiry(visibleAt, input.MessageTTLSeconds),
 	}
+}
 
-	qd.messages = append(qd.messages, msg)
-
+// recordSendDedup updates the FIFO and Service Bus duplicate-detection indexes
+// for a just-enqueued message.
+func recordSendDedup(qd *queueData, input *driver.SendMessageInput, now time.Time) {
 	if qd.info.FIFO && input.DeduplicationID != "" {
 		qd.deduplicationIndex[input.DeduplicationID] = now
 	}
 
 	if qd.requiresDupDetection {
-		if mid := messageIDOf(&input); mid != "" {
+		if mid := messageIDOf(input); mid != "" {
 			qd.dedupByMessageID[mid] = now
 		}
 	}
+}
 
-	// Fire Function trigger if registered.
+// fireTrigger invokes any registered Function trigger for the queue.
+func (m *Mock) fireTrigger(queueURL string, msg *sbMessage) {
 	m.mu.RLock()
-	trigger := m.triggers[input.QueueURL]
+	trigger := m.triggers[queueURL]
 	m.mu.RUnlock()
 
-	if trigger != nil {
-		triggerMsg := driver.Message{
-			MessageID:  msgID,
-			Body:       input.Body,
-			Attributes: attrs,
-			GroupID:    input.GroupID,
-		}
-
-		trigger(input.QueueURL, triggerMsg)
+	if trigger == nil {
+		return
 	}
 
-	m.emitMetric(qd.info.Name, map[string]float64{
-		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	trigger(queueURL, driver.Message{
+		MessageID:  msg.ID,
+		Body:       msg.Body,
+		Attributes: msg.Attributes,
+		GroupID:    msg.GroupID,
 	})
-
-	return &driver.SendMessageOutput{
-		MessageID:  msgID,
-		ExpiresAt:  expiresAt,
-		PopReceipt: receiptHandle,
-	}, nil
 }
 
 func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) error {
