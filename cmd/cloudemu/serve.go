@@ -13,6 +13,12 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/serverkit"
 )
 
+// enginesImagePointer is the single canonical `docker run` line that points users
+// at the :engines image. serve prints it (the error below and --help footer) and
+// doctor echoes it, all from this one const so the CLI can never drift on where
+// the real engines live.
+const enginesImagePointer = "docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:engines --all-real"
+
 // errEnginesNotInLeanBinary is returned when engine flags/env are passed to the
 // lean cloudemu binary, which deliberately does not compile the real engines
 // (postgres/redis/subprocess/docker/localfs) — those heavy deps live only in the
@@ -20,7 +26,7 @@ import (
 // points the user at the batteries image.
 var errEnginesNotInLeanBinary = errors.New(
 	"real engines (postgres/redis/subprocess/docker/localfs) aren't compiled into the lean cloudemu binary.\n" +
-		"run the batteries image:  docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:engines --all-real\n" +
+		"run the batteries image:  " + enginesImagePointer + "\n" +
 		"(or build ./contrib/server from a repo checkout). see https://cloudemu.info/docs/standalone-server")
 
 func runServe(args []string) error {
@@ -87,7 +93,7 @@ func newServeFlagSet(c *serveflags.CommonConfig) *flag.FlagSet {
 		realOnly.PrintDefaults()
 		fmt.Fprintf(out, "\nReal engines (postgres/redis/subprocess/docker/localfs) live in the "+
 			"cloudemu:engines image, not this lean binary:\n"+
-			"  docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:engines --all-real\n")
+			"  "+enginesImagePointer+"\n")
 	}
 
 	return fs

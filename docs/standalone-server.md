@@ -276,6 +276,40 @@ well as NoSQL throughput, data transfer, and per-request charges. It's meant to
 catch "why is this so expensive?" surprises early, not to reconcile invoices; a
 live pricing-API integration is a planned follow-up.
 
+## Preflight check (`cloudemu doctor`)
+
+A fast, no-server sanity check to run before `cloudemu serve` — it confirms the
+default ports are free, prints the build version, and flags whether `docker` is
+available (needed only for the `:engines` image):
+
+```sh
+cloudemu doctor                 # check 127.0.0.1
+cloudemu doctor --host 0.0.0.0  # check the interface you'll bind serve to
+```
+
+```text
+cloudemu doctor — preflight check
+
+[ ok ] version 2.x.y (commit abc1234, built 2026-08-30 by goreleaser)
+
+Ports on 127.0.0.1 (free = free at check time; a port can still be taken before serve binds it):
+  [ ok ] AWS            127.0.0.1:4566  free (at check time)
+  [ ok ] Azure          127.0.0.1:4568  free (at check time)
+  [ ok ] GCP            127.0.0.1:4569  free (at check time)
+  [ ok ] Kubernetes     127.0.0.1:4570  free (at check time)
+  [ ok ] OCI (opt-in)   127.0.0.1:4571  free (at check time)
+
+[ ok ] docker found at /usr/bin/docker (only needed for the :engines image)
+...
+[ ok ] all preflight checks passed — ready to `cloudemu serve`.
+```
+
+An in-use **required** port (AWS/Azure/GCP/Kubernetes) is a blocker: the line is
+marked `[fail]`, the summary tells you how many, and the command exits non-zero
+(so it drops straight into a CI gate). The opt-in **OCI** port and a missing
+`docker` are `[warn]` only — never a failure. The port defaults are read from
+serve itself, so they can't drift from what `cloudemu serve` actually binds.
+
 ## Ports
 
 | Provider   | Default | Protocol | Notes                                    |
@@ -287,7 +321,8 @@ live pricing-API integration is a planned follow-up.
 
 Override with `--aws-port`, `--azure-port`, `--gcp-port`, `--k8s-port`. Start a
 subset with `--providers=aws,gcp`. Bind an interface with `--host 0.0.0.0` (the
-default `127.0.0.1` keeps it local-only).
+default `127.0.0.1` keeps it local-only). Run [`cloudemu
+doctor`](#preflight-check-cloudemu-doctor) first to confirm these ports are free.
 
 ## Pointing SDKs at it
 
