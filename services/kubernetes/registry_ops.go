@@ -91,6 +91,25 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 	}
 }
 
+// reapRegistryObjectLocked deletes one registry object with the same
+// finalizer-gating and teardown a direct DELETE performs (registryDelete): a
+// finalizer-bearing object goes Terminating (MODIFIED event), otherwise it is
+// torn down (owned-child cascade + quota release) and a DELETED event is
+// published. Used by the StatefulSet whenScaled=Delete PVC reap, where the
+// namespace lives on so quota must stay accurate. Callers hold s.mu.
+func (s *ClusterState) reapRegistryObjectLocked(store *registryStore, key string, obj *unstructured.Unstructured) {
+	if s.markForDeletionUnstructured(obj) {
+		s.stampRegistryRVLocked(obj)
+		store.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
+
+		return
+	}
+
+	s.stampRegistryRVLocked(obj)
+	s.teardownRegistryObjectLocked(store, key, obj)
+	store.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
+}
+
 func ownedBy(refs []metav1.OwnerReference, owner types.UID) bool {
 	for _, ref := range refs {
 		if ref.UID == owner {
