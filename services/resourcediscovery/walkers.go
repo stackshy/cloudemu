@@ -102,6 +102,12 @@ const (
 	TypeAccount           = "Account"
 )
 
+// TypeUserAssignedIdentity is the portable type for an Azure user-assigned
+// managed identity (Microsoft.ManagedIdentity/userAssignedIdentities). It sits
+// under ServiceIAM, distinct from TypeUser (Azure AD / IAM users). Kept in its
+// own block so its longer name does not reflow the alignment above.
+const TypeUserAssignedIdentity = "UserAssignedIdentity"
+
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
 // native type strings in Resource Graph (Azure) and Cloud Asset (GCP). AWS RDS
 // uses TypeDBInstance/DBCluster/DBSnapshot above.

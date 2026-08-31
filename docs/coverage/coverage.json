@@ -6597,6 +6597,39 @@
     }
   },
   {
+    "service": "managedidentity",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverIdentities"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedIdentity"
+    }
+  },
+  {
     "service": "memorydb",
     "interface": "MemoryDB",
     "operations": [
