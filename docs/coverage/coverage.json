@@ -4125,6 +4125,54 @@
     }
   },
   {
+    "service": "emr",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "AddInstanceGroups"
+      },
+      {
+        "name": "AddJobFlowSteps"
+      },
+      {
+        "name": "CancelSteps"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeStep"
+      },
+      {
+        "name": "ListBootstrapActions"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListInstanceGroups"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "ListSteps"
+      },
+      {
+        "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "RunJobFlow"
+      },
+      {
+        "name": "TerminateJobFlows"
+      }
+    ],
+    "providers": {
+      "aws": "EMR"
+    }
+  },
+  {
     "service": "eventbus",
     "interface": "EventBus",
     "operations": [

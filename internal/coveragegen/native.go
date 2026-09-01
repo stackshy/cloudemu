@@ -340,6 +340,8 @@ func displayName(pkg string) string {
 		return "LRO"
 	case "costexplorer":
 		return "CostExplorer"
+	case "emr":
+		return "EMR"
 	}
 
 	if pkg == "" {

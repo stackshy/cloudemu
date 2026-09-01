@@ -32,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
+	emrsrv "github.com/stackshy/cloudemu/v2/server/aws/emr"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
@@ -230,6 +231,12 @@ type Drivers struct {
 	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
 	// paths that call sts:GetCallerIdentity or sts:AssumeRole on init succeed.
 	STS bool
+	// EMR serves the Amazon EMR JSON 1.1 protocol (X-Amz-Target prefix
+	// "ElasticMapReduce.") for the cluster/step lifecycle. Cluster state lives
+	// only in the wire server, so the handler owns its own in-memory store — no
+	// backing driver — and it is gated on this bool. AccountID/Region shape the
+	// cluster ARNs; Clock drives the lifecycle timeline.
+	EMR bool
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -324,6 +331,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SNS:                 p.SNS,
 		SFN:                 p.SFN,
 		STS:                 true,
+		EMR:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
 		CostExplorer:        p.ResourceDiscovery,
@@ -470,6 +478,13 @@ func New(d Drivers) *server.Server {
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CostExplorer != nil {
 		srv.Register(costexplorersrv.New(d.CostExplorer))
+	}
+
+	// EMR matches the X-Amz-Target prefix "ElasticMapReduce." — disjoint from the
+	// other JSON 1.1 services, so registration order is free. It carries its own
+	// in-memory cluster/step store (no backing driver).
+	if d.EMR {
+		srv.Register(emrsrv.New(d.AccountID, d.Region, d.Clock))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
