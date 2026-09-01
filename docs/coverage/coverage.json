@@ -12371,6 +12371,27 @@
     }
   },
   {
+    "service": "tags",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAtScope"
+      },
+      {
+        "name": "DeleteAtScope"
+      },
+      {
+        "name": "GetAtScope"
+      },
+      {
+        "name": "UpdateAtScope"
+      }
+    ],
+    "providers": {
+      "azure": "Tags"
+    }
+  },
+  {
     "service": "tenants",
     "interface": "provider-native",
     "operations": [

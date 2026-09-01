@@ -42,6 +42,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Storageaccount](./storageaccount.md) | — (provider-native) | 10 |
 | [Subscriptions](./subscriptions.md) | — (provider-native) | 3 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 9 |
+| [Tags](./tags.md) | — (provider-native) | 4 |
 | [Tenants](./tenants.md) | — (provider-native) | 1 |
 | [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |

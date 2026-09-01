@@ -109,7 +109,7 @@ func (o *propertyOverlay) evict(id string) {
 // top-level id/properties pair pass through untouched.
 func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/subscriptions/") {
+		if !strings.HasPrefix(r.URL.Path, "/subscriptions/") || isTagsAtScope(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -127,6 +127,20 @@ func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.H
 			rec.flush(w)
 		}
 	})
+}
+
+// isTagsAtScope reports whether path targets the Tags resource provider
+// (Microsoft.Resources/tags/default). That handler fully models properties.tags,
+// and Replace/Delete legitimately drop tag keys — the overlay, which only ever
+// ADDS keys the response is missing, would wrongly resurrect a just-removed tag
+// as an "unmodeled" property, so the path must bypass the overlay entirely.
+func isTagsAtScope(path string) bool {
+	const suffix = "/providers/Microsoft.Resources/tags/default"
+
+	trimmed := strings.TrimRight(path, "/")
+
+	return len(trimmed) > len(suffix) &&
+		strings.EqualFold(trimmed[len(trimmed)-len(suffix):], suffix)
 }
 
 // resourceIDFromPath reconstructs the ARM resource id from a request path so a

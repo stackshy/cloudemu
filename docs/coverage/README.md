@@ -85,6 +85,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sts` | [STS](./aws/sts.md) | — | — | — | 8 |
 | `subscriptions` | — | [Subscriptions](./azure/subscriptions.md) | — | — | 3 |
 | `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 9 |
+| `tags` | — | [Tags](./azure/tags.md) | — | — | 4 |
 | `tenants` | — | [Tenants](./azure/tenants.md) | — | — | 1 |
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 125 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |

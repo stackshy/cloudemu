@@ -62,6 +62,7 @@ import (
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
+	tagssrv "github.com/stackshy/cloudemu/v2/server/azure/tags"
 	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
@@ -298,6 +299,14 @@ func New(d Drivers) http.Handler {
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers cascade a group delete into its resources.
 	srv.Register(resourcegroups.New(d.ResourceDiscovery, rgPurgers...))
+
+	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
+	// (no driver): it owns the per-scope tag sets an armresources TagsClient
+	// manages at subscription or resource scope. Its path suffix
+	// /providers/Microsoft.Resources/tags/default is disjoint from the
+	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
+	// listings, so registration order is unconstrained.
+	srv.Register(tagssrv.New())
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
