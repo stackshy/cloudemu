@@ -129,7 +129,7 @@ func TestQueryUsage_SubscriptionScope(t *testing.T) {
 	assert.Equal(t, "USD", rows[0][currencyIdx])
 
 	require.NotNil(t, resp.Type)
-	assert.Equal(t, "Microsoft.CostManagement/query", *resp.Type)
+	assert.Equal(t, "microsoft.costmanagement/Query", *resp.Type)
 }
 
 // TestQueryUsage_GroupByResourceType proves a query grouped by the ResourceType
@@ -210,4 +210,55 @@ func TestQueryUsage_GroupByServiceName(t *testing.T) {
 
 	assert.True(t, labels["Virtual Machines"], "expected a Virtual Machines service group, got %v", labels)
 	assert.GreaterOrEqual(t, len(labels), 2, "VM + public IP span two service groups")
+}
+
+// TestQueryUsage_GranularAndGrouped pins the exact column order for a query that
+// sets BOTH a granularity and a grouping. Real Cost Management orders the
+// columns cost → grouping dimension(s) → date → Currency, and every row matches
+// that order. This is the combined case a grouped-or-granular-only test can't
+// catch.
+func TestQueryUsage_GranularAndGrouped(t *testing.T) {
+	client := newCostClient(t)
+
+	resp, err := client.Usage(context.Background(), subscriptionScope, armcostmanagement.QueryDefinition{
+		Type:      to.Ptr(armcostmanagement.ExportTypeActualCost),
+		Timeframe: to.Ptr(armcostmanagement.TimeframeTypeMonthToDate),
+		Dataset: &armcostmanagement.QueryDataset{
+			Granularity: to.Ptr(armcostmanagement.GranularityTypeDaily),
+			Aggregation: sumAggregation(),
+			Grouping: []*armcostmanagement.QueryGrouping{
+				{Type: to.Ptr(armcostmanagement.QueryColumnTypeDimension), Name: to.Ptr("ResourceType")},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, resp.Properties)
+
+	names := make([]string, 0, len(resp.Properties.Columns))
+	for _, c := range resp.Properties.Columns {
+		require.NotNil(t, c.Name)
+		names = append(names, *c.Name)
+	}
+
+	assert.Equal(t, []string{"Cost", "ResourceType", "UsageDate", "Currency"}, names,
+		"grouping dimension must precede the granularity date column")
+
+	require.NotEmpty(t, resp.Properties.Rows)
+
+	// Every row is ordered to match the columns: number, string, number, "USD".
+	for _, row := range resp.Properties.Rows {
+		require.Len(t, row, 4)
+
+		_, ok := row[0].(float64)
+		assert.True(t, ok, "col 0 (Cost) is %T, want number", row[0])
+
+		_, ok = row[1].(string)
+		assert.True(t, ok, "col 1 (ResourceType) is %T, want string", row[1])
+
+		_, ok = row[2].(float64)
+		assert.True(t, ok, "col 2 (UsageDate) is %T, want number", row[2])
+
+		assert.Equal(t, "USD", row[3], "col 3 must be the currency")
+	}
 }

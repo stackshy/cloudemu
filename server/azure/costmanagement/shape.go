@@ -20,9 +20,9 @@ const trailingSlots = 2
 
 // shape turns the priced cost lines into the Cost Management columns/rows for
 // the requested granularity and grouping. Column order follows the real API:
-// the cost aggregation column(s) first, then the granularity date column (if
-// any), then one column per grouping dimension, then Currency last; every row
-// is ordered to match.
+// the cost aggregation column(s) first, then one column per grouping dimension,
+// then the granularity date column (if any), then Currency last; every row is
+// ordered to match.
 func shape(def *queryDefinition, lines []cost.Line) (columns []column, rows [][]any) {
 	costCols := costColumnNames(def)
 	dateCol, dateVal, hasDate := dateColumn(def.Dataset.Granularity)
@@ -47,12 +47,12 @@ func buildColumns(costCols []string, dateCol column, hasDate bool, groupNames []
 		columns = append(columns, column{Name: name, Type: "Number"})
 	}
 
-	if hasDate {
-		columns = append(columns, dateCol)
-	}
-
 	for _, name := range groupNames {
 		columns = append(columns, column{Name: name, Type: "String"})
+	}
+
+	if hasDate {
+		columns = append(columns, dateCol)
 	}
 
 	return append(columns, column{Name: "Currency", Type: "String"})
@@ -115,7 +115,7 @@ func groupedRows(costCols []string, dateVal any, hasDate bool, groupNames []stri
 }
 
 // buildRow lays out one row: the cost value repeated for each cost column, the
-// date value (if the query is granular), the grouping dimension values, and the
+// grouping dimension values, the date value (if the query is granular), and the
 // currency last — matching buildColumns.
 func buildRow(costCols []string, total, dateVal any, hasDate bool, dims []string) []any {
 	row := make([]any, 0, len(costCols)+len(dims)+trailingSlots)
@@ -124,12 +124,12 @@ func buildRow(costCols []string, total, dateVal any, hasDate bool, dims []string
 		row = append(row, total)
 	}
 
-	if hasDate {
-		row = append(row, dateVal)
-	}
-
 	for _, d := range dims {
 		row = append(row, d)
+	}
+
+	if hasDate {
+		row = append(row, dateVal)
 	}
 
 	return append(row, currency)

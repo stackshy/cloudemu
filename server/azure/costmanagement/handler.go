@@ -109,7 +109,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
 		"id":   scope + "/providers/Microsoft.CostManagement/Query/" + resultName,
 		"name": resultName,
-		"type": "Microsoft.CostManagement/query",
+		"type": "microsoft.costmanagement/Query",
 		"properties": map[string]any{
 			"nextLink": nil,
 			"columns":  columns,
