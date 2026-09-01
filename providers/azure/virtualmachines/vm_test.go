@@ -1176,13 +1176,15 @@ func TestRunInstancesWithMonitoring(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, instances, 1)
 
-	// Should have emitted 5 metrics x 5 backfill datapoints = 25 data points
-	assert.Len(t, mon.data, 25)
+	// Should have emitted 7 metrics x 5 backfill datapoints = 35 data points
+	assert.Len(t, mon.data, 35)
 	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Percentage CPU"))
 	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Network In Total"))
 	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Network Out Total"))
 	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Disk Read Operations/Sec"))
 	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Disk Write Operations/Sec"))
+	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Available Memory Percentage"))
+	assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Available Memory Bytes"))
 }
 
 func TestLifecycleMetricsEmission(t *testing.T) {
@@ -1197,8 +1199,8 @@ func TestLifecycleMetricsEmission(t *testing.T) {
 		mon.reset()
 		err := m.StopInstances(ctx, []string{id})
 		require.NoError(t, err)
-		// 5 metrics, 1 datapoint each
-		assert.Len(t, mon.data, 5)
+		// 7 metrics, 1 datapoint each
+		assert.Len(t, mon.data, 7)
 
 		for _, d := range mon.data {
 			assert.Equal(t, 0.0, d.Value)
@@ -1209,7 +1211,7 @@ func TestLifecycleMetricsEmission(t *testing.T) {
 		mon.reset()
 		err := m.StartInstances(ctx, []string{id})
 		require.NoError(t, err)
-		assert.Len(t, mon.data, 5)
+		assert.Len(t, mon.data, 7)
 
 		assert.True(t, mon.hasMetric("Microsoft.Compute/virtualMachines", "Percentage CPU"))
 	})
@@ -1218,19 +1220,69 @@ func TestLifecycleMetricsEmission(t *testing.T) {
 		mon.reset()
 		err := m.RebootInstances(ctx, []string{id})
 		require.NoError(t, err)
-		assert.Len(t, mon.data, 5)
+		assert.Len(t, mon.data, 7)
 	})
 
 	t.Run("terminate emits zero metrics", func(t *testing.T) {
 		mon.reset()
 		err := m.TerminateInstances(ctx, []string{id})
 		require.NoError(t, err)
-		assert.Len(t, mon.data, 5)
+		assert.Len(t, mon.data, 7)
 
 		for _, d := range mon.data {
 			assert.Equal(t, 0.0, d.Value)
 		}
 	})
+}
+
+// TestVMMemoryMetricsSeeded proves an SDK client reading VM memory utilization
+// sees a real backfilled series for both Azure memory metrics: RunInstances
+// seeds Available Memory Percentage / Available Memory Bytes under
+// Microsoft.Compute/virtualMachines, scoped to the VM's resourceId dimension,
+// with the running values; a Stop then re-seeds them at zero.
+func TestVMMemoryMetricsSeeded(t *testing.T) {
+	ctx := context.Background()
+	m, mon := newTestMockWithMonitoring()
+
+	instances, err := m.RunInstances(ctx, driver.InstanceConfig{
+		ImageID: "img-1", InstanceType: "Standard_B1s", ResourceGroup: "rg",
+	}, 1)
+	require.NoError(t, err)
+	require.Len(t, instances, 1)
+
+	resourceID := m.armResourceID(&instanceData{ID: instances[0].ID, ResourceGroup: "rg"})
+
+	pct := mon.series(resourceID, "Available Memory Percentage")
+	require.NotEmpty(t, pct, "expected a backfilled Available Memory Percentage series")
+
+	for _, v := range pct {
+		assert.Equal(t, 60.0, v)
+	}
+
+	bytesSeries := mon.series(resourceID, "Available Memory Bytes")
+	require.NotEmpty(t, bytesSeries, "expected a backfilled Available Memory Bytes series")
+
+	for _, v := range bytesSeries {
+		assert.Equal(t, 4294967296.0, v)
+	}
+
+	// A Stop re-seeds both memory metrics at zero, like the other lifecycle metrics.
+	mon.reset()
+	require.NoError(t, m.StopInstances(ctx, []string{instances[0].ID}))
+
+	stoppedPct := mon.series(resourceID, "Available Memory Percentage")
+	require.NotEmpty(t, stoppedPct)
+
+	for _, v := range stoppedPct {
+		assert.Equal(t, 0.0, v)
+	}
+
+	stoppedBytes := mon.series(resourceID, "Available Memory Bytes")
+	require.NotEmpty(t, stoppedBytes)
+
+	for _, v := range stoppedBytes {
+		assert.Equal(t, 0.0, v)
+	}
 }
 
 func TestValidateASGBoundsNegativeMin(t *testing.T) {
@@ -1811,6 +1863,20 @@ func (c *vmMetricsCollector) hasMetric(namespace, metricName string) bool {
 	}
 
 	return false
+}
+
+// series returns the values of every datum for metricName scoped to the given
+// resourceId dimension, mirroring what a resource-scoped armmonitor query reads.
+func (c *vmMetricsCollector) series(resourceID, metricName string) []float64 {
+	var values []float64
+
+	for _, d := range c.data {
+		if d.MetricName == metricName && d.Dimensions["resourceId"] == resourceID {
+			values = append(values, d.Value)
+		}
+	}
+
+	return values
 }
 
 func TestSetInstanceVPC(t *testing.T) {
