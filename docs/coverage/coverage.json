@@ -3244,6 +3244,18 @@
     }
   },
   {
+    "service": "costmanagement",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "Usage"
+      }
+    ],
+    "providers": {
+      "azure": "Costmanagement"
+    }
+  },
+  {
     "service": "database",
     "interface": "Database",
     "operations": [

@@ -7,29 +7,49 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// Inventory is the read surface the cost estimator needs: the cross-service
-// resource walk that pricing is applied to. *resourcediscovery.Engine
-// satisfies it, so callers pass the engine directly.
+// Inventory is the read-only resource source the estimator prices. It is
+// satisfied by *resourcediscovery.Engine, so any provider's discovery engine
+// can be priced without this package knowing about a specific provider. The
+// FinOps wire handlers (AWS Cost Explorer, Azure Cost Management) share it so
+// the pricing + aggregation logic lives here once, provider-agnostic, and each
+// handler only shapes the result into its provider's wire format.
 type Inventory interface {
 	ListAll(ctx context.Context) ([]resourcediscovery.Resource, error)
 }
 
-// ServiceMonthly returns the estimated monthly USD of the current inventory,
-// aggregated by resourcediscovery service token (e.g. "compute", "storage").
-// Resources that price at zero (free control-plane objects, usage-metered
-// services) are excluded, so a service appears only when it carries a cost.
-//
-// It applies the shared services/pricing model — the single source of truth for
-// per-resource cost — over the live inventory, so it never re-implements pricing
-// logic. It is the provider-agnostic cost surface the AWS Cost Explorer wire
-// handler serves.
-func ServiceMonthly(ctx context.Context, inv Inventory) (map[string]float64, error) {
-	res, err := inv.ListAll(ctx)
-	if err != nil {
-		return nil, err
+// Line is one always-on resource with its estimated monthly USD cost. The
+// discovery attributes (Provider/Service/Type/Region) are carried through so a
+// wire handler can group the lines by whichever cloud-native dimension its API
+// exposes (service name, resource type, region, …) without re-pricing.
+type Line struct {
+	Provider   string
+	Service    string
+	Type       string
+	ID         string
+	ARN        string
+	Region     string
+	MonthlyUSD float64
+}
+
+// Estimate prices every resource the inventory holds and returns one Line per
+// resource that carries a positive monthly cost, plus the summed total. Usage-
+// based and free resources price at zero and are dropped, matching every other
+// cost surface in the emulator (the /_cloudemu/cost endpoint applies the same
+// always-on filter). A nil inventory yields an empty estimate.
+func Estimate(ctx context.Context, inv Inventory) ([]Line, float64, error) {
+	if inv == nil {
+		return nil, 0, nil
 	}
 
-	byService := make(map[string]float64, len(res))
+	res, err := inv.ListAll(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var (
+		lines []Line
+		total float64
+	)
 
 	for i := range res {
 		r := &res[i]
@@ -39,8 +59,35 @@ func ServiceMonthly(ctx context.Context, inv Inventory) (map[string]float64, err
 			continue
 		}
 
-		byService[r.Service] += est
+		lines = append(lines, Line{
+			Provider:   r.Provider,
+			Service:    r.Service,
+			Type:       r.Type,
+			ID:         r.ID,
+			ARN:        r.ARN,
+			Region:     r.Region,
+			MonthlyUSD: est,
+		})
+		total += est
 	}
 
-	return byService, nil
+	return lines, total, nil
+}
+
+// ServiceMonthly prices the inventory and returns the total monthly USD grouped
+// by each resource's portable service. It is the provider-agnostic aggregation
+// the grouped FinOps responses build on, so callers never re-implement the
+// price-then-bucket walk.
+func ServiceMonthly(ctx context.Context, inv Inventory) (map[string]float64, error) {
+	lines, _, err := Estimate(ctx, inv)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]float64, len(lines))
+	for i := range lines {
+		out[lines[i].Service] += lines[i].MonthlyUSD
+	}
+
+	return out, nil
 }
