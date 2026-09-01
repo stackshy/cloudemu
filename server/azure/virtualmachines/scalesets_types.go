@@ -54,3 +54,41 @@ type vmssResponseProps struct {
 type vmssListResponse struct {
 	Value []vmssResponse `json:"value"`
 }
+
+// vmssVMResponse is the outbound shape for a single materialized scale-set VM
+// (Microsoft.Compute/virtualMachineScaleSets/{vmss}/virtualMachines/{instanceId}).
+type vmssVMResponse struct {
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Type       string              `json:"type"`
+	Location   string              `json:"location"`
+	InstanceID string              `json:"instanceId"`
+	Properties vmssVMResponseProps `json:"properties"`
+}
+
+type vmssVMResponseProps struct {
+	ProvisioningState string        `json:"provisioningState"`
+	InstanceView      *instanceView `json:"instanceView,omitempty"`
+}
+
+// vmssVMListResponse is the outbound shape for a scale-set VM list.
+type vmssVMListResponse struct {
+	Value []vmssVMResponse `json:"value"`
+}
+
+// vmssInstanceViewResponse is the outbound VirtualMachineScaleSetInstanceView
+// for GET virtualMachineScaleSets/{name}/instanceView: per-provisioning-state
+// instance counts plus the scale set's own status line.
+type vmssInstanceViewResponse struct {
+	VirtualMachine *vmssVMStatusesSummary `json:"virtualMachine,omitempty"`
+	Statuses       []instanceViewStatus   `json:"statuses,omitempty"`
+}
+
+type vmssVMStatusesSummary struct {
+	StatusesSummary []vmssStatusSummary `json:"statusesSummary,omitempty"`
+}
+
+type vmssStatusSummary struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}

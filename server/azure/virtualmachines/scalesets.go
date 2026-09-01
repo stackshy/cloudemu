@@ -17,6 +17,10 @@ type scaleSetStore interface {
 	CreateScaleSet(ctx context.Context, s providervm.ScaleSet) (*providervm.ScaleSet, error)
 	ListScaleSets(ctx context.Context) ([]providervm.ScaleSet, error)
 	DeleteScaleSet(ctx context.Context, name string) error
+	ListScaleSetVMs(ctx context.Context, vmssName string) ([]providervm.ScaleSetVM, error)
+	GetScaleSetVM(ctx context.Context, vmssName, instanceID string) (*providervm.ScaleSetVM, error)
+	DeleteScaleSetVM(ctx context.Context, vmssName, instanceID string) error
+	PowerScaleSetVM(ctx context.Context, vmssName, instanceID, action string) error
 }
 
 // serveScaleSet dispatches PUT/GET on Microsoft.Compute/virtualMachineScaleSets.
@@ -30,7 +34,7 @@ func (h *Handler) serveScaleSet(w http.ResponseWriter, r *http.Request, rp azure
 	}
 
 	if rp.SubResource != "" {
-		writeNotImplemented(w, r.Method+" "+r.URL.Path)
+		serveScaleSetSubResource(w, r, rp, store)
 		return
 	}
 
