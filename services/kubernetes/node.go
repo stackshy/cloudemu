@@ -14,13 +14,18 @@ import (
 // The emulator runs one or more synthetic Nodes (KWOK-style: node objects with a
 // Ready status and no kubelet). By default it runs a single node
 // (cloudemu-node-0) and every Pod schedules onto it — the behavior every
-// single-node test relies on. With --k8s-nodes N (fixed at cluster creation,
-// immutable) it seeds one control-plane node plus N-1 workers and routes Pod
-// placement through a deterministic first-fit scheduler
-// (scheduleNodeLocked) that honors nodeSelector, taints/tolerations, and
-// resource-request feasibility. Node/inter-pod affinity, topology spread,
-// scoring/bin-packing, tolerationSeconds/live eviction, and dynamic node
-// add/remove are deferred follow-ups.
+// single-node test relies on. With --k8s-nodes N it seeds one control-plane node
+// plus N-1 workers and routes Pod placement through a deterministic first-fit
+// scheduler (scheduleNodeLocked) that honors nodeSelector, taints/tolerations,
+// and resource-request feasibility.
+//
+// Node membership is also dynamic: registering a Node through the API expands
+// the schedulable set (reconcileNode retries every Pending Pod against the new
+// node in name-sorted order), and deleting one contracts it (nodeOnDelete
+// deletes the node-pinned DaemonSet Pods and reschedules every other bound Pod
+// onto a remaining fitting node, falling back to Pending). Node/inter-pod
+// affinity, topology spread, scoring/bin-packing, and tolerationSeconds/live
+// eviction are deferred follow-ups.
 
 const (
 	// nodeKubeletVersion is the Kubernetes version the synthetic nodes report;
@@ -44,6 +49,9 @@ const (
 	nodeAllocatableMemory = "8041864Ki"
 	// nodeAddressTypeInternalIP is the Node address type carrying the routable IP.
 	nodeAddressTypeInternalIP = "InternalIP"
+	// kindDaemonSet is the DaemonSet Kind, matched on a Pod's ownerReference to
+	// decide a removed node's Pod is deleted (node-pinned) rather than rescheduled.
+	kindDaemonSet = "DaemonSet"
 )
 
 // nodeNameForIndex returns the deterministic name of the i-th synthetic node.
@@ -445,6 +453,131 @@ func podRequests(pod *corev1.Pod) (cpu, mem resource.Quantity) {
 	return cpu, mem
 }
 
+// reconcileNode runs after a Node is created or updated through the API. A node
+// added (or re-labeled/un-tainted) at runtime expands the schedulable set, so
+// every Pod still Pending — nothing fit it when it was created — is retried
+// against the current nodes and placed if one now accepts it. Seeded nodes are
+// inserted directly and never reach this hook, so the fixed-at-seed multi-node
+// path is unchanged.
+func reconcileNode(s *ClusterState, _ *unstructured.Unstructured) {
+	s.reschedulePendingPodsLocked()
+}
+
+// nodeOnDelete runs after a Node is removed through the API. Its bound Pods can
+// no longer run there: DaemonSet Pods are node-pinned one-per-node, so the Pod
+// for the gone node is deleted (a later DaemonSet write will not recreate it —
+// the node is gone), while every other bound Pod is rescheduled onto a remaining
+// fitting node. The node's kube-node-lease Lease is removed too. Callers hold
+// s.mu.
+func nodeOnDelete(s *ClusterState, obj *unstructured.Unstructured) {
+	s.evacuateNodeLocked(obj.GetName())
+	s.deleteNodeLeaseLocked(obj.GetName())
+}
+
+// reschedulePendingPodsLocked retries every unscheduled, non-terminal Pod
+// against the current node set in deterministic (name-sorted) order, placing
+// those that now fit and refreshing Endpoints for the namespaces that changed.
+// Callers hold s.mu.
+func (s *ClusterState) reschedulePendingPodsLocked() {
+	touched := map[string]bool{}
+
+	for _, key := range s.sortedPodKeysLocked() {
+		pod := s.pods[key]
+		if pod.Spec.NodeName != "" || podTerminal(pod) {
+			continue
+		}
+
+		s.markPodRunningLocked(pod)
+
+		if pod.Spec.NodeName != "" {
+			touched[pod.Namespace] = true
+			pod.ResourceVersion = s.nextClusterRVLocked()
+			s.wPods.publish(EventModified, pod.Namespace, *pod.DeepCopy())
+		}
+	}
+
+	for ns := range touched {
+		s.resyncEndpointsForNamespaceLocked(ns)
+	}
+}
+
+// evacuateNodeLocked handles the Pods bound to a just-removed node in
+// deterministic (name-sorted) order: DaemonSet Pods are deleted (node-pinned,
+// one per node), and every other Pod is unbound and rescheduled onto a remaining
+// fitting node (Pending when none fits). Endpoints are refreshed for the
+// namespaces that changed. Callers hold s.mu.
+func (s *ClusterState) evacuateNodeLocked(node string) {
+	touched := map[string]bool{}
+
+	for _, key := range s.sortedPodKeysLocked() {
+		pod := s.pods[key]
+		if pod.Spec.NodeName != node || podTerminal(pod) {
+			continue
+		}
+
+		if podOwnedByDaemonSet(pod) {
+			delete(s.pods, key)
+			s.wPods.publish(EventDeleted, pod.Namespace, *pod.DeepCopy())
+		} else {
+			s.rebindPodLocked(pod)
+		}
+
+		touched[pod.Namespace] = true
+	}
+
+	for ns := range touched {
+		s.resyncEndpointsForNamespaceLocked(ns)
+	}
+}
+
+// rebindPodLocked unbinds a Pod from its (removed) node and re-runs the scheduler
+// so it lands on a remaining fitting node, or falls back to Pending/
+// Unschedulable. The Pod keeps its identity (UID/name); its runtime status is
+// cleared first so a re-placed Pod gets a fresh IP and a Pending one carries no
+// stale address. Callers hold s.mu.
+func (s *ClusterState) rebindPodLocked(pod *corev1.Pod) {
+	pod.Spec.NodeName = ""
+	pod.Status.PodIP = ""
+	pod.Status.PodIPs = nil
+	pod.Status.HostIP = ""
+	pod.Status.ContainerStatuses = nil
+
+	s.markPodRunningLocked(pod)
+
+	pod.ResourceVersion = s.nextClusterRVLocked()
+	s.wPods.publish(EventModified, pod.Namespace, *pod.DeepCopy())
+}
+
+// sortedPodKeysLocked returns s.pods keys in name-sorted order so a scheduling
+// sweep visits Pods deterministically. Callers hold s.mu.
+func (s *ClusterState) sortedPodKeysLocked() []string {
+	keys := make([]string, 0, len(s.pods))
+	for k := range s.pods {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+// podTerminal reports whether a Pod has reached a terminal phase and so is not a
+// (re)scheduling candidate.
+func podTerminal(pod *corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+// podOwnedByDaemonSet reports whether a Pod is controlled by a DaemonSet.
+func podOwnedByDaemonSet(pod *corev1.Pod) bool {
+	for i := range pod.OwnerReferences {
+		if pod.OwnerReferences[i].Kind == kindDaemonSet {
+			return true
+		}
+	}
+
+	return false
+}
+
 // seedNodeLeaseLocked creates a node's kube-node-lease Lease (kubelet heartbeat
 // object), so `kubectl -n kube-node-lease get leases` shows every node's lease
 // like a real cluster. Callers hold s.mu.
@@ -474,4 +607,25 @@ func (s *ClusterState) seedNodeLeaseLocked(name string) {
 	s.stampRegistryRVLocked(lease)
 
 	store.items[objKey("kube-node-lease", name)] = lease
+}
+
+// deleteNodeLeaseLocked removes a node's kube-node-lease Lease — the counterpart
+// to seedNodeLeaseLocked — when the node is deleted, so no orphan lease outlives
+// its node. Callers hold s.mu.
+func (s *ClusterState) deleteNodeLeaseLocked(name string) {
+	store := s.reg.getStore(apiGroupCoordination, "v1", "leases")
+	if store == nil {
+		return
+	}
+
+	key := objKey("kube-node-lease", name)
+
+	lease, ok := store.items[key]
+	if !ok {
+		return
+	}
+
+	s.stampRegistryRVLocked(lease)
+	delete(store.items, key)
+	store.watch.publish(EventDeleted, "kube-node-lease", *lease.DeepCopy())
 }
