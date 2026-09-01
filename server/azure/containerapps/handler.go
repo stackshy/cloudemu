@@ -91,8 +91,6 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resource
 	return h.store.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
-// --- managed environments ---
-
 func (h *Handler) serveEnvironment(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listEnvironments(w, r, rp)
@@ -160,8 +158,6 @@ func (h *Handler) listEnvironments(w http.ResponseWriter, r *http.Request, rp *a
 	writeList(w, r, rp,
 		h.store.ListEnvironmentsByResourceGroup, h.store.ListEnvironmentsBySubscription, toEnvResponse)
 }
-
-// --- container apps ---
 
 func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if rp.ResourceName == "" {

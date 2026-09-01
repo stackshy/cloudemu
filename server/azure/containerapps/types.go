@@ -8,8 +8,7 @@ const (
 	armTypeContainerApp   = providerName + "/" + typeContainerApps
 )
 
-// --- Managed environment wire shapes ---
-
+// envRequest is the ARM PUT/PATCH body for a managed environment.
 type envRequest struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
@@ -68,8 +67,7 @@ func toEnvResponse(e *containerapps.Environment) envResponse {
 	}
 }
 
-// --- Container app wire shapes ---
-
+// appRequest is the ARM PUT/PATCH body for a container app.
 type appRequest struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
