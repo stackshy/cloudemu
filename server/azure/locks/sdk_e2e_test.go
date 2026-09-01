@@ -171,6 +171,104 @@ func TestSDKSubscriptionLockRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKResourceLevelLockOnExistingHandlerPath is the regression for the
+// dispatch-order bug: a lock on an individual resource is addressed at
+// .../providers/Microsoft.Compute/virtualMachines/vm1/providers/Microsoft.
+// Authorization/locks/lk — a path whose leading providers pair belongs to the
+// (registered) VM handler. If the locks handler is not dispatched first this
+// returns 501 instead of round-tripping the lock.
+func TestSDKResourceLevelLockOnExistingHandlerPath(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	const rg, vm, lockName = "rg-1", "vm-1", "vm-lock"
+
+	created, err := client.CreateOrUpdateAtResourceLevel(ctx, rg,
+		"Microsoft.Compute", "", "virtualMachines", vm, lockName,
+		armlocks.ManagementLockObject{
+			Properties: &armlocks.ManagementLockProperties{Level: to.Ptr(armlocks.LockLevelReadOnly)},
+		}, nil)
+	if err != nil {
+		t.Fatalf("create at resource level: %v", err)
+	}
+
+	assertLock(t, "create", created.ManagementLockObject, lockName, armlocks.LockLevelReadOnly, "")
+
+	got, err := client.GetAtResourceLevel(ctx, rg,
+		"Microsoft.Compute", "", "virtualMachines", vm, lockName, nil)
+	if err != nil {
+		t.Fatalf("get at resource level: %v", err)
+	}
+
+	assertLock(t, "get", got.ManagementLockObject, lockName, armlocks.LockLevelReadOnly, "")
+
+	if _, err := client.DeleteAtResourceLevel(ctx, rg,
+		"Microsoft.Compute", "", "virtualMachines", vm, lockName, nil); err != nil {
+		t.Fatalf("delete at resource level: %v", err)
+	}
+}
+
+// TestSDKResourceLevelAndByScopeAddressSameLock is the regression for the
+// scope-normalization bug: a lock created via *AtResourceLevel must be visible
+// and deletable via *ByScope for the same logical scope (and vice versa). The
+// two SDK variants build subtly different raw paths (a doubled leading slash on
+// ByScope, an empty parentResourcePath segment on AtResourceLevel, differing
+// resourceGroups casing) that must normalize to one store key.
+func TestSDKResourceLevelAndByScopeAddressSameLock(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	const rg, vm = "rg-1", "vm-1"
+
+	// Scope string as a ByScope caller would supply it: single slashes,
+	// canonical resourceGroups casing.
+	scope := "/subscriptions/" + testSub +
+		"/resourceGroups/" + rg +
+		"/providers/Microsoft.Compute/virtualMachines/" + vm
+
+	// Create via AtResourceLevel...
+	if _, err := client.CreateOrUpdateAtResourceLevel(ctx, rg,
+		"Microsoft.Compute", "", "virtualMachines", vm, "lk-a",
+		armlocks.ManagementLockObject{
+			Properties: &armlocks.ManagementLockProperties{Level: to.Ptr(armlocks.LockLevelCanNotDelete)},
+		}, nil); err != nil {
+		t.Fatalf("create at resource level: %v", err)
+	}
+
+	// ...and read it back via GetByScope for the same logical scope.
+	byScope, err := client.GetByScope(ctx, scope, "lk-a", nil)
+	if err != nil {
+		t.Fatalf("get by scope after create at resource level: %v", err)
+	}
+
+	assertLock(t, "byScope", byScope.ManagementLockObject, "lk-a", armlocks.LockLevelCanNotDelete, "")
+
+	// Reverse direction: create via ByScope, delete via AtResourceLevel.
+	if _, err := client.CreateOrUpdateByScope(ctx, scope, "lk-b",
+		armlocks.ManagementLockObject{
+			Properties: &armlocks.ManagementLockProperties{Level: to.Ptr(armlocks.LockLevelReadOnly)},
+		}, nil); err != nil {
+		t.Fatalf("create by scope: %v", err)
+	}
+
+	if _, err := client.GetAtResourceLevel(ctx, rg,
+		"Microsoft.Compute", "", "virtualMachines", vm, "lk-b", nil); err != nil {
+		t.Fatalf("get at resource level after create by scope: %v", err)
+	}
+
+	if _, err := client.DeleteByScope(ctx, scope, "lk-b", nil); err != nil {
+		t.Fatalf("delete by scope: %v", err)
+	}
+
+	_, err = client.GetAtResourceLevel(ctx, rg,
+		"Microsoft.Compute", "", "virtualMachines", vm, "lk-b", nil)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("get after by-scope delete: want 404, got %v", err)
+	}
+}
+
 func listNamesAtRG(t *testing.T, client *armlocks.ManagementLocksClient, rg string) map[string]bool {
 	t.Helper()
 

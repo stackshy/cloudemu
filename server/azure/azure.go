@@ -241,6 +241,20 @@ func New(d Drivers) http.Handler {
 	// handlers, so it does not shadow them.
 	srv.Register(providerssrv.New())
 
+	// Management locks (Microsoft.Authorization/locks) attach at any scope,
+	// including a nested .../providers/{ns}/{type}/{name}/providers/Microsoft.
+	// Authorization/locks/{lock} on an individual resource. A resource-scope lock
+	// URL's leading /providers/{ns}/{type} pair is claimed by that resource type's
+	// own handler (whose azurearm.ParsePath match ignores the trailing locks
+	// segment), so the locks handler must register BEFORE the per-resource-type
+	// handlers to win first-match dispatch. Its Matches is a scope-agnostic
+	// substring test on /providers/microsoft.authorization/locks — a path no
+	// resource handler produces — so registering it early shadows nothing. Locks
+	// are a pure management-plane concept with no backing driver, so the handler
+	// is always registered (like subscriptions/tenants). CRUD + round-trip only;
+	// enforcement (blocking deletes/writes on locked resources) is out of scope.
+	srv.Register(locks.New())
+
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front so they can be handed to the resource-group cascade below and then
 	// registered at their normal positions. A resource group is a pure
@@ -532,15 +546,6 @@ func New(d Drivers) http.Handler {
 	if d.IAM != nil {
 		srv.Register(iam.New(d.IAM))
 	}
-
-	// Management locks match /providers/Microsoft.Authorization/locks at any
-	// scope — a disjoint resource type from the IAM handler's role/deny
-	// assignments under the same provider, so it never shadows them. Locks are a
-	// pure management-plane concept with no backing driver, so the handler is
-	// always registered (like subscriptions/tenants). Registered before the
-	// BlobStorage fallback. This is CRUD + round-trip only; lock enforcement
-	// (blocking deletes/writes on locked resources) is out of scope.
-	srv.Register(locks.New())
 
 	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and
 	// must register before the permissive BlobStorage fallback below.

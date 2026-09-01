@@ -186,17 +186,29 @@ func parseLockPath(urlPath string) (scope, name string, ok bool) {
 }
 
 // normalizeScope canonicalizes the chunk of the URL that precedes the locks
-// segment: trailing slashes are trimmed and a leading slash is guaranteed, so a
-// scope is always a path-rooted string.
+// segment into a single-slash, path-rooted string. Empty segments are dropped,
+// so a leading slash is guaranteed and any doubled slash is collapsed.
+//
+// Collapsing matters for cross-variant addressing: the armlocks *ByScope
+// methods build the path as "/{scope}/providers/..." where {scope} already
+// carries its own leading slash, producing a doubled leading slash; the
+// *AtResourceLevel methods leave an empty {parentResourcePath} segment,
+// producing an internal doubled slash. Both must reduce to the same key as the
+// caller's logical scope so a lock created via one variant is found, listed and
+// deleted via the others.
 func normalizeScope(raw string) string {
-	trimmed := strings.TrimRight(raw, "/")
-	if trimmed == "" {
+	segs := strings.Split(raw, "/")
+	kept := make([]string, 0, len(segs))
+
+	for _, s := range segs {
+		if s != "" {
+			kept = append(kept, s)
+		}
+	}
+
+	if len(kept) == 0 {
 		return "/"
 	}
 
-	if !strings.HasPrefix(trimmed, "/") {
-		return "/" + trimmed
-	}
-
-	return trimmed
+	return "/" + strings.Join(kept, "/")
 }
