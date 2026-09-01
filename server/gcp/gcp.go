@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
+	"github.com/stackshy/cloudemu/v2/server/gcp/cloudbilling"
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
@@ -380,6 +381,15 @@ func New(d Drivers) *server.Server {
 	if d.FCM != nil {
 		srv.Register(fcmsrv.New(d.FCM))
 	}
+
+	// Cloud Billing (cloudbilling.googleapis.com) + Budget API
+	// (billingbudgets.googleapis.com) share the /v1/billingAccounts URL space and
+	// have no driver — the control plane is a self-contained store seeded with a
+	// default account and catalog, so the handler is always registered (like
+	// servicenetworking). Its /v1/projects/{p}/billingInfo route overlaps the
+	// /v1/projects/ family, so it registers before Firestore; the billingInfo-
+	// suffix guard keeps it disjoint from Firestore's /v1/projects/{p}/databases.
+	srv.Register(cloudbilling.New())
 
 	if d.Firestore != nil {
 		srv.Register(firestore.New(d.Firestore))
