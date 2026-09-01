@@ -66,6 +66,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
+	synapsesrv "github.com/stackshy/cloudemu/v2/server/azure/synapse"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
 	tagssrv "github.com/stackshy/cloudemu/v2/server/azure/tags"
 	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
@@ -323,6 +324,11 @@ func New(d Drivers) http.Handler {
 		rgPurgers = append(rgPurgers, containerAppsHandler)
 	}
 
+	// Synapse workspaces are resource-group-scoped, so the (always-on,
+	// driverless) Synapse handler joins the purge cascade. Registered further below.
+	synapseHandler := synapsesrv.New()
+	rgPurgers = append(rgPurgers, synapseHandler)
+
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
@@ -479,6 +485,14 @@ func New(d Drivers) http.Handler {
 	// like Event Hubs), so it is always registered. The Kusto KQL query data plane
 	// is out of scope.
 	srv.Register(kustosrv.New())
+
+	// Synapse claims Microsoft.Synapse/workspaces (and their sqlPools,
+	// bigDataPools and integrationRuntimes) — a distinct ARM provider name from
+	// every other Azure handler, so registration order is unconstrained. Like
+	// Event Hubs it is a self-contained control-plane handler with no backing
+	// driver (its state is workspace-scoped ARM containers), so it is always
+	// registered. Created above and joined to the resource-group purge cascade.
+	srv.Register(synapseHandler)
 
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
