@@ -43,6 +43,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
@@ -531,6 +532,15 @@ func New(d Drivers) http.Handler {
 	if d.IAM != nil {
 		srv.Register(iam.New(d.IAM))
 	}
+
+	// Management locks match /providers/Microsoft.Authorization/locks at any
+	// scope — a disjoint resource type from the IAM handler's role/deny
+	// assignments under the same provider, so it never shadows them. Locks are a
+	// pure management-plane concept with no backing driver, so the handler is
+	// always registered (like subscriptions/tenants). Registered before the
+	// BlobStorage fallback. This is CRUD + round-trip only; lock enforcement
+	// (blocking deletes/writes on locked resources) is out of scope.
+	srv.Register(locks.New())
 
 	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and
 	// must register before the permissive BlobStorage fallback below.
