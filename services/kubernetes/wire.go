@@ -13,6 +13,12 @@ import (
 // both requests and responses.
 const contentTypeJSON = "application/json"
 
+// causeTypeFieldValueForbidden mirrors the field.ErrorTypeForbidden cause the
+// apiserver emits for an immutable-field violation. apimachinery's metav1 does
+// not export a constant for this value (only the internal field package does),
+// so it is spelled here to match the wire.
+const causeTypeFieldValueForbidden metav1.CauseType = "FieldValueForbidden"
+
 // writeJSON marshals v and writes it as a JSON response with the given
 // status code. The Kubernetes Content-Type is always application/json.
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -48,6 +54,25 @@ func writeAlreadyExists(w http.ResponseWriter, message string) {
 // writeBadRequest emits a 400 Status response.
 func writeBadRequest(w http.ResponseWriter, message string) {
 	writeStatus(w, http.StatusBadRequest, metav1.StatusReasonBadRequest, message)
+}
+
+// writeInvalid emits a 422 Status response with field-level causes, matching
+// what a real apiserver returns when a request fails validation (e.g. changing
+// an immutable field). client-go decodes it as a typed error (kerrors.IsInvalid)
+// and exposes the causes.
+func writeInvalid(w http.ResponseWriter, kind, name, message string, causes []metav1.StatusCause) {
+	writeJSON(w, http.StatusUnprocessableEntity, &metav1.Status{
+		TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"},
+		Status:   metav1.StatusFailure,
+		Code:     http.StatusUnprocessableEntity,
+		Reason:   metav1.StatusReasonInvalid,
+		Message:  message,
+		Details: &metav1.StatusDetails{
+			Kind:   kind,
+			Name:   name,
+			Causes: causes,
+		},
+	})
 }
 
 // writeMethodNotAllowed emits a 405 Status response.
