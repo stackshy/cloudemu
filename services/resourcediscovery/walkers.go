@@ -109,6 +109,22 @@ const (
 // own block so its longer name does not reflow the alignment above.
 const TypeUserAssignedIdentity = "UserAssignedIdentity"
 
+// TypeSQLVirtualMachine is the portable type for an Azure SQL virtual machine
+// (Microsoft.SqlVirtualMachine/sqlVirtualMachines) — a management overlay on a
+// paired compute VM of the same name/resource group. It sits under
+// ServiceCompute and is synthesized in the compute walker from a VM opted in via
+// the cloudemu:sqlvm tag, so it needs no stored state and no driver capability.
+const TypeSQLVirtualMachine = "SqlVirtualMachine"
+
+// sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
+// paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
+// carrying the tag get the overlay, so plain VMs — and every AWS/GCP VM — are
+// unaffected.
+const (
+	sqlVMOptInTagKey   = "cloudemu:sqlvm"
+	sqlVMOptInTagValue = "true"
+)
+
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
 // native type strings in Resource Graph (Azure) and Cloud Asset (GCP). AWS RDS
 // uses TypeDBInstance/DBCluster/DBSnapshot above.
@@ -190,7 +206,49 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		return nil, err
 	}
 
-	return append(out, snaps...), nil
+	out = append(out, snaps...)
+
+	out = append(out, e.walkSQLVirtualMachines(instances)...)
+
+	return out, nil
+}
+
+// walkSQLVirtualMachines synthesizes a Microsoft.SqlVirtualMachine overlay row
+// for each Azure compute VM opted in via the cloudemu:sqlvm=true tag. The
+// overlay is a pure derived view of the paired VM — it shares the VM's name,
+// resource group, region and tags, differing only in the provider segment of
+// its id — so it needs no stored state and no driver capability. AWS/GCP VMs
+// never reach this (provider-gated), so their discovery output is unchanged.
+func (e *Engine) walkSQLVirtualMachines(instances []computedriver.Instance) []Resource {
+	if e.provider != ProviderAzure {
+		return nil
+	}
+
+	out := make([]Resource, 0, len(instances))
+
+	for i := range instances {
+		inst := &instances[i]
+		if inst.Tags[sqlVMOptInTagKey] != sqlVMOptInTagValue {
+			continue
+		}
+
+		region := inst.Region
+		if region == "" {
+			region = e.region
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider,
+			Service:  ServiceCompute,
+			Type:     TypeSQLVirtualMachine,
+			ID:       inst.ID,
+			ARN:      e.computeSQLVirtualMachineARN(inst.ID, inst.ResourceGroup),
+			Region:   region,
+			Tags:     copyTags(inst.Tags),
+		})
+	}
+
+	return out
 }
 
 // walkSnapshots surfaces block-storage snapshots (EBS / GCE / Azure disk

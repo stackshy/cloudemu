@@ -435,6 +435,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"compute/Volume":                      "microsoft.compute/disks",
 	"compute/Snapshot":                    "microsoft.compute/snapshots",
 	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
+	"compute/SqlVirtualMachine":           "microsoft.sqlvirtualmachine/sqlvirtualmachines",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
 	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",
