@@ -50,6 +50,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
+	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
@@ -228,6 +229,15 @@ func New(d Drivers) http.Handler {
 	// The global tenants list is a non-/subscriptions ARM path; register it
 	// before the permissive blob fallback so it isn't swallowed as a blob call.
 	srv.Register(tenants.New(tenantID))
+
+	// Resource-provider registration (Microsoft.Resources "providers" surface):
+	// the bare /subscriptions/{sub}/providers list, a single-namespace get, and
+	// the register / unregister actions CLIs and IaC tools call at startup. It
+	// has no driver — the emulator holds registration state in memory. Registered
+	// early so its strict path match wins; its Matches never claims the deeper
+	// /providers/{namespace}/{resourceType}/... paths owned by the service
+	// handlers, so it does not shadow them.
+	srv.Register(providerssrv.New())
 
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front so they can be handed to the resource-group cascade below and then

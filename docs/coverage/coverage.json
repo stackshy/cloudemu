@@ -8601,6 +8601,27 @@
     }
   },
   {
+    "service": "providers",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "Register"
+      },
+      {
+        "name": "Unregister"
+      }
+    ],
+    "providers": {
+      "azure": "Providers"
+    }
+  },
+  {
     "service": "queue",
     "interface": "provider-native",
     "operations": [
