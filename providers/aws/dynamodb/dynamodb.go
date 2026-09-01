@@ -1414,7 +1414,7 @@ func (m *Mock) flushStreamDeliveries(callerCtx context.Context) {
 			batch = append(batch, pending[k].rec)
 		}
 
-		payload := driver.BuildLambdaStreamEvent(pending[i].streamARN, pending[i].region, pending[i].viewType, batch)
+		payload := buildLambdaStreamEvent(pending[i].streamARN, pending[i].region, pending[i].viewType, batch)
 		_, _ = m.streamInvoker.DeliverEventSourceBatch(ctx, pending[i].streamARN, payload)
 
 		i = j
