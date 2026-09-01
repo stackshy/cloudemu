@@ -147,7 +147,9 @@ func TestSDKTagsAtScopeLifecycle(t *testing.T) {
 
 	assertTags(t, "merge", merged.Properties, map[string]string{"env": "prod", "team": "platform", "cost": "eng"})
 
-	// PATCH Delete removes a name/value pair; a non-matching value is a no-op.
+	// PATCH Delete removes the named tags regardless of the supplied value; keys
+	// not named remain. Here "env" is deleted even though the value is wrong,
+	// while "team" (unnamed) survives.
 	deleted, err := client.UpdateAtScope(ctx, testScope, armresources.TagsPatchResource{
 		Operation:  to.Ptr(armresources.TagsPatchOperationDelete),
 		Properties: &armresources.Tags{Tags: ptrs(map[string]string{"cost": "eng", "env": "wrong-value"})},
@@ -156,7 +158,7 @@ func TestSDKTagsAtScopeLifecycle(t *testing.T) {
 		t.Fatalf("UpdateAtScope Delete: %v", err)
 	}
 
-	assertTags(t, "delete-op", deleted.Properties, map[string]string{"env": "prod", "team": "platform"})
+	assertTags(t, "delete-op", deleted.Properties, map[string]string{"team": "platform"})
 
 	// PATCH Replace swaps the whole set.
 	replaced, err := client.UpdateAtScope(ctx, testScope, armresources.TagsPatchResource{

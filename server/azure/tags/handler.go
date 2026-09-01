@@ -145,12 +145,10 @@ func applyPatch(current map[string]string, op string, in map[string]string) map[
 		return cloneTags(in)
 	case strings.EqualFold(op, opDelete):
 		out := cloneTags(current)
-		// Delete matches on name/value pairs: a key is removed only when the
-		// supplied value equals the stored value, exactly as ARM does.
-		for k, v := range in {
-			if cur, ok := out[k]; ok && cur == v {
-				delete(out, k)
-			}
+		// Delete removes each named tag regardless of the supplied value, exactly
+		// as ARM does — the value in the request body is ignored.
+		for k := range in {
+			delete(out, k)
 		}
 
 		return out
