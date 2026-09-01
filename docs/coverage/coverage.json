@@ -3172,6 +3172,27 @@
     }
   },
   {
+    "service": "costexplorer",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetCostAndUsage"
+      },
+      {
+        "name": "GetCostForecast"
+      },
+      {
+        "name": "GetDimensionValues"
+      },
+      {
+        "name": "GetTags"
+      }
+    ],
+    "providers": {
+      "aws": "CostExplorer"
+    }
+  },
+  {
     "service": "database",
     "interface": "Database",
     "operations": [

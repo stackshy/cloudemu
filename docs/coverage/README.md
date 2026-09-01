@@ -31,6 +31,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 15 |
 | `cosmosaccount` | — | [Cosmosaccount](./azure/cosmosaccount.md) | — | — | 10 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
+| `costexplorer` | [CostExplorer](./aws/costexplorer.md) | — | — | — | 4 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
 | `disks` | — | [Disks](./azure/disks.md) | — | — | 7 |

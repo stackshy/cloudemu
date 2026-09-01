@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
 	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
+	costexplorersrv "github.com/stackshy/cloudemu/v2/server/aws/costexplorer"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
@@ -71,6 +72,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	"github.com/stackshy/cloudemu/v2/services/cost"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
@@ -238,8 +240,13 @@ type Drivers struct {
 	// Leave nil to omit both handlers. AccountID and Region are needed for
 	// Resource Explorer to construct view/index ARNs.
 	ResourceDiscovery *resourcediscovery.Engine
-	AccountID         string
-	Region            string
+	// CostExplorer is the inventory the Cost Explorer JSON 1.1 handler prices
+	// (X-Amz-Target prefix "AWSInsightsIndexService."). A *resourcediscovery.Engine
+	// satisfies it; leave nil to omit the handler. The handler has no cost model
+	// of its own — it prices this inventory with services/cost + services/pricing.
+	CostExplorer cost.Inventory
+	AccountID    string
+	Region       string
 	// EnforceAuth turns on SigV4 request authentication: each incoming request's
 	// signature is verified against a registered IAM access key (resolved via the
 	// IAM driver) and bad/missing signatures are rejected with 403. Off by
@@ -319,6 +326,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		STS:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
+		CostExplorer:        p.ResourceDiscovery,
 		AccountID:           p.AccountID,
 		Region:              p.Region,
 		EnforceAuth:         p.EnforceAuth,
@@ -456,6 +464,12 @@ func New(d Drivers) *server.Server {
 	// the other JSON 1.1 services, so registration order is unconstrained.
 	if d.WAFv2 != nil {
 		srv.Register(wafv2srv.New(d.WAFv2))
+	}
+
+	// Cost Explorer matches the X-Amz-Target prefix "AWSInsightsIndexService." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.CostExplorer != nil {
+		srv.Register(costexplorersrv.New(d.CostExplorer))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
