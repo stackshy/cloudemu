@@ -75,6 +75,7 @@ const (
 	azureTypePubIPPfx  = "microsoft.network/publicipprefixes"
 	azureTypeRouteTbl  = "microsoft.network/routetables"
 	azureTypeVNetPeer  = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
+	azureTypeSQLVM     = "microsoft.sqlvirtualmachine/sqlvirtualmachines"
 	azureTypeMLWorkspc = "microsoft.machinelearningservices/workspaces"
 	azureTypeMLEndpt   = "microsoft.machinelearningservices/workspaces/onlineendpoints"
 	azureTypeCognitive = "microsoft.cognitiveservices/accounts"
@@ -378,6 +379,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypePubIPPfx:  {portableNetworking, "PublicIPPrefix"},
 	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},
 	azureTypeVNetPeer:  {portableNetworking, "PeeringConnection"},
+	azureTypeSQLVM:     {portableCompute, "SqlVirtualMachine"},
 	azureTypeMLWorkspc: {portableAzureML, "Workspace"},
 	azureTypeMLEndpt:   {portableAzureML, "Endpoint"},
 	azureTypeCognitive: {portableCognitive, "Account"},

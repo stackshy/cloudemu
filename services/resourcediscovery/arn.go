@@ -84,6 +84,15 @@ func (e *Engine) computeInstanceARN(id, resourceGroup string) string {
 	}
 }
 
+// computeSQLVirtualMachineARN builds the ARM id for the Microsoft.SqlVirtualMachine
+// overlay paired with a compute VM. It shares the VM's name and resource group,
+// differing from computeInstanceARN only in the provider/type segment. Azure-only
+// — the overlay walker never calls it for AWS/GCP — so no per-provider switch.
+func (e *Engine) computeSQLVirtualMachineARN(name, resourceGroup string) string {
+	return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup),
+		"Microsoft.SqlVirtualMachine", "sqlVirtualMachines", name)
+}
+
 // computeVolumeARN canonicalizes a block-volume id. When the driver already
 // hands back a fully-qualified id (an Azure managed-disk ARM path, a GCP
 // self-link, or an AWS ARN) it is used verbatim; otherwise a per-provider id
