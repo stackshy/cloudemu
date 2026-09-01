@@ -2,6 +2,7 @@ package virtualmachines
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -84,6 +85,89 @@ func TestCreateScaleSetExplicitRoundTrip(t *testing.T) {
 	assert.Equal(t, "Windows_Server", got.LicenseType)
 	assert.Equal(t, "Windows", got.OSType)
 	assert.Equal(t, "prod", got.Tags["env"])
+}
+
+func TestScaleSetMaterializesInstances(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-mat", Capacity: 3})
+	require.NoError(t, err)
+
+	vms, err := m.ListScaleSetVMs(ctx, "vmss-mat")
+	require.NoError(t, err)
+	require.Len(t, vms, 3)
+
+	// Fresh create assigns ordinals 0..N-1, all running.
+	for i, vm := range vms {
+		assert.Equal(t, strconv.Itoa(i), vm.InstanceID)
+		assert.Equal(t, scaleSetVMRunning, vm.PowerState)
+		assert.Equal(t, "Succeeded", vm.ProvisioningState)
+	}
+}
+
+func TestScaleSetPowerAndDeleteInstance(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-ops", Capacity: 3})
+	require.NoError(t, err)
+
+	require.NoError(t, m.PowerScaleSetVM(ctx, "vmss-ops", "0", "poweroff"))
+	require.NoError(t, m.PowerScaleSetVM(ctx, "vmss-ops", "1", "deallocate"))
+
+	vm0, err := m.GetScaleSetVM(ctx, "vmss-ops", "0")
+	require.NoError(t, err)
+	assert.Equal(t, scaleSetVMStopped, vm0.PowerState)
+
+	vm1, err := m.GetScaleSetVM(ctx, "vmss-ops", "1")
+	require.NoError(t, err)
+	assert.Equal(t, scaleSetVMDeallocated, vm1.PowerState)
+
+	// Deleting an instance drops it and decrements the effective count.
+	require.NoError(t, m.DeleteScaleSetVM(ctx, "vmss-ops", "1"))
+
+	vms, err := m.ListScaleSetVMs(ctx, "vmss-ops")
+	require.NoError(t, err)
+	require.Len(t, vms, 2)
+
+	_, err = m.GetScaleSetVM(ctx, "vmss-ops", "1")
+	require.Error(t, err)
+
+	// An unsupported power verb is rejected.
+	require.Error(t, m.PowerScaleSetVM(ctx, "vmss-ops", "0", "bogus"))
+}
+
+func TestScaleSetReconcilePreservesStateAcrossCapacityChange(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-rc", Capacity: 2})
+	require.NoError(t, err)
+	require.NoError(t, m.PowerScaleSetVM(ctx, "vmss-rc", "0", "poweroff"))
+
+	// Scale out to 4: existing instances keep their power state; new instances
+	// get the next monotonic ordinals.
+	_, err = m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-rc", Capacity: 4})
+	require.NoError(t, err)
+
+	vm0, err := m.GetScaleSetVM(ctx, "vmss-rc", "0")
+	require.NoError(t, err)
+	assert.Equal(t, scaleSetVMStopped, vm0.PowerState, "existing instance power state must survive scale-out")
+
+	vms, err := m.ListScaleSetVMs(ctx, "vmss-rc")
+	require.NoError(t, err)
+	require.Len(t, vms, 4)
+	assert.Equal(t, "3", vms[3].InstanceID)
+
+	// Scale in to 1: the highest-ordinal instances are dropped.
+	_, err = m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-rc", Capacity: 1})
+	require.NoError(t, err)
+
+	vms, err = m.ListScaleSetVMs(ctx, "vmss-rc")
+	require.NoError(t, err)
+	require.Len(t, vms, 1)
+	assert.Equal(t, "0", vms[0].InstanceID)
 }
 
 func TestRunInstancesCarriesCostFields(t *testing.T) {
