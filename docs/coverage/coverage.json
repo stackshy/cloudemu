@@ -6430,6 +6430,27 @@
     }
   },
   {
+    "service": "locks",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      }
+    ],
+    "providers": {
+      "azure": "Locks"
+    }
+  },
+  {
     "service": "logging",
     "interface": "Logging",
     "operations": [

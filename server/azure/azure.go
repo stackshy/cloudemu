@@ -43,6 +43,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
@@ -239,6 +240,20 @@ func New(d Drivers) http.Handler {
 	// /providers/{namespace}/{resourceType}/... paths owned by the service
 	// handlers, so it does not shadow them.
 	srv.Register(providerssrv.New())
+
+	// Management locks (Microsoft.Authorization/locks) attach at any scope,
+	// including a nested .../providers/{ns}/{type}/{name}/providers/Microsoft.
+	// Authorization/locks/{lock} on an individual resource. A resource-scope lock
+	// URL's leading /providers/{ns}/{type} pair is claimed by that resource type's
+	// own handler (whose azurearm.ParsePath match ignores the trailing locks
+	// segment), so the locks handler must register BEFORE the per-resource-type
+	// handlers to win first-match dispatch. Its Matches is a scope-agnostic
+	// substring test on /providers/microsoft.authorization/locks — a path no
+	// resource handler produces — so registering it early shadows nothing. Locks
+	// are a pure management-plane concept with no backing driver, so the handler
+	// is always registered (like subscriptions/tenants). CRUD + round-trip only;
+	// enforcement (blocking deletes/writes on locked resources) is out of scope.
+	srv.Register(locks.New())
 
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front so they can be handed to the resource-group cascade below and then

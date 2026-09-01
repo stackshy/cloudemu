@@ -74,6 +74,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"azure/resourcegraph": {
 		"Operations", "Resources", "ResourcesHistory",
 	},
+	"azure/locks": {
+		"CreateOrUpdate", "Delete", "Get", "List",
+	},
 	"azure/queue": {
 		"Create", "Delete", "DeleteMessage", "DequeueMessages", "EnqueueMessage", "List",
 	},
