@@ -31,6 +31,7 @@ import (
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/timetravel"
 	"github.com/stackshy/cloudemu/v2/features/topology"
 	"github.com/stackshy/cloudemu/v2/persist"
 	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
@@ -155,6 +156,12 @@ type App struct {
 	// ops.
 	flusher *flusher
 
+	// timetravel holds named in-memory state snapshots for rewind/fork, layered
+	// on the same whole-emulator capture/restore the snapshot endpoint uses. It
+	// survives resets (the registry is not part of provider state), so a rewind
+	// can undo a reset.
+	timetravel *timetravel.Registry
+
 	// rebuildMu serializes resets so two concurrent /_cloudemu/reset calls can't
 	// interleave and leave providers wired to different Kubernetes instances. It
 	// also guards the current-state fields below and the live provider set.
@@ -215,6 +222,10 @@ func New(cfg *Config) (*App, error) {
 	}
 
 	a.Rebuild() // populate the backends before serving
+
+	// The registry captures/restores whole-emulator state through the same funcs
+	// the snapshot endpoint uses, so rewind/fork reuse persist.ExportAll/RestoreAll.
+	a.timetravel = timetravel.New(config.RealClock{}, a.snapshot, a.restore)
 
 	if err := a.applyBootState(); err != nil {
 		return nil, err
@@ -673,6 +684,12 @@ func (a *App) extraHandler() http.Handler {
 
 			serveCost(w, r, ds)
 		default:
+			if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, admin.Prefix), timeTravelPrefix) {
+				a.serveTimeTravel(w, r)
+
+				return
+			}
+
 			writeNetErr(w, http.StatusNotFound, "unknown control endpoint")
 		}
 	})
