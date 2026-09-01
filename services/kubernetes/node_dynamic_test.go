@@ -70,6 +70,37 @@ func TestDynamicNode_AddSchedulesPendingPod(t *testing.T) {
 	}
 }
 
+func TestDynamicNode_AddRefansDaemonSet(t *testing.T) {
+	base, done := newMultiNodeFixture(t, 3) // node-0 (tainted), node-1 + node-2 (workers)
+	defer done()
+
+	// A DaemonSet fans one Pod onto each worker (agent-cloudemu-node-1/-2).
+	ds := mustJSON(t, map[string]any{
+		"apiVersion": "apps/v1", "kind": "DaemonSet",
+		"metadata": map[string]any{"name": "agent"},
+		"spec": map[string]any{
+			"selector": map[string]any{"matchLabels": map[string]any{"app": "agent"}},
+			"template": map[string]any{
+				"metadata": map[string]any{"labels": map[string]any{"app": "agent"}},
+				"spec":     map[string]any{"containers": []any{map[string]any{"name": "c", "image": "agent"}}},
+			},
+		},
+	})
+	do(t, http.MethodPost, base+"/apis/apps/v1/namespaces/default/daemonsets", ds).Body.Close()
+
+	if _, ok := podPlacements(t, base, "default")["agent-cloudemu-node-9"]; ok {
+		t.Fatalf("agent-cloudemu-node-9 must not exist before the node is added")
+	}
+
+	// Registering a new schedulable node must immediately re-fan the DaemonSet
+	// onto it, as the real DaemonSet controller does on Node creation.
+	do(t, http.MethodPost, base+"/api/v1/nodes", workerNodeJSON(t, "cloudemu-node-9", "4")).Body.Close()
+
+	if got := podPlacements(t, base, "default")["agent-cloudemu-node-9"]; got.node != "cloudemu-node-9" || got.phase != "Running" {
+		t.Fatalf("agent-cloudemu-node-9 after add: node=%q phase=%q, want cloudemu-node-9/Running", got.node, got.phase)
+	}
+}
+
 func TestDynamicNode_DeleteReschedulesBoundPod(t *testing.T) {
 	base, done := newMultiNodeFixture(t, 3) // node-0 (tainted), node-1 + node-2 (workers, 4 CPU)
 	defer done()

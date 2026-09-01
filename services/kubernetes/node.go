@@ -455,12 +455,41 @@ func podRequests(pod *corev1.Pod) (cpu, mem resource.Quantity) {
 
 // reconcileNode runs after a Node is created or updated through the API. A node
 // added (or re-labeled/un-tainted) at runtime expands the schedulable set, so
-// every Pod still Pending — nothing fit it when it was created — is retried
-// against the current nodes and placed if one now accepts it. Seeded nodes are
-// inserted directly and never reach this hook, so the fixed-at-seed multi-node
-// path is unchanged.
+// real k8s's controllers react on Node membership: every existing DaemonSet
+// re-fans onto the new node (refanDaemonSetsLocked), and every Pod still Pending
+// — nothing fit it when it was created — is retried against the current nodes
+// and placed if one now accepts it. DaemonSets are re-fanned first so their
+// node-pinned Pods claim capacity before the Pending resweep fills the rest.
+// Seeded nodes are inserted directly and never reach this hook, so the
+// fixed-at-seed multi-node path is unchanged.
 func reconcileNode(s *ClusterState, _ *unstructured.Unstructured) {
+	s.refanDaemonSetsLocked()
 	s.reschedulePendingPodsLocked()
+}
+
+// refanDaemonSetsLocked re-runs every DaemonSet's placement against the current
+// node set so a newly-added node immediately gets the DaemonSet Pods it matches
+// (real k8s's DaemonSet controller watches Node creation). It reuses the normal
+// DaemonSet reconcile in deterministic name-sorted order: placement is
+// idempotent (a node that already has the Pod is skipped) and writes Pods
+// straight to the typed store, so it never routes back through registryCreate/
+// Update and cannot re-trigger Node reconcile. Callers hold s.mu.
+func (s *ClusterState) refanDaemonSetsLocked() {
+	store := s.reg.getStore(apiGroupApps, "v1", "daemonsets")
+	if store == nil {
+		return
+	}
+
+	keys := make([]string, 0, len(store.items))
+	for k := range store.items {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		reconcileDaemonSet(s, store.items[k])
+	}
 }
 
 // nodeOnDelete runs after a Node is removed through the API. Its bound Pods can
