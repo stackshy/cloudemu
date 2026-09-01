@@ -16,6 +16,7 @@ import (
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
 	containerinstancessrv "github.com/stackshy/cloudemu/v2/server/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosdb"
@@ -134,7 +135,9 @@ type Drivers struct {
 	AKS              aksserver.Backend
 	// ManagedIdentity serves Microsoft.ManagedIdentity/userAssignedIdentities.
 	ManagedIdentity managedidentitysrv.Store
-	IAM             iamdriver.IAM
+	// ContainerApps serves Microsoft.App managedEnvironments and containerApps.
+	ContainerApps containerappssrv.Store
+	IAM           iamdriver.IAM
 	ACR             crdriver.ContainerRegistry
 	// ContainerInstances serves the Azure Container Instances
 	// (Microsoft.ContainerInstance/containerGroups) ARM API against the
@@ -309,6 +312,14 @@ func New(d Drivers) http.Handler {
 	if d.ManagedIdentity != nil {
 		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
 		rgPurgers = append(rgPurgers, managedIdentityHandler)
+	}
+
+	// Container Apps (managed environments + container apps): resource-group-scoped
+	// resources, so their handler joins the purge cascade. Registered further below.
+	var containerAppsHandler *containerappssrv.Handler
+	if d.ContainerApps != nil {
+		containerAppsHandler = containerappssrv.New(d.ContainerApps)
+		rgPurgers = append(rgPurgers, containerAppsHandler)
 	}
 
 	// Resource groups have no driver of their own: they are containers, and the
@@ -553,6 +564,13 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if managedIdentityHandler != nil {
 		srv.Register(managedIdentityHandler)
+	}
+
+	// Container Apps claim Microsoft.App/{managedEnvironments,containerApps} — a
+	// distinct ARM provider name from every other Azure handler, so registration
+	// order is unconstrained. Registered before the BlobStorage fallback.
+	if containerAppsHandler != nil {
+		srv.Register(containerAppsHandler)
 	}
 
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}

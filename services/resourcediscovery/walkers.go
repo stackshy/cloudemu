@@ -52,6 +52,9 @@ const (
 	ServiceVertexAI   = "aiplatform"
 	ServiceAzureML    = "machinelearningservices"
 	ServiceCognitive  = "cognitiveservices"
+	// ServiceContainerApps buckets Azure Container Apps resources — managed
+	// environments and the container apps that run in them (Microsoft.App).
+	ServiceContainerApps = "containerapps"
 )
 
 // Resource type constants emitted by the walkers.
@@ -115,6 +118,14 @@ const TypeUserAssignedIdentity = "UserAssignedIdentity"
 // ServiceCompute and is synthesized in the compute walker from a VM opted in via
 // the cloudemu:sqlvm tag, so it needs no stored state and no driver capability.
 const TypeSQLVirtualMachine = "SqlVirtualMachine"
+
+// Container Apps portable types (ServiceContainerApps). ManagedEnvironment is the
+// isolation boundary; ContainerApp is the workload. Both are Azure-only, so they
+// live in their own block rather than reflowing the shared type table above.
+const (
+	TypeManagedEnvironment = "ManagedEnvironment"
+	TypeContainerApp       = "ContainerApp"
+)
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
