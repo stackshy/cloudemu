@@ -95,6 +95,12 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"gcp/servicenetworking": {
 		"CreateConnection", "DeleteConnection", "ListConnections",
 	},
+	"gcp/cloudbilling": {
+		"CreateBillingAccount", "CreateBudget", "DeleteBudget", "GetBillingAccount",
+		"GetBudget", "GetProjectBillingInfo", "ListBillingAccounts", "ListBudgets",
+		"ListProjectBillingInfo", "ListServices", "ListSkus", "PatchBillingAccount",
+		"PatchBudget", "UpdateProjectBillingInfo",
+	},
 
 	// OCI — REST work-request envelope.
 	"oci/workrequest": {

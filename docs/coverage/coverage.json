@@ -1755,6 +1755,57 @@
     }
   },
   {
+    "service": "cloudbilling",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateBillingAccount"
+      },
+      {
+        "name": "CreateBudget"
+      },
+      {
+        "name": "DeleteBudget"
+      },
+      {
+        "name": "GetBillingAccount"
+      },
+      {
+        "name": "GetBudget"
+      },
+      {
+        "name": "GetProjectBillingInfo"
+      },
+      {
+        "name": "ListBillingAccounts"
+      },
+      {
+        "name": "ListBudgets"
+      },
+      {
+        "name": "ListProjectBillingInfo"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListSkus"
+      },
+      {
+        "name": "PatchBillingAccount"
+      },
+      {
+        "name": "PatchBudget"
+      },
+      {
+        "name": "UpdateProjectBillingInfo"
+      }
+    ],
+    "providers": {
+      "gcp": "Cloudbilling"
+    }
+  },
+  {
     "service": "cloudformation",
     "interface": "provider-native",
     "operations": [
