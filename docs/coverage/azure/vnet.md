@@ -116,6 +116,17 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
 | `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 
+### AzurePublicIPPrefixes
+
+AzurePublicIPPrefixes is the Azure-only public-IP-prefix surface. Keyed by
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzurePublicIPPrefix` | DeleteAzurePublicIPPrefix removes the prefix, reporting whether it existed. |
+| `GetAzurePublicIPPrefix` | GetAzurePublicIPPrefix returns the prefix identified by (resourceGroup, name). |
+| `ListAzurePublicIPPrefixes` | ListAzurePublicIPPrefixes returns the prefixes in a resource group, or all |
+| `PutAzurePublicIPPrefix` | PutAzurePublicIPPrefix creates or replaces a prefix in place (a repeat |
+
 ### NetworkInterfaceAttacher
 
 NetworkInterfaceAttacher is the AWS-specific ENI attach surface

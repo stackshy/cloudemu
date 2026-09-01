@@ -7349,6 +7349,28 @@
         ]
       },
       {
+        "name": "AzurePublicIPPrefixes",
+        "doc": "AzurePublicIPPrefixes is the Azure-only public-IP-prefix surface. Keyed by",
+        "operations": [
+          {
+            "name": "DeleteAzurePublicIPPrefix",
+            "doc": "DeleteAzurePublicIPPrefix removes the prefix, reporting whether it existed."
+          },
+          {
+            "name": "GetAzurePublicIPPrefix",
+            "doc": "GetAzurePublicIPPrefix returns the prefix identified by (resourceGroup, name)."
+          },
+          {
+            "name": "ListAzurePublicIPPrefixes",
+            "doc": "ListAzurePublicIPPrefixes returns the prefixes in a resource group, or all"
+          },
+          {
+            "name": "PutAzurePublicIPPrefix",
+            "doc": "PutAzurePublicIPPrefix creates or replaces a prefix in place (a repeat"
+          }
+        ]
+      },
+      {
         "name": "ClientVPN",
         "doc": "ClientVPN is an OPTIONAL AWS capability (type-asserted).",
         "operations": [
