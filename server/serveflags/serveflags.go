@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/vcr"
 	"github.com/stackshy/cloudemu/v2/server/serverkit"
 )
 
@@ -41,6 +42,8 @@ var (
 	ErrNoProviders = errors.New("no providers selected")
 	// ErrUnknownProvider is returned for a --providers value outside aws/azure/gcp/oci.
 	ErrUnknownProvider = errors.New("unknown provider (want aws, azure, gcp, or oci)")
+	// ErrVCRCassetteRequired is returned when --vcr is set without --vcr-cassette.
+	ErrVCRCassetteRequired = errors.New("--vcr requires --vcr-cassette")
 )
 
 // StringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -96,6 +99,10 @@ type CommonConfig struct {
 	K8sProgression         bool
 	K8sProgressionInterval time.Duration
 	K8sNodes               int
+
+	VCRMode     string
+	VCRCassette string
+	VCRStrict   bool
 }
 
 // RegisterCommon registers every common serve flag against c. getenv is injected
@@ -133,6 +140,16 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	registerPersistFlags(fs, c, getenv)
 	registerK8sProgressionFlags(fs, c, getenv)
 	registerEnforceAuthFlag(fs, c)
+	registerVCRFlags(fs, c)
+}
+
+// registerVCRFlags registers the record/replay (VCR) flag group. --vcr selects
+// the mode; the cassette path and strict-match knob only matter when it is set.
+func registerVCRFlags(fs *flag.FlagSet, c *CommonConfig) {
+	fs.StringVar(&c.VCRMode, "vcr", "", "record/replay the wire protocol: record|replay (default off); requires --vcr-cassette")
+	fs.StringVar(&c.VCRCassette, "vcr-cassette", "", "path to the VCR cassette JSON (written in record mode, loaded in replay mode)")
+	fs.BoolVar(&c.VCRStrict, "vcr-strict", true,
+		"replay: fail an unmatched request with 501 instead of falling through to the real handler")
 }
 
 // registerPersistFlags registers the persistence flag group, whose knobs only
@@ -185,6 +202,16 @@ func (c *CommonConfig) Validate() error {
 		return ErrStateFileRequired
 	}
 
+	if c.VCRMode != "" {
+		if _, err := vcr.ParseMode(c.VCRMode); err != nil {
+			return err
+		}
+
+		if c.VCRCassette == "" {
+			return ErrVCRCassetteRequired
+		}
+	}
+
 	return nil
 }
 
@@ -224,6 +251,9 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		EnforceAuth:            c.EnforceAuth,
 		EndpointsFile:          c.EndpointsFile,
 		ShutdownTimeout:        c.ShutdownTimeout,
+		VCRMode:                c.VCRMode,
+		VCRCassette:            c.VCRCassette,
+		VCRStrict:              c.VCRStrict,
 		BaseOptions: []config.Option{
 			config.WithAccountID(c.AccountID),
 			config.WithRegion(c.Region),

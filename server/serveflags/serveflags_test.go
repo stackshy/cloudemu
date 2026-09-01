@@ -28,7 +28,7 @@ var commonFlagNames = []string{
 	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
 	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tls-cert", "tls-host",
-	"tls-key",
+	"tls-key", "vcr", "vcr-cassette", "vcr-strict",
 }
 
 // registeredNames returns the sorted flag names a fresh RegisterCommon produces.
@@ -148,6 +148,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--persist-strategy", "manual", "--persist-interval", "7s",
 		"--init-dir", "/seeds",
 		"--k8s-progression", "--k8s-progression-interval", "4s", "--k8s-nodes", "3",
+		"--vcr", "record", "--vcr-cassette", "/c.json", "--vcr-strict=false",
 	}
 	if err := fs.Parse(args); err != nil {
 		t.Fatalf("parse: %v", err)
@@ -190,6 +191,9 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "k8s-progression", sk.K8sProgression, true)
 	assertEqual(t, "k8s-progression-interval", sk.K8sProgressionInterval, 4*time.Second)
 	assertEqual(t, "k8s-nodes", sk.K8sNodes, 3)
+	assertEqual(t, "vcr", sk.VCRMode, "record")
+	assertEqual(t, "vcr-cassette", sk.VCRCassette, "/c.json")
+	assertEqual(t, "vcr-strict", sk.VCRStrict, false)
 
 	if !reflect.DeepEqual([]string(sk.TLSHosts), []string{"a", "b"}) {
 		t.Fatalf("tls-hosts = %v, want [a b]", sk.TLSHosts)
@@ -216,9 +220,22 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("persist without state-file: err = %v, want %v", err, ErrStateFileRequired)
 	}
 
+	if err := (&CommonConfig{VCRMode: "record"}).Validate(); err != ErrVCRCassetteRequired {
+		t.Fatalf("vcr without cassette: err = %v, want %v", err, ErrVCRCassetteRequired)
+	}
+
+	if err := (&CommonConfig{VCRMode: "bogus", VCRCassette: "/c.json"}).Validate(); err == nil {
+		t.Fatal("invalid vcr mode should be rejected")
+	}
+
 	ok := &CommonConfig{TLSCert: "/c.pem", TLSKey: "/k.pem", Persist: true, StateFile: "/s.json"}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
+	}
+
+	okVCR := &CommonConfig{VCRMode: "replay", VCRCassette: "/c.json"}
+	if err := okVCR.Validate(); err != nil {
+		t.Fatalf("valid vcr config rejected: %v", err)
 	}
 }
 
