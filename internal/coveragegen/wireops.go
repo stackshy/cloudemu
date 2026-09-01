@@ -34,6 +34,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"CreateIndex", "CreateView", "DeleteView", "GetDefaultView", "GetIndex",
 		"GetView", "ListIndexes", "ListResources", "ListViews", "Search",
 	},
+	"aws/costexplorer": {
+		"GetCostAndUsage", "GetCostForecast", "GetDimensionValues", "GetTags",
+	},
 
 	// Azure — ARM handlers, routed on HTTP method + resource path shape.
 	"azure/disks": {
