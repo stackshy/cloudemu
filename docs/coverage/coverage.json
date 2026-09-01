@@ -6461,6 +6461,39 @@
     }
   },
   {
+    "service": "kusto",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByCluster"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "Start"
+      },
+      {
+        "name": "Stop"
+      }
+    ],
+    "providers": {
+      "azure": "Kusto"
+    }
+  },
+  {
     "service": "loadbalancer",
     "interface": "LoadBalancer",
     "operations": [
