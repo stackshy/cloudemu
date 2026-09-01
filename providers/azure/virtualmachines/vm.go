@@ -71,8 +71,19 @@ type lifecycleTransition struct {
 }
 
 var (
-	runningMetricValues = []float64{25.0, 1024.0, 512.0, 100.0, 50.0} //nolint:gochecknoglobals // package-level test fixtures
-	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0}          //nolint:gochecknoglobals // package-level test fixtures
+	// vmMetricNames are the Azure Monitor metric names auto-seeded for every VM,
+	// order-aligned with runningMetricValues/zeroMetricValues so both seed paths
+	// (emitInstanceMetrics, emitLifecycleMetrics) share one list and cannot drift.
+	// The trailing two match the memory metrics real Azure publishes under
+	// Microsoft.Compute/virtualMachines.
+	vmMetricNames = []string{ //nolint:gochecknoglobals // package-level config
+		"Percentage CPU", "Network In Total", "Network Out Total",
+		"Disk Read Operations/Sec", "Disk Write Operations/Sec",
+		"Available Memory Percentage", "Available Memory Bytes",
+	}
+	// The trailing two values are the memory metrics: ~60% available and 4 GiB.
+	runningMetricValues = []float64{25.0, 1024.0, 512.0, 100.0, 50.0, 60.0, 4294967296.0} //nolint:gochecknoglobals // fixtures
+	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}                    //nolint:gochecknoglobals // fixtures
 
 	startTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState:     compute.StatePending,
@@ -236,22 +247,21 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, inst *instanceData) {
 		lt = m.opts.Clock.Now()
 	}
 
-	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
-	values := []float64{25.0, 1024.0, 512.0, 100.0, 50.0}
 	resourceID := m.armResourceID(inst)
 
 	var data []mondriver.MetricDatum
 
-	// Backfill the 5 datapoints going backward from launch time so they land in
-	// the recent past. Forward-dating would place them in the future, where a
-	// metrics query ending at "now" filters them out.
-	for i, metricName := range metrics {
+	// Backfill 5 datapoints per metric going backward from launch time so they
+	// land in the recent past. Forward-dating would place them in the future,
+	// where a metrics query ending at "now" filters them out. A freshly-run VM
+	// is running, so it seeds the running values.
+	for i, metricName := range vmMetricNames {
 		for j := 0; j < 5; j++ {
 			ts := lt.Add(-time.Duration(j) * time.Minute)
 			data = append(data, mondriver.MetricDatum{
 				Namespace:  "Microsoft.Compute/virtualMachines",
 				MetricName: metricName,
-				Value:      values[i],
+				Value:      runningMetricValues[i],
 				Unit:       "None",
 				Dimensions: map[string]string{"resourceId": resourceID},
 				Timestamp:  ts,
@@ -267,12 +277,11 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, inst *instanceData, val
 		return
 	}
 
-	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
 	now := m.opts.Clock.Now()
 	resourceID := m.armResourceID(inst)
-	data := make([]mondriver.MetricDatum, len(metrics))
+	data := make([]mondriver.MetricDatum, len(vmMetricNames))
 
-	for i, metricName := range metrics {
+	for i, metricName := range vmMetricNames {
 		data[i] = mondriver.MetricDatum{
 			Namespace:  "Microsoft.Compute/virtualMachines",
 			MetricName: metricName,
