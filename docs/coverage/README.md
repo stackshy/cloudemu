@@ -33,6 +33,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cosmosaccount` | — | [Cosmosaccount](./azure/cosmosaccount.md) | — | — | 10 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
 | `costexplorer` | [CostExplorer](./aws/costexplorer.md) | — | — | — | 4 |
+| `costmanagement` | — | [Costmanagement](./azure/costmanagement.md) | — | — | 1 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
 | `disks` | — | [Disks](./azure/disks.md) | — | — | 7 |

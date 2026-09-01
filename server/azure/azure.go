@@ -20,6 +20,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmospostgresql"
+	"github.com/stackshy/cloudemu/v2/server/azure/costmanagement"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/dbfs"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/gitcredentials"
@@ -530,6 +531,11 @@ func New(d Drivers) http.Handler {
 		// Generic Microsoft.Resources listing (az resource list) at subscription
 		// and resource-group scope, backed by the same discovery engine.
 		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
+		// Cost Management query matches any scope ending in
+		// /providers/Microsoft.CostManagement/query — a distinct ARM provider
+		// name from every other handler, so registration order is unconstrained.
+		// Backed by the same discovery engine, priced through services/cost.
+		srv.Register(costmanagement.New(d.ResourceDiscovery))
 	}
 
 	// Managed identities claim Microsoft.ManagedIdentity/userAssignedIdentities —
