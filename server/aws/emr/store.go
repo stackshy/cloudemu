@@ -21,9 +21,27 @@ const (
 	stateTerminated  = "TERMINATED"
 )
 
-// Step states. Submitted steps execute instantly and land in COMPLETED.
+// Step states. Submitted steps execute instantly and land in COMPLETED;
+// CancelSteps moves a still-PENDING/RUNNING step to the canceled state.
 const (
+	stepPending   = "PENDING"
+	stepRunning   = "RUNNING"
 	stepCompleted = "COMPLETED"
+	stepCancelled = "CANCELLED" //nolint:misspell // EMR StepState wire value is spelled CANCELLED
+)
+
+// Instance-group / instance states. Groups and instances come up RUNNING (the
+// cluster is up) and stay there until the cluster is terminated.
+const (
+	igStateRunning       = "RUNNING"
+	instanceStateRunning = "RUNNING"
+	marketOnDemand       = "ON_DEMAND"
+)
+
+// cancelSubmitted / cancelFailed are the CancelStepsInfo request-status values.
+const (
+	cancelSubmitted = "SUBMITTED"
+	cancelFailed    = "FAILED"
 )
 
 const (
@@ -95,6 +113,8 @@ type cluster struct {
 	applications         []application
 	tags                 []tag
 	steps                []*step
+	instanceGroups       []*instanceGroup
+	bootstrapActions     []bootstrapAction
 }
 
 // store is the in-memory backing state for the EMR wire handler. EMR clusters
@@ -107,7 +127,8 @@ type store struct {
 	accountID string
 	region    string
 	clusters  map[string]*cluster
-	order     []string // cluster ids in creation order (ListClusters returns newest first)
+	order     []string                  // cluster ids in creation order (ListClusters returns newest first)
+	groups    map[string]*instanceGroup // instance-group id -> group, for ModifyInstanceGroups lookup
 	nextID    int64
 }
 
@@ -122,6 +143,7 @@ func newStore(accountID, region string, clock config.Clock) *store {
 		accountID: accountID,
 		region:    region,
 		clusters:  map[string]*cluster{},
+		groups:    map[string]*instanceGroup{},
 	}
 }
 
@@ -164,6 +186,8 @@ func (s *store) runJobFlow(in *runJobFlowInput) *cluster {
 
 	applyInstances(c, in.Instances)
 	c.autoTerminate = !c.keepAlive
+	s.buildInstanceGroups(c, in.Instances, now)
+	recordBootstrap(c, in.BootstrapActions)
 
 	for _, a := range in.Applications {
 		c.applications = append(c.applications,
@@ -245,6 +269,49 @@ func (s *store) addSteps(clusterID string, steps []stepConfig) ([]string, error)
 	}
 
 	return ids, nil
+}
+
+// cancelSteps requests cancellation of the named steps on a cluster. A
+// PENDING/RUNNING step is canceled (request SUBMITTED); a step already in a
+// terminal state (steps run instantly, so COMPLETED) reports FAILED with a
+// not-cancelable reason, matching real EMR.
+func (s *store) cancelSteps(clusterID string, stepIDs []string) ([]cancelStepsInfoWire, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.clusters[clusterID]
+	if !ok {
+		return nil, notFound(clusterID)
+	}
+
+	out := make([]cancelStepsInfoWire, 0, len(stepIDs))
+	for _, id := range stepIDs {
+		out = append(out, c.cancelStep(id))
+	}
+
+	return out, nil
+}
+
+// cancelStep applies a cancellation request to one step and returns its outcome.
+func (c *cluster) cancelStep(id string) cancelStepsInfoWire {
+	for _, st := range c.steps {
+		if st.id != id {
+			continue
+		}
+
+		if st.state == stepPending || st.state == stepRunning {
+			st.state = stepCancelled
+
+			return cancelStepsInfoWire{StepID: id, Status: cancelSubmitted}
+		}
+
+		return cancelStepsInfoWire{
+			StepID: id, Status: cancelFailed,
+			Reason: "Step is in " + st.state + " state and cannot be canceled.",
+		}
+	}
+
+	return cancelStepsInfoWire{StepID: id, Status: cancelFailed, Reason: "Step does not exist."}
 }
 
 // terminate moves each named live cluster to TERMINATED. Unknown or

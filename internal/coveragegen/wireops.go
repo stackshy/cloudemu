@@ -38,8 +38,10 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"GetCostAndUsage", "GetCostForecast", "GetDimensionValues", "GetTags",
 	},
 	"aws/emr": {
-		"AddJobFlowSteps", "DescribeCluster", "DescribeStep", "ListClusters",
-		"ListSteps", "RunJobFlow", "TerminateJobFlows",
+		"AddInstanceGroups", "AddJobFlowSteps", "CancelSteps", "DescribeCluster",
+		"DescribeStep", "ListBootstrapActions", "ListClusters", "ListInstanceGroups",
+		"ListInstances", "ListSteps", "ModifyInstanceGroups", "RunJobFlow",
+		"TerminateJobFlows",
 	},
 
 	// Azure — ARM handlers, routed on HTTP method + resource path shape.

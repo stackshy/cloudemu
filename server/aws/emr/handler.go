@@ -34,13 +34,19 @@ type Handler struct {
 func New(accountID, region string, clock config.Clock) *Handler {
 	h := &Handler{store: newStore(accountID, region, clock)}
 	h.routes = map[string]http.HandlerFunc{
-		"RunJobFlow":        h.runJobFlow,
-		"DescribeCluster":   h.describeCluster,
-		"ListClusters":      h.listClusters,
-		"TerminateJobFlows": h.terminateJobFlows,
-		"AddJobFlowSteps":   h.addJobFlowSteps,
-		"ListSteps":         h.listSteps,
-		"DescribeStep":      h.describeStep,
+		"RunJobFlow":           h.runJobFlow,
+		"DescribeCluster":      h.describeCluster,
+		"ListClusters":         h.listClusters,
+		"TerminateJobFlows":    h.terminateJobFlows,
+		"AddJobFlowSteps":      h.addJobFlowSteps,
+		"ListSteps":            h.listSteps,
+		"DescribeStep":         h.describeStep,
+		"CancelSteps":          h.cancelSteps,
+		"AddInstanceGroups":    h.addInstanceGroups,
+		"ModifyInstanceGroups": h.modifyInstanceGroups,
+		"ListInstanceGroups":   h.listInstanceGroups,
+		"ListInstances":        h.listInstances,
+		"ListBootstrapActions": h.listBootstrapActions,
 	}
 
 	return h

@@ -39,7 +39,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
 | `eks` | [EKS](./aws/eks.md) | — | — | — | 29 |
-| `emr` | [EMR](./aws/emr.md) | — | — | — | 7 |
+| `emr` | [EMR](./aws/emr.md) | — | — | — | 13 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
 | `gke` | — | — | [GKE](./gcp/gke.md) | — | 18 |
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |

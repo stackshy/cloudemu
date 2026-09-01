@@ -7,27 +7,53 @@ import "time"
 // runJobFlowInput mirrors the members of the SDK RunJobFlowInput this handler
 // reads.
 type runJobFlowInput struct {
-	Name              *string                 `json:"Name"`
-	ReleaseLabel      *string                 `json:"ReleaseLabel"`
-	LogURI            *string                 `json:"LogUri"`
-	ServiceRole       *string                 `json:"ServiceRole"`
-	JobFlowRole       *string                 `json:"JobFlowRole"`
-	VisibleToAllUsers *bool                   `json:"VisibleToAllUsers"`
-	Instances         *jobFlowInstancesConfig `json:"Instances"`
-	Applications      []applicationInput      `json:"Applications"`
-	Tags              []tagInput              `json:"Tags"`
-	Steps             []stepConfig            `json:"Steps"`
+	Name              *string                      `json:"Name"`
+	ReleaseLabel      *string                      `json:"ReleaseLabel"`
+	LogURI            *string                      `json:"LogUri"`
+	ServiceRole       *string                      `json:"ServiceRole"`
+	JobFlowRole       *string                      `json:"JobFlowRole"`
+	VisibleToAllUsers *bool                        `json:"VisibleToAllUsers"`
+	Instances         *jobFlowInstancesConfig      `json:"Instances"`
+	Applications      []applicationInput           `json:"Applications"`
+	Tags              []tagInput                   `json:"Tags"`
+	Steps             []stepConfig                 `json:"Steps"`
+	BootstrapActions  []bootstrapActionConfigInput `json:"BootstrapActions"`
 }
 
 // jobFlowInstancesConfig mirrors the read members of the SDK
 // JobFlowInstancesConfig.
 type jobFlowInstancesConfig struct {
-	Ec2SubnetID                 *string `json:"Ec2SubnetId"`
-	Ec2KeyName                  *string `json:"Ec2KeyName"`
-	MasterInstanceType          *string `json:"MasterInstanceType"`
-	InstanceCount               *int32  `json:"InstanceCount"`
-	KeepJobFlowAliveWhenNoSteps *bool   `json:"KeepJobFlowAliveWhenNoSteps"`
-	TerminationProtected        *bool   `json:"TerminationProtected"`
+	Ec2SubnetID                 *string                    `json:"Ec2SubnetId"`
+	Ec2KeyName                  *string                    `json:"Ec2KeyName"`
+	MasterInstanceType          *string                    `json:"MasterInstanceType"`
+	SlaveInstanceType           *string                    `json:"SlaveInstanceType"`
+	InstanceCount               *int32                     `json:"InstanceCount"`
+	KeepJobFlowAliveWhenNoSteps *bool                      `json:"KeepJobFlowAliveWhenNoSteps"`
+	TerminationProtected        *bool                      `json:"TerminationProtected"`
+	InstanceGroups              []instanceGroupConfigInput `json:"InstanceGroups"`
+}
+
+// instanceGroupConfigInput mirrors the read members of the SDK
+// InstanceGroupConfig.
+type instanceGroupConfigInput struct {
+	Name          *string `json:"Name"`
+	InstanceRole  string  `json:"InstanceRole"`
+	InstanceType  *string `json:"InstanceType"`
+	InstanceCount *int32  `json:"InstanceCount"`
+	Market        string  `json:"Market"`
+	BidPrice      *string `json:"BidPrice"`
+}
+
+// bootstrapActionConfigInput mirrors the SDK BootstrapActionConfig.
+type bootstrapActionConfigInput struct {
+	Name                  *string                           `json:"Name"`
+	ScriptBootstrapAction *scriptBootstrapActionConfigInput `json:"ScriptBootstrapAction"`
+}
+
+// scriptBootstrapActionConfigInput mirrors the SDK ScriptBootstrapActionConfig.
+type scriptBootstrapActionConfigInput struct {
+	Path *string  `json:"Path"`
+	Args []string `json:"Args"`
 }
 
 // applicationInput mirrors the SDK Application on the request path.
@@ -100,6 +126,48 @@ type describeStepInput struct {
 	StepID    *string `json:"StepId"`
 }
 
+// cancelStepsInput mirrors the read members of the SDK CancelStepsInput.
+type cancelStepsInput struct {
+	ClusterID *string  `json:"ClusterId"`
+	StepIDs   []string `json:"StepIds"`
+}
+
+// addInstanceGroupsInput mirrors the SDK AddInstanceGroupsInput.
+type addInstanceGroupsInput struct {
+	JobFlowID      *string                    `json:"JobFlowId"`
+	InstanceGroups []instanceGroupConfigInput `json:"InstanceGroups"`
+}
+
+// modifyInstanceGroupsInput mirrors the SDK ModifyInstanceGroupsInput.
+type modifyInstanceGroupsInput struct {
+	InstanceGroups []instanceGroupModifyInput `json:"InstanceGroups"`
+}
+
+// instanceGroupModifyInput mirrors the read members of the SDK
+// InstanceGroupModifyConfig.
+type instanceGroupModifyInput struct {
+	InstanceGroupID *string `json:"InstanceGroupId"`
+	InstanceCount   *int32  `json:"InstanceCount"`
+}
+
+// listInstanceGroupsInput mirrors the SDK ListInstanceGroupsInput.
+type listInstanceGroupsInput struct {
+	ClusterID *string `json:"ClusterId"`
+}
+
+// listInstancesInput mirrors the read members of the SDK ListInstancesInput.
+type listInstancesInput struct {
+	ClusterID          *string  `json:"ClusterId"`
+	InstanceGroupID    *string  `json:"InstanceGroupId"`
+	InstanceGroupTypes []string `json:"InstanceGroupTypes"`
+	InstanceStates     []string `json:"InstanceStates"`
+}
+
+// listBootstrapActionsInput mirrors the SDK ListBootstrapActionsInput.
+type listBootstrapActionsInput struct {
+	ClusterID *string `json:"ClusterId"`
+}
+
 // --- Response outputs (AWS JSON 1.1 shapes the SDK decodes) ---
 
 // runJobFlowOutput mirrors the SDK RunJobFlowOutput.
@@ -131,6 +199,73 @@ type listStepsOutput struct {
 // describeStepOutput mirrors the SDK DescribeStepOutput.
 type describeStepOutput struct {
 	Step *stepWire `json:"Step"`
+}
+
+// cancelStepsOutput mirrors the SDK CancelStepsOutput.
+type cancelStepsOutput struct {
+	CancelStepsInfoList []cancelStepsInfoWire `json:"CancelStepsInfoList"`
+}
+
+// cancelStepsInfoWire mirrors the SDK CancelStepsInfo.
+type cancelStepsInfoWire struct {
+	StepID string `json:"StepId"`
+	Status string `json:"Status"`
+	Reason string `json:"Reason,omitempty"`
+}
+
+// addInstanceGroupsOutput mirrors the SDK AddInstanceGroupsOutput.
+type addInstanceGroupsOutput struct {
+	ClusterArn       string   `json:"ClusterArn"`
+	JobFlowID        string   `json:"JobFlowId"`
+	InstanceGroupIDs []string `json:"InstanceGroupIds"`
+}
+
+// listInstanceGroupsOutput mirrors the SDK ListInstanceGroupsOutput.
+type listInstanceGroupsOutput struct {
+	InstanceGroups []instanceGroupWire `json:"InstanceGroups"`
+}
+
+// listInstancesOutput mirrors the SDK ListInstancesOutput.
+type listInstancesOutput struct {
+	Instances []instanceWire `json:"Instances"`
+}
+
+// listBootstrapActionsOutput mirrors the SDK ListBootstrapActionsOutput.
+type listBootstrapActionsOutput struct {
+	BootstrapActions []commandWire `json:"BootstrapActions"`
+}
+
+// instanceGroupWire mirrors the members of the SDK InstanceGroup this handler
+// populates.
+type instanceGroupWire struct {
+	ID                     string     `json:"Id"`
+	Name                   string     `json:"Name,omitempty"`
+	InstanceGroupType      string     `json:"InstanceGroupType"`
+	InstanceType           string     `json:"InstanceType,omitempty"`
+	Market                 string     `json:"Market,omitempty"`
+	BidPrice               string     `json:"BidPrice,omitempty"`
+	RequestedInstanceCount int32      `json:"RequestedInstanceCount"`
+	RunningInstanceCount   int32      `json:"RunningInstanceCount"`
+	Status                 statusWire `json:"Status"`
+}
+
+// instanceWire mirrors the members of the SDK Instance this handler populates.
+type instanceWire struct {
+	ID              string     `json:"Id"`
+	Ec2InstanceID   string     `json:"Ec2InstanceId"`
+	InstanceGroupID string     `json:"InstanceGroupId"`
+	InstanceType    string     `json:"InstanceType,omitempty"`
+	Market          string     `json:"Market,omitempty"`
+	PrivateDNSName  string     `json:"PrivateDnsName,omitempty"`
+	PrivateIPAddr   string     `json:"PrivateIpAddress,omitempty"`
+	Status          statusWire `json:"Status"`
+}
+
+// commandWire mirrors the SDK Command (ListBootstrapActions entries).
+type commandWire struct {
+	Name       string   `json:"Name,omitempty"`
+	ScriptPath string   `json:"ScriptPath,omitempty"`
+	Args       []string `json:"Args,omitempty"`
 }
 
 // stateChangeReasonWire mirrors the SDK ClusterStateChangeReason /
@@ -287,7 +422,67 @@ func (f stepFilter) matches(st *step) bool {
 	return true
 }
 
+// instanceFilter carries the ListInstances group/state predicate.
+type instanceFilter struct {
+	groupID    string
+	groupTypes map[string]bool
+	states     map[string]bool
+}
+
+// matchesGroup reports whether group g passes the group-scoped filter.
+func (f instanceFilter) matchesGroup(g *instanceGroup) bool {
+	if f.groupID != "" && g.id != f.groupID {
+		return false
+	}
+
+	if len(f.groupTypes) > 0 && !f.groupTypes[g.groupType] {
+		return false
+	}
+
+	return true
+}
+
+// matchesInstance reports whether instance inst passes the state filter.
+func (f instanceFilter) matchesInstance(inst *instance) bool {
+	return len(f.states) == 0 || f.states[inst.state]
+}
+
 // --- Domain -> wire mapping ---
+
+// toInstanceGroupWire renders an instance group as its ListInstanceGroups wire view.
+func toInstanceGroupWire(g *instanceGroup) instanceGroupWire {
+	return instanceGroupWire{
+		ID:                     g.id,
+		Name:                   g.name,
+		InstanceGroupType:      g.groupType,
+		InstanceType:           g.instanceType,
+		Market:                 g.market,
+		BidPrice:               g.bidPrice,
+		RequestedInstanceCount: g.requested,
+		RunningInstanceCount:   g.running,
+		Status: statusWire{
+			State:    g.state,
+			Timeline: &timelineWire{CreationDateTime: epoch(g.created), ReadyDateTime: epoch(g.created)},
+		},
+	}
+}
+
+// toInstanceWire renders an instance as its ListInstances wire view.
+func toInstanceWire(inst *instance) instanceWire {
+	return instanceWire{
+		ID:              inst.id,
+		Ec2InstanceID:   inst.ec2InstanceID,
+		InstanceGroupID: inst.groupID,
+		InstanceType:    inst.instanceType,
+		Market:          inst.market,
+		PrivateDNSName:  inst.privateDNS,
+		PrivateIPAddr:   inst.privateIP,
+		Status: statusWire{
+			State:    inst.state,
+			Timeline: &timelineWire{CreationDateTime: epoch(inst.created), ReadyDateTime: epoch(inst.created)},
+		},
+	}
+}
 
 // toClusterWire renders a cluster as its DescribeCluster wire view.
 func toClusterWire(c *cluster) *clusterWire {

@@ -87,6 +87,83 @@ func (h *Handler) describeStep(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cancelSteps handles CancelSteps.
+func (h *Handler) cancelSteps(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, _ context.Context, in *cancelStepsInput) (any, error) {
+		info, err := h.store.cancelSteps(deref(in.ClusterID), in.StepIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		return cancelStepsOutput{CancelStepsInfoList: info}, nil
+	})
+}
+
+// addInstanceGroups handles AddInstanceGroups.
+func (h *Handler) addInstanceGroups(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, _ context.Context, in *addInstanceGroupsInput) (any, error) {
+		c, ids, err := h.store.addInstanceGroups(deref(in.JobFlowID), in.InstanceGroups)
+		if err != nil {
+			return nil, err
+		}
+
+		return addInstanceGroupsOutput{ClusterArn: c.arn, JobFlowID: c.id, InstanceGroupIDs: ids}, nil
+	})
+}
+
+// modifyInstanceGroups handles ModifyInstanceGroups.
+func (h *Handler) modifyInstanceGroups(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, _ context.Context, in *modifyInstanceGroupsInput) (any, error) {
+		if err := h.store.modifyInstanceGroups(in.InstanceGroups); err != nil {
+			return nil, err
+		}
+
+		return struct{}{}, nil
+	})
+}
+
+// listInstanceGroups handles ListInstanceGroups.
+func (h *Handler) listInstanceGroups(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, _ context.Context, in *listInstanceGroupsInput) (any, error) {
+		groups, err := h.store.listInstanceGroups(deref(in.ClusterID))
+		if err != nil {
+			return nil, err
+		}
+
+		return listInstanceGroupsOutput{InstanceGroups: groups}, nil
+	})
+}
+
+// listInstances handles ListInstances with group id/type and state filters.
+func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, _ context.Context, in *listInstancesInput) (any, error) {
+		f := instanceFilter{
+			groupID:    deref(in.InstanceGroupID),
+			groupTypes: stateSet(in.InstanceGroupTypes),
+			states:     stateSet(in.InstanceStates),
+		}
+
+		insts, err := h.store.listInstances(deref(in.ClusterID), f)
+		if err != nil {
+			return nil, err
+		}
+
+		return listInstancesOutput{Instances: insts}, nil
+	})
+}
+
+// listBootstrapActions handles ListBootstrapActions.
+func (h *Handler) listBootstrapActions(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, _ context.Context, in *listBootstrapActionsInput) (any, error) {
+		actions, err := h.store.listBootstrapActions(deref(in.ClusterID))
+		if err != nil {
+			return nil, err
+		}
+
+		return listBootstrapActionsOutput{BootstrapActions: actions}, nil
+	})
+}
+
 // stateSet turns a list of filter values into a lookup set, or nil when empty.
 func stateSet(values []string) map[string]bool {
 	if len(values) == 0 {

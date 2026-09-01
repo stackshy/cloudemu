@@ -3,15 +3,21 @@
 
 provider-native `emr` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (7)
+## Operations (13)
 
 | Operation | Description |
 | --- | --- |
+| `AddInstanceGroups` |  |
 | `AddJobFlowSteps` |  |
+| `CancelSteps` |  |
 | `DescribeCluster` |  |
 | `DescribeStep` |  |
+| `ListBootstrapActions` |  |
 | `ListClusters` |  |
+| `ListInstanceGroups` |  |
+| `ListInstances` |  |
 | `ListSteps` |  |
+| `ModifyInstanceGroups` |  |
 | `RunJobFlow` |  |
 | `TerminateJobFlows` |  |
 

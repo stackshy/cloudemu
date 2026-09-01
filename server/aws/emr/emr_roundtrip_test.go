@@ -57,9 +57,17 @@ func runCluster(t *testing.T, c *emr.Client) string {
 		Instances: &emrtypes.JobFlowInstancesConfig{
 			InstanceCount:               aws.Int32(3),
 			MasterInstanceType:          aws.String("m5.xlarge"),
+			SlaveInstanceType:           aws.String("m5.large"),
 			Ec2SubnetId:                 aws.String("subnet-123"),
 			KeepJobFlowAliveWhenNoSteps: aws.Bool(true),
 		},
+		BootstrapActions: []emrtypes.BootstrapActionConfig{{
+			Name: aws.String("install-deps"),
+			ScriptBootstrapAction: &emrtypes.ScriptBootstrapActionConfig{
+				Path: aws.String("s3://bkt/bootstrap.sh"),
+				Args: []string{"--verbose"},
+			},
+		}},
 		Applications: []emrtypes.Application{{Name: aws.String("Spark")}},
 		Steps: []emrtypes.StepConfig{{
 			Name: aws.String("bootstrap-load"),
@@ -222,6 +230,193 @@ func TestSDKDescribeClusterUnknownIsError(t *testing.T) {
 	if _, err := c.DescribeCluster(context.Background(),
 		&emr.DescribeClusterInput{ClusterId: aws.String("j-DOESNOTEXIST")}); err == nil {
 		t.Fatal("DescribeCluster on unknown id: want error, got nil")
+	}
+}
+
+func TestSDKInstanceGroupsAndInstances(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+	id := runCluster(t, c)
+
+	// RunJobFlow synthesized a MASTER (1) + CORE (2) pair from the uniform config.
+	groups, err := c.ListInstanceGroups(ctx, &emr.ListInstanceGroupsInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("ListInstanceGroups: %v", err)
+	}
+
+	if len(groups.InstanceGroups) != 2 {
+		t.Fatalf("InstanceGroups = %d, want 2 (MASTER+CORE)", len(groups.InstanceGroups))
+	}
+
+	var coreID string
+
+	for i := range groups.InstanceGroups {
+		g := groups.InstanceGroups[i]
+		if g.InstanceGroupType == emrtypes.InstanceGroupTypeCore {
+			coreID = aws.ToString(g.Id)
+
+			if aws.ToInt32(g.RunningInstanceCount) != 2 {
+				t.Fatalf("CORE running = %d, want 2", aws.ToInt32(g.RunningInstanceCount))
+			}
+		}
+	}
+
+	if coreID == "" {
+		t.Fatalf("no CORE group in %+v", groups.InstanceGroups)
+	}
+
+	insts, err := c.ListInstances(ctx, &emr.ListInstancesInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("ListInstances: %v", err)
+	}
+
+	if len(insts.Instances) != 3 {
+		t.Fatalf("Instances = %d, want 3 (1 master + 2 core)", len(insts.Instances))
+	}
+
+	if insts.Instances[0].Status == nil || insts.Instances[0].Status.State != emrtypes.InstanceStateRunning {
+		t.Fatalf("instance state = %+v, want RUNNING", insts.Instances[0].Status)
+	}
+
+	// Filter by the CORE group id.
+	coreInsts, err := c.ListInstances(ctx,
+		&emr.ListInstancesInput{ClusterId: aws.String(id), InstanceGroupId: aws.String(coreID)})
+	if err != nil {
+		t.Fatalf("ListInstances by group: %v", err)
+	}
+
+	if len(coreInsts.Instances) != 2 {
+		t.Fatalf("CORE instances = %d, want 2", len(coreInsts.Instances))
+	}
+}
+
+func TestSDKAddAndModifyInstanceGroups(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+	id := runCluster(t, c)
+
+	added, err := c.AddInstanceGroups(ctx, &emr.AddInstanceGroupsInput{
+		JobFlowId: aws.String(id),
+		InstanceGroups: []emrtypes.InstanceGroupConfig{{
+			InstanceRole:  emrtypes.InstanceRoleTypeTask,
+			InstanceType:  aws.String("m5.large"),
+			InstanceCount: aws.Int32(2),
+			Name:          aws.String("task-group"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddInstanceGroups: %v", err)
+	}
+
+	if len(added.InstanceGroupIds) != 1 || aws.ToString(added.JobFlowId) != id {
+		t.Fatalf("AddInstanceGroups out = %+v, want one group id for %s", added, id)
+	}
+
+	taskID := added.InstanceGroupIds[0]
+
+	if _, err := c.ModifyInstanceGroups(ctx, &emr.ModifyInstanceGroupsInput{
+		InstanceGroups: []emrtypes.InstanceGroupModifyConfig{{
+			InstanceGroupId: aws.String(taskID),
+			InstanceCount:   aws.Int32(5),
+		}},
+	}); err != nil {
+		t.Fatalf("ModifyInstanceGroups: %v", err)
+	}
+
+	groups, err := c.ListInstanceGroups(ctx, &emr.ListInstanceGroupsInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("ListInstanceGroups: %v", err)
+	}
+
+	var found bool
+
+	for i := range groups.InstanceGroups {
+		g := groups.InstanceGroups[i]
+		if aws.ToString(g.Id) == taskID {
+			found = true
+
+			if aws.ToInt32(g.RequestedInstanceCount) != 5 || aws.ToInt32(g.RunningInstanceCount) != 5 {
+				t.Fatalf("task group counts = %d/%d, want 5/5",
+					aws.ToInt32(g.RequestedInstanceCount), aws.ToInt32(g.RunningInstanceCount))
+			}
+		}
+	}
+
+	if !found {
+		t.Fatalf("added task group %s missing after modify", taskID)
+	}
+
+	// The resize is reflected in the instance list too (3 original + 5 task).
+	insts, err := c.ListInstances(ctx, &emr.ListInstancesInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("ListInstances: %v", err)
+	}
+
+	if len(insts.Instances) != 8 {
+		t.Fatalf("Instances = %d, want 8 after resize", len(insts.Instances))
+	}
+}
+
+func TestSDKListBootstrapActions(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+	id := runCluster(t, c)
+
+	out, err := c.ListBootstrapActions(ctx, &emr.ListBootstrapActionsInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("ListBootstrapActions: %v", err)
+	}
+
+	if len(out.BootstrapActions) != 1 {
+		t.Fatalf("BootstrapActions = %d, want 1", len(out.BootstrapActions))
+	}
+
+	ba := out.BootstrapActions[0]
+	if aws.ToString(ba.Name) != "install-deps" || aws.ToString(ba.ScriptPath) != "s3://bkt/bootstrap.sh" {
+		t.Fatalf("bootstrap = %q/%q, want install-deps/s3://bkt/bootstrap.sh",
+			aws.ToString(ba.Name), aws.ToString(ba.ScriptPath))
+	}
+}
+
+func TestSDKCancelSteps(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+	id := runCluster(t, c)
+
+	added, err := c.AddJobFlowSteps(ctx, &emr.AddJobFlowStepsInput{
+		JobFlowId: aws.String(id),
+		Steps: []emrtypes.StepConfig{{
+			Name:          aws.String("etl"),
+			HadoopJarStep: &emrtypes.HadoopJarStepConfig{Jar: aws.String("command-runner.jar")},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AddJobFlowSteps: %v", err)
+	}
+
+	stepID := added.StepIds[0]
+
+	// Steps execute instantly (COMPLETED), so a cancel request is not honorable:
+	// real EMR reports FAILED with a not-cancellable reason.
+	out, err := c.CancelSteps(ctx, &emr.CancelStepsInput{
+		ClusterId: aws.String(id),
+		StepIds:   []string{stepID},
+	})
+	if err != nil {
+		t.Fatalf("CancelSteps: %v", err)
+	}
+
+	if len(out.CancelStepsInfoList) != 1 {
+		t.Fatalf("CancelStepsInfoList = %d, want 1", len(out.CancelStepsInfoList))
+	}
+
+	info := out.CancelStepsInfoList[0]
+	if aws.ToString(info.StepId) != stepID || info.Status != emrtypes.CancelStepsRequestStatusFailed {
+		t.Fatalf("cancel info = %q/%s, want %s/FAILED", aws.ToString(info.StepId), info.Status, stepID)
+	}
+
+	if aws.ToString(info.Reason) == "" {
+		t.Fatal("expected a not-cancellable reason for a COMPLETED step")
 	}
 }
 
