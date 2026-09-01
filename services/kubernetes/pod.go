@@ -326,6 +326,10 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 		return
 	}
 
+	if enforcePodNodeNameImmutable(w, cur, &in) {
+		return
+	}
+
 	in.Namespace = namespace
 	in.UID = cur.UID
 	in.CreationTimestamp = cur.CreationTimestamp
@@ -367,6 +371,33 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventModified, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, &pod)
+}
+
+// enforcePodNodeNameImmutable applies kubernetes spec.nodeName immutability on a
+// Pod replace. An empty incoming nodeName carries the stored binding forward (a
+// spec-only PUT must not unschedule an already-bound Pod); a non-empty change to
+// a bound Pod is rejected with 422 Invalid, matching the real apiserver. Returns
+// true when it wrote a rejection and the caller must stop.
+func enforcePodNodeNameImmutable(w http.ResponseWriter, cur, in *corev1.Pod) bool {
+	if cur.Spec.NodeName == "" || in.Spec.NodeName == cur.Spec.NodeName {
+		return false
+	}
+
+	if in.Spec.NodeName == "" {
+		in.Spec.NodeName = cur.Spec.NodeName
+
+		return false
+	}
+
+	writeInvalid(w, kindPod, in.Name,
+		fmt.Sprintf("Pod %q is invalid: spec.nodeName: Forbidden: field is immutable", in.Name),
+		[]metav1.StatusCause{{
+			Type:    causeTypeFieldValueForbidden,
+			Message: "field is immutable",
+			Field:   "spec.nodeName",
+		}})
+
+	return true
 }
 
 // Patch flow is identical across namespaced resources; sharing would force a
