@@ -4190,6 +4190,57 @@
     }
   },
   {
+    "service": "eventhub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CheckNameAvailability"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "CreateOrUpdateAuthorizationRule"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DeleteAuthorizationRule"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "GetAuthorizationRule"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListAuthorizationRules"
+      },
+      {
+        "name": "ListByEventHub"
+      },
+      {
+        "name": "ListByNamespace"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "RegenerateKeys"
+      }
+    ],
+    "providers": {
+      "azure": "Eventhub"
+    }
+  },
+  {
     "service": "gke",
     "interface": "provider-native",
     "operations": [
