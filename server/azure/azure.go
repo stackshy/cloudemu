@@ -39,6 +39,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
 	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
+	eventhubsrv "github.com/stackshy/cloudemu/v2/server/azure/eventhub"
 	"github.com/stackshy/cloudemu/v2/server/azure/functions"
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
@@ -450,6 +451,14 @@ func New(d Drivers) http.Handler {
 	if d.ServiceBus != nil {
 		srv.Register(servicebus.New(d.ServiceBus))
 	}
+
+	// Event Hubs claims Microsoft.EventHub/namespaces (and their eventhubs,
+	// consumergroups and authorizationRules) — a distinct ARM provider name from
+	// every other Azure handler, so registration order is unconstrained. It is a
+	// self-contained control-plane handler with no backing driver (its state is
+	// namespace-scoped ARM containers, like locks/tags), so it is always
+	// registered. The Event Hubs data plane is AMQP/Kafka only and out of scope.
+	srv.Register(eventhubsrv.New())
 
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
