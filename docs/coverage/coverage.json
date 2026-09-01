@@ -4062,6 +4062,36 @@
     }
   },
   {
+    "service": "emr",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "AddJobFlowSteps"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeStep"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListSteps"
+      },
+      {
+        "name": "RunJobFlow"
+      },
+      {
+        "name": "TerminateJobFlows"
+      }
+    ],
+    "providers": {
+      "aws": "EMR"
+    }
+  },
+  {
     "service": "eventbus",
     "interface": "EventBus",
     "operations": [
