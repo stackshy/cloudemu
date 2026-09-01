@@ -79,6 +79,8 @@ const (
 	azureTypeMLWorkspc = "microsoft.machinelearningservices/workspaces"
 	azureTypeMLEndpt   = "microsoft.machinelearningservices/workspaces/onlineendpoints"
 	azureTypeCognitive = "microsoft.cognitiveservices/accounts"
+	azureTypeCAEnv     = "microsoft.app/managedenvironments"
+	azureTypeCApp      = "microsoft.app/containerapps"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -104,6 +106,7 @@ const (
 	portableIAM          = "iam"
 	portableAzureML      = "machinelearningservices"
 	portableCognitive    = "cognitiveservices"
+	portableContainerApp = "containerapps"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -383,6 +386,8 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeMLWorkspc: {portableAzureML, "Workspace"},
 	azureTypeMLEndpt:   {portableAzureML, "Endpoint"},
 	azureTypeCognitive: {portableCognitive, "Account"},
+	azureTypeCAEnv:     {portableContainerApp, "ManagedEnvironment"},
+	azureTypeCApp:      {portableContainerApp, "ContainerApp"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
@@ -153,6 +154,7 @@ type Provider struct {
 	AI                 *ai.Mock
 	Search             *search.Mock
 	ManagedIdentity    *managedidentity.Mock
+	ContainerApps      *containerapps.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -208,6 +210,7 @@ func New(opts ...config.Option) *Provider {
 		AI:                 ai.New(o),
 		Search:             search.New(o),
 		ManagedIdentity:    managedidentity.New(o),
+		ContainerApps:      containerapps.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -263,6 +266,7 @@ func New(opts ...config.Option) *Provider {
 			Extra: []resourcediscovery.GenericResources{
 				azureMLDiscovery{p.AI},
 				managedIdentityDiscovery{p.ManagedIdentity},
+				containerAppsDiscovery{p.ContainerApps},
 			},
 		},
 	)

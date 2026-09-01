@@ -473,6 +473,8 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"machinelearningservices/Workspace":   "microsoft.machinelearningservices/workspaces",
 	"machinelearningservices/Endpoint":    "microsoft.machinelearningservices/workspaces/onlineendpoints",
 	"cognitiveservices/Account":           "microsoft.cognitiveservices/accounts",
+	"containerapps/ManagedEnvironment":    "microsoft.app/managedenvironments",
+	"containerapps/ContainerApp":          "microsoft.app/containerapps",
 }
 
 func portableToAzureType(service, typ string) string {

@@ -2884,6 +2884,57 @@
     }
   },
   {
+    "service": "containerapps",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateApp"
+      },
+      {
+        "name": "CreateOrUpdateEnvironment"
+      },
+      {
+        "name": "DeleteApp"
+      },
+      {
+        "name": "DeleteEnvironment"
+      },
+      {
+        "name": "DiscoverApps"
+      },
+      {
+        "name": "DiscoverEnvironments"
+      },
+      {
+        "name": "GetApp"
+      },
+      {
+        "name": "GetEnvironment"
+      },
+      {
+        "name": "ListAppsByResourceGroup"
+      },
+      {
+        "name": "ListAppsBySubscription"
+      },
+      {
+        "name": "ListEnvironmentsByResourceGroup"
+      },
+      {
+        "name": "ListEnvironmentsBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ContainerApps"
+    }
+  },
+  {
     "service": "containerinstances",
     "interface": "ContainerInstances",
     "operations": [

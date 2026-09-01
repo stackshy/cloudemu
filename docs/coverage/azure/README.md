@@ -10,6 +10,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [AKS](./aks.md) | — (provider-native) | 16 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |
+| [ContainerApps](./containerapps.md) | — (provider-native) | 14 |
 | [ContainerInstances](./containerinstances.md) | `containerinstances` | 10 |
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
 | [CosmosPostgreSQL](./cosmospostgresql.md) | `cosmospostgresql` | 34 |
