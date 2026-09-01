@@ -45,6 +45,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
+	kustosrv "github.com/stackshy/cloudemu/v2/server/azure/kusto"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
@@ -138,7 +139,7 @@ type Drivers struct {
 	// ContainerApps serves Microsoft.App managedEnvironments and containerApps.
 	ContainerApps containerappssrv.Store
 	IAM           iamdriver.IAM
-	ACR             crdriver.ContainerRegistry
+	ACR           crdriver.ContainerRegistry
 	// ContainerInstances serves the Azure Container Instances
 	// (Microsoft.ContainerInstance/containerGroups) ARM API against the
 	// containerinstances driver.
@@ -470,6 +471,14 @@ func New(d Drivers) http.Handler {
 	// namespace-scoped ARM containers, like locks/tags), so it is always
 	// registered. The Event Hubs data plane is AMQP/Kafka only and out of scope.
 	srv.Register(eventhubsrv.New())
+
+	// Kusto (Azure Data Explorer) claims Microsoft.Kusto/clusters (and their
+	// databases) — a distinct ARM provider name from every other Azure handler,
+	// so registration order is unconstrained. It is a self-contained control-plane
+	// handler with no backing driver (its state is cluster-scoped ARM containers,
+	// like Event Hubs), so it is always registered. The Kusto KQL query data plane
+	// is out of scope.
+	srv.Register(kustosrv.New())
 
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.

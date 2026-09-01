@@ -98,6 +98,10 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"azure/queue": {
 		"Create", "Delete", "DeleteMessage", "DequeueMessages", "EnqueueMessage", "List",
 	},
+	"azure/kusto": {
+		"CreateOrUpdate", "Delete", "Get", "List", "ListByCluster",
+		"ListByResourceGroup", "Start", "Stop",
+	},
 
 	// GCP — REST handlers, routed on method + resource path / custom verb.
 	"gcp/cloudasset": {
