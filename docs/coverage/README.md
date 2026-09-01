@@ -62,6 +62,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `opensearch` | [OpenSearch](./aws/opensearch.md) | — | — | — | 96 |
 | `parameterstore` | [SSM](./aws/ssm.md) | — | — | — | 9 |
 | `postgresflex` | — | [PostgresFlex](./azure/postgresflex.md) | — | — | 21 |
+| `providers` | — | [Providers](./azure/providers.md) | — | — | 4 |
 | `queue` | — | [Queue](./azure/queue.md) | — | — | 6 |
 | `rds` | [RDS](./aws/rds.md) | — | — | — | 21 |
 | `relationaldb` | [Redshift](./aws/redshift.md) | [MySQLFlex](./azure/mysqlflex.md) | [AlloyDB](./gcp/alloydb.md) | — | 21 |
