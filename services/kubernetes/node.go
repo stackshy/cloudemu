@@ -24,8 +24,10 @@ import (
 // node in name-sorted order), and deleting one contracts it (nodeOnDelete
 // deletes the node-pinned DaemonSet Pods and reschedules every other bound Pod
 // onto a remaining fitting node, falling back to Pending). Node/inter-pod
-// affinity, topology spread, scoring/bin-packing, and tolerationSeconds/live
-// eviction are deferred follow-ups.
+// affinity, topology spread, and preferred-affinity scoring extend the filter/
+// score path in scheduling.go; tolerationSeconds and live NoExecute taint-based
+// eviction (evicting a running Pod after its toleration expires) still need a
+// background controller loop and remain a deferred follow-up.
 
 const (
 	// nodeKubeletVersion is the Kubernetes version the synthetic nodes report;
@@ -298,11 +300,13 @@ func (s *ClusterState) nodeInternalIPLocked(name string) string {
 // succeeded. An explicit spec.nodeName bypasses the scheduler (kubelet-style
 // direct assignment). With a single node, the pod is placed unconditionally
 // (the historical back-compat path — no nodeSelector/taint/request gating). With
-// multiple nodes it runs deterministic first-fit over the name-sorted candidates,
-// filtering by nodeSelector, taints/tolerations, and request feasibility; the
-// first feasible node wins. When nothing fits it emits FailedScheduling and
-// returns false, leaving the caller to mark the pod Unschedulable. Callers hold
-// s.mu.
+// multiple nodes it runs the two-phase scheduler: feasibleNodesLocked filters
+// the name-sorted candidates by nodeSelector, taints/tolerations, request
+// feasibility, required nodeAffinity, required inter-pod (anti)affinity, and
+// DoNotSchedule topology spread; bestScoredNodeLocked then scores the survivors
+// by preferred affinity and spread skew, breaking ties by lowest name. When
+// nothing is feasible it emits FailedScheduling and returns false, leaving the
+// caller to mark the pod Unschedulable. Callers hold s.mu.
 func (s *ClusterState) scheduleNodeLocked(pod *corev1.Pod) bool {
 	if pod.Spec.NodeName != "" {
 		return true
@@ -325,29 +329,18 @@ func (s *ClusterState) scheduleNodeLocked(pod *corev1.Pod) bool {
 		return true
 	}
 
-	for i := range nodes {
-		n := &nodes[i]
-		if !labelsMatch(pod.Spec.NodeSelector, n.labels) {
-			continue
-		}
+	feasible := s.feasibleNodesLocked(pod, nodes)
+	if len(feasible) == 0 {
+		s.recordFailedSchedulingLocked(pod)
 
-		if !podToleratesTaints(pod.Spec.Tolerations, n.taints) {
-			continue
-		}
-
-		if !s.podFitsNodeLocked(pod, n) {
-			continue
-		}
-
-		pod.Spec.NodeName = n.name
-		s.recordScheduledLocked(pod, n.name)
-
-		return true
+		return false
 	}
 
-	s.recordFailedSchedulingLocked(pod)
+	best := s.bestScoredNodeLocked(pod, feasible, nodes)
+	pod.Spec.NodeName = best
+	s.recordScheduledLocked(pod, best)
 
-	return false
+	return true
 }
 
 // recordScheduledLocked emits the scheduler's Scheduled event for a placed pod.
@@ -361,7 +354,7 @@ func (s *ClusterState) recordScheduledLocked(pod *corev1.Pod, node string) {
 func (s *ClusterState) recordFailedSchedulingLocked(pod *corev1.Pod) {
 	s.recordEventLocked(objectReferenceForPod(pod), "FailedScheduling",
 		"0/"+fmt.Sprint(len(s.nodesLocked()))+" nodes are available: no node matches the pod's "+
-			"nodeSelector, tolerations, or resource requests.")
+			"nodeSelector, tolerations, resource requests, affinity, or topology spread constraints.")
 }
 
 // podToleratesTaints reports whether the pod's tolerations cover every
