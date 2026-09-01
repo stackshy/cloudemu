@@ -1468,7 +1468,30 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "ResourceConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", msg)
+	case cerrors.IsThrottled(err):
+		writeThrottle(w, msg)
 	default:
 		writeError(w, http.StatusInternalServerError, "ServiceException", msg)
 	}
+}
+
+// reservedConcurrencyReason is the Reason a reserved-concurrency throttle
+// carries in the TooManyRequestsException body — the value real Lambda returns
+// when a function's ReservedConcurrentExecutions limit is exhausted.
+const reservedConcurrencyReason = "ReservedFunctionConcurrentInvocationLimitExceeded"
+
+// writeThrottle emits the 429 TooManyRequestsException a throttled Invoke
+// returns. The body carries the Reason field the SDK deserializes into
+// TooManyRequestsException.Reason so callers can distinguish a reserved-
+// concurrency throttle from other limits.
+func writeThrottle(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.Header().Set("X-Amzn-Errortype", "TooManyRequestsException")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"Type":    "TooManyRequestsException",
+		"Message": msg,
+		"message": msg,
+		"Reason":  reservedConcurrencyReason,
+	})
 }

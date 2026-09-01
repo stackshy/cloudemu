@@ -114,6 +114,10 @@ type Mock struct {
 	monitoring mondriver.Monitoring
 	logs       logdriver.Logging // optional: CloudWatch Logs sink for invocation logs
 	mu         sync.Mutex        // guards PublishVersion read-modify-write on funcData
+	// inflightMu guards inflight, the number of invocations currently executing
+	// per function name. It backs reserved-concurrency enforcement on Invoke.
+	inflightMu sync.Mutex
+	inflight   map[string]int
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -149,6 +153,7 @@ func New(opts *config.Options) *Mock {
 		mappings: memstore.New[*driver.EventSourceMappingInfo](),
 		opts:     opts,
 		handlers: make(map[string]driver.HandlerFunc),
+		inflight: make(map[string]int),
 	}
 }
 
@@ -326,14 +331,19 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		return &driver.InvokeOutput{StatusCode: dryRunStatusCode, ExecutedVersion: executedVersion}, nil
 	}
 
+	// Enforce reserved concurrency: an invoke that would push the in-flight count
+	// past the function's reserved limit is throttled instead of executed.
+	// release returns the slot once this invocation completes.
+	release, err := m.reserveInvocationSlot(&fd, input.FunctionName)
+	if err != nil {
+		return nil, err
+	}
+
+	defer release()
+
 	dims := map[string]string{"FunctionName": input.FunctionName}
 
-	h := fd.handler
-	if h == nil {
-		m.handlersMu.RLock()
-		h = m.handlers[input.FunctionName]
-		m.handlersMu.RUnlock()
-	}
+	h := m.resolveHandler(&fd, input.FunctionName)
 
 	if h == nil && fd.engineBacked {
 		return m.invokeEngine(ctx, input, dims, executedVersion)
@@ -373,6 +383,20 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
+}
+
+// resolveHandler returns the Go handler to run for an invoke: the one attached
+// to the function record, else one registered out-of-band via RegisterHandler,
+// or nil when the function has no Go handler (a stub or engine-backed invoke).
+func (m *Mock) resolveHandler(fd *funcData, name string) driver.HandlerFunc {
+	if fd.handler != nil {
+		return fd.handler
+	}
+
+	m.handlersMu.RLock()
+	defer m.handlersMu.RUnlock()
+
+	return m.handlers[name]
 }
 
 // resolveQualifier resolves an Invoke Qualifier (empty, "$LATEST", a numeric
