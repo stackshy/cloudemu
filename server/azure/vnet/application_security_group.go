@@ -135,7 +135,7 @@ func (*Handler) deleteASG(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	w.WriteHeader(http.StatusOK)
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; mirrors the network-gateway list handlers over a distinct resource type
 func (*Handler) listASGs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
 	svc netdriver.AzureApplicationSecurityGroups,
 ) {

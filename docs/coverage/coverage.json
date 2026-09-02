@@ -7547,6 +7547,60 @@
         ]
       },
       {
+        "name": "AzureNetworkGateways",
+        "doc": "AzureNetworkGateways is the Azure-only site-to-site VPN surface. Each resource",
+        "operations": [
+          {
+            "name": "DeleteAzureLocalNetworkGateway",
+            "doc": "DeleteAzureLocalNetworkGateway removes the local gateway, reporting whether it existed."
+          },
+          {
+            "name": "DeleteAzureVirtualNetworkGateway",
+            "doc": "DeleteAzureVirtualNetworkGateway removes the gateway, reporting whether it existed."
+          },
+          {
+            "name": "DeleteAzureVirtualNetworkGatewayConnection",
+            "doc": "DeleteAzureVirtualNetworkGatewayConnection removes the connection, reporting whether it existed."
+          },
+          {
+            "name": "GetAzureLocalNetworkGateway",
+            "doc": "GetAzureLocalNetworkGateway returns the local gateway identified by (resourceGroup, name)."
+          },
+          {
+            "name": "GetAzureVirtualNetworkGateway",
+            "doc": "GetAzureVirtualNetworkGateway returns the gateway identified by (resourceGroup, name)."
+          },
+          {
+            "name": "GetAzureVirtualNetworkGatewayConnection",
+            "doc": "GetAzureVirtualNetworkGatewayConnection returns the connection identified by (resourceGroup, name)."
+          },
+          {
+            "name": "ListAzureLocalNetworkGateways",
+            "doc": "ListAzureLocalNetworkGateways returns the local gateways in a resource group,"
+          },
+          {
+            "name": "ListAzureVirtualNetworkGatewayConnections",
+            "doc": "ListAzureVirtualNetworkGatewayConnections returns the connections in a resource"
+          },
+          {
+            "name": "ListAzureVirtualNetworkGateways",
+            "doc": "ListAzureVirtualNetworkGateways returns the gateways in a resource group, or"
+          },
+          {
+            "name": "PutAzureLocalNetworkGateway",
+            "doc": "PutAzureLocalNetworkGateway creates or replaces a local network gateway in place."
+          },
+          {
+            "name": "PutAzureVirtualNetworkGateway",
+            "doc": "PutAzureVirtualNetworkGateway creates or replaces a virtual network gateway"
+          },
+          {
+            "name": "PutAzureVirtualNetworkGatewayConnection",
+            "doc": "PutAzureVirtualNetworkGatewayConnection creates or replaces a connection in place."
+          }
+        ]
+      },
+      {
         "name": "AzureNetworkInterfaces",
         "doc": "AzureNetworkInterfaces is the Azure-specific network-interface surface,",
         "operations": [

@@ -107,7 +107,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typePublicIPPrefix, typeNIC, typeNATGateway, typeASG, typeLocations:
+	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typePublicIPPrefix, typeNIC, typeNATGateway, typeASG,
+		typeVNGateway, typeLNGateway, typeConnection, typeLocations:
 		return true
 	}
 
@@ -153,9 +154,34 @@ func (h *Handler) routeByResourceType(w http.ResponseWriter, r *http.Request, rp
 	case typeASG:
 		h.routeASG(w, r, rp)
 	default:
+		if h.routeGatewayResourceType(w, r, rp) {
+			return
+		}
+
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)
 	}
+}
+
+// routeGatewayResourceType dispatches the site-to-site VPN resource types
+// (virtualNetworkGateways, localNetworkGateways, connections). Split out of
+// routeByResourceType so its dispatch switch stays under the cyclomatic-complexity
+// gate. It returns true when it handled the request.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeGatewayResourceType(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) bool {
+	switch rp.ResourceType {
+	case typeVNGateway:
+		h.routeVNGateway(w, r, rp)
+	case typeLNGateway:
+		h.routeLNGateway(w, r, rp)
+	case typeConnection:
+		h.routeConnection(w, r, rp)
+	default:
+		return false
+	}
+
+	return true
 }
 
 // serveLocationsOperationStatus answers the locations/operationStatuses poll
@@ -641,6 +667,7 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	recordErr(h.purgeRouteTables(ctx, resourceGroup))
 	h.purgeASGs(ctx, resourceGroup)
 	h.purgePublicIPPrefixes(ctx, resourceGroup)
+	h.purgeNetworkGateways(ctx, resourceGroup)
 
 	return firstErr
 }

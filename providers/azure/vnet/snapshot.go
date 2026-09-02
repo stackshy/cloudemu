@@ -38,6 +38,9 @@ type vnetSnapshot struct {
 	AzureVNetPeerings   json.RawMessage `json:"azureVnetPeerings,omitempty"`
 	AzureASGs           json.RawMessage `json:"azureAsgs,omitempty"`
 	AzurePrefixes       json.RawMessage `json:"azurePublicIpPrefixes,omitempty"`
+	AzureVNGateways     json.RawMessage `json:"azureVirtualNetworkGateways,omitempty"`
+	AzureLNGateways     json.RawMessage `json:"azureLocalNetworkGateways,omitempty"`
+	AzureGWConnections  json.RawMessage `json:"azureGatewayConnections,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -76,6 +79,9 @@ func (m *Mock) snapshotStores(snap *vnetSnapshot) error {
 		{&snap.AzureVNetPeerings, m.azureVNetPeerings.Snapshot},
 		{&snap.AzureASGs, m.azureASGs.Snapshot},
 		{&snap.AzurePrefixes, m.azurePrefixes.Snapshot},
+		{&snap.AzureVNGateways, m.azureVNGateways.Snapshot},
+		{&snap.AzureLNGateways, m.azureLNGateways.Snapshot},
+		{&snap.AzureGWConnections, m.azureGWConnections.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -126,6 +132,9 @@ func (m *Mock) restoreStores(snap *vnetSnapshot) error {
 		{snap.AzureVNetPeerings, m.azureVNetPeerings.LoadSnapshot},
 		{snap.AzureASGs, m.azureASGs.LoadSnapshot},
 		{snap.AzurePrefixes, m.azurePrefixes.LoadSnapshot},
+		{snap.AzureVNGateways, m.azureVNGateways.LoadSnapshot},
+		{snap.AzureLNGateways, m.azureLNGateways.LoadSnapshot},
+		{snap.AzureGWConnections, m.azureGWConnections.LoadSnapshot},
 	}
 
 	for _, l := range loads {
