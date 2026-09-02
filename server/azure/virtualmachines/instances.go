@@ -785,6 +785,57 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	h.lifecycleAction(w, r, rp, h.compute.RebootInstances)
 }
 
+// redeploy handles POST virtualMachines/{name}/redeploy. Real Azure powers the
+// VM off, relocates it to a fresh host, and powers it back on; the net
+// observable effect is a brief power cycle that leaves the VM running with
+// provisioningState Succeeded and no data loss. We model that by power-cycling
+// the VM back to the running state, reusing the existing lifecycle plumbing so
+// the same running metrics are emitted.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) redeploy(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	h.powerCycleToRunning(w, r, rp)
+}
+
+// reimage handles POST virtualMachines/{name}/reimage. Real Azure reinstalls
+// the OS by resetting the OS disk to its original image and leaves the VM
+// running. We model the observable power/state transition (VM ends running,
+// provisioningState Succeeded); OS-disk-reset fidelity is deferred to the Azure
+// OS-disk PR, which is the work that first materializes the OS disk as a
+// tracked resource for the emulator to reset.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) reimage(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	h.powerCycleToRunning(w, r, rp)
+}
+
+// powerCycleToRunning is the shared body for redeploy/reimage: it takes the VM
+// through a power cycle that ends in the running state. A running VM is
+// rebooted (running→restarting→running); a stopped/deallocated one is started.
+// Returns 202 + async polling header so real Azure SDK pollers terminate.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) powerCycleToRunning(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if powerCode(inst) == stateRunning {
+		err = h.compute.RebootInstances(r.Context(), []string{inst.ID})
+	} else {
+		err = h.compute.StartInstances(r.Context(), []string{inst.ID})
+	}
+
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, rp.SubResource+"-"+rp.ResourceName)
+}
+
 // generalize handles POST virtualMachines/{name}/generalize. It marks the VM
 // as generalized (OS-specific state removed), a precondition for capturing it
 // into a reusable image. Real Azure returns 200 OK with no body.

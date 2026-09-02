@@ -14,11 +14,12 @@
 //	POST   .../virtualMachines/{name}/start  — Start
 //	POST   .../virtualMachines/{name}/powerOff — Stop
 //	POST   .../virtualMachines/{name}/restart — Restart
+//	POST   .../virtualMachines/{name}/redeploy — Redeploy (power-cycle to a new host)
+//	POST   .../virtualMachines/{name}/reimage  — Reimage (reset OS disk; VM ends running)
 //	POST   .../virtualMachines/{name}/retrieveBootDiagnosticsData — boot-diagnostics URIs
 //	GET    .../virtualMachines/{name}/bootDiagnostics/serialConsoleLog — serial-log bytes
 //
-// Less-used operations (capture, deallocate, instance view, redeploy, etc.)
-// are not yet wired and will return 501 Not Implemented.
+// Remaining less-used operations return 501 Not Implemented.
 package virtualmachines
 
 import (
@@ -53,6 +54,7 @@ const (
 	actionDeallocate = "deallocate"
 	actionRestart    = "restart"
 	actionReimage    = "reimage"
+	actionRedeploy   = "redeploy"
 )
 
 // Handler serves ARM JSON requests for Microsoft.Compute/virtualMachines.
@@ -208,6 +210,10 @@ func (h *Handler) servePostAction(w http.ResponseWriter, r *http.Request, rp azu
 		h.deallocate(w, r, rp)
 	case actionRestart:
 		h.restart(w, r, rp)
+	case actionRedeploy:
+		h.redeploy(w, r, rp)
+	case actionReimage:
+		h.reimage(w, r, rp)
 	case "generalize":
 		h.generalize(w, r, rp)
 	case "capture":
