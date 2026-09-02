@@ -48,6 +48,21 @@ func (h *Handler) doListServiceQuotas(_ context.Context, in *listServiceQuotasIn
 	return out, nil
 }
 
+func (h *Handler) listDefaultServiceQuotas(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, (*Handler).doListDefaultServiceQuotas)
+}
+
+func (h *Handler) doListDefaultServiceQuotas(_ context.Context, in *listServiceQuotasInput) (any, error) {
+	quotas := h.reg.ListDefaults(in.ServiceCode)
+
+	out := &listServiceQuotasOutput{Quotas: make([]serviceQuota, 0, len(quotas))}
+	for i := range quotas {
+		out.Quotas = append(out.Quotas, h.toWire(&quotas[i]))
+	}
+
+	return out, nil
+}
+
 func (h *Handler) requestIncrease(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, (*Handler).doRequestIncrease)
 }

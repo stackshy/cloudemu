@@ -51,6 +51,21 @@ func TestListFiltersByService(t *testing.T) {
 	assert.Greater(t, len(all), len(vpc))
 }
 
+func TestListDefaultsIgnoresOverride(t *testing.T) {
+	r := quota.NewAWSDefaults(nil)
+
+	_, err := r.SetOverride("s3", "L-DC2B2D3D", 999)
+	require.NoError(t, err)
+
+	defaults := r.ListDefaults("s3")
+	require.Len(t, defaults, 1)
+	assert.Equal(t, float64(100), defaults[0].Value, "defaults list reports the default, not the override")
+
+	applied := r.List("s3")
+	require.Len(t, applied, 1)
+	assert.Equal(t, float64(999), applied[0].Value, "applied list reflects the override")
+}
+
 func TestSetInitializesAppliedValue(t *testing.T) {
 	r := quota.New(nil)
 	r.Set(&quota.Quota{ServiceCode: "svc", QuotaCode: "L-1", DefaultValue: 7, Adjustable: true})

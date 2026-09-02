@@ -41,7 +41,7 @@ func New(reg *quota.Registry, accountID, region string) *Handler {
 		"GetServiceQuota":                        h.getServiceQuota,
 		"GetAWSDefaultServiceQuota":              h.getDefaultServiceQuota,
 		"ListServiceQuotas":                      h.listServiceQuotas,
-		"ListAWSDefaultServiceQuotas":            h.listServiceQuotas,
+		"ListAWSDefaultServiceQuotas":            h.listDefaultServiceQuotas,
 		"RequestServiceQuotaIncrease":            h.requestIncrease,
 		"ListRequestedServiceQuotaChangeHistory": h.listHistory,
 	}

@@ -148,6 +148,18 @@ func (r *Registry) List(serviceCode string) []Quota {
 	return out
 }
 
+// ListDefaults returns every quota for serviceCode with its Value set to the AWS
+// default, ignoring any applied override. An empty serviceCode lists all quotas
+// across every service. Results are sorted like List.
+func (r *Registry) ListDefaults(serviceCode string) []Quota {
+	out := r.List(serviceCode)
+	for i := range out {
+		out[i].Value = out[i].DefaultValue
+	}
+
+	return out
+}
+
 // SetOverride sets the applied value of an existing quota, modeling an approved
 // quota change. It fails if the quota is unknown or not adjustable.
 func (r *Registry) SetOverride(serviceCode, quotaCode string, value float64) (Quota, error) {

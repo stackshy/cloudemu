@@ -9,18 +9,27 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	sq "github.com/aws/aws-sdk-go-v2/service/servicequotas"
+	sqtypes "github.com/aws/aws-sdk-go-v2/service/servicequotas/types"
 
-	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	"github.com/stackshy/cloudemu/v2/features/quota"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
-// newServiceQuotasClient stands up an in-process AWS server backed by the seeded
-// AWS default quota registry and returns a real Service Quotas SDK client.
+// newServiceQuotasClient stands up an in-process AWS server backed by a freshly
+// seeded AWS default quota registry and returns a real Service Quotas SDK client.
 func newServiceQuotasClient(t *testing.T) *sq.Client {
 	t.Helper()
 
+	return newServiceQuotasClientWithRegistry(t, quota.NewAWSDefaults(nil))
+}
+
+// newServiceQuotasClientWithRegistry returns a real SDK client pointed at a
+// server backed by reg, letting a test pre-apply overrides before querying.
+func newServiceQuotasClientWithRegistry(t *testing.T, reg *quota.Registry) *sq.Client {
+	t.Helper()
+
 	srv := awsserver.New(awsserver.Drivers{
-		ServiceQuotas: quota.NewAWSDefaults(nil),
+		ServiceQuotas: reg,
 		AccountID:     "000000000000",
 		Region:        "us-east-1",
 	})
@@ -113,6 +122,57 @@ func TestSDKGetAWSDefaultServiceQuota(t *testing.T) {
 
 	if aws.ToFloat64(out.Quota.Value) != 100 {
 		t.Fatalf("default S3 buckets value = %v, want 100", aws.ToFloat64(out.Quota.Value))
+	}
+}
+
+// s3BucketsValue finds the S3 general-purpose buckets quota (L-DC2B2D3D) in a
+// list response and returns its value, failing if it is absent.
+func s3BucketsValue(t *testing.T, quotas []sqtypes.ServiceQuota) float64 {
+	t.Helper()
+
+	for i := range quotas {
+		if aws.ToString(quotas[i].QuotaCode) == "L-DC2B2D3D" {
+			return aws.ToFloat64(quotas[i].Value)
+		}
+	}
+
+	t.Fatalf("S3 buckets quota (L-DC2B2D3D) missing from %+v", quotas)
+
+	return 0
+}
+
+// TestSDKListAWSDefaultServiceQuotas proves ListAWSDefaultServiceQuotas reports
+// AWS defaults and ignores an applied override, while ListServiceQuotas reflects
+// the override. Routing the defaults list to the applied-values path would make
+// this fail.
+func TestSDKListAWSDefaultServiceQuotas(t *testing.T) {
+	ctx := context.Background()
+
+	reg := quota.NewAWSDefaults(nil)
+	if _, err := reg.SetOverride("s3", "L-DC2B2D3D", 999); err != nil {
+		t.Fatalf("SetOverride: %v", err)
+	}
+
+	c := newServiceQuotasClientWithRegistry(t, reg)
+
+	defOut, err := c.ListAWSDefaultServiceQuotas(ctx, &sq.ListAWSDefaultServiceQuotasInput{
+		ServiceCode: aws.String("s3"),
+	})
+	if err != nil {
+		t.Fatalf("ListAWSDefaultServiceQuotas: %v", err)
+	}
+
+	if got := s3BucketsValue(t, defOut.Quotas); got != 100 {
+		t.Fatalf("defaults list S3 buckets = %v, want 100 (override must be ignored)", got)
+	}
+
+	appliedOut, err := c.ListServiceQuotas(ctx, &sq.ListServiceQuotasInput{ServiceCode: aws.String("s3")})
+	if err != nil {
+		t.Fatalf("ListServiceQuotas: %v", err)
+	}
+
+	if got := s3BucketsValue(t, appliedOut.Quotas); got != 999 {
+		t.Fatalf("applied list S3 buckets = %v, want 999 (override applied)", got)
 	}
 }
 
