@@ -80,6 +80,11 @@ type Mock struct {
 	// (token -> request fingerprint + time) so a replay short-circuits instead of
 	// re-applying; guarded by m.mu. Mirrors the SQS FIFO deduplicationIndex.
 	txIdempotency map[string]txIdempotencyRecord
+	// backups holds on-demand table backups keyed by BackupArn: each captures a
+	// table's schema and a deep copy of its items at backup time, so restoring
+	// replays them into a new table regardless of later mutations. Guarded by
+	// m.mu; see backup.go.
+	backups map[string]*backupData
 }
 
 // StreamEventInvoker delivers a DynamoDB Streams event batch to whatever Lambda
@@ -127,6 +132,7 @@ func New(opts *config.Options) *Mock {
 		tables:        make(map[string]*tableData),
 		opts:          opts,
 		txIdempotency: make(map[string]txIdempotencyRecord),
+		backups:       make(map[string]*backupData),
 	}
 }
 
@@ -191,16 +197,23 @@ func validateKeyNotEmpty(keyName string, val any) error {
 // is the sum of each attribute's name length (UTF-8 bytes) and value size. AWS
 // rejects an oversized write with a ValidationException.
 func validateItemSize(item map[string]any) error {
+	if itemSizeBytes(item) > maxItemSizeBytes {
+		return cerrors.New(cerrors.InvalidArgument, "Item size has exceeded the maximum allowed size")
+	}
+
+	return nil
+}
+
+// itemSizeBytes approximates the on-the-wire byte size DynamoDB attributes to an
+// item — the sum of each attribute's name length and value size. It backs both
+// the 400 KB item-ceiling check and a backup's reported SizeBytes.
+func itemSizeBytes(item map[string]any) int {
 	total := 0
 	for name, val := range item {
 		total += len(name) + valueSize(val)
 	}
 
-	if total > maxItemSizeBytes {
-		return cerrors.New(cerrors.InvalidArgument, "Item size has exceeded the maximum allowed size")
-	}
-
-	return nil
+	return total
 }
 
 // elementOverhead is the 1 byte DynamoDB charges per List or Map element, on
