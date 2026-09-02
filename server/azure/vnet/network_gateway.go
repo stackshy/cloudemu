@@ -197,6 +197,8 @@ func (h *Handler) routeVNGateway(w http.ResponseWriter, r *http.Request, rp azur
 	switch r.Method {
 	case http.MethodPut:
 		h.createVNGateway(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchVNGateway(w, r, rp, svc)
 	case http.MethodGet:
 		h.getVNGateway(w, r, rp, svc)
 	case http.MethodDelete:
@@ -206,7 +208,7 @@ func (h *Handler) routeVNGateway(w http.ResponseWriter, r *http.Request, rp azur
 	}
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the capability-gated create shape is mirrored by createPrivateLinkService
 func (*Handler) createVNGateway(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
 	svc netdriver.AzureNetworkGateways,
 ) {
@@ -297,6 +299,45 @@ func toRecordBgp(in *bgpSettings) *netdriver.AzureGatewayBgpSettings {
 		BgpPeeringAddress: in.BgpPeeringAddress,
 		PeerWeight:        in.PeerWeight,
 	}
+}
+
+// patchVNGateway applies an ARM UpdateTags PATCH (VirtualNetworkGateways
+// Client.BeginUpdateTags — an LRO): the body's tags REPLACE the stored set
+// wholesale (tags:{} wipes them), the gateway's other fields are left intact,
+// and the full resource is returned. A sync 200 with a terminal
+// provisioningState completes the poller immediately (the same convention the
+// create uses). The get-modify-put is guarded by patchMu so a concurrent PATCH
+// cannot drop the write. A PATCH on a missing gateway is a 404.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchVNGateway(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	svc netdriver.AzureNetworkGateways,
+) {
+	var req armTagsObject
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	h.patchMu.Lock()
+
+	existing, ok := svc.GetAzureVirtualNetworkGateway(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		h.patchMu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"virtual network gateway "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	if req.Tags != nil {
+		existing.Tags = replacementTags(req.Tags)
+	}
+
+	stored := svc.PutAzureVirtualNetworkGateway(r.Context(), existing)
+	h.patchMu.Unlock()
+
+	writeAcceptedAsync(w, r, rp.Subscription, "vng-updatetags-"+rp.ResourceName, vngResponseFrom(stored, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -431,6 +472,8 @@ func (h *Handler) routeLNGateway(w http.ResponseWriter, r *http.Request, rp azur
 	switch r.Method {
 	case http.MethodPut:
 		h.createLNGateway(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchLNGateway(w, r, rp, svc)
 	case http.MethodGet:
 		h.getLNGateway(w, r, rp, svc)
 	case http.MethodDelete:
@@ -477,6 +520,44 @@ func (*Handler) createLNGateway(w http.ResponseWriter, r *http.Request, rp azure
 	stored := svc.PutAzureLocalNetworkGateway(r.Context(), rec)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "lng-create-"+rp.ResourceName, lngResponseFrom(stored, rp))
+}
+
+// patchLNGateway applies an ARM UpdateTags PATCH (LocalNetworkGatewaysClient.
+// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// wholesale (tags:{} wipes them), the gateway's other fields are left intact,
+// and the full resource is returned. The get-modify-put is guarded by patchMu so
+// a concurrent PATCH cannot drop the write. A PATCH on a missing gateway is a
+// 404.
+//
+//nolint:gocritic,dupl // rp is request-scoped; mirrors patchASG's tag-replace over a distinct resource type
+func (h *Handler) patchLNGateway(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	svc netdriver.AzureNetworkGateways,
+) {
+	var req armTagsObject
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	h.patchMu.Lock()
+
+	existing, ok := svc.GetAzureLocalNetworkGateway(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		h.patchMu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"local network gateway "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	if req.Tags != nil {
+		existing.Tags = replacementTags(req.Tags)
+	}
+
+	stored := svc.PutAzureLocalNetworkGateway(r.Context(), existing)
+	h.patchMu.Unlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, lngResponseFrom(stored, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -571,6 +652,8 @@ func (h *Handler) routeConnection(w http.ResponseWriter, r *http.Request, rp azu
 	switch r.Method {
 	case http.MethodPut:
 		h.createConnection(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchConnection(w, r, rp, svc)
 	case http.MethodGet:
 		h.getConnection(w, r, rp, svc)
 	case http.MethodDelete:
@@ -618,6 +701,45 @@ func (*Handler) createConnection(w http.ResponseWriter, r *http.Request, rp azur
 	stored := svc.PutAzureVirtualNetworkGatewayConnection(r.Context(), rec)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "conn-create-"+rp.ResourceName, connResponseFrom(stored, rp))
+}
+
+// patchConnection applies an ARM UpdateTags PATCH (VirtualNetworkGateway
+// ConnectionsClient.BeginUpdateTags — an LRO): the body's tags REPLACE the
+// stored set wholesale (tags:{} wipes them), the connection's other fields are
+// left intact, and the full resource is returned. A sync 200 with a terminal
+// provisioningState completes the poller immediately (the same convention the
+// create uses). The get-modify-put is guarded by patchMu so a concurrent PATCH
+// cannot drop the write. A PATCH on a missing connection is a 404.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchConnection(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	svc netdriver.AzureNetworkGateways,
+) {
+	var req armTagsObject
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	h.patchMu.Lock()
+
+	existing, ok := svc.GetAzureVirtualNetworkGatewayConnection(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		h.patchMu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"connection "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	if req.Tags != nil {
+		existing.Tags = replacementTags(req.Tags)
+	}
+
+	stored := svc.PutAzureVirtualNetworkGatewayConnection(r.Context(), existing)
+	h.patchMu.Unlock()
+
+	writeAcceptedAsync(w, r, rp.Subscription, "conn-updatetags-"+rp.ResourceName, connResponseFrom(stored, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value

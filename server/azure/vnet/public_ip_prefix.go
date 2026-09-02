@@ -95,6 +95,8 @@ func (h *Handler) routePublicIPPrefix(w http.ResponseWriter, r *http.Request, rp
 	switch r.Method {
 	case http.MethodPut:
 		h.createPublicIPPrefix(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchPublicIPPrefix(w, r, rp, svc)
 	case http.MethodGet:
 		h.getPublicIPPrefix(w, r, rp, svc)
 	case http.MethodDelete:
@@ -142,6 +144,43 @@ func (h *Handler) createPublicIPPrefix(w http.ResponseWriter, r *http.Request, r
 
 	writeAcceptedAsync(w, r, rp.Subscription, "pipprefix-create-"+rp.ResourceName,
 		h.publicIPPrefixResponse(r.Context(), stored, rp))
+}
+
+// patchPublicIPPrefix applies an ARM UpdateTags PATCH (PublicIPPrefixesClient.
+// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// wholesale (tags:{} wipes them), the prefix's other fields are left intact, and
+// the full resource is returned. The get-modify-put is guarded by patchMu so a
+// concurrent PATCH cannot drop the write. A PATCH on a missing prefix is a 404.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchPublicIPPrefix(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	svc netdriver.AzurePublicIPPrefixes,
+) {
+	var req armTagsObject
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	h.patchMu.Lock()
+
+	existing, ok := svc.GetAzurePublicIPPrefix(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		h.patchMu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"public IP prefix "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	if req.Tags != nil {
+		existing.Tags = replacementTags(req.Tags)
+	}
+
+	stored := svc.PutAzurePublicIPPrefix(r.Context(), existing)
+	h.patchMu.Unlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, h.publicIPPrefixResponse(r.Context(), stored, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value

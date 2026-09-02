@@ -22,8 +22,10 @@ package vnet
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"strings"
+	"sync"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -85,7 +87,12 @@ const (
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
 type Handler struct {
-	net netdriver.Networking
+	// patchMu serializes the read-modify-write UpdateTags PATCH handlers so two
+	// concurrent PATCHes to the same resource cannot drop a write (the driver's
+	// Get and Put are individually locked, but the get-then-put across them is
+	// not atomic). It guards only that get-modify-put window.
+	patchMu sync.Mutex
+	net     netdriver.Networking
 }
 
 // New returns a network handler.
@@ -1992,6 +1999,29 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, sub, opID string
 }
 
 // Tag helpers.
+
+// armTagsObject is the ARM UpdateTags PATCH body ({"tags": {...}}) — the
+// TagsObject the armnetwork *Client.UpdateTags / BeginUpdateTags methods send.
+// Only tags are updatable through this operation; the resource's properties are
+// left intact.
+type armTagsObject struct {
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// replacementTags normalizes an UpdateTags PATCH body's tags for wholesale
+// replacement — real Azure's resource-level UpdateTags SETS the tag collection,
+// it does not merge (the merge/replace/delete modes live only on the generic
+// Microsoft.Resources/tags API). A populated map replaces the stored set (cloned
+// so the store never aliases the request); a present-but-empty map ({}) wipes it
+// (nil). The caller applies this only when the body carried a tags key, so an
+// absent tags key leaves the stored set untouched.
+func replacementTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	return maps.Clone(in)
+}
 
 func mergeTags(in map[string]string, key, val string) map[string]string {
 	out := make(map[string]string, len(in)+1)

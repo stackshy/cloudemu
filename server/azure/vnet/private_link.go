@@ -399,7 +399,7 @@ func (h *Handler) routePrivateLinkService(w http.ResponseWriter, r *http.Request
 	}
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the capability-gated create shape is mirrored by createVNGateway
 func (*Handler) createPrivateLinkService(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
 	svc netdriver.AzurePrivateLink,
 ) {
