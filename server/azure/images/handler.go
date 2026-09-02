@@ -180,7 +180,18 @@ func (h *Handler) updateTags(w http.ResponseWriter, r *http.Request, rp azurearm
 		return
 	}
 
-	updated, err := updater.UpdateImageTags(r.Context(), img.ID, mergeUserTags(img.Tags, req.Tags))
+	// Merge the user tags, then re-assert the cloudemu-internal bookkeeping tags
+	// from the stored image exactly as PUT does. A PATCH must never let a caller
+	// rewrite the reserved cloudemu: namespace (image name, resource group,
+	// source VM, OS type) — those keys carry the image's ARM identity, so they
+	// stay immutable across the update.
+	name := tagOr(img.Tags, armNameTag, img.Name)
+	merged := mergeTags(
+		mergeUserTags(img.Tags, withoutReservedTags(req.Tags)),
+		name, tagOr(img.Tags, rgTag, ""), tagOr(img.Tags, sourceVMTag, ""), tagOr(img.Tags, osTypeTag, ""),
+	)
+
+	updated, err := updater.UpdateImageTags(r.Context(), img.ID, merged)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -534,6 +545,27 @@ func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType strin
 
 	if osType != "" {
 		out[osTypeTag] = osType
+	}
+
+	return out
+}
+
+// reservedTagPrefix is the namespace of the cloudemu-internal bookkeeping tags
+// (armNameTag, rgTag, sourceVMTag, osTypeTag). A PATCH caller may not set any tag
+// in it — those keys carry the image's ARM identity.
+const reservedTagPrefix = "cloudemu:"
+
+// withoutReservedTags drops any cloudemu:-prefixed key from a PATCH-supplied tag
+// map so a caller cannot rewrite the image's internal bookkeeping tags.
+func withoutReservedTags(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+
+	for k, v := range in {
+		if strings.HasPrefix(k, reservedTagPrefix) {
+			continue
+		}
+
+		out[k] = v
 	}
 
 	return out

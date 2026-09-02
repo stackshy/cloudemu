@@ -119,6 +119,58 @@ func TestSDKImageUpdateTagsMerges(t *testing.T) {
 	assertTags(t, got.Tags, wantTags)
 }
 
+// TestSDKImageUpdateTagsIgnoresReserved verifies a PATCH cannot rewrite the
+// cloudemu-internal bookkeeping tags: a body carrying reserved cloudemu: keys
+// leaves the image's name/id/ARM path unchanged while still applying real tags.
+func TestSDKImageUpdateTagsIgnoresReserved(t *testing.T) {
+	ctx := context.Background()
+	imgClient := newImagesClient(t, ctx)
+
+	poller, err := imgClient.BeginUpdate(ctx, "rg-1", "img-tags",
+		armcompute.ImageUpdate{Tags: map[string]*string{
+			"cloudemu:azureImageName": to.Ptr("renamed"),
+			"cloudemu:sourceVM":       to.Ptr("evil"),
+			"keep":                    to.Ptr("yes"),
+		}}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate: %v", err)
+	}
+
+	updated, err := poller.PollUntilDone(ctx, &runtime.PollUntilDoneOptions{Frequency: time.Millisecond})
+	if err != nil {
+		t.Fatalf("update poll: %v", err)
+	}
+
+	// The reserved-tag rename attempt must not take effect.
+	if updated.Name == nil || *updated.Name != "img-tags" {
+		t.Errorf("name=%v want img-tags (a reserved tag must not rename the image)", updated.Name)
+	}
+
+	// Reserved keys are never surfaced as user tags; the real tag is applied.
+	if _, ok := updated.Tags["cloudemu:azureImageName"]; ok {
+		t.Error("reserved cloudemu tag leaked into the image's user tags")
+	}
+
+	if updated.Tags["keep"] == nil || *updated.Tags["keep"] != "yes" {
+		t.Errorf("keep tag = %v, want yes", updated.Tags["keep"])
+	}
+
+	// GET on the original name still resolves...
+	got, err := imgClient.Get(ctx, "rg-1", "img-tags", nil)
+	if err != nil {
+		t.Fatalf("Get original name: %v", err)
+	}
+
+	if got.Name == nil || *got.Name != "img-tags" {
+		t.Errorf("got.Name=%v want img-tags", got.Name)
+	}
+
+	// ...and the attempted rename never became addressable.
+	if _, err := imgClient.Get(ctx, "rg-1", "renamed", nil); err == nil {
+		t.Error("image was renamed by a reserved-tag PATCH")
+	}
+}
+
 // TestSDKImageUpdateTagsMissing verifies a PATCH on a missing image is a 404.
 func TestSDKImageUpdateTagsMissing(t *testing.T) {
 	ctx := context.Background()

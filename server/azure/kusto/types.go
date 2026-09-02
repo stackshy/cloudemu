@@ -96,6 +96,8 @@ type updateClusterRequest struct {
 }
 
 type updateDatabaseRequest struct {
+	// Kind is decoded but never applied: a database's kind is immutable in real
+	// Azure, so a PATCH cannot change it. It is kept so the field round-trips.
 	Kind       string             `json:"kind"`
 	Location   string             `json:"location"`
 	Properties databaseProperties `json:"properties"`
