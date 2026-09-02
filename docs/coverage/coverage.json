@@ -12622,6 +12622,48 @@
     }
   },
   {
+    "service": "synapse",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListByWorkspace"
+      },
+      {
+        "name": "Pause"
+      },
+      {
+        "name": "Resume"
+      },
+      {
+        "name": "Start"
+      },
+      {
+        "name": "Stop"
+      },
+      {
+        "name": "Update"
+      }
+    ],
+    "providers": {
+      "azure": "Synapse"
+    }
+  },
+  {
     "service": "tablestorage",
     "interface": "TableStorage",
     "operations": [

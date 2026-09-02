@@ -92,6 +92,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `storageaccount` | — | [Storageaccount](./azure/storageaccount.md) | — | — | 10 |
 | `sts` | [STS](./aws/sts.md) | — | — | — | 8 |
 | `subscriptions` | — | [Subscriptions](./azure/subscriptions.md) | — | — | 3 |
+| `synapse` | — | [Synapse](./azure/synapse.md) | — | — | 11 |
 | `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 9 |
 | `tags` | — | [Tags](./azure/tags.md) | — | — | 4 |
 | `tenants` | — | [Tenants](./azure/tenants.md) | — | — | 1 |
