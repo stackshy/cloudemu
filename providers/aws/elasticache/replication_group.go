@@ -103,13 +103,13 @@ func memberClusters(id string, nodes int) []string {
 	}
 
 	// Defensive clamp: the count originates from caller input (NumCacheNodes), so
-	// bound it before it sizes the allocation regardless of the call path.
-	if nodes > maxReplicationGroupNodes {
-		nodes = maxReplicationGroupNodes
-	}
+	// bound it in the same expression that sizes the allocation regardless of the
+	// call path. Valid provisions stay far under the ceiling, so this is a no-op
+	// for them.
+	bounded := min(nodes, maxReplicationGroupNodes)
 
-	members := make([]string, 0, nodes)
-	for i := 1; i <= nodes; i++ {
+	members := make([]string, 0, bounded)
+	for i := 1; i <= bounded; i++ {
 		members = append(members, fmt.Sprintf("%s-%03d", id, i))
 	}
 
