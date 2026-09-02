@@ -78,10 +78,180 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	// Materialize the boot disk (and any additional disks in the request) as real
+	// Disk resources attached to the instance, so disks.get/list return them and
+	// instances.delete can honor each disk's autoDelete flag.
+	if err := h.materializeInsertDisks(r.Context(), instances[0].ID, &req, rp, hostFromRequest(r)); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// instanceDiskAttacher is a GCP-local capability the GCE Mock implements: it
+// attaches an existing disk (by driver volume ID) to an instance, flipping the
+// driver volume to in-use and recording the attachment-scoped auto-delete flag
+// (autoDelete ⟷ VolumeInfo.DeleteOnTermination). The same path backs both
+// instances.insert boot/data disks and instances.attachDisk, so the disk store
+// and the instance's disks[] view stay consistent.
+type instanceDiskAttacher interface {
+	AttachDiskGCP(instanceID, volumeID, device string, autoDelete bool) error
+}
+
+// materializeInsertDisks turns each entry in the instance's disks[] into a real
+// Disk resource attached to the just-created instance. A disk with
+// initializeParams is created fresh; a disk with only a source references an
+// existing disk. Each is attached carrying its autoDelete flag, and the disks[]
+// tag is rewritten with resolved deviceName/source so a read and disks.get agree.
+// When the driver does not expose the GCP disk capabilities (a non-GCE Compute),
+// materialization is skipped and the raw disks[] round-trips as before.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) materializeInsertDisks(
+	ctx context.Context, instanceID string, req *instanceRequest, rp gcprest.ResourcePath, host string,
+) error {
+	if len(req.Disks) == 0 {
+		return nil
+	}
+
+	attacher, ok := h.compute.(instanceDiskAttacher)
+	mutator, mok := h.compute.(instanceMutator)
+
+	if !ok || !mok {
+		return nil
+	}
+
+	for i := range req.Disks {
+		if err := h.resolveAndAttachDisk(ctx, instanceID, req.Name, i, &req.Disks[i], rp, host, attacher); err != nil {
+			return err
+		}
+	}
+
+	return mutator.MutateInstanceGCP(instanceID, map[string]string{keyDisks: encodeJSON(req.Disks)}, nil, "")
+}
+
+// resolveAndAttachDisk materializes/looks-up the Disk resource backing a single
+// disks[] entry and attaches it to the instance, then fills the entry's resolved
+// deviceName/source so the instance response and disks.get line up. It is shared
+// by instances.insert and instances.attachDisk.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) resolveAndAttachDisk(
+	ctx context.Context, instanceID, instanceName string, index int, d *attachedDisk,
+	rp gcprest.ResourcePath, host string, attacher instanceDiskAttacher,
+) error {
+	if d.DeviceName == "" {
+		d.DeviceName = deviceNameFor(d.Boot, instanceName, index)
+	}
+
+	diskName := insertDiskName(d, instanceName, index)
+
+	volID, err := h.diskVolumeID(ctx, diskName, d, rp)
+	if err != nil {
+		return err
+	}
+
+	if err := attacher.AttachDiskGCP(instanceID, volID, d.DeviceName, d.AutoDelete); err != nil {
+		return err
+	}
+
+	d.Source = gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "disks", diskName)
+
+	return nil
+}
+
+// diskVolumeID resolves the driver volume ID for a disks[] entry: an existing
+// disk named by source is looked up, otherwise a fresh disk is created from the
+// entry's initializeParams (size/type/sourceImage).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) diskVolumeID(
+	ctx context.Context, diskName string, d *attachedDisk, rp gcprest.ResourcePath,
+) (string, error) {
+	if d.InitializeParams == nil && d.Source != "" {
+		vol, err := findDiskByName(ctx, h.compute, lastSegment(d.Source), rp.ScopeName)
+		if err != nil {
+			return "", err
+		}
+
+		return vol.ID, nil
+	}
+
+	cfg := computedriver.VolumeConfig{
+		Size:             initializeDiskSize(d),
+		VolumeType:       initializeDiskType(d),
+		AvailabilityZone: rp.ScopeName,
+		Tags:             mergeDiskTags(nil, diskName, initializeSourceImage(d)),
+	}
+
+	vol, err := h.compute.CreateVolume(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	return vol.ID, nil
+}
+
+// insertDiskName resolves the Disk resource name for a disks[] entry: an
+// explicit initializeParams.diskName, else the source disk's name, else the
+// instance name for the boot disk (GCP's default), else an indexed data-disk
+// name.
+func insertDiskName(d *attachedDisk, instanceName string, index int) string {
+	if d.InitializeParams != nil && d.InitializeParams.DiskName != "" {
+		return d.InitializeParams.DiskName
+	}
+
+	if d.Source != "" {
+		return lastSegment(d.Source)
+	}
+
+	if d.Boot {
+		return instanceName
+	}
+
+	return instanceName + "-disk-" + strconv.Itoa(index)
+}
+
+// initializeDiskSize parses the requested disk size (GiB), defaulting to GCP's
+// 10 GiB when the request names none.
+func initializeDiskSize(d *attachedDisk) int {
+	const defaultSizeGb = 10
+
+	if d.InitializeParams != nil && d.InitializeParams.DiskSizeGb != "" {
+		if n, err := strconv.Atoi(d.InitializeParams.DiskSizeGb); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	if d.DiskSizeGb != "" {
+		if n, err := strconv.Atoi(d.DiskSizeGb); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	return defaultSizeGb
+}
+
+// initializeDiskType resolves the disk type (e.g. "pd-ssd") from initializeParams.
+func initializeDiskType(d *attachedDisk) string {
+	if d.InitializeParams != nil && d.InitializeParams.DiskType != "" {
+		return lastSegment(d.InitializeParams.DiskType)
+	}
+
+	return lastSegment(d.Type)
+}
+
+// initializeSourceImage resolves the source image a fresh disk is created from.
+func initializeSourceImage(d *attachedDisk) string {
+	if d.InitializeParams != nil {
+		return d.InitializeParams.SourceImage
+	}
+
+	return ""
 }
 
 // getInstance handles GET .../instances/{name}.

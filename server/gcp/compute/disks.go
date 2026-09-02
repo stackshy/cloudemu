@@ -466,28 +466,44 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp gcprest.ResourcePath, host
 	return resp
 }
 
-// diskUsersByName scans instances and maps each disk name to the self-links of
-// the instances it is attached to, so a disk read reflects its users[] (kept
-// consistent with the instance-side disks[] populated by attachDisk).
+// diskUsersByName maps each disk name to the self-links of the instances it is
+// attached to, derived from the driver volume store's attachment state
+// (VolumeInfo.AttachedTo). Since insert and attachDisk both flip the driver
+// volume to in-use, this is the single source of truth for a disk's users[] —
+// consistent with the instance-side disks[] and the in-use delete guard.
 func (h *Handler) diskUsersByName(ctx context.Context, host, project string) map[string][]string {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
 	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
 	if err != nil {
 		return nil
 	}
 
-	out := make(map[string][]string)
+	linkByID := make(map[string]string, len(instances))
 
 	for i := range instances {
 		instName := tagOr(instances[i].Tags, gcpNameTag, "")
 		zone := tagOr(instances[i].Tags, keyZone, "")
-		link := gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", instName)
+		linkByID[instances[i].ID] = gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", instName)
+	}
 
-		attached := decodeDisks(instances[i].Tags)
-		for j := range attached {
-			if dn := lastSegment(attached[j].Source); dn != "" {
-				out[dn] = append(out[dn], link)
-			}
+	out := make(map[string][]string)
+
+	for i := range vols {
+		if vols[i].AttachedTo == "" {
+			continue
 		}
+
+		link, ok := linkByID[vols[i].AttachedTo]
+		if !ok {
+			continue
+		}
+
+		name := tagOr(vols[i].Tags, gcpDiskNameTag, vols[i].ID)
+		out[name] = append(out[name], link)
 	}
 
 	return out
