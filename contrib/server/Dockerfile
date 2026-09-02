@@ -7,7 +7,10 @@
 #   docker build -f contrib/server/Dockerfile -t cloudemu-server .
 
 # --- build stage -------------------------------------------------------------
-FROM golang:1.25 AS build
+# Pin the build stage to the runner's native arch ($BUILDPLATFORM) and
+# cross-compile to the requested target ($TARGETOS/$TARGETARCH) so a
+# multi-platform build stays native-speed instead of emulating each arch.
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 
 WORKDIR /src
 
@@ -18,10 +21,12 @@ COPY . .
 # embedded-postgres runs a real (glibc) Postgres binary at runtime, so keep CGO
 # off for a portable Go binary but target a glibc runtime base below.
 ARG VERSION=docker
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     cd contrib/server && \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/cloudemu-server .
 
 # --- runtime stage -----------------------------------------------------------
