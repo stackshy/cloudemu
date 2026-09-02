@@ -15,9 +15,11 @@
 //	HEAD   /{container}/{blob}                          — head blob
 //	DELETE /{container}/{blob}                          — delete blob
 //
-// Less-used surfaces (lifecycle, encryption, versioning) are not yet wired and
-// return 501. An unrecognized or unimplemented blob-PUT comp selector fails
-// closed with an Azure error rather than falling through to a content write.
+// When account-level versioning is enabled, every blob write mints a new
+// version (x-ms-version-id); versions are readable/deletable via ?versionid= and
+// listable via include=versions. An unrecognized or unimplemented blob-PUT comp
+// selector fails closed with an Azure error rather than falling through to a
+// content write.
 package blobstorage
 
 import (
@@ -419,6 +421,11 @@ func (h *Handler) getContainerProperties(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container string, q url.Values) {
+	if ext, ok := h.bucket.(storagedriver.AzureVersionedBlob); ok && includesOption(q.Get("include"), "versions") {
+		h.listBlobVersions(w, r, ext, container, q)
+		return
+	}
+
 	maxResults := parseMaxResults(q)
 
 	opts := storagedriver.ListOptions{
@@ -473,6 +480,57 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 
 	for _, p := range result.CommonPrefixes {
 		out.Blobs.BlobPrefixes = append(out.Blobs.BlobPrefixes, blobPrefixXML{Name: p})
+	}
+
+	writeXML(w, out)
+}
+
+// listBlobVersions serves GET /{container}?restype=container&comp=list&include=versions,
+// rendering every version of the matching blobs with its VersionId and
+// IsCurrentVersion marker. Versions sort by blob name then version id, so the
+// current version (newest id) appears last within a name, matching Azure.
+func (h *Handler) listBlobVersions(
+	w http.ResponseWriter, r *http.Request, ext storagedriver.AzureVersionedBlob, container string, q url.Values,
+) {
+	maxResults := parseMaxResults(q)
+
+	res, err := ext.ListBlobVersions(r.Context(), container, storagedriver.ListOptions{
+		Prefix: q.Get("prefix"), MaxKeys: maxResults, PageToken: q.Get("marker"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	page, err := pagination.Paginate(res.Versions, q.Get("marker"), maxResults)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "OutOfRangeInput", "invalid marker")
+		return
+	}
+
+	out := listBlobsResult{
+		ContainerName: container,
+		Prefix:        q.Get("prefix"),
+		Marker:        q.Get("marker"),
+		NextMarker:    page.NextPageToken,
+	}
+
+	for i := range page.Items {
+		v := &page.Items[i]
+		isCurrent := v.IsLatest
+
+		out.Blobs.Blobs = append(out.Blobs.Blobs, blobXML{
+			Name: v.Key,
+			Properties: blobPropsXML{
+				LastModified:  httpDate(v.LastModified),
+				ETag:          fmt.Sprintf("%q", v.ETag),
+				ContentLength: v.Size,
+				ContentType:   v.ContentType,
+				BlobType:      blobTypeBlockBlob,
+			},
+			VersionID:        v.VersionID,
+			IsCurrentVersion: &isCurrent,
+		})
 	}
 
 	writeXML(w, out)
@@ -552,6 +610,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
 		etag = info.ETag
 		lastModified = info.LastModified
+		setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
 	}
 	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
 	w.Header().Set("Last-Modified", httpDate(lastModified))
@@ -744,6 +803,11 @@ func etagMatches(header, stored string) bool {
 }
 
 func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
+		h.getBlobVersion(w, r, container, blob, versionID)
+		return
+	}
+
 	if snapshot := r.URL.Query().Get("snapshot"); snapshot != "" {
 		h.getBlobSnapshot(w, r, container, blob, snapshot)
 		return
@@ -962,7 +1026,30 @@ func (h *Handler) getBlobSnapshot(w http.ResponseWriter, r *http.Request, contai
 	serveBlobContent(w, r, &obj.Info, obj.Data)
 }
 
+// getBlobVersion serves GET /{container}/{blob}?versionid=… reading a specific
+// version minted while account-level versioning was enabled.
+func (h *Handler) getBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
+	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob versioning not supported")
+		return
+	}
+
+	obj, err := ext.GetBlobVersion(r.Context(), container, blob, versionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	serveBlobContent(w, r, &obj.Info, obj.Data)
+}
+
 func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
+		h.headBlobVersion(w, r, container, blob, versionID)
+		return
+	}
+
 	info, err := h.bucket.HeadObject(r.Context(), container, blob)
 	if err != nil {
 		writeErr(w, err)
@@ -970,6 +1057,25 @@ func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, bl
 	}
 
 	if readConditionHandled(w, r, info.ETag, info.LastModified) {
+		return
+	}
+
+	writeBlobHeaders(w, info, info.Size)
+	w.WriteHeader(http.StatusOK)
+}
+
+// headBlobVersion serves HEAD /{container}/{blob}?versionid=… returning a
+// specific version's headers without its body.
+func (h *Handler) headBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
+	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob versioning not supported")
+		return
+	}
+
+	info, err := ext.HeadBlobVersion(r.Context(), container, blob, versionID)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
 
@@ -995,6 +1101,9 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 		w.Header().Set("X-Ms-Access-Tier", info.AccessTier)
 	}
 
+	// On a versioning-enabled account, reads carry the served version's id.
+	setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
+
 	// System content properties round-trip on read (Get Blob / Get Blob
 	// Properties) so tools like Terraform's azurerm_storage_blob don't see drift.
 	setIfNonEmpty(w, "Cache-Control", info.CacheControl)
@@ -1016,6 +1125,11 @@ func setIfNonEmpty(w http.ResponseWriter, key, v string) {
 }
 
 func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
+		h.deleteBlobVersion(w, r, container, blob, versionID)
+		return
+	}
+
 	if h.checkLease(w, r, container, blob) {
 		return
 	}
@@ -1041,6 +1155,24 @@ func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, 
 			writeErr(w, err)
 			return
 		}
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// deleteBlobVersion serves DELETE /{container}/{blob}?versionid=… permanently
+// removing one version. Deleting the base blob itself (no versionid) leaves the
+// existing versions intact — that path runs through the normal deleteBlob flow.
+func (h *Handler) deleteBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
+	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob versioning not supported")
+		return
+	}
+
+	if err := ext.DeleteBlobVersion(r.Context(), container, blob, versionID); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -1079,6 +1211,7 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
 		w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 		w.Header().Set("Last-Modified", httpDate(info.LastModified))
+		setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
