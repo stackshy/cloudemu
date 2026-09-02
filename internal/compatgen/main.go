@@ -92,7 +92,11 @@ type covService struct {
 // compat.json schema.
 type cell struct {
 	Native string `json:"native"`
-	SDKGo  string `json:"sdkGo,omitempty"` // "pass" when a real Go SDK call succeeded
+	// Clients maps each SDK/language client that exercised this operation to its
+	// status ("pass"). It carries the per-language dimension: Go today, other
+	// languages as their compat tests land. Absent when no client has verified
+	// the cell yet.
+	Clients map[string]string `json:"clients,omitempty"`
 }
 
 type entry struct {
@@ -166,7 +170,7 @@ func loadCoverage(path string) ([]covService, error) {
 // build joins coverage against results. It emits rows only for services that a
 // compat test actually exercised, so the matrix grows as the suite grows.
 func build(services []covService, results []compat.Result) []entry {
-	passed := passIndex(results) // provider|service|operation -> true
+	passed := passIndex(results) // provider|service|operation -> client -> true
 	touched := touchedServices(results)
 
 	var entries []entry
@@ -186,8 +190,12 @@ func build(services []covService, results []compat.Result) []entry {
 				}
 
 				c := cell{Native: native}
-				if passed[key(prov, svc.Name, op.Name)] {
-					c.SDKGo = sdkPass
+				if clients := passed[key(prov, svc.Name, op.Name)]; len(clients) > 0 {
+					c.Clients = map[string]string{}
+					for client := range clients {
+						c.Clients[client] = sdkPass
+					}
+
 					e.Status = statusGreen
 				}
 
@@ -209,13 +217,22 @@ func build(services []covService, results []compat.Result) []entry {
 	return entries
 }
 
-func passIndex(results []compat.Result) map[string]bool {
-	idx := map[string]bool{}
+// passIndex maps each (provider, service, operation) to the set of SDK/language
+// clients whose real call passed, preserving the per-language dimension.
+func passIndex(results []compat.Result) map[string]map[string]bool {
+	idx := map[string]map[string]bool{}
 
 	for _, r := range results {
-		if r.Passed {
-			idx[key(r.Provider, r.Service, r.Operation)] = true
+		if !r.Passed {
+			continue
 		}
+
+		k := key(r.Provider, r.Service, r.Operation)
+		if idx[k] == nil {
+			idx[k] = map[string]bool{}
+		}
+
+		idx[k][r.Client] = true
 	}
 
 	return idx
