@@ -68,6 +68,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.updateTags(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -151,6 +153,40 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// Return 200 OK directly (sync semantics) so PollUntilDone resolves on
 	// the response body's ProvisioningState alone, no header polling.
 	azurearm.WriteJSON(w, http.StatusOK, body)
+}
+
+// updateTags applies an ARM PATCH (Images - Update / ImageUpdate): the tags in
+// the body are merged into the image's existing tags, every other field is
+// preserved, and the full image resource is returned in GET shape. A PATCH on a
+// missing image is a 404. cloudemu-internal tags are always preserved because
+// the merge starts from the stored tag set.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) updateTags(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	img, err := findImageByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	updater, ok := h.compute.(computedriver.ImageTagUpdater)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "image tag update is not supported")
+		return
+	}
+
+	var req imageRequest
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	updated, err := updater.UpdateImageTags(r.Context(), img.ID, mergeUserTags(img.Tags, req.Tags))
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toImageResponse(updated, rp, req.Location))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -498,6 +534,23 @@ func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType strin
 
 	if osType != "" {
 		out[osTypeTag] = osType
+	}
+
+	return out
+}
+
+// mergeUserTags overlays the PATCH-supplied tags onto the image's existing tag
+// set (which still carries the cloudemu-internal tags), so untouched tags — and
+// every internal tag — survive the update. A nil incoming map is a no-op merge.
+func mergeUserTags(existing, incoming map[string]string) map[string]string {
+	out := make(map[string]string, len(existing)+len(incoming))
+
+	for k, v := range existing {
+		out[k] = v
+	}
+
+	for k, v := range incoming {
+		out[k] = v
 	}
 
 	return out

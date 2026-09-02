@@ -2447,6 +2447,15 @@
         ]
       },
       {
+        "name": "ImageTagUpdater",
+        "doc": "ImageTagUpdater is an optional capability for replacing the tag set of an",
+        "operations": [
+          {
+            "name": "UpdateImageTags"
+          }
+        ]
+      },
+      {
         "name": "InstanceMetadataModifier",
         "doc": "InstanceMetadataModifier is an optional AWS-only capability for",
         "operations": [

@@ -16,6 +16,8 @@ func (h *Handler) serveCluster(w http.ResponseWriter, r *http.Request, kp kustoP
 	switch r.Method {
 	case http.MethodPut:
 		h.createCluster(w, r, kp)
+	case http.MethodPatch:
+		h.updateCluster(w, r, kp)
 	case http.MethodGet:
 		h.getCluster(w, kp)
 	case http.MethodDelete:
@@ -76,6 +78,54 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, kp kusto
 	}
 
 	azurearm.WriteJSON(w, status, resource)
+}
+
+// updateCluster serves the ARM PATCH (ClustersClient.Update / ClusterUpdate):
+// tags are merged into the existing set, sku / zones / location are replaced when
+// supplied, the mutable cluster properties are overlaid, and every untouched
+// field — including the synthesized URIs and run state — is preserved. A PATCH on
+// a missing cluster is a 404.
+func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, kp kustoPath) {
+	var req updateClusterRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+
+	h.mu.Lock()
+
+	c, ok := h.lookupCluster(kp)
+	if !ok {
+		h.mu.Unlock()
+		writeClusterNotFound(w, kp.cluster)
+
+		return
+	}
+
+	if req.Location != "" {
+		c.Location = req.Location
+	}
+
+	if req.Tags != nil {
+		c.Tags = mergeTags(c.Tags, req.Tags)
+	}
+
+	if req.SKU != nil {
+		c.SKU = normalizeSKU(req.SKU)
+	}
+
+	if req.Zones != nil {
+		c.Zones = slices.Clone(req.Zones)
+	}
+
+	if req.Properties != nil {
+		applyClusterPropsPatch(&c.Properties, req.Properties)
+	}
+
+	c.UpdatedAt = time.Now().UTC()
+	resource := toClusterResource(c)
+	h.mu.Unlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, resource)
 }
 
 func (h *Handler) getCluster(w http.ResponseWriter, kp kustoPath) {
@@ -174,6 +224,53 @@ func normalizeSKU(in *kustoSKU) kustoSKU {
 	}
 
 	return out
+}
+
+// mergeTags overlays incoming tags onto a clone of existing, so a PATCH keeps
+// untouched tags. A nil incoming map is handled by the caller (no merge).
+func mergeTags(existing, incoming map[string]string) map[string]string {
+	out := maps.Clone(existing)
+	if out == nil {
+		out = make(map[string]string, len(incoming))
+	}
+
+	maps.Copy(out, incoming)
+
+	return out
+}
+
+// applyClusterPropsPatch overlays the client-mutable properties of a
+// ClusterUpdate onto the existing cluster properties in place. Server-computed
+// fields (state, URIs, provisioningState) are left untouched — toClusterResource
+// recomputes them.
+func applyClusterPropsPatch(dst, patch *clusterProperties) {
+	if patch.EngineType != "" {
+		dst.EngineType = patch.EngineType
+	}
+
+	if patch.PublicNetworkAccess != "" {
+		dst.PublicNetworkAccess = patch.PublicNetworkAccess
+	}
+
+	if patch.EnableStreamingIngest != nil {
+		dst.EnableStreamingIngest = patch.EnableStreamingIngest
+	}
+
+	if patch.EnableDiskEncryption != nil {
+		dst.EnableDiskEncryption = patch.EnableDiskEncryption
+	}
+
+	if patch.EnableDoubleEncryption != nil {
+		dst.EnableDoubleEncryption = patch.EnableDoubleEncryption
+	}
+
+	if patch.EnablePurge != nil {
+		dst.EnablePurge = patch.EnablePurge
+	}
+
+	if patch.EnableAutoStop != nil {
+		dst.EnableAutoStop = patch.EnableAutoStop
+	}
 }
 
 func toClusterResource(c *clusterState) clusterResource {

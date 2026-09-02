@@ -887,6 +887,14 @@ type ImageCopier interface {
 	CopyImage(ctx context.Context, input CopyImageInput) (*ImageInfo, error)
 }
 
+// ImageTagUpdater is an optional capability for replacing the tag set of an
+// existing image in place, backing the Azure Microsoft.Compute/images PATCH
+// (ImageUpdate) tag update. Providers that model managed images implement it;
+// the Azure images wire handler discovers it by type assertion.
+type ImageTagUpdater interface {
+	UpdateImageTags(ctx context.Context, id string, tags map[string]string) (*ImageInfo, error)
+}
+
 // PlacementGroupConfig describes an EC2 placement group to create.
 type PlacementGroupConfig struct {
 	Name           string
