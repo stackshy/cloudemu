@@ -919,6 +919,34 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 		// Drop any backing profile association so a rolled-back launch leaves no
 		// orphaned association behind.
 		m.deleteAssociationsForInstance(inst.ID)
+		// Delete the root/data EBS volumes materialized for this instance, so a
+		// rolled-back launch leaves no volume stuck in-use against a gone instance.
+		m.deleteInstanceVolumes(inst.ID)
+	}
+}
+
+// deleteInstanceVolumes removes every EBS volume attached to instanceID. It
+// backs rollback of a partially-launched batch: the just-materialized root/data
+// volumes must be torn down along with the instance record. The check-and-delete
+// runs under the store lock (UpdateOrDelete) so it cannot race a concurrent
+// attach/detach on the same volume.
+func (m *Mock) deleteInstanceVolumes(instanceID string) {
+	for _, volID := range m.volumes.Keys() {
+		var deleted bool
+
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
+			if v.AttachedTo != instanceID {
+				return v, true
+			}
+
+			deleted = true
+
+			return v, false
+		})
+
+		if deleted {
+			m.volSettle.Delete(volID)
+		}
 	}
 }
 
@@ -1722,33 +1750,37 @@ func (m *Mock) detachTerminatedVolumes(instanceIDs []string) {
 		terminated[id] = true
 	}
 
-	var toDelete []string
-
 	for _, volID := range m.volumes.Keys() {
-		vol, ok := m.volumes.Get(volID)
-		if !ok || vol.AttachedTo == "" || !terminated[vol.AttachedTo] {
-			continue
-		}
+		var deleted bool
 
-		if vol.DeleteOnTermination {
-			toDelete = append(toDelete, volID)
-			continue
-		}
+		// The delete-vs-detach decision and the mutation must happen under one
+		// lock so a concurrent DetachVolume that clears the attachment first is
+		// observed here and the volume is NOT wrongly deleted. UpdateOrDelete
+		// re-reads the attachment at mutation time: a volume no longer attached to
+		// a terminating instance (e.g. just detached) survives unchanged.
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
+			if v.AttachedTo == "" || !terminated[v.AttachedTo] {
+				return v, true
+			}
 
-		m.volumes.Update(volID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+			if v.DeleteOnTermination {
+				deleted = true
+
+				return v, false
+			}
+
 			cp := *v
 			cp.State = stateAvailable
 			cp.AttachedTo = ""
 			cp.Device = ""
 			cp.DeleteOnTermination = false
 
-			return &cp
+			return &cp, true
 		})
-	}
 
-	for _, volID := range toDelete {
-		m.volumes.Delete(volID)
-		m.volSettle.Delete(volID)
+		if deleted {
+			m.volSettle.Delete(volID)
+		}
 	}
 }
 
