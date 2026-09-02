@@ -112,6 +112,8 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"azure/kusto": {
 		"CreateOrUpdate", "Delete", "Get", "List", "ListByCluster",
 		"ListByResourceGroup", "Start", "Stop",
+		"CreateTable", "CreateMergeTable", "DropTable",
+		"ShowTables", "ShowTableSchema", "ShowDatabaseSchema",
 	},
 	"azure/synapse": {
 		"CreateOrUpdate", "Delete", "Get", "List", "ListByResourceGroup", "ListByWorkspace",

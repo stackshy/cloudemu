@@ -54,7 +54,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
 | `kms` | [KMS](./aws/kms.md) | — | — | — | 46 |
-| `kusto` | — | [Kusto](./azure/kusto.md) | — | — | 8 |
+| `kusto` | — | [Kusto](./azure/kusto.md) | — | — | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
 | `locks` | — | [Locks](./azure/locks.md) | — | — | 4 |
 | `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 17 |

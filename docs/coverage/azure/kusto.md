@@ -3,16 +3,22 @@
 
 provider-native `kusto` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (8)
+## Operations (14)
 
 | Operation | Description |
 | --- | --- |
+| `CreateMergeTable` |  |
 | `CreateOrUpdate` |  |
+| `CreateTable` |  |
 | `Delete` |  |
+| `DropTable` |  |
 | `Get` |  |
 | `List` |  |
 | `ListByCluster` |  |
 | `ListByResourceGroup` |  |
+| `ShowDatabaseSchema` |  |
+| `ShowTableSchema` |  |
+| `ShowTables` |  |
 | `Start` |  |
 | `Stop` |  |
 
