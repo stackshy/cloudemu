@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -65,15 +66,19 @@ type deregisterImageResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
-func (h *Handler) createImage(w http.ResponseWriter, r *http.Request) {
-	cfg := computedriver.ImageConfig{
-		InstanceID:  r.Form.Get("InstanceId"),
-		Name:        r.Form.Get("Name"),
-		Description: r.Form.Get("Description"),
-		Tags:        mergeTagSpecs(awsquery.TagSpecs(r.Form), "image"),
-	}
+// awsImageCreator is the AWS-specific CreateImage capability: it carries the
+// NoReboot flag and client BlockDeviceMapping.N overrides that the base
+// computedriver.Compute.CreateImage does not model. The AWS EC2 provider
+// implements it; a driver that does not falls back to the base CreateImage.
+type awsImageCreator interface {
+	CreateImageWithOptions(
+		ctx context.Context, cfg computedriver.ImageConfig, noReboot bool,
+		overrides []computedriver.ImageBlockDeviceMapping, noDevices []string,
+	) (*computedriver.ImageInfo, error)
+}
 
-	info, err := h.compute.CreateImage(r.Context(), cfg)
+func (h *Handler) createImage(w http.ResponseWriter, r *http.Request) {
+	info, err := h.createImageInfo(r)
 	if err != nil {
 		writeImageErr(w, err)
 		return
@@ -84,6 +89,59 @@ func (h *Handler) createImage(w http.ResponseWriter, r *http.Request) {
 		RequestID: awsquery.RequestID,
 		ImageID:   info.ID,
 	})
+}
+
+// createImageInfo routes to the AWS CreateImage capability (honoring NoReboot +
+// client BlockDeviceMapping.N) when the driver implements it, and otherwise to
+// the base CreateImage.
+func (h *Handler) createImageInfo(r *http.Request) (*computedriver.ImageInfo, error) {
+	cfg := computedriver.ImageConfig{
+		InstanceID:  r.Form.Get("InstanceId"),
+		Name:        r.Form.Get("Name"),
+		Description: r.Form.Get("Description"),
+		Tags:        mergeTagSpecs(awsquery.TagSpecs(r.Form), "image"),
+	}
+
+	creator, ok := h.compute.(awsImageCreator)
+	if !ok {
+		return h.compute.CreateImage(r.Context(), cfg)
+	}
+
+	overrides, noDevices := parseCreateImageBlockDeviceMappings(r)
+
+	return creator.CreateImageWithOptions(
+		r.Context(), cfg, r.Form.Get("NoReboot") == formTrue, overrides, noDevices,
+	)
+}
+
+// parseCreateImageBlockDeviceMappings reads the CreateImage BlockDeviceMapping.N
+// query groups into client overrides and the set of NoDevice suppressions. A
+// group carrying BlockDeviceMapping.N.NoDevice suppresses its DeviceName; every
+// other group is an override (of an attached volume's device) or an added
+// mapping. The DeleteOnTermination value is taken as the client sent it.
+func parseCreateImageBlockDeviceMappings(
+	r *http.Request,
+) (overrides []computedriver.ImageBlockDeviceMapping, noDevices []string) {
+	for _, i := range awsquery.CollectIndices(r.Form, "BlockDeviceMapping") {
+		base := "BlockDeviceMapping." + strconv.Itoa(i)
+		device := r.Form.Get(base + ".DeviceName")
+
+		if r.Form.Has(base + ".NoDevice") {
+			noDevices = append(noDevices, device)
+			continue
+		}
+
+		size, _ := strconv.Atoi(r.Form.Get(base + ".Ebs.VolumeSize"))
+		overrides = append(overrides, computedriver.ImageBlockDeviceMapping{
+			DeviceName:          device,
+			SnapshotID:          r.Form.Get(base + ".Ebs.SnapshotId"),
+			VolumeSize:          size,
+			VolumeType:          r.Form.Get(base + ".Ebs.VolumeType"),
+			DeleteOnTermination: r.Form.Get(base+".Ebs.DeleteOnTermination") == formTrue,
+		})
+	}
+
+	return overrides, noDevices
 }
 
 type registerImageResponseXML struct {

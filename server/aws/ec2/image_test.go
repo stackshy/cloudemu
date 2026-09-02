@@ -393,3 +393,120 @@ func TestModifyImageAttributeLaunchPermission(t *testing.T) {
 		t.Error("image Public = false after launchPermission group=all, want true")
 	}
 }
+
+// findBDM returns the block device mapping for device, or nil.
+func findBDM(bdms []ec2types.BlockDeviceMapping, device string) *ec2types.BlockDeviceMapping {
+	for i := range bdms {
+		if aws.ToString(bdms[i].DeviceName) == device {
+			return &bdms[i]
+		}
+	}
+
+	return nil
+}
+
+// TestCreateImageBlockDeviceMappingOverrides drives a real aws-sdk-go-v2 client
+// through CreateImage with NoReboot=true, a client override of the root device's
+// size + DeleteOnTermination, and a NoDevice suppression of an attached data
+// volume — pinning that DescribeImages reflects the override, the data device is
+// gone, and the root mapping is backed by a snapshot that DescribeSnapshots finds.
+func TestCreateImageBlockDeviceMappingOverrides(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-base"),
+		InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		BlockDeviceMappings: []ec2types.BlockDeviceMapping{{
+			DeviceName: aws.String("/dev/sdf"),
+			Ebs: &ec2types.EbsBlockDevice{
+				VolumeSize:          aws.Int32(20),
+				VolumeType:          ec2types.VolumeTypeGp2,
+				DeleteOnTermination: aws.Bool(false),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId: aws.String(instID),
+		Name:       aws.String("override-ami"),
+		NoReboot:   aws.Bool(true),
+		BlockDeviceMappings: []ec2types.BlockDeviceMapping{
+			{
+				DeviceName: aws.String("/dev/sda1"),
+				Ebs: &ec2types.EbsBlockDevice{
+					VolumeSize:          aws.Int32(40),
+					DeleteOnTermination: aws.Bool(false),
+				},
+			},
+			{DeviceName: aws.String("/dev/sdf"), NoDevice: aws.String("")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{aws.ToString(img.ImageId)}})
+	if err != nil {
+		t.Fatalf("DescribeImages: %v", err)
+	}
+	im := desc.Images[0]
+
+	if findBDM(im.BlockDeviceMappings, "/dev/sdf") != nil {
+		t.Errorf("NoDevice did not suppress /dev/sdf: %+v", im.BlockDeviceMappings)
+	}
+
+	root := findBDM(im.BlockDeviceMappings, "/dev/sda1")
+	if root == nil || root.Ebs == nil {
+		t.Fatalf("root /dev/sda1 mapping missing: %+v", im.BlockDeviceMappings)
+	}
+	if got := aws.ToInt32(root.Ebs.VolumeSize); got != 40 {
+		t.Errorf("root VolumeSize = %d, want 40 (client override)", got)
+	}
+	if aws.ToBool(root.Ebs.DeleteOnTermination) {
+		t.Error("root DeleteOnTermination = true, want false (client override)")
+	}
+
+	snapID := aws.ToString(root.Ebs.SnapshotId)
+	if snapID == "" {
+		t.Fatal("root mapping has no backing snapshot id")
+	}
+
+	snaps, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{snapID}})
+	if err != nil {
+		t.Fatalf("DescribeSnapshots(%s): %v", snapID, err)
+	}
+	if len(snaps.Snapshots) != 1 {
+		t.Fatalf("DescribeSnapshots = %d, want 1", len(snaps.Snapshots))
+	}
+}
+
+// TestCreateImageNoRebootFalseKeepsInstanceRunning pins that the default
+// (NoReboot unset -> reboot) CreateImage reboots the source instance yet leaves
+// it running, so a subsequent DescribeInstances still reports it available.
+func TestCreateImageNoRebootFalseKeepsInstanceRunning(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+	instID := launchInstanceForImage(t, ctx, client)
+
+	if _, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId: aws.String(instID),
+		Name:       aws.String("reboot-ami"),
+	}); err != nil {
+		t.Fatalf("CreateImage(NoReboot=false): %v", err)
+	}
+
+	desc, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instID}})
+	if err != nil {
+		t.Fatalf("DescribeInstances: %v", err)
+	}
+	if got := desc.Reservations[0].Instances[0].State.Name; got != ec2types.InstanceStateNameRunning {
+		t.Fatalf("instance state after rebooting CreateImage = %q, want running", got)
+	}
+}
