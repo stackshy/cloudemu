@@ -56,6 +56,16 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	// Pre-flight the disks that reference an existing disk by source, BEFORE any
+	// instance/disk is created: real GCP creates NO instance when a referenced
+	// disk source is missing or already attached, so a retry with the same name
+	// still succeeds. Validating up front (rather than rolling back after) keeps
+	// the store free of orphaned instances or half-materialized disks.
+	if err := h.validateDiskSources(r.Context(), req.Disks, rp.ScopeName); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	subnet := firstSubnet(req.NetworkInterfaces)
 
 	cfg := computedriver.InstanceConfig{
@@ -100,6 +110,40 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 // and the instance's disks[] view stay consistent.
 type instanceDiskAttacher interface {
 	AttachDiskGCP(instanceID, volumeID, device string, autoDelete bool) error
+}
+
+// driverVolumeInUse is the driver VolumeInfo.State value for an attached disk.
+const driverVolumeInUse = "in-use"
+
+// validateDiskSources pre-flights the source-referenced disks[] entries before
+// the instance is created: a source that names a missing disk fails with 404,
+// and one that names an already-attached disk fails with a precondition error —
+// in both cases leaving no instance or disk behind, matching real GCP. Entries
+// with initializeParams create a fresh disk during materialization and need no
+// pre-flight. Skipped when the driver is not a GCE mock (materialization is a
+// no-op there anyway).
+func (h *Handler) validateDiskSources(ctx context.Context, disks []attachedDisk, zone string) error {
+	if _, ok := h.compute.(instanceDiskAttacher); !ok {
+		return nil
+	}
+
+	for i := range disks {
+		if disks[i].InitializeParams != nil || disks[i].Source == "" {
+			continue
+		}
+
+		vol, err := findDiskByName(ctx, h.compute, lastSegment(disks[i].Source), zone)
+		if err != nil {
+			return err
+		}
+
+		if vol.State == driverVolumeInUse {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"disk %q is already attached to another instance", lastSegment(disks[i].Source))
+		}
+	}
+
+	return nil
 }
 
 // materializeInsertDisks turns each entry in the instance's disks[] into a real

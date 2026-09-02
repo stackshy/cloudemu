@@ -1,11 +1,13 @@
 package compute_test
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	gcpcompute "cloud.google.com/go/compute/apiv1"
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"google.golang.org/api/iterator"
 )
@@ -92,6 +94,105 @@ func TestSDKInsertMaterializesAdditionalDisk(t *testing.T) {
 			t.Errorf("disks.Get(%s): %v — disk should have materialized", name, err)
 		}
 	}
+}
+
+// TestSDKInsertBadDiskSourceNoOrphan proves an insert that references a
+// nonexistent disk source creates NOTHING: it fails with 404, no instance and no
+// phantom disk are left behind, and a retry with the same name (with a valid
+// boot disk) then succeeds. Guards against the partial-failure orphan where the
+// instance is committed before disk materialization aborts.
+func TestSDKInsertBadDiskSourceNoOrphan(t *testing.T) {
+	client, ts, ctx := newInstancesEnv(t)
+	disks := newDisksSDKClient(t, ts)
+
+	_, err := client.Insert(ctx, &computepb.InsertInstanceRequest{
+		Project: testProject, Zone: testZone,
+		InstanceResource: &computepb.Instance{
+			Name:        ptrStr("orphan-vm"),
+			MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+			Disks: []*computepb.AttachedDisk{
+				{
+					Boot:       ptrBool(true),
+					AutoDelete: ptrBool(true),
+					InitializeParams: &computepb.AttachedDiskInitializeParams{
+						SourceImage: ptrStr("projects/debian-cloud/global/images/family/debian-12"),
+					},
+				},
+				{
+					DeviceName: ptrStr("data"),
+					Source:     ptrStr("zones/" + testZone + "/disks/does-not-exist"),
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("insert with a missing disk source succeeded, want 404 notFound")
+	}
+
+	if !strings.Contains(err.Error(), "notFound") && !strings.Contains(err.Error(), "404") {
+		t.Errorf("err=%v want notFound/404", err)
+	}
+
+	// No instance was created.
+	if _, err := client.Get(ctx, &computepb.GetInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "orphan-vm",
+	}); err == nil {
+		t.Error("orphan-vm exists after a failed insert, want NotFound (no instance committed)")
+	}
+
+	// No phantom boot disk was left behind (boot disk would default to the name).
+	if _, err := disks.Get(ctx, &computepb.GetDiskRequest{
+		Project: testProject, Zone: testZone, Disk: "orphan-vm",
+	}); err == nil {
+		t.Error("a disk named orphan-vm exists after a failed insert, want none")
+	}
+
+	if names := listDiskNames(ctx, t, disks); len(names) != 0 {
+		t.Errorf("disks after failed insert = %v, want none", names)
+	}
+
+	// A retry with the same name and a valid disk set now succeeds.
+	mustInsert(t, client, testZone, &computepb.Instance{
+		Name:        ptrStr("orphan-vm"),
+		MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+		Disks: []*computepb.AttachedDisk{{
+			Boot:       ptrBool(true),
+			AutoDelete: ptrBool(true),
+			InitializeParams: &computepb.AttachedDiskInitializeParams{
+				SourceImage: ptrStr("projects/debian-cloud/global/images/family/debian-12"),
+			},
+		}},
+	})
+
+	if _, err := client.Get(ctx, &computepb.GetInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "orphan-vm",
+	}); err != nil {
+		t.Fatalf("retry insert with same name failed: %v", err)
+	}
+}
+
+// listDiskNames returns every disk name in the test zone.
+func listDiskNames(ctx context.Context, t *testing.T, disks *gcpcompute.DisksClient) []string {
+	t.Helper()
+
+	var names []string
+
+	it := disks.List(ctx, &computepb.ListDisksRequest{Project: testProject, Zone: testZone})
+
+	for {
+		d, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		names = append(names, d.GetName())
+	}
+
+	return names
 }
 
 // TestSDKDeleteHonorsAutoDelete proves instances.delete deletes an autoDelete=true

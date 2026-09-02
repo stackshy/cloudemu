@@ -149,10 +149,10 @@ func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 	}
 
 	// Real GCP refuses to delete a disk still attached to an instance, returning
-	// 400 resourceInUseByAnotherResource. attachDisk only records the disk in the
-	// instance's disks[] (it never flips the driver volume state), so reuse the
-	// same instance scan that populates users[] on a read and reject while any
-	// instance still references this disk. Delete succeeds once the disk detaches.
+	// 400 resourceInUseByAnotherResource. attach flips the driver volume to
+	// in-use (AttachedTo), so the same volume-store scan that populates users[]
+	// on a read is the authoritative attachment view: reject while any instance
+	// still references this disk. Delete succeeds once the disk detaches.
 	host := hostFromRequest(r)
 	if users := h.diskUsersByName(r.Context(), host, rp.Project); len(users[rp.ResourceName]) > 0 {
 		diskLink := gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "disks", rp.ResourceName)
