@@ -44,6 +44,17 @@ const resourceTypeScaleSets = "virtualMachineScaleSets"
 // status endpoints (Microsoft.Compute/locations/{loc}/operationStatuses/{id}).
 const resourceTypeLocations = "locations"
 
+// Power-action verbs shared by the single-VM sub-resource dispatch and the
+// whole-VMSS power dispatch. Compared case-insensitively (ARM action segments
+// arrive as e.g. "powerOff").
+const (
+	actionStart      = "start"
+	actionPowerOff   = "poweroff"
+	actionDeallocate = "deallocate"
+	actionRestart    = "restart"
+	actionReimage    = "reimage"
+)
+
 // Handler serves ARM JSON requests for Microsoft.Compute/virtualMachines.
 type Handler struct {
 	compute computedriver.Compute
@@ -189,13 +200,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 //nolint:gocritic // rp travels through the dispatch chain once per request
 func (h *Handler) servePostAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	switch strings.ToLower(rp.SubResource) {
-	case "start":
+	case actionStart:
 		h.start(w, r, rp)
-	case "poweroff":
+	case actionPowerOff:
 		h.powerOff(w, r, rp)
-	case "deallocate":
+	case actionDeallocate:
 		h.deallocate(w, r, rp)
-	case "restart":
+	case actionRestart:
 		h.restart(w, r, rp)
 	case "generalize":
 		h.generalize(w, r, rp)

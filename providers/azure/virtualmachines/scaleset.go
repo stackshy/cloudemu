@@ -314,6 +314,134 @@ func (m *Mock) PowerScaleSetVM(_ context.Context, vmssName, instanceID, action s
 	return nil
 }
 
+// PowerScaleSet applies a power action to every instance of a scale set — or to
+// the subset named by instanceIDs when non-empty — mirroring the whole-VMSS ARM
+// power actions (Start / PowerOff / Deallocate / Restart / Reimage). It updates
+// each affected instance's power state so a subsequent instanceView reflects it.
+// Returns NotFound when the scale set (or a named instance) does not exist and
+// InvalidArgument for an unknown action.
+func (m *Mock) PowerScaleSet(_ context.Context, vmssName, action string, instanceIDs []string) error {
+	key, ok := m.findScaleSetKey(vmssName)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", vmssName)
+	}
+
+	power, perr := powerStateForAction(action)
+	if perr != nil {
+		return perr
+	}
+
+	targets := instanceIDSet(instanceIDs)
+	matched := make(map[string]bool, len(instanceIDs))
+
+	m.scaleSets.Update(key, func(s *ScaleSet) *ScaleSet {
+		for i := range s.Instances {
+			if targets != nil && !targets[s.Instances[i].InstanceID] {
+				continue
+			}
+
+			s.Instances[i].PowerState = power
+			matched[s.Instances[i].InstanceID] = true
+		}
+
+		return s
+	})
+
+	if targets != nil {
+		for _, id := range instanceIDs {
+			if !matched[id] {
+				return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q has no instance %q", vmssName, id)
+			}
+		}
+	}
+
+	return nil
+}
+
+// instanceIDSet returns the membership set for a subset power request, or nil
+// when instanceIDs is omitted. Real Azure targets every instance by omitting
+// instanceIds entirely (an explicit list targets exactly that subset); there is
+// no all-instances sentinel value.
+func instanceIDSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+
+	return set
+}
+
+// ScaleSetPatch carries the mutable fields a whole-VMSS PATCH (ARM
+// VirtualMachineScaleSets Update) can change. A zero-valued field leaves the
+// stored value untouched; a non-nil Tags map replaces the tag set wholesale
+// (an empty map wipes it), matching ARM resource-level PATCH semantics; a
+// non-nil Capacity rescales the set, reconciling its materialized instances.
+type ScaleSetPatch struct {
+	Tags        map[string]string
+	SKUName     string
+	SKUTier     string
+	Capacity    *int64
+	Priority    string
+	LicenseType string
+}
+
+// UpdateScaleSet merge-patches a stored VMSS and returns the full updated
+// resource. Returns NotFound when no scale set with that name exists.
+//
+//nolint:gocritic // patch mirrors a request-scoped value passed once per call.
+func (m *Mock) UpdateScaleSet(_ context.Context, name string, patch ScaleSetPatch) (*ScaleSet, error) {
+	key, ok := m.findScaleSetKey(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", name)
+	}
+
+	var out ScaleSet
+
+	m.scaleSets.Update(key, func(s *ScaleSet) *ScaleSet {
+		applyScaleSetPatch(s, patch)
+		out = *s
+
+		return s
+	})
+
+	return &out, nil
+}
+
+// applyScaleSetPatch merges the supplied mutable fields into s in place.
+//
+//nolint:gocritic // patch mirrors a request-scoped value passed once per call.
+func applyScaleSetPatch(s *ScaleSet, patch ScaleSetPatch) {
+	if patch.Tags != nil {
+		s.Tags = patch.Tags
+	}
+
+	if patch.SKUName != "" {
+		s.SKUName = patch.SKUName
+	}
+
+	if patch.SKUTier != "" {
+		s.SKUTier = patch.SKUTier
+	}
+
+	if patch.Priority != "" {
+		s.Priority = patch.Priority
+	}
+
+	if patch.LicenseType != "" {
+		s.LicenseType = patch.LicenseType
+	}
+
+	if patch.Capacity != nil {
+		s.Capacity = int(*patch.Capacity)
+		s.CapacityZero = *patch.Capacity == 0
+		s.Instances = reconcileScaleSetVMs(s.Instances, s.Capacity)
+	}
+}
+
 // powerStateForAction maps a per-instance power action verb to the power state
 // the instance settles in. start/restart/reimage leave the VM running;
 // poweroff stops it (allocated); deallocate releases the compute.
