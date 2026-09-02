@@ -138,6 +138,114 @@ func TestScaleSetPowerAndDeleteInstance(t *testing.T) {
 	require.Error(t, m.PowerScaleSetVM(ctx, "vmss-ops", "0", "bogus"))
 }
 
+func TestPowerScaleSetWholeSet(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-ws", Capacity: 3})
+	require.NoError(t, err)
+
+	// Whole-set poweroff transitions every instance to stopped.
+	require.NoError(t, m.PowerScaleSet(ctx, "vmss-ws", "poweroff", nil))
+
+	vms, err := m.ListScaleSetVMs(ctx, "vmss-ws")
+	require.NoError(t, err)
+	require.Len(t, vms, 3)
+
+	for _, vm := range vms {
+		assert.Equal(t, scaleSetVMStopped, vm.PowerState)
+	}
+
+	// Whole-set start brings them all back to running.
+	require.NoError(t, m.PowerScaleSet(ctx, "vmss-ws", "start", nil))
+
+	vms, err = m.ListScaleSetVMs(ctx, "vmss-ws")
+	require.NoError(t, err)
+
+	for _, vm := range vms {
+		assert.Equal(t, scaleSetVMRunning, vm.PowerState)
+	}
+
+	// A subset request touches only the named instance.
+	require.NoError(t, m.PowerScaleSet(ctx, "vmss-ws", "deallocate", []string{"1"}))
+
+	vm1, err := m.GetScaleSetVM(ctx, "vmss-ws", "1")
+	require.NoError(t, err)
+	assert.Equal(t, scaleSetVMDeallocated, vm1.PowerState)
+
+	vm0, err := m.GetScaleSetVM(ctx, "vmss-ws", "0")
+	require.NoError(t, err)
+	assert.Equal(t, scaleSetVMRunning, vm0.PowerState)
+}
+
+func TestPowerScaleSetErrors(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-err", Capacity: 2})
+	require.NoError(t, err)
+
+	// Missing scale set → NotFound.
+	require.Error(t, m.PowerScaleSet(ctx, "no-such", "start", nil))
+
+	// Unknown action → InvalidArgument.
+	require.Error(t, m.PowerScaleSet(ctx, "vmss-err", "bogus", nil))
+
+	// Subset naming a non-existent instance → NotFound.
+	require.Error(t, m.PowerScaleSet(ctx, "vmss-err", "start", []string{"9"}))
+}
+
+func TestUpdateScaleSetMergesTagsAndCapacity(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{
+		Name:     "vmss-patch",
+		Capacity: 2,
+		Tags:     map[string]string{"env": "dev"},
+	})
+	require.NoError(t, err)
+
+	cap4 := int64(4)
+
+	updated, err := m.UpdateScaleSet(ctx, "vmss-patch", ScaleSetPatch{
+		Tags:     map[string]string{"team": "platform"},
+		Capacity: &cap4,
+	})
+	require.NoError(t, err)
+
+	// Tags merge (pre-existing key survives), capacity rescales.
+	assert.Equal(t, "dev", updated.Tags["env"])
+	assert.Equal(t, "platform", updated.Tags["team"])
+	assert.Equal(t, 4, updated.Capacity)
+
+	vms, err := m.ListScaleSetVMs(ctx, "vmss-patch")
+	require.NoError(t, err)
+	require.Len(t, vms, 4)
+
+	// Missing scale set → NotFound.
+	_, err = m.UpdateScaleSet(ctx, "no-such", ScaleSetPatch{})
+	require.Error(t, err)
+}
+
+func TestUpdateScaleSetExplicitZeroCapacity(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-scalein", Capacity: 3})
+	require.NoError(t, err)
+
+	cap0 := int64(0)
+
+	updated, err := m.UpdateScaleSet(ctx, "vmss-scalein", ScaleSetPatch{Capacity: &cap0})
+	require.NoError(t, err)
+	assert.Equal(t, 0, updated.Capacity)
+
+	vms, err := m.ListScaleSetVMs(ctx, "vmss-scalein")
+	require.NoError(t, err)
+	assert.Empty(t, vms)
+}
+
 func TestScaleSetReconcilePreservesStateAcrossCapacityChange(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

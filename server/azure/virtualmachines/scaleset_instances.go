@@ -2,6 +2,8 @@ package virtualmachines
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -29,9 +31,53 @@ func serveScaleSetSubResource(w http.ResponseWriter, r *http.Request, rp azurear
 		}
 
 		scaleSetInstanceView(w, r, rp, store)
+	case actionStart, actionPowerOff, actionDeallocate, actionRestart, actionReimage:
+		if r.Method != http.MethodPost {
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+			return
+		}
+
+		scaleSetPowerAction(w, r, rp, store)
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
+}
+
+// scaleSetPowerAction handles the whole-VMSS POST power actions
+// (.../virtualMachineScaleSets/{name}/start|powerOff|deallocate|restart|reimage).
+// It fans the action out to every instance of the set, or to the subset named by
+// the optional {"instanceIds":[...]} body, then returns 202 + async polling
+// headers the SDK poller settles as Succeeded.
+//
+//nolint:gocritic // rp is a request-scoped value
+func scaleSetPowerAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
+	ids := decodeScaleSetInstanceIDs(r)
+
+	if err := store.PowerScaleSet(r.Context(), rp.ResourceName, rp.SubResource, ids); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, "vmss-"+strings.ToLower(rp.SubResource)+"-"+rp.ResourceName)
+}
+
+// decodeScaleSetInstanceIDs best-effort reads the optional {"instanceIds":[...]}
+// body of a whole-VMSS power action. A missing, empty, or unparseable body
+// targets every instance (nil), matching the SDK's no-body whole-set call.
+func decodeScaleSetInstanceIDs(r *http.Request) []string {
+	if r.Body == nil {
+		return nil
+	}
+
+	var body struct {
+		InstanceIDs []string `json:"instanceIds"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(r.Body, azurearm.MaxBodyBytes)).Decode(&body); err != nil {
+		return nil
+	}
+
+	return body.InstanceIDs
 }
 
 // serveScaleSetVM routes the VMSS VM surface: LIST (collection), GET/DELETE (a

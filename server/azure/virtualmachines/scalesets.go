@@ -21,6 +21,8 @@ type scaleSetStore interface {
 	GetScaleSetVM(ctx context.Context, vmssName, instanceID string) (*providervm.ScaleSetVM, error)
 	DeleteScaleSetVM(ctx context.Context, vmssName, instanceID string) error
 	PowerScaleSetVM(ctx context.Context, vmssName, instanceID, action string) error
+	PowerScaleSet(ctx context.Context, vmssName, action string, instanceIDs []string) error
+	UpdateScaleSet(ctx context.Context, name string, patch providervm.ScaleSetPatch) (*providervm.ScaleSet, error)
 }
 
 // serveScaleSet dispatches PUT/GET on Microsoft.Compute/virtualMachineScaleSets.
@@ -52,6 +54,8 @@ func (h *Handler) serveScaleSet(w http.ResponseWriter, r *http.Request, rp azure
 	switch r.Method {
 	case http.MethodPut:
 		createScaleSet(w, r, rp, store)
+	case http.MethodPatch:
+		updateScaleSet(w, r, rp, store)
 	case http.MethodGet:
 		getScaleSet(w, r, rp, store)
 	case http.MethodDelete:
@@ -59,6 +63,42 @@ func (h *Handler) serveScaleSet(w http.ResponseWriter, r *http.Request, rp azure
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
+}
+
+// updateScaleSet handles PATCH virtualMachineScaleSets/{name} (ARM
+// VirtualMachineScaleSets Update): a merge-patch of tags and mutable properties
+// (sku name/tier/capacity, per-VM Spot priority / hybrid-benefit license) that
+// returns the full updated resource. Unlike DELETE and the power actions, the
+// SDK's BeginUpdate poller accepts a synchronous 200 carrying the final body.
+//
+//nolint:gocritic // rp is a request-scoped value
+func updateScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
+	var req vmssRequest
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	patch := providervm.ScaleSetPatch{Tags: req.Tags}
+
+	if req.SKU != nil {
+		patch.SKUName = req.SKU.Name
+		patch.SKUTier = req.SKU.Tier
+		patch.Capacity = req.SKU.Capacity
+	}
+
+	if p := req.Properties.VirtualMachineProfile; p != nil {
+		patch.Priority = p.Priority
+		patch.LicenseType = p.LicenseType
+	}
+
+	stored, err := store.UpdateScaleSet(r.Context(), rp.ResourceName, patch)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toVMSSResponse(stored, rp))
 }
 
 // deleteScaleSet handles DELETE virtualMachineScaleSets/{name}. Real Azure
