@@ -145,6 +145,17 @@ func TestSDKNATGatewayRoundTrip(t *testing.T) {
 		t.Errorf("natgw subnets=%v want [%s]", got.Properties, subnetID)
 	}
 
+	// The subnet association must be dropped before the NAT gateway can be
+	// deleted (real ARM refuses an in-use delete).
+	dsp, err := subnets.BeginCreateOrUpdate(ctx, "rg-1", "vnet-nat", "subnet-1", armnetwork.Subnet{
+		Properties: &armnetwork.SubnetPropertiesFormat{AddressPrefix: to.Ptr("10.0.1.0/24")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("disassociate subnet from natgw: %v", err)
+	}
+
+	pollDone(t, dsp)
+
 	// Delete frees the bound public IP.
 	dp, err := natClient.BeginDelete(ctx, "rg-1", "natgw-1", nil)
 	if err != nil {
