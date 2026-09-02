@@ -33,17 +33,22 @@ import (
 )
 
 const (
-	providerName     = "Microsoft.Network"
-	typeVNet         = "virtualNetworks"
-	typeNSG          = "networkSecurityGroups"
-	typeRouteTable   = "routeTables"
-	typePublicIP     = "publicIPAddresses"
-	typeLocations    = "locations"
-	armNameTag       = "cloudemu:azureNetName"
-	armSubnetTag     = "cloudemu:azureSubnet"
-	armNSGTag        = "cloudemu:azureNSGName"
-	armPublicIPTag   = "cloudemu:azurePublicIP"
-	armPublicIPRGTag = "cloudemu:azurePublicIPResourceGroup"
+	providerName   = "Microsoft.Network"
+	typeVNet       = "virtualNetworks"
+	typeNSG        = "networkSecurityGroups"
+	typeRouteTable = "routeTables"
+	typePublicIP   = "publicIPAddresses"
+	typeLocations  = "locations"
+	// internalTagPrefix marks the wire-internal bookkeeping tags (ARM name /
+	// resource-group anchors, association references) the (rg, name) lookups
+	// depend on; stripInternal hides them from responses and an UpdateTags PATCH
+	// preserves them across a wholesale user-tag replacement.
+	internalTagPrefix = "cloudemu:"
+	armNameTag        = "cloudemu:azureNetName"
+	armSubnetTag      = "cloudemu:azureSubnet"
+	armNSGTag         = "cloudemu:azureNSGName"
+	armPublicIPTag    = "cloudemu:azurePublicIP"
+	armPublicIPRGTag  = "cloudemu:azurePublicIPResourceGroup"
 	// armVNetRGTag / armNSGRGTag record the resource group a virtual network or
 	// network security group was created under. The cross-cloud networking
 	// driver has a single flat namespace, so without this a resource is globally
@@ -264,6 +269,8 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 	switch r.Method {
 	case http.MethodPut:
 		h.createVNet(w, r, rp)
+	case http.MethodPatch:
+		h.patchVNet(w, r, rp)
 	case http.MethodGet:
 		h.getVNet(w, r, rp)
 	case http.MethodDelete:
@@ -312,6 +319,8 @@ func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	switch r.Method {
 	case http.MethodPut:
 		h.createNSG(w, r, rp)
+	case http.MethodPatch:
+		h.patchNSG(w, r, rp)
 	case http.MethodGet:
 		h.getNSG(w, r, rp)
 	case http.MethodDelete:
@@ -581,7 +590,7 @@ func (h *Handler) getVNet(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	azurearm.WriteJSON(w, http.StatusOK, h.vnetResponse(r.Context(), info, rp))
 }
 
-//nolint:gocritic,dupl // rp is request-scoped; mirrors listNSGs over a distinct resource type by design
+//nolint:gocritic // rp is request-scoped; mirrors listNSGs over a distinct resource type by design
 func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeVPCs(r.Context(), nil)
 	if err != nil {
@@ -797,6 +806,8 @@ func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
 
 // purgeNSGs deletes every network security group (with its metadata) in the
 // resource group, returning the first delete error encountered.
+//
+//nolint:dupl // mirrors purgeRouteTables over a distinct resource type and store by design
 func (h *Handler) purgeNSGs(ctx context.Context, resourceGroup string) error {
 	nsgs, err := h.net.DescribeSecurityGroups(ctx, nil)
 	if err != nil {
@@ -1329,7 +1340,7 @@ func (h *Handler) getNSG(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	azurearm.WriteJSON(w, http.StatusOK, h.nsgResponse(r.Context(), info, rp))
 }
 
-//nolint:gocritic,dupl // rp is request-scoped; mirrors listVNets over a distinct resource type by design
+//nolint:gocritic // rp is request-scoped; mirrors listVNets over a distinct resource type by design
 func (h *Handler) listNSGs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeSecurityGroups(r.Context(), nil)
 	if err != nil {
@@ -1394,7 +1405,7 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 // PublicIP operations.
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listPublicIPs(w, r, rp)
@@ -1404,6 +1415,8 @@ func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azure
 	switch r.Method {
 	case http.MethodPut:
 		h.createPublicIP(w, r, rp)
+	case http.MethodPatch:
+		h.patchPublicIP(w, r, rp)
 	case http.MethodGet:
 		h.getPublicIP(w, r, rp)
 	case http.MethodDelete:
@@ -2076,7 +2089,7 @@ func stripInternal(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if strings.HasPrefix(k, "cloudemu:") {
+		if strings.HasPrefix(k, internalTagPrefix) {
 			continue
 		}
 

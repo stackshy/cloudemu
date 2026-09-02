@@ -65,7 +65,7 @@ type natGatewayListResponse struct {
 
 // routeNATGateway dispatches Microsoft.Network/natGateways requests.
 //
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routeNATGateway(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listNATGateways(w, r, rp)
@@ -75,6 +75,8 @@ func (h *Handler) routeNATGateway(w http.ResponseWriter, r *http.Request, rp azu
 	switch r.Method {
 	case http.MethodPut:
 		h.createNATGateway(w, r, rp)
+	case http.MethodPatch:
+		h.patchNATGateway(w, r, rp)
 	case http.MethodGet:
 		h.getNATGateway(w, r, rp)
 	case http.MethodDelete:
