@@ -193,6 +193,25 @@ discarded. If a restore fails partway the running state is already cleared —
 fine for a local emulator, but don't point `load` at a server whose current
 state you haven't snapshotted.
 
+#### Time travel over HTTP (`/_cloudemu/snapshot/{name}`)
+
+The same named states are reachable over the admin control plane, so any client
+(not just the CLI) can save, rewind, and branch state:
+
+```sh
+# save current state under a name
+curl -X POST http://127.0.0.1:4566/_cloudemu/snapshot/baseline
+# rewind the running estate to a saved state (destructive, like `load`)
+curl -X POST http://127.0.0.1:4566/_cloudemu/snapshot/baseline/rewind
+# fork a saved state to a new name (branch off a checkpoint)
+curl -X POST http://127.0.0.1:4566/_cloudemu/snapshot/baseline/fork/experiment
+# delete a saved state
+curl -X DELETE http://127.0.0.1:4566/_cloudemu/snapshot/experiment
+```
+
+These act on the whole emulator at once and need the `--admin` plane. See
+[persistence.md](persistence.md#admin-endpoint-_cloudemusnapshot).
+
 ### Init hooks (auto-seed on boot)
 
 Drop `*.json` seed fixtures in an init directory and they're applied on every
@@ -432,6 +451,9 @@ your client.
 | `--persist-metadata-only` | `false` | persist resource structure but omit object bodies (smaller snapshot) |
 | `--persist-strategy` | `scheduled` | when to save with `--persist`: `scheduled` / `on-request` / `on-shutdown` / `manual` (env `CLOUDEMU_PERSIST_STRATEGY`) |
 | `--persist-interval` | `15s` | save cadence for `--persist-strategy=scheduled` (env `CLOUDEMU_PERSIST_INTERVAL`) |
+| `--vcr` | — | record or replay the wire protocol: `record` \| `replay` (requires `--vcr-cassette`) |
+| `--vcr-cassette` | — | path to the cassette file to record into / replay from |
+| `--vcr-strict` | `true` | in `replay`, return `501` for a request with no recorded match (rather than passing through) |
 | `--log-requests` | `false` | log every request |
 | `--quiet` | `false` | suppress the startup banner |
 | `--shutdown-timeout` | `10s` | grace period for in-flight requests on Ctrl-C |
