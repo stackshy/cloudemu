@@ -12,6 +12,8 @@ func (h *Handler) serveDatabase(w http.ResponseWriter, r *http.Request, kp kusto
 	switch r.Method {
 	case http.MethodPut:
 		h.createDatabase(w, r, kp, dbName)
+	case http.MethodPatch:
+		h.updateDatabase(w, r, kp, dbName)
 	case http.MethodGet:
 		h.getDatabase(w, kp, dbName)
 	case http.MethodDelete:
@@ -65,6 +67,68 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request, kp kust
 	}
 
 	azurearm.WriteJSON(w, status, resource)
+}
+
+// updateDatabase serves the ARM PATCH (DatabasesClient.Update): the mutable
+// retention windows (softDeletePeriod, hotCachePeriod) and location are replaced
+// when supplied and preserved otherwise, and the full database is returned. A
+// PATCH on a missing cluster or database is a 404.
+func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request, kp kustoPath, dbName string) {
+	var req updateDatabaseRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+
+	h.mu.Lock()
+
+	c, ok := h.lookupCluster(kp)
+	if !ok {
+		h.mu.Unlock()
+		writeClusterNotFound(w, kp.cluster)
+
+		return
+	}
+
+	db, ok := c.Databases[dbKey(dbName)]
+	if !ok {
+		h.mu.Unlock()
+		writeDatabaseNotFound(w, dbName)
+
+		return
+	}
+
+	if req.Location != "" {
+		db.Location = req.Location
+	}
+
+	db.Properties = mergeDatabaseProps(db.Properties, req.Properties)
+	db.UpdatedAt = time.Now().UTC()
+
+	resource := toDatabaseResource(c, db)
+	h.mu.Unlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, resource)
+}
+
+// mergeDatabaseProps overlays the client-mutable database properties of a PATCH
+// onto the existing ones. provisioningState is server-computed and recomputed by
+// toDatabaseResource, so it is not merged here.
+func mergeDatabaseProps(existing, patch databaseProperties) databaseProperties {
+	out := existing
+
+	if patch.SoftDeletePeriod != "" {
+		out.SoftDeletePeriod = patch.SoftDeletePeriod
+	}
+
+	if patch.HotCachePeriod != "" {
+		out.HotCachePeriod = patch.HotCachePeriod
+	}
+
+	if patch.IsFollowed != nil {
+		out.IsFollowed = patch.IsFollowed
+	}
+
+	return out
 }
 
 func (h *Handler) getDatabase(w http.ResponseWriter, kp kustoPath, dbName string) {

@@ -94,6 +94,14 @@ ConsoleReader is an optional capability a Compute implementation may provide
 | --- | --- |
 | `GetConsoleOutput` |  |
 
+### ImageTagUpdater
+
+ImageTagUpdater is an optional capability for replacing the tag set of an
+
+| Operation | Description |
+| --- | --- |
+| `UpdateImageTags` |  |
+
 ### KeyPairGenerator
 
 KeyPairGenerator is an optional Azure-only capability for the ARM

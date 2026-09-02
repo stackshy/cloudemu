@@ -1292,6 +1292,25 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 	return &result, nil
 }
 
+// UpdateImageTags replaces the tag set of an existing image in place, backing
+// the Azure Microsoft.Compute/images PATCH. The wire handler owns the merge with
+// the image's cloudemu-internal tags, so this simply stores the tags it is given
+// and returns the updated image.
+func (m *Mock) UpdateImageTags(_ context.Context, id string, tags map[string]string) (*driver.ImageInfo, error) {
+	img, ok := m.images.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "image %q not found", id)
+	}
+
+	updated := *img
+	updated.Tags = copyTags(tags)
+	m.images.Set(id, &updated)
+
+	result := updated
+
+	return &result, nil
+}
+
 func (m *Mock) DeregisterImage(_ context.Context, id string) error {
 	if !m.images.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "image %q not found", id)

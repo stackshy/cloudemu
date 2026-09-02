@@ -82,3 +82,23 @@ type createDatabaseRequest struct {
 	Location   string             `json:"location"`
 	Properties databaseProperties `json:"properties"`
 }
+
+// Request bodies decoded from PATCH payloads. Properties is a pointer on the
+// cluster update so an omitted properties block is distinguishable from an
+// explicit empty one and leaves the stored properties untouched.
+
+type updateClusterRequest struct {
+	Location   string             `json:"location"`
+	Tags       map[string]string  `json:"tags,omitempty"`
+	SKU        *kustoSKU          `json:"sku,omitempty"`
+	Zones      []string           `json:"zones,omitempty"`
+	Properties *clusterProperties `json:"properties,omitempty"`
+}
+
+type updateDatabaseRequest struct {
+	// Kind is decoded but never applied: a database's kind is immutable in real
+	// Azure, so a PATCH cannot change it. It is kept so the field round-trips.
+	Kind       string             `json:"kind"`
+	Location   string             `json:"location"`
+	Properties databaseProperties `json:"properties"`
+}

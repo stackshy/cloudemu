@@ -68,6 +68,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.updateTags(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -151,6 +153,52 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// Return 200 OK directly (sync semantics) so PollUntilDone resolves on
 	// the response body's ProvisioningState alone, no header polling.
 	azurearm.WriteJSON(w, http.StatusOK, body)
+}
+
+// updateTags applies an ARM PATCH (Images - Update / ImageUpdate): resource-level
+// tag PATCH replaces the user tag set wholesale, every other field is preserved,
+// and the full image resource is returned in GET shape. A PATCH on a missing
+// image is a 404. The cloudemu-internal identity tags are always preserved
+// because they are re-asserted from the stored image after the replace.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) updateTags(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	img, err := findImageByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	updater, ok := h.compute.(computedriver.ImageTagUpdater)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "image tag update is not supported")
+		return
+	}
+
+	var req imageRequest
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// Resource-level Azure tag PATCH REPLACES the user tag set wholesale, so the
+	// new user tags are only those in the body (a tags:{} body wipes them). The
+	// cloudemu-internal bookkeeping tags are then re-asserted from the stored
+	// image exactly as PUT does: a PATCH must never rewrite the reserved cloudemu:
+	// namespace (image name, resource group, source VM, OS type), because those
+	// keys carry the image's ARM identity and stay immutable across the update.
+	name := tagOr(img.Tags, armNameTag, img.Name)
+	tags := mergeTags(
+		withoutReservedTags(req.Tags),
+		name, tagOr(img.Tags, rgTag, ""), tagOr(img.Tags, sourceVMTag, ""), tagOr(img.Tags, osTypeTag, ""),
+	)
+
+	updated, err := updater.UpdateImageTags(r.Context(), img.ID, tags)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toImageResponse(updated, rp, req.Location))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -498,6 +546,27 @@ func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType strin
 
 	if osType != "" {
 		out[osTypeTag] = osType
+	}
+
+	return out
+}
+
+// reservedTagPrefix is the namespace of the cloudemu-internal bookkeeping tags
+// (armNameTag, rgTag, sourceVMTag, osTypeTag). A PATCH caller may not set any tag
+// in it — those keys carry the image's ARM identity.
+const reservedTagPrefix = "cloudemu:"
+
+// withoutReservedTags drops any cloudemu:-prefixed key from a PATCH-supplied tag
+// map so a caller cannot rewrite the image's internal bookkeeping tags.
+func withoutReservedTags(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+
+	for k, v := range in {
+		if strings.HasPrefix(k, reservedTagPrefix) {
+			continue
+		}
+
+		out[k] = v
 	}
 
 	return out
