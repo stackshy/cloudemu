@@ -48,6 +48,12 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"ListInstances", "ListSteps", "ModifyInstanceGroups", "RunJobFlow",
 		"TerminateJobFlows",
 	},
+	"aws/savingsplans": {
+		"CreateSavingsPlan", "DeleteQueuedSavingsPlan", "DescribeSavingsPlanRates",
+		"DescribeSavingsPlans", "DescribeSavingsPlansOfferingRates",
+		"DescribeSavingsPlansOfferings", "ListTagsForResource", "TagResource",
+		"UntagResource",
+	},
 
 	// Azure — ARM handlers, routed on HTTP method + resource path shape.
 	"azure/disks": {

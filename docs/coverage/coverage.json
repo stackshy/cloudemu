@@ -11115,6 +11115,42 @@
     }
   },
   {
+    "service": "savingsplans",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateSavingsPlan"
+      },
+      {
+        "name": "DeleteQueuedSavingsPlan"
+      },
+      {
+        "name": "DescribeSavingsPlanRates"
+      },
+      {
+        "name": "DescribeSavingsPlans"
+      },
+      {
+        "name": "DescribeSavingsPlansOfferingRates"
+      },
+      {
+        "name": "DescribeSavingsPlansOfferings"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      }
+    ],
+    "providers": {
+      "aws": "SavingsPlans"
+    }
+  },
+  {
     "service": "secrets",
     "interface": "Secrets",
     "operations": [

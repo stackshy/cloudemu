@@ -54,6 +54,7 @@ import (
 	route53resolversrv "github.com/stackshy/cloudemu/v2/server/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
+	savingsplanssrv "github.com/stackshy/cloudemu/v2/server/aws/savingsplans"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
 	servicequotassrv "github.com/stackshy/cloudemu/v2/server/aws/servicequotas"
 	sesv2srv "github.com/stackshy/cloudemu/v2/server/aws/sesv2"
@@ -239,6 +240,15 @@ type Drivers struct {
 	// backing driver — and it is gated on this bool. AccountID/Region shape the
 	// cluster ARNs; Clock drives the lifecycle timeline.
 	EMR bool
+	// SavingsPlans serves the AWS Savings Plans REST-JSON API (path-based
+	// operation dispatch, api 2019-06-28) for the plan purchase/describe
+	// lifecycle. Plan state lives only in the wire server, so the handler owns
+	// its own in-memory store — no backing driver — and it is gated on this
+	// bool. AccountID shapes the (global) plan ARNs; Region tags plans; Clock
+	// drives the queued/active timeline. The handler's store also implements
+	// services/cost.Commitments, feeding purchased commitments to the billing
+	// amortization engine.
+	SavingsPlans bool
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -340,6 +350,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SFN:                 p.SFN,
 		STS:                 true,
 		EMR:                 true,
+		SavingsPlans:        true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
 		CostExplorer:        p.ResourceDiscovery,
@@ -500,6 +511,16 @@ func New(d Drivers) *server.Server {
 	// in-memory cluster/step store (no backing driver).
 	if d.EMR {
 		srv.Register(emrsrv.New(d.AccountID, d.Region, d.Clock))
+	}
+
+	// Savings Plans is a REST-JSON service dispatched on POST /{OperationName}
+	// (e.g. /DescribeSavingsPlans). Its exact-path set is disjoint from every
+	// bucket path, but it must register before S3's permissive REST fallback so
+	// its operation paths aren't swallowed. The handler carries its own in-memory
+	// plan store (no backing driver); its store also feeds purchased commitments
+	// to the billing engine via cost.Commitments.
+	if d.SavingsPlans {
+		srv.Register(savingsplanssrv.New(d.AccountID, d.Region, d.Clock))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
