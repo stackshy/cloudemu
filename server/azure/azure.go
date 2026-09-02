@@ -63,6 +63,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/v2/server/azure/sql"
+	sqlvirtualmachinesrv "github.com/stackshy/cloudemu/v2/server/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
@@ -137,6 +138,9 @@ type Drivers struct {
 	AKS              aksserver.Backend
 	// ManagedIdentity serves Microsoft.ManagedIdentity/userAssignedIdentities.
 	ManagedIdentity managedidentitysrv.Store
+	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
+	// the SQL-management overlay on a compute VM.
+	SQLVirtualMachine sqlvirtualmachinesrv.Store
 	// ContainerApps serves Microsoft.App managedEnvironments and containerApps.
 	ContainerApps containerappssrv.Store
 	IAM           iamdriver.IAM
@@ -314,6 +318,15 @@ func New(d Drivers) http.Handler {
 	if d.ManagedIdentity != nil {
 		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
 		rgPurgers = append(rgPurgers, managedIdentityHandler)
+	}
+
+	// SQL virtual machines: a resource-group-scoped resource, so its handler
+	// joins the purge cascade. Deleting the group tears down the SQL-management
+	// overlay records but never the paired compute VMs. Registered further below.
+	var sqlVMHandler *sqlvirtualmachinesrv.Handler
+	if d.SQLVirtualMachine != nil {
+		sqlVMHandler = sqlvirtualmachinesrv.New(d.SQLVirtualMachine)
+		rgPurgers = append(rgPurgers, sqlVMHandler)
 	}
 
 	// Container Apps (managed environments + container apps): resource-group-scoped
@@ -587,6 +600,13 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if managedIdentityHandler != nil {
 		srv.Register(managedIdentityHandler)
+	}
+
+	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —
+	// a distinct ARM provider name from every other Azure handler, so registration
+	// order is unconstrained. Registered before the BlobStorage fallback.
+	if sqlVMHandler != nil {
+		srv.Register(sqlVMHandler)
 	}
 
 	// Container Apps claim Microsoft.App/{managedEnvironments,containerApps} — a

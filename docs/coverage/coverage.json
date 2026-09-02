@@ -12131,6 +12131,42 @@
     }
   },
   {
+    "service": "sqlvirtualmachine",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverSQLVirtualMachines"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "UpdateTags"
+      }
+    ],
+    "providers": {
+      "azure": "SQLVirtualMachine"
+    }
+  },
+  {
     "service": "sshpublickeys",
     "interface": "provider-native",
     "operations": [

@@ -89,6 +89,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
 | `snapshots` | — | [Snapshots](./azure/snapshots.md) | — | — | 5 |
 | `sql` | — | [SQL](./azure/sql.md) | — | — | 21 |
+| `sqlvirtualmachine` | — | [SQLVirtualMachine](./azure/sqlvirtualmachine.md) | — | — | 9 |
 | `sshpublickeys` | — | [Sshpublickeys](./azure/sshpublickeys.md) | — | — | 7 |
 | `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | — | 35 |
 | `storageaccount` | — | [Storageaccount](./azure/storageaccount.md) | — | — | 10 |

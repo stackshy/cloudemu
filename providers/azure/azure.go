@@ -35,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
+	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
@@ -154,6 +155,7 @@ type Provider struct {
 	AI                 *ai.Mock
 	Search             *search.Mock
 	ManagedIdentity    *managedidentity.Mock
+	SQLVirtualMachine  *sqlvirtualmachine.Mock
 	ContainerApps      *containerapps.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
@@ -210,6 +212,7 @@ func New(opts ...config.Option) *Provider {
 		AI:                 ai.New(o),
 		Search:             search.New(o),
 		ManagedIdentity:    managedidentity.New(o),
+		SQLVirtualMachine:  sqlvirtualmachine.New(o),
 		ContainerApps:      containerapps.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
@@ -266,6 +269,7 @@ func New(opts ...config.Option) *Provider {
 			Extra: []resourcediscovery.GenericResources{
 				azureMLDiscovery{p.AI},
 				managedIdentityDiscovery{p.ManagedIdentity},
+				sqlVirtualMachineDiscovery{p.SQLVirtualMachine},
 				containerAppsDiscovery{p.ContainerApps},
 			},
 		},

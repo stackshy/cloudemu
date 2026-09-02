@@ -39,6 +39,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		MySQLFlex:          p.MySQLFlex,
 		AKS:                p.AKS,
 		ManagedIdentity:    p.ManagedIdentity,
+		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,
 		ACR:                p.ACR,
