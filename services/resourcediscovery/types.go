@@ -44,6 +44,13 @@ type Resource struct {
 	Kind string
 	// ManagedBy is the id of an owning/parent resource (e.g. a disk's VM).
 	ManagedBy string
+	// State is the run/lifecycle state of a stateful resource (a compute
+	// instance's "running"/"stopped"/"terminated"). It is a cost input — a
+	// terminated or stopped instance bills $0 for compute — carried separately
+	// from Properties so it never leaks into the properties bag a passthrough
+	// renderer (Azure Resource Graph) echoes. Empty for resources with no run
+	// state, which cost treats as billable (unchanged).
+	State string
 	// Zones are the availability zones the resource occupies.
 	Zones []string
 	// Properties is an open bag of resource-specific attributes (e.g. disk
