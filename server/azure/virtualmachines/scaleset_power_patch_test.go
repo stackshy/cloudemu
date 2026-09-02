@@ -80,6 +80,24 @@ func TestSDKVMSSWholeSetPower(t *testing.T) {
 
 	pollVMSSDone(ctx, t, restartPoller)
 	assertAllVMSSPower(ctx, t, vmClient, rg, name, ids, "PowerState/running")
+
+	// PowerOff then Reimage the whole set → reimage settles every instance back
+	// to running, like start/restart.
+	offPoller, err := ssClient.BeginPowerOff(ctx, rg, name, nil)
+	if err != nil {
+		t.Fatalf("BeginPowerOff before reimage: %v", err)
+	}
+
+	pollVMSSDone(ctx, t, offPoller)
+	assertAllVMSSPower(ctx, t, vmClient, rg, name, ids, "PowerState/stopped")
+
+	reimagePoller, err := ssClient.BeginReimage(ctx, rg, name, nil)
+	if err != nil {
+		t.Fatalf("BeginReimage: %v", err)
+	}
+
+	pollVMSSDone(ctx, t, reimagePoller)
+	assertAllVMSSPower(ctx, t, vmClient, rg, name, ids, "PowerState/running")
 }
 
 // TestSDKVMSSWholeSetPowerSubset targets a single instance via the instanceIds
@@ -132,10 +150,11 @@ func TestSDKVMSSWholeSetPowerSubset(t *testing.T) {
 	}
 }
 
-// TestSDKVMSSUpdate drives the real BeginUpdate (PATCH) merge: a scale set
-// created with one tag and capacity 2 is patched with a second tag and capacity
-// 4. The response must carry both tags (merge, not replace) and the new
-// capacity, and the set must materialize 4 instances.
+// TestSDKVMSSUpdate drives the real BeginUpdate (PATCH): a scale set created
+// with one tag and capacity 2 is patched with a different tag and capacity 4.
+// ARM resource-level PATCH replaces the tag set wholesale, so the response must
+// carry only the new tag (the pre-existing one dropped) plus the new capacity,
+// and the set must materialize 4 instances.
 func TestSDKVMSSUpdate(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{VirtualMachines: cloudP.VirtualMachines})
@@ -185,12 +204,12 @@ func TestSDKVMSSUpdate(t *testing.T) {
 		t.Fatalf("update poll: %v", err)
 	}
 
-	if v := res.Tags["env"]; v == nil || *v != "dev" {
-		t.Fatalf("PATCH dropped pre-existing tag env: got %v", res.Tags)
+	if _, ok := res.Tags["env"]; ok {
+		t.Fatalf("PATCH must replace the tag set wholesale, but pre-existing tag env survived: got %v", res.Tags)
 	}
 
 	if v := res.Tags["team"]; v == nil || *v != "platform" {
-		t.Fatalf("PATCH did not merge new tag team: got %v", res.Tags)
+		t.Fatalf("PATCH did not apply new tag team: got %v", res.Tags)
 	}
 
 	if res.SKU == nil || res.SKU.Capacity == nil || *res.SKU.Capacity != 4 {

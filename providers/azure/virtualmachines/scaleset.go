@@ -349,7 +349,7 @@ func (m *Mock) PowerScaleSet(_ context.Context, vmssName, action string, instanc
 
 	if targets != nil {
 		for _, id := range instanceIDs {
-			if id != "*" && !matched[id] {
+			if !matched[id] {
 				return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q has no instance %q", vmssName, id)
 			}
 		}
@@ -359,17 +359,12 @@ func (m *Mock) PowerScaleSet(_ context.Context, vmssName, action string, instanc
 }
 
 // instanceIDSet returns the membership set for a subset power request, or nil
-// when the request targets every instance (empty, or the "*" wildcard Azure
-// accepts to mean all).
+// when instanceIDs is omitted. Real Azure targets every instance by omitting
+// instanceIds entirely (an explicit list targets exactly that subset); there is
+// no all-instances sentinel value.
 func instanceIDSet(ids []string) map[string]bool {
 	if len(ids) == 0 {
 		return nil
-	}
-
-	for _, id := range ids {
-		if id == "*" {
-			return nil
-		}
 	}
 
 	set := make(map[string]bool, len(ids))
@@ -382,7 +377,8 @@ func instanceIDSet(ids []string) map[string]bool {
 
 // ScaleSetPatch carries the mutable fields a whole-VMSS PATCH (ARM
 // VirtualMachineScaleSets Update) can change. A zero-valued field leaves the
-// stored value untouched; Tags are merged key-by-key rather than replaced; a
+// stored value untouched; a non-nil Tags map replaces the tag set wholesale
+// (an empty map wipes it), matching ARM resource-level PATCH semantics; a
 // non-nil Capacity rescales the set, reconciling its materialized instances.
 type ScaleSetPatch struct {
 	Tags        map[string]string
@@ -419,14 +415,8 @@ func (m *Mock) UpdateScaleSet(_ context.Context, name string, patch ScaleSetPatc
 //
 //nolint:gocritic // patch mirrors a request-scoped value passed once per call.
 func applyScaleSetPatch(s *ScaleSet, patch ScaleSetPatch) {
-	if len(patch.Tags) > 0 {
-		if s.Tags == nil {
-			s.Tags = make(map[string]string, len(patch.Tags))
-		}
-
-		for k, v := range patch.Tags {
-			s.Tags[k] = v
-		}
+	if patch.Tags != nil {
+		s.Tags = patch.Tags
 	}
 
 	if patch.SKUName != "" {

@@ -195,7 +195,7 @@ func TestPowerScaleSetErrors(t *testing.T) {
 	require.Error(t, m.PowerScaleSet(ctx, "vmss-err", "start", []string{"9"}))
 }
 
-func TestUpdateScaleSetMergesTagsAndCapacity(t *testing.T) {
+func TestUpdateScaleSetReplacesTagsAndRescales(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
 
@@ -214,14 +214,25 @@ func TestUpdateScaleSetMergesTagsAndCapacity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Tags merge (pre-existing key survives), capacity rescales.
-	assert.Equal(t, "dev", updated.Tags["env"])
+	// A supplied Tags map replaces the tag set wholesale (ARM PATCH semantics):
+	// the new key is present and the pre-existing key is gone.
 	assert.Equal(t, "platform", updated.Tags["team"])
+	assert.NotContains(t, updated.Tags, "env")
 	assert.Equal(t, 4, updated.Capacity)
 
 	vms, err := m.ListScaleSetVMs(ctx, "vmss-patch")
 	require.NoError(t, err)
 	require.Len(t, vms, 4)
+
+	// A PATCH that omits tags (nil map) leaves the current tag set untouched.
+	unchanged, err := m.UpdateScaleSet(ctx, "vmss-patch", ScaleSetPatch{})
+	require.NoError(t, err)
+	assert.Equal(t, "platform", unchanged.Tags["team"])
+
+	// An empty (non-nil) tags map wipes the tag set.
+	wiped, err := m.UpdateScaleSet(ctx, "vmss-patch", ScaleSetPatch{Tags: map[string]string{}})
+	require.NoError(t, err)
+	assert.Empty(t, wiped.Tags)
 
 	// Missing scale set → NotFound.
 	_, err = m.UpdateScaleSet(ctx, "no-such", ScaleSetPatch{})
