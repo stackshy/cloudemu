@@ -61,6 +61,36 @@ type InstanceConfig struct {
 	// address from the referenced subnetwork's CIDR before launch. Ignored by
 	// AWS/Azure.
 	PrivateIP string
+	// BlockDeviceMappings are the client-supplied boot/data disk requests carried
+	// on create (AWS RunInstances BlockDeviceMapping.N, GCP disks[] with
+	// initializeParams, Azure storageProfile.osDisk + dataDisks). The provider
+	// materializes a real backing volume resource for each one, attached to the
+	// launched instance. Provider-neutral and additive: a caller that leaves it
+	// nil (as Azure/GCP do today) keeps the pre-existing behavior — the AWS
+	// provider then synthesizes a single default root volume.
+	BlockDeviceMappings []BlockDeviceMapping
+}
+
+// BlockDeviceMapping is one client-supplied block/boot disk request on instance
+// create. It is provider-neutral: AWS maps it from RunInstances
+// BlockDeviceMapping.N, and it is the shared carrier the GCP boot-disk / Azure
+// OS-disk work builds on. The provider materializes a real volume resource per
+// mapping, attached to the launched instance at DeviceName.
+type BlockDeviceMapping struct {
+	// DeviceName is the device the volume attaches at (e.g. "/dev/sda1").
+	DeviceName string
+	// Boot marks the instance's root/boot device. Exactly one mapping is the
+	// boot device; the provider synthesizes a default root when none is Boot.
+	Boot bool
+	// AutoDelete requests that the volume be deleted when the instance is
+	// terminated/deleted (AWS DeleteOnTermination, GCP autoDelete, Azure
+	// deleteOption=="Delete"). It is carried onto the materialized volume's
+	// VolumeInfo.DeleteOnTermination.
+	AutoDelete bool
+	// Size is the volume size in GiB (0 = provider default).
+	Size int
+	// Type is the volume/disk type (e.g. "gp3"; empty = provider default).
+	Type string
 }
 
 // AzureNICRef identifies a Network Interface (Microsoft.Network/networkInterfaces)
@@ -414,6 +444,14 @@ type VolumeInfo struct {
 	Device           string
 	CreatedAt        string
 	Tags             map[string]string
+	// DeleteOnTermination is the attachment-scoped auto-delete flag: when the
+	// volume is attached and this is true, terminating the owning instance
+	// deletes the volume rather than detaching it (AWS root volume defaults
+	// true; GCP autoDelete; Azure deleteOption=="Delete"). It has meaning only
+	// while AttachedTo is set and is cleared on detach. Zero value (false)
+	// preserves the pre-existing detach-on-terminate behavior for providers that
+	// do not yet set it.
+	DeleteOnTermination bool
 	// IOPS is the provisioned IOPS (io2/gp3, Premium/Ultra disks), when set.
 	IOPS int
 	// Throughput is the provisioned throughput in MB/s, when set.

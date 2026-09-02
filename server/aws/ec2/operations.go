@@ -61,6 +61,8 @@ const (
 	primaryDeviceIndex = 0
 	// internalDNSSuffix is the private-DNS suffix EC2 uses in us-east-1.
 	internalDNSSuffix = ".ec2.internal"
+	// rootDeviceDefault is the root device name used when an AMI reports none.
+	rootDeviceDefault = "/dev/sda1"
 )
 
 // runInstances handles Action=RunInstances.
@@ -83,6 +85,7 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	applyRunInstancesForm(&cfg, form)
+	cfg.BlockDeviceMappings = h.parseRunBlockDeviceMappings(r.Context(), form, cfg.ImageID)
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, count)
 	if err != nil {
@@ -187,6 +190,75 @@ func applyRunInstancesForm(cfg *computedriver.InstanceConfig, form url.Values) {
 	if tags := mergeTagSpecs(awsquery.TagSpecs(form), "instance"); len(tags) > 0 {
 		cfg.Tags = tags
 	}
+}
+
+// parseRunBlockDeviceMappings reads the RunInstances BlockDeviceMapping.N.*
+// groups into provider-neutral mappings and guarantees exactly one boot mapping
+// so the provider materializes a root volume. The boot mapping is the one whose
+// device name matches the AMI's root device (defaulting to /dev/sda1); a launch
+// that names no such mapping gets a synthesized boot mapping. DeleteOnTermination
+// defaults to true for launch-time mappings, matching real EC2.
+func (h *Handler) parseRunBlockDeviceMappings(
+	ctx context.Context, form url.Values, imageID string,
+) []computedriver.BlockDeviceMapping {
+	rootDevice := h.rootDeviceName(ctx, imageID)
+
+	out := make([]computedriver.BlockDeviceMapping, 0)
+	bootSeen := false
+
+	for _, i := range awsquery.CollectIndices(form, "BlockDeviceMapping") {
+		base := "BlockDeviceMapping." + strconv.Itoa(i)
+
+		// A mapping without an Ebs block (e.g. a NoDevice / ephemeral entry) does
+		// not create an EBS volume; skip it.
+		device := form.Get(base + ".DeviceName")
+		if device == "" {
+			continue
+		}
+
+		size, _ := strconv.Atoi(form.Get(base + ".Ebs.VolumeSize"))
+
+		deleteOnTermination := true
+		if v := form.Get(base + ".Ebs.DeleteOnTermination"); v != "" {
+			deleteOnTermination = v == formTrue
+		}
+
+		boot := device == rootDevice
+		bootSeen = bootSeen || boot
+
+		out = append(out, computedriver.BlockDeviceMapping{
+			DeviceName: device,
+			Boot:       boot,
+			AutoDelete: deleteOnTermination,
+			Size:       size,
+			Type:       form.Get(base + ".Ebs.VolumeType"),
+		})
+	}
+
+	if !bootSeen {
+		out = append(out, computedriver.BlockDeviceMapping{
+			DeviceName: rootDevice,
+			Boot:       true,
+			AutoDelete: true,
+		})
+	}
+
+	return out
+}
+
+// rootDeviceName resolves the root device name of the launch AMI, falling back
+// to /dev/sda1 when the image is unknown or reports none.
+func (h *Handler) rootDeviceName(ctx context.Context, imageID string) string {
+	if imageID == "" || h.compute == nil {
+		return rootDeviceDefault
+	}
+
+	imgs, err := h.compute.DescribeImages(ctx, []string{imageID})
+	if err != nil || len(imgs) == 0 || imgs[0].RootDeviceName == "" {
+		return rootDeviceDefault
+	}
+
+	return imgs[0].RootDeviceName
 }
 
 // reservationIDFor returns the instance's reservation id, falling back to a
@@ -970,7 +1042,7 @@ func instanceBlockDevices(vols []computedriver.VolumeInfo) []instanceBlockDevice
 				VolumeID:            v.ID,
 				Status:              eniAttachedStatus,
 				AttachTime:          v.CreatedAt,
-				DeleteOnTermination: false,
+				DeleteOnTermination: v.DeleteOnTermination,
 			},
 		})
 	}

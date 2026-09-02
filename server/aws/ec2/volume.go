@@ -36,11 +36,12 @@ const (
 )
 
 type volumeAttachmentXML struct {
-	VolumeID   string `xml:"volumeId"`
-	InstanceID string `xml:"instanceId"`
-	Device     string `xml:"device"`
-	Status     string `xml:"status"`
-	AttachTime string `xml:"attachTime,omitempty"`
+	VolumeID            string `xml:"volumeId"`
+	InstanceID          string `xml:"instanceId"`
+	Device              string `xml:"device"`
+	Status              string `xml:"status"`
+	AttachTime          string `xml:"attachTime,omitempty"`
+	DeleteOnTermination bool   `xml:"deleteOnTermination"`
 }
 
 type volumeXML struct {
@@ -420,11 +421,12 @@ func toVolumeXML(v *computedriver.VolumeInfo) volumeXML {
 
 	if v.AttachedTo != "" {
 		x.Attachments = []volumeAttachmentXML{{
-			VolumeID:   v.ID,
-			InstanceID: v.AttachedTo,
-			Device:     v.Device,
-			Status:     "attached",
-			AttachTime: v.CreatedAt,
+			VolumeID:            v.ID,
+			InstanceID:          v.AttachedTo,
+			Device:              v.Device,
+			Status:              "attached",
+			AttachTime:          v.CreatedAt,
+			DeleteOnTermination: v.DeleteOnTermination,
 		}}
 	}
 

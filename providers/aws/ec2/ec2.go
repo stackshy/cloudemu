@@ -67,6 +67,12 @@ const (
 	// imageRootDeviceSize is the default root EBS volume size (GiB) recorded in
 	// an AMI's block device mapping when created from a running instance.
 	imageRootDeviceSize = 8
+	// defaultRootDeviceName is the device the root EBS volume attaches at when a
+	// launch supplies no block device mapping for it.
+	defaultRootDeviceName = "/dev/sda1"
+	// defaultVolumeType is the EBS volume type used for a launch-materialized
+	// volume that names none (matching the CreateVolume default).
+	defaultVolumeType = "gp3"
 	// rsaKeyBits is the modulus size for generated RSA key pairs.
 	rsaKeyBits = 2048
 	// keyTypeRSA / keyTypeEd25519 are the two key-pair algorithms the mock
@@ -714,9 +720,75 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		if vpcID != "" {
 			m.materializePrimaryENI(ctx, id, cfg.SubnetID, sg)
 		}
+
+		// Materialize the instance's root EBS volume (and any client-supplied
+		// data volumes) as real volume resources attached to it, so
+		// DescribeVolumes / DescribeInstances report the backing disks real EC2
+		// creates at launch, and TerminateInstances can honor DeleteOnTermination.
+		m.materializeInstanceVolumes(cfg, id)
 	}
 
 	return results, nil
+}
+
+// materializeInstanceVolumes creates the backing EBS volume resources for a
+// just-launched instance: one per client-supplied BlockDeviceMapping (attached
+// at its device with its DeleteOnTermination), plus a synthesized default root
+// volume (/dev/sda1, 8 GiB, gp3, DeleteOnTermination=true) when the launch names
+// no boot mapping — matching real EC2, where every instance has a root volume.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the launchInstances signature.
+func (m *Mock) materializeInstanceVolumes(cfg driver.InstanceConfig, instanceID string) {
+	az := m.opts.Region + "a"
+	now := m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	bootCreated := false
+
+	for _, bdm := range cfg.BlockDeviceMappings {
+		device := bdm.DeviceName
+		size := bdm.Size
+
+		if bdm.Boot {
+			bootCreated = true
+
+			if device == "" {
+				device = defaultRootDeviceName
+			}
+		}
+
+		if size == 0 {
+			size = imageRootDeviceSize
+		}
+
+		volType := bdm.Type
+		if volType == "" {
+			volType = defaultVolumeType
+		}
+
+		m.createAttachedVolume(instanceID, device, volType, size, bdm.AutoDelete, az, now)
+	}
+
+	if !bootCreated {
+		m.createAttachedVolume(instanceID, defaultRootDeviceName, defaultVolumeType, imageRootDeviceSize, true, az, now)
+	}
+}
+
+// createAttachedVolume stores a new EBS volume already in-use and attached to
+// instanceID at device, carrying the attachment-scoped DeleteOnTermination flag.
+func (m *Mock) createAttachedVolume(instanceID, device, volType string, size int, deleteOnTermination bool, az, now string) {
+	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))
+
+	m.volumes.Set(id, &driver.VolumeInfo{
+		ID:                  id,
+		Size:                size,
+		VolumeType:          volType,
+		State:               stateInUse,
+		AvailabilityZone:    az,
+		AttachedTo:          instanceID,
+		Device:              device,
+		CreatedAt:           now,
+		DeleteOnTermination: deleteOnTermination,
+	})
 }
 
 // renderInstancesByID renders the current state of the given instance ids fresh
@@ -1627,6 +1699,7 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device stri
 		cp.State = stateAvailable
 		cp.AttachedTo = ""
 		cp.Device = ""
+		cp.DeleteOnTermination = false
 
 		return &cp
 	})
@@ -1637,31 +1710,45 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device stri
 	return detachErr
 }
 
-// detachTerminatedVolumes returns every EBS volume attached to a now-terminated
-// instance to the `available` state (attachment cleared). Real EC2 detaches
-// volumes with DeleteOnTermination=false back to available on terminate; user-
-// attached volumes carry that default, so all of them detach here. Each volume
-// is updated with a copy-on-write fresh pointer under the store lock so a
-// concurrent DescribeVolumes/AttachVolume never races.
+// detachTerminatedVolumes settles every EBS volume attached to a now-terminated
+// instance, matching real EC2's terminate cascade: a volume with
+// DeleteOnTermination=true (the root volume's default) is DELETED, and one with
+// DeleteOnTermination=false is returned to `available` with its attachment
+// cleared. The detach path updates a copy-on-write fresh pointer under the store
+// lock so a concurrent DescribeVolumes/AttachVolume never races.
 func (m *Mock) detachTerminatedVolumes(instanceIDs []string) {
 	terminated := make(map[string]bool, len(instanceIDs))
 	for _, id := range instanceIDs {
 		terminated[id] = true
 	}
 
-	for _, volID := range m.volumes.Keys() {
-		m.volumes.Update(volID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
-			if v.AttachedTo == "" || !terminated[v.AttachedTo] {
-				return v
-			}
+	var toDelete []string
 
+	for _, volID := range m.volumes.Keys() {
+		vol, ok := m.volumes.Get(volID)
+		if !ok || vol.AttachedTo == "" || !terminated[vol.AttachedTo] {
+			continue
+		}
+
+		if vol.DeleteOnTermination {
+			toDelete = append(toDelete, volID)
+			continue
+		}
+
+		m.volumes.Update(volID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
 			cp := *v
 			cp.State = stateAvailable
 			cp.AttachedTo = ""
 			cp.Device = ""
+			cp.DeleteOnTermination = false
 
 			return &cp
 		})
+	}
+
+	for _, volID := range toDelete {
+		m.volumes.Delete(volID)
+		m.volSettle.Delete(volID)
 	}
 }
 
