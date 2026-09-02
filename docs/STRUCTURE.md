@@ -156,9 +156,14 @@ have no `driver/`:
 
 - `services/kubernetes` — a self-contained data-plane engine (its own HTTP surface).
 - `services/resourcediscovery` — a cross-service engine that *consumes* other drivers.
-- `services/cost`, `services/scope` — cross-cutting utilities, not a cloud capability.
+- `services/cost`, `services/pricing`, `services/scope` — cross-cutting utilities, not a cloud capability (`pricing` is the rate-table lookup that feeds the `cost` estimate model).
 
 If you add a genuine portable-API service, it **must** have `driver/`.
+
+Cross-cutting *behaviors* (not capabilities) live under `features/` instead —
+`recorder`, `metrics`, `ratelimit`, `inject`, `chaos`, `topology`, plus `vcr`
+(wire record/replay), `timetravel` (named state save/rewind/fork), and `quota`
+(per-service quota registry). These have no `driver/` either.
 
 ---
 
