@@ -100,6 +100,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sagemakerfeaturestoreruntime v1.35.7
 	github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.5
+	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.4
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.45.4
 	github.com/aws/aws-sdk-go-v2/service/sns v1.41.0

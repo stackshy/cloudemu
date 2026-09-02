@@ -244,6 +244,8 @@ github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0 h1:YRiKEeNe+Kgi03T
 github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0/go.mod h1:y1haDXp66bFbEY007eY3iipsa1Mwi27QQNapOv0MQ7g=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.5 h1:CWn32XhRKVJQlCpU5T1PpspYbgUisB+Ke1w7NR4AHZw=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.5/go.mod h1:oUyL28WfxY0RqPhFpkrWZx26Cu4JlyrWMMcWq8qqhi0=
+github.com/aws/aws-sdk-go-v2/service/servicequotas v1.30.0 h1:DkMHQQ1yfoPT57erFe/SJXCZ5Weo5T0/AROuA6hg4VQ=
+github.com/aws/aws-sdk-go-v2/service/servicequotas v1.30.0/go.mod h1:r9XW7P7bOhnjMycQWPVeIEPvmzmW8RqzW65vp4z+IjY=
 github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.4 h1:br4Yg9yZfFggiPLgSh4ud7oLxXeG4r/UFysUiPFBYD0=
 github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.4/go.mod h1:f3Jidj1KNnUeGCuKpAhazEpxIFCVyu5+RDAB6OXt1/s=
 github.com/aws/aws-sdk-go-v2/service/sfn v1.45.4 h1:SM1kF9OLEi49bzhYW5xjexvFWKz9NhnWfN6FpWBwLJw=
