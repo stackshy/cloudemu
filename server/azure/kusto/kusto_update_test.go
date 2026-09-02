@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKKustoClusterUpdate drives the cluster PATCH (ClustersClient.Update):
-// tags merge into the existing set, sku capacity and a mutable property are
+// tags are replaced wholesale, sku capacity and a mutable property are
 // applied, and the synthesized URIs / run state are preserved.
 func TestSDKKustoClusterUpdate(t *testing.T) {
 	ts := newServer(t)
@@ -44,13 +44,14 @@ func TestSDKKustoClusterUpdate(t *testing.T) {
 		t.Fatalf("Get cluster: %v", err)
 	}
 
-	// Existing tag preserved, new tag merged in.
-	if got.Tags["env"] == nil || *got.Tags["env"] != "test" {
-		t.Errorf("tag env = %v, want test (existing tag must survive)", got.Tags["env"])
-	}
-
+	// Resource-level tag PATCH replaces the set wholesale: the cluster was
+	// created with {env: test}, so after a PATCH of {team: data} only team remains.
 	if got.Tags["team"] == nil || *got.Tags["team"] != "data" {
 		t.Errorf("tag team = %v, want data", got.Tags["team"])
+	}
+
+	if _, ok := got.Tags["env"]; ok {
+		t.Errorf("tag env survived a replace PATCH that omitted it: %v", got.Tags["env"])
 	}
 
 	if got.SKU == nil || got.SKU.Capacity == nil || *got.SKU.Capacity != 4 {

@@ -155,11 +155,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	azurearm.WriteJSON(w, http.StatusOK, body)
 }
 
-// updateTags applies an ARM PATCH (Images - Update / ImageUpdate): the tags in
-// the body are merged into the image's existing tags, every other field is
-// preserved, and the full image resource is returned in GET shape. A PATCH on a
-// missing image is a 404. cloudemu-internal tags are always preserved because
-// the merge starts from the stored tag set.
+// updateTags applies an ARM PATCH (Images - Update / ImageUpdate): resource-level
+// tag PATCH replaces the user tag set wholesale, every other field is preserved,
+// and the full image resource is returned in GET shape. A PATCH on a missing
+// image is a 404. The cloudemu-internal identity tags are always preserved
+// because they are re-asserted from the stored image after the replace.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) updateTags(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
@@ -180,18 +180,19 @@ func (h *Handler) updateTags(w http.ResponseWriter, r *http.Request, rp azurearm
 		return
 	}
 
-	// Merge the user tags, then re-assert the cloudemu-internal bookkeeping tags
-	// from the stored image exactly as PUT does. A PATCH must never let a caller
-	// rewrite the reserved cloudemu: namespace (image name, resource group,
-	// source VM, OS type) — those keys carry the image's ARM identity, so they
-	// stay immutable across the update.
+	// Resource-level Azure tag PATCH REPLACES the user tag set wholesale, so the
+	// new user tags are only those in the body (a tags:{} body wipes them). The
+	// cloudemu-internal bookkeeping tags are then re-asserted from the stored
+	// image exactly as PUT does: a PATCH must never rewrite the reserved cloudemu:
+	// namespace (image name, resource group, source VM, OS type), because those
+	// keys carry the image's ARM identity and stay immutable across the update.
 	name := tagOr(img.Tags, armNameTag, img.Name)
-	merged := mergeTags(
-		mergeUserTags(img.Tags, withoutReservedTags(req.Tags)),
+	tags := mergeTags(
+		withoutReservedTags(req.Tags),
 		name, tagOr(img.Tags, rgTag, ""), tagOr(img.Tags, sourceVMTag, ""), tagOr(img.Tags, osTypeTag, ""),
 	)
 
-	updated, err := updater.UpdateImageTags(r.Context(), img.ID, merged)
+	updated, err := updater.UpdateImageTags(r.Context(), img.ID, tags)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -565,23 +566,6 @@ func withoutReservedTags(in map[string]string) map[string]string {
 			continue
 		}
 
-		out[k] = v
-	}
-
-	return out
-}
-
-// mergeUserTags overlays the PATCH-supplied tags onto the image's existing tag
-// set (which still carries the cloudemu-internal tags), so untouched tags — and
-// every internal tag — survive the update. A nil incoming map is a no-op merge.
-func mergeUserTags(existing, incoming map[string]string) map[string]string {
-	out := make(map[string]string, len(existing)+len(incoming))
-
-	for k, v := range existing {
-		out[k] = v
-	}
-
-	for k, v := range incoming {
 		out[k] = v
 	}
 

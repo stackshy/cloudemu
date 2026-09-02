@@ -81,10 +81,11 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, kp kusto
 }
 
 // updateCluster serves the ARM PATCH (ClustersClient.Update / ClusterUpdate):
-// tags are merged into the existing set, sku / zones / location are replaced when
-// supplied, the mutable cluster properties are overlaid, and every untouched
-// field — including the synthesized URIs and run state — is preserved. A PATCH on
-// a missing cluster is a 404.
+// the tags object is replaced wholesale when present (resource-level ARM tag
+// PATCH is replace, not deep-merge), sku / zones / location are replaced when
+// supplied, the mutable cluster properties are overlaid (shallow patch), and
+// every untouched field — including the synthesized URIs and run state — is
+// preserved. A PATCH on a missing cluster is a 404.
 func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, kp kustoPath) {
 	var req updateClusterRequest
 	if !decodeBody(w, r, &req) {
@@ -106,7 +107,7 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, kp kusto
 	}
 
 	if req.Tags != nil {
-		c.Tags = mergeTags(c.Tags, req.Tags)
+		c.Tags = maps.Clone(req.Tags)
 	}
 
 	if req.SKU != nil {
@@ -222,19 +223,6 @@ func normalizeSKU(in *kustoSKU) kustoSKU {
 	if out.Tier == "" {
 		out.Tier = "Standard"
 	}
-
-	return out
-}
-
-// mergeTags overlays incoming tags onto a clone of existing, so a PATCH keeps
-// untouched tags. A nil incoming map is handled by the caller (no merge).
-func mergeTags(existing, incoming map[string]string) map[string]string {
-	out := maps.Clone(existing)
-	if out == nil {
-		out = make(map[string]string, len(incoming))
-	}
-
-	maps.Copy(out, incoming)
 
 	return out
 }

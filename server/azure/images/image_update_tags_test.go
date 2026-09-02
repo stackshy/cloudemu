@@ -79,13 +79,15 @@ func newImagesClient(t *testing.T, ctx context.Context) *armcompute.ImagesClient
 	return imgClient
 }
 
-// TestSDKImageUpdateTagsMerges verifies the PATCH tag update merges the supplied
-// tags into the existing set (preserving untouched ones), overrides a key when
-// re-supplied, and returns the full image resource.
-func TestSDKImageUpdateTagsMerges(t *testing.T) {
+// TestSDKImageUpdateTagsReplaces verifies the PATCH tag update replaces the user
+// tag set wholesale (a pre-existing tag absent from the body is dropped),
+// preserves the untouched osDisk / provisioning state, and returns the full image.
+func TestSDKImageUpdateTagsReplaces(t *testing.T) {
 	ctx := context.Background()
 	imgClient := newImagesClient(t, ctx)
 
+	// The image was created with tags {env: dev, owner: alice}. This PATCH omits
+	// owner, so replace semantics must drop it.
 	poller, err := imgClient.BeginUpdate(ctx, "rg-1", "img-tags",
 		armcompute.ImageUpdate{Tags: map[string]*string{"team": to.Ptr("data"), "env": to.Ptr("prod")}}, nil)
 	if err != nil {
@@ -107,10 +109,15 @@ func TestSDKImageUpdateTagsMerges(t *testing.T) {
 		t.Errorf("provisioningState not preserved: %+v", updated.Properties)
 	}
 
-	wantTags := map[string]string{"env": "prod", "owner": "alice", "team": "data"}
+	// Only the body's tags remain: env overridden, team added, owner dropped.
+	wantTags := map[string]string{"env": "prod", "team": "data"}
 	assertTags(t, updated.Tags, wantTags)
 
-	// A fresh GET reports the same merged tags.
+	if _, ok := updated.Tags["owner"]; ok {
+		t.Error("owner tag survived a replace PATCH that omitted it")
+	}
+
+	// A fresh GET reports the same replaced tag set.
 	got, err := imgClient.Get(ctx, "rg-1", "img-tags", nil)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -153,6 +160,11 @@ func TestSDKImageUpdateTagsIgnoresReserved(t *testing.T) {
 
 	if updated.Tags["keep"] == nil || *updated.Tags["keep"] != "yes" {
 		t.Errorf("keep tag = %v, want yes", updated.Tags["keep"])
+	}
+
+	// Replace semantics: the pre-existing user tags (env, owner) are gone.
+	if _, ok := updated.Tags["owner"]; ok {
+		t.Error("pre-existing owner tag survived a replace PATCH")
 	}
 
 	// GET on the original name still resolves...
