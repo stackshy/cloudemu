@@ -15,7 +15,11 @@ name: CI
 #   * A docs-only PR (only `*.md` / `docs/**`) skips the heavy Go jobs (Test,
 #     Race, Contrib, Compat). Those are skipped at the JOB level via `if:`, which
 #     GitHub reports as a successful check — so required checks are not left
-#     pending and docs PRs stay mergeable.
+#     pending and docs PRs stay mergeable. The skip is fail-safe: the heavy jobs
+#     run unless the classifier explicitly said docs-only (`code=='false'`), so a
+#     classifier failure runs the full suite rather than skipping it, and the
+#     "Test" gate is fail-closed (it only counts a skip as a pass on a genuine
+#     docs-only classifier success).
 on:
   pull_request:
   push:
@@ -104,7 +108,10 @@ jobs:
     name: Contrib (testcontainers)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module (keeps testcontainers-go out of the core module), so
     # the root build/vet doesn't cover it. Compile + vet only — the container
     # acceptance test needs Docker and is run on demand (go test ./...).
@@ -132,7 +139,10 @@ jobs:
     name: Contrib (realengine)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module (keeps embedded-postgres out of the core module). Build
     # + vet only — the real-Postgres tests fetch a Postgres binary and run it,
     # so they are executed on demand (go test ./...), not on every CI run.
@@ -160,7 +170,10 @@ jobs:
     name: Contrib (dockerengine)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module (keeps the docker-CLI-oriented deps out of the core
     # module). Build + vet + lint here; the real-container e2es (MySQL, compute,
     # containers, the Azure Functions host) shell out to the docker CLI and pull
@@ -195,7 +208,10 @@ jobs:
     name: Contrib (server)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module: the batteries-included wire server that composes the
     # real engines onto the wire servers. Build + vet + lint here; the real-engine
     # e2e (embedded Postgres + miniredis + real AWS SDK) fetches a Postgres binary
@@ -215,6 +231,13 @@ jobs:
           key: go-${{ runner.os }}-server-${{ hashFiles('contrib/server/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-server-
+      # Hard failure — keep the contrib module's compile check blocking (a
+      # go.sum/compile break here must fail CI, not merge silently).
+      - name: build & vet
+        working-directory: contrib/server
+        run: |
+          go build ./...
+          go vet ./...
       # embedded-postgres downloads its Postgres binary on first run; cache it so
       # the CI-safe test tier (no docker socket needed — the E2E uses embedded
       # Postgres, the degrade tests run WITHOUT docker) doesn't refetch each run.
@@ -253,7 +276,10 @@ jobs:
     name: Contrib (terraform)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module: the IaC-compatibility suite. Unlike the other contrib
     # e2es (which need Docker), this one needs only an OpenTofu binary and a
     # provider download, so — as the evidenced-IaC-compat proof — it actually
@@ -293,7 +319,10 @@ jobs:
     name: Test (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -331,9 +360,12 @@ jobs:
           go test $pkgs
 
   # Aggregating gate: keeps the required-check name "Test" stable after
-  # sharding. Green when every shard passed OR the shards were skipped
-  # (docs-only PR); red if any shard failed. Branch protection should keep
-  # requiring "Test" (NOT the per-shard "Test (n/4)" names).
+  # sharding. Branch protection should keep requiring "Test" (NOT the per-shard
+  # "Test (n/4)" names). This gate is fail-CLOSED — a skipped matrix only passes
+  # when it is a *genuine* docs-only skip (classifier succeeded AND said
+  # code=='false'). If the `changes` classifier itself failed/was cancelled, or
+  # the shards were skipped while code=='true', the gate goes RED — so a
+  # classifier hiccup can never green "Test" having run zero tests.
   test-gate:
     name: Test
     runs-on: ubuntu-latest
@@ -342,19 +374,29 @@ jobs:
     steps:
       - name: shards result
         run: |
-          result="${{ needs.test.result }}"
-          echo "aggregate shard result: $result"
-          if [ "$result" = "success" ] || [ "$result" = "skipped" ]; then
+          changes_result="${{ needs.changes.result }}"
+          changes_code="${{ needs.changes.outputs.code }}"
+          test_result="${{ needs.test.result }}"
+          echo "changes.result=$changes_result changes.code=$changes_code test.result=$test_result"
+          if [ "$test_result" = "success" ]; then
+            echo "all Test shards passed"
             exit 0
           fi
-          echo "one or more Test shards did not pass"
+          if [ "$test_result" = "skipped" ] && [ "$changes_result" = "success" ] && [ "$changes_code" = "false" ]; then
+            echo "docs-only PR — Test shards legitimately skipped"
+            exit 0
+          fi
+          echo "Test gate FAILED: shards did not pass (shard failure, classifier failure, or an unexpected skip)"
           exit 1
 
   race:
     name: Race
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -404,7 +446,10 @@ jobs:
     name: Compat matrix
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Runs the in-process SDK-compat suite and regenerates docs/compat/ from the
     # results + docs/coverage/coverage.json, then drift-checks it (same pattern
     # as Tidy). A red cell fails the suite; a stale matrix fails the diff.
