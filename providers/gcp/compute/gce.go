@@ -754,6 +754,57 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 	return describeResources(m.snapshots, ids), nil
 }
 
+// SetVolumeLabelsGCP replaces a disk's user labels: set entries are written and
+// remove keys deleted on the disk's tag map (internal cloudemu tags are left
+// untouched — the wire layer only passes user labels). GCP-specific; reached via
+// a type assertion from the GCE wire handler for disks.setLabels.
+func (m *Mock) SetVolumeLabelsGCP(volumeID string, set map[string]string, remove []string) error {
+	return setStoreLabels(m.volumes, volumeID, func(v *driver.VolumeInfo) *map[string]string { return &v.Tags },
+		set, remove, "disk")
+}
+
+// SetImageLabelsGCP replaces an image's user labels. GCP-specific; reached via a
+// type assertion from the GCE wire handler for images.setLabels.
+func (m *Mock) SetImageLabelsGCP(imageID string, set map[string]string, remove []string) error {
+	return setStoreLabels(m.images, imageID, func(v *driver.ImageInfo) *map[string]string { return &v.Tags },
+		set, remove, "image")
+}
+
+// SetSnapshotLabelsGCP replaces a snapshot's user labels. GCP-specific; reached
+// via a type assertion from the GCE wire handler for snapshots.setLabels.
+func (m *Mock) SetSnapshotLabelsGCP(snapshotID string, set map[string]string, remove []string) error {
+	return setStoreLabels(m.snapshots, snapshotID, func(v *driver.SnapshotInfo) *map[string]string { return &v.Tags },
+		set, remove, "snapshot")
+}
+
+// setStoreLabels replaces the user labels on the store record identified by id:
+// set entries are written and remove keys deleted on the tag map returned by
+// tagsPtr. Returns NotFound (kind names the resource) when no record matches.
+func setStoreLabels[T any](
+	store *memstore.Store[*T], id string, tagsPtr func(*T) *map[string]string,
+	set map[string]string, remove []string, kind string,
+) error {
+	rec, ok := store.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, id)
+	}
+
+	tp := tagsPtr(rec)
+	if *tp == nil {
+		*tp = make(map[string]string, len(set))
+	}
+
+	for k, v := range set {
+		(*tp)[k] = v
+	}
+
+	for _, k := range remove {
+		delete(*tp, k)
+	}
+
+	return nil
+}
+
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	// GCP images are created from a disk, snapshot, or import — not from a
