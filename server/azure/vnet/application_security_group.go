@@ -111,30 +111,38 @@ func (*Handler) createASG(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 }
 
 // patchASG applies an ARM UpdateTags PATCH (ApplicationSecurityGroupsClient.
-// UpdateTags — a synchronous 200): the body's tags are merged into the stored
-// set, the ASG's other fields are left intact, and the full resource is
-// returned. A PATCH on a missing ASG is a 404.
+// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// wholesale (tags:{} wipes them), the ASG's other fields are left intact, and
+// the full resource is returned. The get-modify-put is guarded by patchMu so a
+// concurrent PATCH cannot drop the write. A PATCH on a missing ASG is a 404.
 //
-//nolint:gocritic,dupl // rp is request-scoped; mirrors patchPublicIPPrefix's tag-merge over a distinct resource type
-func (*Handler) patchASG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+//nolint:gocritic,dupl // rp is request-scoped; mirrors patchLNGateway's tag-replace over a distinct resource type
+func (h *Handler) patchASG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
 	svc netdriver.AzureApplicationSecurityGroups,
 ) {
-	existing, ok := svc.GetAzureApplicationSecurityGroup(r.Context(), rp.ResourceGroup, rp.ResourceName)
-	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-			"application security group "+rp.ResourceName+" not found")
-
-		return
-	}
-
 	var req armTagsObject
 
 	if !azurearm.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	existing.Tags = mergedTagMap(existing.Tags, req.Tags)
+	h.patchMu.Lock()
+
+	existing, ok := svc.GetAzureApplicationSecurityGroup(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		h.patchMu.Unlock()
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"application security group "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	if req.Tags != nil {
+		existing.Tags = replacementTags(req.Tags)
+	}
+
 	stored := svc.PutAzureApplicationSecurityGroup(r.Context(), existing)
+	h.patchMu.Unlock()
 
 	azurearm.WriteJSON(w, http.StatusOK, asgResponseFrom(stored, rp))
 }

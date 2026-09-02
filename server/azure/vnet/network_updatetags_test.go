@@ -2,6 +2,10 @@ package vnet_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
@@ -11,9 +15,11 @@ import (
 )
 
 // TestSDKApplicationSecurityGroupUpdateTags drives the real armnetwork
-// ApplicationSecurityGroupsClient.UpdateTags (a synchronous PATCH): the supplied
-// tag is merged into the existing set, the ASG's other fields survive, the full
-// resource comes back, and UpdateTags on a missing ASG is a 404.
+// ApplicationSecurityGroupsClient.UpdateTags (a synchronous PATCH). Resource-level
+// UpdateTags REPLACES the tag set wholesale (it does not merge): the supplied tag
+// becomes the only tag, the create-time tag is gone, the ASG's other fields
+// survive, the full resource comes back, a raw tags:{} PATCH wipes all tags, and
+// UpdateTags on a missing ASG is a 404.
 func TestSDKApplicationSecurityGroupUpdateTags(t *testing.T) {
 	ts := newVNetServer(t)
 	ctx := context.Background()
@@ -36,9 +42,10 @@ func TestSDKApplicationSecurityGroupUpdateTags(t *testing.T) {
 		t.Fatalf("UpdateTags: %v", err)
 	}
 
-	// Merge: the new tag is added and the create-time tag is preserved.
-	assertTag(t, updated.Tags, "env", "prod")
+	// Replace: the new tag is the only tag; the create-time tag is gone.
 	assertTag(t, updated.Tags, "team", "net")
+	assertNoTag(t, updated.Tags, "env")
+	assertTagCount(t, updated.Tags, 1)
 
 	// Full resource: name, location and provisioningState come back on the PATCH.
 	if updated.Name == nil || *updated.Name != "asg-tag" {
@@ -54,14 +61,21 @@ func TestSDKApplicationSecurityGroupUpdateTags(t *testing.T) {
 		t.Errorf("provisioningState=%v want Succeeded", updated.Properties)
 	}
 
-	// A follow-up GET reflects the merged set (the merge was persisted, not echoed).
+	// A follow-up GET reflects the replaced set (the replace was persisted).
 	got, err := client.Get(ctx, "rg-1", "asg-tag", nil)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 
-	assertTag(t, got.Tags, "env", "prod")
 	assertTag(t, got.Tags, "team", "net")
+	assertNoTag(t, got.Tags, "env")
+
+	// A raw tags:{} PATCH wipes every tag. The SDK's TagsObject drops an empty map
+	// via omitempty, so tags:{} can only be exercised over the wire directly.
+	wiped := rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/applicationSecurityGroups/asg-tag",
+		`{"tags":{}}`)
+	assertTagCount(t, ptrTags(wiped), 0)
 
 	_, err = client.UpdateTags(ctx, "rg-1", "missing", armnetwork.TagsObject{
 		Tags: map[string]*string{"team": to.Ptr("net")},
@@ -70,9 +84,9 @@ func TestSDKApplicationSecurityGroupUpdateTags(t *testing.T) {
 }
 
 // TestSDKPublicIPPrefixUpdateTags drives PublicIPPrefixesClient.UpdateTags (a
-// synchronous PATCH): the tag merges while the prefix's properties (prefixLength,
-// synthesized ipPrefix, sku) are left intact, and UpdateTags on a missing prefix
-// is a 404.
+// synchronous PATCH): the tag set is replaced wholesale while the prefix's
+// properties (prefixLength, synthesized ipPrefix, sku) are left intact, a raw
+// tags:{} PATCH wipes the tags, and UpdateTags on a missing prefix is a 404.
 func TestSDKPublicIPPrefixUpdateTags(t *testing.T) {
 	ts := newVNetServer(t)
 	ctx := context.Background()
@@ -106,8 +120,9 @@ func TestSDKPublicIPPrefixUpdateTags(t *testing.T) {
 		t.Fatalf("UpdateTags: %v", err)
 	}
 
-	assertTag(t, updated.Tags, "env", "prod")
 	assertTag(t, updated.Tags, "team", "net")
+	assertNoTag(t, updated.Tags, "env")
+	assertTagCount(t, updated.Tags, 1)
 
 	// Properties untouched by an UpdateTags PATCH.
 	if updated.Properties == nil || updated.Properties.PrefixLength == nil ||
@@ -124,6 +139,11 @@ func TestSDKPublicIPPrefixUpdateTags(t *testing.T) {
 		t.Errorf("sku=%v want Standard (must survive UpdateTags)", updated.SKU)
 	}
 
+	wiped := rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/publicIPPrefixes/pfx-tag",
+		`{"tags":{}}`)
+	assertTagCount(t, ptrTags(wiped), 0)
+
 	_, err = client.UpdateTags(ctx, "rg-1", "missing", armnetwork.TagsObject{
 		Tags: map[string]*string{"team": to.Ptr("net")},
 	}, nil)
@@ -133,8 +153,9 @@ func TestSDKPublicIPPrefixUpdateTags(t *testing.T) {
 // TestSDKNetworkGatewaysUpdateTags drives UpdateTags across all three gateway
 // families: VirtualNetworkGatewaysClient.BeginUpdateTags (LRO),
 // LocalNetworkGatewaysClient.UpdateTags (sync) and
-// VirtualNetworkGatewayConnectionsClient.BeginUpdateTags (LRO). Each merges a tag
-// while its properties survive; UpdateTags on a missing resource is a 404.
+// VirtualNetworkGatewayConnectionsClient.BeginUpdateTags (LRO). Each replaces the
+// tag set wholesale while its properties survive; a raw tags:{} PATCH wipes the
+// gateway's tags; UpdateTags on a missing resource is a 404.
 func TestSDKNetworkGatewaysUpdateTags(t *testing.T) {
 	ts := newVNetServer(t)
 	ctx := context.Background()
@@ -145,16 +166,16 @@ func TestSDKNetworkGatewaysUpdateTags(t *testing.T) {
 	subnetID := seedGatewayPrerequisites(t, ctx, opts, rg)
 	pipID := "/subscriptions/sub-1/resourceGroups/" + rg + "/providers/Microsoft.Network/publicIPAddresses/gw-pip"
 
-	vngID := patchVNGatewayTags(t, ctx, opts, rg, subnetID, pipID)
-	lngID := patchLNGatewayTags(t, ctx, opts, rg)
+	vngID := patchVNGatewayTags(t, ctx, ts, opts, rg, subnetID, pipID)
+	lngID := patchLNGatewayTags(t, ctx, ts, opts, rg)
 	patchConnectionTags(t, ctx, opts, rg, vngID, lngID)
 }
 
-// patchVNGatewayTags creates a virtual network gateway with a tag, merges a
-// second via BeginUpdateTags, asserts both tags plus a preserved property, checks
-// the 404 path, and returns the gateway id.
+// patchVNGatewayTags creates a virtual network gateway with a tag, replaces it
+// via BeginUpdateTags, asserts the replacement plus a preserved property, wipes
+// the tags with a raw tags:{} PATCH, checks the 404 path, and returns the id.
 func patchVNGatewayTags(
-	t *testing.T, ctx context.Context, opts *arm.ClientOptions, rg, subnetID, pipID string,
+	t *testing.T, ctx context.Context, ts *httptest.Server, opts *arm.ClientOptions, rg, subnetID, pipID string,
 ) string {
 	t.Helper()
 
@@ -194,13 +215,19 @@ func patchVNGatewayTags(
 
 	updated := pollDone(t, tagsP)
 
-	assertTag(t, updated.Tags, "env", "prod")
 	assertTag(t, updated.Tags, "team", "net")
+	assertNoTag(t, updated.Tags, "env")
+	assertTagCount(t, updated.Tags, 1)
 
 	if updated.Properties == nil || updated.Properties.GatewayType == nil ||
 		*updated.Properties.GatewayType != armnetwork.VirtualNetworkGatewayTypeVPN {
 		t.Errorf("gatewayType=%v want Vpn (property must survive UpdateTags)", updated.Properties)
 	}
+
+	wiped := rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/"+rg+"/providers/Microsoft.Network/virtualNetworkGateways/vng-tag",
+		`{"tags":{}}`)
+	assertTagCount(t, ptrTags(wiped), 0)
 
 	_, err = client.BeginUpdateTags(ctx, rg, "missing", armnetwork.TagsObject{
 		Tags: map[string]*string{"team": to.Ptr("net")},
@@ -210,10 +237,10 @@ func patchVNGatewayTags(
 	return *created.ID
 }
 
-// patchLNGatewayTags creates a local network gateway with a tag, merges a second
-// via the synchronous UpdateTags, asserts both tags plus a preserved property,
-// checks the 404 path, and returns the gateway id.
-func patchLNGatewayTags(t *testing.T, ctx context.Context, opts *arm.ClientOptions, rg string) string {
+// patchLNGatewayTags creates a local network gateway with a tag, replaces it via
+// the synchronous UpdateTags, asserts the replacement plus a preserved property,
+// wipes the tags with a raw tags:{} PATCH, checks the 404 path, and returns the id.
+func patchLNGatewayTags(t *testing.T, ctx context.Context, ts *httptest.Server, opts *arm.ClientOptions, rg string) string {
 	t.Helper()
 
 	client, err := armnetwork.NewLocalNetworkGatewaysClient("sub-1", fakeCred{}, opts)
@@ -241,13 +268,19 @@ func patchLNGatewayTags(t *testing.T, ctx context.Context, opts *arm.ClientOptio
 		t.Fatalf("lng UpdateTags: %v", err)
 	}
 
-	assertTag(t, updated.Tags, "env", "prod")
 	assertTag(t, updated.Tags, "team", "net")
+	assertNoTag(t, updated.Tags, "env")
+	assertTagCount(t, updated.Tags, 1)
 
 	if updated.Properties == nil || updated.Properties.GatewayIPAddress == nil ||
 		*updated.Properties.GatewayIPAddress != "203.0.113.10" {
 		t.Errorf("gatewayIpAddress=%v want 203.0.113.10 (property must survive UpdateTags)", updated.Properties)
 	}
+
+	wiped := rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/"+rg+"/providers/Microsoft.Network/localNetworkGateways/lng-tag",
+		`{"tags":{}}`)
+	assertTagCount(t, ptrTags(wiped), 0)
 
 	_, err = client.UpdateTags(ctx, rg, "missing", armnetwork.TagsObject{
 		Tags: map[string]*string{"team": to.Ptr("net")},
@@ -258,7 +291,7 @@ func patchLNGatewayTags(t *testing.T, ctx context.Context, opts *arm.ClientOptio
 }
 
 // patchConnectionTags creates a connection between the two gateways with a tag,
-// merges a second via BeginUpdateTags, asserts both tags plus a preserved
+// replaces it via BeginUpdateTags, asserts the replacement plus a preserved
 // property, and checks the 404 path.
 func patchConnectionTags(t *testing.T, ctx context.Context, opts *arm.ClientOptions, rg, vngID, lngID string) {
 	t.Helper()
@@ -293,8 +326,9 @@ func patchConnectionTags(t *testing.T, ctx context.Context, opts *arm.ClientOpti
 
 	updated := pollDone(t, tagsP)
 
-	assertTag(t, updated.Tags, "env", "prod")
 	assertTag(t, updated.Tags, "team", "net")
+	assertNoTag(t, updated.Tags, "env")
+	assertTagCount(t, updated.Tags, 1)
 
 	if updated.Properties == nil || updated.Properties.ConnectionType == nil ||
 		*updated.Properties.ConnectionType != armnetwork.VirtualNetworkGatewayConnectionTypeIPsec {
@@ -323,6 +357,53 @@ func mustBeginPrefix(
 	return p
 }
 
+// rawTagsPatch sends a raw ARM UpdateTags PATCH with the given JSON body to the
+// resource at armPath. The armnetwork TagsObject drops an empty tags map via
+// omitempty, so a tags:{} wipe can only be exercised over the wire directly. It
+// asserts a 200 and returns the decoded response tags.
+func rawTagsPatch(t *testing.T, ts *httptest.Server, armPath, body string) map[string]string {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPatch, ts.URL+armPath+"?api-version=2023-09-01", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build PATCH %s: %v", armPath, err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PATCH %s: %v", armPath, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH %s: status %d want 200", armPath, resp.StatusCode)
+	}
+
+	var decoded struct {
+		Tags map[string]string `json:"tags"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode PATCH %s response: %v", armPath, err)
+	}
+
+	return decoded.Tags
+}
+
+// ptrTags lifts a plain tag map to the *string-valued shape the assert helpers
+// take, so a raw-PATCH response can reuse them.
+func ptrTags(in map[string]string) map[string]*string {
+	out := make(map[string]*string, len(in))
+	for k, v := range in {
+		out[k] = to.Ptr(v)
+	}
+
+	return out
+}
+
 // assertTag fails the test unless tags[key] is present and equal to want.
 func assertTag(t *testing.T, tags map[string]*string, key, want string) {
 	t.Helper()
@@ -335,6 +416,24 @@ func assertTag(t *testing.T, tags map[string]*string, key, want string) {
 
 	if *got != want {
 		t.Errorf("tags[%s]=%q want %q", key, *got, want)
+	}
+}
+
+// assertNoTag fails the test if tags[key] is present.
+func assertNoTag(t *testing.T, tags map[string]*string, key string) {
+	t.Helper()
+
+	if _, ok := tags[key]; ok {
+		t.Errorf("tags[%s] present, want absent after replace (tags=%v)", key, derefTags(tags))
+	}
+}
+
+// assertTagCount fails the test unless tags has exactly n entries.
+func assertTagCount(t *testing.T, tags map[string]*string, n int) {
+	t.Helper()
+
+	if len(tags) != n {
+		t.Errorf("tag count=%d want %d (tags=%v)", len(tags), n, derefTags(tags))
 	}
 }
 
