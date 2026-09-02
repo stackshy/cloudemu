@@ -7,8 +7,10 @@ import (
 )
 
 // TestComputeInstanceBillable pins the state-aware compute gate: running/pending
-// (and an unknown/empty state) bill compute; every stopped/terminated/
-// deallocated spelling the three clouds use bills $0; and non-compute resources
+// (and an unknown/empty state) bill compute; the canonical non-running VM
+// lifecycle states the walker surfaces (stopping/stopped/shutting-down/
+// terminated — the latter also covers GCP's stopped and Azure's stopped/
+// deallocated, which settle to these values) bill $0; and non-compute resources
 // are always billable regardless of any state string.
 func TestComputeInstanceBillable(t *testing.T) {
 	cases := []struct {
@@ -23,8 +25,10 @@ func TestComputeInstanceBillable(t *testing.T) {
 		{"compute", "Instance", "stopping", false},
 		{"compute", "Instance", "shutting-down", false},
 		{"compute", "Instance", "terminated", false}, // AWS terminate, GCP stop
-		{"compute", "Instance", "deallocated", false},
-		{"compute", "Instance", "DEALLOCATED", false},
+		{"compute", "Instance", "TERMINATED", false}, // case-insensitive
+		// A state the walker never surfaces (e.g. Azure's deallocated, which lives
+		// in a separate PowerState field) is unknown here, so it stays billable.
+		{"compute", "Instance", "deallocated", true},
 		// Non-compute resources are never gated, even carrying a stopped state.
 		{"compute", "Volume", "stopped", true},
 		{"relationaldb", "DBInstance", "terminated", true},

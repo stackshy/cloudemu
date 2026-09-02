@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/services/cost"
+	"github.com/stackshy/cloudemu/v2/services/pricing"
 )
 
 // keySep separates the per-dimension values of a composite grouping key. It is
@@ -24,14 +25,11 @@ const (
 	granularityMonthly = "monthly"
 )
 
-// hoursPerMonth / hoursPerDay pro-rate a monthly estimate down to one day, using
-// the same 730-hours-per-month convention AWS Cost Explorer's perBucketRate
-// uses, so a Daily query's per-day rows sum to ~= the monthly figure both FinOps
-// surfaces report.
-const (
-	hoursPerMonth = 730.0
-	hoursPerDay   = 24.0
-)
+// hoursPerDay pro-rates a monthly estimate down to one day together with
+// pricing.HoursPerMonth (the shared 730-hours-per-month convention AWS Cost
+// Explorer's perBucketRate also uses), so a Daily query's per-day rows sum to
+// ~= the monthly figure both FinOps surfaces report and the two can't drift.
+const hoursPerDay = 24.0
 
 // shape turns the priced cost lines into the Cost Management columns/rows for
 // the requested granularity and grouping. Column order follows the real API:
@@ -93,7 +91,7 @@ func dailyRows(def *queryDefinition, costCols, groupNames []string, lines []cost
 	}
 
 	start, end := queryDateRange(def)
-	scale := hoursPerDay / hoursPerMonth
+	scale := hoursPerDay / float64(pricing.HoursPerMonth)
 
 	var rows [][]any
 

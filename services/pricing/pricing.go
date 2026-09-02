@@ -5,7 +5,11 @@
 // early, not a billing-accurate figure.
 package pricing
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/stackshy/cloudemu/v2/services/compute"
+)
 
 // HoursPerMonth turns an hourly rate into a monthly estimate (~730h).
 const HoursPerMonth = 730
@@ -242,10 +246,17 @@ var storageGBMonth = map[string]float64{
 
 // ComputeInstanceBillable reports whether a compute instance in the given
 // lifecycle state should be billed for compute. Real clouds bill compute only
-// while an instance is running (or briefly pending): a terminated, shutting-
-// down, stopping, stopped, or deallocated instance bills $0 for compute — a
-// stopped instance still pays for its attached block storage, which is priced
+// while an instance is running (or briefly pending): a stopping, stopped,
+// shutting-down, or terminated instance bills $0 for compute — a stopped
+// instance still pays for its attached block storage, which is priced
 // separately as a compute/Volume resource.
+//
+// The states are the canonical VM lifecycle states from services/compute, the
+// only values the compute walker copies into resourcediscovery.Resource.State.
+// GCP reports a stopped instance as "terminated" and Azure settles both PowerOff
+// and Deallocate to "stopped", so those cases fall out of this same set without
+// extra spellings (Azure's "deallocated" lives in a separate PowerState field
+// the walker never surfaces as State).
 //
 // It gates only compute instances; every other (service, resourceType) pair,
 // and a compute instance whose state is unknown/empty (e.g. a resource
@@ -257,29 +268,12 @@ func ComputeInstanceBillable(service, resourceType, state string) bool {
 	}
 
 	switch strings.ToLower(state) {
-	case StateStopping, StateStopped, StateShuttingDown, StateTerminated, StateTerminating,
-		StateDeallocating, StateDeallocated:
+	case compute.StateStopping, compute.StateStopped, compute.StateShuttingDown, compute.StateTerminated:
 		return false
 	default:
 		return true
 	}
 }
-
-// Non-running compute states that bill $0 for compute. They cover the AWS,
-// Azure, and GCP spellings a walker surfaces on resourcediscovery.Resource.State
-// (GCP reports a stopped instance as "terminated"; Azure settles both PowerOff
-// and Deallocate to "stopped").
-const (
-	StatePending      = "pending"
-	StateRunning      = "running"
-	StateStopping     = "stopping"
-	StateStopped      = "stopped"
-	StateShuttingDown = "shutting-down"
-	StateTerminating  = "terminating"
-	StateTerminated   = "terminated"
-	StateDeallocating = "deallocating"
-	StateDeallocated  = "deallocated"
-)
 
 // hourly returns the rate for sku, or def if the SKU is unknown.
 func hourly(table map[string]float64, sku string, def float64) float64 {

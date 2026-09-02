@@ -86,6 +86,86 @@ func TestQueryUsage_DailyBucketsPerDay(t *testing.T) {
 		"daily rows must sum to the pro-rated monthly figure")
 }
 
+// TestQueryUsage_DailyCustomTimeframe proves a Daily query over a Custom
+// timeframe with explicit from/to dates buckets one pro-rated row per day across
+// exactly that window — a deterministic check with no dependence on the wall
+// clock (unlike MonthToDate).
+func TestQueryUsage_DailyCustomTimeframe(t *testing.T) {
+	client := newCostClient(t)
+
+	fromDate := time.Date(2024, time.March, 10, 0, 0, 0, 0, time.UTC)
+	toDate := time.Date(2024, time.March, 14, 0, 0, 0, 0, time.UTC)
+	const wantDays = 5 // 10, 11, 12, 13, 14 inclusive
+
+	resp, err := client.Usage(context.Background(), subscriptionScope, armcostmanagement.QueryDefinition{
+		Type:       to.Ptr(armcostmanagement.ExportTypeActualCost),
+		Timeframe:  to.Ptr(armcostmanagement.TimeframeTypeCustom),
+		TimePeriod: &armcostmanagement.QueryTimePeriod{From: &fromDate, To: &toDate},
+		Dataset: &armcostmanagement.QueryDataset{
+			Granularity: to.Ptr(armcostmanagement.GranularityTypeDaily),
+			Aggregation: sumAggregation(),
+		},
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Properties)
+
+	costIdx := columnIndex(resp.Properties.Columns, "Cost")
+	dateIdx := columnIndex(resp.Properties.Columns, "UsageDate")
+	require.GreaterOrEqual(t, costIdx, 0)
+	require.GreaterOrEqual(t, dateIdx, 0)
+
+	rows := resp.Properties.Rows
+	require.Len(t, rows, wantDays, "Custom [10..14 March] Daily query returns one row per day")
+
+	wantYMD := []int{20240310, 20240311, 20240312, 20240313, 20240314}
+	for i, row := range rows {
+		c, ok := row[costIdx].(float64)
+		require.True(t, ok)
+		assert.Positive(t, c)
+
+		ymd, ok := row[dateIdx].(float64)
+		require.True(t, ok)
+		assert.Equal(t, wantYMD[i], int(ymd), "row %d date", i)
+	}
+}
+
+// TestQueryUsage_DailyTheLastMonth proves a Daily query over the TheLastMonth
+// timeframe buckets one row per day across the whole previous calendar month.
+func TestQueryUsage_DailyTheLastMonth(t *testing.T) {
+	client := newCostClient(t)
+
+	now := time.Now().UTC()
+	firstThis := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	lastMonthEnd := firstThis.AddDate(0, 0, -1)
+	wantDays := lastMonthEnd.Day() // days in the previous calendar month
+
+	resp, err := client.Usage(context.Background(), subscriptionScope, armcostmanagement.QueryDefinition{
+		Type:      to.Ptr(armcostmanagement.ExportTypeActualCost),
+		Timeframe: to.Ptr(armcostmanagement.TimeframeTypeTheLastMonth),
+		Dataset: &armcostmanagement.QueryDataset{
+			Granularity: to.Ptr(armcostmanagement.GranularityTypeDaily),
+			Aggregation: sumAggregation(),
+		},
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Properties)
+
+	dateIdx := columnIndex(resp.Properties.Columns, "UsageDate")
+	require.GreaterOrEqual(t, dateIdx, 0)
+
+	rows := resp.Properties.Rows
+	require.Len(t, rows, wantDays, "TheLastMonth Daily query returns one row per day of the previous month")
+
+	// Every row lands in the previous calendar month.
+	wantYear, wantMonth := lastMonthEnd.Year(), int(lastMonthEnd.Month())
+	for _, row := range rows {
+		ymd, ok := row[dateIdx].(float64)
+		require.True(t, ok)
+		assert.Equal(t, wantYear, int(ymd)/10000)
+		assert.Equal(t, wantMonth, (int(ymd)/100)%100)
+	}
+}
+
 // aggregateMonthly returns the full monthly total the seeded estate reports
 // through an ungrouped, non-granular query (a single aggregate row over the
 // period).
