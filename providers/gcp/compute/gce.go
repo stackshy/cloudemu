@@ -323,10 +323,15 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			inst.engineBacked = true
 		}
 
-		m.instances.Set(id, inst)
+		// Settle to Running on the record BEFORE publishing it to the store, so a
+		// concurrent reader (e.g. disks.list ranging DescribeInstances) never
+		// observes an in-place field write on the stored pointer. The state machine
+		// is keyed by id, independent of the record pointer.
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
+
+		m.instances.Set(id, inst)
 		results = append(results, toInstance(inst))
 		created = append(created, inst)
 		m.emitInstanceMetrics(ctx, id, inst.LaunchTime, tags[gcpZoneTagKey])
@@ -473,10 +478,43 @@ func (m *Mock) RemoveInstance(ctx context.Context, instanceID string) error {
 		return err
 	}
 
+	// Honor GCP's autoDelete cascade: a disk attached with autoDelete=true is
+	// deleted with the instance, one with autoDelete=false is detached and
+	// survives (matching real instances.delete).
+	m.settleInstanceDisks(instanceID)
+
 	m.instances.Delete(instanceID)
 	m.sm.Remove(instanceID)
 
 	return nil
+}
+
+// settleInstanceDisks applies GCP's instance-delete disk cascade to every disk
+// attached to instanceID: a disk with DeleteOnTermination=true (autoDelete) is
+// DELETED, and one with DeleteOnTermination=false is returned to `available`
+// with its attachment cleared. The decision and mutation happen under one store
+// lock (UpdateOrDelete) so a concurrent DetachVolume that clears the attachment
+// first is observed and the disk is not wrongly deleted.
+func (m *Mock) settleInstanceDisks(instanceID string) {
+	for _, volID := range m.volumes.Keys() {
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
+			if v.AttachedTo != instanceID {
+				return v, true
+			}
+
+			if v.DeleteOnTermination {
+				return v, false
+			}
+
+			cp := *v
+			cp.State = stateAvailable
+			cp.AttachedTo = ""
+			cp.Device = ""
+			cp.DeleteOnTermination = false
+
+			return &cp, true
+		})
+	}
 }
 
 // MutateInstanceGCP applies a GCP-specific instance mutation used by the GCE
@@ -680,6 +718,18 @@ func (m *Mock) ResizeVolumeGCP(volumeID string, sizeGb int) error {
 }
 
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
+	return m.AttachDiskGCP(instanceID, volumeID, device, false)
+}
+
+// AttachDiskGCP attaches an existing disk to an instance, flipping the driver
+// volume to in-use and recording the attachment-scoped auto-delete flag
+// (GCP autoDelete ⟷ VolumeInfo.DeleteOnTermination). It is the single attach
+// path the GCE wire handler drives for instances.insert boot/data disks and for
+// instances.attachDisk, so a disk's driver state and the instance's disks[] view
+// never diverge. GCP-specific; reached via a type assertion from the GCE handler.
+// The read-modify-write runs inside memstore.Store.Update (write-locked) and is
+// copy-on-write, so a concurrent DescribeVolumes never races the mutation.
+func (m *Mock) AttachDiskGCP(instanceID, volumeID, device string, autoDelete bool) error {
 	var opErr error
 
 	found := m.volumes.Update(volumeID, func(old *driver.VolumeInfo) *driver.VolumeInfo {
@@ -697,6 +747,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 		clone.State = stateInUse
 		clone.AttachedTo = instanceID
 		clone.Device = device
+		clone.DeleteOnTermination = autoDelete
 
 		return &clone
 	})
@@ -722,6 +773,7 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
 		clone.State = stateAvailable
 		clone.AttachedTo = ""
 		clone.Device = ""
+		clone.DeleteOnTermination = false
 
 		return &clone
 	})

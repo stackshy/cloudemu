@@ -149,10 +149,10 @@ func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 	}
 
 	// Real GCP refuses to delete a disk still attached to an instance, returning
-	// 400 resourceInUseByAnotherResource. attachDisk only records the disk in the
-	// instance's disks[] (it never flips the driver volume state), so reuse the
-	// same instance scan that populates users[] on a read and reject while any
-	// instance still references this disk. Delete succeeds once the disk detaches.
+	// 400 resourceInUseByAnotherResource. attach flips the driver volume to
+	// in-use (AttachedTo), so the same volume-store scan that populates users[]
+	// on a read is the authoritative attachment view: reject while any instance
+	// still references this disk. Delete succeeds once the disk detaches.
 	host := hostFromRequest(r)
 	if users := h.diskUsersByName(r.Context(), host, rp.Project); len(users[rp.ResourceName]) > 0 {
 		diskLink := gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "disks", rp.ResourceName)
@@ -466,28 +466,44 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp gcprest.ResourcePath, host
 	return resp
 }
 
-// diskUsersByName scans instances and maps each disk name to the self-links of
-// the instances it is attached to, so a disk read reflects its users[] (kept
-// consistent with the instance-side disks[] populated by attachDisk).
+// diskUsersByName maps each disk name to the self-links of the instances it is
+// attached to, derived from the driver volume store's attachment state
+// (VolumeInfo.AttachedTo). Since insert and attachDisk both flip the driver
+// volume to in-use, this is the single source of truth for a disk's users[] —
+// consistent with the instance-side disks[] and the in-use delete guard.
 func (h *Handler) diskUsersByName(ctx context.Context, host, project string) map[string][]string {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
 	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
 	if err != nil {
 		return nil
 	}
 
-	out := make(map[string][]string)
+	linkByID := make(map[string]string, len(instances))
 
 	for i := range instances {
 		instName := tagOr(instances[i].Tags, gcpNameTag, "")
 		zone := tagOr(instances[i].Tags, keyZone, "")
-		link := gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", instName)
+		linkByID[instances[i].ID] = gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", instName)
+	}
 
-		attached := decodeDisks(instances[i].Tags)
-		for j := range attached {
-			if dn := lastSegment(attached[j].Source); dn != "" {
-				out[dn] = append(out[dn], link)
-			}
+	out := make(map[string][]string)
+
+	for i := range vols {
+		if vols[i].AttachedTo == "" {
+			continue
 		}
+
+		link, ok := linkByID[vols[i].AttachedTo]
+		if !ok {
+			continue
+		}
+
+		name := tagOr(vols[i].Tags, gcpDiskNameTag, vols[i].ID)
+		out[name] = append(out[name], link)
 	}
 
 	return out

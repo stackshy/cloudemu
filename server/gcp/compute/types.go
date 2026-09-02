@@ -49,6 +49,7 @@ type attachedDisk struct {
 }
 
 type diskInitializeParams struct {
+	DiskName    string `json:"diskName,omitempty"`
 	SourceImage string `json:"sourceImage,omitempty"`
 	DiskType    string `json:"diskType,omitempty"`
 	DiskSizeGb  string `json:"diskSizeGb,omitempty"`

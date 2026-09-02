@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,7 +120,9 @@ func (h *Handler) setMachineType(w http.ResponseWriter, r *http.Request, rp gcpr
 	h.applyMutation(w, r, rp, inst.ID, "setMachineType", nil, nil, machineTypeShort(body.MachineType))
 }
 
-// attachDisk handles POST .../instances/{name}/attachDisk.
+// attachDisk handles POST .../instances/{name}/attachDisk. It flips the backing
+// driver volume to in-use (recording autoDelete) and records the attachment in
+// the instance's disks[], so the disk store and the instance view stay in sync.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) attachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -134,13 +137,30 @@ func (h *Handler) attachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	disks := append(decodeDisks(inst.Tags), disk)
+	existing := decodeDisks(inst.Tags)
+
+	attacher, ok := h.compute.(instanceDiskAttacher)
+	if !ok {
+		writeNotImplemented(w, "instance attachDisk")
+		return
+	}
+
+	if err := h.resolveAndAttachDisk(
+		r.Context(), inst.ID, rp.ResourceName, len(existing), &disk, rp, hostFromRequest(r), attacher,
+	); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	disks := append(existing, disk)
 
 	h.applyMutation(w, r, rp, inst.ID, "attachDisk",
 		map[string]string{keyDisks: encodeJSON(disks)}, nil, "")
 }
 
-// detachDisk handles POST .../instances/{name}/detachDisk?deviceName=...
+// detachDisk handles POST .../instances/{name}/detachDisk?deviceName=... It flips
+// the backing driver volume back to available (clearing its attachment) and
+// removes the disk from the instance's disks[].
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) detachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -156,16 +176,52 @@ func (h *Handler) detachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	kept := make([]attachedDisk, 0)
+	current := decodeDisks(inst.Tags)
+	kept := make([]attachedDisk, 0, len(current))
 
-	for _, d := range decodeDisks(inst.Tags) {
-		if d.DeviceName != device {
-			kept = append(kept, d)
+	var detached *attachedDisk
+
+	for i := range current {
+		if current[i].DeviceName == device {
+			detached = &current[i]
+			continue
 		}
+
+		kept = append(kept, current[i])
+	}
+
+	if detached == nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "no attached disk with deviceName "+device)
+		return
+	}
+
+	if err := h.detachDriverVolume(r.Context(), inst.ID, detached, rp.ScopeName); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
 	}
 
 	h.applyMutation(w, r, rp, inst.ID, "detachDisk",
 		map[string]string{keyDisks: encodeJSON(kept)}, nil, "")
+}
+
+// detachDriverVolume flips the driver volume backing a detached disks[] entry
+// back to available. The disk is resolved by its recorded source (or, lacking
+// one, its device name); a volume that cannot be resolved is a no-op so a
+// disks[]-only entry never blocks the detach.
+func (h *Handler) detachDriverVolume(
+	ctx context.Context, instanceID string, d *attachedDisk, zone string,
+) error {
+	name := lastSegment(d.Source)
+	if name == "" {
+		name = d.DeviceName
+	}
+
+	vol, err := findDiskByName(ctx, h.compute, name, zone)
+	if err != nil {
+		return nil //nolint:nilerr // a disks[]-only entry with no backing volume needs no driver detach.
+	}
+
+	return h.compute.DetachVolume(ctx, vol.ID, instanceID, d.DeviceName)
 }
 
 // applyMutation runs a GCP-specific instance mutation through the mutator

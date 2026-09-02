@@ -247,9 +247,15 @@ func TestSDKGCEInstanceSetMetadata(t *testing.T) {
 	}
 }
 
-// TestSDKGCEInstanceAttachDetachDisk covers finding #5.
+// TestSDKGCEInstanceAttachDetachDisk covers finding #5. attachDisk/detachDisk go
+// through the unified disk model, so the source disk must exist (real GCP 404s on
+// an unknown source); the attach flips the driver volume to in-use and detach
+// releases it.
 func TestSDKGCEInstanceAttachDetachDisk(t *testing.T) {
-	client, _, ctx := newInstancesEnv(t)
+	client, ts, ctx := newInstancesEnv(t)
+
+	disks := newDisksSDKClient(t, ts)
+	insertDisk(t, disks, &computepb.Disk{Name: ptrStr("data-disk"), SizeGb: ptrInt64(10)})
 
 	mustInsert(t, client, testZone, &computepb.Instance{
 		Name:        ptrStr("ad-vm"),
