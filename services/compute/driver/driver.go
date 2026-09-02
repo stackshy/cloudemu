@@ -798,6 +798,22 @@ type AzureDiskUpdater interface {
 	UpdateVolume(ctx context.Context, id string, cfg VolumeConfig) (*VolumeInfo, error)
 }
 
+// AzureDiskDeleteOptioner is an optional Azure-only capability that records a
+// disk attachment's ARM deleteOption on the attached volume, mapped onto the
+// shared VolumeInfo.DeleteOnTermination (deleteOption "Delete" ⟷ true). The
+// Azure VM wire handler sets it after attaching each OS / data disk a VM's
+// storageProfile references, so VM delete can cascade per real Azure's
+// deleteOption: a "Delete" disk is deleted with the VM, a "Detach" disk survives
+// (returned to Unattached). deleteOption is attachment-scoped, so DetachVolume
+// clears the flag. Only the Azure VM mock implements it; the wire handler
+// type-asserts for it, so AWS/GCP are unaffected.
+type AzureDiskDeleteOptioner interface {
+	// SetDiskDeleteOnTermination records whether the volume is deleted (true) or
+	// detached (false) when the VM it is attached to is deleted. Returns NotFound
+	// when volumeID is unknown.
+	SetDiskDeleteOnTermination(ctx context.Context, volumeID string, deleteOnTermination bool) error
+}
+
 // AzureDiskAccessor is an optional Azure-only capability for the managed-disk
 // beginGetAccess / endGetAccess actions (DisksClient.BeginGrantAccess /
 // BeginRevokeAccess): a time-bounded SAS URI is issued for exporting or

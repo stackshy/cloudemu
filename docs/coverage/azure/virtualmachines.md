@@ -58,6 +58,14 @@ AzureDiskAccessor is an optional Azure-only capability for the managed-disk
 | `GrantDiskAccess` | GrantDiskAccess issues a time-bounded SAS URI granting the requested |
 | `RevokeDiskAccess` | RevokeDiskAccess revokes any SAS access previously granted to the disk. |
 
+### AzureDiskDeleteOptioner
+
+AzureDiskDeleteOptioner is an optional Azure-only capability that records a
+
+| Operation | Description |
+| --- | --- |
+| `SetDiskDeleteOnTermination` | SetDiskDeleteOnTermination records whether the volume is deleted (true) or |
+
 ### AzureDiskUpdater
 
 AzureDiskUpdater is an optional Azure-only capability for an in-place managed

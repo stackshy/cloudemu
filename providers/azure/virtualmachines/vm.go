@@ -31,13 +31,14 @@ import (
 // Compile-time checks that Mock implements driver.Compute and, when a real
 // compute engine is wired, the optional driver.ConsoleReader capability.
 var (
-	_ driver.Compute            = (*Mock)(nil)
-	_ driver.ConsoleReader      = (*Mock)(nil)
-	_ driver.AzureVMController  = (*Mock)(nil)
-	_ driver.AzureDiskUpdater   = (*Mock)(nil)
-	_ driver.KeyPairGenerator   = (*Mock)(nil)
-	_ driver.AzureDiskAccessor  = (*Mock)(nil)
-	_ driver.AzureSSHKeyUpdater = (*Mock)(nil)
+	_ driver.Compute                 = (*Mock)(nil)
+	_ driver.ConsoleReader           = (*Mock)(nil)
+	_ driver.AzureVMController       = (*Mock)(nil)
+	_ driver.AzureDiskUpdater        = (*Mock)(nil)
+	_ driver.KeyPairGenerator        = (*Mock)(nil)
+	_ driver.AzureDiskAccessor       = (*Mock)(nil)
+	_ driver.AzureSSHKeyUpdater      = (*Mock)(nil)
+	_ driver.AzureDiskDeleteOptioner = (*Mock)(nil)
 )
 
 const (
@@ -880,6 +881,11 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 		return err
 	}
 
+	// Cascade the attached managed disks per each attachment's ARM deleteOption
+	// (recorded as VolumeInfo.DeleteOnTermination): a disk with the flag set is
+	// deleted with the VM, one without it is detached (returned to Unattached).
+	m.cascadeTerminatedVolumes(instanceIDs)
+
 	// Tear down the real backing for any engine-backed instances. Every id is now
 	// Terminated (transitionInstances verified they exist), so this is best-effort:
 	// continue through the whole batch and aggregate errors, otherwise one
@@ -915,6 +921,40 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	}
 
 	return errors.Join(errs...)
+}
+
+// cascadeTerminatedVolumes settles every managed disk attached to a
+// now-terminated instance per its ARM deleteOption: a disk whose attachment set
+// DeleteOnTermination=true is DELETED with the VM, one without it is returned to
+// the Unattached state (attachment cleared). The delete-vs-detach decision and
+// the mutation happen under one store-lock span (UpdateOrDelete re-reads the
+// attachment at mutation time) so a concurrent DetachVolume that cleared the
+// attachment first is observed here and the disk is not wrongly deleted.
+func (m *Mock) cascadeTerminatedVolumes(instanceIDs []string) {
+	terminated := make(map[string]bool, len(instanceIDs))
+	for _, id := range instanceIDs {
+		terminated[id] = true
+	}
+
+	for _, volID := range m.volumes.Keys() {
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
+			if v.AttachedTo == "" || !terminated[v.AttachedTo] {
+				return v, true
+			}
+
+			if v.DeleteOnTermination {
+				return v, false
+			}
+
+			cp := *v
+			cp.State = stateAvailable
+			cp.AttachedTo = ""
+			cp.Device = ""
+			cp.DeleteOnTermination = false
+
+			return &cp, true
+		})
+	}
 }
 
 // GetConsoleOutput returns the console output the configured compute engine
@@ -1135,41 +1175,81 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 }
 
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
-	vol, ok := m.volumes.Get(volumeID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
-	}
-
-	if vol.State == stateInUse {
-		return cerrors.Newf(cerrors.FailedPrecondition, "disk %q already attached", volumeID)
-	}
-
 	if _, ok := m.instances.Get(instanceID); !ok {
 		return cerrors.Newf(cerrors.NotFound, "VM %q not found", instanceID)
 	}
 
-	vol.State = stateInUse
-	vol.AttachedTo = instanceID
-	vol.Device = device
+	// The in-use precondition and the mutation must happen under one store-lock
+	// span (copy-on-write) so a concurrent AttachVolume/DetachVolume on the same
+	// disk cannot race between the check and the write.
+	var attachErr error
 
-	return nil
-}
+	ok := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		if v.State == stateInUse {
+			attachErr = cerrors.Newf(cerrors.FailedPrecondition, "disk %q already attached", volumeID)
+			return v
+		}
 
-// DetachVolume detaches a managed disk. instanceID/device are accepted for
-// driver-interface parity with AWS; Azure detaches by disk id alone.
-func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
-	vol, ok := m.volumes.Get(volumeID)
+		cp := *v
+		cp.State = stateInUse
+		cp.AttachedTo = instanceID
+		cp.Device = device
+
+		return &cp
+	})
+
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
-	if vol.State != "in-use" {
-		return cerrors.Newf(cerrors.FailedPrecondition, "disk %q is not attached", volumeID)
+	return attachErr
+}
+
+// DetachVolume detaches a managed disk. instanceID/device are accepted for
+// driver-interface parity with AWS; Azure detaches by disk id alone. The
+// attachment-scoped DeleteOnTermination flag is cleared on detach (a disk that
+// survives its VM is no longer slated for cascade deletion).
+func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
+	var detachErr error
+
+	ok := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		if v.State != stateInUse {
+			detachErr = cerrors.Newf(cerrors.FailedPrecondition, "disk %q is not attached", volumeID)
+			return v
+		}
+
+		cp := *v
+		cp.State = stateAvailable
+		cp.AttachedTo = ""
+		cp.Device = ""
+		cp.DeleteOnTermination = false
+
+		return &cp
+	})
+
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
-	vol.State = stateAvailable
-	vol.AttachedTo = ""
-	vol.Device = ""
+	return detachErr
+}
+
+// SetDiskDeleteOnTermination records a disk attachment's ARM deleteOption on the
+// volume (deleteOption "Delete" ⟷ deleteOnTermination true), so VM delete can
+// cascade: a true flag deletes the disk with the VM, a false one detaches it.
+// It backs the AzureDiskDeleteOptioner capability; the Azure VM wire handler
+// calls it after attaching each OS / data disk a VM's storageProfile references.
+func (m *Mock) SetDiskDeleteOnTermination(_ context.Context, volumeID string, deleteOnTermination bool) error {
+	ok := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		cp := *v
+		cp.DeleteOnTermination = deleteOnTermination
+
+		return &cp
+	})
+
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
+	}
 
 	return nil
 }

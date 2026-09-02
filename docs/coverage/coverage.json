@@ -2344,6 +2344,16 @@
         ]
       },
       {
+        "name": "AzureDiskDeleteOptioner",
+        "doc": "AzureDiskDeleteOptioner is an optional Azure-only capability that records a",
+        "operations": [
+          {
+            "name": "SetDiskDeleteOnTermination",
+            "doc": "SetDiskDeleteOnTermination records whether the volume is deleted (true) or"
+          }
+        ]
+      },
+      {
         "name": "AzureDiskUpdater",
         "doc": "AzureDiskUpdater is an optional Azure-only capability for an in-place managed",
         "operations": [

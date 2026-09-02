@@ -68,9 +68,19 @@ type storageProfile struct {
 	DataDisks      []dataDisk      `json:"dataDisks,omitempty"`
 }
 
-// osDisk carries the OS-disk shape; we only model osType, a cost input.
+// osDisk carries the ARM storageProfile.osDisk shape. Beyond osType (a cost
+// input), we model the fields needed to materialize the VM's OS managed disk as
+// a real Microsoft.Compute/disks resource on create: its name, createOption
+// (FromImage/Empty/Attach), size, managedDisk.storageAccountType, and the
+// deleteOption that drives the VM-delete cascade.
 type osDisk struct {
-	OSType string `json:"osType,omitempty"`
+	OSType       string                 `json:"osType,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	CreateOption string                 `json:"createOption,omitempty"`
+	DiskSizeGB   int                    `json:"diskSizeGB,omitempty"`
+	Caching      string                 `json:"caching,omitempty"`
+	ManagedDisk  *managedDiskParameters `json:"managedDisk,omitempty"`
+	DeleteOption string                 `json:"deleteOption,omitempty"`
 }
 
 // dataDisk mirrors armcompute.DataDisk: one entry of storageProfile.dataDisks,
@@ -86,6 +96,11 @@ type dataDisk struct {
 	ManagedDisk  *managedDiskParameters `json:"managedDisk,omitempty"`
 	ToBeDetached bool                   `json:"toBeDetached,omitempty"`
 	DetachOption string                 `json:"detachOption,omitempty"`
+	// DeleteOption ("Delete"/"Detach") drives the VM-delete cascade for this
+	// attachment: "Delete" deletes the managed disk with the VM, "Detach" (the
+	// ARM default) leaves it. It is recorded on the attached volume via
+	// AzureDiskDeleteOptioner.
+	DeleteOption string `json:"deleteOption,omitempty"`
 }
 
 // managedDiskParameters references an existing Microsoft.Compute/disks
