@@ -385,7 +385,7 @@ func (h *Handler) stageUpdate(
 		return nil, nil, false
 	}
 
-	existing, exists, gerr := h.stagedExisting(r.Context(), overlay, p.collection, id)
+	existing, exists, gerr := h.stagedExisting(r.Context(), overlay, p.tableKey(), id)
 	if gerr != nil {
 		writeErr(w, gerr)
 		return nil, nil, false
@@ -408,7 +408,7 @@ func (h *Handler) stageUpdate(
 
 	stampTimes(item, existing, now)
 
-	return &stagedWrite{table: p.collection, id: id, item: item}, results, true
+	return &stagedWrite{table: p.tableKey(), id: id, item: item}, results, true
 }
 
 // applyStaged persists the staged writes, grouped by collection so each
@@ -478,7 +478,7 @@ func (h *Handler) stageDelete(
 		return nil, false
 	}
 
-	existing, exists, gerr := h.stagedExisting(r.Context(), overlay, p.collection, id)
+	existing, exists, gerr := h.stagedExisting(r.Context(), overlay, p.tableKey(), id)
 	if gerr != nil {
 		writeErr(w, gerr)
 		return nil, false
@@ -489,7 +489,7 @@ func (h *Handler) stageDelete(
 		return nil, false
 	}
 
-	return &stagedWrite{table: p.collection, id: id, isDelete: true}, true
+	return &stagedWrite{table: p.tableKey(), id: id, isDelete: true}, true
 }
 
 // existingUpdateTime reads the stored commit timestamp of a document, returning
@@ -721,7 +721,7 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 			continue
 		}
 
-		item, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: id})
+		item, gerr := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: id})
 		if gerr != nil {
 			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
 			continue
@@ -956,7 +956,7 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 	// grammar fidelity (type-aware, AND/OR/NOT, IN/array-contains, unary). A
 	// never-written collection has no driver table; real Firestore returns an
 	// empty result set rather than an error, so treat NotFound as empty.
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.collection, Limit: allResults})
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.tableKey(), Limit: allResults})
 	if err != nil {
 		if cerrors.IsNotFound(err) {
 			streamQueryResults(w, nil, p)
@@ -1074,6 +1074,29 @@ func (p firestorePath) parentPath() string {
 	return joinPath(p.collection, p.documentID)
 }
 
+// nsSep separates the project and database namespace components from the
+// collection path inside a driver table key. A NUL byte can never appear in a
+// Firestore project id, database id, or collection path (all UTF-8 text without
+// NUL), so it cannot collide with any real path content.
+const nsSep = "\x00"
+
+// namespacePrefix is the driver-table-key prefix that scopes a collection to a
+// single (project, database). Documents under different projects — or under the
+// same project but different databases, including the default database
+// "(default)" vs a named database — resolve to distinct prefixes and therefore
+// never share a collection namespace.
+func (p firestorePath) namespacePrefix() string {
+	return p.project + nsSep + p.database + nsSep
+}
+
+// tableKey returns the driver "table" this location's collection maps to,
+// namespaced by project and database. Every driver read/write/list/query/delete
+// must key on this — not on the bare collection path — so a document written
+// under project A / database X is invisible under project B or database Y.
+func (p firestorePath) tableKey() string {
+	return p.namespacePrefix() + p.collection
+}
+
 // joinPath joins two path segments with "/", tolerating either being empty.
 func joinPath(a, b string) string {
 	switch {
@@ -1173,7 +1196,7 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 	// CreateDocument with an explicit id must fail if that id already exists,
 	// rather than silently overwriting (real Firestore returns ALREADY_EXISTS).
 	if explicitID {
-		if _, err := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: docID}); err == nil {
+		if _, err := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: docID}); err == nil {
 			writeError(w, http.StatusConflict, "ALREADY_EXISTS",
 				"document "+docID+" already exists")
 
@@ -1187,9 +1210,9 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 
 	// Firestore creates a collection lazily on first write; the driver requires
 	// the "table" to exist, so ensure it before writing.
-	h.ensureCollection(r.Context(), p.collection)
+	h.ensureCollection(r.Context(), p.tableKey())
 
-	if err := h.db.PutItem(r.Context(), p.collection, item); err != nil {
+	if err := h.db.PutItem(r.Context(), p.tableKey(), item); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -1199,13 +1222,14 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 
 // ensureCollection lazily creates a Firestore collection (driver table keyed on
 // the reserved document-id field) so a first write doesn't fail with "collection
-// not found". An already-exists result is benign.
-func (h *Handler) ensureCollection(ctx context.Context, collection string) {
-	_ = h.db.CreateTable(ctx, dbdriver.TableConfig{Name: collection, PartitionKey: fieldID})
+// not found". table is the namespaced driver key (project + database +
+// collection). An already-exists result is benign.
+func (h *Handler) ensureCollection(ctx context.Context, table string) {
+	_ = h.db.CreateTable(ctx, dbdriver.TableConfig{Name: table, PartitionKey: fieldID})
 }
 
 func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
-	item, err := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: p.documentID})
+	item, err := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: p.documentID})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -1221,7 +1245,7 @@ func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestor
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, p firestorePath) {
 	// Fetch the whole collection, then order + page in the handler so orderBy
 	// stays correct across page boundaries.
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.collection, Limit: allResults})
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.tableKey(), Limit: allResults})
 	if err != nil {
 		// A never-written (sub)collection has no driver table; real Firestore
 		// lists it as empty rather than erroring.
@@ -1359,7 +1383,7 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 		return
 	}
 
-	existing, err := h.db.GetItem(r.Context(), p.collection, map[string]any{fieldID: p.documentID})
+	existing, err := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: p.documentID})
 	if err != nil && !cerrors.IsNotFound(err) {
 		writeErr(w, err)
 		return
@@ -1378,7 +1402,7 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 
 	stampTimes(item, existing, time.Now().UTC())
 
-	if err := h.db.PutItem(r.Context(), p.collection, item); err != nil {
+	if err := h.db.PutItem(r.Context(), p.tableKey(), item); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -1387,7 +1411,7 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 }
 
 func (h *Handler) deleteDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
-	if err := h.db.DeleteItem(r.Context(), p.collection, map[string]any{fieldID: p.documentID}); err != nil {
+	if err := h.db.DeleteItem(r.Context(), p.tableKey(), map[string]any{fieldID: p.documentID}); err != nil {
 		writeErr(w, err)
 		return
 	}

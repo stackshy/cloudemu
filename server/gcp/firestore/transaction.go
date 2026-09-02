@@ -86,7 +86,7 @@ func (h *Handler) listCollectionIDs(w http.ResponseWriter, r *http.Request, base
 		return
 	}
 
-	ids := immediateCollectionIDs(names, parent.parentPath())
+	ids := immediateCollectionIDs(names, parent.namespacePrefix(), parent.parentPath())
 	sort.Strings(ids)
 
 	page, pgerr := pagination.Paginate(ids, req.PageToken, req.PageSize)
@@ -101,26 +101,32 @@ func (h *Handler) listCollectionIDs(w http.ResponseWriter, r *http.Request, base
 	})
 }
 
-// immediateCollectionIDs filters the driver table names (each a full parent
-// path like "cities" or "cities/SF/landmarks") to the collection ids that are
-// immediate children of parent, returning only each match's final path segment.
-// A parent of "" selects the top-level collections. This scopes the result to
-// the requested document so an unrelated document's subcollections never leak.
-func immediateCollectionIDs(tables []string, parent string) []string {
+// immediateCollectionIDs filters the driver table names (each a namespaced key
+// "{project}\x00{database}\x00{parentPath}" where parentPath is a full path like
+// "cities" or "cities/SF/landmarks") to the collection ids that are immediate
+// children of parent within the given project/database namespace, returning only
+// each match's final path segment. Tables outside nsPrefix (a different project
+// or database) are skipped, so a query never leaks another tenant's collections.
+// A parent of "" selects the namespace's top-level collections.
+func immediateCollectionIDs(tables []string, nsPrefix, parent string) []string {
 	seen := make(map[string]struct{}, len(tables))
 
 	ids := make([]string, 0, len(tables))
 
 	for _, t := range tables {
-		rest := t
+		if !strings.HasPrefix(t, nsPrefix) {
+			continue
+		}
+
+		rest := t[len(nsPrefix):]
 
 		if parent != "" {
 			prefix := parent + "/"
-			if !strings.HasPrefix(t, prefix) {
+			if !strings.HasPrefix(rest, prefix) {
 				continue
 			}
 
-			rest = t[len(prefix):]
+			rest = rest[len(prefix):]
 		}
 
 		// An immediate child collection is a single segment under the parent;
