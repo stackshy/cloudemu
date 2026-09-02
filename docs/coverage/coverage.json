@@ -7743,6 +7743,32 @@
         ]
       },
       {
+        "name": "AzureNetworkTagReplacer",
+        "doc": "AzureNetworkTagReplacer replaces the entire stored tag collection on the core",
+        "operations": [
+          {
+            "name": "ReplaceAddressTags",
+            "doc": "ReplaceAddressTags sets the public IP address's tags, keyed by its"
+          },
+          {
+            "name": "ReplaceNATGatewayTags",
+            "doc": "ReplaceNATGatewayTags sets the NAT gateway's tags, keyed by its driver id."
+          },
+          {
+            "name": "ReplaceNetworkInterfaceTags",
+            "doc": "ReplaceNetworkInterfaceTags sets the network interface's tags, keyed by the"
+          },
+          {
+            "name": "ReplaceSecurityGroupTags",
+            "doc": "ReplaceSecurityGroupTags sets the network security group's tags, keyed by"
+          },
+          {
+            "name": "ReplaceVPCTags",
+            "doc": "ReplaceVPCTags sets the virtual network's tags, keyed by its driver id."
+          }
+        ]
+      },
+      {
         "name": "AzurePrivateLink",
         "doc": "AzurePrivateLink is the Azure-only Private Link surface. Each resource type is",
         "operations": [

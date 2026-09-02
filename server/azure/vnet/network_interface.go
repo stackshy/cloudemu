@@ -125,6 +125,8 @@ func (h *Handler) routeNIC(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	switch r.Method {
 	case http.MethodPut:
 		h.createNIC(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchNIC(w, r, rp, svc)
 	case http.MethodGet:
 		h.getNIC(w, r, rp, svc)
 	case http.MethodDelete:

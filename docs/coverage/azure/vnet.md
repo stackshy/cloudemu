@@ -135,6 +135,18 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
 | `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 
+### AzureNetworkTagReplacer
+
+AzureNetworkTagReplacer replaces the entire stored tag collection on the core
+
+| Operation | Description |
+| --- | --- |
+| `ReplaceAddressTags` | ReplaceAddressTags sets the public IP address's tags, keyed by its |
+| `ReplaceNATGatewayTags` | ReplaceNATGatewayTags sets the NAT gateway's tags, keyed by its driver id. |
+| `ReplaceNetworkInterfaceTags` | ReplaceNetworkInterfaceTags sets the network interface's tags, keyed by the |
+| `ReplaceSecurityGroupTags` | ReplaceSecurityGroupTags sets the network security group's tags, keyed by |
+| `ReplaceVPCTags` | ReplaceVPCTags sets the virtual network's tags, keyed by its driver id. |
+
 ### AzurePrivateLink
 
 AzurePrivateLink is the Azure-only Private Link surface. Each resource type is
