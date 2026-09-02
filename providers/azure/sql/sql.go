@@ -46,7 +46,10 @@ const (
 	dtuRunning         = 50.0
 )
 
-var _ rdsdriver.RelationalDB = (*Mock)(nil)
+var (
+	_ rdsdriver.RelationalDB    = (*Mock)(nil)
+	_ rdsdriver.DatabaseUpdater = (*Mock)(nil)
+)
 
 // Mock is the in-memory Azure SQL implementation.
 type Mock struct {

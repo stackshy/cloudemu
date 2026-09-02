@@ -106,3 +106,73 @@ func TestSDKAzureSQLTransparentDataEncryption(t *testing.T) {
 		t.Fatalf("got list name %v, want current", page.Value[0].Name)
 	}
 }
+
+// TestSDKAzureSQLTDESurvivesDatabaseUpdate is the S1 regression: a database
+// whose TDE was set to Disabled must keep that state across an unrelated
+// property update. A delete+recreate upsert dropped the TDE record and
+// re-materialized it as Enabled; the in-place update leaves it untouched.
+func TestSDKAzureSQLTDESurvivesDatabaseUpdate(t *testing.T) {
+	cf := seedTDEDatabase(t)
+	ctx := context.Background()
+	tde := cf.NewTransparentDataEncryptionsClient()
+	dbs := cf.NewDatabasesClient()
+
+	// Disable TDE via the transparentDataEncryption/current sub-resource.
+	if _, err := tde.CreateOrUpdate(ctx, "rg-1", "srv1", "appdb",
+		armsql.TransparentDataEncryptionNameCurrent,
+		armsql.LogicalDatabaseTransparentDataEncryption{
+			Properties: &armsql.TransparentDataEncryptionProperties{
+				State: to.Ptr(armsql.TransparentDataEncryptionStateDisabled),
+			},
+		}, nil); err != nil {
+		t.Fatalf("disable TDE: %v", err)
+	}
+
+	// PATCH an unrelated property (tags) on the database.
+	patchPoller, err := dbs.BeginUpdate(ctx, "rg-1", "srv1", "appdb", armsql.DatabaseUpdate{
+		Tags: map[string]*string{"env": to.Ptr("prod")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate: %v", err)
+	}
+
+	if _, err := patchPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("BeginUpdate PollUntilDone: %v", err)
+	}
+
+	// TDE must still be Disabled — not silently reset to Enabled.
+	got, err := tde.Get(ctx, "rg-1", "srv1", "appdb", armsql.TransparentDataEncryptionNameCurrent, nil)
+	if err != nil {
+		t.Fatalf("Get after PATCH: %v", err)
+	}
+
+	if got.Properties == nil || got.Properties.State == nil {
+		t.Fatal("expected TDE state set after PATCH")
+	}
+
+	if *got.Properties.State != armsql.TransparentDataEncryptionStateDisabled {
+		t.Fatalf("got state %q after unrelated PATCH, want Disabled", *got.Properties.State)
+	}
+
+	// A PUT (CreateOrUpdate) against the existing database must also preserve it.
+	putPoller, err := dbs.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "appdb", armsql.Database{
+		Location: to.Ptr("eastus"),
+		SKU:      &armsql.SKU{Name: to.Ptr("GP_Gen5_4"), Tier: to.Ptr("GeneralPurpose")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate (PUT): %v", err)
+	}
+
+	if _, err := putPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PUT PollUntilDone: %v", err)
+	}
+
+	got, err = tde.Get(ctx, "rg-1", "srv1", "appdb", armsql.TransparentDataEncryptionNameCurrent, nil)
+	if err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+
+	if *got.Properties.State != armsql.TransparentDataEncryptionStateDisabled {
+		t.Fatalf("got state %q after PUT, want Disabled", *got.Properties.State)
+	}
+}

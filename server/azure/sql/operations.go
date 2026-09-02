@@ -285,15 +285,18 @@ func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *r
 	return merged
 }
 
-// replaceDatabase merges the request body over the stored database and
-// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
-// HA while leaving omitted fields intact.
+// replaceDatabase merges the request body over the stored database and applies
+// the result in place, so a PUT/PATCH against an existing database changes
+// sku/tier/HA while leaving omitted fields intact.
 //
-// The merged elasticPoolId is validated before DeleteDatabase runs: a request
-// that references a nonexistent pool must fail the update with no side
-// effect, not delete the database out from under a bad request (CreateDatabase
-// re-validates the pool too, but only after the delete below would already
-// have happened).
+// It updates the record in place via the DatabaseUpdater capability rather than
+// deleting and re-creating it. A delete+recreate upsert dropped the database's
+// transparentDataEncryption record and re-materialized it as Enabled on the
+// re-create, silently re-enabling TDE on a database the user had disabled it on.
+// The in-place update leaves the TDE sub-resource untouched.
+//
+// The merged elasticPoolId is validated before the update: a request that
+// references a nonexistent pool must fail with no side effect.
 func replaceDatabase(
 	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
 ) (*rdsdriver.Database, error) {
@@ -308,11 +311,12 @@ func replaceDatabase(
 		return nil, err
 	}
 
-	if err := db.DeleteDatabase(ctx, cfg.Server, cfg.Name); err != nil {
-		return nil, err
+	updater, ok := db.(rdsdriver.DatabaseUpdater)
+	if !ok {
+		return nil, cerrors.New(cerrors.InvalidArgument, "database update is not supported by this provider")
 	}
 
-	return db.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+	return updater.UpdateDatabase(ctx, rdsdriver.DatabaseConfig{
 		Server:        merged.Server,
 		Name:          merged.Name,
 		Charset:       merged.Charset,
