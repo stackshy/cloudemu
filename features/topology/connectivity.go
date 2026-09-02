@@ -125,7 +125,12 @@ func (e *Engine) evaluateInstanceSGs(
 	port int,
 	protocol string,
 ) TrafficVerdict {
-	egressMatch := e.findMatchingSGRule(ctx, src.SecurityGroups, dst.PrivateIP, port, protocol, false)
+	// Egress rules on the source are matched against the destination (its IP and
+	// its group memberships); ingress rules on the destination against the
+	// source. Passing the peer's security groups lets a referenced-group rule
+	// ("allow from sg-app") resolve instead of falsely reading as denied.
+	egressMatch := e.findMatchingSGRule(ctx, src.SecurityGroups, port, protocol, false,
+		ruleSource{ip: dst.PrivateIP, groupIDs: dst.SecurityGroups})
 	if egressMatch == nil {
 		return TrafficVerdict{
 			Allowed: false,
@@ -133,7 +138,8 @@ func (e *Engine) evaluateInstanceSGs(
 		}
 	}
 
-	ingressMatch := e.findMatchingSGRule(ctx, dst.SecurityGroups, src.PrivateIP, port, protocol, true)
+	ingressMatch := e.findMatchingSGRule(ctx, dst.SecurityGroups, port, protocol, true,
+		ruleSource{ip: src.PrivateIP, groupIDs: src.SecurityGroups})
 	if ingressMatch == nil {
 		return TrafficVerdict{
 			Allowed: false,
@@ -152,23 +158,25 @@ func (e *Engine) evaluateInstanceSGs(
 func (e *Engine) findMatchingSGRule(
 	ctx context.Context,
 	sgIDs []string,
-	targetIP string,
 	port int,
 	protocol string,
 	ingress bool,
+	src ruleSource,
 ) *RuleMatch {
 	groups, err := e.networking.DescribeSecurityGroups(ctx, sgIDs)
 	if err != nil {
 		return nil
 	}
 
-	for _, sg := range groups {
+	for i := range groups {
+		sg := &groups[i]
+
 		rules := sg.EgressRules
 		if ingress {
 			rules = sg.IngressRules
 		}
 
-		match := matchRules(rules, sg.ID, port, protocol, targetIP)
+		match := matchRules(rules, sg.ID, port, protocol, src)
 		if match != nil {
 			return match
 		}
