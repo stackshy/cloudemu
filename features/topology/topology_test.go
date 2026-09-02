@@ -277,6 +277,158 @@ func TestEvaluateSecurityGroupsBlockedByIngress(t *testing.T) {
 	assert.Contains(t, verdict.Reason, "no ingress rule")
 }
 
+// A security group whose ingress rule references the source group (the common
+// "allow db ingress from the app SG" pattern) must be honored. Before the fix
+// the matcher looked only at CIDR and reported a false DENY.
+func TestEvaluateSecurityGroupsReferencedGroupAllowed(t *testing.T) {
+	engine, _, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	srcSG, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "app-sg", Description: "app",
+	})
+	require.NoError(t, err)
+
+	err = vpcMock.AddEgressRule(ctx, srcSG.ID, netdriver.SecurityRule{
+		Protocol: "-1", FromPort: 0, ToPort: 0, CIDR: "0.0.0.0/0",
+	})
+	require.NoError(t, err)
+
+	dstSG, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "db-sg", Description: "db",
+	})
+	require.NoError(t, err)
+
+	// Ingress allowed from the app SG by reference — no CIDR at all.
+	err = vpcMock.AddIngressRule(ctx, dstSG.ID, netdriver.SecurityRule{
+		Protocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupID: srcSG.ID,
+	})
+	require.NoError(t, err)
+
+	verdict, err := engine.EvaluateSecurityGroups(ctx, srcSG.ID, dstSG.ID, 5432, "tcp")
+	require.NoError(t, err)
+	assert.True(t, verdict.Allowed, "SG-to-SG reference must be honored")
+	assert.NotNil(t, verdict.IngressMatch)
+	assert.Equal(t, dstSG.ID, verdict.IngressMatch.GroupID)
+}
+
+// An ingress rule that references a different group must NOT admit a source
+// that is not a member of that group.
+func TestEvaluateSecurityGroupsReferencedGroupDenied(t *testing.T) {
+	engine, _, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	srcSG, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "app-sg", Description: "app",
+	})
+	require.NoError(t, err)
+
+	err = vpcMock.AddEgressRule(ctx, srcSG.ID, netdriver.SecurityRule{
+		Protocol: "-1", FromPort: 0, ToPort: 0, CIDR: "0.0.0.0/0",
+	})
+	require.NoError(t, err)
+
+	otherSG, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "other-sg", Description: "unrelated",
+	})
+	require.NoError(t, err)
+
+	dstSG, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "db-sg", Description: "db",
+	})
+	require.NoError(t, err)
+
+	// Ingress allowed only from otherSG — the source (srcSG) is not a member.
+	err = vpcMock.AddIngressRule(ctx, dstSG.ID, netdriver.SecurityRule{
+		Protocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupID: otherSG.ID,
+	})
+	require.NoError(t, err)
+
+	verdict, err := engine.EvaluateSecurityGroups(ctx, srcSG.ID, dstSG.ID, 5432, "tcp")
+	require.NoError(t, err)
+	assert.False(t, verdict.Allowed)
+	assert.Contains(t, verdict.Reason, "no ingress rule")
+}
+
+// matchRules must honor each populated selector (CIDR, IPv6CIDR,
+// ReferencedGroupID), never match on an empty/unpopulated selector, and treat
+// an unresolvable prefix-list rule as non-matching (documented limitation).
+func TestRuleSelectorMatching(t *testing.T) {
+	tests := []struct {
+		name  string
+		rule  netdriver.SecurityRule
+		src   ruleSource
+		match bool
+	}{
+		{
+			name:  "IPv4 CIDR matches",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "10.0.0.0/16"},
+			src:   ruleSource{ip: "10.0.1.5"},
+			match: true,
+		},
+		{
+			name:  "IPv4 CIDR outside range",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "10.0.0.0/16"},
+			src:   ruleSource{ip: "192.168.1.1"},
+			match: false,
+		},
+		{
+			name:  "IPv6 CIDR matches IPv6 source",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, IPv6CIDR: "2001:db8::/32"},
+			src:   ruleSource{ip: "2001:db8::1"},
+			match: true,
+		},
+		{
+			name:  "IPv6 CIDR does not match outside source",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, IPv6CIDR: "2001:db8::/32"},
+			src:   ruleSource{ip: "2001:dead::1"},
+			match: false,
+		},
+		{
+			name:  "referenced group matches member",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, ReferencedGroupID: "sg-app"},
+			src:   ruleSource{ip: "10.0.1.5", groupIDs: []string{"sg-app", "sg-shared"}},
+			match: true,
+		},
+		{
+			name:  "referenced group does not match non-member",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, ReferencedGroupID: "sg-app"},
+			src:   ruleSource{ip: "10.0.1.5", groupIDs: []string{"sg-other"}},
+			match: false,
+		},
+		{
+			name:  "empty selector never matches",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443},
+			src:   ruleSource{ip: "10.0.1.5", groupIDs: []string{"sg-app"}},
+			match: false,
+		},
+		{
+			name:  "prefix-list rule is unresolvable and does not match",
+			rule:  netdriver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, PrefixListID: "pl-1234"},
+			src:   ruleSource{ip: "10.0.1.5"},
+			match: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			match := matchRules([]netdriver.SecurityRule{tt.rule}, "sg-test", 443, "tcp", tt.src)
+			if tt.match {
+				require.NotNil(t, match)
+				assert.Equal(t, "sg-test", match.GroupID)
+			} else {
+				assert.Nil(t, match)
+			}
+		})
+	}
+}
+
 func TestEvaluateNetworkACLAllow(t *testing.T) {
 	engine, _, vpcMock, _ := newTestEngine()
 	ctx := context.Background()
@@ -435,6 +587,89 @@ func TestCanConnectBlockedBySG(t *testing.T) {
 
 	err = ec2Mock.SetInstanceVPC(dstInstances[0].ID, vpcID)
 	require.NoError(t, err)
+
+	result, err := engine.CanConnect(ctx, ConnectivityQuery{
+		SrcInstanceID: srcInstances[0].ID,
+		DstInstanceID: dstInstances[0].ID,
+		Port:          443,
+		Protocol:      "tcp",
+	})
+	require.NoError(t, err)
+	assert.False(t, result.Allowed)
+	assert.Contains(t, result.Reason, "no ingress rule")
+}
+
+// A destination instance whose SG allows ingress from the source instance's SG
+// (by reference, not by CIDR) must be reachable. This is the single most common
+// real-world SG pattern; before the fix CanConnect returned a false DENY.
+func TestCanConnectReferencedGroupAllowed(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, srcSGID, dstSGID := createVPCWithSubnetAndSGs(t, ctx, vpcMock, "10.0.0.0/16", false)
+
+	// dst allows ingress from the source SG by reference — no CIDR.
+	err := vpcMock.AddIngressRule(ctx, dstSGID, netdriver.SecurityRule{
+		Protocol: "tcp", FromPort: 443, ToPort: 443, ReferencedGroupID: srcSGID,
+	})
+	require.NoError(t, err)
+
+	srcInstances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnetID, SecurityGroups: []string{srcSGID},
+	}, 1)
+	require.NoError(t, err)
+	require.NoError(t, ec2Mock.SetInstanceVPC(srcInstances[0].ID, vpcID))
+
+	dstInstances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnetID, SecurityGroups: []string{dstSGID},
+	}, 1)
+	require.NoError(t, err)
+	require.NoError(t, ec2Mock.SetInstanceVPC(dstInstances[0].ID, vpcID))
+
+	result, err := engine.CanConnect(ctx, ConnectivityQuery{
+		SrcInstanceID: srcInstances[0].ID,
+		DstInstanceID: dstInstances[0].ID,
+		Port:          443,
+		Protocol:      "tcp",
+	})
+	require.NoError(t, err)
+	assert.True(t, result.Allowed, "referenced-group ingress must allow a member source")
+	assert.True(t, result.SGVerdict.Allowed)
+}
+
+// A source instance that is not a member of the referenced group must be denied.
+func TestCanConnectReferencedGroupNotMember(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, srcSGID, dstSGID := createVPCWithSubnetAndSGs(t, ctx, vpcMock, "10.0.0.0/16", false)
+
+	// A third group the source does not belong to.
+	otherSG, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: vpcID, Name: "other-sg", Description: "unrelated",
+	})
+	require.NoError(t, err)
+
+	err = vpcMock.AddIngressRule(ctx, dstSGID, netdriver.SecurityRule{
+		Protocol: "tcp", FromPort: 443, ToPort: 443, ReferencedGroupID: otherSG.ID,
+	})
+	require.NoError(t, err)
+
+	srcInstances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnetID, SecurityGroups: []string{srcSGID},
+	}, 1)
+	require.NoError(t, err)
+	require.NoError(t, ec2Mock.SetInstanceVPC(srcInstances[0].ID, vpcID))
+
+	dstInstances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnetID, SecurityGroups: []string{dstSGID},
+	}, 1)
+	require.NoError(t, err)
+	require.NoError(t, ec2Mock.SetInstanceVPC(dstInstances[0].ID, vpcID))
 
 	result, err := engine.CanConnect(ctx, ConnectivityQuery{
 		SrcInstanceID: srcInstances[0].ID,
