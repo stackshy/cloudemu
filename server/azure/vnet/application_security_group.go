@@ -69,6 +69,8 @@ func (h *Handler) routeASG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	switch r.Method {
 	case http.MethodPut:
 		h.createASG(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchASG(w, r, rp, svc)
 	case http.MethodGet:
 		h.getASG(w, r, rp, svc)
 	case http.MethodDelete:
@@ -104,6 +106,35 @@ func (*Handler) createASG(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 		Location:      loc,
 		Tags:          req.Tags,
 	})
+
+	azurearm.WriteJSON(w, http.StatusOK, asgResponseFrom(stored, rp))
+}
+
+// patchASG applies an ARM UpdateTags PATCH (ApplicationSecurityGroupsClient.
+// UpdateTags — a synchronous 200): the body's tags are merged into the stored
+// set, the ASG's other fields are left intact, and the full resource is
+// returned. A PATCH on a missing ASG is a 404.
+//
+//nolint:gocritic,dupl // rp is request-scoped; mirrors patchPublicIPPrefix's tag-merge over a distinct resource type
+func (*Handler) patchASG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	svc netdriver.AzureApplicationSecurityGroups,
+) {
+	existing, ok := svc.GetAzureApplicationSecurityGroup(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"application security group "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	var req armTagsObject
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	existing.Tags = mergedTagMap(existing.Tags, req.Tags)
+	stored := svc.PutAzureApplicationSecurityGroup(r.Context(), existing)
 
 	azurearm.WriteJSON(w, http.StatusOK, asgResponseFrom(stored, rp))
 }

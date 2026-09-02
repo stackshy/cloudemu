@@ -1993,6 +1993,36 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, sub, opID string
 
 // Tag helpers.
 
+// armTagsObject is the ARM UpdateTags PATCH body ({"tags": {...}}) — the
+// TagsObject the armnetwork *Client.UpdateTags / BeginUpdateTags methods send.
+// Only tags are updatable through this operation; the resource's properties are
+// left intact.
+type armTagsObject struct {
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// mergedTagMap merges an UpdateTags PATCH body's tags into the stored set:
+// supplied keys are added or overwritten while every other existing tag is
+// preserved. It returns a fresh map (nil when the result is empty) so the stored
+// set is never aliased to the request or the existing record.
+func mergedTagMap(existing, incoming map[string]string) map[string]string {
+	out := make(map[string]string, len(existing)+len(incoming))
+
+	for k, v := range existing {
+		out[k] = v
+	}
+
+	for k, v := range incoming {
+		out[k] = v
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
 func mergeTags(in map[string]string, key, val string) map[string]string {
 	out := make(map[string]string, len(in)+1)
 

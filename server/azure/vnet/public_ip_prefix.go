@@ -95,6 +95,8 @@ func (h *Handler) routePublicIPPrefix(w http.ResponseWriter, r *http.Request, rp
 	switch r.Method {
 	case http.MethodPut:
 		h.createPublicIPPrefix(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchPublicIPPrefix(w, r, rp, svc)
 	case http.MethodGet:
 		h.getPublicIPPrefix(w, r, rp, svc)
 	case http.MethodDelete:
@@ -142,6 +144,35 @@ func (h *Handler) createPublicIPPrefix(w http.ResponseWriter, r *http.Request, r
 
 	writeAcceptedAsync(w, r, rp.Subscription, "pipprefix-create-"+rp.ResourceName,
 		h.publicIPPrefixResponse(r.Context(), stored, rp))
+}
+
+// patchPublicIPPrefix applies an ARM UpdateTags PATCH (PublicIPPrefixesClient.
+// UpdateTags — a synchronous 200): the body's tags are merged into the stored
+// set, the prefix's other fields are left intact, and the full resource is
+// returned. A PATCH on a missing prefix is a 404.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchPublicIPPrefix(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath,
+	svc netdriver.AzurePublicIPPrefixes,
+) {
+	existing, ok := svc.GetAzurePublicIPPrefix(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"public IP prefix "+rp.ResourceName+" not found")
+
+		return
+	}
+
+	var req armTagsObject
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	existing.Tags = mergedTagMap(existing.Tags, req.Tags)
+	stored := svc.PutAzurePublicIPPrefix(r.Context(), existing)
+
+	azurearm.WriteJSON(w, http.StatusOK, h.publicIPPrefixResponse(r.Context(), stored, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
