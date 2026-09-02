@@ -101,15 +101,18 @@ type Template struct {
 }
 
 // Ingress is the app's inbound configuration. Fqdn is synthesized on create.
+// Traffic splits inbound requests across the app's revisions.
 type Ingress struct {
-	External      bool   `json:"external,omitempty"`
-	TargetPort    int32  `json:"targetPort,omitempty"`
-	Transport     string `json:"transport,omitempty"`
-	AllowInsecure bool   `json:"allowInsecure,omitempty"`
+	External      bool            `json:"external,omitempty"`
+	TargetPort    int32           `json:"targetPort,omitempty"`
+	Transport     string          `json:"transport,omitempty"`
+	AllowInsecure bool            `json:"allowInsecure,omitempty"`
+	Traffic       []TrafficWeight `json:"traffic,omitempty"`
 }
 
 // ContainerApp is a stored container app. Fqdn and LatestRevisionName are minted
-// once at create and preserved across updates.
+// once at create and preserved across updates. Revisions is the app's revision
+// history — a new entry is materialized every time the template changes.
 type ContainerApp struct {
 	Subscription       string            `json:"subscription"`
 	ResourceGroup      string            `json:"resourceGroup"`
@@ -123,6 +126,7 @@ type ContainerApp struct {
 	Template           Template          `json:"template"`
 	Fqdn               string            `json:"fqdn,omitempty"`
 	LatestRevisionName string            `json:"latestRevisionName"`
+	Revisions          []Revision        `json:"revisions,omitempty"`
 }
 
 // ARMID returns the fully-qualified ARM id for the container app.
@@ -150,16 +154,25 @@ type AppInput struct {
 
 // Mock is the in-memory backend for Container Apps.
 type Mock struct {
-	mu   sync.RWMutex
-	envs *memstore.Store[Environment]
-	apps *memstore.Store[ContainerApp]
+	mu    sync.RWMutex
+	clock config.Clock
+	envs  *memstore.Store[Environment]
+	apps  *memstore.Store[ContainerApp]
 }
 
-// New creates an empty Container Apps mock.
-func New(_ *config.Options) *Mock {
+// New creates an empty Container Apps mock. The clock stamps revision createdTime
+// values; it falls back to the real clock when opts (or its clock) is nil so the
+// mock stays usable standalone (e.g. New(nil) in tests).
+func New(opts *config.Options) *Mock {
+	clock := config.Clock(config.RealClock{})
+	if opts != nil && opts.Clock != nil {
+		clock = opts.Clock
+	}
+
 	return &Mock{
-		envs: memstore.New[Environment](),
-		apps: memstore.New[ContainerApp](),
+		clock: clock,
+		envs:  memstore.New[Environment](),
+		apps:  memstore.New[ContainerApp](),
 	}
 }
 
@@ -267,7 +280,11 @@ func (m *Mock) CreateOrUpdateApp(
 
 	if created {
 		app = ContainerApp{Subscription: sub, ResourceGroup: rg, Name: name}
-		app.LatestRevisionName = strings.ToLower(name) + "--" + shortHash(app.ARMID())
+	} else {
+		// Get returns a value copy but the revision slice shares its backing
+		// array; clone it so a validation failure below leaves the stored app
+		// untouched (we only Set on success).
+		app.Revisions = cloneRevisions(app.Revisions)
 	}
 
 	app.Location = in.Location
@@ -278,6 +295,14 @@ func (m *Mock) CreateOrUpdateApp(
 	app.SecretNames = append([]string(nil), in.SecretNames...)
 	app.Template = cloneTemplate(in.Template)
 	app.Fqdn = m.appFqdnLocked(name, in.EnvironmentID, in.Ingress)
+
+	if err := m.materializeRevisionLocked(&app); err != nil {
+		return ContainerApp{}, false, err
+	}
+
+	if err := validateTrafficLocked(&app); err != nil {
+		return ContainerApp{}, false, err
+	}
 
 	m.apps.Set(k, app)
 
@@ -497,6 +522,7 @@ func cloneIngress(in *Ingress) *Ingress {
 	}
 
 	out := *in
+	out.Traffic = append([]TrafficWeight(nil), in.Traffic...)
 
 	return &out
 }

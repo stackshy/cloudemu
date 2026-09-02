@@ -1,6 +1,9 @@
 package containerapps
 
-import "github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
+import (
+	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+)
 
 const (
 	provisioningSucceeded = "Succeeded"
@@ -88,11 +91,19 @@ type appConfig struct {
 }
 
 type appIngress struct {
-	Fqdn          string `json:"fqdn,omitempty"`
-	External      bool   `json:"external,omitempty"`
-	TargetPort    int32  `json:"targetPort,omitempty"`
-	Transport     string `json:"transport,omitempty"`
-	AllowInsecure bool   `json:"allowInsecure,omitempty"`
+	Fqdn          string             `json:"fqdn,omitempty"`
+	External      bool               `json:"external,omitempty"`
+	TargetPort    int32              `json:"targetPort,omitempty"`
+	Transport     string             `json:"transport,omitempty"`
+	AllowInsecure bool               `json:"allowInsecure,omitempty"`
+	Traffic       []appTrafficWeight `json:"traffic,omitempty"`
+}
+
+type appTrafficWeight struct {
+	RevisionName   string `json:"revisionName,omitempty"`
+	Weight         int32  `json:"weight,omitempty"`
+	Label          string `json:"label,omitempty"`
+	LatestRevision bool   `json:"latestRevision,omitempty"`
 }
 
 type appSecret struct {
@@ -177,12 +188,21 @@ func toIngressModel(in *appIngress) *containerapps.Ingress {
 		return nil
 	}
 
-	return &containerapps.Ingress{
+	out := &containerapps.Ingress{
 		External:      in.External,
 		TargetPort:    in.TargetPort,
 		Transport:     in.Transport,
 		AllowInsecure: in.AllowInsecure,
 	}
+
+	for i := range in.Traffic {
+		t := in.Traffic[i]
+		out.Traffic = append(out.Traffic, containerapps.TrafficWeight{
+			RevisionName: t.RevisionName, Weight: t.Weight, Label: t.Label, LatestRevision: t.LatestRevision,
+		})
+	}
+
+	return out
 }
 
 func toTemplateModel(t *appTemplate) containerapps.Template {
@@ -249,6 +269,7 @@ func toConfigResponse(a *containerapps.ContainerApp) *appConfig {
 			TargetPort:    a.Ingress.TargetPort,
 			Transport:     a.Ingress.Transport,
 			AllowInsecure: a.Ingress.AllowInsecure,
+			Traffic:       toTrafficResponse(a.Ingress.Traffic),
 		}
 	}
 
@@ -286,6 +307,71 @@ func toTemplateResponse(t *containerapps.Template) *appTemplate {
 	}
 
 	return out
+}
+
+func toTrafficResponse(in []containerapps.TrafficWeight) []appTrafficWeight {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]appTrafficWeight, 0, len(in))
+	for i := range in {
+		out = append(out, appTrafficWeight{
+			RevisionName:   in[i].RevisionName,
+			Weight:         in[i].Weight,
+			Label:          in[i].Label,
+			LatestRevision: in[i].LatestRevision,
+		})
+	}
+
+	return out
+}
+
+// armTypeRevision is the ARM resource type of a container app's revision.
+const armTypeRevision = armTypeContainerApp + "/revisions"
+
+// revisionResponse is the ARM shape of a Microsoft.App containerApps revision.
+type revisionResponse struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Properties revisionRespProps `json:"properties"`
+}
+
+type revisionRespProps struct {
+	CreatedTime       string       `json:"createdTime,omitempty"`
+	Active            bool         `json:"active"`
+	TrafficWeight     int32        `json:"trafficWeight"`
+	Replicas          int32        `json:"replicas"`
+	ProvisioningState string       `json:"provisioningState,omitempty"`
+	RunningState      string       `json:"runningState,omitempty"`
+	HealthState       string       `json:"healthState,omitempty"`
+	Fqdn              string       `json:"fqdn,omitempty"`
+	Template          *appTemplate `json:"template,omitempty"`
+}
+
+// toRevisionResponse projects a stored revision onto its ARM wire shape. The id
+// is the parent app's ARM id with a /revisions/{name} suffix, matching the URL
+// the armappcontainers SDK addresses the revision by.
+func toRevisionResponse(rp *azurearm.ResourcePath, rev *containerapps.Revision) revisionResponse {
+	appID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeContainerApps, rp.ResourceName)
+
+	return revisionResponse{
+		ID:   appID + "/" + subResourceRevisions + "/" + rev.Name,
+		Name: rev.Name,
+		Type: armTypeRevision,
+		Properties: revisionRespProps{
+			CreatedTime:       rev.CreatedTime,
+			Active:            rev.Active,
+			TrafficWeight:     rev.TrafficWeight,
+			Replicas:          rev.Replicas,
+			ProvisioningState: rev.ProvisioningState,
+			RunningState:      rev.RunningState,
+			HealthState:       rev.HealthState,
+			Fqdn:              rev.Fqdn,
+			Template:          toTemplateResponse(&rev.Template),
+		},
+	}
 }
 
 func firstNonEmpty(a, b string) string {

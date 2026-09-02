@@ -3,24 +3,29 @@
 
 provider-native `containerapps` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (14)
+## Operations (19)
 
 | Operation | Description |
 | --- | --- |
 | `ARMID` |  |
+| `ActivateRevision` |  |
 | `CreateOrUpdateApp` |  |
 | `CreateOrUpdateEnvironment` |  |
+| `DeactivateRevision` |  |
 | `DeleteApp` |  |
 | `DeleteEnvironment` |  |
 | `DiscoverApps` |  |
 | `DiscoverEnvironments` |  |
 | `GetApp` |  |
 | `GetEnvironment` |  |
+| `GetRevision` |  |
 | `ListAppsByResourceGroup` |  |
 | `ListAppsBySubscription` |  |
 | `ListEnvironmentsByResourceGroup` |  |
 | `ListEnvironmentsBySubscription` |  |
+| `ListRevisions` |  |
 | `PurgeResourceGroup` |  |
+| `RestartRevision` |  |
 
 ## Not in scope
 

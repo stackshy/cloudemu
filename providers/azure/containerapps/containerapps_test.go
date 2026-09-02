@@ -221,4 +221,295 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
+func mustApp(t *testing.T, m *containerapps.Mock, in *containerapps.AppInput) containerapps.ContainerApp {
+	t.Helper()
+
+	app, _, err := m.CreateOrUpdateApp(context.Background(), sub, rg, appNm, in)
+	if err != nil {
+		t.Fatalf("CreateOrUpdateApp: %v", err)
+	}
+
+	return app
+}
+
+// TestRevisionMaterializedOnTemplateChange proves a create mints one revision and
+// a template change mints a second, with both retained in multiple-revisions mode.
+func TestRevisionMaterializedOnTemplateChange(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	base := func(suffix, image string) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Multiple",
+			Ingress: &containerapps.Ingress{External: true, TargetPort: 80},
+			Template: containerapps.Template{
+				RevisionSuffix: suffix,
+				Containers:     []containerapps.Container{{Name: "main", Image: image}},
+			},
+		}
+	}
+
+	app := mustApp(t, m, base("v1", "nginx:1"))
+	if app.LatestRevisionName != appNm+"--v1" {
+		t.Fatalf("latestRevisionName = %q, want %s--v1", app.LatestRevisionName, appNm)
+	}
+
+	revs, err := m.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil || len(revs) != 1 {
+		t.Fatalf("ListRevisions after create = %v (err %v), want 1", revs, err)
+	}
+
+	if !revs[0].Active || revs[0].TrafficWeight != 100 {
+		t.Fatalf("first revision active=%v weight=%d, want active=true weight=100", revs[0].Active, revs[0].TrafficWeight)
+	}
+
+	mustApp(t, m, base("v2", "nginx:2"))
+
+	revs, err = m.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil || len(revs) != 2 {
+		t.Fatalf("ListRevisions after update = %v (err %v), want 2", revs, err)
+	}
+
+	// Multiple mode keeps the earlier revision active alongside the new latest.
+	for i := range revs {
+		if !revs[i].Active {
+			t.Fatalf("revision %q inactive in multiple mode, want active", revs[i].Name)
+		}
+	}
+}
+
+// TestSingleModeSupersedesRevision proves single-revision mode deactivates the
+// prior revision when a new one is materialized.
+func TestSingleModeSupersedesRevision(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mk := func(suffix string) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Single",
+			Template: containerapps.Template{RevisionSuffix: suffix},
+		}
+	}
+
+	mustApp(t, m, mk("v1"))
+	mustApp(t, m, mk("v2"))
+
+	r1, err := m.GetRevision(ctx, sub, rg, appNm, appNm+"--v1")
+	if err != nil {
+		t.Fatalf("GetRevision v1: %v", err)
+	}
+
+	if r1.Active {
+		t.Fatal("v1 still active in single mode after v2 created, want superseded")
+	}
+
+	r2, err := m.GetRevision(ctx, sub, rg, appNm, appNm+"--v2")
+	if err != nil || !r2.Active {
+		t.Fatalf("v2 active = %v (err %v), want active", r2.Active, err)
+	}
+}
+
+// TestActivateDeactivateRestartRevision covers the three POST verbs and NotFound.
+func TestActivateDeactivateRestartRevision(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+	rev := appNm + "--v1"
+
+	mustApp(t, m, &containerapps.AppInput{
+		Location: region, EnvironmentID: env.ARMID(),
+		Template: containerapps.Template{RevisionSuffix: "v1"},
+	})
+
+	if err := m.DeactivateRevision(ctx, sub, rg, appNm, rev); err != nil {
+		t.Fatalf("DeactivateRevision: %v", err)
+	}
+
+	if got, _ := m.GetRevision(ctx, sub, rg, appNm, rev); got.Active {
+		t.Fatal("revision active after deactivate, want false")
+	}
+
+	if err := m.ActivateRevision(ctx, sub, rg, appNm, rev); err != nil {
+		t.Fatalf("ActivateRevision: %v", err)
+	}
+
+	if got, _ := m.GetRevision(ctx, sub, rg, appNm, rev); !got.Active {
+		t.Fatal("revision inactive after activate, want true")
+	}
+
+	if err := m.RestartRevision(ctx, sub, rg, appNm, rev); err != nil {
+		t.Fatalf("RestartRevision: %v", err)
+	}
+
+	if err := m.ActivateRevision(ctx, sub, rg, appNm, appNm+"--missing"); err == nil {
+		t.Fatal("ActivateRevision on missing revision returned nil, want NotFound")
+	}
+
+	if _, err := m.ListRevisions(ctx, sub, rg, "no-app"); err == nil {
+		t.Fatal("ListRevisions on missing app returned nil, want NotFound")
+	}
+}
+
+// TestSingleModeActivateKeepsOneActive proves that in single-revision mode
+// activating a superseded revision makes it THE sole active revision — the state
+// never has two active revisions, which real Azure cannot produce.
+func TestSingleModeActivateKeepsOneActive(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mk := func(suffix string) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Single",
+			Template: containerapps.Template{RevisionSuffix: suffix},
+		}
+	}
+
+	mustApp(t, m, mk("v1"))
+	mustApp(t, m, mk("v2")) // v2 supersedes v1 (single mode)
+
+	rev1 := appNm + "--v1"
+
+	if err := m.ActivateRevision(ctx, sub, rg, appNm, rev1); err != nil {
+		t.Fatalf("ActivateRevision v1: %v", err)
+	}
+
+	revs, err := m.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil {
+		t.Fatalf("ListRevisions: %v", err)
+	}
+
+	var active []string
+
+	for i := range revs {
+		if revs[i].Active {
+			active = append(active, revs[i].Name)
+		}
+	}
+
+	if len(active) != 1 || active[0] != rev1 {
+		t.Fatalf("active revisions in single mode = %v, want exactly [%s]", active, rev1)
+	}
+}
+
+// TestDuplicateRevisionSuffixRejected proves that re-using an explicit revision
+// suffix with a different template is rejected, while an identical re-PUT stays
+// idempotent (no error, no duplicate revision).
+func TestDuplicateRevisionSuffixRejected(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mk := func(image string) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(),
+			Template: containerapps.Template{
+				RevisionSuffix: "v1",
+				Containers:     []containerapps.Container{{Name: "main", Image: image}},
+			},
+		}
+	}
+
+	mustApp(t, m, mk("nginx:1"))
+
+	// Same suffix, different template -> conflict.
+	if _, _, err := m.CreateOrUpdateApp(ctx, sub, rg, appNm, mk("nginx:2")); err == nil {
+		t.Fatal("reusing suffix v1 with a different template was accepted, want an error")
+	}
+
+	// Identical re-PUT -> idempotent, no duplicate revision.
+	if _, _, err := m.CreateOrUpdateApp(ctx, sub, rg, appNm, mk("nginx:1")); err != nil {
+		t.Fatalf("identical re-PUT rejected: %v", err)
+	}
+
+	revs, err := m.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil || len(revs) != 1 {
+		t.Fatalf("ListRevisions = %v (err %v), want exactly 1 revision", revs, err)
+	}
+}
+
+// TestTrafficWeightValidation proves an ingress split must reference known
+// revisions and sum to 100, and a rejected update leaves the app unchanged.
+func TestTrafficWeightValidation(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mk := func(suffix string, traffic []containerapps.TrafficWeight) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Multiple",
+			Ingress:  &containerapps.Ingress{External: true, TargetPort: 80, Traffic: traffic},
+			Template: containerapps.Template{RevisionSuffix: suffix},
+		}
+	}
+
+	mustApp(t, m, mk("v1", nil))
+	mustApp(t, m, mk("v2", nil))
+
+	rev1, rev2 := appNm+"--v1", appNm+"--v2"
+
+	// A balanced split is accepted and reflected in per-revision weights.
+	mustApp(t, m, mk("v2", []containerapps.TrafficWeight{
+		{RevisionName: rev1, Weight: 60}, {RevisionName: rev2, Weight: 40},
+	}))
+
+	r1, _ := m.GetRevision(ctx, sub, rg, appNm, rev1)
+	if r1.TrafficWeight != 60 {
+		t.Fatalf("rev1 weight = %d, want 60", r1.TrafficWeight)
+	}
+
+	// An unbalanced split is rejected...
+	if _, _, err := m.CreateOrUpdateApp(ctx, sub, rg, appNm, mk("v2", []containerapps.TrafficWeight{
+		{RevisionName: rev1, Weight: 60}, {RevisionName: rev2, Weight: 30},
+	})); err == nil {
+		t.Fatal("split summing to 90 accepted, want InvalidArgument")
+	}
+
+	// ...and the prior valid split survives the rejected update.
+	if r1, _ = m.GetRevision(ctx, sub, rg, appNm, rev1); r1.TrafficWeight != 60 {
+		t.Fatalf("rev1 weight after rejected update = %d, want 60 (unchanged)", r1.TrafficWeight)
+	}
+
+	// A split naming an unknown revision is rejected.
+	if _, _, err := m.CreateOrUpdateApp(ctx, sub, rg, appNm, mk("v2", []containerapps.TrafficWeight{
+		{RevisionName: appNm + "--ghost", Weight: 100},
+	})); err == nil {
+		t.Fatal("split referencing unknown revision accepted, want InvalidArgument")
+	}
+}
+
+// TestRevisionsSurviveSnapshot proves the revision history round-trips through a
+// snapshot/restore.
+func TestRevisionsSurviveSnapshot(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mustApp(t, m, &containerapps.AppInput{
+		Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Multiple",
+		Template: containerapps.Template{RevisionSuffix: "v1"},
+	})
+	mustApp(t, m, &containerapps.AppInput{
+		Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Multiple",
+		Template: containerapps.Template{RevisionSuffix: "v2"},
+	})
+
+	data, err := m.Snapshot(ctx, false)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	restored := newMock()
+	if err := restored.Restore(ctx, data); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	revs, err := restored.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil || len(revs) != 2 {
+		t.Fatalf("restored ListRevisions = %v (err %v), want 2", revs, err)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }

@@ -333,6 +333,227 @@ func toFloat(v any) float64 {
 	return f
 }
 
+// TestSDKContainerAppRevisions drives the revision/traffic surface with the real
+// armappcontainers ContainerAppsRevisionsClient: creating an app materializes a
+// revision, updating its template mints a second (both listed in multiple-revisions
+// mode), get/activate/deactivate/restart a revision, a traffic split across the
+// two revisions, and the errors on an unbalanced split and a missing revision/app.
+func TestSDKContainerAppRevisions(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	envID := seedRevisionEnv(t, ctx, ts)
+
+	appClient, err := armappcontainers.NewContainerAppsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewContainerAppsClient: %v", err)
+	}
+
+	revClient, err := armappcontainers.NewContainerAppsRevisionsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewContainerAppsRevisionsClient: %v", err)
+	}
+
+	// Create the app (multiple-revisions mode, suffix v1) -> revision "api--v1".
+	putRevisionApp(t, ctx, appClient, envID, "v1", "nginx:1", nil)
+
+	rev1 := appName + "--v1"
+	rev2 := appName + "--v2"
+
+	assertRevisions(t, ctx, revClient, map[string]bool{rev1: true})
+
+	// A template change mints a second revision; both are active in multiple mode.
+	putRevisionApp(t, ctx, appClient, envID, "v2", "nginx:2", nil)
+	assertRevisions(t, ctx, revClient, map[string]bool{rev1: true, rev2: true})
+
+	// The latest revision carries 100% of traffic with no explicit split.
+	got := getRevision(t, ctx, revClient, rev2)
+	if got.Properties.TrafficWeight == nil || *got.Properties.TrafficWeight != 100 {
+		t.Fatalf("rev2 trafficWeight = %v, want 100", got.Properties.TrafficWeight)
+	}
+
+	assertActivateDeactivate(t, ctx, revClient, rev1)
+
+	if _, err := revClient.RestartRevision(ctx, rgName, appName, rev2, nil); err != nil {
+		t.Fatalf("RestartRevision: %v", err)
+	}
+
+	assertTrafficSplit(t, ctx, appClient, revClient, envID, rev1, rev2)
+	assertRevisionErrors(t, ctx, revClient)
+}
+
+func seedRevisionEnv(t *testing.T, ctx context.Context, ts *httptest.Server) string {
+	t.Helper()
+
+	envClient, err := armappcontainers.NewManagedEnvironmentsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewManagedEnvironmentsClient: %v", err)
+	}
+
+	return createEnvironment(t, ctx, envClient)
+}
+
+func putRevisionApp(
+	t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsClient,
+	envID, suffix, image string, traffic []*armappcontainers.TrafficWeight,
+) {
+	t.Helper()
+
+	ingress := &armappcontainers.Ingress{External: to.Ptr(true), TargetPort: to.Ptr[int32](80)}
+	if traffic != nil {
+		ingress.Traffic = traffic
+	}
+
+	poller, err := c.BeginCreateOrUpdate(ctx, rgName, appName, armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Configuration: &armappcontainers.Configuration{
+				ActiveRevisionsMode: to.Ptr(armappcontainers.ActiveRevisionsModeMultiple),
+				Ingress:             ingress,
+			},
+			Template: &armappcontainers.Template{
+				RevisionSuffix: to.Ptr(suffix),
+				Containers: []*armappcontainers.Container{{
+					Name: to.Ptr("main"), Image: to.Ptr(image),
+				}},
+				Scale: &armappcontainers.Scale{MinReplicas: to.Ptr[int32](2)},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate app (suffix %s): %v", suffix, err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll app create (suffix %s): %v", suffix, err)
+	}
+}
+
+func assertRevisions(
+	t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsRevisionsClient, wantActive map[string]bool,
+) {
+	t.Helper()
+
+	got := map[string]bool{}
+	pager := c.NewListRevisionsPager(rgName, appName, nil)
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("list revisions: %v", err)
+		}
+
+		for _, rev := range page.Value {
+			got[*rev.Name] = rev.Properties != nil && rev.Properties.Active != nil && *rev.Properties.Active
+		}
+	}
+
+	if len(got) != len(wantActive) {
+		t.Fatalf("revisions = %v, want %v", got, wantActive)
+	}
+
+	for name, active := range wantActive {
+		if gotActive, ok := got[name]; !ok || gotActive != active {
+			t.Fatalf("revision %q active = %v (present %v), want %v", name, gotActive, ok, active)
+		}
+	}
+}
+
+func getRevision(
+	t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsRevisionsClient, name string,
+) armappcontainers.ContainerAppsRevisionsClientGetRevisionResponse {
+	t.Helper()
+
+	got, err := c.GetRevision(ctx, rgName, appName, name, nil)
+	if err != nil {
+		t.Fatalf("GetRevision %q: %v", name, err)
+	}
+
+	return got
+}
+
+func assertActivateDeactivate(
+	t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsRevisionsClient, name string,
+) {
+	t.Helper()
+
+	if _, err := c.DeactivateRevision(ctx, rgName, appName, name, nil); err != nil {
+		t.Fatalf("DeactivateRevision %q: %v", name, err)
+	}
+
+	if got := getRevision(t, ctx, c, name); got.Properties.Active == nil || *got.Properties.Active {
+		t.Fatalf("after deactivate, %q active = %v, want false", name, got.Properties.Active)
+	}
+
+	if _, err := c.ActivateRevision(ctx, rgName, appName, name, nil); err != nil {
+		t.Fatalf("ActivateRevision %q: %v", name, err)
+	}
+
+	if got := getRevision(t, ctx, c, name); got.Properties.Active == nil || !*got.Properties.Active {
+		t.Fatalf("after activate, %q active = %v, want true", name, got.Properties.Active)
+	}
+}
+
+func assertTrafficSplit(
+	t *testing.T, ctx context.Context,
+	appClient *armappcontainers.ContainerAppsClient, revClient *armappcontainers.ContainerAppsRevisionsClient,
+	envID, rev1, rev2 string,
+) {
+	t.Helper()
+
+	// A valid 50/50 split across both revisions is accepted.
+	putRevisionApp(t, ctx, appClient, envID, "v2", "nginx:2", []*armappcontainers.TrafficWeight{
+		{RevisionName: to.Ptr(rev1), Weight: to.Ptr[int32](50)},
+		{RevisionName: to.Ptr(rev2), Weight: to.Ptr[int32](50)},
+	})
+
+	if got := getRevision(t, ctx, revClient, rev1); got.Properties.TrafficWeight == nil || *got.Properties.TrafficWeight != 50 {
+		t.Fatalf("rev1 trafficWeight after split = %v, want 50", got.Properties.TrafficWeight)
+	}
+
+	// A split that does not sum to 100 is rejected. The template matches the
+	// stored v2 revision, so the request reaches traffic validation rather than
+	// tripping the duplicate-suffix guard.
+	_, err := appClient.BeginCreateOrUpdate(ctx, rgName, appName, armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Configuration: &armappcontainers.Configuration{
+				ActiveRevisionsMode: to.Ptr(armappcontainers.ActiveRevisionsModeMultiple),
+				Ingress: &armappcontainers.Ingress{
+					External: to.Ptr(true), TargetPort: to.Ptr[int32](80),
+					Traffic: []*armappcontainers.TrafficWeight{
+						{RevisionName: to.Ptr(rev1), Weight: to.Ptr[int32](50)},
+						{RevisionName: to.Ptr(rev2), Weight: to.Ptr[int32](40)},
+					},
+				},
+			},
+			Template: &armappcontainers.Template{
+				RevisionSuffix: to.Ptr("v2"),
+				Containers:     []*armappcontainers.Container{{Name: to.Ptr("main"), Image: to.Ptr("nginx:2")}},
+				Scale:          &armappcontainers.Scale{MinReplicas: to.Ptr[int32](2)},
+			},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("traffic split summing to 90 was accepted, want an error")
+	}
+}
+
+func assertRevisionErrors(t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsRevisionsClient) {
+	t.Helper()
+
+	if _, err := c.GetRevision(ctx, rgName, appName, appName+"--missing", nil); err == nil {
+		t.Fatal("GetRevision on a missing revision returned nil error, want NotFound")
+	}
+
+	pager := c.NewListRevisionsPager(rgName, "no-such-app", nil)
+	if _, err := pager.NextPage(ctx); err == nil {
+		t.Fatal("ListRevisions on a missing app returned nil error, want NotFound")
+	}
+}
+
 func deleteContainerApp(t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsClient) {
 	t.Helper()
 
