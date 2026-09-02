@@ -66,8 +66,11 @@ type Revision struct {
 
 // materializeRevisionLocked creates or refreshes the revision the app's current
 // template maps to, points LatestRevisionName at it, and reconciles the active
-// flags for the app's active-revisions mode. Callers hold m.mu.
-func (m *Mock) materializeRevisionLocked(app *ContainerApp) {
+// flags for the app's active-revisions mode. Re-using an explicit
+// template.revisionSuffix that already names a revision with a different template
+// is rejected, matching Azure ("revision with suffix ... already exists"); an
+// identical re-PUT stays idempotent. Callers hold m.mu.
+func (m *Mock) materializeRevisionLocked(app *ContainerApp) error {
 	suffix := app.Template.RevisionSuffix
 	if suffix == "" {
 		suffix = templateSuffix(app.Template)
@@ -85,7 +88,11 @@ func (m *Mock) materializeRevisionLocked(app *ContainerApp) {
 	}
 
 	if idx := revisionIndex(app, revName); idx >= 0 {
-		app.Revisions[idx].Template = cloneTemplate(app.Template)
+		if templateSuffix(app.Revisions[idx].Template) != templateSuffix(app.Template) {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"revision with suffix %q already exists with a different template", suffix)
+		}
+
 		app.Revisions[idx].Fqdn = fqdn
 	} else {
 		app.Revisions = append(app.Revisions, Revision{
@@ -97,6 +104,8 @@ func (m *Mock) materializeRevisionLocked(app *ContainerApp) {
 	}
 
 	reconcileActive(app, revName)
+
+	return nil
 }
 
 // reconcileActive marks the latest revision active. In single-revision mode
@@ -244,6 +253,20 @@ func (m *Mock) setRevisionActive(sub, rg, appName, revName string, active bool) 
 
 	app.Revisions = cloneRevisions(app.Revisions)
 	app.Revisions[idx].Active = active
+
+	// Single-revision mode admits exactly one active revision: activating one
+	// makes it the sole active revision (and the traffic target), so it can
+	// never leave two active at once. Multiple mode flips the one flag alone.
+	if active && !strings.EqualFold(app.ActiveRevMode, modeMultiple) {
+		for i := range app.Revisions {
+			if i != idx {
+				app.Revisions[i].Active = false
+			}
+		}
+
+		app.LatestRevisionName = app.Revisions[idx].Name
+	}
+
 	m.apps.Set(k, app)
 
 	return nil

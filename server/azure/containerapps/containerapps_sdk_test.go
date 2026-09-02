@@ -512,7 +512,9 @@ func assertTrafficSplit(
 		t.Fatalf("rev1 trafficWeight after split = %v, want 50", got.Properties.TrafficWeight)
 	}
 
-	// A split that does not sum to 100 is rejected.
+	// A split that does not sum to 100 is rejected. The template matches the
+	// stored v2 revision, so the request reaches traffic validation rather than
+	// tripping the duplicate-suffix guard.
 	_, err := appClient.BeginCreateOrUpdate(ctx, rgName, appName, armappcontainers.ContainerApp{
 		Location: to.Ptr("eastus"),
 		Properties: &armappcontainers.ContainerAppProperties{
@@ -527,7 +529,11 @@ func assertTrafficSplit(
 					},
 				},
 			},
-			Template: &armappcontainers.Template{RevisionSuffix: to.Ptr("v2")},
+			Template: &armappcontainers.Template{
+				RevisionSuffix: to.Ptr("v2"),
+				Containers:     []*armappcontainers.Container{{Name: to.Ptr("main"), Image: to.Ptr("nginx:2")}},
+				Scale:          &armappcontainers.Scale{MinReplicas: to.Ptr[int32](2)},
+			},
 		},
 	}, nil)
 	if err == nil {

@@ -242,7 +242,7 @@ func TestRevisionMaterializedOnTemplateChange(t *testing.T) {
 	base := func(suffix, image string) *containerapps.AppInput {
 		return &containerapps.AppInput{
 			Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Multiple",
-			Ingress:  &containerapps.Ingress{External: true, TargetPort: 80},
+			Ingress: &containerapps.Ingress{External: true, TargetPort: 80},
 			Template: containerapps.Template{
 				RevisionSuffix: suffix,
 				Containers:     []containerapps.Container{{Name: "main", Image: image}},
@@ -349,6 +349,84 @@ func TestActivateDeactivateRestartRevision(t *testing.T) {
 
 	if _, err := m.ListRevisions(ctx, sub, rg, "no-app"); err == nil {
 		t.Fatal("ListRevisions on missing app returned nil, want NotFound")
+	}
+}
+
+// TestSingleModeActivateKeepsOneActive proves that in single-revision mode
+// activating a superseded revision makes it THE sole active revision — the state
+// never has two active revisions, which real Azure cannot produce.
+func TestSingleModeActivateKeepsOneActive(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mk := func(suffix string) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(), ActiveRevMode: "Single",
+			Template: containerapps.Template{RevisionSuffix: suffix},
+		}
+	}
+
+	mustApp(t, m, mk("v1"))
+	mustApp(t, m, mk("v2")) // v2 supersedes v1 (single mode)
+
+	rev1 := appNm + "--v1"
+
+	if err := m.ActivateRevision(ctx, sub, rg, appNm, rev1); err != nil {
+		t.Fatalf("ActivateRevision v1: %v", err)
+	}
+
+	revs, err := m.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil {
+		t.Fatalf("ListRevisions: %v", err)
+	}
+
+	var active []string
+
+	for i := range revs {
+		if revs[i].Active {
+			active = append(active, revs[i].Name)
+		}
+	}
+
+	if len(active) != 1 || active[0] != rev1 {
+		t.Fatalf("active revisions in single mode = %v, want exactly [%s]", active, rev1)
+	}
+}
+
+// TestDuplicateRevisionSuffixRejected proves that re-using an explicit revision
+// suffix with a different template is rejected, while an identical re-PUT stays
+// idempotent (no error, no duplicate revision).
+func TestDuplicateRevisionSuffixRejected(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+	ctx := context.Background()
+
+	mk := func(image string) *containerapps.AppInput {
+		return &containerapps.AppInput{
+			Location: region, EnvironmentID: env.ARMID(),
+			Template: containerapps.Template{
+				RevisionSuffix: "v1",
+				Containers:     []containerapps.Container{{Name: "main", Image: image}},
+			},
+		}
+	}
+
+	mustApp(t, m, mk("nginx:1"))
+
+	// Same suffix, different template -> conflict.
+	if _, _, err := m.CreateOrUpdateApp(ctx, sub, rg, appNm, mk("nginx:2")); err == nil {
+		t.Fatal("reusing suffix v1 with a different template was accepted, want an error")
+	}
+
+	// Identical re-PUT -> idempotent, no duplicate revision.
+	if _, _, err := m.CreateOrUpdateApp(ctx, sub, rg, appNm, mk("nginx:1")); err != nil {
+		t.Fatalf("identical re-PUT rejected: %v", err)
+	}
+
+	revs, err := m.ListRevisions(ctx, sub, rg, appNm)
+	if err != nil || len(revs) != 1 {
+		t.Fatalf("ListRevisions = %v (err %v), want exactly 1 revision", revs, err)
 	}
 }
 

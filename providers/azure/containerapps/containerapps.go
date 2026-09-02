@@ -296,7 +296,9 @@ func (m *Mock) CreateOrUpdateApp(
 	app.Template = cloneTemplate(in.Template)
 	app.Fqdn = m.appFqdnLocked(name, in.EnvironmentID, in.Ingress)
 
-	m.materializeRevisionLocked(&app)
+	if err := m.materializeRevisionLocked(&app); err != nil {
+		return ContainerApp{}, false, err
+	}
 
 	if err := validateTrafficLocked(&app); err != nil {
 		return ContainerApp{}, false, err
