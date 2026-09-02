@@ -28,7 +28,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
 | `configservice` | [Config](./aws/config.md) | — | — | — | 102 |
-| `containerapps` | — | [ContainerApps](./azure/containerapps.md) | — | — | 14 |
+| `containerapps` | — | [ContainerApps](./azure/containerapps.md) | — | — | 19 |
 | `containerinstances` | — | [ContainerInstances](./azure/containerinstances.md) | — | — | 10 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 15 |
 | `cosmosaccount` | — | [Cosmosaccount](./azure/cosmosaccount.md) | — | — | 10 |

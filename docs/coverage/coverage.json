@@ -2900,10 +2900,16 @@
         "name": "ARMID"
       },
       {
+        "name": "ActivateRevision"
+      },
+      {
         "name": "CreateOrUpdateApp"
       },
       {
         "name": "CreateOrUpdateEnvironment"
+      },
+      {
+        "name": "DeactivateRevision"
       },
       {
         "name": "DeleteApp"
@@ -2924,6 +2930,9 @@
         "name": "GetEnvironment"
       },
       {
+        "name": "GetRevision"
+      },
+      {
         "name": "ListAppsByResourceGroup"
       },
       {
@@ -2936,7 +2945,13 @@
         "name": "ListEnvironmentsBySubscription"
       },
       {
+        "name": "ListRevisions"
+      },
+      {
         "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "RestartRevision"
       }
     ],
     "providers": {

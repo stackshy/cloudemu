@@ -23,6 +23,14 @@ const (
 	providerName      = "Microsoft.App"
 	typeEnvironments  = "managedEnvironments"
 	typeContainerApps = "containerApps"
+
+	// subResourceRevisions is the sub-resource segment for a container app's
+	// revisions (.../containerApps/{app}/revisions[/{rev}[/{action}]]).
+	subResourceRevisions = "revisions"
+
+	actionActivate   = "activate"
+	actionDeactivate = "deactivate"
+	actionRestart    = "restart"
 )
 
 // Store is the minimal Container Apps backend the handler needs.
@@ -43,6 +51,12 @@ type Store interface {
 	DeleteApp(ctx context.Context, sub, rg, name string) (bool, error)
 	ListAppsByResourceGroup(ctx context.Context, sub, rg string) ([]containerapps.ContainerApp, error)
 	ListAppsBySubscription(ctx context.Context, sub string) ([]containerapps.ContainerApp, error)
+
+	ListRevisions(ctx context.Context, sub, rg, app string) ([]containerapps.Revision, error)
+	GetRevision(ctx context.Context, sub, rg, app, rev string) (containerapps.Revision, error)
+	ActivateRevision(ctx context.Context, sub, rg, app, rev string) error
+	DeactivateRevision(ctx context.Context, sub, rg, app, rev string) error
+	RestartRevision(ctx context.Context, sub, rg, app, rev string) error
 
 	PurgeResourceGroup(ctx context.Context, sub, rg string) error
 }
@@ -165,6 +179,11 @@ func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
+	if strings.EqualFold(rp.SubResource, subResourceRevisions) {
+		h.serveRevision(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut, http.MethodPatch:
 		h.putApp(w, r, rp)
@@ -222,6 +241,87 @@ func (h *Handler) deleteApp(w http.ResponseWriter, r *http.Request, rp *azurearm
 func (h *Handler) listApps(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	writeList(w, r, rp,
 		h.store.ListAppsByResourceGroup, h.store.ListAppsBySubscription, toAppResponse)
+}
+
+// serveRevision dispatches the container-app revision sub-resource:
+//
+//	GET  .../revisions               → list
+//	GET  .../revisions/{rev}          → get
+//	POST .../revisions/{rev}/{action} → activate | deactivate | restart
+func (h *Handler) serveRevision(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if rp.SubResourceName == "" {
+		h.listRevisions(w, r, rp)
+		return
+	}
+
+	if rp.SubResourceAction != "" {
+		h.revisionAction(w, r, rp)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	rev, err := h.store.GetRevision(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toRevisionResponse(rp, &rev))
+}
+
+func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodGet {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	revs, err := h.store.ListRevisions(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := listEnvelope[revisionResponse]{Value: make([]revisionResponse, 0, len(revs))}
+	for i := range revs {
+		out.Value = append(out.Value, toRevisionResponse(rp, &revs[i]))
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, out)
+}
+
+// revisionAction runs a POST activate/deactivate/restart on a revision. Each is
+// synchronous in armappcontainers and returns an empty body, so a 200 with no
+// content terminates the SDK call.
+func (h *Handler) revisionAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	var err error
+
+	switch strings.ToLower(rp.SubResourceAction) {
+	case actionActivate:
+		err = h.store.ActivateRevision(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	case actionDeactivate:
+		err = h.store.DeactivateRevision(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	case actionRestart:
+		err = h.store.RestartRevision(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unknown revision action")
+		return
+	}
+
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // writeList serves a collection GET for either resource type: it dispatches to
