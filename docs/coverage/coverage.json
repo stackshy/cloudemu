@@ -7691,6 +7691,44 @@
         ]
       },
       {
+        "name": "AzurePrivateLink",
+        "doc": "AzurePrivateLink is the Azure-only Private Link surface. Each resource type is",
+        "operations": [
+          {
+            "name": "DeleteAzurePrivateEndpoint",
+            "doc": "DeleteAzurePrivateEndpoint removes the endpoint, reporting whether it existed."
+          },
+          {
+            "name": "DeleteAzurePrivateLinkService",
+            "doc": "DeleteAzurePrivateLinkService removes the service, reporting whether it existed."
+          },
+          {
+            "name": "GetAzurePrivateEndpoint",
+            "doc": "GetAzurePrivateEndpoint returns the endpoint identified by (resourceGroup, name)."
+          },
+          {
+            "name": "GetAzurePrivateLinkService",
+            "doc": "GetAzurePrivateLinkService returns the service identified by (resourceGroup, name)."
+          },
+          {
+            "name": "ListAzurePrivateEndpoints",
+            "doc": "ListAzurePrivateEndpoints returns the endpoints in a resource group, or all"
+          },
+          {
+            "name": "ListAzurePrivateLinkServices",
+            "doc": "ListAzurePrivateLinkServices returns the services in a resource group, or all"
+          },
+          {
+            "name": "PutAzurePrivateEndpoint",
+            "doc": "PutAzurePrivateEndpoint creates or replaces a private endpoint in place (a"
+          },
+          {
+            "name": "PutAzurePrivateLinkService",
+            "doc": "PutAzurePrivateLinkService creates or replaces a private link service in place."
+          }
+        ]
+      },
+      {
         "name": "AzurePublicIPPrefixes",
         "doc": "AzurePublicIPPrefixes is the Azure-only public-IP-prefix surface. Keyed by",
         "operations": [

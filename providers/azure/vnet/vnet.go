@@ -92,6 +92,12 @@ type Mock struct {
 	azureVNGateways    *memstore.Store[driver.AzureVirtualNetworkGateway]
 	azureLNGateways    *memstore.Store[driver.AzureLocalNetworkGateway]
 	azureGWConnections *memstore.Store[driver.AzureVirtualNetworkGatewayConnection]
+	// azurePrivateEndpoints / azurePrivateLinkServices hold the Azure-only
+	// Private Link surface (Microsoft.Network/privateEndpoints and
+	// privateLinkServices), each keyed by (resourceGroup, name). Neither has a
+	// cross-cloud equivalent.
+	azurePrivateEndpoints    *memstore.Store[driver.AzurePrivateEndpoint]
+	azurePrivateLinkServices *memstore.Store[driver.AzurePrivateLinkService]
 	// nicMu serializes network-interface create/update, whose private-IP
 	// allocation is a read-modify-write across the nics store (memstore is
 	// per-op safe but can't make that sequence atomic).
@@ -133,7 +139,11 @@ func New(opts *config.Options) *Mock {
 		azureVNGateways:     memstore.New[driver.AzureVirtualNetworkGateway](),
 		azureLNGateways:     memstore.New[driver.AzureLocalNetworkGateway](),
 		azureGWConnections:  memstore.New[driver.AzureVirtualNetworkGatewayConnection](),
-		opts:                opts,
+
+		azurePrivateEndpoints:    memstore.New[driver.AzurePrivateEndpoint](),
+		azurePrivateLinkServices: memstore.New[driver.AzurePrivateLinkService](),
+
+		opts: opts,
 	}
 }
 

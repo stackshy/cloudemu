@@ -135,6 +135,21 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
 | `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 
+### AzurePrivateLink
+
+AzurePrivateLink is the Azure-only Private Link surface. Each resource type is
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzurePrivateEndpoint` | DeleteAzurePrivateEndpoint removes the endpoint, reporting whether it existed. |
+| `DeleteAzurePrivateLinkService` | DeleteAzurePrivateLinkService removes the service, reporting whether it existed. |
+| `GetAzurePrivateEndpoint` | GetAzurePrivateEndpoint returns the endpoint identified by (resourceGroup, name). |
+| `GetAzurePrivateLinkService` | GetAzurePrivateLinkService returns the service identified by (resourceGroup, name). |
+| `ListAzurePrivateEndpoints` | ListAzurePrivateEndpoints returns the endpoints in a resource group, or all |
+| `ListAzurePrivateLinkServices` | ListAzurePrivateLinkServices returns the services in a resource group, or all |
+| `PutAzurePrivateEndpoint` | PutAzurePrivateEndpoint creates or replaces a private endpoint in place (a |
+| `PutAzurePrivateLinkService` | PutAzurePrivateLinkService creates or replaces a private link service in place. |
+
 ### AzurePublicIPPrefixes
 
 AzurePublicIPPrefixes is the Azure-only public-IP-prefix surface. Keyed by
