@@ -80,6 +80,25 @@ AzureApplicationSecurityGroups is the Azure-only application-security-group
 | `ListAzureApplicationSecurityGroups` | ListAzureApplicationSecurityGroups returns the ASGs in a resource group, or |
 | `PutAzureApplicationSecurityGroup` | PutAzureApplicationSecurityGroup creates or replaces an ASG in place (a |
 
+### AzureNetworkGateways
+
+AzureNetworkGateways is the Azure-only site-to-site VPN surface. Each resource
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzureLocalNetworkGateway` | DeleteAzureLocalNetworkGateway removes the local gateway, reporting whether it existed. |
+| `DeleteAzureVirtualNetworkGateway` | DeleteAzureVirtualNetworkGateway removes the gateway, reporting whether it existed. |
+| `DeleteAzureVirtualNetworkGatewayConnection` | DeleteAzureVirtualNetworkGatewayConnection removes the connection, reporting whether it existed. |
+| `GetAzureLocalNetworkGateway` | GetAzureLocalNetworkGateway returns the local gateway identified by (resourceGroup, name). |
+| `GetAzureVirtualNetworkGateway` | GetAzureVirtualNetworkGateway returns the gateway identified by (resourceGroup, name). |
+| `GetAzureVirtualNetworkGatewayConnection` | GetAzureVirtualNetworkGatewayConnection returns the connection identified by (resourceGroup, name). |
+| `ListAzureLocalNetworkGateways` | ListAzureLocalNetworkGateways returns the local gateways in a resource group, |
+| `ListAzureVirtualNetworkGatewayConnections` | ListAzureVirtualNetworkGatewayConnections returns the connections in a resource |
+| `ListAzureVirtualNetworkGateways` | ListAzureVirtualNetworkGateways returns the gateways in a resource group, or |
+| `PutAzureLocalNetworkGateway` | PutAzureLocalNetworkGateway creates or replaces a local network gateway in place. |
+| `PutAzureVirtualNetworkGateway` | PutAzureVirtualNetworkGateway creates or replaces a virtual network gateway |
+| `PutAzureVirtualNetworkGatewayConnection` | PutAzureVirtualNetworkGatewayConnection creates or replaces a connection in place. |
+
 ### AzureNetworkInterfaces
 
 AzureNetworkInterfaces is the Azure-specific network-interface surface,

@@ -85,6 +85,13 @@ type Mock struct {
 	// azurePrefixes holds the Azure-only public IP prefixes (a reserved CIDR range
 	// with no cross-cloud equivalent), keyed by (resourceGroup, name).
 	azurePrefixes *memstore.Store[driver.AzurePublicIPPrefix]
+	// azureVNGateways / azureLNGateways / azureGWConnections hold the Azure-only
+	// site-to-site VPN surface (virtual network gateways, local network gateways
+	// and connections), each keyed by (resourceGroup, name). None has a
+	// cross-cloud equivalent.
+	azureVNGateways    *memstore.Store[driver.AzureVirtualNetworkGateway]
+	azureLNGateways    *memstore.Store[driver.AzureLocalNetworkGateway]
+	azureGWConnections *memstore.Store[driver.AzureVirtualNetworkGatewayConnection]
 	// nicMu serializes network-interface create/update, whose private-IP
 	// allocation is a read-modify-write across the nics store (memstore is
 	// per-op safe but can't make that sequence atomic).
@@ -123,6 +130,9 @@ func New(opts *config.Options) *Mock {
 		azureVNetPeerings:   memstore.New[[]driver.AzureVNetPeering](),
 		azureASGs:           memstore.New[driver.AzureApplicationSecurityGroup](),
 		azurePrefixes:       memstore.New[driver.AzurePublicIPPrefix](),
+		azureVNGateways:     memstore.New[driver.AzureVirtualNetworkGateway](),
+		azureLNGateways:     memstore.New[driver.AzureLocalNetworkGateway](),
+		azureGWConnections:  memstore.New[driver.AzureVirtualNetworkGatewayConnection](),
 		opts:                opts,
 	}
 }
