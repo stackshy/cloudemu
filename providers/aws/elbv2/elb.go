@@ -650,10 +650,24 @@ func cloneActions(actions []driver.RuleAction) []driver.RuleAction {
 	return append([]driver.RuleAction(nil), actions...)
 }
 
-// DeleteListener deletes a listener by ARN.
+// DeleteListener deletes a listener by ARN and, with it, the rules under that
+// listener. Rules are children of the listener in real ELBv2, so deleting the
+// listener removes them; leaving them behind would leak them for the life of
+// the process (their parent listener is gone, so nothing ever reaches them) and
+// DescribeRules on the deleted listener already returns ListenerNotFound. This
+// mirrors the LB→listener→rule cascade in DeleteLoadBalancer.
 func (m *Mock) DeleteListener(_ context.Context, arn string) error {
 	if !m.listeners.Delete(arn) {
 		return errors.Newf(errors.NotFound, "listener %q not found", arn)
+	}
+
+	// Cascade to the listener's rules. Range over a snapshot and delete each key
+	// through the store's own write-locked Delete so the mutation stays atomic
+	// per key (no Get-then-separate-Delete race).
+	for rkey, r := range m.rules.All() {
+		if r.ListenerARN == arn {
+			m.rules.Delete(rkey)
+		}
 	}
 
 	return nil

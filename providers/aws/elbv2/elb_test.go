@@ -211,6 +211,31 @@ func TestDeleteListener(t *testing.T) {
 	assertError(t, m.DeleteListener(ctx, "arn:nope"), true)
 }
 
+func TestDeleteListenerCascadesRules(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+
+	victim, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
+	survivor, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTPS", Port: 443})
+
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: victim.ARN, Priority: 10})
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: victim.ARN, Priority: 20})
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: survivor.ARN, Priority: 10})
+
+	requireNoError(t, m.DeleteListener(ctx, victim.ARN))
+
+	// The victim's rules are gone with it: DescribeRules on the deleted listener
+	// is ListenerNotFound, so no orphaned rule remains queryable.
+	_, err := m.DescribeRules(ctx, victim.ARN)
+	assertError(t, err, true)
+
+	// The sibling listener's rule is untouched (default rule + the one created).
+	survivorRules, err := m.DescribeRules(ctx, survivor.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(survivorRules))
+}
+
 func TestDescribeListeners(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
