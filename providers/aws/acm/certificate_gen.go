@@ -120,10 +120,10 @@ func rsaKeyMaterial(bits int) (signer crypto.Signer, keyPEM, sigAlg string, err 
 	// Never generate a key weaker than 2048 bits, even if a caller requests the
 	// legacy RSA_1024 algorithm: a sub-2048 RSA key is rejected by modern TLS
 	// stacks and flagged as weak crypto. The emulator issues a fake cert, so the
-	// exact bit count carries no semantic weight — clamp to the safe minimum.
-	if bits < rsaBits2048 {
-		bits = rsaBits2048
-	}
+	// exact bit count carries no semantic weight — floor it to the safe minimum
+	// in a single max() the GenerateKey call reads directly, so no path can reach
+	// it with fewer than 2048 bits.
+	bits = max(bits, rsaBits2048)
 
 	key, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {

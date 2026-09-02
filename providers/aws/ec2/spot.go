@@ -14,6 +14,11 @@ const (
 	spotStatusCanceled = "canceled"
 	spotTypeOneTime    = "one-time"
 	timeFormat         = "2006-01-02T15:04:05Z"
+	// maxSpotRequests bounds the capacity hint for the results slice so a tainted
+	// cfg.Count can never size an unbounded allocation. It mirrors the per-call
+	// instance ceiling RunInstances enforces (a larger count errors out there
+	// before this point), so the bound never changes a valid request's behavior.
+	maxSpotRequests = 1000
 )
 
 // RequestSpotInstances creates spot instance requests and immediately fulfills them.
@@ -35,7 +40,7 @@ func (m *Mock) RequestSpotInstances(
 		return nil, err
 	}
 
-	results := make([]driver.SpotInstanceRequest, 0, cfg.Count)
+	results := make([]driver.SpotInstanceRequest, 0, min(cfg.Count, maxSpotRequests))
 	now := m.opts.Clock.Now().UTC().Format(timeFormat)
 
 	for _, inst := range instances {
