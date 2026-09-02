@@ -192,14 +192,20 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		}
 
 		out = append(out, Resource{
-			Provider:   e.provider,
-			Service:    ServiceCompute,
-			Type:       TypeInstance,
-			ID:         inst.ID,
-			ARN:        e.computeInstanceARN(inst.ID, inst.ResourceGroup),
-			Region:     region,
-			Tags:       copyTags(inst.Tags),
-			SKU:        inst.InstanceType,
+			Provider: e.provider,
+			Service:  ServiceCompute,
+			Type:     TypeInstance,
+			ID:       inst.ID,
+			ARN:      e.computeInstanceARN(inst.ID, inst.ResourceGroup),
+			Region:   region,
+			Tags:     copyTags(inst.Tags),
+			SKU:      inst.InstanceType,
+			// State carries the instance's run state so the cost path can bill $0
+			// for a terminated/stopped instance's compute. For Azure both PowerOff
+			// and Deallocate settle the lifecycle State to "stopped"; GCP reports a
+			// stopped instance as "terminated" — either way a non-running State
+			// zeroes compute, which is what the cost surfaces want.
+			State:      inst.State,
 			Zones:      cloneStrings(inst.Zones),
 			Properties: orNilProps(props),
 		})

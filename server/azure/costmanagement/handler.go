@@ -119,16 +119,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // queryDefinition is the subset of the SDK QueryDefinition this handler reads.
-// Only the fields that change the shape of the response (granularity, grouping,
-// aggregation column names) are decoded; filters/timeframe are accepted and
-// ignored because the emulator holds a single point-in-time estate.
+// Only the fields that change the shape of the response are decoded: the
+// granularity, grouping and aggregation column names, plus the timeframe (and,
+// for a Custom timeframe, the explicit time period) that bound how many daily
+// buckets a granular query spreads across. Filters are accepted and ignored
+// because the emulator holds a single point-in-time estate.
 type queryDefinition struct {
-	Type    string `json:"type"`
-	Dataset struct {
+	Type       string      `json:"type"`
+	Timeframe  string      `json:"timeframe"`
+	TimePeriod *timePeriod `json:"timePeriod"`
+	Dataset    struct {
 		Granularity string                     `json:"granularity"`
 		Aggregation map[string]aggregationSpec `json:"aggregation"`
 		Grouping    []groupingSpec             `json:"grouping"`
 	} `json:"dataset"`
+}
+
+// timePeriod is the explicit [from, to] window a Custom timeframe supplies. The
+// SDK marshals both bounds as RFC3339 timestamps.
+type timePeriod struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 type aggregationSpec struct {

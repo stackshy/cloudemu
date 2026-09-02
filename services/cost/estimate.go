@@ -55,7 +55,7 @@ func Estimate(ctx context.Context, inv Inventory) ([]Line, float64, error) {
 		r := &res[i]
 
 		est := pricing.Monthly(r.Provider, r.Service, r.Type, r.SKU, r.Region, r.Properties)
-		if est <= 0 {
+		if est <= 0 || !pricing.ComputeInstanceBillable(r.Service, r.Type, r.State) {
 			continue
 		}
 
