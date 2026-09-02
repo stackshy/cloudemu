@@ -6,10 +6,13 @@
 // are created Running with a synthesized query URI and data-ingestion URI, and
 // Start/Stop flip the cluster state. Databases default to the ReadWrite kind.
 //
-// SCOPE: this handler is the ARM CONTROL-PLANE only (clusters + databases CRUD,
-// list, start/stop). The Kusto QUERY data plane — running KQL against
-// <cluster>.<region>.kusto.windows.net — is a large separate engine and is out
-// of scope here, the same control-plane boundary Event Hubs and Service Bus draw.
+// SCOPE: this Handler is the ARM CONTROL-PLANE only (clusters + databases CRUD,
+// list, start/stop). The Kusto QUERY data plane — the /v1|v2/rest/{mgmt,query}
+// endpoints clients POST to <cluster>.<region>.kusto.windows.net — is served by
+// the separate DataPlaneHandler (dataplane.go) registered alongside it. That
+// handler currently serves the control commands (.create/.show/.drop table)
+// against an in-memory table store; the KQL query evaluator lands in a later
+// increment.
 package kusto
 
 import (

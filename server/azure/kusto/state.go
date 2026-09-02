@@ -5,7 +5,8 @@ import "time"
 // In-memory control-plane model for Kusto (Azure Data Explorer). Clusters and
 // their databases are Azure-only ARM containers with no cross-cloud portable-
 // driver equivalent, so their state lives here on the handler, scoped to the
-// parent cluster. The KQL query data plane is out of scope (see package doc).
+// parent cluster. The query data plane keeps its own table store on the
+// DataPlaneHandler (see tablestore.go), independent of this ARM state.
 
 const (
 	// stateRunning / stateStopped are the cluster lifecycle states real Kusto

@@ -495,9 +495,16 @@ func New(d Drivers) http.Handler {
 	// databases) — a distinct ARM provider name from every other Azure handler,
 	// so registration order is unconstrained. It is a self-contained control-plane
 	// handler with no backing driver (its state is cluster-scoped ARM containers,
-	// like Event Hubs), so it is always registered. The Kusto KQL query data plane
-	// is out of scope.
+	// like Event Hubs), so it is always registered.
 	srv.Register(kustosrv.New())
+
+	// Kusto query data plane serves the globally-unique /v1|v2/rest/{mgmt,query}
+	// paths clients POST to the cluster host. The paths collide with no other
+	// handler, so registration order is unconstrained; like the control plane it
+	// is driverless, holding the ingested tables in memory. This increment serves
+	// the control commands (.create/.show/.drop table); the KQL query evaluator
+	// arrives in a later increment.
+	srv.Register(kustosrv.NewDataPlane())
 
 	// Synapse claims Microsoft.Synapse/workspaces (and their sqlPools,
 	// bigDataPools and integrationRuntimes) — a distinct ARM provider name from

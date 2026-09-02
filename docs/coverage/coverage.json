@@ -6489,10 +6489,19 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "CreateMergeTable"
+      },
+      {
         "name": "CreateOrUpdate"
       },
       {
+        "name": "CreateTable"
+      },
+      {
         "name": "Delete"
+      },
+      {
+        "name": "DropTable"
       },
       {
         "name": "Get"
@@ -6505,6 +6514,15 @@
       },
       {
         "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ShowDatabaseSchema"
+      },
+      {
+        "name": "ShowTableSchema"
+      },
+      {
+        "name": "ShowTables"
       },
       {
         "name": "Start"
