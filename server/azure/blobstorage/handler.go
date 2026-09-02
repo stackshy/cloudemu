@@ -489,7 +489,7 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 // rendering every version of the matching blobs with its VersionId and
 // IsCurrentVersion marker. Versions sort by blob name then version id, so the
 // current version (newest id) appears last within a name, matching Azure.
-func (h *Handler) listBlobVersions(
+func (*Handler) listBlobVersions(
 	w http.ResponseWriter, r *http.Request, ext storagedriver.AzureVersionedBlob, container string, q url.Values,
 ) {
 	maxResults := parseMaxResults(q)

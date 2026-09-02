@@ -157,6 +157,43 @@ func TestDeleteCurrentVersionRemovesBase(t *testing.T) {
 	assert.True(t, cerrors.IsNotFound(err), "deleting the current version removes the base blob")
 }
 
+func TestSetTierAndPropertiesDoNotMintVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	enableVersioning(t, m)
+	require.NoError(t, m.CreateBucket(ctx, "c1"))
+
+	require.NoError(t, m.PutObject(ctx, "c1", "k1", []byte("v1"), "text/plain", nil))
+
+	countVersions := func() int {
+		res, err := m.ListBlobVersions(ctx, "c1", driver.ListOptions{})
+		require.NoError(t, err)
+
+		return len(res.Versions)
+	}
+
+	require.Equal(t, 1, countVersions())
+
+	// Set Blob Tier is an in-place tier change — no new version.
+	_, err := m.SetBlobTier(ctx, "c1", "k1", accessTierCool)
+	require.NoError(t, err)
+	assert.Equal(t, 1, countVersions(), "Set Blob Tier must not mint a version")
+
+	// Set Blob Properties is an in-place property update — no new version.
+	_, err = m.SetBlobProperties(ctx, "c1", "k1", &driver.BlobProperties{ContentType: "application/json"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, countVersions(), "Set Blob Properties must not mint a version")
+
+	// Set Blob Metadata DOES mint a version.
+	_, err = m.SetBlobMetadata(ctx, "c1", "k1", map[string]string{"k": "v"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, countVersions(), "Set Blob Metadata mints a version")
+
+	// A subsequent overwrite (Put Blob) also mints a version.
+	require.NoError(t, m.PutObject(ctx, "c1", "k1", []byte("v2"), "text/plain", nil))
+	assert.Equal(t, 3, countVersions(), "Put Blob mints a version")
+}
+
 func TestVersionsSurviveSnapshotRestore(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

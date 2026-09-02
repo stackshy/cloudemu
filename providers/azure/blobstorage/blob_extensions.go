@@ -229,9 +229,12 @@ func (m *Mock) SetBlobMetadata(_ context.Context, container, blob string, metada
 	return &info, nil
 }
 
-// SetBlobProperties replaces only a blob's system properties.
+// SetBlobProperties replaces only a blob's system properties. Per Azure's
+// "Versioning on write operations" list this is an in-place update that does
+// NOT mint a new version (only Put Blob / Put Block List / Copy Blob / Set Blob
+// Metadata do).
 func (m *Mock) SetBlobProperties(_ context.Context, container, blob string, props *driver.BlobProperties) (*driver.ObjectInfo, error) {
-	ctr, obj, err := m.getContainerBlob(container, blob)
+	obj, err := m.getBlobObject(container, blob)
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +249,6 @@ func (m *Mock) SetBlobProperties(_ context.Context, container, blob string, prop
 	obj.CacheControl = props.CacheControl
 	obj.LastModified = m.opts.Clock.Now().UTC().Format(blobTimeFormat)
 	obj.ETag = computeBlobETag(obj)
-
-	m.recordVersion(ctr, obj)
 
 	info := objectInfo(obj)
 
@@ -265,7 +266,7 @@ func (m *Mock) SetBlobTier(_ context.Context, container, blob, tier string) (int
 			"invalid x-ms-access-tier %q: must be one of Hot, Cool, Cold, Archive", tier)
 	}
 
-	ctr, obj, err := m.getContainerBlob(container, blob)
+	obj, err := m.getBlobObject(container, blob)
 	if err != nil {
 		return 0, err
 	}
@@ -279,8 +280,6 @@ func (m *Mock) SetBlobTier(_ context.Context, container, blob, tier string) (int
 	}
 
 	obj.AccessTier = tier
-
-	m.recordVersion(ctr, obj)
 
 	return status, nil
 }
