@@ -15,6 +15,12 @@ import (
 // resource priced at $M/month bills $M/hoursPerMonth for every wall-clock hour.
 const hoursPerMonth = pricing.HoursPerMonth
 
+// coverageEpsilon absorbs floating-point rounding when comparing a commitment's
+// remaining budget against a line's cost, so a commitment sized to exactly a
+// line's cost still covers it and a fully-covered line emits no ~0 on-demand
+// remainder.
+const coverageEpsilon = 1e-9
+
 // LineItem is one priced resource's spend within a single [UsageStart,UsageEnd)
 // time bucket — the emulator's analog of a Cost and Usage Report / FOCUS row.
 // It carries both the on-demand (unblended) cost and the commitment-amortized
@@ -60,10 +66,14 @@ type LineItem struct {
 // or free) resources are dropped, matching Estimate.
 //
 // Commitments are applied per bucket in resource-id order: the pooled dollar
-// commitment active at the bucket start covers whole lines until it is
-// exhausted, tagging each covered line with the commitment's model and id. A
-// nil inventory yields no line items; a non-positive bucket is rejected; a
-// window with start >= end yields no line items.
+// commitment active at the bucket start is drawn down fractionally, and the
+// boundary resource whose cost the remaining budget cannot fully absorb is
+// split into a covered LineItem (tagged with the commitment's model and id) and
+// an on-demand remainder. So a resource can yield more than one LineItem in a
+// bucket, and the covered spend read back from the tags equals the exact dollar
+// coverage Coverage reports. A nil inventory yields no line items; a
+// non-positive bucket is rejected; a window with start >= end yields no line
+// items.
 func LineItems(
 	ctx context.Context,
 	inv Inventory,
@@ -118,46 +128,79 @@ func bucketLines(priced []Line, commitments []Commitment, start, end time.Time) 
 		remaining[i] = active[i].HourlyCommitmentUSD * hours
 	}
 
+	// At least one line per priced resource; a split boundary line adds a few
+	// more, so len(priced) is a lower-bound capacity hint.
 	lines := make([]LineItem, 0, len(priced))
 
 	for i := range priced {
+		base := LineItem{
+			Provider:   priced[i].Provider,
+			Service:    priced[i].Service,
+			Type:       priced[i].Type,
+			ID:         priced[i].ID,
+			ARN:        priced[i].ARN,
+			Region:     priced[i].Region,
+			UsageStart: start,
+			UsageEnd:   end,
+		}
 		cost := priced[i].MonthlyUSD / hoursPerMonth * hours
 
-		li := LineItem{
-			Provider:         priced[i].Provider,
-			Service:          priced[i].Service,
-			Type:             priced[i].Type,
-			ID:               priced[i].ID,
-			ARN:              priced[i].ARN,
-			Region:           priced[i].Region,
-			UsageStart:       start,
-			UsageEnd:         end,
-			UnblendedCostUSD: cost,
-			AmortizedCostUSD: cost,
-			PricingModel:     PricingModelOnDemand,
-		}
-
-		applyCommitment(&li, active, remaining, cost)
-
-		lines = append(lines, li)
+		lines = append(lines, splitLine(&base, cost, active, remaining)...)
 	}
 
 	return lines
 }
 
-// applyCommitment tags li with the first active commitment whose remaining
-// dollar budget can absorb the whole line, deducting the cost from that budget.
-// A line the pooled budget cannot fully cover stays on-demand.
-func applyCommitment(li *LineItem, active []Commitment, remaining []float64, cost float64) {
-	for j := range active {
-		if remaining[j] >= cost {
-			remaining[j] -= cost
-			li.PricingModel = pricingModel(active[j].Kind)
-			li.CommitmentID = active[j].ID
+// splitLine attributes a resource's on-demand cost across the active
+// commitments' remaining pooled budget, fractionally: it draws down each
+// commitment (in id order) for the covered portion and emits a separate covered
+// LineItem per commitment that absorbed part of the cost, then one on-demand
+// LineItem for whatever budget could not reach. The covered/on-demand split is
+// pure attribution — every emitted line keeps UnblendedCostUSD == its portion
+// and AmortizedCostUSD == UnblendedCostUSD per the dollar-commitment model — and
+// the emitted portions sum to cost exactly. A cost fully absorbed by commitment
+// emits no on-demand line; a cost no commitment reaches emits a single on-demand
+// line. coverageEpsilon absorbs float rounding so a commitment sized to exactly
+// a line's cost is not missed.
+func splitLine(base *LineItem, cost float64, active []Commitment, remaining []float64) []LineItem {
+	uncovered := cost
 
-			return
+	var out []LineItem
+
+	for j := range active {
+		if uncovered <= coverageEpsilon || remaining[j] <= coverageEpsilon {
+			continue
 		}
+
+		take := uncovered
+		if remaining[j] < take {
+			take = remaining[j]
+		}
+
+		remaining[j] -= take
+		uncovered -= take
+
+		out = append(out, costSegment(base, take, pricingModel(active[j].Kind), active[j].ID))
 	}
+
+	if uncovered > coverageEpsilon || len(out) == 0 {
+		out = append(out, costSegment(base, uncovered, PricingModelOnDemand, ""))
+	}
+
+	return out
+}
+
+// costSegment stamps one cost portion onto a copy of base. Amortized tracks
+// unblended under the dollar-commitment model; the covered/on-demand
+// distinction is carried by model and commitmentID.
+func costSegment(base *LineItem, cost float64, model, commitmentID string) LineItem {
+	seg := *base
+	seg.UnblendedCostUSD = cost
+	seg.AmortizedCostUSD = cost
+	seg.PricingModel = model
+	seg.CommitmentID = commitmentID
+
+	return seg
 }
 
 // activeCommitments returns the commitments in force at instant t, sorted by id
