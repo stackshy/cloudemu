@@ -74,6 +74,31 @@ func (s *store) delete(scope, name string) bool {
 	return true
 }
 
+// covering returns every lock at path or at any ancestor scope above it — the
+// upward complement of list. A stored lock at scope L covers path P iff
+// P == L or P starts with L+"/" (a segment-boundary prefix), which yields
+// subscription→resource-group→resource inheritance and extension-resource
+// inheritance without enumerating ancestors. The trailing-slash boundary keeps
+// /subscriptions/S1 from matching /subscriptions/S10. Comparison is
+// case-insensitive, matching how scopes are keyed.
+func (s *store) covering(path string) []storedLock {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	want := strings.ToLower(path)
+
+	var out []storedLock
+
+	for _, l := range s.locks {
+		got := strings.ToLower(l.scope)
+		if want == got || strings.HasPrefix(want, got+"/") {
+			out = append(out, l)
+		}
+	}
+
+	return out
+}
+
 // list returns every lock at scope and — mirroring real Azure's inheritance —
 // at any child scope beneath it, ordered deterministically by (scope, name). A
 // subscription-scope list therefore surfaces resource-group and resource locks;

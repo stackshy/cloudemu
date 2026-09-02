@@ -226,6 +226,11 @@ const defaultTenantID = "11111111-1111-1111-1111-111111111111"
 func New(d Drivers) http.Handler {
 	srv := server.New()
 
+	// Management locks are constructed once and shared: the same instance is
+	// registered as the CRUD handler and handed to the enforcement gate below,
+	// so the gate reads the exact store callers write to.
+	locksHandler := locks.New()
+
 	tenantID := d.TenantID
 	if tenantID == "" {
 		tenantID = defaultTenantID
@@ -258,9 +263,9 @@ func New(d Drivers) http.Handler {
 	// substring test on /providers/microsoft.authorization/locks — a path no
 	// resource handler produces — so registering it early shadows nothing. Locks
 	// are a pure management-plane concept with no backing driver, so the handler
-	// is always registered (like subscriptions/tenants). CRUD + round-trip only;
-	// enforcement (blocking deletes/writes on locked resources) is out of scope.
-	srv.Register(locks.New())
+	// is always registered (like subscriptions/tenants). This same instance
+	// backs the always-on enforcement gate wired via SetPreDispatch below.
+	srv.Register(locksHandler)
 
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front so they can be handed to the resource-group cascade below and then
@@ -685,13 +690,21 @@ func New(d Drivers) http.Handler {
 		srv.Register(blobstorage.New(d.BlobStorage))
 	}
 
-	// Opt-in claims-based bearer authentication. Installed only when enabled, so
-	// the default request path is byte-for-byte unchanged. Registered on the raw
-	// server so the pre-dispatch gate runs before handler matching (and before
-	// the unmodeled-property overlay below wraps the response).
+	// Pre-dispatch chokepoint. Two hooks share the single slot, composed so both
+	// run before handler matching (and before the unmodeled-property overlay
+	// wraps the response):
+	//   - Opt-in claims-based bearer authentication (nil unless EnforceAuth), so
+	//     the default request path is byte-for-byte unchanged when it is off.
+	//   - Always-on management-lock enforcement, matching real Azure which has no
+	//     enforce toggle. It is inert until a caller creates a lock.
+	// Auth runs first for fidelity (authenticate, then evaluate locks); since
+	// neither mutates the body the order is behaviorally irrelevant.
+	var authGate preDispatch
 	if d.EnforceAuth {
-		srv.SetPreDispatch(newAuthGate(config.RealClock{}))
+		authGate = newAuthGate(config.RealClock{})
 	}
+
+	srv.SetPreDispatch(composePreDispatch(authGate, newLockGate(locksHandler)))
 
 	// When the monitoring backend can record Activity Log events, observe every
 	// served ARM request and log a management event so the Activity Log API
