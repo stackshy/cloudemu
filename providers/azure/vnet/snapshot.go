@@ -41,6 +41,9 @@ type vnetSnapshot struct {
 	AzureVNGateways     json.RawMessage `json:"azureVirtualNetworkGateways,omitempty"`
 	AzureLNGateways     json.RawMessage `json:"azureLocalNetworkGateways,omitempty"`
 	AzureGWConnections  json.RawMessage `json:"azureGatewayConnections,omitempty"`
+
+	AzurePrivateEndpoints    json.RawMessage `json:"azurePrivateEndpoints,omitempty"`
+	AzurePrivateLinkServices json.RawMessage `json:"azurePrivateLinkServices,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -82,6 +85,8 @@ func (m *Mock) snapshotStores(snap *vnetSnapshot) error {
 		{&snap.AzureVNGateways, m.azureVNGateways.Snapshot},
 		{&snap.AzureLNGateways, m.azureLNGateways.Snapshot},
 		{&snap.AzureGWConnections, m.azureGWConnections.Snapshot},
+		{&snap.AzurePrivateEndpoints, m.azurePrivateEndpoints.Snapshot},
+		{&snap.AzurePrivateLinkServices, m.azurePrivateLinkServices.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -135,6 +140,8 @@ func (m *Mock) restoreStores(snap *vnetSnapshot) error {
 		{snap.AzureVNGateways, m.azureVNGateways.LoadSnapshot},
 		{snap.AzureLNGateways, m.azureLNGateways.LoadSnapshot},
 		{snap.AzureGWConnections, m.azureGWConnections.LoadSnapshot},
+		{snap.AzurePrivateEndpoints, m.azurePrivateEndpoints.LoadSnapshot},
+		{snap.AzurePrivateLinkServices, m.azurePrivateLinkServices.LoadSnapshot},
 	}
 
 	for _, l := range loads {

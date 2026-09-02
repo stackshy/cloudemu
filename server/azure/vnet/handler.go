@@ -108,7 +108,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	switch rp.ResourceType {
 	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typePublicIPPrefix, typeNIC, typeNATGateway, typeASG,
-		typeVNGateway, typeLNGateway, typeConnection, typeLocations:
+		typeVNGateway, typeLNGateway, typeConnection, typePrivateEndpoint, typePrivateLinkService, typeLocations:
 		return true
 	}
 
@@ -154,13 +154,24 @@ func (h *Handler) routeByResourceType(w http.ResponseWriter, r *http.Request, rp
 	case typeASG:
 		h.routeASG(w, r, rp)
 	default:
-		if h.routeGatewayResourceType(w, r, rp) {
+		if h.routeOptionalResourceType(w, r, rp) {
 			return
 		}
 
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)
 	}
+}
+
+// routeOptionalResourceType dispatches the Azure-only resource types served
+// through type-asserted networking-driver capabilities (site-to-site VPN
+// gateways, Private Link). Split out of routeByResourceType so that switch stays
+// under the cyclomatic-complexity gate as capabilities are added. It returns
+// true when it handled the request.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeOptionalResourceType(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) bool {
+	return h.routeGatewayResourceType(w, r, rp) || h.routePrivateLinkResourceType(w, r, rp)
 }
 
 // routeGatewayResourceType dispatches the site-to-site VPN resource types
@@ -668,6 +679,7 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	h.purgeASGs(ctx, resourceGroup)
 	h.purgePublicIPPrefixes(ctx, resourceGroup)
 	h.purgeNetworkGateways(ctx, resourceGroup)
+	h.purgePrivateLink(ctx, resourceGroup)
 
 	return firstErr
 }
