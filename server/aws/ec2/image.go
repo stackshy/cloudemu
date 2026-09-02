@@ -73,7 +73,7 @@ type deregisterImageResponseXML struct {
 type awsImageCreator interface {
 	CreateImageWithOptions(
 		ctx context.Context, cfg computedriver.ImageConfig, noReboot bool,
-		overrides []computedriver.ImageBlockDeviceMapping, noDevices []string,
+		overrides []computedriver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
 	) (*computedriver.ImageInfo, error)
 }
 
@@ -107,21 +107,24 @@ func (h *Handler) createImageInfo(r *http.Request) (*computedriver.ImageInfo, er
 		return h.compute.CreateImage(r.Context(), cfg)
 	}
 
-	overrides, noDevices := parseCreateImageBlockDeviceMappings(r)
+	overrides, noDevices, dotSetDevices := parseCreateImageBlockDeviceMappings(r)
 
 	return creator.CreateImageWithOptions(
-		r.Context(), cfg, r.Form.Get("NoReboot") == formTrue, overrides, noDevices,
+		r.Context(), cfg, r.Form.Get("NoReboot") == formTrue, overrides, noDevices, dotSetDevices,
 	)
 }
 
 // parseCreateImageBlockDeviceMappings reads the CreateImage BlockDeviceMapping.N
-// query groups into client overrides and the set of NoDevice suppressions. A
-// group carrying BlockDeviceMapping.N.NoDevice suppresses its DeviceName; every
-// other group is an override (of an attached volume's device) or an added
-// mapping. The DeleteOnTermination value is taken as the client sent it.
+// query groups into client overrides, the set of NoDevice suppressions, and the
+// set of devices whose DeleteOnTermination the client actually sent. A group
+// carrying BlockDeviceMapping.N.NoDevice suppresses its DeviceName; every other
+// group is an override (of an attached volume's device) or an added mapping. A
+// device is listed in dotSetDevices only when Ebs.DeleteOnTermination was
+// present in the request, so an override that omits it preserves the source
+// volume's DeleteOnTermination rather than silently clearing it.
 func parseCreateImageBlockDeviceMappings(
 	r *http.Request,
-) (overrides []computedriver.ImageBlockDeviceMapping, noDevices []string) {
+) (overrides []computedriver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string) {
 	for _, i := range awsquery.CollectIndices(r.Form, "BlockDeviceMapping") {
 		base := "BlockDeviceMapping." + strconv.Itoa(i)
 		device := r.Form.Get(base + ".DeviceName")
@@ -129,6 +132,10 @@ func parseCreateImageBlockDeviceMappings(
 		if r.Form.Has(base + ".NoDevice") {
 			noDevices = append(noDevices, device)
 			continue
+		}
+
+		if r.Form.Has(base + ".Ebs.DeleteOnTermination") {
+			dotSetDevices = append(dotSetDevices, device)
 		}
 
 		size, _ := strconv.Atoi(r.Form.Get(base + ".Ebs.VolumeSize"))
@@ -141,7 +148,7 @@ func parseCreateImageBlockDeviceMappings(
 		})
 	}
 
-	return overrides, noDevices
+	return overrides, noDevices, dotSetDevices
 }
 
 type registerImageResponseXML struct {

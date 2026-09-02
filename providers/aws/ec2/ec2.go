@@ -1948,7 +1948,7 @@ func containsPermission[T comparable](set []T, want T) bool {
 //
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	return m.createImage(ctx, &cfg, true, nil, nil)
+	return m.createImage(ctx, &cfg, true, nil, nil, nil)
 }
 
 // CreateImageWithOptions is the AWS EC2 CreateImage capability the wire layer
@@ -1956,23 +1956,24 @@ func (m *Mock) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver
 // NoReboot flag (a running source instance is rebooted as part of image
 // creation unless NoReboot is true, matching real EC2's default) and client
 // BlockDeviceMapping overrides: an override for an attached volume's device
-// replaces its size/type/DeleteOnTermination (and snapshot, if the client names
-// one), a mapping for a new device is added, and a device listed in noDevices
-// (BlockDeviceMapping.N.NoDevice) is suppressed.
+// replaces its size/type/snapshot and, only when the client actually sent it
+// (device listed in dotSetDevices), its DeleteOnTermination; a mapping for a new
+// device is added; and a device listed in noDevices (BlockDeviceMapping.N.NoDevice)
+// is suppressed.
 //
 //nolint:gocritic // hugeParam: cfg param type is fixed by server/aws/ec2's awsImageCreator interface.
 func (m *Mock) CreateImageWithOptions(
 	ctx context.Context, cfg driver.ImageConfig, noReboot bool,
-	overrides []driver.ImageBlockDeviceMapping, noDevices []string,
+	overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
 ) (*driver.ImageInfo, error) {
-	return m.createImage(ctx, &cfg, noReboot, overrides, noDevices)
+	return m.createImage(ctx, &cfg, noReboot, overrides, noDevices, dotSetDevices)
 }
 
 // createImage is the shared CreateImage engine behind both the base and the
 // AWS-wire (option-carrying) entry points.
 func (m *Mock) createImage(
 	ctx context.Context, cfg *driver.ImageConfig, noReboot bool,
-	overrides []driver.ImageBlockDeviceMapping, noDevices []string,
+	overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
 ) (*driver.ImageInfo, error) {
 	inst, ok := m.instances.Get(cfg.InstanceID)
 	if !ok {
@@ -1990,7 +1991,9 @@ func (m *Mock) createImage(
 	id := fmt.Sprintf("ami-%012d", m.amiCounter.Add(1))
 	now := m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
 
-	bdms := applyImageBDMOverrides(m.snapshotAttachedVolumes(cfg.InstanceID, id, now), overrides, noDevices)
+	bdms := applyImageBDMOverrides(
+		m.snapshotAttachedVolumes(cfg.InstanceID, id, now), overrides, noDevices, dotSetDevices,
+	)
 
 	img := &driver.ImageInfo{
 		ID:                  id,
@@ -2081,14 +2084,21 @@ func (m *Mock) snapshotForImage(volumeID, amiID string, size int, encrypted bool
 // applyImageBDMOverrides folds the client-supplied CreateImage block device
 // mappings onto the snapshot-derived base: a NoDevice entry suppresses its
 // device, an override for an existing device replaces its non-zero size / set
-// type / snapshot and its DeleteOnTermination, and a mapping for a new device is
-// appended.
+// type / snapshot (and, only for a device in dotSet, its DeleteOnTermination),
+// and a mapping for a new device is appended. A device absent from dotSet keeps
+// the source volume's DeleteOnTermination, so a partial size-only override does
+// not silently clear it.
 func applyImageBDMOverrides(
-	base, overrides []driver.ImageBlockDeviceMapping, noDevices []string,
+	base, overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
 ) []driver.ImageBlockDeviceMapping {
 	suppressed := make(map[string]bool, len(noDevices))
 	for _, d := range noDevices {
 		suppressed[d] = true
+	}
+
+	dotSet := make(map[string]bool, len(dotSetDevices))
+	for _, d := range dotSetDevices {
+		dotSet[d] = true
 	}
 
 	result := make([]driver.ImageBlockDeviceMapping, 0, len(base)+len(overrides))
@@ -2109,7 +2119,7 @@ func applyImageBDMOverrides(
 		}
 
 		if i, ok := idx[o.DeviceName]; ok {
-			mergeImageBDMOverride(&result[i], o)
+			mergeImageBDMOverride(&result[i], o, dotSet[o.DeviceName])
 			continue
 		}
 
@@ -2126,7 +2136,9 @@ func applyImageBDMOverrides(
 
 // mergeImageBDMOverride applies a client override onto an existing mapping,
 // keeping the backing snapshot and any attribute the client left unset.
-func mergeImageBDMOverride(dst *driver.ImageBlockDeviceMapping, o driver.ImageBlockDeviceMapping) {
+// DeleteOnTermination is overwritten only when the client actually sent it
+// (dotSet), so an override that omits it preserves the source volume's value.
+func mergeImageBDMOverride(dst *driver.ImageBlockDeviceMapping, o driver.ImageBlockDeviceMapping, dotSet bool) {
 	if o.VolumeSize > 0 {
 		dst.VolumeSize = o.VolumeSize
 	}
@@ -2139,7 +2151,9 @@ func mergeImageBDMOverride(dst *driver.ImageBlockDeviceMapping, o driver.ImageBl
 		dst.SnapshotID = o.SnapshotID
 	}
 
-	dst.DeleteOnTermination = o.DeleteOnTermination
+	if dotSet {
+		dst.DeleteOnTermination = o.DeleteOnTermination
+	}
 }
 
 // imageRootDeviceName picks the AMI's root device: the conventional

@@ -487,6 +487,46 @@ func TestCreateImageBlockDeviceMappingOverrides(t *testing.T) {
 	}
 }
 
+// TestCreateImageRootResizePreservesDeleteOnTermination pins the common
+// Packer/Terraform root-resize pattern through the real SDK: a CreateImage BDM
+// override that sets only Ebs.VolumeSize (no DeleteOnTermination) resizes the
+// AMI's root device yet keeps the source volume's DeleteOnTermination=true,
+// rather than silently clearing it to false.
+func TestCreateImageRootResizePreservesDeleteOnTermination(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+	instID := launchInstanceForImage(t, ctx, client)
+
+	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId: aws.String(instID),
+		Name:       aws.String("resize-ami"),
+		NoReboot:   aws.Bool(true),
+		BlockDeviceMappings: []ec2types.BlockDeviceMapping{{
+			DeviceName: aws.String("/dev/sda1"),
+			Ebs:        &ec2types.EbsBlockDevice{VolumeSize: aws.Int32(100)}, // DeleteOnTermination left nil
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: []string{aws.ToString(img.ImageId)}})
+	if err != nil {
+		t.Fatalf("DescribeImages: %v", err)
+	}
+
+	root := findBDM(desc.Images[0].BlockDeviceMappings, "/dev/sda1")
+	if root == nil || root.Ebs == nil {
+		t.Fatalf("root /dev/sda1 mapping missing: %+v", desc.Images[0].BlockDeviceMappings)
+	}
+	if got := aws.ToInt32(root.Ebs.VolumeSize); got != 100 {
+		t.Errorf("root VolumeSize = %d, want 100", got)
+	}
+	if !aws.ToBool(root.Ebs.DeleteOnTermination) {
+		t.Error("root DeleteOnTermination = false after size-only override, want true (source preserved)")
+	}
+}
+
 // TestCreateImageNoRebootFalseKeepsInstanceRunning pins that the default
 // (NoReboot unset -> reboot) CreateImage reboots the source instance yet leaves
 // it running, so a subsequent DescribeInstances still reports it available.

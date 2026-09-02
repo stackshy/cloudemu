@@ -99,6 +99,7 @@ func TestCreateImageWithOptionsOverrideAndSuppress(t *testing.T) {
 			DeviceName: defaultRootDeviceName, VolumeSize: 30, VolumeType: "gp3", DeleteOnTermination: false,
 		}},
 		[]string{"/dev/sdf"},
+		[]string{defaultRootDeviceName}, // client explicitly sent DeleteOnTermination=false
 	)
 	requireNoError(t, err)
 
@@ -115,6 +116,49 @@ func TestCreateImageWithOptionsOverrideAndSuppress(t *testing.T) {
 	assertNotEmpty(t, root.SnapshotID)
 }
 
+// TestCreateImageWithOptionsPreservesUnsetDoT pins the Packer/Terraform
+// root-resize pattern: a client BDM override that sets only VolumeSize (and does
+// not send DeleteOnTermination) must resize the AMI's root device while keeping
+// the source volume's DeleteOnTermination (true for a default root) rather than
+// silently clearing it to false. When the client DOES send DeleteOnTermination,
+// it is applied.
+func TestCreateImageWithOptionsPreservesUnsetDoT(t *testing.T) {
+	ctx := context.Background()
+
+	// Size-only override (no device in dotSet): source DoT (true) preserved.
+	t.Run("unset preserves source", func(t *testing.T) {
+		m := newTestMock()
+		id := runWithVolumes(t, m)
+
+		img, err := m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "resize"}, true,
+			[]driver.ImageBlockDeviceMapping{{DeviceName: defaultRootDeviceName, VolumeSize: 100}},
+			nil, nil, // DeleteOnTermination not sent
+		)
+		requireNoError(t, err)
+
+		root := bdmByDevice(img.BlockDeviceMappings)[defaultRootDeviceName]
+		assertEqual(t, 100, root.VolumeSize)
+		assertTrue(t, root.DeleteOnTermination,
+			"size-only override must preserve source DeleteOnTermination=true")
+	})
+
+	// Explicit DeleteOnTermination=false (device in dotSet): applied.
+	t.Run("explicit false applies", func(t *testing.T) {
+		m := newTestMock()
+		id := runWithVolumes(t, m)
+
+		img, err := m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "detach"}, true,
+			[]driver.ImageBlockDeviceMapping{{DeviceName: defaultRootDeviceName, DeleteOnTermination: false}},
+			nil, []string{defaultRootDeviceName},
+		)
+		requireNoError(t, err)
+
+		root := bdmByDevice(img.BlockDeviceMappings)[defaultRootDeviceName]
+		assertTrue(t, !root.DeleteOnTermination,
+			"explicit DeleteOnTermination=false must be applied")
+	})
+}
+
 // TestCreateImageWithOptionsAddsMapping pins that a client mapping for a device
 // that has no backing volume is appended to the AMI's block device mapping.
 func TestCreateImageWithOptionsAddsMapping(t *testing.T) {
@@ -125,7 +169,7 @@ func TestCreateImageWithOptionsAddsMapping(t *testing.T) {
 
 	img, err := m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "add"}, true,
 		[]driver.ImageBlockDeviceMapping{{DeviceName: "/dev/sdg", VolumeSize: 50, DeleteOnTermination: true}},
-		nil,
+		nil, []string{"/dev/sdg"},
 	)
 	requireNoError(t, err)
 
@@ -159,7 +203,7 @@ func TestCreateImageRebootHonorsNoReboot(t *testing.T) {
 	// NoReboot=true: no reboot, no new lifecycle metrics.
 	before := metricCount(mon)
 
-	_, err := m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "noreboot"}, true, nil, nil)
+	_, err := m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "noreboot"}, true, nil, nil, nil)
 	requireNoError(t, err)
 
 	if got := metricCount(mon); got != before {
@@ -170,7 +214,7 @@ func TestCreateImageRebootHonorsNoReboot(t *testing.T) {
 	// batch (5 datums), and remains running.
 	before = metricCount(mon)
 
-	_, err = m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "reboot"}, false, nil, nil)
+	_, err = m.CreateImageWithOptions(ctx, driver.ImageConfig{InstanceID: id, Name: "reboot"}, false, nil, nil, nil)
 	requireNoError(t, err)
 
 	if got := metricCount(mon) - before; got != 5 {
