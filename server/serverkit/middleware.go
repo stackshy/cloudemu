@@ -52,6 +52,33 @@ func (a *App) wrapDirty(h http.Handler) http.Handler {
 	})
 }
 
+// wrapLatency delays every emulated wire request by the configured --latency
+// duration, so the standalone/Docker path honors the same artificial-latency
+// simulation the typed library's portable layer applies per op. It is applied
+// inside the backend swap chain (like wrapDirty), BEFORE the admin Control fronts
+// the backend, so the /_cloudemu control plane (health/reset/snapshot/...) is
+// never delayed — latency simulation is for the emulated cloud APIs, not the
+// control plane. When latency is unset (0) the handler is returned unchanged, so
+// there is zero overhead on the hot path. The sleep is a real per-request
+// time.Sleep — that is the point of latency simulation — and honors request
+// cancellation so a client that gives up doesn't pin the goroutine for the full
+// delay.
+func (a *App) wrapLatency(h http.Handler) http.Handler {
+	d := a.cfg.Latency
+	if d <= 0 {
+		return h
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(d):
+		case <-r.Context().Done():
+		}
+
+		h.ServeHTTP(w, r)
+	})
+}
+
 // statusWriter captures the first response status for logging while remaining a
 // transparent http.ResponseWriter. Write is not overridden — it promotes from
 // the embedded writer, so a handler that writes a body without an explicit

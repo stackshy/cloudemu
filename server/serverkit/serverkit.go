@@ -501,7 +501,7 @@ func (a *App) swapFresh() []closer {
 		// it. Wrapping here (not in buildServers) keeps admin/health probes — which
 		// Control answers before reaching this backend — from dirtying an idle
 		// emulator.
-		a.k8sBackend.Swap(a.wrapVCR(a.wrapDirty(wrap(k8s, "kubernetes", a.cfg.LogRequests)), "kubernetes"))
+		a.k8sBackend.Swap(a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(k8s, "kubernetes", a.cfg.LogRequests)), "kubernetes")))
 	}
 
 	for p, h := range fresh {
@@ -545,7 +545,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.EKS.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   a.wrapVCR(a.wrapDirty(wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests)), providerAWS),
+			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests)), providerAWS)),
 			target:    seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -559,7 +559,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.GKE.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   a.wrapVCR(a.wrapDirty(wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests)), providerGCP),
+			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests)), providerGCP)),
 			target:    seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -580,7 +580,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.AKS.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   a.wrapVCR(a.wrapDirty(wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests)), providerAzure),
+			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests)), providerAzure)),
 			target:    seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -593,7 +593,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		// OCI has no managed-Kubernetes service, so no SetK8sAPI here, and its
 		// *Provider carries no engines to close.
 		return builtProvider{
-			handler: a.wrapVCR(a.wrapDirty(wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests)), providerOCI),
+			handler: a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests)), providerOCI)),
 			target: seed.Target{
 				Storage: cloud.ObjectStorage, Database: cloud.NoSQL,
 				Secrets: cloud.Vault, Compute: cloud.Compute,
