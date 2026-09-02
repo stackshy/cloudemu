@@ -485,26 +485,22 @@ func (m *Mock) RemoveInstance(ctx context.Context, instanceID string) error {
 // GCP verbs apply to running VMs. set entries are merged into the tag map,
 // remove keys are deleted, and machineType replaces the instance type when
 // non-empty. GCP-specific; reached via a type assertion from the GCE handler.
+//
+// The read-modify-write runs inside memstore.Store.Update (write-locked) and is
+// copy-on-write, so a concurrent DescribeInstances (which ranges the tag map)
+// never races with an in-place mutation.
 func (m *Mock) MutateInstanceGCP(instanceID string, set map[string]string, remove []string, machineType string) error {
-	inst, ok := m.instances.Get(instanceID)
-	if !ok {
+	if !m.instances.Update(instanceID, func(old *instanceData) *instanceData {
+		clone := *old
+		clone.Tags = mergeTags(clone.Tags, set, remove)
+
+		if machineType != "" {
+			clone.InstanceType = machineType
+		}
+
+		return &clone
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
-	}
-
-	if inst.Tags == nil {
-		inst.Tags = make(map[string]string)
-	}
-
-	for k, v := range set {
-		inst.Tags[k] = v
-	}
-
-	for _, k := range remove {
-		delete(inst.Tags, k)
-	}
-
-	if machineType != "" {
-		inst.InstanceType = machineType
 	}
 
 	return nil
@@ -669,56 +665,71 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 // GCP forbids shrinking, so the wire handler rejects smaller sizes before this
 // is reached. GCP-specific; reached via a type assertion from the GCE handler.
 func (m *Mock) ResizeVolumeGCP(volumeID string, sizeGb int) error {
-	vol, ok := m.volumes.Get(volumeID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
-	}
+	if !m.volumes.Update(volumeID, func(old *driver.VolumeInfo) *driver.VolumeInfo {
+		clone := *old
+		if sizeGb > clone.Size {
+			clone.Size = sizeGb
+		}
 
-	if sizeGb > vol.Size {
-		vol.Size = sizeGb
+		return &clone
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
 	return nil
 }
 
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
-	vol, ok := m.volumes.Get(volumeID)
-	if !ok {
+	var opErr error
+
+	found := m.volumes.Update(volumeID, func(old *driver.VolumeInfo) *driver.VolumeInfo {
+		if old.State == stateInUse {
+			opErr = cerrors.Newf(cerrors.FailedPrecondition, "disk %q already attached", volumeID)
+			return old
+		}
+
+		if _, ok := m.instances.Get(instanceID); !ok {
+			opErr = cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+			return old
+		}
+
+		clone := *old
+		clone.State = stateInUse
+		clone.AttachedTo = instanceID
+		clone.Device = device
+
+		return &clone
+	})
+	if !found {
 		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
-	if vol.State == stateInUse {
-		return cerrors.Newf(cerrors.FailedPrecondition, "disk %q already attached", volumeID)
-	}
-
-	if _, ok := m.instances.Get(instanceID); !ok {
-		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
-	}
-
-	vol.State = stateInUse
-	vol.AttachedTo = instanceID
-	vol.Device = device
-
-	return nil
+	return opErr
 }
 
 // DetachVolume detaches a persistent disk. instanceID/device are accepted for
 // driver-interface parity with AWS; GCP detaches by disk id alone.
 func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
-	vol, ok := m.volumes.Get(volumeID)
-	if !ok {
+	var opErr error
+
+	found := m.volumes.Update(volumeID, func(old *driver.VolumeInfo) *driver.VolumeInfo {
+		if old.State != stateInUse {
+			opErr = cerrors.Newf(cerrors.FailedPrecondition, "disk %q is not attached", volumeID)
+			return old
+		}
+
+		clone := *old
+		clone.State = stateAvailable
+		clone.AttachedTo = ""
+		clone.Device = ""
+
+		return &clone
+	})
+	if !found {
 		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
-	if vol.State != "in-use" {
-		return cerrors.Newf(cerrors.FailedPrecondition, "disk %q is not attached", volumeID)
-	}
-
-	vol.State = stateAvailable
-	vol.AttachedTo = ""
-	vol.Device = ""
-
-	return nil
+	return opErr
 }
 
 func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
@@ -752,6 +763,75 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 
 func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.SnapshotInfo, error) {
 	return describeResources(m.snapshots, ids), nil
+}
+
+// SetVolumeLabelsGCP replaces a disk's user labels: set entries are written and
+// remove keys deleted on the disk's tag map (internal cloudemu tags are left
+// untouched — the wire layer only passes user labels). GCP-specific; reached via
+// a type assertion from the GCE wire handler for disks.setLabels.
+func (m *Mock) SetVolumeLabelsGCP(volumeID string, set map[string]string, remove []string) error {
+	return setStoreLabels(m.volumes, volumeID, func(v *driver.VolumeInfo) *map[string]string { return &v.Tags },
+		set, remove, "disk")
+}
+
+// SetImageLabelsGCP replaces an image's user labels. GCP-specific; reached via a
+// type assertion from the GCE wire handler for images.setLabels.
+func (m *Mock) SetImageLabelsGCP(imageID string, set map[string]string, remove []string) error {
+	return setStoreLabels(m.images, imageID, func(v *driver.ImageInfo) *map[string]string { return &v.Tags },
+		set, remove, "image")
+}
+
+// SetSnapshotLabelsGCP replaces a snapshot's user labels. GCP-specific; reached
+// via a type assertion from the GCE wire handler for snapshots.setLabels.
+func (m *Mock) SetSnapshotLabelsGCP(snapshotID string, set map[string]string, remove []string) error {
+	return setStoreLabels(m.snapshots, snapshotID, func(v *driver.SnapshotInfo) *map[string]string { return &v.Tags },
+		set, remove, "snapshot")
+}
+
+// setStoreLabels replaces the user labels on the store record identified by id:
+// set entries are written and remove keys deleted on the tag map returned by
+// tagsPtr. Returns NotFound (kind names the resource) when no record matches.
+//
+// The read-modify-write runs inside memstore.Store.Update (write-locked) and is
+// copy-on-write: it clones the record and installs a fresh tag map, so a
+// concurrent reader holding the previous pointer never observes an in-place map
+// mutation (which would trip Go's concurrent map access under go test -race).
+func setStoreLabels[T any](
+	store *memstore.Store[*T], id string, tagsPtr func(*T) *map[string]string,
+	set map[string]string, remove []string, kind string,
+) error {
+	if !store.Update(id, func(old *T) *T {
+		clone := *old
+		tp := tagsPtr(&clone)
+		*tp = mergeTags(*tp, set, remove)
+
+		return &clone
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, id)
+	}
+
+	return nil
+}
+
+// mergeTags returns a NEW map: a copy of src with set entries written and remove
+// keys deleted. src is never mutated (copy-on-write), so a reader still holding
+// it is unaffected. The result is always non-nil.
+func mergeTags(src, set map[string]string, remove []string) map[string]string {
+	out := make(map[string]string, len(src)+len(set))
+
+	for k, v := range src {
+		out[k] = v
+	}
+
+	for k, v := range set {
+		out[k] = v
+	}
+
+	for _, k := range remove {
+		delete(out, k)
+	}
+
+	return out
 }
 
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.

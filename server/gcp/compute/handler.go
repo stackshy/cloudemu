@@ -36,6 +36,10 @@ const (
 	resourceMachineTyp = "machineTypes"
 )
 
+// actionSetLabels is the lowercased setLabels verb, shared by the instance,
+// disk, image, and snapshot POST-action routers.
+const actionSetLabels = "setlabels"
+
 // Handler serves GCP Compute Engine REST requests for instances and zone
 // operations.
 type Handler struct {
@@ -166,6 +170,11 @@ func (h *Handler) serveSnapshotsRoute(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "setLabels") {
+		h.setSnapshotLabels(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getSnapshot(w, r, rp)
@@ -188,6 +197,11 @@ func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gc
 			writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		}
 
+		return
+	}
+
+	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "setLabels") {
+		h.setImageLabels(w, r, rp)
 		return
 	}
 
@@ -216,8 +230,8 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 		return
 	}
 
-	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "resize") {
-		h.resizeDisk(w, r, rp)
+	if r.Method == http.MethodPost && rp.Action != "" {
+		h.serveDiskAction(w, r, rp)
 		return
 	}
 
@@ -226,6 +240,22 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 		h.getDisk(w, r, rp)
 	case http.MethodDelete:
 		h.deleteDisk(w, r, rp)
+	default:
+		writeNotImplemented(w, r.Method+" "+r.URL.Path)
+	}
+}
+
+// serveDiskAction routes the POST disk verbs (resize/setLabels/createSnapshot).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveDiskAction(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	switch strings.ToLower(rp.Action) {
+	case "resize":
+		h.resizeDisk(w, r, rp)
+	case actionSetLabels:
+		h.setDiskLabels(w, r, rp)
+	case "createsnapshot":
+		h.createSnapshotFromDisk(w, r, rp)
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
@@ -290,7 +320,7 @@ func (h *Handler) dispatchInstanceVerb(w http.ResponseWriter, r *http.Request, r
 		h.stopInstance(w, r, rp)
 	case "reset":
 		h.resetInstance(w, r, rp)
-	case "setlabels":
+	case actionSetLabels:
 		h.setLabels(w, r, rp)
 	case "setmetadata":
 		h.setMetadata(w, r, rp)
