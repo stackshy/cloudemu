@@ -17,12 +17,14 @@
 // string, so the At{Subscription,ResourceGroup,Resource}Level and ByScope SDK
 // variants all route through the same code path.
 //
-// SCOPE BOUNDARY: this handler implements the management-plane CRUD and a
-// faithful round-trip of level/notes plus discoverability of the locks
-// themselves. It does NOT enforce the locks — a CanNotDelete or ReadOnly lock
-// does not (yet) block deletes or writes on the locked resource. Enforcement is
-// a cross-cutting change spanning every Azure delete/write path and is tracked
-// as follow-up work.
+// ENFORCEMENT: this handler owns the CRUD/round-trip surface above and, via
+// Enforce, the lock-evaluation policy consumed by the server's pre-dispatch
+// gate (server/azure/lockgate.go). A CanNotDelete lock blocks DELETE on its
+// scope and everything under it; a ReadOnly lock additionally blocks
+// PUT/PATCH/POST (writes and actions). GET/HEAD are always allowed. The gate is
+// the single chokepoint applying this to every Azure resource type — no
+// per-handler edits. Keeping the method→level policy here (not in the gate)
+// keeps all lock semantics cohesive and unit-testable without a server.
 //
 // Locks are a pure management-plane concept with no per-provider driver
 // counterpart (there is no AWS/GCP analog), so the handler owns its own
@@ -47,6 +49,11 @@ const (
 
 	// armType is the ARM resource type reported on every lock.
 	armType = "Microsoft.Authorization/locks"
+
+	// The two Azure lock levels. Compared case-insensitively since SDKs and
+	// hand-built requests vary the casing.
+	levelCanNotDelete = "CanNotDelete"
+	levelReadOnly     = "ReadOnly"
 )
 
 // Handler serves Microsoft.Authorization/locks ARM requests from an in-memory
@@ -58,6 +65,95 @@ type Handler struct {
 // New returns a locks handler with an empty in-memory store.
 func New() *Handler {
 	return &Handler{store: newStore()}
+}
+
+// Enforce evaluates the management locks covering a control-plane request and
+// reports whether they forbid the given HTTP method.
+//
+// resourcePath is the request URL path (query already stripped by net/http);
+// method is the HTTP verb. A DELETE is blocked by any covering lock (both
+// levels block delete) or by any lock on a descendant scope (deleting a
+// container that holds a locked child is blocked wholesale, matching Azure). A
+// PUT/PATCH/POST (write or action) is blocked only by a ReadOnly lock covering
+// the path or an ancestor. GET/HEAD are never passed here by the gate.
+//
+// It returns the blocking lock's original-cased scope and level plus
+// blocked=true; the most specific (longest-scope) blocking lock is chosen so
+// the error message names the tightest lock. When no lock blocks, blocked is
+// false and the strings are empty. "Most restrictive wins" falls out: a write
+// covered by both levels still finds the ReadOnly and blocks.
+func (h *Handler) Enforce(resourcePath, method string) (lockedScope, level string, blocked bool) {
+	path := normalizeScope(resourcePath)
+
+	switch strings.ToUpper(method) {
+	case http.MethodDelete:
+		if l, ok := mostSpecificBlocking(h.store.covering(path), blocksDelete); ok {
+			return l.scope, l.level, true
+		}
+
+		// A delete of a container (RG/subscription/parent resource) is blocked
+		// if any lock sits at or below the target — reuse the downward list.
+		if l, ok := mostSpecificBlocking(h.store.list(path), blocksDelete); ok {
+			return l.scope, l.level, true
+		}
+	case http.MethodPut, http.MethodPatch, http.MethodPost:
+		if l, ok := mostSpecificBlocking(h.store.covering(path), blocksWrite); ok {
+			return l.scope, l.level, true
+		}
+	}
+
+	return "", "", false
+}
+
+// blocksDelete reports whether a lock of the given level blocks a DELETE. Both
+// levels do.
+func blocksDelete(level string) bool {
+	return strings.EqualFold(level, levelCanNotDelete) || strings.EqualFold(level, levelReadOnly)
+}
+
+// blocksWrite reports whether a lock of the given level blocks a
+// PUT/PATCH/POST. Only ReadOnly does.
+func blocksWrite(level string) bool {
+	return strings.EqualFold(level, levelReadOnly)
+}
+
+// mostSpecificBlocking returns the blocking lock with the longest scope (ties
+// broken by scope then name for determinism) among those whose level satisfies
+// the predicate. The longest scope is the tightest lock, giving the most
+// faithful error message.
+func mostSpecificBlocking(candidates []storedLock, blocks func(string) bool) (storedLock, bool) {
+	var (
+		best  storedLock
+		found bool
+	)
+
+	for _, l := range candidates {
+		if !blocks(l.level) {
+			continue
+		}
+
+		if !found || moreSpecific(l, best) {
+			best = l
+			found = true
+		}
+	}
+
+	return best, found
+}
+
+// moreSpecific reports whether lock a should be preferred over b as the named
+// blocking lock: a longer scope wins; equal-length scopes break to the
+// lexicographically smaller (scope, name) so the choice is stable.
+func moreSpecific(a, b storedLock) bool {
+	if len(a.scope) != len(b.scope) {
+		return len(a.scope) > len(b.scope)
+	}
+
+	if a.scope != b.scope {
+		return a.scope < b.scope
+	}
+
+	return a.name < b.name
 }
 
 // Matches claims any path carrying the /providers/Microsoft.Authorization/locks
