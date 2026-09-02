@@ -23,17 +23,14 @@ func (d managedIdentityDiscovery) DiscoverResources(
 		return nil, err
 	}
 
-	out := make([]resourcediscovery.DiscoveredResource, 0, len(ids))
-	for i := range ids {
-		out = append(out, resourcediscovery.DiscoveredResource{
+	return projectDiscovery(ids, func(id *managedidentity.Identity) resourcediscovery.DiscoveredResource {
+		return resourcediscovery.DiscoveredResource{
 			Service: resourcediscovery.ServiceIAM,
 			Type:    resourcediscovery.TypeUserAssignedIdentity,
-			ID:      ids[i].Name,
-			ARN:     ids[i].ARMID(),
-			Region:  ids[i].Location,
-			Tags:    ids[i].Tags,
-		})
-	}
-
-	return out, nil
+			ID:      id.Name,
+			ARN:     id.ARMID(),
+			Region:  id.Location,
+			Tags:    id.Tags,
+		}
+	}), nil
 }
