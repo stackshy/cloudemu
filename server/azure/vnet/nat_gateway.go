@@ -222,6 +222,17 @@ func (h *Handler) deleteNATGateway(w http.ResponseWriter, r *http.Request, rp az
 		return
 	}
 
+	// Real ARM refuses to delete a NAT gateway still associated with any subnet;
+	// the subnet's natGateway reference must be dropped first.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNATGateway, rp.ResourceName)
+
+	if refs := h.natGatewaySubnetRefs(r.Context(), rp, id); len(refs) > 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseNatGatewayCannotBeDeleted",
+			inUseMessage("Nat gateway", rp.ResourceName, refs))
+
+		return
+	}
+
 	if err := h.net.DeleteNATGateway(r.Context(), info.ID); err != nil {
 		azurearm.WriteCErr(w, err)
 		return

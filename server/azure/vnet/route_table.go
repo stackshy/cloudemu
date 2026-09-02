@@ -155,6 +155,17 @@ func (h *Handler) deleteRouteTable(w http.ResponseWriter, r *http.Request, rp az
 		return
 	}
 
+	// Real ARM refuses to delete a route table still associated with any subnet,
+	// answering 400 InUseRouteTableCannotBeDeleted; disassociate the subnet first.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeRouteTable, rp.ResourceName)
+
+	if refs := h.routeTableAssociatedSubnets(r.Context(), id); len(refs) > 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseRouteTableCannotBeDeleted",
+			inUseMessage("Route table", rp.ResourceName, refs))
+
+		return
+	}
+
 	if meta, ok := h.azureMeta(); ok {
 		meta.DeleteAzureRouteTableMetadata(r.Context(), info.ID)
 	}

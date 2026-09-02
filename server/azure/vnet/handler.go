@@ -1368,6 +1368,18 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
+	// Real ARM refuses to delete an NSG still associated with any subnet or NIC,
+	// answering 400 InUseNetworkSecurityGroupCannotBeDeleted and naming the
+	// associated resources; the association must be dropped first.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNSG, rp.ResourceName)
+
+	if refs := append(h.nsgAssociatedSubnets(r.Context(), id), h.nsgAssociatedNICs(r.Context(), id)...); len(refs) > 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseNetworkSecurityGroupCannotBeDeleted",
+			inUseMessage("Network security group", rp.ResourceName, refs))
+
+		return
+	}
+
 	if meta, ok := h.azureMeta(); ok {
 		meta.DeleteAzureNSGMetadata(r.Context(), info.ID)
 	}
@@ -1883,6 +1895,19 @@ func subnetResourceID(nsgARMID, vnetName, subnetName string) string {
 
 	return azurearm.BuildResourceID(nsgRP.Subscription, nsgRP.ResourceGroup, providerName, typeVNet, vnetName) +
 		"/subnets/" + subnetName
+}
+
+// inUseMessage renders the ARM "cannot be deleted, still in use" body shared by
+// the NSG / route table / NAT gateway delete-in-use guards, naming the
+// associated resources the caller must disassociate first.
+func inUseMessage(resourceType, name string, refs []armIDRef) string {
+	ids := make([]string, 0, len(refs))
+	for i := range refs {
+		ids = append(ids, refs[i].ID)
+	}
+
+	return resourceType + " " + name + " cannot be deleted because it is in use by the following resources: " +
+		strings.Join(ids, ", ") + ". In order to delete the resource, remove the association with the listed resource(s)."
 }
 
 // nicResourceID builds a NIC ARM id sharing the subscription of nsgARMID,
