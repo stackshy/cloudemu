@@ -344,6 +344,8 @@ func displayName(pkg string) string {
 		return "ServiceQuotas"
 	case "emr":
 		return "EMR"
+	case "savingsplans":
+		return "SavingsPlans"
 	}
 
 	if pkg == "" {
