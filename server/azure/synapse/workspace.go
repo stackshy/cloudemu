@@ -15,7 +15,7 @@ func (h *Handler) serveWorkspace(w http.ResponseWriter, r *http.Request, rp *azu
 	case http.MethodPatch:
 		h.patchWorkspace(w, r, rp)
 	case http.MethodGet:
-		h.getWorkspace1(w, rp)
+		h.getWorkspaceResource(w, rp)
 	case http.MethodDelete:
 		h.deleteWorkspace(w, rp)
 	default:
@@ -96,7 +96,7 @@ func (h *Handler) patchWorkspace(w http.ResponseWriter, r *http.Request, rp *azu
 	azurearm.WriteJSON(w, http.StatusOK, resource)
 }
 
-func (h *Handler) getWorkspace1(w http.ResponseWriter, rp *azurearm.ResourcePath) {
+func (h *Handler) getWorkspaceResource(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 	h.mu.RLock()
 
 	ws, ok := h.getWorkspace(rp)
