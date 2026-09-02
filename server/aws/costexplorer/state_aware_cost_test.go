@@ -136,8 +136,9 @@ func TestSDKCostDropsOnTerminate(t *testing.T) {
 }
 
 // TestSDKCostDropsOnStop proves a stopped instance is not billed for compute:
-// stopping both instances drops the compute cost to zero (a real stopped
-// instance pays only for its EBS, which this estate has none of).
+// stopping both instances drops the total below the running estate, but the
+// root EBS volumes each instance launches with keep billing (a real stopped
+// instance still pays for its EBS storage), so the total stays above zero.
 func TestSDKCostDropsOnStop(t *testing.T) {
 	ctx := context.Background()
 	ceClient, ec2Client := newStateAwareClients(t)
@@ -154,7 +155,11 @@ func TestSDKCostDropsOnStop(t *testing.T) {
 	}
 
 	after := monthlyTotal(t, ceClient)
-	if after != 0 {
-		t.Fatalf("total after stopping all = %v, want 0 (stopped compute is not billed)", after)
+	if after >= before {
+		t.Fatalf("total after stopping all = %v, want < %v (compute no longer billed)", after, before)
+	}
+
+	if after <= 0 {
+		t.Fatalf("total after stopping all = %v, want > 0 (root EBS volumes still billed)", after)
 	}
 }

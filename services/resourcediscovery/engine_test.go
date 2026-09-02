@@ -204,6 +204,10 @@ func TestARNShapes(t *testing.T) {
 		case TypeInstance:
 			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:instance/"),
 				"unexpected instance ARN: %s", r.ARN)
+		case TypeVolume:
+			// Each launched instance materializes a root EBS volume.
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:volume/"),
+				"unexpected volume ARN: %s", r.ARN)
 		case TypeVPC:
 			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:vpc/"),
 				"unexpected VPC ARN: %s", r.ARN)
