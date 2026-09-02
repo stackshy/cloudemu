@@ -683,7 +683,12 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
-		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID))
+		// Clock/Region drive the EC2 handler's wire-only Reserved Instance surface
+		// (deterministic queued/active/retired timeline; region-tagged commitments
+		// and offering catalog). Its purchased reservations also implement
+		// cost.Commitments — union them with the Savings Plans source via
+		// cost.Combine for the CE reservation coverage/utilization consumer.
+		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID, ec2.WithClock(d.Clock), ec2.WithRegion(d.Region)))
 	}
 
 	if d.Lambda != nil {
