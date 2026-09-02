@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1939,50 +1940,77 @@ func containsPermission[T comparable](set []T, want T) bool {
 
 // CreateImage creates a machine image from an instance.
 //
+// CreateImage creates an AMI from an instance. It is the base (portable) path:
+// it snapshots each of the instance's attached EBS volumes and references those
+// snapshots from the image's block device mapping, but never reboots the source
+// instance and applies no client block-device overrides. The AWS wire layer's
+// NoReboot / BlockDeviceMapping.N fidelity comes in through CreateImageWithOptions.
+//
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
-func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+func (m *Mock) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
+	return m.createImage(ctx, &cfg, true, nil, nil, nil)
+}
+
+// CreateImageWithOptions is the AWS EC2 CreateImage capability the wire layer
+// reaches through server/aws/ec2's awsImageCreator interface. It honors the
+// NoReboot flag (a running source instance is rebooted as part of image
+// creation unless NoReboot is true, matching real EC2's default) and client
+// BlockDeviceMapping overrides: an override for an attached volume's device
+// replaces its size/type/snapshot and, only when the client actually sent it
+// (device listed in dotSetDevices), its DeleteOnTermination; a mapping for a new
+// device is added; and a device listed in noDevices (BlockDeviceMapping.N.NoDevice)
+// is suppressed.
+//
+//nolint:gocritic // hugeParam: cfg param type is fixed by server/aws/ec2's awsImageCreator interface.
+func (m *Mock) CreateImageWithOptions(
+	ctx context.Context, cfg driver.ImageConfig, noReboot bool,
+	overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
+) (*driver.ImageInfo, error) {
+	return m.createImage(ctx, &cfg, noReboot, overrides, noDevices, dotSetDevices)
+}
+
+// createImage is the shared CreateImage engine behind both the base and the
+// AWS-wire (option-carrying) entry points.
+func (m *Mock) createImage(
+	ctx context.Context, cfg *driver.ImageConfig, noReboot bool,
+	overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
+) (*driver.ImageInfo, error) {
+	inst, ok := m.instances.Get(cfg.InstanceID)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+	}
+
+	// Real EC2 reboots a running instance before snapshotting so its filesystem
+	// is flushed, unless NoReboot is set. A stopped instance is never rebooted.
+	if !noReboot && inst.readState() == compute.StateRunning {
+		if err := m.transitionInstances(ctx, []string{cfg.InstanceID}, rebootTransition); err != nil {
+			return nil, err
+		}
 	}
 
 	id := fmt.Sprintf("ami-%012d", m.amiCounter.Add(1))
 	now := m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
 
-	// A real CreateImage snapshots the instance's root volume and references
-	// that snapshot from the AMI's block device mapping.
-	snapID := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
-	m.snapshots.Set(snapID, &driver.SnapshotInfo{
-		ID:          snapID,
-		State:       "completed",
-		Description: "Created by CreateImage for " + id,
-		Size:        imageRootDeviceSize,
-		CreatedAt:   now,
-		OwnerID:     m.opts.AccountID,
-		Progress:    "100%",
-	})
+	bdms := applyImageBDMOverrides(
+		m.snapshotAttachedVolumes(cfg.InstanceID, id, now), overrides, noDevices, dotSetDevices,
+	)
 
 	img := &driver.ImageInfo{
-		ID:                 id,
-		Name:               cfg.Name,
-		State:              stateAvailable,
-		Description:        cfg.Description,
-		CreatedAt:          now,
-		Tags:               copyTags(cfg.Tags),
-		OwnerID:            m.opts.AccountID,
-		Architecture:       "x86_64",
-		RootDeviceType:     "ebs",
-		RootDeviceName:     "/dev/sda1",
-		VirtualizationType: "hvm",
-		Hypervisor:         "xen",
-		ImageType:          "machine",
-		PlatformDetails:    "Linux/UNIX",
-		BlockDeviceMappings: []driver.ImageBlockDeviceMapping{{
-			DeviceName:          "/dev/sda1",
-			SnapshotID:          snapID,
-			VolumeSize:          imageRootDeviceSize,
-			VolumeType:          "gp2",
-			DeleteOnTermination: true,
-		}},
+		ID:                  id,
+		Name:                cfg.Name,
+		State:               stateAvailable,
+		Description:         cfg.Description,
+		CreatedAt:           now,
+		Tags:                copyTags(cfg.Tags),
+		OwnerID:             m.opts.AccountID,
+		Architecture:        "x86_64",
+		RootDeviceType:      "ebs",
+		RootDeviceName:      imageRootDeviceName(bdms),
+		VirtualizationType:  "hvm",
+		Hypervisor:          "xen",
+		ImageType:           "machine",
+		PlatformDetails:     "Linux/UNIX",
+		BlockDeviceMappings: bdms,
 	}
 
 	m.images.Set(id, img)
@@ -1990,6 +2018,159 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 	result := *img
 
 	return &result, nil
+}
+
+// snapshotAttachedVolumes snapshots every EBS volume attached to instanceID and
+// returns one block device mapping per snapshot, ordered by device name for
+// determinism. An instance with no materialized volumes still yields a single
+// snapshot-backed root mapping so DescribeImages reports a realistic AMI.
+func (m *Mock) snapshotAttachedVolumes(instanceID, amiID, now string) []driver.ImageBlockDeviceMapping {
+	attached := make([]*driver.VolumeInfo, 0)
+
+	for _, volID := range m.volumes.Keys() {
+		if v, ok := m.volumes.Get(volID); ok && v.AttachedTo == instanceID {
+			attached = append(attached, v)
+		}
+	}
+
+	sort.Slice(attached, func(i, j int) bool { return attached[i].Device < attached[j].Device })
+
+	bdms := make([]driver.ImageBlockDeviceMapping, 0, len(attached))
+
+	for _, v := range attached {
+		snapID := m.snapshotForImage(v.ID, amiID, v.Size, v.Encrypted, now)
+		bdms = append(bdms, driver.ImageBlockDeviceMapping{
+			DeviceName:          v.Device,
+			SnapshotID:          snapID,
+			VolumeSize:          v.Size,
+			VolumeType:          v.VolumeType,
+			DeleteOnTermination: v.DeleteOnTermination,
+		})
+	}
+
+	if len(bdms) == 0 {
+		snapID := m.snapshotForImage("", amiID, imageRootDeviceSize, false, now)
+		bdms = append(bdms, driver.ImageBlockDeviceMapping{
+			DeviceName:          defaultRootDeviceName,
+			SnapshotID:          snapID,
+			VolumeSize:          imageRootDeviceSize,
+			VolumeType:          defaultVolumeType,
+			DeleteOnTermination: true,
+		})
+	}
+
+	return bdms
+}
+
+// snapshotForImage stores a completed snapshot of volumeID for the AMI being
+// created and returns its id.
+func (m *Mock) snapshotForImage(volumeID, amiID string, size int, encrypted bool, now string) string {
+	snapID := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
+	m.snapshots.Set(snapID, &driver.SnapshotInfo{
+		ID:          snapID,
+		VolumeID:    volumeID,
+		State:       "completed",
+		Description: "Created by CreateImage for " + amiID,
+		Size:        size,
+		CreatedAt:   now,
+		OwnerID:     m.opts.AccountID,
+		Progress:    "100%",
+		Encrypted:   encrypted,
+	})
+
+	return snapID
+}
+
+// applyImageBDMOverrides folds the client-supplied CreateImage block device
+// mappings onto the snapshot-derived base: a NoDevice entry suppresses its
+// device, an override for an existing device replaces its non-zero size / set
+// type / snapshot (and, only for a device in dotSet, its DeleteOnTermination),
+// and a mapping for a new device is appended. A device absent from dotSet keeps
+// the source volume's DeleteOnTermination, so a partial size-only override does
+// not silently clear it.
+func applyImageBDMOverrides(
+	base, overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
+) []driver.ImageBlockDeviceMapping {
+	suppressed := make(map[string]bool, len(noDevices))
+	for _, d := range noDevices {
+		suppressed[d] = true
+	}
+
+	dotSet := make(map[string]bool, len(dotSetDevices))
+	for _, d := range dotSetDevices {
+		dotSet[d] = true
+	}
+
+	result := make([]driver.ImageBlockDeviceMapping, 0, len(base)+len(overrides))
+	idx := make(map[string]int, len(base))
+
+	for _, b := range base {
+		if suppressed[b.DeviceName] {
+			continue
+		}
+
+		idx[b.DeviceName] = len(result)
+		result = append(result, b)
+	}
+
+	for _, o := range overrides {
+		if suppressed[o.DeviceName] {
+			continue
+		}
+
+		if i, ok := idx[o.DeviceName]; ok {
+			mergeImageBDMOverride(&result[i], o, dotSet[o.DeviceName])
+			continue
+		}
+
+		if o.VolumeType == "" {
+			o.VolumeType = defaultVolumeType
+		}
+
+		idx[o.DeviceName] = len(result)
+		result = append(result, o)
+	}
+
+	return result
+}
+
+// mergeImageBDMOverride applies a client override onto an existing mapping,
+// keeping the backing snapshot and any attribute the client left unset.
+// DeleteOnTermination is overwritten only when the client actually sent it
+// (dotSet), so an override that omits it preserves the source volume's value.
+func mergeImageBDMOverride(dst *driver.ImageBlockDeviceMapping, o driver.ImageBlockDeviceMapping, dotSet bool) {
+	if o.VolumeSize > 0 {
+		dst.VolumeSize = o.VolumeSize
+	}
+
+	if o.VolumeType != "" {
+		dst.VolumeType = o.VolumeType
+	}
+
+	if o.SnapshotID != "" {
+		dst.SnapshotID = o.SnapshotID
+	}
+
+	if dotSet {
+		dst.DeleteOnTermination = o.DeleteOnTermination
+	}
+}
+
+// imageRootDeviceName picks the AMI's root device: the conventional
+// defaultRootDeviceName when present, otherwise the first (device-sorted)
+// mapping, falling back to the default when there are none.
+func imageRootDeviceName(bdms []driver.ImageBlockDeviceMapping) string {
+	for _, b := range bdms {
+		if b.DeviceName == defaultRootDeviceName {
+			return b.DeviceName
+		}
+	}
+
+	if len(bdms) > 0 {
+		return bdms[0].DeviceName
+	}
+
+	return defaultRootDeviceName
 }
 
 // DeregisterImage deregisters a machine image.
