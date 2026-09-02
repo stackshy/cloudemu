@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	"github.com/stackshy/cloudemu/v2/services/cost"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -43,19 +45,74 @@ type Handler struct {
 	// rest of the AWS server (STS/IAM/SQS/...) reports. Defaults to
 	// defaultAccountID when the caller passes an empty string.
 	accountID string
+	// ri holds the wire-only Reserved Instance purchase/reporting surface (a
+	// billing instrument, so no compute-driver method backs it). It is always
+	// initialized, so the RI actions work even when the handler is built without
+	// a clock/region (falling back to the real clock and a default region).
+	ri *riStore
+}
+
+// Option configures optional Handler behavior. Options are additive and
+// backward-compatible: existing New(c, v, accountID) callers keep working
+// unchanged, and only the wire server passes clock/region for deterministic
+// Reserved Instance timelines.
+type Option func(*Handler)
+
+// WithClock sets the clock driving the Reserved Instance queued/active/retired
+// timeline (nil = real clock). Tests inject a config.FakeClock for determinism.
+func WithClock(clock config.Clock) Option {
+	return func(h *Handler) { h.ri.clock = clockOrReal(clock) }
+}
+
+// WithRegion sets the region tagging purchased reservations and the RI
+// commitment scope, and seeds the offering catalog's AZ names.
+func WithRegion(region string) Option {
+	return func(h *Handler) {
+		if region != "" {
+			h.ri.region = region
+			h.ri.offerings = seedRIOfferings(region)
+		}
+	}
 }
 
 // New returns an EC2 handler backed by c and v. Either may be nil if only
 // one service is being emulated, though most workflows need both together.
 // accountID is the owner account echoed on resources; an empty string falls
-// back to defaultAccountID.
-func New(c computedriver.Compute, v netdriver.Networking, accountID string) *Handler {
+// back to defaultAccountID. Options configure the optional Reserved Instance
+// surface (clock/region); with none the RI ops run on the real clock.
+func New(c computedriver.Compute, v netdriver.Networking, accountID string, opts ...Option) *Handler {
 	if accountID == "" {
 		accountID = defaultAccountID
 	}
 
-	return &Handler{compute: c, vpc: v, accountID: accountID}
+	h := &Handler{
+		compute:   c,
+		vpc:       v,
+		accountID: accountID,
+		ri:        newRIStore("", nil),
+	}
+
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
 }
+
+// clockOrReal returns clock, or a real clock when clock is nil.
+func clockOrReal(clock config.Clock) config.Clock {
+	if clock == nil {
+		return config.RealClock{}
+	}
+
+	return clock
+}
+
+// Commitments exposes the Reserved Instance store as a cost.Commitments source,
+// so a later Cost Explorer coverage/utilization handler (billing-parity step 3)
+// can amortize the reservations purchased here. Union it with the Savings Plans
+// source via cost.Combine to price RI and SP commitments together.
+func (h *Handler) Commitments() cost.Commitments { return h.ri }
 
 // Matches returns true for EC2-shaped requests. EC2 uses the AWS query
 // protocol: either a POST with form-encoded body (the SDK default) or a GET
@@ -130,6 +187,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeMetadata,
 		h.routeInstanceStatus,
 		h.routeIamInstanceProfileAssociations,
+		h.routeReservedInstances,
 	}
 	for _, route := range routes {
 		if route(w, r, action) {
