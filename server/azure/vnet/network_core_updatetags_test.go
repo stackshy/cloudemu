@@ -373,6 +373,131 @@ func TestSDKNetworkInterfaceUpdateTags(t *testing.T) {
 	assertNotFound(t, err, "network interface UpdateTags on missing")
 }
 
+// TestSDKVirtualNetworkUpdateTagsAnchorImmutable proves a caller cannot hijack a
+// resource's identity by smuggling a cloudemu:-prefixed key into an UpdateTags
+// PATCH: the reserved key is stripped, a normal user tag in the same PATCH still
+// applies, and an independent Get(rg, name) still resolves (not 404) with
+// identity intact — before and after a tags:{} wipe.
+func TestSDKVirtualNetworkUpdateTagsAnchorImmutable(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+
+	client, err := armnetwork.NewVirtualNetworksClient("sub-1", fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cp, err := client.BeginCreateOrUpdate(ctx, "rg-1", "vnet-victim", armnetwork.VirtualNetwork{
+		Location: to.Ptr("westus2"),
+		Properties: &armnetwork.VirtualNetworkPropertiesFormat{
+			AddressSpace: &armnetwork.AddressSpace{AddressPrefixes: []*string{to.Ptr("10.0.0.0/16")}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	pollDone(t, cp)
+
+	// A PATCH that tries to overwrite the name anchor (and another reserved key)
+	// alongside a legitimate user tag.
+	resp := rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vnet-victim",
+		`{"tags":{"cloudemu:azureNetName":"hijacked","cloudemu:evil":"x","team":"net"}}`)
+
+	// The reserved keys never surface; the user tag does.
+	if _, bad := resp["cloudemu:azureNetName"]; bad {
+		t.Errorf("reserved key leaked into response tags: %v", resp)
+	}
+
+	assertTag(t, ptrTags(resp), "team", "net")
+
+	// The resource is still resolvable by (rg, name) — the hijack did not orphan it.
+	got, err := client.Get(ctx, "rg-1", "vnet-victim", nil)
+	if err != nil {
+		t.Fatalf("Get after collision PATCH: %v (resource orphaned)", err)
+	}
+
+	if got.Name == nil || *got.Name != "vnet-victim" {
+		t.Errorf("name=%v want vnet-victim (identity must survive)", got.Name)
+	}
+
+	assertTag(t, got.Tags, "team", "net")
+
+	if _, bad := got.Tags["cloudemu:azureNetName"]; bad {
+		t.Errorf("reserved key leaked into stored tags: %v", got.Tags)
+	}
+
+	// A tags:{} wipe clears user tags but the anchor survives — still resolvable.
+	rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vnet-victim",
+		`{"tags":{}}`)
+
+	wiped, err := client.Get(ctx, "rg-1", "vnet-victim", nil)
+	if err != nil {
+		t.Fatalf("Get after wipe: %v (resource orphaned)", err)
+	}
+
+	assertTagCount(t, wiped.Tags, 0)
+}
+
+// TestSDKNetworkSecurityGroupUpdateTagsAnchorImmutable is the NSG counterpart of
+// the VNet anchor-immutability test.
+func TestSDKNetworkSecurityGroupUpdateTagsAnchorImmutable(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+
+	client, err := armnetwork.NewSecurityGroupsClient("sub-1", fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cp, err := client.BeginCreateOrUpdate(ctx, "rg-1", "nsg-victim", armnetwork.SecurityGroup{
+		Location: to.Ptr("westus2"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	pollDone(t, cp)
+
+	resp := rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/networkSecurityGroups/nsg-victim",
+		`{"tags":{"cloudemu:azureNSGName":"hijacked","cloudemu:evil":"x","team":"net"}}`)
+
+	if _, bad := resp["cloudemu:azureNSGName"]; bad {
+		t.Errorf("reserved key leaked into response tags: %v", resp)
+	}
+
+	assertTag(t, ptrTags(resp), "team", "net")
+
+	got, err := client.Get(ctx, "rg-1", "nsg-victim", nil)
+	if err != nil {
+		t.Fatalf("Get after collision PATCH: %v (resource orphaned)", err)
+	}
+
+	if got.Name == nil || *got.Name != "nsg-victim" {
+		t.Errorf("name=%v want nsg-victim (identity must survive)", got.Name)
+	}
+
+	assertTag(t, got.Tags, "team", "net")
+
+	if _, bad := got.Tags["cloudemu:azureNSGName"]; bad {
+		t.Errorf("reserved key leaked into stored tags: %v", got.Tags)
+	}
+
+	rawTagsPatch(t, ts,
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/networkSecurityGroups/nsg-victim",
+		`{"tags":{}}`)
+
+	wiped, err := client.Get(ctx, "rg-1", "nsg-victim", nil)
+	if err != nil {
+		t.Fatalf("Get after wipe: %v (resource orphaned)", err)
+	}
+
+	assertTagCount(t, wiped.Tags, 0)
+}
+
 // seedNICSubnet creates a vnet + subnet a NIC can bind to and returns the
 // subnet's ARM resource id.
 func seedNICSubnet(t *testing.T, ctx context.Context, opts *arm.ClientOptions) string {

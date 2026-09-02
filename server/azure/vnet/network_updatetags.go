@@ -27,17 +27,30 @@ import (
 // UpdateTags replacement, so a PATCH that SETS the user-facing tags never drops
 // the bookkeeping the (rg, name) lookup depends on. replacement is the caller's
 // new user tag set (nil to wipe them); the result is nil when nothing remains.
+//
+// The resource's identity anchors are immutable across any PATCH: a caller's
+// cloudemu:-prefixed keys are stripped from the replacement FIRST (so user input
+// can never introduce a reserved key), and the STORED anchors are re-asserted
+// LAST (so they always win even against a stray reserved key). The resource must
+// always remain resolvable by (rg, name) after any UpdateTags, including a wipe.
 func preserveInternalTags(existing, replacement map[string]string) map[string]string {
 	out := make(map[string]string, len(existing)+len(replacement))
 
+	// User tags first, with reserved cloudemu: keys dropped so a caller can never
+	// overwrite (or introduce) an identity anchor.
+	for k, v := range replacement {
+		if strings.HasPrefix(k, internalTagPrefix) {
+			continue
+		}
+
+		out[k] = v
+	}
+
+	// Re-assert the stored anchors last so they always win — identity survives.
 	for k, v := range existing {
 		if strings.HasPrefix(k, internalTagPrefix) {
 			out[k] = v
 		}
-	}
-
-	for k, v := range replacement {
-		out[k] = v
 	}
 
 	if len(out) == 0 {
