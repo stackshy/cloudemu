@@ -180,10 +180,9 @@ func TestSDKAzureSQLDatabaseElasticPoolMembership(t *testing.T) {
 // TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase is the HIGH
 // regression: a PUT against an EXISTING database that references an
 // elasticPoolId which doesn't resolve must fail the request without deleting
-// the database. replaceDatabase upserts by deleting the stored record and
-// re-creating it merged with the request body — before the fix, the delete
-// ran first, so a bad pool reference on the re-create half permanently lost a
-// database that already existed.
+// the database. replaceDatabase validates the merged elasticPoolId before it
+// applies any change, so a bad pool reference leaves the existing database
+// exactly as it was.
 func TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase(t *testing.T) {
 	cf := newFactory(t)
 	ctx := context.Background()

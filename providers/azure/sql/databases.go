@@ -79,6 +79,50 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	return &out, nil
 }
 
+// UpdateDatabase applies a fully-merged desired state to an existing logical
+// database in place, implementing the relationaldb DatabaseUpdater optional
+// capability. It is the update half of the wire CreateOrUpdate/PATCH: the
+// caller has already merged the request body over the stored record, so cfg
+// carries the resolved final values for every mutable field.
+//
+// Crucially it does NOT touch the transparentDataEncryption record: a database
+// whose TDE was set to Disabled keeps that state across an unrelated property
+// update (real Azure never re-enables TDE on a database PATCH). The mutation is
+// a write-locked COW Update, so it is safe under concurrent access and never
+// re-materializes TDE the way a delete+recreate upsert would.
+//
+//nolint:gocritic // cfg matches the DatabaseUpdater capability interface signature.
+func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
+	if cfg.Server == "" || cfg.Name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "server and database name are required")
+	}
+
+	var updated rdsdriver.Database
+
+	ok := m.databases.Update(dbKey(cfg.Server, cfg.Name), func(db rdsdriver.Database) rdsdriver.Database {
+		db.Charset = cfg.Charset
+		db.Collation = cfg.Collation
+		db.Location = orDefault(cfg.Location, db.Location)
+		db.Tags = copyTags(cfg.Tags)
+		db.SKUName = cfg.SKUName
+		db.SKUTier = cfg.SKUTier
+		db.SKUCapacity = cfg.SKUCapacity
+		db.ZoneRedundant = cfg.ZoneRedundant
+		db.ElasticPoolID = cfg.ElasticPoolID
+		updated = db
+
+		return db
+	})
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "database %q not found on server %q", cfg.Name, cfg.Server)
+	}
+
+	out := updated
+	out.Tags = copyTags(updated.Tags)
+
+	return &out, nil
+}
+
 // GetDatabase returns a logical database, or NotFound.
 func (m *Mock) GetDatabase(_ context.Context, server, name string) (*rdsdriver.Database, error) {
 	m.mu.RLock()
