@@ -37,6 +37,11 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"aws/costexplorer": {
 		"GetCostAndUsage", "GetCostForecast", "GetDimensionValues", "GetTags",
 	},
+	"aws/servicequotas": {
+		"GetAWSDefaultServiceQuota", "GetServiceQuota", "ListAWSDefaultServiceQuotas",
+		"ListRequestedServiceQuotaChangeHistory", "ListServiceQuotas",
+		"RequestServiceQuotaIncrease",
+	},
 	"aws/emr": {
 		"AddInstanceGroups", "AddJobFlowSteps", "CancelSteps", "DescribeCluster",
 		"DescribeStep", "ListBootstrapActions", "ListClusters", "ListInstanceGroups",

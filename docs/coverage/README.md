@@ -83,6 +83,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | — | 7 |
 | `serverless` | [Lambda](./aws/lambda.md) | [Functions](./azure/functions.md) | [CloudFunctions](./gcp/cloudfunctions.md) | — | 27 |
 | `servicenetworking` | — | — | [Servicenetworking](./gcp/servicenetworking.md) | — | 3 |
+| `servicequotas` | [ServiceQuotas](./aws/servicequotas.md) | — | — | — | 6 |
 | `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
 | `snapshots` | — | [Snapshots](./azure/snapshots.md) | — | — | 5 |

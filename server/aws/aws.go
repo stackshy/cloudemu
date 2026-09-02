@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/quota"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -54,6 +55,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
+	servicequotassrv "github.com/stackshy/cloudemu/v2/server/aws/servicequotas"
 	sesv2srv "github.com/stackshy/cloudemu/v2/server/aws/sesv2"
 	sfnsrv "github.com/stackshy/cloudemu/v2/server/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/server/aws/sns"
@@ -247,6 +249,12 @@ type Drivers struct {
 	// Leave nil to omit both handlers. AccountID and Region are needed for
 	// Resource Explorer to construct view/index ARNs.
 	ResourceDiscovery *resourcediscovery.Engine
+	// ServiceQuotas serves the AWS Service Quotas JSON 1.1 protocol (X-Amz-Target
+	// prefix "ServiceQuotasV20190624.") against a provider-agnostic quota registry
+	// (features/quota). It reports quota values and increase-request history only;
+	// it does not enforce quotas against live resource usage. Leave nil to omit the
+	// handler.
+	ServiceQuotas *quota.Registry
 	// CostExplorer is the inventory the Cost Explorer JSON 1.1 handler prices
 	// (X-Amz-Target prefix "AWSInsightsIndexService."). A *resourcediscovery.Engine
 	// satisfies it; leave nil to omit the handler. The handler has no cost model
@@ -335,6 +343,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
 		CostExplorer:        p.ResourceDiscovery,
+		ServiceQuotas:       quota.NewAWSDefaults(p.Clock),
 		AccountID:           p.AccountID,
 		Region:              p.Region,
 		EnforceAuth:         p.EnforceAuth,
@@ -478,6 +487,12 @@ func New(d Drivers) *server.Server {
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CostExplorer != nil {
 		srv.Register(costexplorersrv.New(d.CostExplorer))
+	}
+
+	// Service Quotas matches the X-Amz-Target prefix "ServiceQuotasV20190624." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.ServiceQuotas != nil {
+		srv.Register(servicequotassrv.New(d.ServiceQuotas, d.AccountID, d.Region))
 	}
 
 	// EMR matches the X-Amz-Target prefix "ElasticMapReduce." — disjoint from the

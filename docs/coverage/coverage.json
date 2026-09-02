@@ -11423,6 +11423,33 @@
     }
   },
   {
+    "service": "servicequotas",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetAWSDefaultServiceQuota"
+      },
+      {
+        "name": "GetServiceQuota"
+      },
+      {
+        "name": "ListAWSDefaultServiceQuotas"
+      },
+      {
+        "name": "ListRequestedServiceQuotaChangeHistory"
+      },
+      {
+        "name": "ListServiceQuotas"
+      },
+      {
+        "name": "RequestServiceQuotaIncrease"
+      }
+    ],
+    "providers": {
+      "aws": "ServiceQuotas"
+    }
+  },
+  {
     "service": "sesv2",
     "interface": "SESV2",
     "operations": [
