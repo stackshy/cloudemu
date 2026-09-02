@@ -119,6 +119,7 @@ func (m *Mock) CommitBlockList(
 	}
 
 	m.carryOverLease(ctr, blob, obj)
+	m.recordVersion(ctr, obj)
 	ctr.objects.Set(blob, obj)
 	ctr.staging.Delete(blob)
 
@@ -209,7 +210,7 @@ func snapshotStagedBlocks(ctr *containerMeta, blob string) map[string][]byte {
 
 // SetBlobMetadata replaces only a blob's metadata, preserving its content.
 func (m *Mock) SetBlobMetadata(_ context.Context, container, blob string, metadata map[string]string) (*driver.ObjectInfo, error) {
-	obj, err := m.getBlobObject(container, blob)
+	ctr, obj, err := m.getContainerBlob(container, blob)
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +222,17 @@ func (m *Mock) SetBlobMetadata(_ context.Context, container, blob string, metada
 	obj.LastModified = m.opts.Clock.Now().UTC().Format(blobTimeFormat)
 	obj.ETag = computeBlobETag(obj)
 
+	m.recordVersion(ctr, obj)
+
 	info := objectInfo(obj)
 
 	return &info, nil
 }
 
-// SetBlobProperties replaces only a blob's system properties.
+// SetBlobProperties replaces only a blob's system properties. Per Azure's
+// "Versioning on write operations" list this is an in-place update that does
+// NOT mint a new version (only Put Blob / Put Block List / Copy Blob / Set Blob
+// Metadata do).
 func (m *Mock) SetBlobProperties(_ context.Context, container, blob string, props *driver.BlobProperties) (*driver.ObjectInfo, error) {
 	obj, err := m.getBlobObject(container, blob)
 	if err != nil {
@@ -368,6 +374,7 @@ func (m *Mock) CreateAppendBlob(
 	}
 	obj.ETag = computeBlobETag(obj)
 
+	m.recordVersion(ctr, obj)
 	ctr.objects.Set(blob, obj)
 
 	info := objectInfo(obj)
@@ -379,7 +386,7 @@ func (m *Mock) CreateAppendBlob(
 func (m *Mock) AppendBlock(
 	_ context.Context, container, blob string, data []byte,
 ) (offset int64, committedBlocks int, info *driver.ObjectInfo, err error) {
-	obj, err := m.getBlobObject(container, blob)
+	ctr, obj, err := m.getContainerBlob(container, blob)
 	if err != nil {
 		return 0, 0, nil, err
 	}
@@ -397,6 +404,8 @@ func (m *Mock) AppendBlock(
 	obj.appendBlocks++
 	obj.LastModified = m.opts.Clock.Now().UTC().Format(blobTimeFormat)
 	obj.ETag = computeBlobETag(obj)
+
+	m.recordVersion(ctr, obj)
 
 	m.emitMetric(container, map[string]float64{"Transactions": 1, "Ingress": float64(len(data))})
 

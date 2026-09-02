@@ -85,6 +85,18 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 | `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
 | `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
 
+### AzureVersionedBlob
+
+AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `DeleteBlobVersion` | DeleteBlobVersion permanently removes a specific version (DELETE |
+| `GetBlobVersion` | GetBlobVersion reads a specific version of a blob (GET ?versionid=…). |
+| `HeadBlobVersion` | HeadBlobVersion returns a specific version's info (HEAD ?versionid=…). |
+| `ListBlobVersions` | ListBlobVersions returns every version (current and previous) of the blobs |
+| `VersioningEnabled` | VersioningEnabled reports whether account-level blob versioning is on. |
+
 ### BlobServiceConfig
 
 BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by

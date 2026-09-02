@@ -39,8 +39,10 @@ type containerSnapshot struct {
 	PublicAccess   string                         `json:"publicAccess,omitempty"`
 	AccessPolicies []driver.SignedIdentifier      `json:"accessPolicies,omitempty"`
 	SnapshotSeq    int                            `json:"snapshotSeq,omitempty"`
+	VersionSeq     int                            `json:"versionSeq,omitempty"`
 	Objects        map[string]*blobObjectSnapshot `json:"objects,omitempty"`
 	Snapshots      map[string]*blobObjectSnapshot `json:"snapshots,omitempty"`
+	Versions       map[string]*blobObjectSnapshot `json:"versions,omitempty"`
 }
 
 // blobObjectSnapshot mirrors blobObject, promoting its meaningful unexported
@@ -56,6 +58,7 @@ type blobObjectSnapshot struct {
 	Metadata              map[string]string  `json:"metadata,omitempty"`
 	Tags                  map[string]string  `json:"tags,omitempty"`
 	BlobType              string             `json:"blobType,omitempty"`
+	VersionID             string             `json:"versionId,omitempty"`
 	AccessTier            string             `json:"accessTier,omitempty"`
 	ContentEncoding       string             `json:"contentEncoding,omitempty"`
 	ContentLanguage       string             `json:"contentLanguage,omitempty"`
@@ -118,10 +121,12 @@ func snapshotContainer(c *containerMeta, includeAssets bool) *containerSnapshot 
 		Metadata: c.metadata, PublicAccess: c.publicAccess, AccessPolicies: c.accessPolicies,
 		Objects:   make(map[string]*blobObjectSnapshot, c.objects.Len()),
 		Snapshots: make(map[string]*blobObjectSnapshot, c.snapshots.Len()),
+		Versions:  make(map[string]*blobObjectSnapshot, c.versions.Len()),
 	}
 
 	c.mu.Lock()
 	cs.SnapshotSeq = c.snapshotSeq
+	cs.VersionSeq = c.versionSeq
 	c.mu.Unlock()
 
 	for key, obj := range c.objects.All() {
@@ -130,6 +135,10 @@ func snapshotContainer(c *containerMeta, includeAssets bool) *containerSnapshot 
 
 	for key, obj := range c.snapshots.All() {
 		cs.Snapshots[key] = snapshotBlob(obj, includeAssets)
+	}
+
+	for key, obj := range c.versions.All() {
+		cs.Versions[key] = snapshotBlob(obj, includeAssets)
 	}
 
 	return cs
@@ -147,7 +156,7 @@ func snapshotBlob(obj *blobObject, includeAssets bool) *blobObjectSnapshot {
 	return &blobObjectSnapshot{
 		Key: obj.Key, Data: data, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata, Tags: obj.Tags,
-		BlobType: obj.BlobType, AccessTier: obj.AccessTier, ContentEncoding: obj.ContentEncoding,
+		BlobType: obj.BlobType, VersionID: obj.VersionID, AccessTier: obj.AccessTier, ContentEncoding: obj.ContentEncoding,
 		ContentLanguage: obj.ContentLanguage, ContentDisposition: obj.ContentDisposition,
 		CacheControl: obj.CacheControl, CommittedBlocks: obj.CommittedBlocks, AppendBlocks: obj.appendBlocks,
 		LeaseState: obj.leaseState, LeaseID: obj.leaseID, LeaseDurationSec: obj.leaseDurationSec,
@@ -206,7 +215,9 @@ func restoreContainer(cs *containerSnapshot) *containerMeta {
 		publicAccess: cs.PublicAccess, accessPolicies: cs.AccessPolicies,
 		staging:     memstore.New[*blockStaging](),
 		snapshots:   memstore.New[*blobObject](),
+		versions:    memstore.New[*blobObject](),
 		snapshotSeq: cs.SnapshotSeq,
+		versionSeq:  cs.VersionSeq,
 	}
 
 	for key, os := range cs.Objects {
@@ -217,6 +228,10 @@ func restoreContainer(cs *containerSnapshot) *containerMeta {
 		c.snapshots.Set(key, restoreBlob(os))
 	}
 
+	for key, os := range cs.Versions {
+		c.versions.Set(key, restoreBlob(os))
+	}
+
 	return c
 }
 
@@ -224,7 +239,7 @@ func restoreBlob(os *blobObjectSnapshot) *blobObject {
 	return &blobObject{
 		Key: os.Key, Data: os.Data, Size: os.Size, ContentType: os.ContentType,
 		ETag: os.ETag, LastModified: os.LastModified, Metadata: os.Metadata, Tags: os.Tags,
-		BlobType: os.BlobType, AccessTier: os.AccessTier, ContentEncoding: os.ContentEncoding,
+		BlobType: os.BlobType, VersionID: os.VersionID, AccessTier: os.AccessTier, ContentEncoding: os.ContentEncoding,
 		ContentLanguage: os.ContentLanguage, ContentDisposition: os.ContentDisposition,
 		CacheControl: os.CacheControl, CommittedBlocks: os.CommittedBlocks, appendBlocks: os.AppendBlocks,
 		leaseState: os.LeaseState, leaseID: os.LeaseID, leaseDurationSec: os.LeaseDurationSec,

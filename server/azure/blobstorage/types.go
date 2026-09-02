@@ -51,6 +51,10 @@ type blobXML struct {
 	Name       string       `xml:"Name"`
 	Properties blobPropsXML `xml:"Properties"`
 	Metadata   *metadataXML `xml:"Metadata,omitempty"`
+	// VersionID and IsCurrentVersion are emitted only for a List Blobs
+	// include=versions response; a plain listing leaves both empty.
+	VersionID        string `xml:"VersionId,omitempty"`
+	IsCurrentVersion *bool  `xml:"IsCurrentVersion,omitempty"`
 }
 
 type blobPropsXML struct {

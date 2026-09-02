@@ -12493,6 +12493,32 @@
         ]
       },
       {
+        "name": "AzureVersionedBlob",
+        "doc": "AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "DeleteBlobVersion",
+            "doc": "DeleteBlobVersion permanently removes a specific version (DELETE"
+          },
+          {
+            "name": "GetBlobVersion",
+            "doc": "GetBlobVersion reads a specific version of a blob (GET ?versionid=…)."
+          },
+          {
+            "name": "HeadBlobVersion",
+            "doc": "HeadBlobVersion returns a specific version's info (HEAD ?versionid=…)."
+          },
+          {
+            "name": "ListBlobVersions",
+            "doc": "ListBlobVersions returns every version (current and previous) of the blobs"
+          },
+          {
+            "name": "VersioningEnabled",
+            "doc": "VersioningEnabled reports whether account-level blob versioning is on."
+          }
+        ]
+      },
+      {
         "name": "BlobServiceConfig",
         "doc": "BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by",
         "operations": [

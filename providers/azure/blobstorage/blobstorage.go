@@ -49,6 +49,12 @@ type blobObject struct {
 	Tags         map[string]string
 	// BlobType is "BlockBlob" (default, empty) or "AppendBlob".
 	BlobType string
+	// VersionID is this blob's version identifier when account-level versioning
+	// is enabled — a timestamp id minted on the write that produced it. Empty on
+	// an account that never had versioning enabled. On a live (base) blob it is
+	// the current version's id; on a copy held in the container's versions store
+	// it identifies that historical version.
+	VersionID string
 	// AccessTier is the blob access tier (Hot/Cool/Cold/Archive), set by Set Blob
 	// Tier; empty when unset.
 	AccessTier string
@@ -123,9 +129,15 @@ type containerMeta struct {
 	// Snapshots live at the container level so they survive a base-blob
 	// overwrite, matching real Azure snapshot lifetime.
 	snapshots *memstore.Store[*blobObject]
-	// mu guards snapshotSeq (and any future container-scoped counters).
+	// versions holds immutable blob versions keyed by versionKey(blob, id) when
+	// account-level versioning is enabled. Like snapshots they live at the
+	// container level so a version survives a base-blob overwrite or delete,
+	// matching real Azure version lifetime.
+	versions *memstore.Store[*blobObject]
+	// mu guards snapshotSeq/versionSeq (and any future container-scoped counters).
 	mu          sync.Mutex
 	snapshotSeq int
+	versionSeq  int
 }
 
 // blockStaging buffers the uncommitted blocks staged for one blob before a
@@ -321,6 +333,7 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 		multiparts: memstore.New[*blobMultipartUpload](),
 		staging:    memstore.New[*blockStaging](),
 		snapshots:  memstore.New[*blobObject](),
+		versions:   memstore.New[*blobObject](),
 	})
 
 	return nil
@@ -431,6 +444,7 @@ func (m *Mock) putBlockBlobInternal(
 	}
 
 	m.carryOverLease(ctr, key, obj)
+	m.recordVersion(ctr, obj)
 	ctr.objects.Set(key, obj)
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
@@ -483,7 +497,7 @@ func objectInfo(obj *blobObject) driver.ObjectInfo {
 	return driver.ObjectInfo{
 		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-		BlobType: obj.BlobType, AccessTier: obj.AccessTier,
+		BlobType: obj.BlobType, AccessTier: obj.AccessTier, VersionID: obj.VersionID,
 		CacheControl: obj.CacheControl, ContentEncoding: obj.ContentEncoding,
 		ContentDisposition: obj.ContentDisposition, ContentLanguage: obj.ContentLanguage,
 	}
@@ -728,6 +742,7 @@ func (m *Mock) copyBlobInternal(
 	}
 
 	m.carryOverLease(dstCtr, dstKey, dstObj)
+	m.recordVersion(dstCtr, dstObj)
 	dstCtr.objects.Set(dstKey, dstObj)
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
@@ -987,6 +1002,7 @@ func (m *Mock) CompleteMultipartUpload(
 		obj.Data = data
 	}
 
+	m.recordVersion(ctr, obj)
 	ctr.objects.Set(key, obj)
 
 	ctr.multiparts.Delete(uploadID)

@@ -303,6 +303,36 @@ type AzureBlobExtensions interface {
 	ContainerAccessPolicy(ctx context.Context, container string) (publicAccess string, policies []SignedIdentifier, err error)
 }
 
+// AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that models automatic blob versioning (x-ms-version-id). When
+// account-level versioning is enabled (Set Blob Service Properties,
+// isVersioningEnabled) every write to a blob mints a new immutable version, the
+// most recent of which is the current version served by the base blob; older
+// versions stay readable, listable, and individually deletable by their id.
+//
+// It is distinct from the S3-shaped VersionedBucket: Azure enables versioning
+// once at the account/blob-service level (not per bucket with a status) and does
+// not use delete markers — deleting the base blob simply retains the existing
+// versions. S3/GCS don't implement it.
+//
+// Note: version bytes are captured in memory at write time; combining an
+// external StorageEngine with versioning captures version metadata only.
+type AzureVersionedBlob interface {
+	// VersioningEnabled reports whether account-level blob versioning is on.
+	VersioningEnabled(ctx context.Context) (bool, error)
+	// GetBlobVersion reads a specific version of a blob (GET ?versionid=…).
+	GetBlobVersion(ctx context.Context, container, blob, versionID string) (*Object, error)
+	// HeadBlobVersion returns a specific version's info (HEAD ?versionid=…).
+	HeadBlobVersion(ctx context.Context, container, blob, versionID string) (*ObjectInfo, error)
+	// DeleteBlobVersion permanently removes a specific version (DELETE
+	// ?versionid=…). Removing the current version also removes the base blob.
+	DeleteBlobVersion(ctx context.Context, container, blob, versionID string) error
+	// ListBlobVersions returns every version (current and previous) of the blobs
+	// matching opts, so a List Blobs include=versions can render each with its
+	// VersionID and IsLatest (IsCurrentVersion) marker.
+	ListBlobVersions(ctx context.Context, container string, opts ListOptions) (*VersionListResult, error)
+}
+
 // BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 // the networking NetworkInterfaces capability): a provider whose buckets map to
 // a richer resource (Azure storage accounts) exposes their SKU/kind/access-tier
