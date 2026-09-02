@@ -232,6 +232,27 @@ func (s *store) create(in *createInput) (string, error) {
 	return id, nil
 }
 
+// effectiveState resolves a plan's current state from the clock rather than a
+// value frozen at creation: a plan is queued until its Start, active in
+// [Start, End), and retired at or after End. The queued-deleted lifecycle is
+// terminal and sticky — a plan deleted while queued stays queued-deleted and
+// never becomes active — so it (and any other stored non-time state such as a
+// payment-pending/failed marker, were one modeled) short-circuits the time rule.
+func effectiveState(p *savingsPlan, now time.Time) string {
+	if p.State == stateQueuedDeleted {
+		return stateQueuedDeleted
+	}
+
+	switch {
+	case now.Before(p.Start):
+		return stateQueued
+	case now.Before(p.End):
+		return stateActive
+	default:
+		return stateRetired
+	}
+}
+
 // recurringFor reports the recurring payment amount a payment option carries.
 // Only Partial Upfront bills a recurring hourly charge in this model; the seeded
 // catalog leaves the concrete figure to the caller's commitment, so a nominal
@@ -255,8 +276,8 @@ func (s *store) deleteQueued(id string) error {
 		return cerrors.Newf(cerrors.NotFound, "savings plan not found: %s", id)
 	}
 
-	if plan.State != stateQueued {
-		return cerrors.Newf(cerrors.FailedPrecondition, "savings plan %s is %s, not queued", id, plan.State)
+	if state := effectiveState(plan, s.clock.Now().UTC()); state != stateQueued {
+		return cerrors.Newf(cerrors.FailedPrecondition, "savings plan %s is %s, not queued", id, state)
 	}
 
 	plan.State = stateQueuedDeleted
@@ -266,15 +287,24 @@ func (s *store) deleteQueued(id string) error {
 }
 
 // describe returns the plans matching the filter, in ascending id order for
-// deterministic output.
+// deterministic output. Each returned plan is a copy whose State is the
+// clock-derived effective state (queued/active/retired unless terminally
+// queued-deleted), so DescribeSavingsPlans reflects lifecycle transitions
+// without any stored state ever being mutated on a read.
 func (s *store) describe(f planFilter) []*savingsPlan {
 	all := s.plans.All()
+	now := s.clock.Now().UTC()
 	out := make([]*savingsPlan, 0, len(all))
 
 	for _, p := range all {
-		if f.matches(p) {
-			out = append(out, p)
+		state := effectiveState(p, now)
+		if !f.matches(p, state) {
+			continue
 		}
+
+		view := *p
+		view.State = state
+		out = append(out, &view)
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -352,19 +382,18 @@ func (s *store) planARN(id string) string {
 	return idgen.AWSARN("savingsplans", "", s.accountID, "savingsplan/"+id)
 }
 
-// ListActive satisfies cost.Commitments: it returns every active Savings Plan in
-// force at instant at, normalized to the provider-agnostic cost.Commitment shape
-// the billing engine amortizes. A later Cost Explorer coverage/utilization
-// handler (billing-parity step 3) reads real purchased commitments through this.
+// ListActive satisfies cost.Commitments: it returns every Savings Plan whose
+// clock-derived effective state at instant at is active, normalized to the
+// provider-agnostic cost.Commitment shape the billing engine amortizes. State is
+// resolved from at (not creation), so a plan bought with a future purchaseTime
+// starts feeding commitments once at reaches its Start, and an expired plan drops
+// out at its End. A later Cost Explorer coverage/utilization handler
+// (billing-parity step 3) reads real purchased commitments through this.
 func (s *store) ListActive(_ context.Context, at time.Time) ([]cost.Commitment, error) {
 	var out []cost.Commitment
 
 	for _, p := range s.plans.All() {
-		if p.State != stateActive {
-			continue
-		}
-
-		if at.Before(p.Start) || !at.Before(p.End) {
+		if effectiveState(p, at) != stateActive {
 			continue
 		}
 

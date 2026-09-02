@@ -55,7 +55,11 @@ func newPlanFilter(ids, arns, states []string, filters []wireFilter) planFilter 
 	}
 }
 
-func (f planFilter) matches(p *savingsPlan) bool {
+// matches reports whether plan p satisfies the filter. state is the plan's
+// clock-derived effective state (passed in rather than read from p.State) so the
+// states[] dimension filters on the live lifecycle, not the value frozen at
+// creation.
+func (f planFilter) matches(p *savingsPlan, state string) bool {
 	if len(f.ids) > 0 {
 		if _, ok := f.ids[p.ID]; !ok {
 			return false
@@ -69,7 +73,7 @@ func (f planFilter) matches(p *savingsPlan) bool {
 	}
 
 	if len(f.states) > 0 {
-		if _, ok := f.states[p.State]; !ok {
+		if _, ok := f.states[state]; !ok {
 			return false
 		}
 	}
