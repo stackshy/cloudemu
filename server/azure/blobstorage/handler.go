@@ -29,8 +29,10 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +69,7 @@ const (
 	compLease       = "lease"
 	compTags        = "tags"
 	compPage        = "page"
+	compUndelete    = "undelete"
 
 	// blobTypePageBlob is the Azure page-blob type; cloudemu does not implement
 	// page-blob range semantics, so a page-blob create/write fails closed.
@@ -239,6 +242,11 @@ func (h *Handler) putBlobOp(w http.ResponseWriter, r *http.Request, container, b
 func (h *Handler) putBlobComp(w http.ResponseWriter, r *http.Request, container, blob, comp string) {
 	if comp == compTags {
 		h.setBlobTags(w, r, container, blob)
+		return
+	}
+
+	if comp == compUndelete {
+		h.undeleteBlob(w, r, container, blob)
 		return
 	}
 
@@ -450,9 +458,27 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 	}
 
 	includeMetadata := includesOption(q.Get("include"), "metadata")
+	out.Blobs.Blobs = appendLiveBlobs(nil, result.Objects, includeMetadata)
 
-	for i := range result.Objects {
-		obj := &result.Objects[i]
+	for _, p := range result.CommonPrefixes {
+		out.Blobs.BlobPrefixes = append(out.Blobs.BlobPrefixes, blobPrefixXML{Name: p})
+	}
+
+	if ext, ok := h.bucket.(storagedriver.AzureSoftDeleteBlob); ok && includesOption(q.Get("include"), "deleted") {
+		if err := h.appendDeletedBlobs(r, ext, container, opts.Prefix, &out); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	writeXML(w, out)
+}
+
+// appendLiveBlobs renders each listed live blob as a blobXML, attaching metadata
+// when the caller asked for include=metadata.
+func appendLiveBlobs(dst []blobXML, objects []storagedriver.ObjectInfo, includeMetadata bool) []blobXML {
+	for i := range objects {
+		obj := &objects[i]
 
 		blobType := obj.BlobType
 		if blobType == "" {
@@ -475,14 +501,75 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 			bx.Metadata = &metadataXML{Items: obj.Metadata}
 		}
 
-		out.Blobs.Blobs = append(out.Blobs.Blobs, bx)
+		dst = append(dst, bx)
 	}
 
-	for _, p := range result.CommonPrefixes {
-		out.Blobs.BlobPrefixes = append(out.Blobs.BlobPrefixes, blobPrefixXML{Name: p})
+	return dst
+}
+
+// appendDeletedBlobs merges the container's soft-deleted blobs into a List Blobs
+// include=deleted response, each marked Deleted=true with its DeletedTime and
+// RemainingRetentionDays, and re-sorts the combined blob list by name so live
+// and soft-deleted blobs interleave as real Azure returns them.
+//
+// Limitation (deferred): the soft-deleted set is appended on top of the already
+// maxresults-bounded live page rather than folded into one merged, uniformly
+// paginated live+deleted stream. Real Azure paginates the combined stream and
+// carries the deleted tail forward in the continuation marker; here the marker
+// tracks only the live listing, so a page can exceed maxresults by the deleted
+// count and the deleted tail is not itself continued. This matches real behavior
+// for the common small-container case; full merged-stream pagination is future
+// work (it needs a marker scheme that encodes both stream positions).
+func (*Handler) appendDeletedBlobs(
+	r *http.Request, ext storagedriver.AzureSoftDeleteBlob, container, prefix string, out *listBlobsResult,
+) error {
+	res, err := ext.ListDeletedBlobs(r.Context(), container, storagedriver.ListOptions{Prefix: prefix})
+	if err != nil {
+		return err
 	}
 
-	writeXML(w, out)
+	deletedTrue := true
+
+	for i := range res.Blobs {
+		d := &res.Blobs[i]
+		remaining := clampRetentionDays(d.RemainingRetentionDays)
+
+		out.Blobs.Blobs = append(out.Blobs.Blobs, blobXML{
+			Name: d.Info.Key,
+			Properties: blobPropsXML{
+				LastModified:           httpDate(d.Info.LastModified),
+				ETag:                   fmt.Sprintf("%q", d.Info.ETag),
+				ContentLength:          d.Info.Size,
+				ContentType:            d.Info.ContentType,
+				BlobType:               blobTypeBlockBlob,
+				DeletedTime:            httpDate(d.DeletedTime),
+				RemainingRetentionDays: &remaining,
+			},
+			Deleted: &deletedTrue,
+		})
+	}
+
+	sort.Slice(out.Blobs.Blobs, func(i, j int) bool {
+		return out.Blobs.Blobs[i].Name < out.Blobs.Blobs[j].Name
+	})
+
+	return nil
+}
+
+// clampRetentionDays narrows a non-negative day count to the int32 the wire
+// field carries, saturating at the int32 max (a remaining-retention window can
+// never approach that, so this only exists to keep the conversion provably
+// overflow-free).
+func clampRetentionDays(days int) int32 {
+	if days < 0 {
+		return 0
+	}
+
+	if days > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(days)
 }
 
 // listBlobVersions serves GET /{container}?restype=container&comp=list&include=versions,
@@ -1176,6 +1263,23 @@ func (h *Handler) deleteBlobVersion(w http.ResponseWriter, r *http.Request, cont
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// undeleteBlob serves PUT /{container}/{blob}?comp=undelete, restoring a
+// soft-deleted blob to active. Requires the AzureSoftDeleteBlob capability.
+func (h *Handler) undeleteBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	ext, ok := h.bucket.(storagedriver.AzureSoftDeleteBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob soft delete not supported")
+		return
+	}
+
+	if err := ext.UndeleteBlob(r.Context(), container, blob); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, blob string) {

@@ -12531,6 +12531,24 @@
         ]
       },
       {
+        "name": "AzureSoftDeleteBlob",
+        "doc": "AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "ListDeletedBlobs",
+            "doc": "ListDeletedBlobs returns the soft-deleted blobs matching opts, so a List"
+          },
+          {
+            "name": "SoftDeleteEnabled",
+            "doc": "SoftDeleteEnabled reports whether soft delete is currently in effect for"
+          },
+          {
+            "name": "UndeleteBlob",
+            "doc": "UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete)."
+          }
+        ]
+      },
+      {
         "name": "AzureVersionedBlob",
         "doc": "AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by",
         "operations": [
