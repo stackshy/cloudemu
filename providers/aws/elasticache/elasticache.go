@@ -131,6 +131,18 @@ func (m *Mock) requireSubnetGroup(name string) error {
 	return nil
 }
 
+// cloneTags returns an independent copy of the supplied tag map, never nil, so a
+// cache's Tags field is always a usable (possibly empty) map. maps.Clone would
+// propagate a nil source through as nil, breaking that invariant.
+func cloneTags(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+
+	return out
+}
+
 // cacheARN builds an ElastiCache cluster ARN in the given region.
 func (m *Mock) cacheARN(region, name string) string {
 	return "arn:aws:elasticache:" + region + ":" + m.opts.AccountID + ":cluster:" + name
@@ -264,7 +276,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	endpoint := clusterEndpoint(cfg.Name, region, engine, resolvePort(engine, cfg.Port))
 
-	tags := maps.Clone(cfg.Tags)
+	tags := cloneTags(cfg.Tags)
 
 	info := driver.CacheInfo{
 		Name:               cfg.Name,
