@@ -45,6 +45,9 @@ const (
 	DefaultGKEReconcileSettle = 1 * time.Second // GKE node pool RECONCILING->RUNNING (resize/mutate)
 	DefaultECSTaskStartSettle = 2 * time.Second // ECS task PROVISIONING/PENDING->RUNNING
 	DefaultECSTaskStopSettle  = 1 * time.Second // ECS task STOPPING/DEPROVISIONING->STOPPED
+
+	DefaultTargetHealthSettle = 2 * time.Second // ELBv2 target initial->healthy
+	DefaultTargetDrainSettle  = 2 * time.Second // ELBv2 target draining->removed
 )
 
 // Window is a read-time overlay describing a resource still settling into its

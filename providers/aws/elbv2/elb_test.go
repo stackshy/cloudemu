@@ -439,6 +439,138 @@ func TestCreateLoadBalancerSettlesProvisioningToActive(t *testing.T) {
 	assertEqual(t, "active", got[0].State)
 }
 
+// newAsyncTestMock returns a Mock with AsyncSettle enabled and the FakeClock
+// the test controls, for exercising the target-health settle windows below.
+func newAsyncTestMock() (*Mock, *config.FakeClock) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithAsyncSettle(),
+		config.WithRegion("us-east-1"), config.WithAccountID("123456789012"))
+
+	return New(opts), fc
+}
+
+// attachListener creates a load balancer and a listener forwarding to tg, so
+// tg's targets are "in use" and begin health checking.
+func attachListener(t *testing.T, m *Mock, tg *driver.TargetGroupInfo) {
+	t.Helper()
+
+	lb := createTestLB(m)
+	_, err := m.CreateListener(context.Background(), driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+		DefaultActions: []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	requireNoError(t, err)
+}
+
+// TestRegisterTargetsSettlesInitialToHealthy verifies the AWS-realistic
+// initial->healthy transition when async settling is enabled: a freshly
+// registered target is observed as "initial" until the settle window
+// elapses, then "healthy". Driven purely by the clock, no wall-clock sleep.
+func TestRegisterTargetsSettlesInitialToHealthy(t *testing.T) {
+	m, fc := newAsyncTestMock()
+	ctx := context.Background()
+	tg := createTestTG(m)
+	attachListener(t, m, tg)
+
+	requireNoError(t, m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+
+	health, err := m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, "initial", health[0].State)
+	assertEqual(t, "Elb.RegistrationInProgress", health[0].Reason)
+
+	fc.Advance(5 * time.Second)
+
+	health, err = m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, "healthy", health[0].State)
+	assertEqual(t, "", health[0].Reason)
+}
+
+// TestDeregisterTargetsSettlesDrainingToRemoved verifies the AWS-realistic
+// draining->removed transition when async settling is enabled: a
+// deregistered target is observed as "draining" (Target.DeregistrationInProgress)
+// until its deregistration-delay settle window elapses, then disappears from
+// DescribeTargetHealth entirely.
+func TestDeregisterTargetsSettlesDrainingToRemoved(t *testing.T) {
+	m, fc := newAsyncTestMock()
+	ctx := context.Background()
+	tg := createTestTG(m)
+	attachListener(t, m, tg)
+
+	requireNoError(t, m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+	fc.Advance(5 * time.Second) // settle to healthy first
+
+	requireNoError(t, m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+
+	health, err := m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(health))
+	assertEqual(t, "draining", health[0].State)
+	assertEqual(t, "Target.DeregistrationInProgress", health[0].Reason)
+
+	fc.Advance(5 * time.Second)
+
+	health, err = m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 0, len(health))
+}
+
+// TestRegisterTargetsCancelsDraining verifies that re-registering a target
+// that is currently draining cancels the drain and restarts it at "initial",
+// matching real ELBv2: a target scaled back in before its deregistration
+// delay elapsed rejoins service instead of being removed mid-drain.
+func TestRegisterTargetsCancelsDraining(t *testing.T) {
+	m, fc := newAsyncTestMock()
+	ctx := context.Background()
+	tg := createTestTG(m)
+	attachListener(t, m, tg)
+
+	requireNoError(t, m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+	fc.Advance(5 * time.Second)
+	requireNoError(t, m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+
+	health, err := m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, "draining", health[0].State)
+
+	requireNoError(t, m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+
+	health, err = m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(health))
+	assertEqual(t, "initial", health[0].State)
+
+	// Advancing well past the (canceled) drain window must not remove it —
+	// only the fresh registration's own window governs it now.
+	fc.Advance(5 * time.Second)
+
+	health, err = m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(health))
+	assertEqual(t, "healthy", health[0].State)
+}
+
+// TestSetTargetHealthStopsAutoProgression verifies that an explicit
+// SetTargetHealth call takes a target out of the automatic settle-driven
+// lifecycle: it does not later flip to "healthy" or drain away on its own.
+func TestSetTargetHealthStopsAutoProgression(t *testing.T) {
+	m, fc := newAsyncTestMock()
+	ctx := context.Background()
+	tg := createTestTG(m)
+	attachListener(t, m, tg)
+
+	requireNoError(t, m.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}}))
+	requireNoError(t, m.SetTargetHealth(ctx, tg.ARN, "i-1", "unhealthy"))
+
+	fc.Advance(10 * time.Second)
+
+	health, err := m.DescribeTargetHealth(ctx, tg.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(health))
+	assertEqual(t, "unhealthy", health[0].State)
+}
+
 func TestSetTargetHealth(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
