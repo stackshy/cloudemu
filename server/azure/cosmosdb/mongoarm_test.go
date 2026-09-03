@@ -8,6 +8,8 @@ package cosmosdb_test
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -241,6 +243,34 @@ func TestSDKMongoUnshardedCollection(t *testing.T) {
 	got, err := env.mongo.GetMongoDBCollection(ctx, "rg-1", "mongo-u", "db", "logs", nil)
 	require.NoError(t, err)
 	assert.Empty(t, got.Properties.Resource.ShardKey, "an unsharded collection reports no shard key")
+}
+
+// TestSDKMongoDatabaseNoChildLinks pins that a Mongo database response omits the
+// _colls/_users child links that a SQL database carries — the Cosmos
+// MongoDBDatabaseGetPropertiesResource has neither field (unlike its SQL
+// counterpart; see TestSDKSQLDatabaseChildLinks). Asserted on the raw JSON since
+// the SDK type has no fields to inspect.
+func TestSDKMongoDatabaseNoChildLinks(t *testing.T) {
+	env := newMongoEnv(t)
+	env.createAccount(t, "rg-1", "mongo-links", "eastus")
+	env.putDatabase(t, "rg-1", "mongo-links", "linked", nil)
+
+	url := env.ts.URL + "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.DocumentDB/" +
+		"databaseAccounts/mongo-links/mongodbDatabases/linked?api-version=2024-11-15"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+
+	resp, err := env.ts.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotContains(t, string(body), "_colls", "a Mongo database must not carry the SQL _colls link")
+	assert.NotContains(t, string(body), "_users", "a Mongo database must not carry the SQL _users link")
 }
 
 // TestSDKMongoCollectionWithoutDatabase asserts a collection cannot be created

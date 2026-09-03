@@ -28,6 +28,11 @@ type armAPISpec struct {
 	databaseType           string // .../{databasesSegment}
 	databaseThroughputType string // .../{databasesSegment}/throughputSettings
 	childThroughputType    string // .../{databasesSegment}/{childSegment}/throughputSettings
+	// databaseColls/databaseUsers are the SQL database's _colls/_users child
+	// links, set on every SQL database response; the Mongo database resource has
+	// neither, so they are left empty (omitted) for the Mongo plane.
+	databaseColls string
+	databaseUsers string
 }
 
 // Request routing (shared) ---------------------------------------------------
@@ -193,10 +198,12 @@ func armRenderDatabase(h *Handler, rp *azurearm.ResourcePath, db string, spec *a
 		Type: spec.databaseType,
 		Properties: &armDatabaseGetProps{
 			Resource: &armDatabaseGetResource{
-				ID:   db,
-				RID:  "rid-" + dbNS(rp.ResourceName, db),
-				TS:   h.clock.Now().Unix(),
-				ETag: azurearm.ETag(id),
+				ID:    db,
+				RID:   "rid-" + dbNS(rp.ResourceName, db),
+				TS:    h.clock.Now().Unix(),
+				ETag:  azurearm.ETag(id),
+				Colls: spec.databaseColls,
+				Users: spec.databaseUsers,
 			},
 		},
 	}

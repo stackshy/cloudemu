@@ -67,6 +67,8 @@ func sqlAPISpec() *armAPISpec {
 		databaseType:           typeSQLDatabase,
 		databaseThroughputType: typeSQLDatabaseThroughput,
 		childThroughputType:    typeSQLContainerThrough,
+		databaseColls:          "colls/",
+		databaseUsers:          "users/",
 	}
 }
 

@@ -40,6 +40,11 @@ type armDatabaseGetResource struct {
 	RID  string `json:"_rid,omitempty"`
 	TS   int64  `json:"_ts,omitempty"`
 	ETag string `json:"_etag,omitempty"`
+	// Colls/Users are the SQL database's child-resource links (Cosmos
+	// SQLDatabaseGetPropertiesResource carries _colls/_users). The Mongo database
+	// resource has neither, so they stay empty (omitted) for the Mongo plane.
+	Colls string `json:"_colls,omitempty"`
+	Users string `json:"_users,omitempty"`
 }
 
 type armDatabaseList struct {
