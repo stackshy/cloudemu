@@ -184,6 +184,16 @@ type VirtualMFADeviceInfo struct {
 	QRCodePNG        []byte
 }
 
+// VirtualMFADeviceMetadata describes a virtual MFA device as returned by
+// ListVirtualMFADevices. Unlike VirtualMFADeviceInfo it carries no seed/QR
+// payload (real AWS omits both from the list response) and instead reports
+// the assigned user, nil for a device that has not been enabled. AWS-only.
+type VirtualMFADeviceMetadata struct {
+	SerialNumber string
+	EnableDate   string
+	AssignedUser *UserInfo
+}
+
 // AccessKeyAuth carries the secret and owning principal for one access key id.
 // It is used by the AWS SigV4 request-authentication gate to verify an
 // incoming signature and resolve the caller, and by STS GetCallerIdentity to
