@@ -81,6 +81,44 @@ func TestPageBlobClearAndCoalesce(t *testing.T) {
 	assert.Equal(t, make([]byte, 512), obj.Data[0:512])
 }
 
+func TestPageBlobRangesSurviveSnapshotRestore(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "c1"))
+	_, err := m.CreatePageBlob(ctx, "c1", "pb", 2048, nil, nil)
+	require.NoError(t, err)
+
+	// Two non-adjacent written ranges plus distinct page contents.
+	_, err = m.PutPage(ctx, "c1", "pb", 0, 511, bytes.Repeat([]byte{0xAB}, 512))
+	require.NoError(t, err)
+	_, err = m.PutPage(ctx, "c1", "pb", 1024, 1535, bytes.Repeat([]byte{0xCD}, 512))
+	require.NoError(t, err)
+
+	before, _, err := m.GetPageRanges(ctx, "c1", "pb")
+	require.NoError(t, err)
+	require.Len(t, before, 2)
+
+	data, err := m.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	restored := newTestMock()
+	require.NoError(t, restored.Restore(ctx, data))
+
+	// The written-range map survives the round-trip: exactly the same two ranges.
+	after, size, err := restored.GetPageRanges(ctx, "c1", "pb")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2048), size)
+	assert.Equal(t, before, after)
+
+	// And the bytes match.
+	obj, err := restored.GetObject(ctx, "c1", "pb")
+	require.NoError(t, err)
+	require.Len(t, obj.Data, 2048)
+	assert.Equal(t, bytes.Repeat([]byte{0xAB}, 512), obj.Data[0:512])
+	assert.Equal(t, make([]byte, 512), obj.Data[512:1024])
+	assert.Equal(t, bytes.Repeat([]byte{0xCD}, 512), obj.Data[1024:1536])
+}
+
 func TestPageBlobValidation(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
