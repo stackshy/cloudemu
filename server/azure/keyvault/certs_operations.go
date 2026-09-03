@@ -26,8 +26,6 @@ func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 
 // writeCertErr maps a canonical cloudemu error to a Key Vault certificate error
 // response.
-//
-//nolint:dupl // parallel certificate/secret error mapper; the shared shape is intentional
 func writeCertErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):

@@ -313,8 +313,6 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeCErr maps a canonical cloudemu error to a Key Vault error response.
-//
-//nolint:dupl // parallel certificate/secret error mapper; the shared shape is intentional
 func writeCErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
@@ -327,6 +325,11 @@ func writeCErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "Conflict", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeErr(w, http.StatusBadRequest, "BadParameter", err.Error())
+	case cerrors.IsPermissionDenied(err):
+		// A disabled, not-yet-valid or expired secret version: real Key Vault
+		// answers get with 403 Forbidden rather than falling back to an older
+		// usable version.
+		writeErr(w, http.StatusForbidden, "Forbidden", err.Error())
 	default:
 		writeErr(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 	}

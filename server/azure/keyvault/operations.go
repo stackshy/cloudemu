@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -63,22 +62,12 @@ func (h *Handler) setSecret(w http.ResponseWriter, r *http.Request, name string)
 }
 
 func (h *Handler) getSecret(w http.ResponseWriter, r *http.Request, name, version string) {
+	// Disabled, not-yet-valid and expired gating lives in the driver (against
+	// the injected clock, so it is deterministic under a FakeClock) rather than
+	// here, so it maps through writeCErr like every other driver error.
 	kv, err := h.kv.GetKeyVaultSecret(r.Context(), vaultFromRequest(r), name, version)
 	if err != nil {
 		writeCErr(w, err)
-		return
-	}
-
-	if !kv.Enabled {
-		writeErr(w, http.StatusForbidden, "Forbidden", "Operation get is not allowed on a disabled secret.")
-		return
-	}
-
-	// A secret outside its nbf/exp window is not operable: Key Vault returns 403
-	// on get, just as for a disabled secret.
-	now := time.Now().Unix()
-	if (kv.NotBefore != 0 && now < kv.NotBefore) || (kv.Expires != 0 && now >= kv.Expires) {
-		writeErr(w, http.StatusForbidden, "Forbidden", "Operation get is not allowed on an expired or not-yet-valid secret.")
 		return
 	}
 
