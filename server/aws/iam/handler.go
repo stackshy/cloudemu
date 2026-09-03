@@ -112,6 +112,10 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeleteAccountPasswordPolicy":    {},
 	"CreateVirtualMFADevice":         {},
 	"ListMFADevices":                 {},
+	"EnableMFADevice":                {},
+	"DeactivateMFADevice":            {},
+	"DeleteVirtualMFADevice":         {},
+	"ListVirtualMFADevices":          {},
 }
 
 // roleTagManager is the AWS-specific role-tagging surface, asserted against the
@@ -363,6 +367,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createVirtualMFADevice(w, r)
 	case "ListMFADevices":
 		h.listMFADevices(w, r)
+	case "EnableMFADevice":
+		h.enableMFADevice(w, r)
+	case "DeactivateMFADevice":
+		h.deactivateMFADevice(w, r)
+	case "DeleteVirtualMFADevice":
+		h.deleteVirtualMFADevice(w, r)
+	case "ListVirtualMFADevices":
+		h.listVirtualMFADevices(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))

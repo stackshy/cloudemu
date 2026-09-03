@@ -204,6 +204,13 @@ func (m *Mock) DeleteUser(_ context.Context, name string) error {
 		}
 	}
 
+	for _, d := range m.mfaDevices.All() {
+		if d.UserName == name {
+			return errors.Newf(errors.FailedPrecondition,
+				"cannot delete user %q: an MFA device is still enabled (deactivate it first)", name)
+		}
+	}
+
 	m.users.Delete(name)
 	delete(m.userPolicies, name)
 	delete(m.userInlinePolicies, name)
