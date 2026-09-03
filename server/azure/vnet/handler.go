@@ -645,14 +645,12 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		return
 	}
 
-	// Cascade-delete the child subnets so they stop being globally addressable
-	// once their parent network is gone.
-	h.deleteChildSubnets(r.Context(), info.ID)
-
 	if meta, ok := h.azureMeta(); ok {
 		meta.DeleteAzureVNetMetadata(r.Context(), info.ID)
 	}
 
+	// DeleteVPC cascade-deletes the child subnets at the driver layer (the single
+	// source of truth), so they stop being globally addressable with their parent.
 	if err := h.net.DeleteVPC(r.Context(), info.ID); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -777,6 +775,8 @@ func (h *Handler) purgePublicIPs(ctx context.Context, resourceGroup string) erro
 
 // purgeVNets deletes every virtual network (with its subnets and metadata) in
 // the resource group, returning the first delete error encountered.
+//
+//nolint:dupl // mirrors purgeNSGs over a distinct resource type and store by design
 func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
 	vpcs, err := h.net.DescribeVPCs(ctx, nil)
 	if err != nil {
@@ -790,12 +790,11 @@ func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
 			continue
 		}
 
-		h.deleteChildSubnets(ctx, vpcs[i].ID)
-
 		if meta, ok := h.azureMeta(); ok {
 			meta.DeleteAzureVNetMetadata(ctx, vpcs[i].ID)
 		}
 
+		// DeleteVPC cascade-deletes the vnet's child subnets at the driver layer.
 		if derr := h.net.DeleteVPC(ctx, vpcs[i].ID); derr != nil && firstErr == nil {
 			firstErr = derr
 		}
@@ -831,20 +830,6 @@ func (h *Handler) purgeNSGs(ctx context.Context, resourceGroup string) error {
 	}
 
 	return firstErr
-}
-
-// deleteChildSubnets removes every subnet that belongs to the given vnet.
-func (h *Handler) deleteChildSubnets(ctx context.Context, vpcID string) {
-	subs, err := h.net.DescribeSubnets(ctx, nil)
-	if err != nil {
-		return
-	}
-
-	for i := range subs {
-		if subs[i].VPCID == vpcID {
-			_ = h.net.DeleteSubnet(ctx, subs[i].ID)
-		}
-	}
 }
 
 // vnetSubnetInUse reports whether any network interface's ipConfiguration

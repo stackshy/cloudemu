@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	gcpcompute "cloud.google.com/go/compute/apiv1"
@@ -135,8 +136,14 @@ func TestSDKNetworkDeleteInUse(t *testing.T) {
 		t.Fatalf("subnet Insert wait: %v", err)
 	}
 
-	if _, err := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-inuse"}); err == nil {
+	_, delErr := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-inuse"})
+	if delErr == nil {
 		t.Fatal("Delete of in-use network: want error, got nil")
+	}
+
+	// The message must name the real resources, not internal driver ids.
+	if msg := delErr.Error(); !strings.Contains(msg, "vpc-inuse") || !strings.Contains(msg, "sub-inuse") {
+		t.Errorf("in-use message %q must contain real names vpc-inuse and sub-inuse", msg)
 	}
 
 	// The subnet must still exist (delete rejected, not partially applied).
@@ -144,6 +151,76 @@ func TestSDKNetworkDeleteInUse(t *testing.T) {
 		Project: testProject, Region: "us-central1", Subnetwork: "sub-inuse",
 	}); err != nil {
 		t.Errorf("subnet Get after rejected network delete: %v", err)
+	}
+}
+
+// TestSDKNetworkDeleteBlockedByFirewall verifies the provider-layer guard, now
+// authoritative for every caller, also blocks a network delete over the wire
+// while a firewall rule still references the network — real GCP answers
+// resourceInUseByAnotherResource. Deleting the firewall unblocks the network.
+func TestSDKNetworkDeleteBlockedByFirewall(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+	c := newNetClient(t, ts.URL, ts.Client())
+
+	mustInsertNetwork(t, ctx, c, &computepb.Network{
+		Name:                  ptrStr("vpc-fw"),
+		AutoCreateSubnetworks: func() *bool { b := false; return &b }(),
+	})
+
+	fwClient, err := gcpcompute.NewFirewallsRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewFirewallsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = fwClient.Close() })
+
+	fwOp, err := fwClient.Insert(ctx, &computepb.InsertFirewallRequest{
+		Project: testProject,
+		FirewallResource: &computepb.Firewall{
+			Name:         ptrStr("fw-block"),
+			Network:      ptrStr("projects/" + testProject + "/global/networks/vpc-fw"),
+			Allowed:      []*computepb.Allowed{{IPProtocol: ptrStr("tcp"), Ports: []string{"22"}}},
+			SourceRanges: []string{"0.0.0.0/0"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("firewall Insert: %v", err)
+	}
+
+	if err := fwOp.Wait(ctx); err != nil {
+		t.Fatalf("firewall Insert wait: %v", err)
+	}
+
+	_, delErr := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-fw"})
+	if delErr == nil {
+		t.Fatal("Delete of network with firewall: want error, got nil")
+	}
+
+	// The message must name the real resources the caller typed, not the
+	// internal driver ids the provider error carries.
+	if msg := delErr.Error(); !strings.Contains(msg, "vpc-fw") || !strings.Contains(msg, "fw-block") {
+		t.Errorf("in-use message %q must contain real names vpc-fw and fw-block", msg)
+	}
+
+	// Remove the firewall, then the network deletes cleanly.
+	delFwOp, err := fwClient.Delete(ctx, &computepb.DeleteFirewallRequest{Project: testProject, Firewall: "fw-block"})
+	if err != nil {
+		t.Fatalf("firewall Delete: %v", err)
+	}
+
+	if err := delFwOp.Wait(ctx); err != nil {
+		t.Fatalf("firewall Delete wait: %v", err)
+	}
+
+	delOp, err := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-fw"})
+	if err != nil {
+		t.Fatalf("network Delete after firewall removed: %v", err)
+	}
+
+	if err := delOp.Wait(ctx); err != nil {
+		t.Fatalf("network Delete wait: %v", err)
 	}
 }
 

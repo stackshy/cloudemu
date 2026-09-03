@@ -1509,3 +1509,60 @@ func TestTagMutation(t *testing.T) {
 		require.Error(t, m.RemoveSecurityGroupTags(ctx, "fw-nope", []string{"k"}))
 	})
 }
+
+// TestDeleteVPCInUseByChild covers the provider-layer delete guard: a network
+// referenced by a subnetwork or a firewall rule cannot be deleted (typed-API
+// callers get the same protection as an SDK/CLI caller), and the delete succeeds
+// once the child is removed or when the network is unreferenced.
+func TestDeleteVPCInUseByChild(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("blocked by subnetwork", func(t *testing.T) {
+		m := newTestMock()
+
+		vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		require.NoError(t, err)
+
+		sub, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24"})
+		require.NoError(t, err)
+
+		err = m.DeleteVPC(ctx, vpc.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "already being used")
+		assert.Contains(t, err.Error(), "subnetwork")
+
+		// The network must still exist (delete rejected, not partially applied).
+		vpcs, err := m.DescribeVPCs(ctx, []string{vpc.ID})
+		require.NoError(t, err)
+		assert.Len(t, vpcs, 1)
+
+		// Delete the child, then the network deletes cleanly.
+		require.NoError(t, m.DeleteSubnet(ctx, sub.ID))
+		require.NoError(t, m.DeleteVPC(ctx, vpc.ID))
+	})
+
+	t.Run("blocked by firewall", func(t *testing.T) {
+		m := newTestMock()
+
+		vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		require.NoError(t, err)
+
+		fw, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "allow-ssh", VPCID: vpc.ID})
+		require.NoError(t, err)
+
+		err = m.DeleteVPC(ctx, vpc.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "firewall")
+
+		require.NoError(t, m.DeleteSecurityGroup(ctx, fw.ID))
+		require.NoError(t, m.DeleteVPC(ctx, vpc.ID))
+	})
+
+	t.Run("unreferenced network deletes", func(t *testing.T) {
+		m := newTestMock()
+
+		vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		require.NoError(t, err)
+		require.NoError(t, m.DeleteVPC(ctx, vpc.ID))
+	})
+}
