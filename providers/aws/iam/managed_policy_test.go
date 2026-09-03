@@ -123,3 +123,47 @@ func TestNonManagedPolicyStillNotFound(t *testing.T) {
 		t.Error("attaching an uncreated customer-managed policy should fail")
 	}
 }
+
+// The curated AWS-managed policies used to carry an empty placeholder
+// document, so attaching one granted nothing: CheckPermission read the
+// attached policy's PolicyDocument and an empty Statement list never
+// matched any action. These confirm the real documents now filled in
+// (managed_policy_documents.go) actually authorize what they claim to.
+func TestCheckPermissionHonorsManagedPolicyDocument(t *testing.T) {
+	ctx := context.Background()
+	m := newIAM(t)
+	mkRole(t, m, "r")
+
+	if err := m.AttachRolePolicy(ctx, "r", "arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess"); err != nil {
+		t.Fatalf("AttachRolePolicy: %v", err)
+	}
+
+	allowed, err := m.CheckPermission(ctx, "r", "ec2:DescribeInstances", "*")
+	if err != nil {
+		t.Fatalf("CheckPermission: %v", err)
+	}
+
+	if !allowed {
+		t.Error("ec2:DescribeInstances should be allowed by AmazonEC2ReadOnlyAccess")
+	}
+
+	allowed, err = m.CheckPermission(ctx, "r", "ec2:TerminateInstances", "*")
+	if err != nil {
+		t.Fatalf("CheckPermission: %v", err)
+	}
+
+	if allowed {
+		t.Error("ec2:TerminateInstances should not be allowed by AmazonEC2ReadOnlyAccess")
+	}
+}
+
+// Every catalogued name must have a document — a catalog entry without one
+// would materialize as an empty-Statement policy again, silently
+// reintroducing the bug this change fixes.
+func TestEveryManagedPolicyHasADocument(t *testing.T) {
+	for name, doc := range awsManagedPolicyDocuments {
+		if doc == "" {
+			t.Errorf("%s: empty policy document", name)
+		}
+	}
+}
