@@ -369,9 +369,23 @@ type Cluster struct {
 	Location  string
 	CreatedAt time.Time
 	Tags      map[string]string
+	// AssociatedRoles are the IAM roles associated with an Aurora DB cluster for
+	// integrations such as S3 import/export, Lambda, or Comprehend (AWS RDS
+	// DBCluster AssociatedRoles). Empty for non-AWS engines and clusters without
+	// role associations.
+	AssociatedRoles []DBClusterRole
 	// Scope records where an Azure SQL logical server lives (subscription/
 	// resource group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+}
+
+// DBClusterRole is an IAM role associated with an Aurora DB cluster (AWS RDS
+// DBClusterRole). FeatureName names the integration the role authorizes (e.g.
+// "s3Import"); Status reports the association state (ACTIVE/PENDING/INVALID).
+type DBClusterRole struct {
+	RoleARN     string
+	FeatureName string
+	Status      string
 }
 
 // SnapshotConfig configures an instance snapshot.
@@ -1348,6 +1362,15 @@ type ClusterEndpoints interface {
 // specific member, discovered by type assertion.
 type ClusterFailover interface {
 	FailoverDBCluster(ctx context.Context, clusterID, targetInstanceID string) (*Cluster, error)
+}
+
+// ClusterRoles is an OPTIONAL capability to associate and disassociate IAM
+// roles with an Aurora DB cluster (AWS RDS AddRoleToDBCluster /
+// RemoveRoleFromDBCluster), discovered by type assertion. The associations are
+// reported in Cluster.AssociatedRoles.
+type ClusterRoles interface {
+	AddRoleToDBCluster(ctx context.Context, clusterID, roleARN, featureName string) error
+	RemoveRoleFromDBCluster(ctx context.Context, clusterID, roleARN, featureName string) error
 }
 
 // GlobalClusterMember is a cluster participating in an Aurora global cluster.
