@@ -38,14 +38,16 @@ func (m *Mock) PublishLayerVersion(_ context.Context, cfg driver.LayerConfig) (*
 	)
 
 	lv := &driver.LayerVersion{
-		Name:               cfg.Name,
-		Version:            ver,
-		Description:        cfg.Description,
-		ContentSHA256:      shaStr,
-		ContentSize:        int64(len(cfg.Content)),
-		CompatibleRuntimes: cfg.CompatibleRuntimes,
-		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		ARN:                arn,
+		Name:                    cfg.Name,
+		Version:                 ver,
+		Description:             cfg.Description,
+		ContentSHA256:           shaStr,
+		ContentSize:             int64(len(cfg.Content)),
+		CompatibleRuntimes:      cfg.CompatibleRuntimes,
+		CompatibleArchitectures: cfg.CompatibleArchitectures,
+		LicenseInfo:             cfg.LicenseInfo,
+		CreatedAt:               m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		ARN:                     arn,
 	}
 
 	ld.versions.Set(strconv.Itoa(ver), lv)

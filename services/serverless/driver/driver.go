@@ -102,6 +102,12 @@ type LayerConfig struct {
 	Description        string
 	Content            []byte
 	CompatibleRuntimes []string
+	// CompatibleArchitectures is the list of instruction-set architectures
+	// ("x86_64", "arm64") the layer supports.
+	CompatibleArchitectures []string
+	// LicenseInfo is the layer's software license (an SPDX identifier, a
+	// license URL, or the full license text).
+	LicenseInfo string
 }
 
 // LayerVersion represents a published layer version.
@@ -112,8 +118,30 @@ type LayerVersion struct {
 	ContentSHA256      string
 	ContentSize        int64
 	CompatibleRuntimes []string
-	CreatedAt          string
-	ARN                string
+	// CompatibleArchitectures is the list of instruction-set architectures
+	// ("x86_64", "arm64") the layer supports.
+	CompatibleArchitectures []string
+	// LicenseInfo is the layer's software license.
+	LicenseInfo string
+	CreatedAt   string
+	ARN         string
+}
+
+// LayerPermissionStatement is one statement of a layer version's resource-based
+// policy, added via AddLayerVersionPermission. It grants another account (or an
+// organization, or all accounts) permission to use a published layer version.
+// Layer version permissions are an AWS Lambda-only concept (no Azure Functions
+// or GCP Cloud Functions equivalent), so — like PermissionStatement — the data
+// struct lives on the shared driver package but the methods that manage it are
+// exposed through an AWS-only optional interface (type-asserted by the AWS
+// Lambda server handler) rather than the portable Serverless interface.
+type LayerPermissionStatement struct {
+	StatementID string
+	Action      string
+	Principal   string
+	// OrganizationID, when set with Principal "*", scopes the grant to accounts
+	// within this AWS Organization instead of every AWS account.
+	OrganizationID string
 }
 
 // ConcurrencyConfig configures function concurrency.
