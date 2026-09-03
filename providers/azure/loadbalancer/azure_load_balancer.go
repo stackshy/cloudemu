@@ -2,6 +2,7 @@ package loadbalancer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -136,14 +137,29 @@ func (m *Mock) UpsertAzureLBBackendPool(_ context.Context, rg, name, poolName st
 }
 
 // DeleteAzureLBBackendPool removes a single backend pool by name, leaving
-// every other child untouched.
+// every other child untouched. Returns FailedPrecondition (ARM
+// InUseDeleteCannotProceed, surfaced as 409) if a load balancing rule or
+// outbound rule on the same load balancer still references the pool — a
+// standalone child DELETE bypasses the whole-LB reference validation a
+// full-replace PUT goes through (validateAzureLB), so this is the only guard
+// stopping a rule from being left pointing at a pool that no longer exists.
 func (m *Mock) DeleteAzureLBBackendPool(_ context.Context, rg, name, poolName string) error {
-	poolMissing := false
+	var (
+		poolMissing bool
+		inUse       error
+	)
 
 	ok := m.azureLBs.Update(azureLBKey(rg, name), func(lb driver.AzureLoadBalancer) driver.AzureLoadBalancer {
 		idx := indexOfString(lb.BackendPools, poolName)
 		if idx == -1 {
 			poolMissing = true
+
+			return lb
+		}
+
+		if ref := poolReferencedBy(&lb, poolName); ref != "" {
+			inUse = cerrors.Newf(cerrors.FailedPrecondition,
+				"backend address pool %q is in use by %s and cannot be deleted", poolName, ref)
 
 			return lb
 		}
@@ -160,7 +176,29 @@ func (m *Mock) DeleteAzureLBBackendPool(_ context.Context, rg, name, poolName st
 		return cerrors.Newf(cerrors.NotFound, "backend address pool %q not found", poolName)
 	}
 
+	if inUse != nil {
+		return inUse
+	}
+
 	return nil
+}
+
+// poolReferencedBy returns a description of the first sibling load balancing
+// rule or outbound rule that references poolName, or "" if none does.
+func poolReferencedBy(lb *driver.AzureLoadBalancer, poolName string) string {
+	for i := range lb.Rules {
+		if strings.EqualFold(lb.Rules[i].BackendPoolName, poolName) {
+			return fmt.Sprintf("load balancing rule %q", lb.Rules[i].Name)
+		}
+	}
+
+	for i := range lb.OutboundRules {
+		if strings.EqualFold(lb.OutboundRules[i].BackendPoolName, poolName) {
+			return fmt.Sprintf("outbound rule %q", lb.OutboundRules[i].Name)
+		}
+	}
+
+	return ""
 }
 
 // UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by name,

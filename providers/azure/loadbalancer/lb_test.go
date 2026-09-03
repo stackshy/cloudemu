@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -661,4 +662,86 @@ func TestUpsertAzureLBNatRuleConcurrent(t *testing.T) {
 	lb, err := m.GetAzureLoadBalancer(ctx, rg, name)
 	require.NoError(t, err)
 	assert.Len(t, lb.NatRules, n, "every concurrently-added inbound NAT rule must survive")
+}
+
+// TestDeleteAzureLBBackendPoolInUseByRule proves the standalone backend-pool
+// DELETE rejects a pool still referenced by a load balancing rule instead of
+// silently leaving the rule pointing at a pool that no longer exists — the
+// whole-LB PUT path rejects this via validateAzureLB, but a standalone DELETE
+// bypasses that validation entirely, so the driver itself must guard it.
+func TestDeleteAzureLBBackendPoolInUseByRule(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	const rg, name = "rg1", "lb-pool-inuse"
+
+	_, err := m.CreateOrUpdateAzureLoadBalancer(ctx, rg, name, driver.AzureLoadBalancer{
+		Location:     "eastus",
+		SKUName:      "Standard",
+		Frontends:    []driver.AzureLBFrontend{{Name: "fe1", PrivateIPAddress: "10.0.0.4"}},
+		BackendPools: []string{"pool-a"},
+		Rules: []driver.AzureLBRule{{
+			Name: "rule-1", Protocol: "Tcp", FrontendPort: 80, BackendPort: 80,
+			FrontendName: "fe1", BackendPoolName: "pool-a",
+		}},
+	})
+	require.NoError(t, err)
+
+	err = m.DeleteAzureLBBackendPool(ctx, rg, name, "pool-a")
+	require.Error(t, err)
+	assert.True(t, cerrors.IsFailedPrecondition(err), "got %v", err)
+
+	lb, err := m.GetAzureLoadBalancer(ctx, rg, name)
+	require.NoError(t, err)
+	assert.Contains(t, lb.BackendPools, "pool-a", "pool referenced by a rule must survive the rejected delete")
+}
+
+// TestDeleteAzureLBBackendPoolInUseByOutboundRule is the outbound-rule twin of
+// the load-balancing-rule guard above.
+func TestDeleteAzureLBBackendPoolInUseByOutboundRule(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	const rg, name = "rg1", "lb-pool-inuse-outbound"
+
+	_, err := m.CreateOrUpdateAzureLoadBalancer(ctx, rg, name, driver.AzureLoadBalancer{
+		Location:     "eastus",
+		SKUName:      "Standard",
+		Frontends:    []driver.AzureLBFrontend{{Name: "fe1", PrivateIPAddress: "10.0.0.4"}},
+		BackendPools: []string{"pool-a"},
+		OutboundRules: []driver.AzureLBOutboundRule{{
+			Name: "out-1", Protocol: "All", BackendPoolName: "pool-a", FrontendNames: []string{"fe1"},
+		}},
+	})
+	require.NoError(t, err)
+
+	err = m.DeleteAzureLBBackendPool(ctx, rg, name, "pool-a")
+	require.Error(t, err)
+	assert.True(t, cerrors.IsFailedPrecondition(err), "got %v", err)
+
+	lb, err := m.GetAzureLoadBalancer(ctx, rg, name)
+	require.NoError(t, err)
+	assert.Contains(t, lb.BackendPools, "pool-a", "pool referenced by an outbound rule must survive the rejected delete")
+}
+
+// TestDeleteAzureLBBackendPoolUnreferencedSucceeds proves the guard does not
+// false-positive: a pool with no rule or outbound rule pointing at it deletes
+// cleanly.
+func TestDeleteAzureLBBackendPoolUnreferencedSucceeds(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	const rg, name = "rg1", "lb-pool-free"
+
+	_, err := m.CreateOrUpdateAzureLoadBalancer(ctx, rg, name, driver.AzureLoadBalancer{
+		Location: "eastus", SKUName: "Standard", BackendPools: []string{"pool-a", "pool-b"},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, m.DeleteAzureLBBackendPool(ctx, rg, name, "pool-a"))
+
+	lb, err := m.GetAzureLoadBalancer(ctx, rg, name)
+	require.NoError(t, err)
+	assert.NotContains(t, lb.BackendPools, "pool-a")
+	assert.Contains(t, lb.BackendPools, "pool-b")
 }
