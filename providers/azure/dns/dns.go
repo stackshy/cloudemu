@@ -3,8 +3,12 @@ package dns
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"maps"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -23,6 +27,22 @@ type Mock struct {
 	records      *memstore.Store[driver.RecordInfo]
 	healthChecks *memstore.Store[driver.HealthCheckInfo]
 	opts         *config.Options
+
+	// recordsMu serializes the read-check-mint-write sequence every
+	// record-set-mutating method performs, so a concurrent write can never
+	// observe a stale existence/etag check and then land its own write past it
+	// — the classic TOCTOU a bare memstore Get followed by a separate Set/Delete
+	// call would allow. It is a plain package-level mutex rather than a
+	// per-record lock: DNS record-set write volume is low, and a single lock
+	// keeps the CreateOrUpdate atomicity (existence + If-Match/If-None-Match
+	// check + write, all-or-nothing) trivially easy to reason about.
+	recordsMu sync.Mutex
+	// etagSeq mints a fresh, distinct ETag on every record-set write, so a
+	// document's etag changes on each mutation and an If-Match/If-None-Match
+	// precondition has something to detect. Azure's real etags are opaque
+	// tokens SDKs only compare for equality, so a rotating synthetic value
+	// round-trips correctly without a real version counter.
+	etagSeq atomic.Uint64
 }
 
 // New creates a new Azure DNS mock with the given configuration options.
@@ -33,6 +53,18 @@ func New(opts *config.Options) *Mock {
 		healthChecks: memstore.New[driver.HealthCheckInfo](),
 		opts:         opts,
 	}
+}
+
+// nextETag mints a fresh, GUID-shaped entity tag distinct from any previously
+// minted one, matching the look of the deterministic etags azurearm.ETag
+// produces elsewhere in the wire layer. It is computed here rather than by
+// importing that wire-layer helper: a provider must not depend on the server
+// package that wraps it (see the three-layer architecture in CLAUDE.md).
+func (m *Mock) nextETag(key string) string {
+	seq := m.etagSeq.Add(1)
+	h := sha256.Sum256(fmt.Appendf(nil, "%s/%d", key, seq))
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
 // cnameType is the DNS CNAME record type. Azure enforces CNAME coexistence
@@ -164,21 +196,11 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
-	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.ZoneID)
-	}
+	m.recordsMu.Lock()
+	defer m.recordsMu.Unlock()
 
-	if cfg.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "record name is required")
-	}
-
-	if cfg.Type == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "record type is required")
-	}
-
-	if m.hasCNAMEConflict(cfg.ZoneID, cfg.Name, cfg.Type) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument,
-			"a CNAME record set cannot coexist with another record set of a different type at name %q", cfg.Name)
+	if err := m.validateRecordCfg(&cfg); err != nil {
+		return nil, err
 	}
 
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
@@ -187,22 +209,7 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "record %q already exists in zone %q", cfg.Name, cfg.ZoneID)
 	}
 
-	values := make([]string, len(cfg.Values))
-	copy(values, cfg.Values)
-
-	weight := copyWeight(cfg.Weight)
-
-	rec := driver.RecordInfo{
-		ZoneID: cfg.ZoneID,
-		Name:   cfg.Name,
-		Type:   cfg.Type,
-		TTL:    cfg.TTL,
-		Values: values,
-		Weight: weight,
-		SetID:  cfg.SetID,
-		SOA:    copySOA(cfg.SOA),
-	}
-
+	rec := m.buildRecordInfo(&cfg, key)
 	m.records.Set(key, rec)
 
 	// Update zone record count.
@@ -214,6 +221,52 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	result := rec
 
 	return &result, nil
+}
+
+// validateRecordCfg checks the invariants every record-set write (create,
+// update, and the atomic upsert) must satisfy: the owning zone exists, a name
+// and type are supplied, and the write does not violate Azure's CNAME
+// coexistence rule.
+func (m *Mock) validateRecordCfg(cfg *driver.RecordConfig) error {
+	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
+		return cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.ZoneID)
+	}
+
+	if cfg.Name == "" {
+		return cerrors.New(cerrors.InvalidArgument, "record name is required")
+	}
+
+	if cfg.Type == "" {
+		return cerrors.New(cerrors.InvalidArgument, "record type is required")
+	}
+
+	if m.hasCNAMEConflict(cfg.ZoneID, cfg.Name, cfg.Type) {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"a CNAME record set cannot coexist with another record set of a different type at name %q", cfg.Name)
+	}
+
+	return nil
+}
+
+// buildRecordInfo copies cfg's mutable fields into a fresh RecordInfo and
+// mints it a new ETag distinct from whatever the key previously held, so every
+// successful write — create or update — changes the record set's etag the way
+// real Azure DNS does.
+func (m *Mock) buildRecordInfo(cfg *driver.RecordConfig, key string) driver.RecordInfo {
+	values := make([]string, len(cfg.Values))
+	copy(values, cfg.Values)
+
+	return driver.RecordInfo{
+		ZoneID: cfg.ZoneID,
+		Name:   cfg.Name,
+		Type:   cfg.Type,
+		TTL:    cfg.TTL,
+		Values: values,
+		Weight: copyWeight(cfg.Weight),
+		SetID:  cfg.SetID,
+		SOA:    copySOA(cfg.SOA),
+		ETag:   m.nextETag(key),
+	}
 }
 
 // hasCNAMEConflict reports whether creating a record of recordType at name
@@ -245,14 +298,44 @@ func (m *Mock) hasCNAMEConflict(zoneID, name, recordType string) bool {
 
 // DeleteRecord deletes a DNS record set from the specified zone.
 func (m *Mock) DeleteRecord(_ context.Context, zoneID, name, recordType string) error {
+	m.recordsMu.Lock()
+	defer m.recordsMu.Unlock()
+
+	return m.deleteRecordLocked(zoneID, name, recordType, "")
+}
+
+// DeleteRecordAtomic implements Azure DNS RecordSets.Delete's optional If-Match
+// precondition: a non-empty ifMatch rejects the delete with FailedPrecondition
+// if the record set's current ETag does not equal it, checked and acted on
+// under the same recordsMu lock as every other record-set write so the check
+// cannot be raced by a concurrent update. Like UpsertRecordAtomic, it is
+// Azure-specific and lives outside the shared driver.DNS interface.
+func (m *Mock) DeleteRecordAtomic(_ context.Context, zoneID, name, recordType, ifMatch string) error {
+	m.recordsMu.Lock()
+	defer m.recordsMu.Unlock()
+
+	return m.deleteRecordLocked(zoneID, name, recordType, ifMatch)
+}
+
+// deleteRecordLocked is the shared body of DeleteRecord and DeleteRecordAtomic,
+// called with recordsMu already held. ifMatch is checked only against the
+// single-record-set (no set ID) match: a weighted record set's several set-ID
+// entries under the same name+type have no single etag an If-Match could
+// meaningfully compare against, so that batch-delete path ignores it.
+func (m *Mock) deleteRecordLocked(zoneID, name, recordType, ifMatch string) error {
 	if _, ok := m.zones.Get(zoneID); !ok {
 		return cerrors.Newf(cerrors.NotFound, "zone %q not found", zoneID)
 	}
 
 	key := recordKey(zoneID, name, recordType, "")
 
-	// Try without set ID first. If not found, search for any matching record with a set ID.
-	if m.records.Delete(key) {
+	if existing, ok := m.records.Get(key); ok {
+		if ifMatch != "" && existing.ETag != ifMatch {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"etag mismatch for record set %q of type %q in zone %q", name, recordType, zoneID)
+		}
+
+		m.records.Delete(key)
 		m.zones.Update(zoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
 			z.RecordCount--
 			return z
@@ -339,6 +422,9 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
+	m.recordsMu.Lock()
+	defer m.recordsMu.Unlock()
+
 	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.ZoneID)
 	}
@@ -349,26 +435,80 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, cerrors.Newf(cerrors.NotFound, "record %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
 	}
 
-	values := make([]string, len(cfg.Values))
-	copy(values, cfg.Values)
-
-	weight := copyWeight(cfg.Weight)
-
-	rec := driver.RecordInfo{
-		ZoneID: cfg.ZoneID,
-		Name:   cfg.Name,
-		Type:   cfg.Type,
-		TTL:    cfg.TTL,
-		Values: values,
-		Weight: weight,
-		SetID:  cfg.SetID,
-		SOA:    copySOA(cfg.SOA),
-	}
-
+	rec := m.buildRecordInfo(&cfg, key)
 	m.records.Set(key, rec)
 	result := rec
 
 	return &result, nil
+}
+
+// wildcardETag is the If-None-Match value Azure DNS (and HTTP conditional
+// requests generally) uses to mean "any representation" — i.e. "succeed only
+// if no record set currently exists at this key".
+const wildcardETag = "*"
+
+// UpsertRecordAtomic implements Azure DNS RecordSets.CreateOrUpdate's ETag
+// optimistic-concurrency semantics in a single atomic step: an empty
+// ifNoneMatch/ifMatch pair is an unconditional upsert; ifNoneMatch == "*"
+// makes the call create-only, rejecting it with FailedPrecondition if a record
+// set already exists at the key; a non-empty ifMatch makes it a conditional
+// update, rejecting it with FailedPrecondition if the record set is missing or
+// its current ETag does not equal ifMatch. It is Azure-specific — If-Match/
+// If-None-Match preconditions are an ARM wire concept with no AWS Route 53 or
+// GCP Cloud DNS equivalent — so it lives outside the shared driver.DNS
+// interface rather than as a new interface method those providers would also
+// have to implement.
+//
+// The whole read-check-mint-write sequence runs under recordsMu, the same lock
+// CreateRecord/UpdateRecord/DeleteRecord take, so a concurrent write against the
+// same key can never slip between this call's precondition check and its store
+// — the exact TOCTOU class a separate Get followed by a Create-or-Update call
+// would allow.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) UpsertRecordAtomic(
+	_ context.Context, cfg driver.RecordConfig, ifMatch, ifNoneMatch string,
+) (info *driver.RecordInfo, created bool, err error) {
+	m.recordsMu.Lock()
+	defer m.recordsMu.Unlock()
+
+	if verr := m.validateRecordCfg(&cfg); verr != nil {
+		return nil, false, verr
+	}
+
+	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
+	existing, exists := m.records.Get(key)
+
+	if ifNoneMatch == wildcardETag && exists {
+		return nil, false, cerrors.Newf(cerrors.FailedPrecondition,
+			"record set %q of type %q already exists in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
+	}
+
+	if ifMatch != "" {
+		if !exists {
+			return nil, false, cerrors.Newf(cerrors.NotFound,
+				"record %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
+		}
+
+		if existing.ETag != ifMatch {
+			return nil, false, cerrors.Newf(cerrors.FailedPrecondition,
+				"etag mismatch for record set %q of type %q in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
+		}
+	}
+
+	rec := m.buildRecordInfo(&cfg, key)
+	m.records.Set(key, rec)
+
+	if !exists {
+		m.zones.Update(cfg.ZoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
+			z.RecordCount++
+			return z
+		})
+	}
+
+	result := rec
+
+	return &result, !exists, nil
 }
 
 // copyWeight returns a deep copy of a weight pointer.

@@ -32,6 +32,7 @@
 package dns
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -54,6 +55,28 @@ const (
 // Handler serves Microsoft.Network/dnsZones ARM requests against a dns driver.
 type Handler struct {
 	dns dnsdriver.DNS
+}
+
+// atomicRecordUpserter is the optional capability the Azure dns.Mock exposes
+// for a single-lock CreateOrUpdate that atomically evaluates a record set's
+// If-Match/If-None-Match preconditions against its current ETag before minting
+// a fresh one and writing — closing the TOCTOU a separate GetRecord followed by
+// a Create-or-Update call would leave open between two concurrent PUTs. The
+// production Azure dns.Mock always implements it; createOrUpdateRecordSet falls
+// back to the plain (non-atomic, precondition-less) two-call upsert for any
+// driver that doesn't, so the handler stays usable against a minimal test
+// double too.
+type atomicRecordUpserter interface {
+	UpsertRecordAtomic(ctx context.Context, cfg dnsdriver.RecordConfig, ifMatch, ifNoneMatch string) (
+		info *dnsdriver.RecordInfo, created bool, err error)
+}
+
+// conditionalRecordDeleter is the optional capability the Azure dns.Mock
+// exposes for a Delete that honors RecordSets.Delete's If-Match precondition.
+// deleteRecordSet falls back to the plain unconditional DeleteRecord (silently
+// ignoring any If-Match header) for a driver that doesn't implement it.
+type conditionalRecordDeleter interface {
+	DeleteRecordAtomic(ctx context.Context, zoneID, name, recordType, ifMatch string) error
 }
 
 // New returns an Azure DNS handler backed by d.
