@@ -13,7 +13,13 @@ import (
 // resource, mirroring real Azure Monitor's rejection of a metric alert rule
 // linked to an action group that doesn't exist (the same reference-validation
 // convention already applied to gcplb/azurelb create/update: 400
-// InvalidArgument, not a silent no-op deferred to breach time).
+// InvalidArgument, not a silent no-op deferred to breach time). ARM resource
+// ids are case-insensitive, so this resolves each id by scanning the stored
+// action groups and comparing canonical ids with strings.EqualFold — the same
+// pattern actionGroupInUse uses below — rather than an exact-case store.get(),
+// which would reject a reference that differs only in casing even though
+// RegisterActionGroup/fireActionGroups (providers/azure/monitor/actiongroups.go)
+// already resolve such a reference case-insensitively at breach time.
 func (h *Handler) validateActionGroupRefs(ids []string) error {
 	for _, id := range ids {
 		agRP, ok := azurearm.ParsePath(id)
@@ -21,12 +27,25 @@ func (h *Handler) validateActionGroupRefs(ids []string) error {
 			return cerrors.Newf(cerrors.InvalidArgument, "actionGroupId %q is not a valid action group resource id", id)
 		}
 
-		if _, ok := h.store.get(agRP.Subscription, agRP.ResourceGroup, typeActionGroup, agRP.ResourceName); !ok {
+		if !h.actionGroupExists(id) {
 			return cerrors.Newf(cerrors.InvalidArgument, "action group %q not found", id)
 		}
 	}
 
 	return nil
+}
+
+// actionGroupExists reports whether agID resolves to a stored actionGroups
+// resource, comparing canonical ARM ids case-insensitively.
+func (h *Handler) actionGroupExists(agID string) bool {
+	for key := range h.store.allOfKind(typeActionGroup) {
+		candidate := azurearm.BuildResourceID(key.subscription, key.resourceGroup, providerName, typeActionGroup, key.name)
+		if strings.EqualFold(candidate, agID) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // activityLogActionGroupIDs extracts properties.actions.actionGroups[].

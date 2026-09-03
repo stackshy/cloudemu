@@ -80,6 +80,75 @@ func TestMetricAlertPatchRejectsUnknownActionGroup(t *testing.T) {
 	}
 }
 
+// TestMetricAlertAcceptsCaseInsensitiveActionGroupRef is the regression for the
+// case-sensitivity false-rejection: real ARM resource ids are case-insensitive,
+// and providers/azure/monitor's RegisterActionGroup/fireActionGroups already
+// resolve an actionGroupId case-insensitively at breach time (actiongroups.go).
+// A metricAlert PUT referencing an existing action group with different casing
+// in the resource-group and action-group-name segments must succeed, not be
+// rejected as "not found".
+func TestMetricAlertAcceptsCaseInsensitiveActionGroupRef(t *testing.T) {
+	srv := newInsightsServer(t)
+	ctx := context.Background()
+
+	agClient := srv.actionGroups(t)
+
+	if _, err := agClient.CreateOrUpdate(ctx, "rg-1", "ag1", armmonitor.ActionGroupResource{
+		Location:   to.Ptr("global"),
+		Properties: &armmonitor.ActionGroup{GroupShortName: to.Ptr("ag1"), Enabled: to.Ptr(true)},
+	}, nil); err != nil {
+		t.Fatalf("action group CreateOrUpdate: %v", err)
+	}
+
+	// Same action group, different casing in the resourceGroups and
+	// actionGroups name segments of the ARM id.
+	const differentCaseAgID = "/subscriptions/sub-1/resourceGroups/RG-1/providers/microsoft.insights/actionGroups/AG1"
+
+	rule := metricAlertResource(80)
+	rule.Properties.Actions = []*armmonitor.MetricAlertAction{{ActionGroupID: to.Ptr(differentCaseAgID)}}
+
+	alertClient := srv.metricAlerts(t)
+
+	if _, err := alertClient.CreateOrUpdate(ctx, "rg-1", "cpu-alert", rule, nil); err != nil {
+		t.Fatalf("CreateOrUpdate with differently-cased actionGroupId = %v, want success", err)
+	}
+}
+
+// TestMetricAlertPatchAcceptsCaseInsensitiveActionGroupRef is the PATCH-path
+// counterpart of TestMetricAlertAcceptsCaseInsensitiveActionGroupRef: adding a
+// differently-cased actionGroupId reference via Update (PATCH) must also
+// succeed.
+func TestMetricAlertPatchAcceptsCaseInsensitiveActionGroupRef(t *testing.T) {
+	srv := newInsightsServer(t)
+	ctx := context.Background()
+
+	agClient := srv.actionGroups(t)
+
+	if _, err := agClient.CreateOrUpdate(ctx, "rg-1", "ag1", armmonitor.ActionGroupResource{
+		Location:   to.Ptr("global"),
+		Properties: &armmonitor.ActionGroup{GroupShortName: to.Ptr("ag1"), Enabled: to.Ptr(true)},
+	}, nil); err != nil {
+		t.Fatalf("action group CreateOrUpdate: %v", err)
+	}
+
+	alertClient := srv.metricAlerts(t)
+
+	if _, err := alertClient.CreateOrUpdate(ctx, "rg-1", "cpu-alert", metricAlertResource(80), nil); err != nil {
+		t.Fatalf("CreateOrUpdate: %v", err)
+	}
+
+	const differentCaseAgID = "/subscriptions/sub-1/resourceGroups/RG-1/providers/microsoft.insights/actionGroups/AG1"
+
+	_, err := alertClient.Update(ctx, "rg-1", "cpu-alert", armmonitor.MetricAlertResourcePatch{
+		Properties: &armmonitor.MetricAlertPropertiesPatch{
+			Actions: []*armmonitor.MetricAlertAction{{ActionGroupID: to.Ptr(differentCaseAgID)}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Update with differently-cased actionGroupId = %v, want success", err)
+	}
+}
+
 // TestActionGroupDeleteGuardedByMetricAlert covers the in-use delete guard: an
 // action group referenced by a metric alert's actions[] cannot be deleted
 // until the alert is removed or repointed, matching the azurelb backend-pool
