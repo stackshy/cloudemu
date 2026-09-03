@@ -21,6 +21,7 @@ package route53
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
@@ -51,6 +52,21 @@ const (
 // Handler serves Route 53 REST requests against a dns driver.
 type Handler struct {
 	dns dnsdriver.DNS
+
+	// zoneMu serializes the two operations that read a zone's record-set state
+	// and then act on it in a separate step: ChangeResourceRecordSets (validate
+	// the whole batch against current records, then apply every change) and
+	// DeleteHostedZone (check the zone holds only the apex SOA/NS, then delete
+	// it). The underlying memstore only guarantees each individual Get/Set/
+	// Delete call is atomic, not a read-then-act sequence spanning several
+	// calls — without this lock, two concurrent requests against the same zone
+	// could interleave between the check and the mutation (e.g. a batch
+	// validated as safe gets partially applied around a concurrent DELETE, or
+	// DeleteHostedZone deletes a zone a concurrent ChangeResourceRecordSets just
+	// added a record to). cloudemu's Route 53 handler is not on a hot path, so a
+	// single handler-wide lock is preferred over a per-zone lock map and its
+	// bookkeeping.
+	zoneMu sync.Mutex
 }
 
 // New returns a Route 53 handler backed by d.

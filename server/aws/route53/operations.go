@@ -169,6 +169,13 @@ func markerPage[T any](items []T, marker string, maxItems int, id func(T) string
 func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id string) {
 	zoneID := trimZonePrefix(id)
 
+	// Hold the zone lock across the empty-check and the delete: without it, a
+	// concurrent ChangeResourceRecordSets could add a record to this zone
+	// between the check below and DeleteZone, silently discarding a record the
+	// caller believed it had just created.
+	h.zoneMu.Lock()
+	defer h.zoneMu.Unlock()
+
 	zone, err := h.dns.GetZone(r.Context(), zoneID)
 	if err != nil {
 		writeErr(w, err)
@@ -245,6 +252,15 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 		rr := &req.ChangeBatch.Changes[i].ResourceRecordSet
 		rr.Name = ensureTrailingDot(rr.Name)
 	}
+
+	// Hold the zone lock across validation and apply: two concurrent batches
+	// against the same zone must not interleave between "validated against
+	// current records" and "applied" — that would let a batch that was valid
+	// against a stale snapshot partially apply alongside another writer,
+	// breaking the all-or-nothing guarantee this handler documents. It also
+	// serializes against DeleteHostedZone's own check-then-delete.
+	h.zoneMu.Lock()
+	defer h.zoneMu.Unlock()
 
 	// The hosted zone must exist before the change batch is validated: a change
 	// against a missing zone is NoSuchHostedZone (404), not the batch-level
@@ -392,6 +408,30 @@ func (h *Handler) validateChangeBatch(r *http.Request, zone *dnsdriver.ZoneInfo,
 		if err := validateChange(&changes[i], zone.Name, present, byKey); err != nil {
 			return err
 		}
+	}
+
+	return validateApexRecordsSurvive(zone.Name, present)
+}
+
+// validateApexRecordsSurvive checks the batch's net effect (present, folded by
+// validateChange over every change) still leaves the zone's mandatory apex SOA
+// and NS record sets standing. Real Route 53 rejects a batch that would delete
+// either outright — "A HostedZone must contain exactly one SOA record" and "...
+// must contain at least one NS record for the zone itself" — while still
+// allowing a DELETE+CREATE (or UPSERT) of either within the same batch, since
+// that nets to present. present only holds keys touched by CreateZone's seeded
+// SOA/NS or by this batch, so an apex key absent from present means it was
+// never seeded (a pre-existing edge case this guard does not apply to) and is
+// left alone.
+func validateApexRecordsSurvive(zoneName string, present map[string]bool) error {
+	soaKey := rrSetKey(zoneName, "SOA", "")
+	if seeded, touched := present[soaKey]; touched && !seeded {
+		return cerrors.New(cerrors.FailedPrecondition, "A HostedZone must contain exactly one SOA record")
+	}
+
+	nsKey := rrSetKey(zoneName, "NS", "")
+	if seeded, touched := present[nsKey]; touched && !seeded {
+		return cerrors.New(cerrors.FailedPrecondition, "A HostedZone must contain at least one NS record for the zone itself")
 	}
 
 	return nil
