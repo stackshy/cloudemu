@@ -153,7 +153,7 @@ func updateBucket(w http.ResponseWriter, r *http.Request, gcp logdriver.GCPLoggi
 	}
 
 	if mask == "" {
-		update.SetDescription = true
+		update.SetDescription = body.Description != ""
 		update.SetRetentionDays = body.RetentionDays != 0
 		update.SetLocked = body.Locked
 	} else {

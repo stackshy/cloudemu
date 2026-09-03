@@ -265,9 +265,14 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 		totalBytes += int64(len(e.Message))
 	}
 
+	// Copy-on-write: never mutate the stored *logGroup's info in place, or a
+	// concurrent GetLogGroup/ListLogGroups reading g.info without the store
+	// lock could observe a torn write.
 	m.groups.Update(groupName, func(lg *logGroup) *logGroup {
-		lg.info.StoredBytes += totalBytes
-		return lg
+		updated := *lg
+		updated.info.StoredBytes += totalBytes
+
+		return &updated
 	})
 
 	dims := map[string]string{"log_group": groupName}

@@ -88,6 +88,52 @@ func TestSDKBucketsLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKBucketsPatchNoMaskPreservesDescription guards a mask-less Patch (the
+// Go SDK does not require .UpdateMask()): a caller touching only
+// retentionDays must not silently wipe the existing description. This
+// exercises updateBucket's presence-heuristic fallback, which previously set
+// SetDescription unconditionally to true regardless of whether the body
+// actually carried a description.
+func TestSDKBucketsPatchNoMaskPreservesDescription(t *testing.T) {
+	svc := newLoggingService(t)
+	ctx := context.Background()
+
+	parent := "projects/" + testProject + "/locations/global"
+	bucketName := parent + "/buckets/no-mask-bucket"
+
+	if _, err := svc.Projects.Locations.Buckets.Create(parent, &logging.LogBucket{
+		Description:   "important",
+		RetentionDays: 14,
+	}).BucketId("no-mask-bucket").Context(ctx).Do(); err != nil {
+		t.Fatalf("Buckets.Create: %v", err)
+	}
+
+	// No .UpdateMask() call: only RetentionDays is set on the body.
+	updated, err := svc.Projects.Locations.Buckets.Patch(bucketName, &logging.LogBucket{
+		RetentionDays: 30,
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Buckets.Patch(no mask): %v", err)
+	}
+
+	if updated.RetentionDays != 30 {
+		t.Errorf("updated retentionDays = %d, want 30", updated.RetentionDays)
+	}
+
+	if updated.Description != "important" {
+		t.Errorf("mask-less patch wiped description: got %q, want %q", updated.Description, "important")
+	}
+
+	got, err := svc.Projects.Locations.Buckets.Get(bucketName).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Buckets.Get: %v", err)
+	}
+
+	if got.Description != "important" {
+		t.Errorf("get description after mask-less patch = %q, want %q", got.Description, "important")
+	}
+}
+
 // TestSDKBucketsLockedGuards guards the locked-bucket invariants: retention
 // cannot be reduced, the bucket cannot be unlocked, and it cannot be deleted.
 func TestSDKBucketsLockedGuards(t *testing.T) {
