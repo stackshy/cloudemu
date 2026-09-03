@@ -243,6 +243,10 @@ func New(opts ...config.Option) *Provider {
 	// A blob created/updated in a bound container invokes any function whose
 	// function.json declares a blobTrigger binding on that container.
 	p.BlobStorage.SetFunctionTriggerSink(p.Functions)
+	// A Cosmos DB document created/updated in a bound (database, container)
+	// invokes any function whose function.json declares a cosmosDBTrigger
+	// binding on it, mirroring Cosmos's change feed.
+	p.CosmosDB.SetFunctionTriggerSink(p.Functions)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)

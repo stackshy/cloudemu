@@ -63,6 +63,11 @@ type Mock struct {
 	accountAttrs map[string]driver.AccountAttributes
 	opts         *config.Options
 	monitoring   mondriver.Monitoring
+	// functionSink delivers a just-created-or-updated document to any Azure
+	// Function whose function.json declares a matching cosmosDBTrigger
+	// binding, mirroring Cosmos's change feed. Wired via
+	// SetFunctionTriggerSink; nil (the default) disables delivery.
+	functionSink CosmosFunctionTriggerSink
 }
 
 // Compile-time check that Mock satisfies the optional TableAttributes
@@ -262,7 +267,7 @@ func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 }
 
 // PutItem stores an item in a container.
-func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) error {
+func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) error {
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -276,9 +281,11 @@ func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) err
 	item = maps.Clone(item)
 	td.items.Set(key, item)
 	m.recordStreamEvent(td, oldItem, item, hadOld)
+	trigger := maps.Clone(item)
 	m.mu.Unlock()
 
 	m.emitMetric(table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
+	m.dispatchFunctionTrigger(ctx, table, trigger)
 
 	return nil
 }
@@ -313,7 +320,7 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 // UpdateItem applies partial updates to an existing document in a container.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[string]any, error) {
+func (m *Mock) UpdateItem(ctx context.Context, input driver.UpdateItemInput) (map[string]any, error) {
 	m.mu.Lock()
 
 	td, exists := m.tables[input.Table]
@@ -340,9 +347,11 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 
 	td.items.Set(k, updated)
 	m.recordStreamEvent(td, oldItem, updated, true)
+	trigger := maps.Clone(updated)
 	m.mu.Unlock()
 
 	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
+	m.dispatchFunctionTrigger(ctx, input.Table, trigger)
 
 	return maps.Clone(updated), nil
 }
@@ -475,7 +484,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 }
 
 // BatchPutItems stores multiple items in a container.
-func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
+func (m *Mock) BatchPutItems(ctx context.Context, table string, items []map[string]any) error {
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -484,15 +493,22 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
 	}
 
+	triggers := make([]map[string]any, 0, len(items))
+
 	for _, item := range items {
 		key := itemKey(td.config, item)
 		oldItem, hadOld := td.items.Get(key)
 		item = maps.Clone(item)
 		td.items.Set(key, item)
 		m.recordStreamEvent(td, oldItem, item, hadOld)
+		triggers = append(triggers, maps.Clone(item))
 	}
 
 	m.mu.Unlock()
+
+	for _, trigger := range triggers {
+		m.dispatchFunctionTrigger(ctx, table, trigger)
+	}
 
 	return nil
 }
