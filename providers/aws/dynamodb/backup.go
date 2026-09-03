@@ -56,7 +56,7 @@ func (m *Mock) CreateBackup(_ context.Context, table, backupName string) (driver
 		CreatedUnix: float64(m.opts.Clock.Now().Unix()),
 		SizeBytes:   size,
 		ItemCount:   int64(len(items)),
-		SourceTable: td.config,
+		SourceTable: deepCopyTableConfig(&td.config),
 	}
 
 	m.backups[info.BackupArn] = &backupData{info: info, items: items}
@@ -197,7 +197,7 @@ func (m *Mock) PITRWindow(_ context.Context, table string) (earliest, latest flo
 // restore does not carry continuous backups or streams forward). Caller holds
 // m.mu.
 func (m *Mock) restoreInto(ctx context.Context, targetTable string, srcCfg *driver.TableConfig, items []map[string]any) {
-	cfg := *srcCfg
+	cfg := deepCopyTableConfig(srcCfg)
 	cfg.Name = targetTable
 	cfg.TableArn = idgen.AWSARN("dynamodb", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "table/"+targetTable)
 	cfg.CreatedAtUnix = float64(m.opts.Clock.Now().Unix())
@@ -226,6 +226,48 @@ func (m *Mock) newBackupID() string {
 	}
 
 	return fmt.Sprintf("%013d-%08x", m.opts.Clock.Now().UnixMilli(), b)
+}
+
+// deepCopyTableConfig returns a copy of cfg whose slice fields (Attributes,
+// GSIs, LSIs and each index's NonKeyAttributes) are fresh, so a backup or a
+// restored table shares no schema state with the live table. Without it, an
+// in-place slice mutation on the source table — e.g. DeleteIndex's append-shift
+// of GSIs — would corrupt the backup and every table restored from it.
+func deepCopyTableConfig(cfg *driver.TableConfig) driver.TableConfig {
+	out := *cfg
+	out.Attributes = append([]driver.AttributeDef(nil), cfg.Attributes...)
+	out.GSIs = deepCopyGSIs(cfg.GSIs)
+	out.LSIs = deepCopyLSIs(cfg.LSIs)
+
+	return out
+}
+
+func deepCopyGSIs(in []driver.GSIConfig) []driver.GSIConfig {
+	if in == nil {
+		return nil
+	}
+
+	out := make([]driver.GSIConfig, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].NonKeyAttributes = append([]string(nil), in[i].NonKeyAttributes...)
+	}
+
+	return out
+}
+
+func deepCopyLSIs(in []driver.LSIConfig) []driver.LSIConfig {
+	if in == nil {
+		return nil
+	}
+
+	out := make([]driver.LSIConfig, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].NonKeyAttributes = append([]string(nil), in[i].NonKeyAttributes...)
+	}
+
+	return out
 }
 
 // deepCopyItem returns a fully independent copy of item, recursing through

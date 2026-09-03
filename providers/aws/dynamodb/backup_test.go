@@ -163,3 +163,89 @@ func TestPITRWindow(t *testing.T) {
 	_, _, err = m.PITRWindow(ctx, "ghost")
 	assertError(t, err, true)
 }
+
+// TestBackupSchemaIndependence guards that a backup and every table restored
+// from it own their schema slices outright: an in-place GSI mutation on the
+// source table (DeleteIndex's append-shift, CreateIndex's append-grow) must not
+// leak into the backup's SourceTable or a restored table's indexes.
+func TestBackupSchemaIndependence(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	requireNoError(t, m.CreateTable(ctx, driver.TableConfig{
+		Name:         "products",
+		PartitionKey: "pk",
+		SortKey:      "sk",
+		Attributes: []driver.AttributeDef{
+			{Name: "pk", Type: "S"}, {Name: "sk", Type: "S"},
+			{Name: "g1pk", Type: "S"}, {Name: "g2pk", Type: "S"}, {Name: "lsk", Type: "S"},
+		},
+		GSIs: []driver.GSIConfig{
+			{Name: "idx1", PartitionKey: "g1pk", Projection: "INCLUDE", NonKeyAttributes: []string{"n1"}},
+			{Name: "idx2", PartitionKey: "g2pk", Projection: "ALL"},
+		},
+		LSIs: []driver.LSIConfig{
+			{Name: "lsi1", SortKey: "lsk", Projection: "INCLUDE", NonKeyAttributes: []string{"n2"}},
+		},
+	}))
+
+	info, err := m.CreateBackup(ctx, "products", "b")
+	requireNoError(t, err)
+	requireNoError(t, m.RestoreTableFromBackup(ctx, info.BackupArn, "restored1"))
+	requireNoError(t, m.RestoreTableFromBackup(ctx, info.BackupArn, "restored2"))
+
+	// Mutate the SOURCE schema in place — the append-shift previously corrupted
+	// the backing array shared with the backup; the append-grow exercises the
+	// same aliasing on growth.
+	requireNoError(t, m.DeleteIndex(ctx, "products", "idx1"))
+	_, err = m.CreateIndex(ctx, "products", driver.GSIConfig{Name: "idx3", PartitionKey: "g2pk"})
+	requireNoError(t, err)
+
+	// Mutate a RESTORED table in place — this must not leak back into the backup
+	// or into a sibling restore (which would happen if restore aliased the
+	// backup's slices).
+	requireNoError(t, m.DeleteIndex(ctx, "restored1", "idx2"))
+
+	// The backup's schema must be untouched: both original GSIs, uncorrupted,
+	// with their own NonKeyAttributes, plus the LSI and attribute definitions.
+	got, err := m.DescribeBackup(ctx, info.BackupArn)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(got.SourceTable.GSIs))
+	assertEqual(t, "idx1", got.SourceTable.GSIs[0].Name)
+	assertEqual(t, "idx2", got.SourceTable.GSIs[1].Name)
+	assertEqual(t, 1, len(got.SourceTable.GSIs[0].NonKeyAttributes))
+	assertEqual(t, "n1", got.SourceTable.GSIs[0].NonKeyAttributes[0])
+	assertEqual(t, 1, len(got.SourceTable.LSIs))
+	assertEqual(t, "n2", got.SourceTable.LSIs[0].NonKeyAttributes[0])
+	assertEqual(t, 5, len(got.SourceTable.Attributes))
+
+	// The untouched sibling restore must still show both original GSIs, its LSI
+	// and its attribute definitions.
+	assertGSINames(t, m, "restored2", "idx1", "idx2")
+
+	rcfg, err := m.DescribeTable(ctx, "restored2")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(rcfg.LSIs))
+	assertEqual(t, "n2", rcfg.LSIs[0].NonKeyAttributes[0])
+	assertEqual(t, 5, len(rcfg.Attributes))
+}
+
+// assertGSINames asserts a table's GSIs are exactly the given names.
+func assertGSINames(t *testing.T, m *Mock, table string, want ...string) {
+	t.Helper()
+
+	idxs, err := m.ListIndexes(context.Background(), table)
+	requireNoError(t, err)
+	assertEqual(t, len(want), len(idxs))
+
+	got := map[string]bool{}
+	for _, ix := range idxs {
+		got[ix.Name] = true
+	}
+
+	for _, name := range want {
+		if !got[name] {
+			t.Fatalf("table %q missing GSI %q; has %v", table, name, got)
+		}
+	}
+}
