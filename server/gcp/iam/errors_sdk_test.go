@@ -60,6 +60,26 @@ func TestSDKGCPIAMKeyNotFoundIsTyped(t *testing.T) {
 	assertGoogleAPIError(t, err, 404)
 }
 
+func TestSDKGCPIAMKeyDisableNotFoundIsTyped(t *testing.T) {
+	svc := newSDKService(t)
+	ctx := context.Background()
+
+	parent := "projects/" + testProject
+	if _, err := svc.Projects.ServiceAccounts.Create(parent, &iamv1.CreateServiceAccountRequest{
+		AccountId: "key-disable-test",
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("CreateServiceAccount: %v", err)
+	}
+
+	email := "key-disable-test@" + testProject + ".iam.gserviceaccount.com"
+	keyName := "projects/-/serviceAccounts/" + email + "/keys/no-such-key"
+
+	_, err := svc.Projects.ServiceAccounts.Keys.Disable(keyName,
+		&iamv1.DisableServiceAccountKeyRequest{}).Context(ctx).Do()
+
+	assertGoogleAPIError(t, err, 404)
+}
+
 func TestSDKGCPIAMDuplicateServiceAccountIsConflict(t *testing.T) {
 	svc := newSDKService(t)
 	ctx := context.Background()

@@ -12,6 +12,16 @@ import (
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
+const (
+	disableVerb = "disable"
+	enableVerb  = "enable"
+
+	// keyDisableReasonUserInitiated mirrors the real GCP enum value stamped on
+	// a key disabled via the disable() method (as opposed to automatic
+	// rotation-driven disablement, which cloudemu does not model).
+	keyDisableReasonUserInitiated = "SERVICE_ACCOUNT_KEY_DISABLE_REASON_USER_INITIATED"
+)
+
 // iamPolicy is the GCP IAM Policy resource returned by getIamPolicy /
 // setIamPolicy. Bindings are stored verbatim so a set/get round-trips.
 type iamPolicy struct {
@@ -68,9 +78,9 @@ func (h *Handler) dispatchSAVerb(w http.ResponseWriter, r *http.Request, rt *rou
 		h.signJwt(w, r, rt.name)
 	case "generateAccessToken":
 		h.generateAccessToken(w, r)
-	case "enable":
+	case enableVerb:
 		h.setDisabled(w, rt.name, false)
-	case "disable":
+	case disableVerb:
 		h.setDisabled(w, rt.name, true)
 	default:
 		writeError(w, http.StatusNotFound, "notFound", "unknown method: "+rt.verb)
@@ -329,6 +339,62 @@ func (*Handler) generateAccessToken(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) setDisabled(w http.ResponseWriter, email string, disabled bool) {
 	h.mu.Lock()
 	h.disabled[email] = disabled
+	h.mu.Unlock()
+
+	writeJSON(w, map[string]any{})
+}
+
+// routeKeyVerb dispatches the one-off ":method" service-account-key calls
+// (disable, enable). Both are POSTs on a specific key, mirroring
+// projects.serviceAccounts.keys.disable/enable in the real API.
+func (h *Handler) routeKeyVerb(w http.ResponseWriter, r *http.Request, rt *route) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
+			"method "+rt.verb+" requires POST")
+
+		return
+	}
+
+	switch rt.verb {
+	case disableVerb:
+		h.setKeyDisabled(w, r, rt.name, rt.subName, true)
+	case enableVerb:
+		h.setKeyDisabled(w, r, rt.name, rt.subName, false)
+	default:
+		writeError(w, http.StatusNotFound, "notFound", "unknown method: "+rt.verb)
+	}
+}
+
+// setKeyDisabled toggles the disabled bit on an existing SA key, matching
+// real GCP's projects.serviceAccounts.keys.disable/enable, which return an
+// empty body on success. The driver has no update path for access keys, so
+// the bit is tracked here (like the SA-level disabled bit) rather than
+// mutated in the driver store.
+func (h *Handler) setKeyDisabled(w http.ResponseWriter, r *http.Request, email, keyID string, disabled bool) {
+	keys, err := h.iam.ListAccessKeys(r.Context(), email)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	found := false
+
+	for i := range keys {
+		if keys[i].AccessKeyID == keyID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		writeError(w, http.StatusNotFound, "NOT_FOUND",
+			"service account key "+keyID+" not found")
+
+		return
+	}
+
+	h.mu.Lock()
+	h.keyDisabled[keyID] = disabled
 	h.mu.Unlock()
 
 	writeJSON(w, map[string]any{})
