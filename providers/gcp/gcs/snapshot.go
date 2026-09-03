@@ -43,6 +43,9 @@ type bucketSnapshot struct {
 	UBLAEnabled            bool                                    `json:"ublaEnabled,omitempty"`
 	UBLALockedTime         string                                  `json:"ublaLockedTime,omitempty"`
 	PublicAccessPrevention string                                  `json:"publicAccessPrevention,omitempty"`
+	RetentionPeriod        int64                                   `json:"retentionPeriod,omitempty"`
+	RetentionEffectiveTime string                                  `json:"retentionEffectiveTime,omitempty"`
+	RetentionLocked        bool                                    `json:"retentionLocked,omitempty"`
 	Objects                map[string]*objectSnapshot              `json:"objects,omitempty"`
 	Versions               map[string][]*objectSnapshot            `json:"versions,omitempty"`
 	Notifications          map[string]driver.GCSNotificationConfig `json:"notifications,omitempty"`
@@ -70,6 +73,9 @@ type objectSnapshot struct {
 	ContentDisposition string            `json:"contentDisposition,omitempty"`
 	ContentLanguage    string            `json:"contentLanguage,omitempty"`
 	StorageClass       string            `json:"storageClass,omitempty"`
+	TemporaryHold      bool              `json:"temporaryHold,omitempty"`
+	EventBasedHold     bool              `json:"eventBasedHold,omitempty"`
+	RetentionRef       string            `json:"retentionRef,omitempty"`
 }
 
 // Snapshot captures every bucket's state as JSON. When includeAssets is false
@@ -106,6 +112,9 @@ func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 		Metageneration: bkt.metageneration, Updated: bkt.updated, IAMPolicy: bkt.iamPolicy,
 		UBLAEnabled: bkt.ublaEnabled, UBLALockedTime: bkt.ublaLockedTime,
 		PublicAccessPrevention: bkt.publicAccessPrevention,
+		RetentionPeriod:        bkt.retentionPeriod,
+		RetentionEffectiveTime: bkt.retentionEffectiveTime,
+		RetentionLocked:        bkt.retentionLocked,
 		Objects:                make(map[string]*objectSnapshot, bkt.objects.Len()),
 	}
 
@@ -158,6 +167,8 @@ func objectToSnapshot(obj *gcsObject, includeAssets bool) *objectSnapshot {
 		MD5: obj.MD5, CRC32C: obj.CRC32C, CacheControl: obj.CacheControl,
 		ContentEncoding: obj.ContentEncoding, ContentDisposition: obj.ContentDisposition,
 		ContentLanguage: obj.ContentLanguage, StorageClass: obj.StorageClass,
+		TemporaryHold: obj.TemporaryHold, EventBasedHold: obj.EventBasedHold,
+		RetentionRef: obj.RetentionRef,
 	}
 }
 
@@ -211,6 +222,9 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 		metageneration: metagen, updated: bs.Updated, iamPolicy: bs.IAMPolicy,
 		ublaEnabled: bs.UBLAEnabled, ublaLockedTime: bs.UBLALockedTime,
 		publicAccessPrevention: bs.PublicAccessPrevention,
+		retentionPeriod:        bs.RetentionPeriod,
+		retentionEffectiveTime: bs.RetentionEffectiveTime,
+		retentionLocked:        bs.RetentionLocked,
 		versions:               restoreVersions(bs.Versions),
 		notifications:          bs.Notifications,
 	}
@@ -250,5 +264,7 @@ func snapshotToObject(os *objectSnapshot) *gcsObject {
 		MD5: os.MD5, CRC32C: os.CRC32C, CacheControl: os.CacheControl,
 		ContentEncoding: os.ContentEncoding, ContentDisposition: os.ContentDisposition,
 		ContentLanguage: os.ContentLanguage, StorageClass: os.StorageClass,
+		TemporaryHold: os.TemporaryHold, EventBasedHold: os.EventBasedHold,
+		RetentionRef: os.RetentionRef,
 	}
 }
