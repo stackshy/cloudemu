@@ -114,6 +114,10 @@ func New(opts *config.Options) *Mock {
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
+	// Fast-path check: avoids the deploy call for the common (non-racing)
+	// duplicate-name case, but does not by itself prevent two concurrent
+	// creates of the same name both passing — that guard is the SetIfAbsent
+	// below, which is the atomic compare-and-set under the store lock.
 	if _, ok := m.funcs.Get(cfg.Name); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
 	}
@@ -146,11 +150,23 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", cfg.Name, err)
 	}
 
-	m.funcs.Set(cfg.Name, funcData{
+	fd := funcData{
 		info: info, handler: h, engineBacked: engineBacked,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
-	})
+	}
+
+	// SetIfAbsent is the atomic compare-and-set: it closes the TOCTOU window
+	// between the Get above and this write, so two concurrent creates of the
+	// same name can't both succeed. The loser tears down its own (now
+	// orphaned) engine deployment, best-effort.
+	if !m.funcs.SetIfAbsent(cfg.Name, fd) {
+		if engineBacked {
+			_ = funcengine.Remove(ctx, m.opts.FunctionEngine, cfg.Name)
+		}
+
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
+	}
 
 	result := info
 
@@ -208,12 +224,18 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	info := fd.info
 	applyConfigUpdates(&info, cfg)
 	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	fd.info = info
 
 	// A code update re-deploys to the engine using the post-merge runtime/handler
-	// so the function runs the new code, not the stale deployment.
+	// so the function runs the new code, not the stale deployment. This external
+	// call happens outside the store lock (Deploy may be slow), based on the fd
+	// snapshot read above; the write-back below is what must be atomic.
+	backed := fd.engineBacked
+	deployed := false
+
 	if len(cfg.Code) > 0 {
-		backed, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
+		var err error
+
+		backed, err = funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
 			Name: name, Runtime: info.Runtime, Handler: info.Handler, Framework: cfg.Framework,
 			Code: cfg.Code, Environment: info.Environment, Timeout: info.Timeout,
 		})
@@ -221,10 +243,32 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 			return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
 		}
 
-		fd.engineBacked = backed
+		deployed = true
 	}
 
-	m.funcs.Set(name, fd)
+	// Update applies the merge under the store's write lock, so a concurrent
+	// DeleteFunction (Get+Delete) can't be interleaved between our read and this
+	// write: either the delete lands first and this reports NotFound (below),
+	// leaving the entry gone, or this write lands first and the delete then
+	// removes it cleanly — never a stale resurrection of a deleted entry.
+	ok = m.funcs.Update(name, func(cur funcData) funcData {
+		cur.info = info
+		if deployed {
+			cur.engineBacked = backed
+		}
+
+		return cur
+	})
+	if !ok {
+		// The entry was deleted concurrently between our read and this write; do
+		// not resurrect it. Best-effort tear down the engine deployment we just
+		// made, mirroring DeleteFunction's own cleanup.
+		if deployed && backed {
+			_ = funcengine.Remove(ctx, m.opts.FunctionEngine, name)
+		}
+
+		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+	}
 
 	result := info
 
