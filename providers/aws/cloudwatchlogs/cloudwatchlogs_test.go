@@ -354,6 +354,66 @@ func TestPutLogEvents(t *testing.T) {
 		err = m.PutLogEvents(ctx, "grp", "no-stream", nil)
 		require.Error(t, err)
 	})
+
+	t.Run("empty batch rejected", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{})
+		require.Error(t, err)
+		assert.True(t, errors.IsInvalidArgument(err))
+	})
+
+	t.Run("out of order batch rejected", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime.Add(time.Second), Message: "second"},
+			{Timestamp: baseTime, Message: "first"},
+		})
+		require.Error(t, err)
+		assert.True(t, errors.IsInvalidArgument(err))
+
+		// Nothing from the rejected batch was ingested.
+		got, gerr := m.GetLogEvents(ctx, &driver.LogQueryInput{LogGroup: "test-group", LogStream: "test-stream"})
+		require.NoError(t, gerr)
+		assert.Empty(t, got)
+	})
+
+	t.Run("batch spanning more than 24 hours rejected", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "early"},
+			{Timestamp: baseTime.Add(25 * time.Hour), Message: "too late"},
+		})
+		require.Error(t, err)
+		assert.True(t, errors.IsInvalidArgument(err))
+	})
+
+	t.Run("batch spanning exactly 24 hours accepted", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "early"},
+			{Timestamp: baseTime.Add(24 * time.Hour), Message: "late"},
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("equal timestamps within a batch accepted", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "one"},
+			{Timestamp: baseTime, Message: "two"},
+		})
+		require.NoError(t, err)
+	})
 }
 
 func TestGetLogEvents(t *testing.T) {

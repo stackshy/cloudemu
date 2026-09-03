@@ -675,3 +675,75 @@ func TestSDKLogsErrors(t *testing.T) {
 		t.Fatalf("DeleteLogGroup(missing): got %v, want ResourceNotFoundException", err)
 	}
 }
+
+// TestSDKPutLogEventsBatchValidation locks real CloudWatch Logs' PutLogEvents
+// batch constraints: events in a single request must be in chronological
+// order, and the oldest and newest event in a request cannot span more than
+// 24 hours. Either violation is a hard InvalidParameterException that rejects
+// the whole batch — nothing from it is ingested.
+func TestSDKPutLogEventsBatchValidation(t *testing.T) {
+	client := newLogsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateLogGroup(ctx, &cwl.CreateLogGroupInput{LogGroupName: aws.String("/pv/g")}); err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	if _, err := client.CreateLogStream(ctx, &cwl.CreateLogStreamInput{
+		LogGroupName: aws.String("/pv/g"), LogStreamName: aws.String("s1"),
+	}); err != nil {
+		t.Fatalf("CreateLogStream: %v", err)
+	}
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+
+	_, err := client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName:  aws.String("/pv/g"),
+		LogStreamName: aws.String("s1"),
+		LogEvents: []cwltypes.InputLogEvent{
+			{Timestamp: aws.Int64(base.Add(time.Second).UnixMilli()), Message: aws.String("second")},
+			{Timestamp: aws.Int64(base.UnixMilli()), Message: aws.String("first")},
+		},
+	})
+
+	var invalid *cwltypes.InvalidParameterException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("out-of-order PutLogEvents: got %v, want InvalidParameterException", err)
+	}
+
+	_, err = client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName:  aws.String("/pv/g"),
+		LogStreamName: aws.String("s1"),
+		LogEvents: []cwltypes.InputLogEvent{
+			{Timestamp: aws.Int64(base.UnixMilli()), Message: aws.String("early")},
+			{Timestamp: aws.Int64(base.Add(25 * time.Hour).UnixMilli()), Message: aws.String("too late")},
+		},
+	})
+	if !errors.As(err, &invalid) {
+		t.Fatalf("batch spanning >24h PutLogEvents: got %v, want InvalidParameterException", err)
+	}
+
+	// Neither rejected batch ingested anything.
+	got, gerr := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/pv/g"), LogStreamName: aws.String("s1"),
+	})
+	if gerr != nil {
+		t.Fatalf("GetLogEvents: %v", gerr)
+	}
+
+	if len(got.Events) != 0 {
+		t.Fatalf("GetLogEvents after rejected batches = %d events, want 0: %+v", len(got.Events), got.Events)
+	}
+
+	// A well-formed batch (chronological, within 24h) still succeeds.
+	if _, err := client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName:  aws.String("/pv/g"),
+		LogStreamName: aws.String("s1"),
+		LogEvents: []cwltypes.InputLogEvent{
+			{Timestamp: aws.Int64(base.UnixMilli()), Message: aws.String("ok1")},
+			{Timestamp: aws.Int64(base.Add(time.Second).UnixMilli()), Message: aws.String("ok2")},
+		},
+	}); err != nil {
+		t.Fatalf("well-formed PutLogEvents: %v", err)
+	}
+}

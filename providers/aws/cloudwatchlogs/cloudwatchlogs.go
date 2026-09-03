@@ -22,6 +22,12 @@ import (
 
 const defaultLogLimit = 100
 
+// putLogEventsMaxBatchSpan bounds how far apart the oldest and newest event
+// timestamps in a single PutLogEvents batch may be. Real CloudWatch Logs: a
+// batch of log events in a single request cannot span more than 24 hours,
+// otherwise the PutLogEvents operation fails.
+const putLogEventsMaxBatchSpan = 24 * time.Hour
+
 // Compile-time check that Mock implements driver.Logging.
 var _ driver.Logging = (*Mock)(nil)
 
@@ -241,6 +247,14 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 		return errors.Newf(errors.NotFound, "log stream %q not found in group %q", streamName, groupName)
 	}
 
+	if len(events) == 0 {
+		return errors.New(errors.InvalidArgument, "logEvents cannot be empty")
+	}
+
+	if err := validatePutLogEventsBatch(events); err != nil {
+		return err
+	}
+
 	ingestedAt := m.opts.Clock.Now().UTC()
 
 	copied := make([]driver.LogEvent, len(events))
@@ -267,20 +281,14 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 	// The sort is stable, so equal timestamps retain ingestion order.
 	sortLogEventsAscending(s.events)
 
-	if len(events) > 0 {
-		earliest := events[0].Timestamp
-		for i := range events {
-			if events[i].Timestamp.Before(earliest) {
-				earliest = events[i].Timestamp
-			}
-		}
-
-		if s.info.FirstEvent == "" {
-			s.info.FirstEvent = earliest.UTC().Format(time.RFC3339)
-		}
-
-		s.info.LastEvent = events[len(events)-1].Timestamp.UTC().Format(time.RFC3339)
+	// events is already validated non-empty and chronologically ascending (see
+	// validatePutLogEventsBatch above), so events[0] is this batch's earliest
+	// timestamp and events[len(events)-1] its latest.
+	if s.info.FirstEvent == "" {
+		s.info.FirstEvent = events[0].Timestamp.UTC().Format(time.RFC3339)
 	}
+
+	s.info.LastEvent = events[len(events)-1].Timestamp.UTC().Format(time.RFC3339)
 
 	s.mu.Unlock()
 
@@ -295,6 +303,33 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 
 	m.evaluateMetricFilters(g, events)
 	m.deliverToSubscriptions(ctx, g, streamName, copied)
+
+	return nil
+}
+
+// validatePutLogEventsBatch enforces the two structural constraints real
+// CloudWatch Logs applies to a PutLogEvents batch before ingesting anything:
+// the events must be in chronological (non-decreasing) timestamp order, and
+// the oldest and newest event in the batch must not be more than 24 hours
+// apart. Both are hard failures — the whole batch is rejected and nothing is
+// written — unlike the per-event too-old/too-new rejection real CloudWatch
+// Logs also applies (surfaced via PutLogEventsOutput.RejectedLogEventsInfo),
+// which this emulator does not model: that check is relative to wall-clock
+// time, and event timestamps here are caller-supplied and not tied to the
+// mock's clock, so silently dropping "future" events would reject events
+// legitimate callers routinely backdate or postdate in tests.
+func validatePutLogEventsBatch(events []driver.LogEvent) error {
+	for i := 1; i < len(events); i++ {
+		if events[i].Timestamp.Before(events[i-1].Timestamp) {
+			return errors.New(errors.InvalidArgument,
+				"log events in a single PutLogEvents request must be in chronological order")
+		}
+	}
+
+	if events[len(events)-1].Timestamp.Sub(events[0].Timestamp) > putLogEventsMaxBatchSpan {
+		return errors.New(errors.InvalidArgument,
+			"the log events in a single PutLogEvents request cannot span more than 24 hours")
+	}
 
 	return nil
 }
