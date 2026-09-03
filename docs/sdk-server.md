@@ -194,6 +194,7 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **Disks / Snapshots / Images / SSH Public Keys** | `Microsoft.Compute/{disks,snapshots,images,sshPublicKeys}` — full CRUD |
 | **Blob Storage** *(data plane)* | Containers + Blobs: Create/Delete/List, PutBlob, GetBlob, DeleteBlob, CopyBlob |
 | **Cosmos DB** *(data plane)* | Databases, Containers, Documents — full CRUD with `x-ms-documentdb-*` headers |
+| **Cosmos DB (SQL ARM control plane)** | `Microsoft.DocumentDB/databaseAccounts/{acct}/sqlDatabases[/containers]` — SQL databases (CreateUpdate/Get/List/Delete, cascading container delete), containers (CreateUpdate/Get/List/Delete with partitionKey, defaultTtl, uniqueKeyPolicy, indexingPolicy), and `throughputSettings/default` at database and container level (Get/Update manual RU/s or autoscale maxThroughput + migrateToAutoscale/migrateToManualThroughput). Real `armcosmos` `SQLResources` clients round-trip end-to-end, including the LRO pollers, so Terraform/Bicep/`az cosmosdb sql` can manage the data model. Shares state with the Cosmos data plane above — a control-plane database/container/throughput is visible to data-plane clients and vice versa. |
 | **Virtual Network** | `Microsoft.Network/{virtualNetworks,networkSecurityGroups,publicIPAddresses,networkInterfaces}` — CRUD + nested subnets; NICs bind a subnet and get a private IP |
 | **Azure Monitor** | `microsoft.insights/metricAlerts` and metric data ingest/read |
 | **Functions** | `Microsoft.Web/sites` (Function Apps): CreateOrUpdate, Get, List, Delete + non-ARM `/api/{name}` invoke |

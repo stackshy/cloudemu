@@ -155,6 +155,68 @@ func (h *Handler) databaseExists(account, db string) bool {
 	return ok
 }
 
+// registerDatabase records that database (account, db) exists, returning false
+// when it already did. The data-plane create maps that to a 409; the ARM
+// control plane treats create-or-update as idempotent and ignores it. Both
+// planes share this one databases set, so a database created through either is
+// visible to the other.
+func (h *Handler) registerDatabase(account, db string) bool {
+	key := dbNS(account, db)
+
+	h.dbMu.Lock()
+	defer h.dbMu.Unlock()
+
+	if _, exists := h.databases[key]; exists {
+		return false
+	}
+
+	h.databases[key] = struct{}{}
+
+	return true
+}
+
+// cascadeDeleteDatabase removes database (account, db) and every container
+// table, offer and TTL/attrs entry beneath it, mirroring real Cosmos's
+// database-delete cascade. Because the driver namespace is flat and keyed by
+// qualify(account, db, coll), the database's containers are exactly the tables
+// whose name starts with the account-qualified "{ns}/" prefix. Returns NotFound
+// when the database doesn't exist. Shared by the data-plane DELETE /dbs/{db} and
+// the ARM BeginDeleteSQLDatabase so both tear a database down identically.
+func (h *Handler) cascadeDeleteDatabase(ctx context.Context, account, db string) error {
+	if !h.databaseExists(account, db) {
+		return cerrors.New(cerrors.NotFound, "database not found")
+	}
+
+	tables, err := h.db.ListTables(ctx)
+	if err != nil {
+		return err
+	}
+
+	ns := dbNS(account, db)
+	prefix := ns + "/"
+
+	for _, t := range tables {
+		if !strings.HasPrefix(t, prefix) {
+			continue
+		}
+
+		if derr := h.db.DeleteTable(ctx, t); derr != nil {
+			return derr
+		}
+
+		h.deleteOffer(t)
+		h.attrs.delete(t)
+	}
+
+	h.deleteOffer(ns) // the database's own shared-throughput offer, if any
+
+	h.dbMu.Lock()
+	delete(h.databases, ns)
+	h.dbMu.Unlock()
+
+	return nil
+}
+
 // splitAccount separates an optional leading /{account} segment from the Cosmos
 // resource path. The real azcosmos SDK derives the account from the
 // {account}.documents.azure.com host; the emulator collapses every account onto
@@ -374,17 +436,12 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request, account
 
 	key := dbNS(account, body.ID)
 
-	h.dbMu.Lock()
-	if _, exists := h.databases[key]; exists {
-		h.dbMu.Unlock()
+	if !h.registerDatabase(account, body.ID) {
 		writeError(w, http.StatusConflict, "Conflict",
 			"Database with specified id already exists.")
 
 		return
 	}
-
-	h.databases[key] = struct{}{}
-	h.dbMu.Unlock()
 
 	// A database created with ThroughputProperties (shared, database-level
 	// provisioned throughput) gets its own offer, keyed by the same _rid
@@ -454,43 +511,13 @@ func (h *Handler) databaseResource(w http.ResponseWriter, r *http.Request, accou
 	}
 }
 
-// deleteDatabase removes a database and every container inside it. Because the
-// driver namespace is flat and keyed by qualify(account, db, coll), the
-// database's containers are exactly the tables whose name starts with the
-// account-qualified "{ns}/" prefix.
+// deleteDatabase removes a database and every container inside it, via the
+// shared cascadeDeleteDatabase helper (also used by the ARM control plane).
 func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, account, db string) {
-	if !h.databaseExists(account, db) {
-		writeError(w, http.StatusNotFound, "NotFound", "database not found")
-		return
-	}
-
-	tables, err := h.db.ListTables(r.Context())
-	if err != nil {
+	if err := h.cascadeDeleteDatabase(r.Context(), account, db); err != nil {
 		writeErr(w, err)
 		return
 	}
-
-	ns := dbNS(account, db)
-	prefix := ns + "/"
-
-	for _, t := range tables {
-		if !strings.HasPrefix(t, prefix) {
-			continue
-		}
-
-		if derr := h.db.DeleteTable(r.Context(), t); derr != nil {
-			writeErr(w, derr)
-			return
-		}
-
-		h.deleteOffer(t)
-		h.attrs.delete(t)
-	}
-
-	h.deleteOffer(ns) // the database's own shared-throughput offer, if any
-	h.dbMu.Lock()
-	delete(h.databases, ns)
-	h.dbMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
 }

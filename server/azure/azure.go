@@ -399,6 +399,13 @@ func New(d Drivers) http.Handler {
 	if d.CosmosDB != nil {
 		cosmosDataPlane := cosmosdb.New(d.CosmosDB)
 		srv.Register(cosmosDataPlane)
+		// Cosmos SQL-API ARM control plane (sqlDatabases / containers /
+		// throughputSettings). Shares cosmosDataPlane's state so a control-plane
+		// database/container/throughput is visible on the data plane and vice
+		// versa. Registered BEFORE cosmosaccount so it wins the first-match over
+		// the shared databaseAccounts path for the /sqlDatabases sub-tree; the
+		// account handler still serves the account-level path and its actions.
+		srv.Register(cosmosdb.NewARM(cosmosDataPlane))
 		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
 		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
 		// management path — disjoint from the /dbs data plane above and from
