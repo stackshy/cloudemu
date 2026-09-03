@@ -249,6 +249,85 @@ func TestSDKGCPIAMListReflectsDisabled(t *testing.T) {
 	}
 }
 
+// TestSDKGCPIAMKeyDisableEnable guards SA-key lifecycle depth: Keys.Disable
+// sets disabled=true (with a disableReason) on Get and List, and Keys.Enable
+// clears it again — mirroring projects.serviceAccounts.keys.disable/enable.
+func TestSDKGCPIAMKeyDisableEnable(t *testing.T) {
+	svc := newSDKService(t)
+	ctx := context.Background()
+
+	email := createSA(t, svc, "key-toggle-sa")
+	saResource := "projects/-/serviceAccounts/" + email
+
+	created, err := svc.Projects.ServiceAccounts.Keys.Create(saResource,
+		&iamv1.CreateServiceAccountKeyRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Keys.Create: %v", err)
+	}
+
+	if created.Disabled {
+		t.Fatal("freshly created key reports disabled=true")
+	}
+
+	if _, err := svc.Projects.ServiceAccounts.Keys.Disable(created.Name,
+		&iamv1.DisableServiceAccountKeyRequest{}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Keys.Disable: %v", err)
+	}
+
+	got, err := svc.Projects.ServiceAccounts.Keys.Get(created.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Keys.Get after Disable: %v", err)
+	}
+
+	if !got.Disabled {
+		t.Fatal("Get did not reflect disabled=true after Keys.Disable")
+	}
+
+	if got.DisableReason == "" {
+		t.Fatal("disabled key has no disableReason")
+	}
+
+	listed, err := svc.Projects.ServiceAccounts.Keys.List(saResource).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Keys.List after Disable: %v", err)
+	}
+
+	var listedKey *iamv1.ServiceAccountKey
+
+	for _, k := range listed.Keys {
+		if k.Name == created.Name {
+			listedKey = k
+			break
+		}
+	}
+
+	if listedKey == nil {
+		t.Fatalf("key %s missing from List", created.Name)
+	}
+
+	if !listedKey.Disabled {
+		t.Fatal("List did not reflect disabled=true after Keys.Disable")
+	}
+
+	if _, err := svc.Projects.ServiceAccounts.Keys.Enable(created.Name,
+		&iamv1.EnableServiceAccountKeyRequest{}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Keys.Enable: %v", err)
+	}
+
+	got, err = svc.Projects.ServiceAccounts.Keys.Get(created.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Keys.Get after Enable: %v", err)
+	}
+
+	if got.Disabled {
+		t.Fatal("Get still reports disabled=true after Keys.Enable")
+	}
+
+	if got.DisableReason != "" {
+		t.Fatalf("re-enabled key still has disableReason %q", got.DisableReason)
+	}
+}
+
 // TestSDKGCPIAMKeyFileAndValidity guards the MEDIUM finding: Keys.Create returns
 // a base64 credentials file (parseable service_account JSON) and populated
 // validAfterTime/validBeforeTime.

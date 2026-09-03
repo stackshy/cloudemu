@@ -96,6 +96,8 @@ type serviceAccountKey struct {
 	ValidBeforeTime string `json:"validBeforeTime,omitempty"`
 	KeyOrigin       string `json:"keyOrigin,omitempty"`
 	KeyType         string `json:"keyType,omitempty"`
+	Disabled        bool   `json:"disabled,omitempty"`
+	DisableReason   string `json:"disableReason,omitempty"`
 }
 
 // listKeysResponse is the wire shape for the SA key list response.

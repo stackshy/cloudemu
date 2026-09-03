@@ -14,6 +14,8 @@
 //	GET    /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}                  — Get key
 //	GET    /v1/projects/{p}/serviceAccounts/{email}/keys                          — List keys
 //	DELETE /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}                  — Delete key
+//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}:disable          — Disable key
+//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}:enable           — Enable key
 //	POST   /v1/projects/{p}/roles                                                 — Create role
 //	GET    /v1/projects/{p}/roles/{roleId}                                        — Get role
 //	GET    /v1/projects/{p}/roles                                                 — List roles
@@ -52,10 +54,11 @@ const (
 
 // Handler serves iam.googleapis.com v1 REST requests against the IAM driver.
 //
-// Service-account resource policies, the enabled/disabled bit, policy etag
-// versions and soft-deleted resources have no place in the portable IAM
-// driver, so they're tracked here keyed by SA email / role id. The driver
-// hard-deletes, so undelete is served from these local tombstones.
+// Service-account resource policies, the enabled/disabled bit, per-key
+// disabled bit, policy etag versions and soft-deleted resources have no
+// place in the portable IAM driver, so they're tracked here keyed by SA
+// email / role id / key id. The driver hard-deletes, so undelete is served
+// from these local tombstones.
 type Handler struct {
 	iam iamdriver.IAM
 
@@ -63,6 +66,7 @@ type Handler struct {
 	saPolicy      map[string]*iamPolicy   // SA email -> resource policy
 	policyVersion map[string]int          // SA email -> monotonic policy etag version
 	disabled      map[string]bool         // SA email -> disabled
+	keyDisabled   map[string]bool         // key id -> disabled
 	deletedSA     map[string]*deletedSA   // SA email -> soft-deleted account
 	deletedRole   map[string]*deletedRole // role id -> soft-deleted role
 }
@@ -89,6 +93,7 @@ func New(drv iamdriver.IAM) *Handler {
 		saPolicy:      make(map[string]*iamPolicy),
 		policyVersion: make(map[string]int),
 		disabled:      make(map[string]bool),
+		keyDisabled:   make(map[string]bool),
 		deletedSA:     make(map[string]*deletedSA),
 		deletedRole:   make(map[string]*deletedRole),
 	}
@@ -183,8 +188,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // routeServiceAccounts dispatches the /serviceAccounts/* surface.
 func (h *Handler) routeServiceAccounts(w http.ResponseWriter, r *http.Request, rt *route) {
 	// One-off ":method" calls (getIamPolicy, signBlob, …) are POSTs on a
-	// specific service account.
-	if rt.verb != "" && rt.name != "" {
+	// specific service account. A verb on a keys sub-resource (…/keys/{id}:disable)
+	// parses into the same rt.verb + rt.name shape but must be routed to the
+	// key-level dispatch below instead, so this only fires when there's no
+	// sub-resource in play.
+	if rt.verb != "" && rt.name != "" && rt.subKind == "" {
 		h.routeSAVerb(w, r, rt)
 		return
 	}
@@ -192,28 +200,10 @@ func (h *Handler) routeServiceAccounts(w http.ResponseWriter, r *http.Request, r
 	switch {
 	// Collection: POST create, GET list.
 	case rt.name == "":
-		switch r.Method {
-		case http.MethodPost:
-			h.createServiceAccount(w, r, rt.project)
-		case http.MethodGet:
-			h.listServiceAccounts(w, r, rt.project)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
-				"unsupported verb on serviceAccounts collection: "+r.Method)
-		}
+		h.routeServiceAccountsCollection(w, r, rt.project)
 	// Single SA: GET / DELETE / PATCH.
 	case rt.subKind == "":
-		switch r.Method {
-		case http.MethodGet:
-			h.getServiceAccount(w, r, rt.project, rt.name)
-		case http.MethodDelete:
-			h.deleteServiceAccount(w, r, rt.name)
-		case http.MethodPatch:
-			h.updateServiceAccount(w, r, rt.project, rt.name)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
-				"unsupported verb on serviceAccount: "+r.Method)
-		}
+		h.routeSingleServiceAccount(w, r, rt)
 	// SA keys sub-resource.
 	case rt.subKind == keysSeg:
 		h.routeServiceAccountKeys(w, r, rt)
@@ -223,7 +213,42 @@ func (h *Handler) routeServiceAccounts(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
+// routeServiceAccountsCollection dispatches the /serviceAccounts collection
+// endpoint: POST create, GET list.
+func (h *Handler) routeServiceAccountsCollection(w http.ResponseWriter, r *http.Request, project string) {
+	switch r.Method {
+	case http.MethodPost:
+		h.createServiceAccount(w, r, project)
+	case http.MethodGet:
+		h.listServiceAccounts(w, r, project)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
+			"unsupported verb on serviceAccounts collection: "+r.Method)
+	}
+}
+
+// routeSingleServiceAccount dispatches GET / DELETE / PATCH on one SA.
+func (h *Handler) routeSingleServiceAccount(w http.ResponseWriter, r *http.Request, rt *route) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getServiceAccount(w, r, rt.project, rt.name)
+	case http.MethodDelete:
+		h.deleteServiceAccount(w, r, rt.name)
+	case http.MethodPatch:
+		h.updateServiceAccount(w, r, rt.project, rt.name)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
+			"unsupported verb on serviceAccount: "+r.Method)
+	}
+}
+
 func (h *Handler) routeServiceAccountKeys(w http.ResponseWriter, r *http.Request, rt *route) {
+	// One-off ":method" calls (disable, enable) are POSTs on a specific key.
+	if rt.verb != "" && rt.subName != "" {
+		h.routeKeyVerb(w, r, rt)
+		return
+	}
+
 	switch rt.subName {
 	case "":
 		switch r.Method {
