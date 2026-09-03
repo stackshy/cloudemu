@@ -345,6 +345,20 @@ func New(d Drivers) *server.Server {
 	if d.Eventarc != nil {
 		eaH := eventarc.New(d.Eventarc)
 		eaH.SetOperationRegistry(opsReg)
+
+		// Destination validation: a trigger create/patch is rejected when it
+		// names a Cloud Function / Cloud Run service that doesn't exist,
+		// mirroring real Eventarc's admission check. Only wired when the peer
+		// service is present, so a server that omits one keeps accepting that
+		// destination kind unchecked.
+		if d.CloudFunctions != nil {
+			eaH.SetFunctionResolver(d.CloudFunctions)
+		}
+
+		if d.CloudRun != nil {
+			eaH.SetCloudRunResolver(d.CloudRun)
+		}
+
 		srv.Register(eaH)
 	}
 

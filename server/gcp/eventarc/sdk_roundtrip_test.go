@@ -178,7 +178,8 @@ func TestSDKEventarcErrors(t *testing.T) {
 
 	// Duplicate create is a conflict.
 	tr := &eventarc.Trigger{
-		Destination: &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "s"}},
+		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "google.cloud.storage.object.v1.finalized"}},
+		Destination:  &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "s"}},
 	}
 
 	if _, err := svc.Projects.Locations.Triggers.Create(parent(), tr).TriggerId("dup").Context(ctx).Do(); err != nil {
@@ -303,7 +304,8 @@ func TestSDKEventarcListPagination(t *testing.T) {
 
 	for _, id := range []string{"a", "b", "c"} {
 		tr := &eventarc.Trigger{
-			Destination: &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "s", Region: testLocation}},
+			EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "google.cloud.storage.object.v1.finalized"}},
+			Destination:  &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "s", Region: testLocation}},
 		}
 		if _, err := svc.Projects.Locations.Triggers.Create(parent(), tr).TriggerId(id).Context(ctx).Do(); err != nil {
 			t.Fatalf("Create(%s): %v", id, err)
