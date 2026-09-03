@@ -21,27 +21,31 @@ type gcsSnapshot struct {
 	Buckets  map[string]*bucketSnapshot `json:"buckets,omitempty"`
 	Gen      int64                      `json:"gen,omitempty"`
 	NotifGen int64                      `json:"notifGen,omitempty"`
+	HMACKeys map[string]*hmacKeyRecord  `json:"hmacKeys,omitempty"`
 }
 
 type bucketSnapshot struct {
-	Name           string                                  `json:"name"`
-	Region         string                                  `json:"region,omitempty"`
-	CreatedAt      string                                  `json:"createdAt,omitempty"`
-	Versioning     bool                                    `json:"versioning,omitempty"`
-	Lifecycle      *driver.LifecycleConfig                 `json:"lifecycle,omitempty"`
-	LifecycleRaw   []byte                                  `json:"lifecycleRaw,omitempty"`
-	Policy         *driver.BucketPolicy                    `json:"policy,omitempty"`
-	CORS           *driver.CORSConfig                      `json:"cors,omitempty"`
-	Encryption     *driver.EncryptionConfig                `json:"encryption,omitempty"`
-	Tags           map[string]string                       `json:"tags,omitempty"`
-	Location       string                                  `json:"location,omitempty"`
-	StorageClass   string                                  `json:"storageClass,omitempty"`
-	Metageneration int64                                   `json:"metageneration,omitempty"`
-	Updated        string                                  `json:"updated,omitempty"`
-	IAMPolicy      []byte                                  `json:"iamPolicy,omitempty"`
-	Objects        map[string]*objectSnapshot              `json:"objects,omitempty"`
-	Versions       map[string][]*objectSnapshot            `json:"versions,omitempty"`
-	Notifications  map[string]driver.GCSNotificationConfig `json:"notifications,omitempty"`
+	Name                   string                                  `json:"name"`
+	Region                 string                                  `json:"region,omitempty"`
+	CreatedAt              string                                  `json:"createdAt,omitempty"`
+	Versioning             bool                                    `json:"versioning,omitempty"`
+	Lifecycle              *driver.LifecycleConfig                 `json:"lifecycle,omitempty"`
+	LifecycleRaw           []byte                                  `json:"lifecycleRaw,omitempty"`
+	Policy                 *driver.BucketPolicy                    `json:"policy,omitempty"`
+	CORS                   *driver.CORSConfig                      `json:"cors,omitempty"`
+	Encryption             *driver.EncryptionConfig                `json:"encryption,omitempty"`
+	Tags                   map[string]string                       `json:"tags,omitempty"`
+	Location               string                                  `json:"location,omitempty"`
+	StorageClass           string                                  `json:"storageClass,omitempty"`
+	Metageneration         int64                                   `json:"metageneration,omitempty"`
+	Updated                string                                  `json:"updated,omitempty"`
+	IAMPolicy              []byte                                  `json:"iamPolicy,omitempty"`
+	UBLAEnabled            bool                                    `json:"ublaEnabled,omitempty"`
+	UBLALockedTime         string                                  `json:"ublaLockedTime,omitempty"`
+	PublicAccessPrevention string                                  `json:"publicAccessPrevention,omitempty"`
+	Objects                map[string]*objectSnapshot              `json:"objects,omitempty"`
+	Versions               map[string][]*objectSnapshot            `json:"versions,omitempty"`
+	Notifications          map[string]driver.GCSNotificationConfig `json:"notifications,omitempty"`
 }
 
 // objectSnapshot mirrors gcsObject (all exported already), but Data is dropped
@@ -81,6 +85,15 @@ func (m *Mock) Snapshot(_ context.Context, includeAssets bool) (json.RawMessage,
 		snap.Buckets[name] = snapshotBucket(bkt, includeAssets)
 	}
 
+	if keys := m.hmacKeys.All(); len(keys) > 0 {
+		snap.HMACKeys = make(map[string]*hmacKeyRecord, len(keys))
+
+		for id, rec := range keys {
+			cp := *rec
+			snap.HMACKeys[id] = &cp
+		}
+	}
+
 	return json.Marshal(snap)
 }
 
@@ -91,7 +104,9 @@ func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 		CORS: bkt.corsConfig, Encryption: bkt.encryption, Tags: bkt.tags,
 		Location: bkt.location, StorageClass: bkt.storageClass,
 		Metageneration: bkt.metageneration, Updated: bkt.updated, IAMPolicy: bkt.iamPolicy,
-		Objects: make(map[string]*objectSnapshot, bkt.objects.Len()),
+		UBLAEnabled: bkt.ublaEnabled, UBLALockedTime: bkt.ublaLockedTime,
+		PublicAccessPrevention: bkt.publicAccessPrevention,
+		Objects:                make(map[string]*objectSnapshot, bkt.objects.Len()),
 	}
 
 	for key, obj := range bkt.objects.All() {
@@ -171,6 +186,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.buckets.Set(name, restoreBucket(bs))
 	}
 
+	for id, rec := range snap.HMACKeys {
+		cp := *rec
+		m.hmacKeys.Set(id, &cp)
+	}
+
 	return nil
 }
 
@@ -189,8 +209,10 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 		encryption: bs.Encryption, tags: bs.Tags,
 		location: bs.Location, storageClass: bs.StorageClass,
 		metageneration: metagen, updated: bs.Updated, iamPolicy: bs.IAMPolicy,
-		versions:      restoreVersions(bs.Versions),
-		notifications: bs.Notifications,
+		ublaEnabled: bs.UBLAEnabled, ublaLockedTime: bs.UBLALockedTime,
+		publicAccessPrevention: bs.PublicAccessPrevention,
+		versions:               restoreVersions(bs.Versions),
+		notifications:          bs.Notifications,
 	}
 
 	for key, os := range bs.Objects {

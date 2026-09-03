@@ -64,6 +64,9 @@ type iamConfiguration struct {
 
 type uniformBucketLevelAccess struct {
 	Enabled bool `json:"enabled"`
+	// LockedTime is when UBLA becomes permanent; GCS stamps it ~90 days out when
+	// UBLA is enabled and omits it when disabled.
+	LockedTime string `json:"lockedTime,omitempty"`
 }
 
 type bucketsListResponse struct {

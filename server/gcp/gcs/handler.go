@@ -21,6 +21,7 @@ package gcs
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -70,6 +71,8 @@ const (
 	// pathBO is /b/{bucket}/o = 3 segments.
 	pathBO = 3
 
+	// collectionProjects is the /projects/{project}/... top-level collection.
+	collectionProjects = "projects"
 	// subresIAM is the /b/{bucket}/iam sub-collection segment.
 	subresIAM = "iam"
 	// subresNotificationConfigs is the /b/{bucket}/notificationConfigs segment.
@@ -92,6 +95,15 @@ type Handler struct {
 	// configuration verbatim (every rule condition), nil when the backing driver
 	// only supports the age-only portable driver.LifecycleConfig.
 	lifecycle lifecycleRawStore
+
+	// iamCfg is the optional capability that persists a bucket's iamConfiguration
+	// (Uniform Bucket-Level Access + Public Access Prevention); nil falls back to
+	// the read-only GCS defaults.
+	iamCfg iamConfigStore
+
+	// hmac is the optional capability backing project-scoped service-account HMAC
+	// keys; nil makes the /projects/{p}/hmacKeys endpoints report not-implemented.
+	hmac hmacKeyStore
 
 	// publisher emits object-change events to Pub/Sub for matching bucket
 	// notification configs. Nil (the default) makes object events a no-op, so
@@ -125,8 +137,17 @@ type resumableSession struct {
 func New(b storagedriver.Bucket) *Handler {
 	ext, _ := b.(storagedriver.GCSExtensions)
 	lifecycle, _ := b.(lifecycleRawStore)
+	iamCfg, _ := b.(iamConfigStore)
+	hmac, _ := b.(hmacKeyStore)
 
-	return &Handler{bucket: b, ext: ext, lifecycle: lifecycle, resumable: make(map[string]*resumableSession)}
+	return &Handler{
+		bucket:    b,
+		ext:       ext,
+		lifecycle: lifecycle,
+		iamCfg:    iamCfg,
+		hmac:      hmac,
+		resumable: make(map[string]*resumableSession),
+	}
 }
 
 // Matches returns true for /storage/v1/, /upload/storage/v1/, and direct
@@ -202,6 +223,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, jsonAPIPrefix)
 	parts := strings.Split(rest, "/")
 
+	if len(parts) > 0 && parts[0] == collectionProjects {
+		h.projectRoute(w, r, parts)
+		return
+	}
+
+	h.serveBucketAPI(w, r, parts)
+}
+
+// serveBucketAPI dispatches the /storage/v1/b[/...] bucket + object JSON API
+// routes.
+func (h *Handler) serveBucketAPI(w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) == 0 || parts[0] != "b" {
 		writeError(w, http.StatusNotFound, "notFound", "unknown collection")
 		return
@@ -213,30 +245,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case pathBucket:
 		h.bucketResource(w, r, parts[1])
 	case pathBO:
-		// /b/{bucket}/o — list objects; /b/{bucket}/iam — bucket IAM policy.
-		switch parts[2] {
-		case "o":
-			h.listObjects(w, r, parts[1])
-		case subresIAM:
-			h.bucketIAM(w, r, parts[1])
-		case subresNotificationConfigs:
-			h.notificationCollection(w, r, parts[1])
-		default:
-			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
-		}
+		h.serveBucketSubcollection(w, r, parts)
 	default:
-		// /b/{bucket}/o/{obj}[/...], /b/{bucket}/iam/testPermissions, or
-		// /b/{bucket}/notificationConfigs/{id}.
-		switch {
-		case parts[2] == "o":
-			h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
-		case parts[2] == subresIAM && parts[3] == "testPermissions":
-			h.testIAMPermissions(w, r, parts[1])
-		case parts[2] == subresNotificationConfigs:
-			h.notificationResourceOp(w, r, parts[1], parts[3])
-		default:
-			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
-		}
+		h.serveBucketSubresource(w, r, parts)
+	}
+}
+
+// serveBucketSubcollection routes /b/{bucket}/{o|iam|notificationConfigs}.
+func (h *Handler) serveBucketSubcollection(w http.ResponseWriter, r *http.Request, parts []string) {
+	switch parts[2] {
+	case "o":
+		h.listObjects(w, r, parts[1])
+	case subresIAM:
+		h.bucketIAM(w, r, parts[1])
+	case subresNotificationConfigs:
+		h.notificationCollection(w, r, parts[1])
+	default:
+		writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
+	}
+}
+
+// serveBucketSubresource routes the deep paths: /b/{bucket}/o/{obj}[/...],
+// /b/{bucket}/iam/testPermissions, and /b/{bucket}/notificationConfigs/{id}.
+func (h *Handler) serveBucketSubresource(w http.ResponseWriter, r *http.Request, parts []string) {
+	switch {
+	case parts[2] == "o":
+		h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
+	case parts[2] == subresIAM && parts[3] == "testPermissions":
+		h.testIAMPermissions(w, r, parts[1])
+	case parts[2] == subresNotificationConfigs:
+		h.notificationResourceOp(w, r, parts[1], parts[3])
+	default:
+		writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
 	}
 }
 
@@ -298,6 +338,8 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		_ = h.putLifecycle(r.Context(), body.Name, body.Lifecycle)
 	}
 
+	_ = h.applyIAMConfig(r.Context(), body.Name, body.IamConfiguration)
+
 	writeJSON(w, http.StatusOK, h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339)))
 }
 
@@ -352,7 +394,7 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		Etag:             name + "/" + strconv.FormatInt(metageneration, 10),
 		TimeCreated:      created,
 		Updated:          updated,
-		IamConfiguration: &iamConfiguration{PublicAccessPrevention: "inherited"},
+		IamConfiguration: h.iamConfigView(r.Context(), name),
 	}
 
 	if enabled, err := h.bucket.GetBucketVersioning(r.Context(), name); err == nil && enabled {
@@ -426,25 +468,9 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
-	if body.Versioning != nil {
-		if err := h.bucket.SetBucketVersioning(r.Context(), name, body.Versioning.Enabled); err != nil {
-			writeErr(w, err)
-			return
-		}
-	}
-
-	if body.Labels != nil {
-		if err := h.bucket.PutBucketTagging(r.Context(), name, body.Labels); err != nil {
-			writeErr(w, err)
-			return
-		}
-	}
-
-	if body.Lifecycle != nil {
-		if err := h.putLifecycle(r.Context(), name, body.Lifecycle); err != nil {
-			writeErr(w, err)
-			return
-		}
+	if err := h.applyBucketConfig(r.Context(), name, &body); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	if h.ext != nil {
@@ -456,6 +482,37 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 	}
 
 	writeJSON(w, http.StatusOK, h.bucketView(r, name, ""))
+}
+
+// applyBucketConfig applies the mutable configuration fields present in a
+// Buckets.patch/update body (versioning, labels, lifecycle, iamConfiguration),
+// each only when supplied. It returns the first error encountered.
+func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *bucketResource) error {
+	if body.Versioning != nil {
+		if err := h.bucket.SetBucketVersioning(ctx, name, body.Versioning.Enabled); err != nil {
+			return err
+		}
+	}
+
+	if body.Labels != nil {
+		if err := h.bucket.PutBucketTagging(ctx, name, body.Labels); err != nil {
+			return err
+		}
+	}
+
+	if body.Lifecycle != nil {
+		if err := h.putLifecycle(ctx, name, body.Lifecycle); err != nil {
+			return err
+		}
+	}
+
+	if body.IamConfiguration != nil {
+		if err := h.applyIAMConfig(ctx, name, body.IamConfiguration); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name string) {
