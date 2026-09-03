@@ -180,6 +180,72 @@ func TestSDKDestroyedVersionLifecycleIs400(t *testing.T) {
 	}
 }
 
+// TestSDKVersionLifecycleEtagPrecondition proves the enable/disable/destroy
+// verbs honor an optional etag precondition: a stale etag is rejected 412
+// conditionNotMet and leaves the version's state unchanged, the current etag
+// succeeds and mints a fresh one, and an omitted etag always succeeds (audit:
+// version lifecycle etag optimistic concurrency).
+func TestSDKVersionLifecycleEtagPrecondition(t *testing.T) {
+	svc := newSMService(t)
+	ctx := context.Background()
+	name := mustCreateSecret(t, svc, "etag-lifecycle")
+
+	v1, err := svc.Projects.Secrets.AddVersion(name, &sm.AddSecretVersionRequest{
+		Payload: &sm.SecretPayload{Data: encode("secret")},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("AddVersion: %v", err)
+	}
+
+	if v1.Etag == "" {
+		t.Fatal("version Etag empty, want an opaque tag")
+	}
+
+	// A stale etag is rejected 412 conditionNotMet and must not apply the
+	// transition.
+	_, err = svc.Projects.Secrets.Versions.Disable(v1.Name,
+		&sm.DisableSecretVersionRequest{Etag: "stale-etag"}).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 412 {
+		t.Fatalf("Disable(stale etag): got %v, want 412 conditionNotMet", err)
+	}
+
+	meta, err := svc.Projects.Secrets.Versions.Get(v1.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if meta.State != "ENABLED" {
+		t.Fatalf("state after rejected Disable = %q, want ENABLED (unchanged)", meta.State)
+	}
+
+	// The matching current etag succeeds and mints a fresh etag.
+	dis, err := svc.Projects.Secrets.Versions.Disable(v1.Name,
+		&sm.DisableSecretVersionRequest{Etag: v1.Etag}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Disable(matching etag): %v", err)
+	}
+
+	if dis.State != "DISABLED" {
+		t.Fatalf("state after Disable = %q, want DISABLED", dis.State)
+	}
+
+	if dis.Etag == v1.Etag {
+		t.Fatal("etag unchanged after a successful Disable, want a fresh etag")
+	}
+
+	// An omitted etag always succeeds, regardless of the version's current one.
+	en, err := svc.Projects.Secrets.Versions.Enable(v1.Name, &sm.EnableSecretVersionRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Enable(no etag): %v", err)
+	}
+
+	if en.State != "ENABLED" {
+		t.Fatalf("state after Enable = %q, want ENABLED", en.State)
+	}
+}
+
 // TestSDKDeleteThenRecreateSameID proves GCP secrets.delete is a permanent hard
 // delete: Get 404s afterwards and the same secretId is creatable again with no
 // ALREADY_EXISTS (no recovery window).
@@ -229,6 +295,51 @@ func TestSDKSecretPatch(t *testing.T) {
 
 	if got.Labels["team"] != "platform" {
 		t.Fatalf("persisted labels = %v, want team=platform", got.Labels)
+	}
+}
+
+// TestSDKSecretPatchEtagPrecondition proves secrets.patch honors an optional
+// etag precondition, independent of the update mask (audit: Secrets.patch
+// etag optimistic concurrency).
+func TestSDKSecretPatchEtagPrecondition(t *testing.T) {
+	svc := newSMService(t)
+	ctx := context.Background()
+	name := mustCreateSecret(t, svc, "etag-patch")
+
+	got, err := svc.Projects.Secrets.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	_, err = svc.Projects.Secrets.Patch(name, &sm.Secret{
+		Labels: map[string]string{"team": "platform"},
+		Etag:   "stale-etag",
+	}).UpdateMask("labels").Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 412 {
+		t.Fatalf("Patch(stale etag): got %v, want 412 conditionNotMet", err)
+	}
+
+	unchanged, err := svc.Projects.Secrets.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get after rejected Patch: %v", err)
+	}
+
+	if len(unchanged.Labels) != 0 {
+		t.Fatalf("labels after rejected Patch = %v, want unchanged (empty)", unchanged.Labels)
+	}
+
+	updated, err := svc.Projects.Secrets.Patch(name, &sm.Secret{
+		Labels: map[string]string{"team": "platform"},
+		Etag:   got.Etag,
+	}).UpdateMask("labels").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Patch(matching etag): %v", err)
+	}
+
+	if updated.Labels["team"] != "platform" {
+		t.Fatalf("labels = %v, want team=platform", updated.Labels)
 	}
 }
 

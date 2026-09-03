@@ -2,6 +2,7 @@ package secretmanager
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -28,10 +29,13 @@ func findVersion(sd *secretData, versionID string) (*driver.SecretVersion, bool)
 	return nil, false
 }
 
-// mutateVersion loads a live secret, locates a version, and applies fn to it
-// under the secret's write lock. It centralizes the not-found/deleted checks
-// shared by enable/disable/destroy.
-func (m *Mock) mutateVersion(name, versionID string,
+// mutateVersion loads a live secret, locates a version, checks its etag
+// precondition, and applies fn to it — all under the secret's write lock, so
+// the etag comparison and the mutation happen in one atomic step (a separate
+// check-then-write pair would let two concurrent callers starting from the
+// same etag both pass the check before either wrote). It centralizes the
+// not-found/precondition checks shared by enable/disable/destroy.
+func (m *Mock) mutateVersion(name, versionID, etag string,
 	fn func(v *driver.SecretVersion) error,
 ) (*driver.SecretVersion, error) {
 	sd, ok := m.secrets.Get(name)
@@ -47,6 +51,12 @@ func (m *Mock) mutateVersion(name, versionID string,
 		return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", versionID, name)
 	}
 
+	if etagMismatch(etag, v.Etag) {
+		return nil, &driver.GCPSecretPreconditionError{
+			Message: fmt.Sprintf("etag mismatch for version %q of secret %q", v.VersionID, name),
+		}
+	}
+
 	if err := fn(v); err != nil {
 		return nil, err
 	}
@@ -57,9 +67,16 @@ func (m *Mock) mutateVersion(name, versionID string,
 	return &result, nil
 }
 
+// etagMismatch reports whether a caller-supplied precondition etag is
+// non-empty and does not match the currently stored one. An empty etag always
+// skips the check, matching real GCP's leniency when the caller omits it.
+func etagMismatch(want, got string) bool {
+	return want != "" && want != got
+}
+
 // EnableSecretVersion moves a version to ENABLED.
-func (m *Mock) EnableSecretVersion(_ context.Context, name, versionID string) (*driver.SecretVersion, error) {
-	return m.mutateVersion(name, versionID, func(v *driver.SecretVersion) error {
+func (m *Mock) EnableSecretVersion(_ context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
+	return m.mutateVersion(name, versionID, etag, func(v *driver.SecretVersion) error {
 		if v.State == driver.VersionDestroyed {
 			return errors.Newf(errors.FailedPrecondition, "version %q is destroyed", versionID)
 		}
@@ -72,8 +89,8 @@ func (m *Mock) EnableSecretVersion(_ context.Context, name, versionID string) (*
 }
 
 // DisableSecretVersion moves a version to DISABLED.
-func (m *Mock) DisableSecretVersion(_ context.Context, name, versionID string) (*driver.SecretVersion, error) {
-	return m.mutateVersion(name, versionID, func(v *driver.SecretVersion) error {
+func (m *Mock) DisableSecretVersion(_ context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
+	return m.mutateVersion(name, versionID, etag, func(v *driver.SecretVersion) error {
 		if v.State == driver.VersionDestroyed {
 			return errors.Newf(errors.FailedPrecondition, "version %q is destroyed", versionID)
 		}
@@ -86,8 +103,8 @@ func (m *Mock) DisableSecretVersion(_ context.Context, name, versionID string) (
 }
 
 // DestroySecretVersion moves a version to DESTROYED, wiping its payload.
-func (m *Mock) DestroySecretVersion(_ context.Context, name, versionID string) (*driver.SecretVersion, error) {
-	return m.mutateVersion(name, versionID, func(v *driver.SecretVersion) error {
+func (m *Mock) DestroySecretVersion(_ context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
+	return m.mutateVersion(name, versionID, etag, func(v *driver.SecretVersion) error {
 		if v.State == driver.VersionDestroyed {
 			return errors.Newf(errors.FailedPrecondition, "version %q is already destroyed", versionID)
 		}
@@ -110,6 +127,10 @@ func (m *Mock) PatchSecret(_ context.Context, name string, patch driver.GCPSecre
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	if etagMismatch(patch.Etag, sd.info.Etag) {
+		return nil, &driver.GCPSecretPreconditionError{Message: fmt.Sprintf("etag mismatch for secret %q", name)}
+	}
 
 	if patch.SetLabels {
 		sd.info.Tags = copyMap(patch.Labels)

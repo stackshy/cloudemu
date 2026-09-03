@@ -96,7 +96,8 @@ type createSecretRequest struct {
 }
 
 // patchSecretRequest is the body of secrets.patch; the update mask names which
-// fields to apply.
+// fields to apply. Etag is a top-level optimistic-concurrency precondition —
+// not gated by the update mask — honored whenever the caller supplies one.
 type patchSecretRequest struct {
 	Labels         map[string]string `json:"labels"`
 	Annotations    map[string]string `json:"annotations"`
@@ -105,10 +106,17 @@ type patchSecretRequest struct {
 	Rotation       *rotationJSON     `json:"rotation"`
 	Topics         []topicJSON       `json:"topics"`
 	VersionAliases map[string]string `json:"versionAliases"`
+	Etag           string            `json:"etag"`
 }
 
 type addVersionRequest struct {
 	Payload payloadJSON `json:"payload"`
+}
+
+// lifecycleVerbRequest is the body of the version enable/disable/destroy
+// custom methods: an optional etag optimistic-concurrency precondition.
+type lifecycleVerbRequest struct {
+	Etag string `json:"etag"`
 }
 
 type accessResponse struct {
