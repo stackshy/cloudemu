@@ -145,27 +145,43 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	h := m.handlers[cfg.Name]
 	m.handlersMu.RUnlock()
 
-	engineBacked, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &cfg)
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", cfg.Name, err)
-	}
-
 	fd := funcData{
-		info: info, handler: h, engineBacked: engineBacked,
+		info: info, handler: h,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
 	}
 
-	// SetIfAbsent is the atomic compare-and-set: it closes the TOCTOU window
-	// between the Get above and this write, so two concurrent creates of the
-	// same name can't both succeed. The loser tears down its own (now
-	// orphaned) engine deployment, best-effort.
+	// Claim the name atomically BEFORE deploying to the engine. funcengine's
+	// Deploy/Remove are keyed by name only (no per-create handle), so if two
+	// concurrent creates both deployed first and then raced SetIfAbsent, the
+	// losing racer's "cleanup" Remove(name) would tear down whatever is
+	// currently registered under that name — which can be the WINNER's
+	// deployment, leaving it engineBacked but with no live deployment behind
+	// it. Reserving the name first guarantees only the actual owner of the
+	// name ever calls Deploy/Remove for it, so a losing racer touches no
+	// engine state at all.
 	if !m.funcs.SetIfAbsent(cfg.Name, fd) {
-		if engineBacked {
-			_ = funcengine.Remove(ctx, m.opts.FunctionEngine, cfg.Name)
-		}
-
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
+	}
+
+	engineBacked, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &cfg)
+	if err != nil {
+		// We own the name (SetIfAbsent succeeded above): roll back our own
+		// reservation rather than leaving a store entry with no code deployed.
+		m.funcs.Delete(cfg.Name)
+
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", cfg.Name, err)
+	}
+
+	if engineBacked && !m.funcs.Update(cfg.Name, func(cur funcData) funcData {
+		cur.engineBacked = true
+
+		return cur
+	}) {
+		// The entry was deleted concurrently (e.g. a racing DeleteFunction) after
+		// we claimed the name but before the deploy landed. We are still the
+		// deploy's owner, so best-effort tear it down rather than leaking it.
+		_ = funcengine.Remove(ctx, m.opts.FunctionEngine, cfg.Name)
 	}
 
 	result := info
