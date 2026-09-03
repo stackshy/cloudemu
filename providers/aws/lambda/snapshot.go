@@ -43,7 +43,13 @@ type funcSnapshot struct {
 	Policies     map[string]map[string]driver.PermissionStatement `json:"policies,omitempty"`
 	// URLConfigs is the Function URL config per qualifier (see funcData.urlConfigs).
 	URLConfigs map[string]*driver.FunctionURLConfig `json:"urlConfigs,omitempty"`
-	AWSConfig  driver.AWSFunctionConfig             `json:"awsConfig"`
+	// URLConfig is the legacy single-URL shape a snapshot taken before Function
+	// URLs gained qualifier scoping used ("urlConfig", singular). Never written
+	// (snapshotFunc only populates URLConfigs), but still read on restore so an
+	// old on-disk snapshot's Function URL config isn't silently dropped — see
+	// restoreFunc.
+	URLConfig *driver.FunctionURLConfig `json:"urlConfig,omitempty"`
+	AWSConfig driver.AWSFunctionConfig  `json:"awsConfig"`
 	// EventInvokeConfigs is the async-invoke config per qualifier (retries,
 	// event age, OnSuccess/OnFailure destinations).
 	EventInvokeConfigs map[string]driver.EventInvokeConfig `json:"eventInvokeConfigs,omitempty"`
@@ -174,7 +180,7 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	fd := funcData{
 		info: fs.Info, engineBacked: fs.EngineBacked, nextVersion: fs.NextVersion,
 		aliases: memstore.New[*aliasData](), concurrency: fs.Concurrency,
-		policies: fs.Policies, urlConfigs: fs.URLConfigs, awsConfig: fs.AWSConfig,
+		policies: fs.Policies, urlConfigs: legacyURLConfigs(fs), awsConfig: fs.AWSConfig,
 		eventInvokeConfigs:            fs.EventInvokeConfigs,
 		provisionedConcurrencyConfigs: fs.ProvisionedConcurrencyConfigs,
 	}
@@ -197,4 +203,17 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	}
 
 	return fd
+}
+
+// legacyURLConfigs returns fs.URLConfigs, migrating a pre-qualifier-scoping
+// snapshot's legacy singular "urlConfig" field (fs.URLConfig) into the new
+// per-qualifier map when the snapshot predates it — otherwise a Function URL
+// config in an old on-disk snapshot would silently vanish on restore, since
+// the new map field simply isn't present in that JSON.
+func legacyURLConfigs(fs *funcSnapshot) map[string]*driver.FunctionURLConfig {
+	if len(fs.URLConfigs) > 0 || fs.URLConfig == nil {
+		return fs.URLConfigs
+	}
+
+	return map[string]*driver.FunctionURLConfig{policyKey(fs.URLConfig.Qualifier): fs.URLConfig}
 }
