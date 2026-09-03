@@ -68,6 +68,11 @@ func cloneBlobObject(obj *blobObject) *blobObject {
 		CommittedBlocks: append([]driver.BlockInfo(nil), obj.CommittedBlocks...),
 		appendBlocks:    obj.appendBlocks,
 		pages:           maps.Clone(obj.pages),
+		// Immutable-storage state travels with the copy so a soft-deleted or
+		// restored blob keeps its WORM protection.
+		immutabilityMode:   obj.immutabilityMode,
+		immutabilityExpiry: obj.immutabilityExpiry,
+		legalHold:          obj.legalHold,
 	}
 }
 

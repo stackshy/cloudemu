@@ -12552,6 +12552,28 @@
         ]
       },
       {
+        "name": "AzureImmutableBlob",
+        "doc": "AzureImmutableBlob is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "BlobImmutability",
+            "doc": "BlobImmutability reports the blob's current immutability policy and legal"
+          },
+          {
+            "name": "DeleteBlobImmutabilityPolicy",
+            "doc": "DeleteBlobImmutabilityPolicy removes the blob's immutability policy"
+          },
+          {
+            "name": "SetBlobImmutabilityPolicy",
+            "doc": "SetBlobImmutabilityPolicy sets (or updates) the blob's time-based"
+          },
+          {
+            "name": "SetBlobLegalHold",
+            "doc": "SetBlobLegalHold sets or clears the blob's legal hold."
+          }
+        ]
+      },
+      {
         "name": "AzurePageBlob",
         "doc": "AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type",
         "operations": [

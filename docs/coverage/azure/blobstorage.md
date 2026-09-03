@@ -93,6 +93,17 @@ AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by
 | --- | --- |
 | `FindBlobsByTags` |  |
 
+### AzureImmutableBlob
+
+AzureImmutableBlob is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `BlobImmutability` | BlobImmutability reports the blob's current immutability policy and legal |
+| `DeleteBlobImmutabilityPolicy` | DeleteBlobImmutabilityPolicy removes the blob's immutability policy |
+| `SetBlobImmutabilityPolicy` | SetBlobImmutabilityPolicy sets (or updates) the blob's time-based |
+| `SetBlobLegalHold` | SetBlobLegalHold sets or clears the blob's legal hold. |
+
 ### AzurePageBlob
 
 AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type

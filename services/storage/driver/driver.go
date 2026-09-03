@@ -382,6 +382,65 @@ type AzureSoftDeleteBlob interface {
 	ListDeletedBlobs(ctx context.Context, container string, opts ListOptions) (*DeletedBlobListResult, error)
 }
 
+// Blob-level immutability policy modes (x-ms-immutability-policy-mode). An empty
+// mode means no time-based immutability policy is set on the blob.
+const (
+	// BlobImmutabilityUnlocked is an editable time-based retention policy: the
+	// retain-until date may be increased or decreased, and the policy deleted.
+	BlobImmutabilityUnlocked = "Unlocked"
+	// BlobImmutabilityLocked is a permanent time-based retention policy: the
+	// retain-until date may only be extended (never shortened), and the policy
+	// can never be removed.
+	BlobImmutabilityLocked = "Locked"
+)
+
+// BlobImmutabilityPolicy is a blob-level (version-level) time-based retention
+// immutability policy: a retain-until instant and a mode (Unlocked/Locked). A
+// zero value (empty Mode, zero ExpiryTime) means no policy is set. While the
+// current time is before ExpiryTime the blob is protected from delete and
+// overwrite (WORM).
+type BlobImmutabilityPolicy struct {
+	ExpiryTime time.Time
+	Mode       string
+}
+
+// AzureImmutableBlob is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that ENFORCES blob immutable storage (WORM): a time-based
+// retention immutability policy (Set/Delete Blob Immutability Policy,
+// ?comp=immutabilityPolicies) and a legal hold (Set Blob Legal Hold,
+// ?comp=legalhold). While a blob has an unexpired immutability policy OR a legal
+// hold set, Delete Blob and any overwrite are rejected with the Azure 409
+// BlobImmutableDueToPolicy / BlobImmutableDueToLegalHold error. An Unlocked
+// policy may have its retain-until date raised or lowered and may be deleted; a
+// Locked policy may only be extended and can never be removed. S3/GCS don't
+// implement it (they carry their own object-lock/retention capabilities).
+//
+// Note: real Azure blob-level immutability builds on versioning, where an
+// overwrite creates a new version and leaves the protected version intact;
+// cloudemu models the container-level WORM semantics the world-case targets —
+// while protected, both delete and overwrite of the blob are blocked.
+type AzureImmutableBlob interface {
+	// SetBlobImmutabilityPolicy sets (or updates) the blob's time-based
+	// retention immutability policy and returns the effective policy. Setting a
+	// policy in the past is rejected. On an Unlocked policy the retain-until date
+	// may be raised or lowered and the mode may be promoted to Locked; on a
+	// Locked policy the date may only be extended and the mode can never revert
+	// to Unlocked — a disallowed change returns a FailedPrecondition error.
+	SetBlobImmutabilityPolicy(
+		ctx context.Context, container, blob string, policy BlobImmutabilityPolicy,
+	) (BlobImmutabilityPolicy, error)
+	// DeleteBlobImmutabilityPolicy removes the blob's immutability policy
+	// (allowed only while it is Unlocked; a Locked policy returns a
+	// FailedPrecondition error).
+	DeleteBlobImmutabilityPolicy(ctx context.Context, container, blob string) error
+	// SetBlobLegalHold sets or clears the blob's legal hold.
+	SetBlobLegalHold(ctx context.Context, container, blob string, hold bool) error
+	// BlobImmutability reports the blob's current immutability policy and legal
+	// hold, so Get Blob Properties can echo the x-ms-immutability-policy-* and
+	// x-ms-legal-hold headers.
+	BlobImmutability(ctx context.Context, container, blob string) (policy BlobImmutabilityPolicy, legalHold bool, err error)
+}
+
 // PageRange is one contiguous [Start,End] byte span (inclusive) of a page blob
 // that currently holds written data, as reported by Get Page Ranges.
 type PageRange struct {

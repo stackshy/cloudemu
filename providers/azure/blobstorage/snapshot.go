@@ -77,6 +77,9 @@ type blobObjectSnapshot struct {
 	LeaseExpiresAt        time.Time          `json:"leaseExpiresAt,omitempty"`
 	LeaseBreakAt          time.Time          `json:"leaseBreakAt,omitempty"`
 	LeaseModTimeAtAcquire string             `json:"leaseModTimeAtAcquire,omitempty"`
+	ImmutabilityMode      string             `json:"immutabilityMode,omitempty"`
+	ImmutabilityExpiry    time.Time          `json:"immutabilityExpiry,omitempty"`
+	LegalHold             bool               `json:"legalHold,omitempty"`
 }
 
 // Snapshot captures every container's state as JSON. When includeAssets is false
@@ -174,6 +177,9 @@ func snapshotBlob(obj *blobObject, includeAssets bool) *blobObjectSnapshot {
 		LeaseState: obj.leaseState, LeaseID: obj.leaseID, LeaseDurationSec: obj.leaseDurationSec,
 		LeaseExpiresAt: obj.leaseExpiresAt, LeaseBreakAt: obj.leaseBreakAt,
 		LeaseModTimeAtAcquire: obj.leaseModTimeAtAcquire,
+		ImmutabilityMode:      obj.immutabilityMode,
+		ImmutabilityExpiry:    obj.immutabilityExpiry,
+		LegalHold:             obj.legalHold,
 	}
 }
 
@@ -264,5 +270,8 @@ func restoreBlob(os *blobObjectSnapshot) *blobObject {
 		leaseState: os.LeaseState, leaseID: os.LeaseID, leaseDurationSec: os.LeaseDurationSec,
 		leaseExpiresAt: os.LeaseExpiresAt, leaseBreakAt: os.LeaseBreakAt,
 		leaseModTimeAtAcquire: os.LeaseModTimeAtAcquire,
+		immutabilityMode:      os.ImmutabilityMode,
+		immutabilityExpiry:    os.ImmutabilityExpiry,
+		legalHold:             os.LegalHold,
 	}
 }

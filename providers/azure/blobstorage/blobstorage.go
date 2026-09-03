@@ -103,6 +103,15 @@ type blobObject struct {
 	// Acquire/Renew, used to detect "blob modified since lease" on a Renew of
 	// an expired-but-unreleased lease.
 	leaseModTimeAtAcquire string
+
+	// Immutable-storage (WORM) state, guarded by mu. immutabilityMode is one of
+	// driver.BlobImmutabilityUnlocked/Locked (empty when no time-based policy is
+	// set); immutabilityExpiry is its retain-until instant. legalHold, when true,
+	// protects the blob independent of any policy. While the blob has an unexpired
+	// policy OR a legal hold, delete and overwrite are blocked.
+	immutabilityMode   string
+	immutabilityExpiry time.Time
+	legalHold          bool
 }
 
 type blobMultipartUpload struct {
@@ -437,6 +446,11 @@ func (m *Mock) putBlockBlobInternal(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
+	// Immutable storage (WORM): overwriting a protected blob is blocked.
+	if err := m.enforceImmutable(ctr, key); err != nil {
+		return nil, err
+	}
+
 	size := int64(len(data))
 	meta := maps.Clone(metadata)
 
@@ -560,6 +574,12 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	obj, ok := ctr.objects.Get(key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
+	}
+
+	// Immutable storage (WORM): an unexpired immutability policy or an active
+	// legal hold blocks the delete before any soft-delete/purge runs.
+	if err := m.enforceImmutable(ctr, key); err != nil {
+		return err
 	}
 
 	// When soft delete is in effect, a Delete Blob retains the blob (bytes and
@@ -751,6 +771,11 @@ func (m *Mock) copyBlobInternal(
 	dstCtr, ok := m.containers.Get(dstBucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
+	}
+
+	// Immutable storage (WORM): overwriting a protected destination blob is blocked.
+	if err := m.enforceImmutable(dstCtr, dstKey); err != nil {
+		return nil, err
 	}
 
 	meta := maps.Clone(srcObj.Metadata)
