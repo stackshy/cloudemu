@@ -49,6 +49,10 @@ type Mock struct {
 	// can hold resources for more than one project.
 	sinks   *memstore.Store[*driver.LogSink]
 	metrics *memstore.Store[*driver.LogBasedMetric]
+
+	// buckets backs the GCP-only projects.locations.buckets surface, keyed by
+	// "{project}/{location}/{name}".
+	buckets *memstore.Store[*driver.LogBucket]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -80,6 +84,7 @@ func New(opts *config.Options) *Mock {
 		opts:    opts,
 		sinks:   memstore.New[*driver.LogSink](),
 		metrics: memstore.New[*driver.LogBasedMetric](),
+		buckets: memstore.New[*driver.LogBucket](),
 	}
 }
 
@@ -577,26 +582,36 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 
 // UpdateLogGroup replaces the mutable fields of an existing log group —
 // ARM CreateOrUpdate-on-existing semantics (retention and tags come from
-// the request; identity and CreatedAt are preserved).
+// the request; identity and CreatedAt are preserved). The read-modify-write
+// runs under the store's lock (via Update) rather than mutating the stored
+// *logGroup's info in place, so a concurrent GetLogGroup can never observe a
+// torn write.
 func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
-	g, ok := m.groups.Get(cfg.Name)
-	if !ok {
+	var result driver.LogGroupInfo
+
+	found := m.groups.Update(cfg.Name, func(g *logGroup) *logGroup {
+		updated := *g
+
+		if cfg.RetentionDays != 0 {
+			updated.info.RetentionDays = cfg.RetentionDays
+		}
+
+		if cfg.Tags != nil {
+			updated.info.Tags = maps.Clone(cfg.Tags)
+		}
+
+		if !cfg.Scope.IsZero() {
+			updated.info.Scope = cfg.Scope
+		}
+
+		result = updated.info
+
+		return &updated
+	})
+
+	if !found {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", cfg.Name)
 	}
-
-	if cfg.RetentionDays != 0 {
-		g.info.RetentionDays = cfg.RetentionDays
-	}
-	if cfg.Tags != nil {
-		g.info.Tags = maps.Clone(cfg.Tags)
-	}
-	if !cfg.Scope.IsZero() {
-		g.info.Scope = cfg.Scope
-	}
-
-	m.groups.Set(cfg.Name, g)
-
-	result := g.info
 
 	return &result, nil
 }
