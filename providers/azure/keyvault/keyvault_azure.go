@@ -106,8 +106,10 @@ func (m *Mock) SetKeyVaultSecret(_ context.Context, vault, name string, params d
 }
 
 // GetKeyVaultSecret returns one secret version. Empty version returns current.
-//
-//nolint:dupl // parallel certificate/secret version accessor; the shared shape is intentional
+// A version that is disabled, not yet valid (nbf) or expired (exp) cannot be
+// retrieved: real Key Vault answers such a get with 403 Forbidden rather than
+// serving an earlier, usable version, so the check applies to whichever
+// version was resolved (current or explicitly named) and never falls back.
 func (m *Mock) GetKeyVaultSecret(_ context.Context, vault, name, version string) (*driver.KVSecret, error) {
 	sd := liveVaultSecret(m.vault(vault).secrets, name)
 	if sd == nil {
@@ -122,9 +124,34 @@ func (m *Mock) GetKeyVaultSecret(_ context.Context, vault, name, version string)
 		return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", version, name)
 	}
 
+	if err := m.checkVersionUsable(v); err != nil {
+		return nil, err
+	}
+
 	kv := v.toKV(name)
 
 	return &kv, nil
+}
+
+// checkVersionUsable reports whether v may be retrieved right now: it must be
+// enabled and within its notBefore/expires window. Matches real Key Vault,
+// which returns 403 Forbidden for a get against a disabled, not-yet-valid or
+// expired version. The caller must hold sd.mu.
+func (m *Mock) checkVersionUsable(v *secretVersion) error {
+	if !v.enabled {
+		return errors.New(errors.PermissionDenied, "operation get is not allowed on a disabled secret")
+	}
+
+	now := m.opts.Clock.Now().Unix()
+	if v.notBefore != 0 && now < v.notBefore {
+		return errors.New(errors.PermissionDenied, "operation get is not allowed on a not-yet-valid secret")
+	}
+
+	if v.expires != 0 && now >= v.expires {
+		return errors.New(errors.PermissionDenied, "operation get is not allowed on an expired secret")
+	}
+
+	return nil
 }
 
 // ListKeyVaultSecrets returns the current version of each live secret.
