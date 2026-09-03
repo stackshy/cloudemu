@@ -86,6 +86,11 @@ type Mock struct {
 	httpClient  *http.Client
 	serviceBus  ServiceBusDeliverer
 	functions   FunctionInvoker
+	// storageQueue delivers to StorageQueue destinations. It reuses the same
+	// ServiceBusDeliverer contract as serviceBus (DeliverExternal(ctx, name,
+	// body) enqueues by name) because the Azure Queue Storage provider is the
+	// same servicebus.Mock implementation, wired as a distinct instance.
+	storageQueue ServiceBusDeliverer
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -103,6 +108,12 @@ func (m *Mock) SetServiceBusDeliverer(d ServiceBusDeliverer) {
 // AzureFunction subscription destinations.
 func (m *Mock) SetFunctionInvoker(i FunctionInvoker) {
 	m.functions = i
+}
+
+// SetStorageQueueDeliverer wires the Azure Queue Storage backend so PutEvents
+// delivers to StorageQueue subscription destinations.
+func (m *Mock) SetStorageQueueDeliverer(d ServiceBusDeliverer) {
+	m.storageQueue = d
 }
 
 func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
