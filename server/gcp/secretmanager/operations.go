@@ -1,7 +1,10 @@
 package secretmanager
 
 import (
+	"encoding/json"
+	"errors"
 	"hash/crc32"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -375,19 +378,56 @@ func (h *Handler) patchSecret(w http.ResponseWriter, r *http.Request, rt route) 
 		patch.SetExpireTime = true
 	}
 
+	patch.Etag = req.Etag
+
 	info, err := h.gcp.PatchSecret(r.Context(), rt.secret, patch)
 	if err != nil {
-		gcprest.WriteCErr(w, err)
+		writeSecretErr(w, err)
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, toSecretJSON(rt.project, info))
 }
 
+// writePreconditionErr writes GCP's 412 conditionNotMet response for a stale
+// etag precondition (matching GCS/Compute Engine's fingerprint convention
+// elsewhere in cloudemu) and reports whether err was one. The caller maps any
+// other error itself.
+func writePreconditionErr(w http.ResponseWriter, err error) bool {
+	var preErr *secretsdriver.GCPSecretPreconditionError
+	if !errors.As(err, &preErr) {
+		return false
+	}
+
+	gcprest.WriteError(w, http.StatusPreconditionFailed, "conditionNotMet", preErr.Error())
+
+	return true
+}
+
+// writeSecretErr maps a *secretsdriver.GCPSecretPreconditionError to GCP's
+// 412 conditionNotMet response and any other error through the shared
+// gcprest mapping.
+func writeSecretErr(w http.ResponseWriter, err error) {
+	if !writePreconditionErr(w, err) {
+		gcprest.WriteCErr(w, err)
+	}
+}
+
 // mutateVersion applies an enable/disable/destroy lifecycle verb to a version.
 func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route, verb string) {
 	if h.gcp == nil {
 		writeUnsupported(w)
+		return
+	}
+
+	// etag is optional on real Secret Manager's lifecycle verbs — an omitted
+	// field, and even a truly zero-byte body (some HTTP clients never write a
+	// "{}" the way google-api-go-client does), must still succeed. Unlike
+	// gcprest.DecodeJSON, this tolerates io.EOF instead of answering 400.
+	var req lifecycleVerbRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, gcprest.MaxBodyBytes)).Decode(&req); err != nil &&
+		!errors.Is(err, io.EOF) {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid JSON: "+err.Error())
 		return
 	}
 
@@ -398,17 +438,21 @@ func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route
 
 	switch verb {
 	case verbEnable:
-		ver, err = h.gcp.EnableSecretVersion(r.Context(), rt.secret, driverVersion(rt.version))
+		ver, err = h.gcp.EnableSecretVersion(r.Context(), rt.secret, driverVersion(rt.version), req.Etag)
 	case verbDisable:
-		ver, err = h.gcp.DisableSecretVersion(r.Context(), rt.secret, driverVersion(rt.version))
+		ver, err = h.gcp.DisableSecretVersion(r.Context(), rt.secret, driverVersion(rt.version), req.Etag)
 	case verbDestroy:
-		ver, err = h.gcp.DestroySecretVersion(r.Context(), rt.secret, driverVersion(rt.version))
+		ver, err = h.gcp.DestroySecretVersion(r.Context(), rt.secret, driverVersion(rt.version), req.Etag)
 	default:
 		writeUnsupported(w)
 		return
 	}
 
 	if err != nil {
+		if writePreconditionErr(w, err) {
+			return
+		}
+
 		// An illegal state transition (e.g. destroy/disable/enable on a DESTROYED
 		// version) is FAILED_PRECONDITION, which GCP reports as HTTP 400. The
 		// shared gcprest mapping would turn it into 409, so answer 400 locally

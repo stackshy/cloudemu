@@ -182,6 +182,30 @@ type GCPSecretPatch struct {
 	ExpireTime    string
 	TTL           string
 	SetExpireTime bool
+
+	// Etag is the caller-supplied optimistic-concurrency precondition: when
+	// non-empty, the patch is only applied if it matches the secret's currently
+	// stored etag (real GCP's leniency — an empty Etag always skips the check).
+	Etag string
+}
+
+// GCPSecretPreconditionError signals a caller-supplied etag precondition (on a
+// version lifecycle verb or secrets.patch) that did not match the currently
+// stored resource's etag. Real Secret Manager answers 412 Precondition Failed
+// with reason "conditionNotMet", matching GCS/Compute Engine's fingerprint
+// convention elsewhere in cloudemu — which does NOT map to the canonical
+// FailedPrecondition→409 the gcprest default uses, so providers return this
+// typed error and the handler matches it with errors.As to emit the exact 412.
+type GCPSecretPreconditionError struct {
+	Message string
+}
+
+func (e *GCPSecretPreconditionError) Error() string {
+	if e.Message == "" {
+		return "conditionNotMet"
+	}
+
+	return e.Message
 }
 
 // GCPIAMBinding binds an IAM role to a set of members.
@@ -202,16 +226,24 @@ type GCPIAMPolicy struct {
 // providers need not model version lifecycle, secret patch, or IAM semantics.
 type GCPSecrets interface {
 	// EnableSecretVersion moves a version to ENABLED. It is idempotent on an
-	// already-enabled version and fails on a DESTROYED one.
-	EnableSecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
+	// already-enabled version and fails on a DESTROYED one. A non-empty etag
+	// must match the version's currently stored etag or the call fails with a
+	// *GCPSecretPreconditionError; an empty etag always succeeds.
+	EnableSecretVersion(ctx context.Context, name, versionID, etag string) (*SecretVersion, error)
 	// DisableSecretVersion moves a version to DISABLED. It fails on a DESTROYED
-	// version.
-	DisableSecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
+	// version. A non-empty etag must match the version's currently stored etag
+	// or the call fails with a *GCPSecretPreconditionError; an empty etag
+	// always succeeds.
+	DisableSecretVersion(ctx context.Context, name, versionID, etag string) (*SecretVersion, error)
 	// DestroySecretVersion moves a version to DESTROYED, wipes its payload, and
-	// stamps its destroyTime. It fails on an already-DESTROYED version.
-	DestroySecretVersion(ctx context.Context, name, versionID string) (*SecretVersion, error)
+	// stamps its destroyTime. It fails on an already-DESTROYED version. A
+	// non-empty etag must match the version's currently stored etag or the call
+	// fails with a *GCPSecretPreconditionError; an empty etag always succeeds.
+	DestroySecretVersion(ctx context.Context, name, versionID, etag string) (*SecretVersion, error)
 	// PatchSecret applies a partial update (labels, annotations, topics, version
-	// aliases, rotation, expiry) to a secret's metadata, honoring the update mask.
+	// aliases, rotation, expiry) to a secret's metadata, honoring the update
+	// mask. A non-empty patch.Etag must match the secret's currently stored
+	// etag or the call fails with a *GCPSecretPreconditionError.
 	PatchSecret(ctx context.Context, name string, patch GCPSecretPatch) (*SecretInfo, error)
 	// GetSecretIAMPolicy returns the secret's stored IAM policy (an empty
 	// versioned policy when none has been set).

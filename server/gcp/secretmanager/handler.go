@@ -25,6 +25,12 @@
 // id; "latest" is accepted as a version alias, matching real Secret Manager. The
 // driver seeds an initial (empty) version on create, so a freshly created
 // secret carries one more version than the addVersion calls made against it.
+//
+// The version enable/disable/destroy verbs and secrets.patch each accept an
+// optional "etag" optimistic-concurrency precondition: a non-empty etag that
+// doesn't match the resource's currently stored one is rejected with 412
+// conditionNotMet and the request has no effect; an omitted etag always
+// succeeds.
 package secretmanager
 
 import (
