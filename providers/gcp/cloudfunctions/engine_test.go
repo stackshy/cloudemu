@@ -2,6 +2,8 @@ package cloudfunctions
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,6 +142,110 @@ func TestGCPDeleteRemovesFromEngine(t *testing.T) {
 
 	if len(eng.removed) != 1 || eng.removed[0] != "real-fn" {
 		t.Fatalf("engine.Remove not called: %v", eng.removed)
+	}
+}
+
+// concurrentEngine is a thread-safe config.FunctionEngine that tracks whether
+// a name is currently live, so a -race test can assert that a losing
+// CreateFunction racer never tears down the winner's deployment. funcengine's
+// Deploy/Remove are keyed by name only, so a naive "clean up my own
+// deployment" Remove(name) call by a losing racer removes whatever is
+// currently registered under that name — which can be the winner's.
+type concurrentEngine struct {
+	mu   sync.Mutex
+	live map[string]bool
+}
+
+func newConcurrentEngine() *concurrentEngine {
+	return &concurrentEngine{live: map[string]bool{}}
+}
+
+//nolint:gocritic // fn is the by-value DTO defined by the FunctionEngine contract
+func (e *concurrentEngine) Deploy(_ context.Context, fn config.FunctionDeployment) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.live[fn.Name] = true
+
+	return nil
+}
+
+func (e *concurrentEngine) Invoke(_ context.Context, name string, _ []byte) (config.FunctionResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.live[name] {
+		return config.FunctionResult{}, errors.New("not deployed")
+	}
+
+	return config.FunctionResult{Payload: []byte(`{"ok":true}`)}, nil
+}
+
+func (e *concurrentEngine) Remove(_ context.Context, name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.live[name] = false
+
+	return nil
+}
+
+// TestGCPConcurrentCreateSameNameKeepsWinnerInvokable races many CreateFunction
+// calls for the same name against each other with a real FunctionEngine
+// configured. Exactly one must win (AlreadyExists for the rest), and — the
+// case this test exists for — the winner's engine deployment must survive:
+// a losing racer must never remove it out from under the winner. Run under
+// -race.
+func TestGCPConcurrentCreateSameNameKeepsWinnerInvokable(t *testing.T) {
+	eng := newConcurrentEngine()
+	m := newEngineMock(eng)
+	ctx := context.Background()
+
+	const iterations = 20
+	const racers = 10
+
+	for iter := 0; iter < iterations; iter++ {
+		var wg sync.WaitGroup
+
+		results := make([]error, racers)
+
+		for i := 0; i < racers; i++ {
+			wg.Add(1)
+
+			go func(idx int) {
+				defer wg.Done()
+
+				_, err := m.CreateFunction(ctx, engineFuncConfig())
+				results[idx] = err
+			}(i)
+		}
+
+		wg.Wait()
+
+		winners := 0
+
+		for _, err := range results {
+			if err == nil {
+				winners++
+			}
+		}
+
+		if winners != 1 {
+			t.Fatalf("iteration %d: want exactly 1 winning create, got %d", iter, winners)
+		}
+
+		out, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: "real-fn"})
+		if err != nil {
+			t.Fatalf("iteration %d: Invoke after concurrent create: %v", iter, err)
+		}
+
+		if out.Error != "" {
+			t.Fatalf("iteration %d: winner's deployment was torn down by a losing racer: %q", iter, out.Error)
+		}
+
+		if err := m.DeleteFunction(ctx, "real-fn"); err != nil {
+			t.Fatalf("iteration %d: DeleteFunction: %v", iter, err)
+		}
 	}
 }
 
