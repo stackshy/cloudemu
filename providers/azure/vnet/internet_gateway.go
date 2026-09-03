@@ -39,26 +39,35 @@ func (m *Mock) CreateInternetGateway(
 	return &info, nil
 }
 
-// DeleteInternetGateway deletes the internet gateway.
+// DeleteInternetGateway deletes the internet gateway. The still-attached guard
+// and the delete run in one locked span via UpdateOrDelete, so the gateway
+// cannot be attached between the check and the delete (no check-then-act race).
 func (m *Mock) DeleteInternetGateway(
 	_ context.Context, id string,
 ) error {
-	igw, ok := m.igws.Get(id)
-	if !ok {
+	var attached bool
+
+	found := m.igws.UpdateOrDelete(id, func(igw *igwData) (*igwData, bool) {
+		if igw.State == IGWStateAttached {
+			attached = true
+			return igw, true // keep
+		}
+
+		return nil, false // delete
+	})
+	if !found {
 		return cerrors.Newf(
 			cerrors.NotFound,
 			"internet gateway %q not found", id,
 		)
 	}
 
-	if igw.State == IGWStateAttached {
+	if attached {
 		return cerrors.Newf(
 			cerrors.FailedPrecondition,
 			"internet gateway %q is still attached", id,
 		)
 	}
-
-	m.igws.Delete(id)
 
 	return nil
 }
@@ -76,31 +85,40 @@ func (m *Mock) DescribeInternetGateways(
 func (m *Mock) AttachInternetGateway(
 	_ context.Context, igwID, vpcID string,
 ) error {
-	igw, ok := m.igws.Get(igwID)
-	if !ok {
+	var opErr error
+
+	found := m.igws.Update(igwID, func(igw *igwData) *igwData {
+		if igw.State == IGWStateAttached {
+			opErr = cerrors.Newf(
+				cerrors.FailedPrecondition,
+				"internet gateway %q is already attached", igwID,
+			)
+
+			return igw
+		}
+
+		if !m.vpcs.Has(vpcID) {
+			opErr = cerrors.Newf(
+				cerrors.NotFound, "vnet %q not found", vpcID,
+			)
+
+			return igw
+		}
+
+		cp := *igw
+		cp.VpcID = vpcID
+		cp.State = IGWStateAttached
+
+		return &cp
+	})
+	if !found {
 		return cerrors.Newf(
 			cerrors.NotFound,
 			"internet gateway %q not found", igwID,
 		)
 	}
 
-	if igw.State == IGWStateAttached {
-		return cerrors.Newf(
-			cerrors.FailedPrecondition,
-			"internet gateway %q is already attached", igwID,
-		)
-	}
-
-	if !m.vpcs.Has(vpcID) {
-		return cerrors.Newf(
-			cerrors.NotFound, "vnet %q not found", vpcID,
-		)
-	}
-
-	igw.VpcID = vpcID
-	igw.State = IGWStateAttached
-
-	return nil
+	return opErr
 }
 
 // DetachInternetGateway detaches an internet gateway
@@ -108,26 +126,33 @@ func (m *Mock) AttachInternetGateway(
 func (m *Mock) DetachInternetGateway(
 	_ context.Context, igwID, vpcID string,
 ) error {
-	igw, ok := m.igws.Get(igwID)
-	if !ok {
+	var opErr error
+
+	found := m.igws.Update(igwID, func(igw *igwData) *igwData {
+		if igw.State != IGWStateAttached || igw.VpcID != vpcID {
+			opErr = cerrors.Newf(
+				cerrors.FailedPrecondition,
+				"internet gateway %q is not attached to vnet %q",
+				igwID, vpcID,
+			)
+
+			return igw
+		}
+
+		cp := *igw
+		cp.VpcID = ""
+		cp.State = IGWStateDetached
+
+		return &cp
+	})
+	if !found {
 		return cerrors.Newf(
 			cerrors.NotFound,
 			"internet gateway %q not found", igwID,
 		)
 	}
 
-	if igw.State != IGWStateAttached || igw.VpcID != vpcID {
-		return cerrors.Newf(
-			cerrors.FailedPrecondition,
-			"internet gateway %q is not attached to vnet %q",
-			igwID, vpcID,
-		)
-	}
-
-	igw.VpcID = ""
-	igw.State = IGWStateDetached
-
-	return nil
+	return opErr
 }
 
 func toIGWInfo(igw *igwData) driver.InternetGateway {

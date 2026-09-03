@@ -15,7 +15,6 @@ const (
 	PeeringStatusPending  = "pending-acceptance"
 	PeeringStatusActive   = "active"
 	PeeringStatusRejected = "rejected"
-	PeeringStatusDeleted  = "deleted"
 )
 
 type peeringData struct {
@@ -65,50 +64,50 @@ func (m *Mock) CreatePeeringConnection(
 	return &info, nil
 }
 
-// AcceptPeeringConnection accepts a pending VNet peering.
+// AcceptPeeringConnection accepts a pending VNet peering. The status transition
+// is applied copy-on-write onto a fresh *peeringData under the store lock.
 func (m *Mock) AcceptPeeringConnection(_ context.Context, peeringID string) error {
-	p, ok := m.peerings.Get(peeringID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
-	}
-
-	if p.Status != PeeringStatusPending {
-		return cerrors.Newf(cerrors.FailedPrecondition, "peering %q is in state %q, expected %q",
-			peeringID, p.Status, PeeringStatusPending)
-	}
-
-	p.Status = PeeringStatusActive
-
-	return nil
+	return m.transitionPeering(peeringID, PeeringStatusActive)
 }
 
 // RejectPeeringConnection rejects a pending VNet peering.
 func (m *Mock) RejectPeeringConnection(_ context.Context, peeringID string) error {
-	p, ok := m.peerings.Get(peeringID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
-	}
-
-	if p.Status != PeeringStatusPending {
-		return cerrors.Newf(cerrors.FailedPrecondition, "peering %q is in state %q, expected %q",
-			peeringID, p.Status, PeeringStatusPending)
-	}
-
-	p.Status = PeeringStatusRejected
-
-	return nil
+	return m.transitionPeering(peeringID, PeeringStatusRejected)
 }
 
-// DeletePeeringConnection deletes a VNet peering.
-func (m *Mock) DeletePeeringConnection(_ context.Context, peeringID string) error {
-	p, ok := m.peerings.Get(peeringID)
-	if !ok {
+// transitionPeering moves a pending peering to next, copy-on-write. It reports
+// NotFound for a missing peering and FailedPrecondition when the peering is not
+// pending, matching the per-transition error messages.
+func (m *Mock) transitionPeering(peeringID, next string) error {
+	var opErr error
+
+	found := m.peerings.Update(peeringID, func(p *peeringData) *peeringData {
+		if p.Status != PeeringStatusPending {
+			opErr = cerrors.Newf(cerrors.FailedPrecondition, "peering %q is in state %q, expected %q",
+				peeringID, p.Status, PeeringStatusPending)
+
+			return p
+		}
+
+		cp := *p
+		cp.Status = next
+
+		return &cp
+	})
+	if !found {
 		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
 	}
 
-	p.Status = PeeringStatusDeleted
+	return opErr
+}
 
-	m.peerings.Delete(peeringID)
+// DeletePeeringConnection deletes a VNet peering. Delete is itself atomic and
+// reports whether the peering existed, so no separate read is needed (the old
+// transient "deleted" status write mutated the shared pointer and is dropped).
+func (m *Mock) DeletePeeringConnection(_ context.Context, peeringID string) error {
+	if !m.peerings.Delete(peeringID) {
+		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
+	}
 
 	return nil
 }

@@ -91,10 +91,11 @@ func (m *Mock) bindNATGatewayAllocation(allocationID string) (string, error) {
 			return e
 		}
 
-		e.AssociationID = idgen.GenerateID("natgwassoc-")
-		address = e.PublicIP
+		cp := *e
+		cp.AssociationID = idgen.GenerateID("natgwassoc-")
+		address = cp.PublicIP
 
-		return e
+		return &cp
 	})
 
 	if !found {
@@ -111,18 +112,20 @@ func (m *Mock) bindNATGatewayAllocation(allocationID string) (string, error) {
 // DeleteNATGateway deletes the NAT gateway with the given ID, freeing any
 // bound Elastic IP allocation so it can be released or reused.
 func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
-	nat, ok := m.natGateways.Get(id)
-	if !ok {
+	var allocationID string
+
+	// Read the bound allocation and delete the gateway in one locked span so the
+	// two cannot be split by a concurrent update.
+	found := m.natGateways.UpdateOrDelete(id, func(n *natGatewayData) (*natGatewayData, bool) {
+		allocationID = n.AllocationID
+		return nil, false // delete
+	})
+	if !found {
 		return cerrors.Newf(cerrors.NotFound, "NAT gateway %q not found", id)
 	}
 
-	m.natGateways.Delete(id)
-
-	if nat.AllocationID != "" {
-		m.eips.Update(nat.AllocationID, func(e *eipData) *eipData {
-			e.AssociationID = ""
-			return e
-		})
+	if allocationID != "" {
+		m.eips.Update(allocationID, clearEIPAssociation)
 	}
 
 	return nil
@@ -141,8 +144,10 @@ func (m *Mock) UpdateAzureNATGateway(_ context.Context, id, allocationID string,
 		return cerrors.Newf(cerrors.NotFound, "NAT gateway %q not found", id)
 	}
 
+	newPublicIP := nat.PublicIP
+
 	if allocationID != nat.AllocationID {
-		newPublicIP := ""
+		newPublicIP = ""
 
 		if allocationID != "" {
 			address, err := m.bindNATGatewayAllocation(allocationID)
@@ -154,23 +159,19 @@ func (m *Mock) UpdateAzureNATGateway(_ context.Context, id, allocationID string,
 		}
 
 		if nat.AllocationID != "" {
-			m.eips.Update(nat.AllocationID, func(e *eipData) *eipData {
-				e.AssociationID = ""
-				return e
-			})
+			m.eips.Update(nat.AllocationID, clearEIPAssociation)
 		}
-
-		m.natGateways.Update(id, func(n *natGatewayData) *natGatewayData {
-			n.AllocationID = allocationID
-			n.PublicIP = newPublicIP
-
-			return n
-		})
 	}
 
+	// Single copy-on-write swap applies the (possibly unchanged) allocation and
+	// the new tags onto a fresh *natGatewayData, never mutating the shared one.
 	m.natGateways.Update(id, func(n *natGatewayData) *natGatewayData {
-		n.Tags = copyTags(tags)
-		return n
+		cp := *n
+		cp.AllocationID = allocationID
+		cp.PublicIP = newPublicIP
+		cp.Tags = copyTags(tags)
+
+		return &cp
 	})
 
 	return nil
