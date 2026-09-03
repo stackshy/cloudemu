@@ -157,6 +157,20 @@ type createSnapshotResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+type copySnapshotResponse struct {
+	XMLName  xml.Name         `xml:"CopySnapshotResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   snapshotResult   `xml:"CopySnapshotResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type deleteSnapshotResponse struct {
+	XMLName  xml.Name         `xml:"DeleteSnapshotResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   snapshotResult   `xml:"DeleteSnapshotResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
 type snapshotsListXML struct {
 	Snapshot []snapshotXML `xml:"Snapshot,omitempty"`
 }

@@ -31,6 +31,12 @@ func (m *Mock) CreateReplicationGroup(
 			"ReplicationGroupAlreadyExists: replication group %q already exists", cfg.ID)
 	}
 
+	// A restore (SnapshotName set) seeds the unset config fields from the
+	// snapshot before defaults are applied.
+	if err := m.seedReplicationGroupRestore(&cfg); err != nil {
+		return nil, err
+	}
+
 	engine := cfg.Engine
 	if engine == "" {
 		engine = defaultEngine

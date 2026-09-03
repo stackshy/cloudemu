@@ -105,6 +105,8 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		SubnetGroupName:          r.Form.Get("CacheSubnetGroupName"),
 		SecurityGroupIDs:         awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
 		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == formTrue,
+		SnapshotName:             r.Form.Get("SnapshotName"),
+		SnapshotArns:             awsquery.ListStrings(r.Form, "SnapshotArns.SnapshotArn"),
 	})
 	if err != nil {
 		writeErr(w, err)

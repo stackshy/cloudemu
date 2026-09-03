@@ -1683,7 +1683,15 @@
         "doc": "Snapshots is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
+            "name": "CopySnapshot",
+            "doc": "CopySnapshot deep-copies an existing snapshot to a new name, so mutating"
+          },
+          {
             "name": "CreateSnapshot"
+          },
+          {
+            "name": "DeleteSnapshot",
+            "doc": "DeleteSnapshot removes a snapshot and returns its last state (marked"
           },
           {
             "name": "DescribeSnapshots"

@@ -46,7 +46,9 @@ Snapshots is an OPTIONAL capability, discovered by type assertion.
 
 | Operation | Description |
 | --- | --- |
+| `CopySnapshot` | CopySnapshot deep-copies an existing snapshot to a new name, so mutating |
 | `CreateSnapshot` |  |
+| `DeleteSnapshot` | DeleteSnapshot removes a snapshot and returns its last state (marked |
 | `DescribeSnapshots` |  |
 
 ### SubnetGroups
