@@ -18,6 +18,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -60,6 +61,13 @@ type Mock struct {
 	// collision-free suffix (guarded by mu).
 	backupSeq int64
 
+	// instSettle overlays a transient PENDING_CREATE / MAINTENANCE window over an
+	// instance's stored RUNNABLE state so create/modify/restart report the real
+	// GCP intermediate state before settling. It is a no-op unless
+	// config.Options.AsyncSettle is set (SettleDuration returns 0 → inactive
+	// window → the historical synchronous behavior). The Set carries its own lock.
+	instSettle *settle.Set
+
 	// rootPasswords remembers each instance's master password (guarded by mu) so
 	// a clone can re-provision its own database against a configured
 	// DatabaseEngine. The emulator enforces no auth, so this is local state, not
@@ -79,8 +87,16 @@ func New(opts *config.Options) *Mock {
 		users:         memstore.New[rdsdriver.User](),
 		sslCerts:      memstore.New[rdsdriver.SslCert](),
 		rootPasswords: map[string]string{},
+		instSettle:    settle.NewSet(),
 		opts:          opts,
 	}
+}
+
+// settleState overlays the instance's settle window (if any) onto its stored
+// terminal state: the transient state while the window is active and unelapsed,
+// otherwise final. Absent window → final.
+func (m *Mock) settleState(id, final string) string {
+	return m.instSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // SetMonitoring wires a Cloud Monitoring backend for auto-metric emission.
@@ -196,6 +212,15 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 	}
 
 	out := m.finalizeInstance(cfg.ID, inst)
+
+	// Under AsyncSettle a fresh instance reports PENDING_CREATE until the window
+	// elapses, matching real Cloud SQL (instances.insert → PENDING_CREATE →
+	// RUNNABLE). With the default (AsyncSettle off) SettleDuration is 0 → the
+	// window is inactive → the returned/observed state stays RUNNABLE immediately.
+	m.instSettle.Begin(cfg.ID, rdsdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCloudSQLSettle))
+
+	out.State = m.settleState(cfg.ID, out.State)
 
 	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connRunning)
 
@@ -345,7 +370,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, cloneInstance(v))
+			c := cloneInstance(v)
+			c.State = m.settleState(c.ID, c.State)
+			out = append(out, c)
 		}
 
 		return out, nil
@@ -359,7 +386,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 		}
 
-		out = append(out, cloneInstance(inst))
+		c := cloneInstance(inst)
+		c.State = m.settleState(c.ID, c.State)
+		out = append(out, c)
 	}
 
 	return out, nil
@@ -424,7 +453,14 @@ func (m *Mock) ModifyInstance(
 
 	m.instances.Set(id, inst)
 
+	// Under AsyncSettle a patched instance briefly reports MAINTENANCE (via the
+	// StateModifying → MAINTENANCE wire mapping) before settling back to RUNNABLE.
+	// Default off → SettleDuration 0 → inactive window → RUNNABLE immediately.
+	m.instSettle.Begin(id, rdsdriver.StateModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCloudSQLSettle))
+
 	out := cloneInstance(inst)
+	out.State = m.settleState(id, out.State)
 
 	return &out, nil
 }
@@ -470,6 +506,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 	m.instances.Delete(id)
 	delete(m.rootPasswords, id)
+	m.instSettle.Clear(id)
 	m.unlinkReplicas(&inst)
 	m.deleteChildren(id)
 
@@ -551,6 +588,11 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 
 	m.instances.Set(id, inst)
 
+	// A restart briefly reports MAINTENANCE (StateRebooting → MAINTENANCE) before
+	// settling back to RUNNABLE under AsyncSettle; a no-op when settle is off.
+	m.instSettle.Begin(id, rdsdriver.StateRebooting, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBRebootSettle))
+
 	m.emitInstanceMetrics(id, cpuMetricRunning, connRunning)
 
 	return nil
@@ -576,6 +618,10 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 
 	inst.State = to
 	m.instances.Set(id, inst)
+
+	// A start/stop transition supersedes any post-create settle window, so the
+	// new terminal state (RUNNABLE / SUSPENDED) is observed immediately.
+	m.instSettle.Clear(id)
 
 	m.emitInstanceMetrics(id, cpu, conns)
 
