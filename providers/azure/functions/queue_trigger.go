@@ -27,22 +27,56 @@ func (m *Mock) DeliverFunctionTrigger(ctx context.Context, bindingType, queueNam
 		return
 	}
 
-	for _, app := range m.appsBoundToQueue(bindingType, queueName) {
+	match := func(b map[string]any) bool {
+		qn, _ := b["queueName"].(string)
+		return qn == queueName
+	}
+
+	for _, app := range m.appsBoundBy(bindingType, match) {
 		_ = m.InvokeExternal(ctx, app, body)
 	}
 }
 
-// appsBoundToQueue returns, sorted for deterministic delivery order, the names of
-// the function apps that have at least one deployed function whose bindings
-// include a matching input trigger.
-func (m *Mock) appsBoundToQueue(bindingType, queueName string) []string {
+// DeliverTopicFunctionTrigger invokes every deployed function whose
+// function.json declares a serviceBusTrigger binding on (topicName,
+// subscriptionName), passing body as the invocation payload. It is the
+// topic/subscription counterpart of DeliverFunctionTrigger: a message
+// published to a Service Bus topic is fanned out to each subscription, and a
+// function bound to one subscription fires once per message that subscription
+// receives. See DeliverFunctionTrigger for delivery semantics (synchronous,
+// recursion-guarded).
+func (m *Mock) DeliverTopicFunctionTrigger(ctx context.Context, bindingType, topicName, subscriptionName string, body []byte) {
+	if bindingType == "" || topicName == "" || subscriptionName == "" {
+		return
+	}
+
+	if recursionguard.Depth(ctx) >= recursionguard.MaxDepth {
+		return
+	}
+
+	match := func(b map[string]any) bool {
+		tn, _ := b["topicName"].(string)
+		sn, _ := b["subscriptionName"].(string)
+
+		return tn == topicName && sn == subscriptionName
+	}
+
+	for _, app := range m.appsBoundBy(bindingType, match) {
+		_ = m.InvokeExternal(ctx, app, body)
+	}
+}
+
+// appsBoundBy returns, sorted for deterministic delivery order, the names of
+// the function apps that have at least one deployed, non-disabled function
+// whose bindings include an input trigger of bindingType satisfying match.
+func (m *Mock) appsBoundBy(bindingType string, match func(b map[string]any) bool) []string {
 	m.sitesMu.RLock()
 	defer m.sitesMu.RUnlock()
 
 	var apps []string
 
 	for _, meta := range m.sites.All() {
-		if siteHasQueueTrigger(meta, bindingType, queueName) {
+		if siteHasTrigger(meta, bindingType, match) {
 			apps = append(apps, meta.Name)
 		}
 	}
@@ -52,15 +86,15 @@ func (m *Mock) appsBoundToQueue(bindingType, queueName string) []string {
 	return apps
 }
 
-// siteHasQueueTrigger reports whether any non-disabled function of the site
+// siteHasTrigger reports whether any non-disabled function of the site
 // declares a matching trigger binding.
-func siteHasQueueTrigger(meta *SiteMeta, bindingType, queueName string) bool {
+func siteHasTrigger(meta *SiteMeta, bindingType string, match func(b map[string]any) bool) bool {
 	for _, fn := range meta.Functions {
 		if fn.IsDisabled {
 			continue
 		}
 
-		if bindingMatchesQueue(fn.Config, bindingType, queueName) {
+		if bindingMatches(fn.Config, bindingType, match) {
 			return true
 		}
 	}
@@ -68,11 +102,11 @@ func siteHasQueueTrigger(meta *SiteMeta, bindingType, queueName string) bool {
 	return false
 }
 
-// bindingMatchesQueue reports whether a deployed function's function.json config
-// declares an input trigger of bindingType bound to queueName. Azure discovers
+// bindingMatches reports whether a deployed function's function.json config
+// declares an input trigger of bindingType satisfying match. Azure discovers
 // these bindings from the deployed code; here they arrive verbatim in the ARM
 // CreateFunction body's "config" object.
-func bindingMatchesQueue(config map[string]any, bindingType, queueName string) bool {
+func bindingMatches(config map[string]any, bindingType string, match func(b map[string]any) bool) bool {
 	bindings, ok := config["bindings"].([]any)
 	if !ok {
 		return false
@@ -94,7 +128,7 @@ func bindingMatchesQueue(config map[string]any, bindingType, queueName string) b
 			continue
 		}
 
-		if qn, _ := b["queueName"].(string); qn == queueName {
+		if match(b) {
 			return true
 		}
 	}

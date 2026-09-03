@@ -107,6 +107,17 @@ type FunctionTriggerSink interface {
 	DeliverFunctionTrigger(ctx context.Context, bindingType, queueName string, body []byte)
 }
 
+// TopicFunctionTriggerSink is an optional extension of FunctionTriggerSink for
+// Service Bus topic/subscription delivery: a serviceBusTrigger binding may bind
+// a (topicName, subscriptionName) pair instead of a queueName, and a message
+// published to the topic is fanned out to each subscription's own backing
+// store (see server/azure/servicebus's topic send). dispatchFunctionTrigger
+// type-asserts for this interface, so a sink that only implements
+// FunctionTriggerSink (e.g. a queue-only test double) keeps working unchanged.
+type TopicFunctionTriggerSink interface {
+	DeliverTopicFunctionTrigger(ctx context.Context, bindingType, topicName, subscriptionName string, body []byte)
+}
+
 // Mock is an in-memory mock implementation of the Azure Service Bus service.
 type Mock struct {
 	queues     *memstore.Store[*queueData]
@@ -428,6 +439,12 @@ func (m *Mock) enqueueLocked(qd *queueData, input *driver.SendMessageInput) (enq
 // provider so any function bound to this queue fires. It is a no-op when no sink
 // is wired (the default, and every non-Azure-Functions deployment). Called after
 // the queue lock is released; see SendMessage.
+//
+// A queue backing a topic subscription (see subscriptionEntity) is dispatched as
+// a topic/subscription trigger instead of a queueName trigger when the sink
+// supports it, since that queue is an internal fan-out target a serviceBusTrigger
+// binding never names directly (real Azure Functions binds (topicName,
+// subscriptionName) for a topic, not the internal per-subscription store).
 func (m *Mock) dispatchFunctionTrigger(ctx context.Context, queueName string, msg *sbMessage) {
 	m.mu.RLock()
 	sink := m.funcSink
@@ -438,7 +455,35 @@ func (m *Mock) dispatchFunctionTrigger(ctx context.Context, queueName string, ms
 		return
 	}
 
+	if topic, sub, ok := subscriptionEntity(queueName); ok {
+		if topicSink, ok := sink.(TopicFunctionTriggerSink); ok {
+			topicSink.DeliverTopicFunctionTrigger(ctx, bindingType, topic, sub, []byte(msg.Body))
+			return
+		}
+	}
+
 	sink.DeliverFunctionTrigger(ctx, bindingType, queueName, []byte(msg.Body))
+}
+
+// subscriptionEntitySegments is the segment count of the
+// "{namespace}/{topic}/subscriptions/{sub}" entity name a topic subscription's
+// backing queue is created with (see server/azure/servicebus's
+// createSubQueue), used by subscriptionEntity to recognize it.
+const subscriptionEntitySegments = 4
+
+// subscriptionEntity reports whether name is a topic subscription's backing
+// queue name and, if so, the topic and subscription it belongs to. Service Bus
+// namespace, topic and subscription names cannot contain "/", so the 4-segment
+// shape unambiguously identifies this internal addressing convention.
+func subscriptionEntity(name string) (topic, sub string, ok bool) {
+	const subSegment = "subscriptions"
+
+	segs := strings.Split(name, "/")
+	if len(segs) != subscriptionEntitySegments || segs[2] != subSegment {
+		return "", "", false
+	}
+
+	return segs[1], segs[3], true
 }
 
 // findSendDuplicate reports an already-accepted message id when input is a FIFO
