@@ -32,6 +32,23 @@ AWS's `database` service · portable interface `driver.Database` · [AWS index](
 | `UpdateStreamConfig` | Streams / Change Feed |
 | `UpdateTTL` | TTL |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### Backuper
+
+Backuper is an OPTIONAL capability, discovered by type assertion (like the
+
+| Operation | Description |
+| --- | --- |
+| `CreateBackup` | CreateBackup snapshots the table's schema and items under a new BackupArn. |
+| `DeleteBackup` | DeleteBackup removes the backup identified by backupArn, returning its |
+| `DescribeBackup` | DescribeBackup returns the backup identified by backupArn. |
+| `ListBackups` | ListBackups returns every backup, or only those of tableName when it is |
+| `RestoreTableFromBackup` | RestoreTableFromBackup creates targetTable from the backup's schema and |
+| `RestoreTableToPointInTime` | RestoreTableToPointInTime creates targetTable from sourceTable. The |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

@@ -3424,6 +3424,36 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "Backuper",
+        "doc": "Backuper is an OPTIONAL capability, discovered by type assertion (like the",
+        "operations": [
+          {
+            "name": "CreateBackup",
+            "doc": "CreateBackup snapshots the table's schema and items under a new BackupArn."
+          },
+          {
+            "name": "DeleteBackup",
+            "doc": "DeleteBackup removes the backup identified by backupArn, returning its"
+          },
+          {
+            "name": "DescribeBackup",
+            "doc": "DescribeBackup returns the backup identified by backupArn."
+          },
+          {
+            "name": "ListBackups",
+            "doc": "ListBackups returns every backup, or only those of tableName when it is"
+          },
+          {
+            "name": "RestoreTableFromBackup",
+            "doc": "RestoreTableFromBackup creates targetTable from the backup's schema and"
+          },
+          {
+            "name": "RestoreTableToPointInTime",
+            "doc": "RestoreTableToPointInTime creates targetTable from sourceTable. The"
+          }
+        ]
+      },
+      {
         "name": "TableAttributes",
         "doc": "TableAttributes is an OPTIONAL capability, discovered by type assertion (like",
         "operations": [

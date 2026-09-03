@@ -188,7 +188,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
 	if h.routeTables(w, r, op) || h.routeItems(w, r, op) || h.routeBatch(w, r, op) ||
-		h.routeTags(w, r, op) || h.routeTTL(w, r, op) {
+		h.routeTags(w, r, op) || h.routeTTL(w, r, op) || h.routeBackups(w, r, op) {
 		return
 	}
 
@@ -664,17 +664,12 @@ func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	pitr := statusDisabled
-	if h.pitrEnabled(r.Context(), req.TableName) {
-		pitr = statusEnabled
-	}
+	enabled := h.pitrEnabled(r.Context(), req.TableName)
 
 	wire.WriteJSON(w, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
-			"ContinuousBackupsStatus": statusEnabled,
-			"PointInTimeRecoveryDescription": map[string]any{
-				"PointInTimeRecoveryStatus": pitr,
-			},
+			"ContinuousBackupsStatus":        statusEnabled,
+			"PointInTimeRecoveryDescription": h.pitrRecoveryDescription(r.Context(), req.TableName, enabled),
 		},
 	})
 }

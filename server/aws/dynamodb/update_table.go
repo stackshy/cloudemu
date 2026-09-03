@@ -222,17 +222,10 @@ func (h *Handler) updateContinuousBackups(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	pitr := statusDisabled
-	if enabled {
-		pitr = statusEnabled
-	}
-
 	wire.WriteJSON(w, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
-			"ContinuousBackupsStatus": statusEnabled,
-			"PointInTimeRecoveryDescription": map[string]any{
-				"PointInTimeRecoveryStatus": pitr,
-			},
+			"ContinuousBackupsStatus":        statusEnabled,
+			"PointInTimeRecoveryDescription": h.pitrRecoveryDescription(r.Context(), req.TableName, enabled),
 		},
 	})
 }
