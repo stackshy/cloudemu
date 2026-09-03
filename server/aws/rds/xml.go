@@ -163,7 +163,18 @@ type dbClusterXML struct {
 	ClusterCreateTime   string                `xml:"ClusterCreateTime,omitempty"`
 	DBClusterMembers    *dbClusterMembersXML  `xml:"DBClusterMembers,omitempty"`
 	VpcSecurityGroups   *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
+	AssociatedRoles     *associatedRolesXML   `xml:"AssociatedRoles,omitempty"`
 	TagList             *tagListXML           `xml:"TagList,omitempty"`
+}
+
+type dbClusterRoleXML struct {
+	RoleArn     string `xml:"RoleArn"`
+	FeatureName string `xml:"FeatureName,omitempty"`
+	Status      string `xml:"Status,omitempty"`
+}
+
+type associatedRolesXML struct {
+	DBClusterRole []dbClusterRoleXML `xml:"DBClusterRole"`
 }
 
 type dbSnapshotXML struct {
@@ -530,8 +541,26 @@ func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {
 		ClusterCreateTime:   cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		DBClusterMembers:    &members,
 		VpcSecurityGroups:   toVpcSGsXML(cluster.VPCSecurityGroups),
+		AssociatedRoles:     toAssociatedRolesXML(cluster.AssociatedRoles),
 		TagList:             toTagListXML(cluster.Tags),
 	}
+}
+
+func toAssociatedRolesXML(roles []rdsdriver.DBClusterRole) *associatedRolesXML {
+	if len(roles) == 0 {
+		return nil
+	}
+
+	out := &associatedRolesXML{DBClusterRole: make([]dbClusterRoleXML, 0, len(roles))}
+	for i := range roles {
+		out.DBClusterRole = append(out.DBClusterRole, dbClusterRoleXML{
+			RoleArn:     roles[i].RoleARN,
+			FeatureName: roles[i].FeatureName,
+			Status:      roles[i].Status,
+		})
+	}
+
+	return out
 }
 
 func toAvailabilityZonesXML(azs []string) *availabilityZonesXML {

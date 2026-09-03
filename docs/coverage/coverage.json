@@ -9414,6 +9414,18 @@
         ]
       },
       {
+        "name": "ClusterRoles",
+        "doc": "ClusterRoles is an OPTIONAL capability to associate and disassociate IAM",
+        "operations": [
+          {
+            "name": "AddRoleToDBCluster"
+          },
+          {
+            "name": "RemoveRoleFromDBCluster"
+          }
+        ]
+      },
+      {
         "name": "Configurations",
         "doc": "Configurations is an OPTIONAL capability for reading and setting server",
         "operations": [

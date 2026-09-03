@@ -316,6 +316,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Members = cloneSlice(c.Members)
 	c.VPCSecurityGroups = cloneSlice(c.VPCSecurityGroups)
 	c.AvailabilityZones = cloneSlice(c.AvailabilityZones)
+	c.AssociatedRoles = cloneSlice(c.AssociatedRoles)
 
 	return c
 }
