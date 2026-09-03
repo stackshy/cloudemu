@@ -71,12 +71,23 @@ type gen2ServiceConfig struct {
 }
 
 type gen2EventTrigger struct {
-	Trigger             string `json:"trigger,omitempty"`
-	TriggerRegion       string `json:"triggerRegion,omitempty"`
-	EventType           string `json:"eventType,omitempty"`
-	PubsubTopic         string `json:"pubsubTopic,omitempty"`
-	ServiceAccountEmail string `json:"serviceAccountEmail,omitempty"`
-	RetryPolicy         string `json:"retryPolicy,omitempty"`
+	Trigger             string            `json:"trigger,omitempty"`
+	TriggerRegion       string            `json:"triggerRegion,omitempty"`
+	EventType           string            `json:"eventType,omitempty"`
+	EventFilters        []gen2EventFilter `json:"eventFilters,omitempty"`
+	PubsubTopic         string            `json:"pubsubTopic,omitempty"`
+	ServiceAccountEmail string            `json:"serviceAccountEmail,omitempty"`
+	RetryPolicy         string            `json:"retryPolicy,omitempty"`
+}
+
+// gen2EventFilter is one eventTrigger.eventFilters entry: a non-Pub/Sub gen2
+// trigger (e.g. Cloud Storage) binds to a specific source resource by
+// filtering on a CloudEvent attribute — a storage trigger filters on
+// attribute "bucket" — rather than the pubsubTopic field Pub/Sub triggers use.
+type gen2EventFilter struct {
+	Attribute string `json:"attribute,omitempty"`
+	Operator  string `json:"operator,omitempty"`
+	Value     string `json:"value,omitempty"`
 }
 
 // listGen2Response is the {functions, nextPageToken} envelope of v2 list.
@@ -700,6 +711,10 @@ func cloneGen2(fn *gen2Function) *gen2Function {
 
 	if fn.EventTrigger != nil {
 		et := *fn.EventTrigger
+		if fn.EventTrigger.EventFilters != nil {
+			et.EventFilters = append([]gen2EventFilter(nil), fn.EventTrigger.EventFilters...)
+		}
+
 		out.EventTrigger = &et
 	}
 
