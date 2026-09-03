@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 )
 
@@ -32,6 +33,15 @@ type Mock struct {
 	// tags holds tag maps keyed by resource ARN.
 	tags map[string]map[string]string
 
+	// tableSettle overlays a transient CREATING/UPDATING/RESTORING window (keyed by
+	// "keyspace/table") over a table's stored "ACTIVE" status so
+	// create/update/restore report the real Keyspaces intermediate state before
+	// settling. It is a no-op unless config.Options.AsyncSettle is set
+	// (SettleDuration returns 0 → inactive window → historical synchronous
+	// behavior). The Set has its own lock. Keyspaces themselves expose no status in
+	// the API, so only tables are overlaid.
+	tableSettle *settle.Set
+
 	opts *config.Options
 }
 
@@ -39,11 +49,12 @@ type Mock struct {
 // that real Amazon Keyspaces provisions.
 func New(opts *config.Options) *Mock {
 	m := &Mock{
-		keyspaces: memstore.New[ksdriver.Keyspace](),
-		tables:    memstore.New[ksdriver.Table](),
-		udts:      memstore.New[ksdriver.UDT](),
-		tags:      make(map[string]map[string]string),
-		opts:      opts,
+		keyspaces:   memstore.New[ksdriver.Keyspace](),
+		tables:      memstore.New[ksdriver.Table](),
+		udts:        memstore.New[ksdriver.UDT](),
+		tags:        make(map[string]map[string]string),
+		tableSettle: settle.NewSet(),
+		opts:        opts,
 	}
 
 	for _, sys := range []string{"system", "system_schema", "system_multiregion_info"} {

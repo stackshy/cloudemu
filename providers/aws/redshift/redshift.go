@@ -19,6 +19,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -88,6 +89,13 @@ type Mock struct {
 	subnetGroups     *memstore.Store[SubnetGroup]
 	tagsByARN        map[string]map[string]string // ResourceName (ARN) -> tags
 
+	// clusterSettle overlays a transient creating/modifying window (keyed by
+	// cluster id) over a cluster's stored "available" state so create/modify report
+	// the real Redshift intermediate state before settling. It is a no-op unless
+	// config.Options.AsyncSettle is set (SettleDuration returns 0 → inactive window
+	// → historical synchronous behavior). The Set has its own lock.
+	clusterSettle *settle.Set
+
 	opts           *config.Options
 	monitoring     mondriver.Monitoring
 	subnetResolver SubnetResolver
@@ -100,8 +108,16 @@ func New(opts *config.Options) *Mock {
 		clusterSnapshots: memstore.New[rdbdriver.ClusterSnapshot](),
 		parameterGroups:  memstore.New[ParameterGroup](),
 		subnetGroups:     memstore.New[SubnetGroup](),
+		clusterSettle:    settle.NewSet(),
 		opts:             opts,
 	}
+}
+
+// settleClusterState overlays a cluster's settle window (keyed by id) onto its
+// stored terminal state: the transient value while the window is active and
+// unelapsed, otherwise final. Absent window → final.
+func (m *Mock) settleClusterState(id, final string) string {
+	return m.clusterSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // CreateClusterParameterGroup registers a redshift cluster parameter group.
@@ -499,7 +515,15 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (
 	m.emitClusterMetrics(cfg.ID, cpuUtilizationRunning, databaseConnectionsRun,
 		readIOPSRunning, writeIOPSRunning, networkReceiveThroughput)
 
+	// Under AsyncSettle a fresh cluster reports creating until the window elapses,
+	// matching real Redshift (CreateCluster → creating → available). With the
+	// default (AsyncSettle off) SettleDuration is 0 → inactive window → available
+	// immediately, so nothing changes for existing callers.
+	m.clusterSettle.Begin(cfg.ID, rdbdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
+
 	out := cluster
+	out.State = m.settleClusterState(cfg.ID, out.State)
 
 	return &out, nil
 }
@@ -639,6 +663,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
+			v.State = m.settleClusterState(v.ID, v.State)
 			out = append(out, v)
 		}
 
@@ -653,6 +678,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 			return nil, cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 		}
 
+		cluster.State = m.settleClusterState(id, cluster.State)
 		out = append(out, cluster)
 	}
 
@@ -683,7 +709,14 @@ func (m *Mock) ModifyCluster(
 
 	m.clusters.Set(id, cluster)
 
+	// Under AsyncSettle a modified cluster briefly reports modifying before
+	// settling back to available (ModifyCluster → modifying → available); a no-op
+	// when settle is off.
+	m.clusterSettle.Begin(id, rdbdriver.StateModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultWarehouseResize))
+
 	out := cluster
+	out.State = m.settleClusterState(id, out.State)
 
 	return &out, nil
 }
@@ -723,6 +756,8 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 			return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 		}
 
+		m.clusterSettle.Clear(id)
+
 		return nil
 	}
 
@@ -744,6 +779,7 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clusters.Delete(id)
+	m.clusterSettle.Clear(id)
 
 	return nil
 }
@@ -843,6 +879,9 @@ func (m *Mock) transitionCluster(id, from, to, verb string) error {
 
 	cluster.State = to
 	m.clusters.Set(id, cluster)
+	// An explicit lifecycle transition (start/stop/pause/resume) supersedes any
+	// still-active create/modify settle window, so drop it.
+	m.clusterSettle.Clear(id)
 
 	return nil
 }
@@ -1006,7 +1045,13 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	m.emitClusterMetrics(input.NewClusterID, cpuUtilizationRunning, databaseConnectionsRun,
 		readIOPSRunning, writeIOPSRunning, networkReceiveThroughput)
 
+	// Restore is a create: report creating until the window elapses (a no-op when
+	// settle is off).
+	m.clusterSettle.Begin(input.NewClusterID, rdbdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
+
 	out := cluster
+	out.State = m.settleClusterState(input.NewClusterID, out.State)
 
 	return &out, nil
 }
