@@ -91,6 +91,16 @@ type Mock struct {
 	healthSettle *settle.Set
 	drainSettle  *settle.Set
 
+	// healthArmed marks (by settleKey) every target whose healthSettle window
+	// has been started. Real ELBv2 only begins health checking once a target
+	// group is referenced by a listener, so the window must not start at
+	// RegisterTargets time — a target sitting on an unattached target group for
+	// an arbitrary time must not burn its health-check clock. Instead
+	// observeTargetHealth arms it lazily, the first time it observes the group
+	// as referenced, and this set makes that a one-time transition: once armed,
+	// later calls only read the window, never restart it. Guarded by healthMu.
+	healthArmed map[string]struct{}
+
 	attrsMu sync.RWMutex
 	attrs   map[string]driver.LBAttributes // lbARN -> attributes
 
@@ -115,6 +125,7 @@ func New(opts *config.Options) *Mock {
 		health:       make(map[string]map[targetKey]*driver.TargetHealth),
 		healthSettle: settle.NewSet(),
 		drainSettle:  settle.NewSet(),
+		healthArmed:  make(map[string]struct{}),
 		attrs:        make(map[string]driver.LBAttributes),
 		tgAttrs:      make(map[string]map[string]string),
 	}
@@ -450,6 +461,7 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 		sk := settleKey(arn, k)
 		m.healthSettle.Clear(sk)
 		m.drainSettle.Clear(sk)
+		delete(m.healthArmed, sk)
 	}
 
 	delete(m.health, arn)
@@ -1211,12 +1223,16 @@ func mergedTargetGroupAttributes(overrides map[string]string) map[string]string 
 
 // RegisterTargets registers targets with a target group.
 //
-// A freshly registered target starts "initial" and settles to "healthy" after
-// the target-health settle window elapses (immediately when async settling is
-// off — see internal/settle). Re-registering a target that is currently
-// draining (a rolling deploy scaling an instance back in before its drain
-// window elapsed) cancels the drain and restarts registration, matching real
-// ELBv2: RegisterTargets on an in-service target resets its health tracking.
+// A freshly registered target starts "initial". It does NOT start its
+// initial->healthy settle window here: real ELBv2 only begins health checking
+// once the target group is referenced by a listener, so a target sitting on
+// an unattached target group for an arbitrary time must not burn its
+// health-check clock. observeTargetHealth arms the window lazily, the first
+// time DescribeTargetHealth observes the group as referenced. Re-registering a
+// target that is currently draining (a rolling deploy scaling an instance
+// back in before its drain window elapsed) cancels the drain and restarts
+// registration — including the arm bit — matching real ELBv2: RegisterTargets
+// on an in-service target resets its health tracking.
 func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
@@ -1230,8 +1246,6 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 		tgHealth = make(map[targetKey]*driver.TargetHealth)
 		m.health[targetGroupARN] = tgHealth
 	}
-
-	now := m.opts.Clock.Now()
 
 	for _, t := range targets {
 		key := keyFor(t)
@@ -1248,7 +1262,8 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 		}
 
 		m.drainSettle.Clear(sk)
-		m.healthSettle.Begin(sk, targetStateInitial, now, m.opts.SettleDuration(settle.DefaultTargetHealthSettle))
+		m.healthSettle.Clear(sk)
+		delete(m.healthArmed, sk)
 	}
 
 	return nil
@@ -1336,6 +1351,7 @@ func (m *Mock) beginDraining(
 ) {
 	sk := settleKey(targetGroupARN, key)
 	m.healthSettle.Clear(sk)
+	delete(m.healthArmed, sk)
 
 	drainDur := m.opts.SettleDuration(settle.DefaultTargetDrainSettle)
 	if drainDur <= 0 {
@@ -1424,6 +1440,15 @@ func (m *Mock) observeTargetHealth(
 			return unused, true
 		}
 
+		// Arm the settle window the first time the group is observed as
+		// referenced — never before, and never again once armed. This is what
+		// keeps a target on a not-yet-attached target group from burning its
+		// health-check clock while it waits.
+		if _, armed := m.healthArmed[sk]; !armed {
+			m.healthSettle.Begin(sk, targetStateInitial, now, m.opts.SettleDuration(settle.DefaultTargetHealthSettle))
+			m.healthArmed[sk] = struct{}{}
+		}
+
 		observed := *th
 		observed.State = m.healthSettle.State(sk, now, targetStateHealthy)
 
@@ -1473,6 +1498,7 @@ func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN, targetID, stat
 		sk := settleKey(targetGroupARN, k)
 		m.healthSettle.Clear(sk)
 		m.drainSettle.Clear(sk)
+		delete(m.healthArmed, sk)
 	}
 
 	if !found {
