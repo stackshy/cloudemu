@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
@@ -26,6 +27,15 @@ const (
 	statusPending  = "PENDING"
 	statusStopped  = "STOPPED"
 	defaultCluster = "default"
+
+	// taskStatusProvisioning is the Fargate-only launch transient: the ENI is
+	// still being attached. taskStatusDeprovisioning is its stop-side mirror:
+	// the ENI is being detached. taskStatusStopping is the EC2/EXTERNAL stop
+	// transient (statusPending already covers the EC2/EXTERNAL launch
+	// transient). All three are overlaid read-time states — see taskSettle.
+	taskStatusProvisioning   = "PROVISIONING"
+	taskStatusDeprovisioning = "DEPROVISIONING"
+	taskStatusStopping       = "STOPPING"
 )
 
 // Mock is an in-memory mock implementation of Amazon ECS.
@@ -49,6 +59,14 @@ type Mock struct {
 	// it. A present entry is the "engine-backed" marker consulted by StopTask and
 	// ExecuteCommand; absent means the task is a synthetic (engine-less) task.
 	engineHandles *memstore.Store[string]
+
+	// taskSettle overlays a realistic lastStatus transient (PROVISIONING/PENDING
+	// on launch, STOPPING/DEPROVISIONING on stop) onto a task's already-final
+	// stored LastStatus for a short window after RunTask/StopTask, when
+	// opts.AsyncSettle is enabled. It is a read-time overlay only: internal
+	// bookkeeping (capacity release, service reconciliation counts) always uses
+	// the stored final state, never this overlay. See internal/settle.
+	taskSettle *settle.Set
 
 	logs logdriver.Logging // optional: awslogs surfacing target (CloudWatch Logs)
 
@@ -88,6 +106,7 @@ func New(opts *config.Options) *Mock {
 		settings:      memstore.New[*driver.AccountSetting](),
 		attributes:    memstore.New[*driver.Attribute](),
 		engineHandles: memstore.New[string](),
+		taskSettle:    settle.NewSet(),
 		opts:          opts,
 	}
 }
