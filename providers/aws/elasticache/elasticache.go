@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -72,6 +73,11 @@ const (
 	engineMemcached = "memcached"
 	defaultNodeType = "cache.t3.micro"
 	statusAvailable = "available"
+	// statusCreating and statusModifying are the real ElastiCache transient
+	// states a cluster/replication group reports (under AsyncSettle) on create and
+	// modify before settling to available.
+	statusCreating  = "creating"
+	statusModifying = "modifying"
 
 	defaultRedisVersion     = "7.1"
 	defaultMemcachedVersion = "1.6.22"
@@ -184,6 +190,15 @@ type Mock struct {
 	opts              *config.Options
 	monitoring        mondriver.Monitoring
 
+	// cacheSettle / rgSettle overlay a transient creating/modifying window over a
+	// cache cluster's / replication group's stored "available" status so
+	// create/modify report the real ElastiCache intermediate state before
+	// settling. Both are no-ops unless config.Options.AsyncSettle is set
+	// (SettleDuration returns 0 → inactive window → historical synchronous
+	// behavior). Each Set carries its own lock.
+	cacheSettle *settle.Set
+	rgSettle    *settle.Set
+
 	tagMu     sync.Mutex
 	tagsByARN map[string]map[string]string
 }
@@ -227,9 +242,23 @@ func New(opts *config.Options) *Mock {
 		replicationGroups: memstore.New[driver.ReplicationGroup](),
 		parameterGroups:   memstore.New[ParameterGroup](),
 		snapshots:         memstore.New[driver.Snapshot](),
+		cacheSettle:       settle.NewSet(),
+		rgSettle:          settle.NewSet(),
 		tagsByARN:         make(map[string]map[string]string),
 		opts:              opts,
 	}
+}
+
+// settleCacheStatus overlays a cache cluster's settle window (keyed by name)
+// onto its stored terminal status.
+func (m *Mock) settleCacheStatus(name, final string) string {
+	return m.cacheSettle.State(name, m.opts.Clock.Now(), final)
+}
+
+// settleRGStatus overlays a replication group's settle window (keyed by id)
+// onto its stored terminal status.
+func (m *Mock) settleRGStatus(id, final string) string {
+	return m.rgSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // CreateCache creates a new ElastiCache cluster.
@@ -308,7 +337,15 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	m.caches.Set(cfg.Name, cd)
 	m.seedTags(info.ARN, tags)
 
+	// Under AsyncSettle a fresh cluster reports creating until the window elapses,
+	// matching real ElastiCache (CreateCacheCluster → creating → available). With
+	// the default (AsyncSettle off) SettleDuration is 0 → inactive window →
+	// available immediately, so nothing changes for existing callers.
+	m.cacheSettle.Begin(cfg.Name, statusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheSettle))
+
 	result := info
+	result.Status = m.settleCacheStatus(cfg.Name, result.Status)
 
 	return &result, nil
 }
@@ -344,7 +381,14 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 
 	m.caches.Set(cfg.Name, cd)
 
+	// Under AsyncSettle a modified cluster briefly reports modifying before
+	// settling back to available (ModifyCacheCluster → modifying → available); a
+	// no-op when settle is off.
+	m.cacheSettle.Begin(cfg.Name, statusModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
+
 	result := cd.info
+	result.Status = m.settleCacheStatus(cfg.Name, result.Status)
 
 	return &result, nil
 }
@@ -379,6 +423,7 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 	}
 
 	m.caches.Delete(name)
+	m.cacheSettle.Clear(name)
 
 	return nil
 }
@@ -391,6 +436,7 @@ func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, erro
 	}
 
 	result := cd.info
+	result.Status = m.settleCacheStatus(name, result.Status)
 
 	return &result, nil
 }
@@ -400,11 +446,15 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 	all := m.caches.SortedValues()
 
 	caches := make([]driver.CacheInfo, 0, len(all))
+
 	for _, cd := range all {
 		if !cd.info.Scope.Matches(filter) {
 			continue
 		}
-		caches = append(caches, cd.info)
+
+		info := cd.info
+		info.Status = m.settleCacheStatus(info.Name, info.Status)
+		caches = append(caches, info)
 	}
 
 	return caches, nil
@@ -431,7 +481,11 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	m.caches.Set(cfg.Name, cd)
 
+	m.cacheSettle.Begin(cfg.Name, statusModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
+
 	result := cd.info
+	result.Status = m.settleCacheStatus(cfg.Name, result.Status)
 
 	return &result, nil
 }

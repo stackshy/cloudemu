@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -52,6 +53,13 @@ type Mock struct {
 	// events is an append-only lifecycle log surfaced by DescribeEvents.
 	events []mdbdriver.Event
 
+	// clusterSettle overlays a transient creating/updating window (keyed by
+	// cluster name) over a cluster's stored "available" status so create/update
+	// report the real MemoryDB intermediate state before settling. It is a no-op
+	// unless config.Options.AsyncSettle is set (SettleDuration returns 0 → inactive
+	// window → historical synchronous behavior). The Set has its own lock.
+	clusterSettle *settle.Set
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -70,6 +78,7 @@ func New(opts *config.Options) *Mock {
 		reservedNodes:   memstore.New[mdbdriver.ReservedNode](),
 		paramOverrides:  make(map[string]map[string]string),
 		tags:            make(map[string]map[string]string),
+		clusterSettle:   settle.NewSet(),
 		opts:            opts,
 	}
 
@@ -89,6 +98,14 @@ func New(opts *config.Options) *Mock {
 // SetMonitoring wires a CloudWatch backend for auto-metric emission.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// overlayClusterStatus overlays a cluster's settle window (keyed by name) onto
+// its Status field: the transient value while the window is active and
+// unelapsed, otherwise the stored terminal status. A no-op when no window
+// exists (default AsyncSettle-off path).
+func (m *Mock) overlayClusterStatus(c *mdbdriver.Cluster) {
+	c.Status = m.clusterSettle.State(c.Name, m.opts.Clock.Now(), c.Status)
 }
 
 func (m *Mock) arn(resourceType, name string) string {

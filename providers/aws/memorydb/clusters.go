@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
@@ -253,6 +254,8 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 
 	// No engine wired in: the synthetic cluster is complete as reserved.
 	if m.opts.CacheEngine == nil {
+		m.overlayClusterStatus(reserved)
+
 		return reserved, nil
 	}
 
@@ -264,6 +267,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 	}
 
 	out := m.finalizeClusterEngine(reserved, host, port)
+	m.overlayClusterStatus(&out)
 
 	return &out, nil
 }
@@ -366,6 +370,14 @@ func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cl
 	m.emitClusterMetrics(cfg.Name)
 	m.recordClusterEvent(cfg.Name, "Cluster created")
 
+	// Under AsyncSettle a fresh cluster reports creating until the window elapses,
+	// matching real MemoryDB (CreateCluster → creating → available). With the
+	// default (AsyncSettle off) SettleDuration is 0 → inactive window → available
+	// immediately, so nothing changes for existing callers. The stored row keeps
+	// the terminal status; only the read-path copy is overlaid.
+	m.clusterSettle.Begin(cfg.Name, mdbdriver.StatusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
+
 	out := cloneCluster(&cluster)
 
 	return &out, nil
@@ -423,6 +435,7 @@ func (m *Mock) rollbackCluster(name, acl, mrc string) {
 	defer m.mu.Unlock()
 
 	m.clusters.Delete(name)
+	m.clusterSettle.Clear(name)
 	m.linkACLCluster(acl, name, false)
 
 	if mrc != "" {
@@ -435,9 +448,18 @@ func (m *Mock) DescribeClusters(_ context.Context, names []string) ([]mdbdriver.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return describeByName(m.clusters, names, cloneCluster, func(n string) error {
+	out, err := describeByName(m.clusters, names, cloneCluster, func(n string) error {
 		return cerrors.Newf(cerrors.NotFound, "cluster %q not found", n)
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range out {
+		m.overlayClusterStatus(&out[i])
+	}
+
+	return out, nil
 }
 
 // UpdateCluster applies the non-zero fields of cfg to an existing cluster.
@@ -488,7 +510,14 @@ func (m *Mock) UpdateCluster(_ context.Context, cfg mdbdriver.UpdateClusterConfi
 	m.clusters.Set(cfg.Name, c)
 	m.recordClusterEvent(cfg.Name, "Cluster modified")
 
+	// Under AsyncSettle an updated cluster briefly reports updating before settling
+	// back to available (UpdateCluster → updating → available); a no-op when settle
+	// is off.
+	m.clusterSettle.Begin(cfg.Name, mdbdriver.StatusUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
+
 	out := cloneCluster(&c)
+	m.overlayClusterStatus(&out)
 
 	return &out, nil
 }
@@ -582,6 +611,7 @@ func (m *Mock) stageClusterDeleteLocked(name, finalSnapshotName string) (mdbdriv
 // holds the lock.
 func (m *Mock) removeClusterLocked(c *mdbdriver.Cluster) *mdbdriver.Cluster {
 	m.clusters.Delete(c.Name)
+	m.clusterSettle.Clear(c.Name)
 	m.linkACLCluster(c.ACLName, c.Name, false)
 
 	if c.MultiRegionClusterName != "" {

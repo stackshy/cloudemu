@@ -171,8 +171,6 @@ func (m *Mock) GetType(_ context.Context, keyspace, name string) (*ksdriver.UDT,
 }
 
 // ListTypes returns the type names of a keyspace, deterministically ordered.
-//
-//nolint:dupl // the per-keyspace prefix filter mirrors ListTables by design.
 func (m *Mock) ListTypes(_ context.Context, keyspace string) ([]ksdriver.UDT, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
