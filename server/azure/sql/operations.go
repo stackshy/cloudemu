@@ -155,6 +155,27 @@ func (h *Handler) databases() (rdsdriver.Databases, bool) {
 	return d, ok
 }
 
+// databaseStatuser is the optional provider capability that reports a
+// database's transient ARM status (Creating / Scaling) while an async settle
+// window is active. Providers that don't implement it (settle disabled or not
+// adopted) leave the status empty, so read responses report the terminal
+// Online. Kept an assertion (not a required interface method) so the wire
+// layer stays decoupled from the settle overlay.
+type databaseStatuser interface {
+	DatabaseTransientStatus(server, name string) string
+}
+
+// databaseStatus returns the transient status the provider reports for a
+// database, or "" when the provider doesn't expose one.
+func (h *Handler) databaseStatus(server, name string) string {
+	s, ok := h.db.(databaseStatuser)
+	if !ok {
+		return ""
+	}
+
+	return s.DatabaseTransientStatus(server, name)
+}
+
 func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.DatabaseConfig {
 	cfg := rdsdriver.DatabaseConfig{
 		Server:   rp.ResourceName,
@@ -194,7 +215,7 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 
 	out, err := db.CreateDatabase(r.Context(), cfg)
 	if err == nil {
-		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp, h.databaseStatus(out.Server, out.Name)))
 		return
 	}
 
@@ -213,7 +234,7 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 
 	out, err = replaceDatabase(r.Context(), db, &body, &cfg)
 	if err == nil {
-		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp, h.databaseStatus(out.Server, out.Name)))
 		return
 	}
 
@@ -351,14 +372,14 @@ func requireElasticPool(ctx context.Context, db rdsdriver.Databases, server, poo
 	return err
 }
 
-func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
+func (h *Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
 	out, err := db.GetDatabase(r.Context(), rp.ResourceName, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp, h.databaseStatus(out.Server, out.Name)))
 }
 
 func (*Handler) deleteDatabase(
@@ -374,7 +395,7 @@ func (*Handler) deleteDatabase(
 	w.WriteHeader(http.StatusOK)
 }
 
-func (*Handler) listDatabases(
+func (h *Handler) listDatabases(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases,
 ) {
 	items, err := db.ListDatabases(r.Context(), rp.ResourceName)
@@ -385,7 +406,7 @@ func (*Handler) listDatabases(
 
 	out := make([]armDatabase, 0, len(items))
 	for i := range items {
-		out = append(out, toARMDatabase(&items[i], rp))
+		out = append(out, toARMDatabase(&items[i], rp, h.databaseStatus(items[i].Server, items[i].Name)))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armList[armDatabase]{Value: out})

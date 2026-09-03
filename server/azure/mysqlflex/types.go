@@ -137,7 +137,9 @@ func serverState(state string) string {
 		return stateReady
 	case rdsdriver.StateStopped:
 		return stateStopped
-	case rdsdriver.StateStarting:
+	// The ARM ServerState enum has no "Creating"; a provisioning server reports
+	// Starting until it settles to Ready (async lifecycle, AsyncSettle only).
+	case rdsdriver.StateCreating, rdsdriver.StateStarting:
 		return stateStarting
 	case rdsdriver.StateStopping:
 		return stateStopping

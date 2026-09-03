@@ -86,8 +86,16 @@ func toARMServer(cluster *rdsdriver.Cluster, subscription, resourceGroup string)
 // toARMDatabase converts a portable Database (Databases capability) to ARM JSON.
 // SKU.name plus properties.currentSku / zoneRedundant are echoed so SKU/tier
 // and HA are observable to both the armsql SDK and Resource Graph discovery.
-func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath) armDatabase {
+//
+// status is the transient ARM status (Creating / Scaling) reported while a
+// create/update settle window is active; empty means the database has settled,
+// so read responses report the terminal Online.
+func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status string) armDatabase {
 	zoneRedundant := db.ZoneRedundant
+
+	if status == "" {
+		status = dbStatusOnline
+	}
 
 	return armDatabase{
 		ID:       armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
@@ -97,7 +105,7 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath) armDatabas
 		Tags:     db.Tags,
 		SKU:      &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
 		Properties: &armDatabaseProps{
-			Status:                      dbStatusOnline,
+			Status:                      status,
 			Collation:                   db.Collation,
 			DatabaseID:                  databaseGUID(db),
 			CurrentServiceObjectiveName: db.SKUName,
