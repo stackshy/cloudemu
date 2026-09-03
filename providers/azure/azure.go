@@ -234,6 +234,11 @@ func New(opts ...config.Option) *Provider {
 	p.EventGrid.SetMonitoring(p.Monitor)
 	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
 	p.EventGrid.SetFunctionInvoker(p.Functions)
+	// Native trigger delivery: a message enqueued to a Storage queue or Service
+	// Bus queue invokes any function whose function.json declares the matching
+	// trigger binding (queueTrigger / serviceBusTrigger) for that queue.
+	p.QueueStorage.SetFunctionTriggerSink(p.Functions, "queueTrigger")
+	p.ServiceBus.SetFunctionTriggerSink(p.Functions, "serviceBusTrigger")
 	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
