@@ -4,11 +4,29 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+)
+
+// Azure SQL Database ARM status values (properties.status). A database is
+// Creating on first provision and Scaling while a service-objective/SKU change
+// applies, then settles to Online. See armsql.DatabaseStatus.
+const (
+	dbStatusCreating = "Creating"
+	dbStatusScaling  = "Scaling"
 )
 
 // dbKey is the storage key for a logical database: "server/name".
 func dbKey(server, name string) string { return server + "/" + name }
+
+// DatabaseTransientStatus returns the ARM database status to report while a
+// create/update settle window is active ("Creating" / "Scaling"), or "" once
+// the database has settled (the wire layer then reports the terminal "Online").
+// Always "" unless config.Options.AsyncSettle is set. It is the read-through the
+// wire handler consults so a real armsql client observes the intermediate state.
+func (m *Mock) DatabaseTransientStatus(server, name string) string {
+	return m.dbSettle.State(dbKey(server, name), m.opts.Clock.Now(), "")
+}
 
 // CreateDatabase creates a logical database on a SQL server, implementing the
 // relationaldb Databases optional capability. SKU/tier default to the common
@@ -65,6 +83,12 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	}
 	m.databases.Set(key, db)
 
+	// Under AsyncSettle the database reports status Creating until the window
+	// elapses (real Azure SQL: Creating → Online). Default off → SettleDuration
+	// 0 → inactive window → Online immediately.
+	m.dbSettle.Begin(key, dbStatusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	// Azure SQL databases are encrypted at rest by default: a create
 	// materializes the transparentDataEncryption/current sub-resource as
 	// Enabled so a Get on it round-trips without a separate PUT.
@@ -117,6 +141,12 @@ func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		return nil, cerrors.Newf(cerrors.NotFound, "database %q not found on server %q", cfg.Name, cfg.Server)
 	}
 
+	// Under AsyncSettle an updated database briefly reports status Scaling (a
+	// service-objective/SKU change) before settling back to Online; a no-op when
+	// settle is off.
+	m.dbSettle.Begin(dbKey(cfg.Server, cfg.Name), dbStatusScaling, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	out := updated
 	out.Tags = copyTags(updated.Tags)
 
@@ -168,6 +198,7 @@ func (m *Mock) DeleteDatabase(_ context.Context, server, name string) error {
 	}
 
 	m.tde.Delete(dbKey(server, name))
+	m.dbSettle.Clear(dbKey(server, name))
 
 	return nil
 }

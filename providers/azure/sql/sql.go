@@ -31,6 +31,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -79,6 +80,16 @@ type Mock struct {
 	// transparent-data-encryption records, key = "server/database"
 	tde *memstore.Store[rdsdriver.TransparentDataEncryption]
 
+	// instSettle overlays a transient Creating / Updating window over a database
+	// instance's stored available state on the portable relationaldb path
+	// (keyed "server/database"). dbSettle overlays the ARM database status
+	// (Creating / Scaling → Online) on the wire Databases-capability path (keyed
+	// "server/name"). Both are no-ops unless config.Options.AsyncSettle is set
+	// (SettleDuration returns 0 → inactive window → historical synchronous
+	// behavior); each Set carries its own lock.
+	instSettle *settle.Set
+	dbSettle   *settle.Set
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -98,8 +109,17 @@ func New(opts *config.Options) *Mock {
 		tde:              memstore.New[rdsdriver.TransparentDataEncryption](),
 		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
 		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
+		instSettle:       settle.NewSet(),
+		dbSettle:         settle.NewSet(),
 		opts:             opts,
 	}
+}
+
+// settleInstState overlays an instance's settle window (if any) onto its stored
+// terminal state: the transient value while the window is active and unelapsed,
+// otherwise final. Absent window → final.
+func (m *Mock) settleInstState(server, database, final string) string {
+	return m.instSettle.State(instanceKey(server, database), m.opts.Clock.Now(), final)
 }
 
 // SetMonitoring wires an Azure-Monitor-style backend for auto-metric emission.
@@ -257,9 +277,16 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	server.Members = append(server.Members, cfg.ID)
 	m.clusters.Set(cfg.ClusterID, server)
 
+	// Under AsyncSettle a fresh database reports creating until the window
+	// elapses, matching real Azure SQL (status Creating → Online). Default off →
+	// SettleDuration 0 → inactive window → available immediately.
+	m.instSettle.Begin(instanceKey(cfg.ClusterID, cfg.ID), rdsdriver.StateCreating,
+		m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	m.emitDatabaseMetrics(cfg.ClusterID, cfg.ID, cpuMetricRunning, dtuRunning)
 
 	out := cloneInstance(inst)
+	out.State = m.settleInstState(cfg.ClusterID, cfg.ID, out.State)
 
 	return &out, nil
 }
@@ -278,7 +305,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, cloneInstance(v))
+			c := cloneInstance(v)
+			c.State = m.settleInstState(c.ClusterID, c.ID, c.State)
+			out = append(out, c)
 		}
 
 		return out, nil
@@ -292,7 +321,9 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, err
 		}
 
-		out = append(out, cloneInstance(inst))
+		c := cloneInstance(inst)
+		c.State = m.settleInstState(c.ClusterID, c.ID, c.State)
+		out = append(out, c)
 	}
 
 	return out, nil
@@ -364,7 +395,13 @@ func (m *Mock) ModifyInstance(
 
 	m.instances.Set(instanceKey(inst.ClusterID, inst.ID), inst)
 
+	// Under AsyncSettle a modified database briefly reports updating before
+	// settling back to available; a no-op when settle is off.
+	m.instSettle.Begin(instanceKey(inst.ClusterID, inst.ID), rdsdriver.StateModifying,
+		m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	out := cloneInstance(inst)
+	out.State = m.settleInstState(inst.ClusterID, inst.ID, out.State)
 
 	return &out, nil
 }
@@ -380,6 +417,7 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 	}
 
 	m.instances.Delete(instanceKey(inst.ClusterID, inst.ID))
+	m.instSettle.Clear(instanceKey(inst.ClusterID, inst.ID))
 
 	cluster, ok := m.clusters.Get(inst.ClusterID)
 	if ok {
@@ -441,6 +479,10 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, dtu float64, verb st
 
 	inst.State = to
 	m.instances.Set(instanceKey(inst.ClusterID, inst.ID), inst)
+
+	// A start/stop transition supersedes any post-create settle window, so the
+	// new terminal state is observed immediately.
+	m.instSettle.Clear(instanceKey(inst.ClusterID, inst.ID))
 
 	m.emitDatabaseMetrics(inst.ClusterID, inst.ID, cpu, dtu)
 
@@ -749,9 +791,15 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		m.clusters.Set(server, cluster)
 	}
 
+	// A restore provisions a fresh database, so it settles creating → available
+	// like a create under AsyncSettle; a no-op when settle is off.
+	m.instSettle.Begin(instanceKey(server, dbName), rdsdriver.StateCreating,
+		m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	m.emitDatabaseMetrics(server, dbName, cpuMetricRunning, dtuRunning)
 
 	out := cloneInstance(inst)
+	out.State = m.settleInstState(server, dbName, out.State)
 
 	return &out, nil
 }

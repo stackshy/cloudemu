@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -60,6 +61,13 @@ type Mock struct {
 	firewallRules  *memstore.Store[rdsdriver.FirewallRule]
 	configurations *memstore.Store[rdsdriver.Configuration]
 
+	// instSettle overlays a transient Starting / Updating window over a server's
+	// stored available state so create/modify/restart report the real Azure
+	// Postgres Flex ServerState before settling to Ready. A no-op unless
+	// config.Options.AsyncSettle is set (SettleDuration returns 0 → inactive
+	// window → the historical synchronous behavior). The Set carries its own lock.
+	instSettle *settle.Set
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -72,8 +80,16 @@ func New(opts *config.Options) *Mock {
 		databases:      memstore.New[rdsdriver.Database](),
 		firewallRules:  memstore.New[rdsdriver.FirewallRule](),
 		configurations: memstore.New[rdsdriver.Configuration](),
+		instSettle:     settle.NewSet(),
 		opts:           opts,
 	}
+}
+
+// settleState overlays the server's settle window (if any) onto its stored
+// terminal state: the transient value while the window is active and unelapsed,
+// otherwise final. Absent window → final.
+func (m *Mock) settleState(id, final string) string {
+	return m.instSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // SetMonitoring wires an Azure-Monitor-style backend for auto-metric emission.
@@ -161,6 +177,15 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 	}
 
 	out := m.finalizeInstance(cfg.ID, inst)
+
+	// Under AsyncSettle a fresh server reports Starting until the window elapses,
+	// matching real Azure Postgres Flex (ServerState has no Creating; a
+	// provisioning server reports Starting → Ready). Default off → SettleDuration
+	// 0 → inactive window → Ready immediately.
+	m.instSettle.Begin(cfg.ID, rdsdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
+	out.State = m.settleState(cfg.ID, out.State)
 
 	m.emitServerMetrics(cfg.ID, cpuMetricRunning, connRunning)
 
@@ -279,6 +304,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
+			v.State = m.settleState(v.ID, v.State)
 			out = append(out, v)
 		}
 
@@ -293,6 +319,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "Postgres Flex server %q not found", id)
 		}
 
+		inst.State = m.settleState(inst.ID, inst.State)
 		out = append(out, inst)
 	}
 
@@ -353,7 +380,13 @@ func (m *Mock) ModifyInstance(
 
 	m.instances.Set(id, inst)
 
+	// Under AsyncSettle a modified server briefly reports Updating before
+	// settling back to Ready; a no-op when settle is off.
+	m.instSettle.Begin(id, rdsdriver.StateModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	out := inst
+	out.State = m.settleState(id, out.State)
 
 	return &out, nil
 }
@@ -390,6 +423,7 @@ func (m *Mock) deleteInstanceScoped(ctx context.Context, id string, filter scope
 	}
 
 	m.instances.Delete(id)
+	m.instSettle.Clear(id)
 	m.deleteChildren(id)
 
 	return nil
@@ -447,6 +481,11 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 
 	m.instances.Set(id, inst)
 
+	// A restart briefly reports Updating (StateRebooting → Updating) before
+	// settling back to Ready under AsyncSettle; a no-op when settle is off.
+	m.instSettle.Begin(id, rdsdriver.StateRebooting, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBRebootSettle))
+
 	m.emitServerMetrics(id, cpuMetricRunning, connRunning)
 
 	return nil
@@ -472,6 +511,10 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 
 	inst.State = to
 	m.instances.Set(id, inst)
+
+	// A start/stop transition supersedes any post-create settle window, so the
+	// new terminal state is observed immediately.
+	m.instSettle.Clear(id)
 
 	m.emitServerMetrics(id, cpu, conns)
 
@@ -643,9 +686,15 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	m.instances.Set(input.NewInstanceID, inst)
 
+	// A restore provisions a fresh server, so it settles Starting → Ready like a
+	// create under AsyncSettle; a no-op when settle is off.
+	m.instSettle.Begin(input.NewInstanceID, rdsdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultAzureDBSettle))
+
 	m.emitServerMetrics(input.NewInstanceID, cpuMetricRunning, connRunning)
 
 	out := inst
+	out.State = m.settleState(input.NewInstanceID, out.State)
 
 	return &out, nil
 }
