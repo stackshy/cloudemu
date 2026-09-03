@@ -21,8 +21,26 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+)
+
+// Cluster and node pool status values (real GKE clusterStatus / nodePoolStatus
+// enums). PROVISIONING_ERROR, ERROR, and DEGRADED are not modeled — the mock
+// has no failure injection for the control-plane provisioning path.
+const (
+	statusProvisioning = "PROVISIONING"
+	statusRunning      = "RUNNING"
+	statusReconciling  = "RECONCILING"
+)
+
+// Operation status values (real GKE Operation.status enum). PENDING is not
+// modeled — the mock starts every operation directly in RUNNING.
+const (
+	opStatusRunning  = "RUNNING"
+	opStatusDone     = "DONE"
+	opStatusAborting = "ABORTING"
 )
 
 // Default versions reported by clusters/node pools and getServerConfig.
@@ -126,6 +144,18 @@ type Mock struct {
 	nodePools  *memstore.Store[NodePool] // keyed by clusterName + "/" + nodePoolName
 	operations *memstore.Store[Operation]
 
+	// clusterSettle/nodePoolSettle/opSettle overlay a transient
+	// PROVISIONING/RECONCILING/RUNNING window over a cluster's, node pool's, or
+	// operation's stored terminal status, so create/mutate calls report the real
+	// GKE intermediate state before settling — matching how real Container Engine
+	// Operations poll RUNNING before DONE while the target resource is still
+	// PROVISIONING/RECONCILING. Each Set is a no-op unless config.Options.
+	// AsyncSettle is set (SettleDuration returns 0 -> inactive window -> the
+	// historical synchronous behavior). The Sets carry their own locks.
+	clusterSettle  *settle.Set
+	nodePoolSettle *settle.Set
+	opSettle       *settle.Set
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 
@@ -141,12 +171,33 @@ type Mock struct {
 // New creates a new GKE mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:   memstore.New[Cluster](),
-		nodePools:  memstore.New[NodePool](),
-		operations: memstore.New[Operation](),
-		opts:       opts,
-		k8sUIDs:    make(map[string]string),
+		clusters:       memstore.New[Cluster](),
+		nodePools:      memstore.New[NodePool](),
+		operations:     memstore.New[Operation](),
+		clusterSettle:  settle.NewSet(),
+		nodePoolSettle: settle.NewSet(),
+		opSettle:       settle.NewSet(),
+		opts:           opts,
+		k8sUIDs:        make(map[string]string),
 	}
+}
+
+// clusterState overlays a cluster's settle window (if any) onto its stored
+// terminal status.
+func (m *Mock) clusterState(key, final string) string {
+	return m.clusterSettle.State(key, m.opts.Clock.Now(), final)
+}
+
+// nodePoolState overlays a node pool's settle window (if any) onto its stored
+// terminal status.
+func (m *Mock) nodePoolState(key, final string) string {
+	return m.nodePoolSettle.State(key, m.opts.Clock.Now(), final)
+}
+
+// opState overlays an operation's settle window (if any) onto its stored
+// terminal status.
+func (m *Mock) opState(name, final string) string {
+	return m.opSettle.State(name, m.opts.Clock.Now(), final)
 }
 
 // SetMonitoring wires a Cloud Monitoring backend for auto-metric emission.
@@ -239,12 +290,35 @@ func (m *Mock) recordOperation(opType, location, target string) Operation {
 		Name:          idgen.GenerateID("operation-"),
 		Location:      location,
 		OperationType: opType,
-		Status:        "DONE",
+		Status:        opStatusDone,
 		TargetLink:    target,
 		StartTime:     now,
 		EndTime:       now,
 	}
 	m.operations.Set(op.Name, op)
+
+	return op
+}
+
+// recordOperationAsync behaves like recordOperation but additionally opens an
+// opSettle window so GetOperation/ListOperations report the intermediate
+// RUNNING status until dur elapses — mirroring how a real GKE LRO polls RUNNING
+// while its target cluster/node pool is still PROVISIONING/RECONCILING. now and
+// dur are shared with the caller's resource-level settle.Set.Begin call so both
+// windows open and close in lockstep. A non-positive dur (AsyncSettle off)
+// leaves the operation observed DONE immediately, unchanged from before.
+func (m *Mock) recordOperationAsync(opType, location, target string, now time.Time, dur time.Duration) Operation {
+	op := Operation{
+		Name:          idgen.GenerateID("operation-"),
+		Location:      location,
+		OperationType: opType,
+		Status:        opStatusDone,
+		TargetLink:    target,
+		StartTime:     now,
+		EndTime:       now,
+	}
+	m.operations.Set(op.Name, op)
+	m.opSettle.Begin(op.Name, opStatusRunning, now, dur)
 
 	return op
 }
@@ -319,6 +393,8 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		return nil, nil, cerrors.Newf(cerrors.AlreadyExists, "cluster %q already exists", input.Name)
 	}
 
+	now := m.opts.Clock.Now().UTC()
+
 	cluster := Cluster{
 		Name:              input.Name,
 		ID:                idgen.SyntheticGUID(key),
@@ -334,8 +410,8 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		LoggingService:    defaultIfEmpty(input.LoggingService, "logging.googleapis.com/kubernetes"),
 		MonitoringService: defaultIfEmpty(input.MonitoringService, "monitoring.googleapis.com/kubernetes"),
 		ResourceLabels:    copyLabels(input.ResourceLabels),
-		Status:            "RUNNING",
-		CreatedAt:         m.opts.Clock.Now().UTC(),
+		Status:            statusRunning,
+		CreatedAt:         now,
 	}
 
 	// Bootstrap default node pool when none specified — matches real GKE. The
@@ -361,9 +437,18 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		pools = []NodePoolSpec{spec}
 	}
 
+	// The bootstrap/explicit node pools provision alongside the cluster in real
+	// GKE, so they share the cluster's settle window rather than their own
+	// standalone CreateNodePool window.
+	settleDur := m.opts.SettleDuration(settle.DefaultGKEClusterSettle)
+
 	for i := range pools {
-		np := nodePoolFromSpec(&pools[i], input.Name, input.Location, m.opts.Clock.Now().UTC())
-		m.nodePools.Set(nodePoolKey(input.Location, input.Name, np.Name), np)
+		np := nodePoolFromSpec(&pools[i], input.Name, input.Location, now)
+		npKey := nodePoolKey(input.Location, input.Name, np.Name)
+
+		m.nodePools.Set(npKey, np)
+		m.nodePoolSettle.Begin(npKey, statusProvisioning, now, settleDur)
+
 		cluster.NodePoolNames = append(cluster.NodePoolNames, np.Name)
 	}
 
@@ -376,13 +461,16 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	}
 
 	m.clusters.Set(key, cluster)
+	m.clusterSettle.Begin(key, statusProvisioning, now, settleDur)
 
-	op := m.recordOperation("CREATE_CLUSTER", input.Location,
-		"projects/"+m.opts.ProjectID+"/locations/"+input.Location+"/clusters/"+input.Name)
+	op := m.recordOperationAsync("CREATE_CLUSTER", input.Location,
+		"projects/"+m.opts.ProjectID+"/locations/"+input.Location+"/clusters/"+input.Name, now, settleDur)
 
 	m.emitClusterMetrics(input.Name)
 
 	out := cluster
+	out.Status = m.clusterState(key, out.Status)
+	op.Status = m.opState(op.Name, op.Status)
 
 	return &out, &op, nil
 }
@@ -417,7 +505,7 @@ func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time
 		AutoscalingOn:  spec.AutoscalingOn,
 		AutoUpgrade:    autoUpgrade,
 		AutoRepair:     autoRepair,
-		Status:         "RUNNING",
+		Status:         statusRunning,
 		CreatedAt:      now,
 	}
 }
@@ -427,13 +515,16 @@ func (m *Mock) GetCluster(_ context.Context, location, name string) (*Cluster, e
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	c, ok := m.clusters.Get(clusterKey(location, name))
+	key := clusterKey(location, name)
+
+	c, ok := m.clusters.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found in %q", name, location)
 	}
 
 	out := c
 	out.LabelFingerprint = labelFingerprint(out.ResourceLabels)
+	out.Status = m.clusterState(key, out.Status)
 
 	return &out, nil
 }
@@ -447,12 +538,13 @@ func (m *Mock) ListClusters(_ context.Context, location string) ([]Cluster, erro
 	out := make([]Cluster, 0, len(all))
 
 	//nolint:gocritic // map values are sized for accuracy.
-	for _, c := range all {
+	for k, c := range all {
 		if location != "" && location != "-" && c.Location != location {
 			continue
 		}
 
 		c.LabelFingerprint = labelFingerprint(c.ResourceLabels)
+		c.Status = m.clusterState(k, c.Status)
 		out = append(out, c)
 	}
 
@@ -547,11 +639,13 @@ func (m *Mock) DeleteCluster(_ context.Context, location, name string) (*Operati
 	}
 
 	m.clusters.Delete(key)
+	m.clusterSettle.Clear(key)
 
 	prefix := location + "/" + name + "/"
 	for _, k := range m.nodePools.Keys() {
 		if hasPrefix(k, prefix) {
 			m.nodePools.Delete(k)
+			m.nodePoolSettle.Clear(k)
 		}
 	}
 
@@ -701,16 +795,23 @@ func (m *Mock) CreateNodePool(
 		return nil, nil, cerrors.Newf(cerrors.AlreadyExists, "node pool %q already exists in cluster %q", spec.Name, clusterName)
 	}
 
-	np := nodePoolFromSpec(spec, clusterName, location, m.opts.Clock.Now().UTC())
+	now := m.opts.Clock.Now().UTC()
+
+	np := nodePoolFromSpec(spec, clusterName, location, now)
 	m.nodePools.Set(npKey, np)
+
+	settleDur := m.opts.SettleDuration(settle.DefaultGKENodePoolSettle)
+	m.nodePoolSettle.Begin(npKey, statusProvisioning, now, settleDur)
 
 	cluster.NodePoolNames = append(cluster.NodePoolNames, np.Name)
 	m.clusters.Set(cKey, cluster)
 
-	op := m.recordOperation("CREATE_NODE_POOL", location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+spec.Name)
+	op := m.recordOperationAsync("CREATE_NODE_POOL", location,
+		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+spec.Name, now, settleDur)
 
 	out := np
+	out.Status = m.nodePoolState(npKey, out.Status)
+	op.Status = m.opState(op.Name, op.Status)
 
 	return &out, &op, nil
 }
@@ -720,12 +821,15 @@ func (m *Mock) GetNodePool(_ context.Context, location, clusterName, name string
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	np, ok := m.nodePools.Get(nodePoolKey(location, clusterName, name))
+	key := nodePoolKey(location, clusterName, name)
+
+	np, ok := m.nodePools.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "node pool %q not found in cluster %q", name, clusterName)
 	}
 
 	out := np
+	out.Status = m.nodePoolState(key, out.Status)
 
 	return &out, nil
 }
@@ -743,6 +847,7 @@ func (m *Mock) ListNodePools(_ context.Context, location, clusterName string) ([
 	//nolint:gocritic // map values are sized for accuracy.
 	for k, np := range all {
 		if hasPrefix(k, prefix) {
+			np.Status = m.nodePoolState(k, np.Status)
 			out = append(out, np)
 		}
 	}
@@ -787,6 +892,7 @@ func (m *Mock) DeleteNodePool(_ context.Context, location, clusterName, name str
 	}
 
 	m.nodePools.Delete(npKey)
+	m.nodePoolSettle.Clear(npKey)
 
 	if cluster, ok := m.clusters.Get(clusterKey(location, clusterName)); ok {
 		cluster.NodePoolNames = removeString(cluster.NodePoolNames, name)
@@ -837,6 +943,12 @@ func (m *Mock) RollbackNodePool(_ context.Context, location, clusterName, name s
 	})
 }
 
+// mutateNodePool applies fn to a node pool and records the operation it
+// triggers. Real GKE surfaces RECONCILING while any node-pool mutation (resize,
+// autoscaling toggle, management change, upgrade/rollback) is in flight, so a
+// brief RECONCILING settle window overlays the pool's status here too — the
+// mutated field (e.g. NodeCount) itself is applied immediately so a synchronous
+// currentNodeCount read reflects the new value right away.
 func (m *Mock) mutateNodePool(
 	location, clusterName, name, opType string, fn func(*NodePool),
 ) (*Operation, error) {
@@ -853,8 +965,13 @@ func (m *Mock) mutateNodePool(
 	fn(&np)
 	m.nodePools.Set(key, np)
 
-	op := m.recordOperation(opType, location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+name)
+	now := m.opts.Clock.Now().UTC()
+	settleDur := m.opts.SettleDuration(settle.DefaultGKEReconcileSettle)
+	m.nodePoolSettle.Begin(key, statusReconciling, now, settleDur)
+
+	op := m.recordOperationAsync(opType, location,
+		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+name, now, settleDur)
+	op.Status = m.opState(op.Name, op.Status)
 
 	return &op, nil
 }
@@ -872,6 +989,7 @@ func (m *Mock) GetOperation(_ context.Context, _, name string) (*Operation, erro
 	}
 
 	out := op
+	out.Status = m.opState(name, out.Status)
 
 	return &out, nil
 }
@@ -901,6 +1019,7 @@ func (m *Mock) ListOperations(_ context.Context, location string) ([]Operation, 
 			continue
 		}
 
+		op.Status = m.opState(op.Name, op.Status)
 		out = append(out, op)
 	}
 
@@ -921,8 +1040,11 @@ func (m *Mock) CancelOperation(_ context.Context, _, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "operation %q not found", name)
 	}
 
-	op.Status = "ABORTING"
+	op.Status = opStatusAborting
 	m.operations.Set(name, op)
+	// A cancel supersedes any pending settle window: the ABORTING status must be
+	// observed immediately, not masked by a still-open RUNNING overlay.
+	m.opSettle.Clear(name)
 
 	return nil
 }

@@ -40,6 +40,9 @@ const (
 	DefaultAzureDBSettle     = 3 * time.Second // Azure SQL/flex Creating->Succeeded/Ready
 	DefaultKeyspacesSettle   = 2 * time.Second // Keyspaces table CREATING->ACTIVE
 
+	DefaultGKEClusterSettle   = 3 * time.Second // GKE cluster PROVISIONING->RUNNING
+	DefaultGKENodePoolSettle  = 2 * time.Second // GKE node pool PROVISIONING->RUNNING
+	DefaultGKEReconcileSettle = 1 * time.Second // GKE node pool RECONCILING->RUNNING (resize/mutate)
 	DefaultECSTaskStartSettle = 2 * time.Second // ECS task PROVISIONING/PENDING->RUNNING
 	DefaultECSTaskStopSettle  = 1 * time.Second // ECS task STOPPING/DEPROVISIONING->STOPPED
 )
