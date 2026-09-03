@@ -205,6 +205,7 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
 		strings.HasPrefix(r.URL.Path, layersPrefix) ||
 		strings.HasPrefix(r.URL.Path, functionURLPrefix) ||
+		strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix) ||
 		isCodeSigningPath(r.URL.Path)
 }
 
@@ -270,6 +271,8 @@ func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
 		h.serveLayers(w, r)
 	case strings.HasPrefix(r.URL.Path, functionURLPrefix):
 		h.serveFunctionURL(w, r)
+	case strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix):
+		h.serveEventInvokeConfig(w, r)
 	case isCodeSigningPath(r.URL.Path):
 		h.serveFunctionCodeSigningConfig(w, r)
 	default:

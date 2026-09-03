@@ -43,6 +43,9 @@ type funcSnapshot struct {
 	Policies     map[string]map[string]driver.PermissionStatement `json:"policies,omitempty"`
 	URLConfig    *driver.FunctionURLConfig                        `json:"urlConfig,omitempty"`
 	AWSConfig    driver.AWSFunctionConfig                         `json:"awsConfig"`
+	// EventInvokeConfigs is the async-invoke config per qualifier (retries,
+	// event age, OnSuccess/OnFailure destinations).
+	EventInvokeConfigs map[string]driver.EventInvokeConfig `json:"eventInvokeConfigs,omitempty"`
 }
 
 // versionSnapshot mirrors versionData (all fields unexported). Config carries the
@@ -109,7 +112,7 @@ func snapshotFunc(fd *funcData) *funcSnapshot {
 	fs := &funcSnapshot{
 		Info: fd.info, EngineBacked: fd.engineBacked, NextVersion: fd.nextVersion,
 		Concurrency: fd.concurrency, Policies: fd.policies, URLConfig: fd.urlConfig,
-		AWSConfig: fd.awsConfig,
+		AWSConfig: fd.awsConfig, EventInvokeConfigs: fd.eventInvokeConfigs,
 	}
 
 	for _, v := range fd.versions {
@@ -167,6 +170,7 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 		info: fs.Info, engineBacked: fs.EngineBacked, nextVersion: fs.NextVersion,
 		aliases: memstore.New[*aliasData](), concurrency: fs.Concurrency,
 		policies: fs.Policies, urlConfig: fs.URLConfig, awsConfig: fs.AWSConfig,
+		eventInvokeConfigs: fs.EventInvokeConfigs,
 	}
 
 	// Re-link the live handler if the host process has registered one for this

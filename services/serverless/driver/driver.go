@@ -150,6 +150,49 @@ type TracingConfig struct {
 	Mode string
 }
 
+// Destination is one async-invoke destination target (AWS Lambda Destination):
+// an SQS queue, SNS topic, Lambda function, or EventBridge event bus ARN that a
+// finished asynchronous invocation is routed to.
+type Destination struct {
+	Destination string // target ARN
+}
+
+// DestinationConfig routes the result of an asynchronous invocation (AWS Lambda
+// DestinationConfig): OnSuccess receives successful invocations, OnFailure
+// receives invocations that failed after exhausting their retries. Either may be
+// nil (no destination configured for that outcome).
+type DestinationConfig struct {
+	OnSuccess *Destination
+	OnFailure *Destination
+}
+
+// EventInvokeConfig is a function's asynchronous-invocation configuration (AWS
+// Lambda PutFunctionEventInvokeConfig), scoped to a version or alias via
+// Qualifier. It has no Azure Functions or GCP Cloud Functions equivalent, so it
+// is kept off the portable Serverless interface and applied/read through an
+// AWS-only optional interface, the same way Function URLs and DeadLetterConfig
+// are.
+type EventInvokeConfig struct {
+	FunctionName string
+	// Qualifier scopes the config to a published version or alias; empty (or
+	// "$LATEST") is the unqualified function config.
+	Qualifier string
+	// FunctionArn is the qualified function ARN echoed back in the response.
+	FunctionArn string
+	// MaximumRetryAttempts is the number of times Lambda retries a failed
+	// asynchronous invocation (0-2) before routing the event to the DLQ /
+	// OnFailure destination. Nil means the AWS default of 2.
+	MaximumRetryAttempts *int
+	// MaximumEventAgeInSeconds is how long (60-21600) Lambda keeps an
+	// unprocessed asynchronous event before discarding it. Nil means unset.
+	MaximumEventAgeInSeconds *int
+	// DestinationConfig routes the finished invocation's outcome to an
+	// OnSuccess / OnFailure target. Nil means no destinations configured.
+	DestinationConfig *DestinationConfig
+	// LastModified is the RFC3339 timestamp of the last Put/Update.
+	LastModified string
+}
+
 // EphemeralStorage is a function's /tmp size in MB (AWS Lambda EphemeralStorage).
 // Real Lambda accepts 512–10240 and defaults to 512 when the client omits it.
 type EphemeralStorage struct {

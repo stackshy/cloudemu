@@ -315,6 +315,11 @@ func New(opts ...config.Option) *Provider {
 	// SNS -> Lambda fan-out: publishes invoke lambda-protocol subscriptions with
 	// the SNS Records event (reuses the shared InvokeExternal choke point).
 	p.SNS.SetLambdaInvoker(p.Lambda)
+	// Lambda async failure -> DLQ / destination: a failed asynchronous (Event)
+	// invoke routes its event to the function's DeadLetterConfig queue/topic and
+	// its OnFailure/OnSuccess async destinations via the SQS/SNS mocks. Re-entry
+	// is bounded by the shared InvokeExternal recursion guard.
+	p.Lambda.SetAsyncDestinationTargets(p.SQS, p.SNS)
 	// EventBridge -> targets: matched rules deliver events to their first-class
 	// target types — SQS queues, Lambda functions (ASYNC), SNS topics, and Step
 	// Functions state machines (ASYNC). Lambda reuses the shared InvokeExternal

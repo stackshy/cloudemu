@@ -42,6 +42,10 @@ const (
 	// parameters and permissions (including the Qualifier) without running the
 	// function.
 	invokeTypeDryRun = "DryRun"
+	// invokeTypeEvent is the asynchronous (fire-and-forget) invocation type. A
+	// failed Event invoke routes its event to the DLQ / OnFailure destination
+	// after retries are exhausted; a successful one may route to OnSuccess.
+	invokeTypeEvent = "Event"
 	// dryRunStatusCode is the HTTP 204 No Content a successful DryRun reports.
 	dryRunStatusCode = 204
 )
@@ -101,6 +105,10 @@ type funcData struct {
 	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
 	// TracingConfig) applied through the AWSConfigurable optional interface.
 	awsConfig driver.AWSFunctionConfig
+	// eventInvokeConfigs holds the asynchronous-invocation config keyed by
+	// qualifier (normalized via policyKey: "" and "$LATEST" collapse to the
+	// unqualified function config), matching AWS's per-version/alias scoping.
+	eventInvokeConfigs map[string]driver.EventInvokeConfig
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -113,7 +121,15 @@ type Mock struct {
 	handlers   map[string]driver.HandlerFunc
 	monitoring mondriver.Monitoring
 	logs       logdriver.Logging // optional: CloudWatch Logs sink for invocation logs
-	mu         sync.Mutex        // guards PublishVersion read-modify-write on funcData
+	// dlqSQS / dlqSNS are the cross-service seams a failed asynchronous invoke
+	// uses to route its event to the function's DeadLetterConfig queue/topic and
+	// its OnFailure/OnSuccess async destinations. Both are optional: unset means
+	// destination routing is silently skipped (library users without SQS/SNS are
+	// unaffected). Delivery re-enters Lambda only through InvokeExternal, whose
+	// recursion guard bounds any DLQ->function->DLQ loop.
+	dlqSQS asyncSQSDeliverer
+	dlqSNS asyncSNSPublisher
+	mu     sync.Mutex // guards PublishVersion read-modify-write on funcData
 	// inflightMu guards inflight, the number of invocations currently executing
 	// per function name. It backs reserved-concurrency enforcement on Invoke.
 	inflightMu sync.Mutex
@@ -341,9 +357,34 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 
 	defer release()
 
+	out, err := m.runInvocation(ctx, &fd, input, executedVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	// An asynchronous (Event) invocation routes its finished outcome to the
+	// function's async destinations: a failure (a handler/engine error) goes to
+	// the DeadLetterConfig queue/topic and the OnFailure destination once retries
+	// are exhausted; a success may go to the OnSuccess destination. Synchronous
+	// invokes never touch these (the caller gets the result directly).
+	if input.InvokeType == invokeTypeEvent {
+		m.routeAsyncDestinations(ctx, &fd, input, executedVersion, out)
+	}
+
+	return out, nil
+}
+
+// runInvocation runs the function body and returns its InvokeOutput: the real
+// FunctionEngine when one is deployed, the registered Go handler when one is
+// attached, or the echo stub otherwise. It emits the invoke metrics and surfaces
+// the START/END/REPORT logs; the async-destination routing sits above it in
+// Invoke so both the stub/handler and engine paths funnel through one place.
+func (m *Mock) runInvocation(
+	ctx context.Context, fd *funcData, input driver.InvokeInput, executedVersion string,
+) (*driver.InvokeOutput, error) {
 	dims := map[string]string{"FunctionName": input.FunctionName}
 
-	h := m.resolveHandler(&fd, input.FunctionName)
+	h := m.resolveHandler(fd, input.FunctionName)
 
 	if h == nil && fd.engineBacked {
 		return m.invokeEngine(ctx, input, dims, executedVersion)
