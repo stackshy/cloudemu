@@ -16,8 +16,10 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // "cluster/name", "family:revision" composite keys survive unchanged, so a
 // restore is transparent to clients. The dynamic-host-port counter is preserved
 // so newly placed bridge-mode ports do not collide with restored ones. The
-// mutexes and the optional wired deps (launcher, logs, registrar) are not
-// serialized.
+// mutexes, the optional wired deps (launcher, logs, registrar), and the
+// in-flight taskSettle transients are not serialized — a settle window is a
+// sub-few-second overlay, so a restored task is simply observed in its final
+// state, matching how EC2 excludes its own settle windows.
 type ecsSnapshot struct {
 	Clusters      json.RawMessage `json:"clusters,omitempty"`
 	TaskDefs      json.RawMessage `json:"taskDefs,omitempty"`

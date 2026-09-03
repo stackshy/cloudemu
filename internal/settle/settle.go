@@ -39,6 +39,9 @@ const (
 	DefaultCloudSQLSettle    = 3 * time.Second // Cloud SQL PENDING_CREATE->RUNNABLE
 	DefaultAzureDBSettle     = 3 * time.Second // Azure SQL/flex Creating->Succeeded/Ready
 	DefaultKeyspacesSettle   = 2 * time.Second // Keyspaces table CREATING->ACTIVE
+
+	DefaultECSTaskStartSettle = 2 * time.Second // ECS task PROVISIONING/PENDING->RUNNING
+	DefaultECSTaskStopSettle  = 1 * time.Second // ECS task STOPPING/DEPROVISIONING->STOPPED
 )
 
 // Window is a read-time overlay describing a resource still settling into its

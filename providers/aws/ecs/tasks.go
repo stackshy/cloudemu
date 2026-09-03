@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/container/containerengine"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
@@ -86,6 +87,10 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 			continue
 		}
 
+		// The response reflects what a caller polling DescribeTasks would see
+		// right now: the launch-settle transient (PROVISIONING/PENDING) rather
+		// than the task's already-final RUNNING, when AsyncSettle is enabled.
+		m.overlayStatus(task)
 		tasks = append(tasks, *task)
 	}
 
@@ -226,6 +231,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		m.placeFargate(task, spec.netCfg, spec.platformVersion)
 		m.backTaskWithEngine(ctx, task, spec)
 		m.tasks.Set(task.ARN, task)
+		m.beginLaunchSettle(task)
 		clone := cloneTask(task)
 
 		return &clone, nil
@@ -248,9 +254,69 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 	task.LastStatus = statusRunning
 	m.backTaskWithEngine(ctx, task, spec)
 	m.tasks.Set(task.ARN, task)
+	m.beginLaunchSettle(task)
 	clone := cloneTask(task)
 
 	return &clone, nil
+}
+
+// beginLaunchSettle starts the task's launch settle window — a realistic
+// lastStatus transient shown before the task's already-final RUNNING becomes
+// wire-visible: PROVISIONING while a Fargate task's ENI attaches, PENDING for
+// EC2/EXTERNAL placement (matching AWS's own vocabulary for each launch type).
+// A task whose engine backing already drove it to a terminal state before this
+// call (e.g. a RunToCompletion container that exited immediately) never shows a
+// launch transient, matching real ECS: it skips straight from launch to
+// STOPPED. The window is inactive (immediately observed as final) unless
+// opts.AsyncSettle is enabled.
+func (m *Mock) beginLaunchSettle(task *driver.Task) {
+	if task.LastStatus != statusRunning {
+		return
+	}
+
+	intermediate := statusPending
+	if task.LaunchType == launchFargate {
+		intermediate = taskStatusProvisioning
+	}
+
+	m.taskSettle.Begin(task.ARN, intermediate, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultECSTaskStartSettle))
+}
+
+// beginStopSettle starts the task's stop settle window — a realistic
+// lastStatus transient shown before the task's already-final STOPPED becomes
+// wire-visible: DEPROVISIONING while a Fargate task's ENI detaches, STOPPING
+// for EC2/EXTERNAL. The window is inactive (immediately observed as final)
+// unless opts.AsyncSettle is enabled.
+func (m *Mock) beginStopSettle(task *driver.Task) {
+	intermediate := taskStatusStopping
+	if task.LaunchType == launchFargate {
+		intermediate = taskStatusDeprovisioning
+	}
+
+	m.taskSettle.Begin(task.ARN, intermediate, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultECSTaskStopSettle))
+}
+
+// overlayStatus rewrites t.LastStatus in place with the current settle
+// observation for t.ARN. It is applied only at the wire-response boundary
+// (RunTask/StopTask/ListTasks/DescribeTasks) on an already-cloned task value,
+// never on a record still held by a store, so it can never leak the transient
+// into internal bookkeeping (capacity release, service running/pending counts)
+// which always reads the stored final state directly.
+func (m *Mock) overlayStatus(t *driver.Task) {
+	t.LastStatus = m.taskSettle.State(t.ARN, m.opts.Clock.Now(), t.LastStatus)
+}
+
+// observedTask clones t (a stored record) and overlays its wire-visible
+// lastStatus with the current settle observation, so a caller polling
+// DescribeTasks/ListTasks shortly after RunTask/StopTask sees the realistic
+// PROVISIONING/PENDING or STOPPING/DEPROVISIONING transient (when AsyncSettle
+// is enabled) before the terminal RUNNING/STOPPED — matching the
+// aws-sdk-go-v2 TasksRunning/TasksStopped waiters.
+func (m *Mock) observedTask(t *driver.Task) driver.Task {
+	out := cloneTask(t)
+	m.overlayStatus(&out)
+
+	return out
 }
 
 // markContainers sets every container's last status. A container marked
@@ -450,8 +516,10 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 	}
 
 	m.tasks.Set(updated.ARN, &updated)
+	m.beginStopSettle(&updated)
 
 	out := cloneTask(&updated)
+	m.overlayStatus(&out)
 
 	return &out, nil
 }
@@ -488,7 +556,7 @@ func (m *Mock) ListTasks(_ context.Context, cluster, family, desiredStatus, serv
 			continue
 		}
 
-		out = append(out, cloneTask(t))
+		out = append(out, m.observedTask(t))
 	}
 
 	return out, nil
@@ -511,7 +579,7 @@ func (m *Mock) DescribeTasks(_ context.Context, cluster string, ids []string) ([
 
 	for _, id := range ids {
 		if t, ok := m.resolveTask(id); ok && clusterNameFromARN(t.ClusterARN) == want {
-			found = append(found, cloneTask(t))
+			found = append(found, m.observedTask(t))
 			continue
 		}
 
