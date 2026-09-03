@@ -26,10 +26,8 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	// A trigger must route somewhere. Real Eventarc rejects a trigger with no
-	// destination with INVALID_ARGUMENT rather than storing a dead route.
-	if _, ok := destinationTarget(body.Destination); !ok {
-		gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "destination is required")
+	target, ok := h.validateTriggerBody(w, r, &body)
+	if !ok {
 		return
 	}
 
@@ -61,8 +59,6 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	target, _ := destinationTarget(body.Destination)
-
 	if perr := h.bus.PutTargets(r.Context(), bus, triggerID, []ebdriver.Target{target}); perr != nil {
 		// Roll back the rule created above so a failed Create doesn't leave
 		// an orphaned trigger that blocks a later Create with the same id.
@@ -82,6 +78,33 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, triggerID,
 		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
+}
+
+// validateTriggerBody validates a Create request's eventFilters and
+// destination, writing the appropriate error response and returning ok=false
+// when either check fails. On success it returns the driver Target the
+// validated destination folds into — a trigger must route somewhere, and real
+// Eventarc rejects a trigger with no destination (or one naming a resource
+// that doesn't exist) with INVALID_ARGUMENT / NOT_FOUND rather than storing a
+// dead route.
+func (h *Handler) validateTriggerBody(w http.ResponseWriter, r *http.Request, body *triggerJSON) (ebdriver.Target, bool) {
+	if msg := validateEventFilters(body.EventFilters); msg != "" {
+		gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
+		return ebdriver.Target{}, false
+	}
+
+	target, ok := destinationTarget(body.Destination)
+	if !ok {
+		gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "destination is required")
+		return ebdriver.Target{}, false
+	}
+
+	if err := h.validateDestination(r.Context(), body.Destination); err != nil {
+		gcprest.WriteCErr(w, err)
+		return ebdriver.Target{}, false
+	}
+
+	return target, true
 }
 
 // triggerTypeURL is the protobuf Any type URL a GAPIC eventarc client expects
@@ -202,25 +225,8 @@ func (h *Handler) patchTrigger(w http.ResponseWriter, r *http.Request, rt *route
 	cur := toTriggerJSON(rt.project, rt.location, existing)
 	meta := decodeTriggerMeta(existing.Description)
 
-	if mask.has("eventFilters") {
-		cur.EventFilters = body.EventFilters
-	}
-
-	if mask.has("serviceAccount") {
-		meta.ServiceAccount = body.ServiceAccount
-	}
-
-	if mask.has("labels") {
-		meta.Labels = body.Labels
-	}
-
-	if mask.has("destination") {
-		if _, ok := destinationTarget(body.Destination); !ok {
-			gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "destination is required")
-			return
-		}
-
-		cur.Destination = body.Destination
+	if !h.applyMaskedFields(w, r, mask, &body, &cur, &meta) {
+		return
 	}
 
 	meta.Revision++
@@ -238,6 +244,48 @@ func (h *Handler) patchTrigger(w http.ResponseWriter, r *http.Request, rt *route
 
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger,
 		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
+}
+
+// applyMaskedFields validates and applies onto cur/meta the fields a Patch
+// request's updateMask names, writing the appropriate error response and
+// returning ok=false when a validated field (eventFilters or destination)
+// fails validation. Unvalidated fields (serviceAccount, labels) are applied
+// unconditionally.
+func (h *Handler) applyMaskedFields(
+	w http.ResponseWriter, r *http.Request, mask updateMask, body, cur *triggerJSON, meta *triggerMeta,
+) bool {
+	if mask.has("eventFilters") {
+		if msg := validateEventFilters(body.EventFilters); msg != "" {
+			gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
+			return false
+		}
+
+		cur.EventFilters = body.EventFilters
+	}
+
+	if mask.has("serviceAccount") {
+		meta.ServiceAccount = body.ServiceAccount
+	}
+
+	if mask.has("labels") {
+		meta.Labels = body.Labels
+	}
+
+	if mask.has("destination") {
+		if _, ok := destinationTarget(body.Destination); !ok {
+			gcprest.WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "destination is required")
+			return false
+		}
+
+		if err := h.validateDestination(r.Context(), body.Destination); err != nil {
+			gcprest.WriteCErr(w, err)
+			return false
+		}
+
+		cur.Destination = body.Destination
+	}
+
+	return true
 }
 
 // applyTriggerUpdate persists the mutated trigger back onto the driver rule and
