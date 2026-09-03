@@ -21,6 +21,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -64,11 +65,28 @@ type Handler struct {
 	accountID string
 	region    string
 	trust     roleTrustEvaluator
+	// resolver, when the wired IAM driver supports it, resolves a presented
+	// long-term (AKIA) access key id to its owning IAM user so
+	// GetCallerIdentity can reflect that user instead of a constant.
+	resolver iamdriver.AccessKeyResolver
 	// sessions, when set, records the temporary credentials this handler mints
 	// so the SigV4 authentication gate can verify signatures made with them. It
 	// is wired only when EnforceAuth is on; left nil the handler returns the
 	// fixed synthetic credentials it always has (auth-off byte-for-byte).
 	sessions *SessionStore
+
+	// identities records, for a temporary (ASIA) access key id this handler has
+	// minted, the caller identity it represents (an AssumedRoleUser, a
+	// FederatedUser, or the resolved caller for GetSessionToken), so a later
+	// GetCallerIdentity call made with that access key reflects the operation
+	// that minted it rather than a constant. It is populated regardless of
+	// EnforceAuth. With EnforceAuth off every mint shares cloudemu's one fixed
+	// synthetic access key id (see mintCredentials), so this map holds a single
+	// entry that reflects whichever operation minted most recently — a known
+	// limitation of the unauthenticated default. With EnforceAuth on each mint
+	// gets a unique key, so entries never collide.
+	identMu    sync.RWMutex
+	identities map[string]callerIdentity
 }
 
 // SetSessions wires the temporary-credential store. When set, AssumeRole /
@@ -90,12 +108,40 @@ func New(accountID, region string, iam iamdriver.IAM) *Handler {
 		region = defaultRegion
 	}
 
-	h := &Handler{accountID: accountID, region: region}
+	h := &Handler{accountID: accountID, region: region, identities: make(map[string]callerIdentity)}
 	if te, ok := iam.(roleTrustEvaluator); ok {
 		h.trust = te
 	}
 
+	if resolver, ok := iam.(iamdriver.AccessKeyResolver); ok {
+		h.resolver = resolver
+	}
+
 	return h
+}
+
+// rememberIdentity records the caller identity a just-minted temporary access
+// key id represents. A blank key or an identity with nothing to report is a
+// no-op.
+func (h *Handler) rememberIdentity(accessKeyID string, id callerIdentity) {
+	if accessKeyID == "" || (id.arn == "" && id.userID == "") {
+		return
+	}
+
+	h.identMu.Lock()
+	h.identities[accessKeyID] = id
+	h.identMu.Unlock()
+}
+
+// identityFor returns the caller identity recorded for a temporary access key
+// id, if any.
+func (h *Handler) identityFor(accessKeyID string) (callerIdentity, bool) {
+	h.identMu.RLock()
+	defer h.identMu.RUnlock()
+
+	id, ok := h.identities[accessKeyID]
+
+	return id, ok
 }
 
 const (
