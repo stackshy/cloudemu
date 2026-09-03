@@ -11,7 +11,9 @@ package cosmosdb
 // databases set, containers are the same driver tables (keyed by qualify), and
 // throughput lives in the same offers map. A database or container created here
 // is therefore immediately visible to the data plane and vice versa — there are
-// not two disjoint models.
+// not two disjoint models. The API-agnostic database and throughput planes live
+// in armcommon.go and are shared with the Mongo-API control plane (mongoarm.go);
+// only the SQL container shape (partition key + TTL/unique keys) is here.
 //
 // Create/update/delete/migrate are long-running operations in real Azure; the
 // emulator completes them synchronously (200 with the resource body, or 204 for
@@ -21,7 +23,6 @@ package cosmosdb
 import (
 	"context"
 	"net/http"
-	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -33,6 +34,7 @@ const (
 	armProvider     = "Microsoft.DocumentDB"
 	armAccountType  = "databaseAccounts"
 	sqlDatabasesSeg = "sqlDatabases"
+	containersSeg   = "containers"
 
 	typeSQLDatabase           = "Microsoft.DocumentDB/databaseAccounts/sqlDatabases"
 	typeSQLContainer          = "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers"
@@ -56,17 +58,30 @@ const (
 	minAutoscaleThroughput = 1000
 )
 
+// sqlAPISpec is the SQL-API type/segment set for the shared database and
+// throughput planes.
+func sqlAPISpec() *armAPISpec {
+	return &armAPISpec{
+		databasesSegment:       sqlDatabasesSeg,
+		childSegment:           containersSeg,
+		databaseType:           typeSQLDatabase,
+		databaseThroughputType: typeSQLDatabaseThroughput,
+		childThroughputType:    typeSQLContainerThrough,
+	}
+}
+
 // ARMHandler serves the Microsoft.DocumentDB SQL sub-resource control plane
 // (sqlDatabases, containers, throughputSettings) against the shared data-plane
 // Handler.
 type ARMHandler struct {
-	h *Handler
+	h    *Handler
+	spec *armAPISpec
 }
 
 // NewARM returns an ARM SQL control-plane handler backed by the same data-plane
 // Handler, so control-plane and data-plane state stay unified.
 func NewARM(h *Handler) *ARMHandler {
-	return &ARMHandler{h: h}
+	return &ARMHandler{h: h, spec: sqlAPISpec()}
 }
 
 // Matches claims only the sqlDatabases sub-tree of a database account
@@ -86,7 +101,7 @@ func (*ARMHandler) Matches(r *http.Request) bool {
 		strings.EqualFold(rp.SubResource, sqlDatabasesSeg)
 }
 
-// sqlKind enumerates the addressable resource shapes under the sqlDatabases tree.
+// sqlKind enumerates the addressable resource shapes under a database sub-tree.
 type sqlKind int
 
 const (
@@ -100,7 +115,8 @@ const (
 	kindContainerMigrate
 )
 
-// sqlTarget is a parsed sqlDatabases-subtree request.
+// sqlTarget is a parsed database-subtree request (the "container" field holds
+// the SQL container or Mongo collection name, per the API).
 type sqlTarget struct {
 	kind      sqlKind
 	db        string
@@ -109,58 +125,24 @@ type sqlTarget struct {
 }
 
 // ServeHTTP parses the ARM path, verifies the parent account exists, then
-// dispatches to the addressed resource.
+// dispatches: the database/throughput kinds go to the shared plane, the
+// container kinds to the SQL-specific callbacks below.
 func (a *ARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	rp, ok := azurearm.ParsePath(r.URL.Path)
-	if !ok {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
-		return
-	}
-
-	tail := sqlTail(r.URL.Path, rp.ResourceName)
-
-	target, ok := parseSQLTarget(tail)
-	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported Cosmos SQL resource path")
-		return
-	}
-
-	// Every sqlDatabases operation is scoped to a database account; a missing
-	// account is ARM's ParentResourceNotFound.
-	if !a.h.isAccount(rp.ResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "ParentResourceNotFound",
-			"database account "+rp.ResourceName+" not found")
-
-		return
-	}
-
-	a.dispatch(w, r, &rp, &target)
+	serveARMSubtree(a.h, w, r, sqlDatabasesSeg, containersSeg, "unsupported Cosmos SQL resource path",
+		func(rp *azurearm.ResourcePath, t *sqlTarget) {
+			armDispatch(a.h, w, r, rp, t, a.spec, "unsupported Cosmos SQL resource path", childOps{
+				list:   a.listContainers,
+				single: a.containerResource,
+			})
+		})
 }
 
-// dispatch routes a parsed target to its handler.
-func (a *ARMHandler) dispatch(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, t *sqlTarget) {
-	switch t.kind {
-	case kindDBList:
-		a.listDatabases(w, r, rp)
-	case kindDB:
-		a.databaseResource(w, r, rp, t.db)
-	case kindContainerList:
-		a.listContainers(w, r, rp, t.db)
-	case kindContainer:
-		a.containerResource(w, r, rp, t.db, t.container)
-	case kindDBThroughput, kindContainerThroughput:
-		a.throughputResource(w, r, rp, t)
-	case kindDBMigrate, kindContainerMigrate:
-		a.migrateThroughput(w, r, rp, t)
-	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported Cosmos SQL resource path")
-	}
-}
+// Path parsing (shared) -------------------------------------------------------
 
-// sqlTail returns the path segments after .../databaseAccounts/{account}/,
-// starting at "sqlDatabases". ParsePath stops at the sqlDatabases segment, so
-// the deeper container/throughput segments are recovered from the raw path here.
-func sqlTail(urlPath, account string) []string {
+// armTail returns the path segments after .../databaseAccounts/{account}/,
+// starting at the API's databases segment. ParsePath stops at that segment, so
+// the deeper child/throughput segments are recovered from the raw path here.
+func armTail(urlPath, account string) []string {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 
 	for i := 0; i+1 < len(parts); i++ {
@@ -172,10 +154,12 @@ func sqlTail(urlPath, account string) []string {
 	return nil
 }
 
-// parseSQLTarget classifies the sqlDatabases-subtree segments. seg[0] is always
-// "sqlDatabases" (guaranteed by Matches).
-func parseSQLTarget(seg []string) (sqlTarget, bool) {
-	if len(seg) == 0 || !strings.EqualFold(seg[0], sqlDatabasesSeg) {
+// parseDBSubtree classifies the segments under an API's databases tree. seg[0]
+// is always the databases segment (guaranteed by Matches). dbSeg/childSeg name
+// the API's databases and child collection segments ("sqlDatabases"/"containers"
+// or "mongodbDatabases"/"collections").
+func parseDBSubtree(seg []string, dbSeg, childSeg string) (sqlTarget, bool) {
+	if len(seg) == 0 || !strings.EqualFold(seg[0], dbSeg) {
 		return sqlTarget{}, false
 	}
 
@@ -190,18 +174,18 @@ func parseSQLTarget(seg []string) (sqlTarget, bool) {
 		return sqlTarget{kind: kindDB, db: db}, true
 	}
 
-	switch strings.ToLower(rest[0]) {
-	case "throughputsettings":
+	switch {
+	case strings.EqualFold(rest[0], "throughputSettings"):
 		return parseThroughputTail(db, "", rest, kindDBThroughput, kindDBMigrate)
-	case "containers":
-		return parseContainerTail(db, rest[1:])
+	case strings.EqualFold(rest[0], childSeg):
+		return parseChildTail(db, rest[1:])
 	default:
 		return sqlTarget{}, false
 	}
 }
 
-// parseContainerTail classifies the segments after ".../containers".
-func parseContainerTail(db string, seg []string) (sqlTarget, bool) {
+// parseChildTail classifies the segments after ".../{childSegment}".
+func parseChildTail(db string, seg []string) (sqlTarget, bool) {
 	if len(seg) == 0 {
 		return sqlTarget{kind: kindContainerList, db: db}, true
 	}
@@ -248,134 +232,21 @@ func parseThroughputTail(db, container string, seg []string, plain, migrate sqlK
 	}
 }
 
-// Databases ------------------------------------------------------------------
-
-func (a *ARMHandler) databaseResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db string) {
-	switch r.Method {
-	case http.MethodPut:
-		a.createOrUpdateDatabase(w, r, rp, db)
-	case http.MethodGet:
-		if !a.h.databaseExists(rp.ResourceName, db) {
-			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "sql database "+db+" not found")
-			return
-		}
-
-		azurearm.WriteJSON(w, http.StatusOK, a.renderDatabase(rp, db))
-	case http.MethodDelete:
-		// Delete is idempotent: a cascade over a missing database is a no-op that
-		// still answers 204 so the SDK's BeginDelete poller terminates.
-		_ = a.h.cascadeDeleteDatabase(r.Context(), rp.ResourceName, db)
-
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
-func (a *ARMHandler) createOrUpdateDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db string) {
-	var body armSQLDatabaseCreateParams
-	if !azurearm.DecodeJSON(w, r, &body) {
-		return
-	}
-
-	if body.Properties == nil || body.Properties.Resource == nil || body.Properties.Resource.ID == "" {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "properties.resource.id is required")
-		return
-	}
-
-	// registerDatabase is idempotent for the ARM create-or-update contract: a
-	// re-PUT of an existing database is not an error, it re-applies throughput.
-	a.h.registerDatabase(rp.ResourceName, db)
-
-	// Shared (database-level) throughput, keyed by the database's dbNS — exactly
-	// the key the data plane's /offers lookup derives, so it round-trips there.
-	if st, ok := offerFromOptions(body.Properties.Options); ok {
-		a.h.setOffer(dbNS(rp.ResourceName, db), st)
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, a.renderDatabase(rp, db))
-}
-
-func (a *ARMHandler) listDatabases(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if r.Method != http.MethodGet {
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
-	}
-
-	names := a.databasesInAccount(rp.ResourceName)
-
-	out := armSQLDatabaseList{Value: make([]armSQLDatabaseGetResults, 0, len(names))}
-	for _, name := range names {
-		out.Value = append(out.Value, a.renderDatabase(rp, name))
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, out)
-}
-
-// databasesInAccount returns the sorted database names owned by account.
-func (a *ARMHandler) databasesInAccount(account string) []string {
-	a.h.dbMu.RLock()
-	defer a.h.dbMu.RUnlock()
-
-	names := make([]string, 0)
-
-	for key := range a.h.databases {
-		if id, ok := accountDBName(key, account); ok {
-			names = append(names, id)
-		}
-	}
-
-	sort.Strings(names)
-
-	return names
-}
-
-func (a *ARMHandler) renderDatabase(rp *azurearm.ResourcePath, db string) armSQLDatabaseGetResults {
-	id := dbResourceID(rp, db)
-
-	return armSQLDatabaseGetResults{
-		ID:   id,
-		Name: db,
-		Type: typeSQLDatabase,
-		Properties: &armSQLDatabaseGetProps{
-			Resource: &armSQLDatabaseGetResource{
-				ID:    db,
-				RID:   "rid-" + dbNS(rp.ResourceName, db),
-				TS:    a.h.clock.Now().Unix(),
-				ETag:  azurearm.ETag(id),
-				Colls: "colls/",
-				Users: "users/",
-			},
-		},
-	}
-}
-
-// Containers -----------------------------------------------------------------
+// Containers (SQL-specific) ---------------------------------------------------
 
 func (a *ARMHandler) containerResource(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db, container string,
 ) {
-	switch r.Method {
-	case http.MethodPut:
-		a.createOrUpdateContainer(w, r, rp, db, container)
-	case http.MethodGet:
-		res, err := a.renderContainer(r.Context(), rp, db, container)
-		if err != nil {
-			azurearm.WriteCErr(w, err)
-			return
-		}
+	armServeChild(a.h, w, r, rp, db, container, singleChildOps{
+		put:     a.createOrUpdateContainer,
+		render:  a.renderContainerAny,
+		cleanup: a.h.attrs.delete,
+	})
+}
 
-		azurearm.WriteJSON(w, http.StatusOK, res)
-	case http.MethodDelete:
-		table := qualify(rp.ResourceName, db, container)
-		// Idempotent: absence is a no-op that still answers 204.
-		_ = a.h.db.DeleteTable(r.Context(), table)
-		a.h.deleteOffer(table)
-		a.h.attrs.delete(table)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
+// renderContainerAny adapts renderContainer to the shared render callback.
+func (a *ARMHandler) renderContainerAny(ctx context.Context, rp *azurearm.ResourcePath, db, container string) (any, error) {
+	return a.renderContainer(ctx, rp, db, container)
 }
 
 func (a *ARMHandler) createOrUpdateContainer(
@@ -429,38 +300,7 @@ func (a *ARMHandler) createOrUpdateContainer(
 }
 
 func (a *ARMHandler) listContainers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db string) {
-	if r.Method != http.MethodGet {
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
-	}
-
-	if !a.h.databaseExists(rp.ResourceName, db) {
-		azurearm.WriteError(w, http.StatusNotFound, "ParentResourceNotFound", "sql database "+db+" not found")
-		return
-	}
-
-	tables, err := a.h.db.ListTables(r.Context())
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	prefix := dbNS(rp.ResourceName, db) + "/"
-
-	out := armSQLContainerList{Value: make([]armSQLContainerGetResults, 0)}
-
-	for _, t := range tables {
-		if !strings.HasPrefix(t, prefix) {
-			continue
-		}
-
-		coll := strings.TrimPrefix(t, prefix)
-		if res, cerr := a.renderContainer(r.Context(), rp, db, coll); cerr == nil {
-			out.Value = append(out.Value, res)
-		}
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, out)
+	armListChildren(a.h, w, r, rp, db, "sql database "+db+" not found", a.renderContainerAny)
 }
 
 func (a *ARMHandler) renderContainer(
@@ -479,7 +319,7 @@ func (a *ARMHandler) renderContainer(
 	}
 
 	attrs := a.h.attrs.get(table)
-	id := containerResourceID(rp, db, container)
+	id := armChildResourceID(rp, db, container, a.spec)
 
 	return armSQLContainerGetResults{
 		ID:   id,
@@ -500,107 +340,7 @@ func (a *ARMHandler) renderContainer(
 	}, nil
 }
 
-// Throughput -----------------------------------------------------------------
-
-func (a *ARMHandler) throughputResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, t *sqlTarget) {
-	key, resType, exists := a.throughputTarget(rp, t)
-	if !exists {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "parent resource not found")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		st, ok := a.h.getOffer(key)
-		if !ok {
-			azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-				"resource does not have dedicated throughput (shared or serverless)")
-
-			return
-		}
-
-		azurearm.WriteJSON(w, http.StatusOK, renderThroughput(st, throughputID(rp, t), resType))
-	case http.MethodPut:
-		a.updateThroughput(w, r, rp, t, key, resType)
-	default:
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
-func (a *ARMHandler) updateThroughput(
-	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, t *sqlTarget, key, resType string,
-) {
-	var body armThroughputUpdateParams
-	if !azurearm.DecodeJSON(w, r, &body) {
-		return
-	}
-
-	var res *armThroughputResource
-	if body.Properties != nil {
-		res = body.Properties.Resource
-	}
-
-	if res == nil {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "properties.resource is required")
-		return
-	}
-
-	st, ok := offerFromThroughput(res.Throughput, res.AutoscaleSettings)
-	if !ok {
-		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter",
-			"either throughput or autoscaleSettings.maxThroughput is required")
-
-		return
-	}
-
-	a.h.setOffer(key, st)
-	azurearm.WriteJSON(w, http.StatusOK, renderThroughput(st, throughputID(rp, t), resType))
-}
-
-func (a *ARMHandler) migrateThroughput(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, t *sqlTarget) {
-	if r.Method != http.MethodPost {
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
-	}
-
-	key, resType, exists := a.throughputTarget(rp, t)
-	if !exists {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "parent resource not found")
-		return
-	}
-
-	st, ok := a.h.getOffer(key)
-	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-			"resource does not have dedicated throughput to migrate")
-
-		return
-	}
-
-	migrated := migrateOffer(st, t.migrate == actionMigrateToAutoscale)
-	a.h.setOffer(key, migrated)
-
-	azurearm.WriteJSON(w, http.StatusOK, renderThroughput(migrated, throughputID(rp, t), resType))
-}
-
-// throughputTarget resolves a throughput request to its offer key and response
-// resource type, and reports whether the parent database/container exists.
-func (a *ARMHandler) throughputTarget(rp *azurearm.ResourcePath, t *sqlTarget) (key, resType string, exists bool) {
-	if t.container != "" {
-		table := qualify(rp.ResourceName, t.db, t.container)
-		if _, err := a.h.db.DescribeTable(context.Background(), table); err != nil {
-			return "", "", false
-		}
-
-		return table, typeSQLContainerThrough, true
-	}
-
-	if !a.h.databaseExists(rp.ResourceName, t.db) {
-		return "", "", false
-	}
-
-	return dbNS(rp.ResourceName, t.db), typeSQLDatabaseThroughput, true
-}
+// Throughput/offer helpers (shared) ------------------------------------------
 
 // migrateOffer converts an offer between manual and autoscale, clamping to the
 // mode's floor. Migrating to the mode it already occupies is a no-op.
@@ -673,7 +413,7 @@ func renderThroughput(st offerState, id, resType string) armThroughputGetResults
 	}
 }
 
-// Resource-ID + small helpers ------------------------------------------------
+// Small helpers ---------------------------------------------------------------
 
 func (b *armSQLContainerCreateParams) resourceOrNil() *armSQLContainerResource {
 	if b.Properties == nil {
@@ -681,25 +421,6 @@ func (b *armSQLContainerCreateParams) resourceOrNil() *armSQLContainerResource {
 	}
 
 	return b.Properties.Resource
-}
-
-func dbResourceID(rp *azurearm.ResourcePath, db string) string {
-	return azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, armProvider, armAccountType, rp.ResourceName) +
-		"/sqlDatabases/" + db
-}
-
-func containerResourceID(rp *azurearm.ResourcePath, db, container string) string {
-	return dbResourceID(rp, db) + "/containers/" + container
-}
-
-// throughputID is the ARM ID of a throughputSettings/default child.
-func throughputID(rp *azurearm.ResourcePath, t *sqlTarget) string {
-	base := dbResourceID(rp, t.db)
-	if t.container != "" {
-		base += "/containers/" + t.container
-	}
-
-	return base + "/throughputSettings/" + throughputName
 }
 
 func int32Ptr(v int32) *int32 { return &v }

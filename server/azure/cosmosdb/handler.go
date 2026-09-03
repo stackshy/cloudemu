@@ -73,6 +73,12 @@ type Handler struct {
 	// bookkeeping needed to enforce it. See container_attrs.go.
 	attrs *attrsStore
 
+	// mongoAttrs tracks the Mongo-API collection properties the generic driver
+	// has no concept of (shard key, indexes, analytical TTL), keyed by the
+	// collection's qualified table name, so the Mongo ARM control plane round-
+	// trips them on a collection read/list. See mongoarm.go.
+	mongoAttrs *mongoAttrStore
+
 	// writeMu serializes item mutations and TTL reaping per container. A create's
 	// uniqueness check and its insert must be one uninterruptible step (see
 	// keyedMutex), and a lazy TTL sweep must not race a concurrent write.
@@ -106,12 +112,13 @@ func New(db dbdriver.Database) *Handler {
 	}
 
 	return &Handler{
-		db:        db,
-		offers:    make(map[string]offerState),
-		databases: make(map[string]struct{}),
-		attrs:     newAttrsStore(clock),
-		writeMu:   newKeyedMutex(),
-		clock:     clock,
+		db:         db,
+		offers:     make(map[string]offerState),
+		databases:  make(map[string]struct{}),
+		attrs:      newAttrsStore(clock),
+		mongoAttrs: newMongoAttrStore(),
+		writeMu:    newKeyedMutex(),
+		clock:      clock,
 	}
 }
 
@@ -206,6 +213,7 @@ func (h *Handler) cascadeDeleteDatabase(ctx context.Context, account, db string)
 
 		h.deleteOffer(t)
 		h.attrs.delete(t)
+		h.mongoAttrs.delete(t)
 	}
 
 	h.deleteOffer(ns) // the database's own shared-throughput offer, if any
@@ -556,6 +564,7 @@ func (h *Handler) PurgeAccount(ctx context.Context, account string) {
 			if strings.HasPrefix(t, prefix) {
 				h.deleteOffer(t)
 				h.attrs.delete(t)
+				h.mongoAttrs.delete(t)
 			}
 		}
 	}
