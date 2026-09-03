@@ -151,19 +151,26 @@ func (m *Mock) AttachNetworkInterface(_ context.Context, resourceGroup, name, vm
 	m.nicMu.Lock()
 	defer m.nicMu.Unlock()
 
-	nic, ok := m.nics.Get(nicKey(resourceGroup, name))
-	if !ok {
+	var opErr error
+
+	found := m.nics.Update(nicKey(resourceGroup, name), func(nic *nicData) *nicData {
+		if nic.VirtualMachineID != "" && nic.VirtualMachineID != vmID {
+			opErr = cerrors.Newf(cerrors.FailedPrecondition,
+				"network interface %q is already attached to %q", name, nic.VirtualMachineID)
+
+			return nic
+		}
+
+		cp := *nic
+		cp.VirtualMachineID = vmID
+
+		return &cp
+	})
+	if !found {
 		return cerrors.Newf(cerrors.NotFound, "network interface %q not found in resource group %q", name, resourceGroup)
 	}
 
-	if nic.VirtualMachineID != "" && nic.VirtualMachineID != vmID {
-		return cerrors.Newf(cerrors.FailedPrecondition,
-			"network interface %q is already attached to %q", name, nic.VirtualMachineID)
-	}
-
-	nic.VirtualMachineID = vmID
-
-	return nil
+	return opErr
 }
 
 // DetachNetworkInterface clears the NIC's virtualMachine back-reference, but
@@ -174,14 +181,16 @@ func (m *Mock) DetachNetworkInterface(_ context.Context, resourceGroup, name, vm
 	m.nicMu.Lock()
 	defer m.nicMu.Unlock()
 
-	nic, ok := m.nics.Get(nicKey(resourceGroup, name))
-	if !ok {
-		return nil
-	}
+	m.nics.Update(nicKey(resourceGroup, name), func(nic *nicData) *nicData {
+		if nic.VirtualMachineID != vmID {
+			return nic
+		}
 
-	if nic.VirtualMachineID == vmID {
-		nic.VirtualMachineID = ""
-	}
+		cp := *nic
+		cp.VirtualMachineID = ""
+
+		return &cp
+	})
 
 	return nil
 }

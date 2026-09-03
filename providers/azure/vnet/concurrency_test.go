@@ -242,3 +242,153 @@ func TestConcurrentNATBindVsDelete(t *testing.T) {
 	require.Len(t, addrs, 1)
 	require.Empty(t, addrs[0].AssociationID)
 }
+
+// TestConcurrentReplaceTagsVsDescribe covers the ARM UpdateTags PATCH mutators
+// (Replace*Tags), which previously reassigned .Tags on the shared stored pointer
+// under Update() instead of copy-on-write. It fires ReplaceVPCTags /
+// ReplaceSecurityGroupTags against concurrent DescribeVPCs / DescribeSecurityGroups
+// readers that walk the returned tag maps. Run with -race, a write at the tag
+// reassignment used to race the reader's map iteration in toVPCInfo/toSGInfo.
+func TestConcurrentReplaceTagsVsDescribe(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	sg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "nsg-tags", VPCID: vpcID})
+	require.NoError(t, err)
+	nsgID := sg.ID
+
+	const (
+		workers = 24
+		iters   = 250
+	)
+
+	var wg sync.WaitGroup
+
+	for w := range workers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			for i := range iters {
+				tags := map[string]string{
+					fmt.Sprintf("k%d", w): fmt.Sprintf("%d", i),
+					"shared":              fmt.Sprintf("%d", w),
+				}
+				require.NoError(t, m.ReplaceVPCTags(ctx, vpcID, tags))
+				require.NoError(t, m.ReplaceSecurityGroupTags(ctx, nsgID, tags))
+			}
+		}(w)
+	}
+
+	for range workers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range iters {
+				vpcs, derr := m.DescribeVPCs(ctx, []string{vpcID})
+				require.NoError(t, derr)
+
+				for i := range vpcs {
+					for k, v := range vpcs[i].Tags {
+						_, _ = k, v
+					}
+				}
+
+				sgs, derr := m.DescribeSecurityGroups(ctx, []string{nsgID})
+				require.NoError(t, derr)
+
+				for i := range sgs {
+					for k := range sgs[i].Tags {
+						_ = k
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// createTestNIC creates a single-ipConfiguration NIC keyed by (rg, name).
+func createTestNIC(t *testing.T, m *Mock, rg, name string) {
+	t.Helper()
+
+	_, err := m.CreateOrUpdateNetworkInterface(context.Background(), rg, name, driver.AzureNICConfig{
+		Location: "eastus",
+		IPConfigs: []driver.AzureIPConfig{
+			{Name: "ipconfig1", AllocationMethod: "Static", PrivateIP: "10.0.0.10", Primary: true},
+		},
+	})
+	require.NoError(t, err)
+}
+
+// TestConcurrentNICMutationVsSnapshot drives NIC AttachNetworkInterface /
+// DetachNetworkInterface / ReplaceNetworkInterfaceTags against concurrent
+// Snapshot() calls. Snapshot dumps m.nics via store.All()+json.Marshal without
+// nicMu; before the fix Attach/Detach mutated *nicData in place, so the Marshal
+// read raced the field write. Copy-on-write through the store lock makes the
+// captured pointer immutable, so this must be -race clean.
+func TestConcurrentNICMutationVsSnapshot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	m := newTestMock()
+
+	const (
+		nics    = 8
+		workers = 16
+		iters   = 200
+	)
+
+	for i := range nics {
+		createTestNIC(t, m, "rg-1", fmt.Sprintf("nic-%d", i))
+	}
+
+	var wg sync.WaitGroup
+
+	// Mutators: attach, detach and replace-tags across the NIC set.
+	for w := range workers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			for i := range iters {
+				name := fmt.Sprintf("nic-%d", (w+i)%nics)
+				vmID := fmt.Sprintf("/subscriptions/s/vm-%d", w)
+
+				_ = m.AttachNetworkInterface(ctx, "rg-1", name, vmID)
+				_ = m.ReplaceNetworkInterfaceTags(ctx, "rg-1", name, map[string]string{"w": fmt.Sprintf("%d", w)})
+				_ = m.DetachNetworkInterface(ctx, "rg-1", name, vmID)
+			}
+		}(w)
+	}
+
+	// Snapshotters: dump the whole mock concurrently.
+	for range workers / 2 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range iters {
+				data, err := m.Snapshot(ctx, false)
+				require.NoError(t, err)
+				require.NotEmpty(t, data)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Final snapshot must round-trip cleanly.
+	data, err := m.Snapshot(ctx, false)
+	require.NoError(t, err)
+	require.NoError(t, m.Restore(ctx, data))
+}

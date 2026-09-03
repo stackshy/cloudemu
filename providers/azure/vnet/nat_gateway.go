@@ -132,12 +132,21 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 }
 
 // UpdateAzureNATGateway re-applies the mutable fields of an existing NAT gateway
-// (its bound public-IP allocation and tags) in place, so a repeat ARM
-// CreateOrUpdate PUT re-associates the public IP and reflects tag changes rather
-// than discarding them. When the requested allocation differs from the current
-// one it binds the new public IP first (rejecting one already in use) and only
-// then frees the previous binding, so a failed rebind leaves the gateway
-// untouched. An empty allocationID detaches any bound public IP.
+// (its bound public-IP allocation and tags), so a repeat ARM CreateOrUpdate PUT
+// re-associates the public IP and reflects tag changes rather than discarding
+// them. When the requested allocation differs from the current one it binds the
+// new public IP first (rejecting one already in use) and only then frees the
+// previous binding, so a failed rebind leaves the gateway untouched. An empty
+// allocationID detaches any bound public IP. The gateway change itself is
+// applied copy-on-write via a single final Update.
+//
+// This spans two stores (natGateways for the gateway, eips for the binding),
+// which no single memstore lock can cover, so the read-then-rebind-then-write is
+// not one atomic span: two concurrent PUTs to the SAME gateway can lose an
+// update. That is a same-resource TOCTOU, not a data race (every write is COW
+// through a store lock), and real ARM serializes PUTs on one resource; folding
+// it fully atomic would require nesting the eips store lock inside a
+// natGateways Update callback, which the package deliberately avoids.
 func (m *Mock) UpdateAzureNATGateway(_ context.Context, id, allocationID string, tags map[string]string) error {
 	nat, ok := m.natGateways.Get(id)
 	if !ok {
