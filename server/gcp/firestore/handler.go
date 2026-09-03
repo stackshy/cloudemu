@@ -158,7 +158,7 @@ func splitActionSuffix(path string) (action, base string, ok bool) {
 
 // serveAction handles the batch write/read endpoints used by Firestore's
 // REST API. Real Firestore's gRPC API uses individual RPCs; the REST API
-// bundles them under :commit / :batchGet / :runQuery.
+// bundles them under :commit / :batchGet / :runQuery / :runAggregationQuery.
 func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, base, action string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
@@ -172,6 +172,8 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, base, acti
 		h.batchGet(w, r, base)
 	case "runQuery":
 		h.runQuery(w, r, base)
+	case "runAggregationQuery":
+		h.runAggregationQuery(w, r, base)
 	case "beginTransaction":
 		h.beginTransaction(w, r)
 	case "rollback":
