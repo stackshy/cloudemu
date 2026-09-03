@@ -4,12 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 	sm "google.golang.org/api/secretmanager/v1"
+
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
+
+// newSMServiceRaw is like newSMService but also returns the server's base URL
+// so a test can bypass the SDK and issue a raw HTTP request — needed to
+// reproduce a truly empty request body, which google-api-go-client never
+// sends (it always marshals a zero-value request struct as "{}").
+func newSMServiceRaw(t *testing.T) (*sm.Service, string) {
+	t.Helper()
+
+	cloud := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{SecretManager: cloud.SecretManager})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	svc, err := sm.NewService(context.Background(),
+		option.WithEndpoint(ts.URL),
+		option.WithoutAuthentication(),
+	)
+	if err != nil {
+		t.Fatalf("secretmanager.NewService: %v", err)
+	}
+
+	return svc, ts.URL
+}
 
 // mustCreateSecret creates an empty (GCP-style) secret container.
 func mustCreateSecret(t *testing.T, svc *sm.Service, id string) string {
@@ -243,6 +273,76 @@ func TestSDKVersionLifecycleEtagPrecondition(t *testing.T) {
 
 	if en.State != "ENABLED" {
 		t.Fatalf("state after Enable = %q, want ENABLED", en.State)
+	}
+}
+
+// TestSDKVersionLifecycleEmptyBody proves the enable/disable/destroy verbs
+// succeed on a truly zero-byte request body (http.NoBody), not just the "{}"
+// google-api-go-client always marshals for a zero-value request struct — etag
+// is optional, and a raw HTTP client that never writes a body must still
+// reach the driver rather than 400 on an empty-body JSON decode.
+func TestSDKVersionLifecycleEmptyBody(t *testing.T) {
+	svc, baseURL := newSMServiceRaw(t)
+	ctx := context.Background()
+	name := mustCreateSecret(t, svc, "raw-empty-body")
+
+	v1, err := svc.Projects.Secrets.AddVersion(name, &sm.AddSecretVersionRequest{
+		Payload: &sm.SecretPayload{Data: encode("secret")},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("AddVersion: %v", err)
+	}
+
+	rawPost := func(verb string) *http.Response {
+		t.Helper()
+
+		resp, perr := http.Post(baseURL+"/v1/"+v1.Name+":"+verb, "application/json", http.NoBody)
+		if perr != nil {
+			t.Fatalf("raw POST %s: %v", verb, perr)
+		}
+
+		t.Cleanup(func() { resp.Body.Close() })
+
+		return resp
+	}
+
+	if resp := rawPost("disable"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("raw empty-body Disable: status = %d, want 200", resp.StatusCode)
+	}
+
+	meta, err := svc.Projects.Secrets.Versions.Get(v1.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if meta.State != "DISABLED" {
+		t.Fatalf("state after raw empty-body Disable = %q, want DISABLED", meta.State)
+	}
+
+	if resp := rawPost("enable"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("raw empty-body Enable: status = %d, want 200", resp.StatusCode)
+	}
+
+	meta, err = svc.Projects.Secrets.Versions.Get(v1.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if meta.State != "ENABLED" {
+		t.Fatalf("state after raw empty-body Enable = %q, want ENABLED", meta.State)
+	}
+
+	if resp := rawPost("destroy"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("raw empty-body Destroy: status = %d, want 200", resp.StatusCode)
+	}
+
+	meta, err = svc.Projects.Secrets.Versions.Get(v1.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if meta.State != "DESTROYED" {
+		t.Fatalf("state after raw empty-body Destroy = %q, want DESTROYED", meta.State)
 	}
 }
 

@@ -1,8 +1,10 @@
 package secretmanager
 
 import (
+	"encoding/json"
 	"errors"
 	"hash/crc32"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -418,8 +420,14 @@ func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
+	// etag is optional on real Secret Manager's lifecycle verbs — an omitted
+	// field, and even a truly zero-byte body (some HTTP clients never write a
+	// "{}" the way google-api-go-client does), must still succeed. Unlike
+	// gcprest.DecodeJSON, this tolerates io.EOF instead of answering 400.
 	var req lifecycleVerbRequest
-	if !gcprest.DecodeJSON(w, r, &req) {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, gcprest.MaxBodyBytes)).Decode(&req); err != nil &&
+		!errors.Is(err, io.EOF) {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid JSON: "+err.Error())
 		return
 	}
 
