@@ -27,6 +27,23 @@ func queueTriggerConfig(bindingType, queueName string) map[string]any {
 	}
 }
 
+// topicTriggerConfig builds a function.json-shaped config declaring a single
+// serviceBusTrigger input trigger binding on (topicName, subscriptionName).
+func topicTriggerConfig(topicName, subscriptionName string) map[string]any {
+	return map[string]any{
+		"bindings": []any{
+			map[string]any{
+				"name":             "item",
+				"type":             "serviceBusTrigger",
+				"direction":        "in",
+				"topicName":        topicName,
+				"subscriptionName": subscriptionName,
+				"connection":       "AzureWebJobsServiceBus",
+			},
+		},
+	}
+}
+
 // seedTriggeredApp creates the portable function app plus its SiteMeta and one
 // deployed function carrying the supplied binding config, then registers a Go
 // handler that records each invocation's payload. The returned pointers observe
@@ -143,6 +160,89 @@ func TestDeliverFunctionTriggerRecursionGuard(t *testing.T) {
 
 	ctx := recursionguard.WithDepth(context.Background(), recursionguard.MaxDepth)
 	m.DeliverFunctionTrigger(ctx, "queueTrigger", "loop", []byte("x"))
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(count), "delivery at MaxDepth must be dropped")
+}
+
+func TestDeliverTopicFunctionTriggerInvokesBoundApp(t *testing.T) {
+	m := newTestMock()
+	count, last := seedTriggeredApp(t, m, "orders-app", topicTriggerConfig("orders", "billing"))
+
+	m.DeliverTopicFunctionTrigger(context.Background(), "serviceBusTrigger", "orders", "billing", []byte("hello"))
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(count), "bound function should fire exactly once")
+	assert.Equal(t, "hello", string(*last), "function should receive the delivered message body")
+}
+
+func TestDeliverTopicFunctionTriggerNoMatch(t *testing.T) {
+	m := newTestMock()
+	count, _ := seedTriggeredApp(t, m, "orders-app", topicTriggerConfig("orders", "billing"))
+
+	// A different topic, a different subscription of the same topic, the wrong
+	// binding type, and empty inputs must all no-op.
+	m.DeliverTopicFunctionTrigger(context.Background(), "serviceBusTrigger", "shipping", "billing", []byte("x"))
+	m.DeliverTopicFunctionTrigger(context.Background(), "serviceBusTrigger", "orders", "audit", []byte("x"))
+	m.DeliverTopicFunctionTrigger(context.Background(), "queueTrigger", "orders", "billing", []byte("x"))
+	m.DeliverTopicFunctionTrigger(context.Background(), "", "orders", "billing", []byte("x"))
+	m.DeliverTopicFunctionTrigger(context.Background(), "serviceBusTrigger", "", "billing", []byte("x"))
+	m.DeliverTopicFunctionTrigger(context.Background(), "serviceBusTrigger", "orders", "", []byte("x"))
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(count))
+}
+
+func TestDeliverTopicFunctionTriggerSkipsDisabledFunction(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateFunction(ctx, driver.FunctionConfig{Name: "disabled-app", Runtime: "node"})
+	require.NoError(t, err)
+	_, err = m.UpsertSiteMeta(ctx, SiteMeta{Name: "disabled-app", Subscription: "sub", ResourceGroup: "rg"})
+	require.NoError(t, err)
+	_, _, err = m.CreateSiteFunction(ctx, "disabled-app", SiteFunction{
+		Name: "fn1", Config: topicTriggerConfig("orders", "billing"), IsDisabled: true,
+	})
+	require.NoError(t, err)
+
+	var count int32
+
+	m.RegisterHandler("disabled-app", func(_ context.Context, p []byte) ([]byte, error) {
+		atomic.AddInt32(&count, 1)
+
+		return p, nil
+	})
+
+	m.DeliverTopicFunctionTrigger(ctx, "serviceBusTrigger", "orders", "billing", []byte("x"))
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&count), "a disabled function must not fire")
+}
+
+func TestDeliverTopicFunctionTriggerOutputBindingIgnored(t *testing.T) {
+	m := newTestMock()
+
+	// An output ("out") binding to the topic is not a trigger and must not fire.
+	cfg := map[string]any{
+		"bindings": []any{
+			map[string]any{
+				"name": "out", "type": "serviceBusTrigger", "direction": "out",
+				"topicName": "orders", "subscriptionName": "billing",
+			},
+		},
+	}
+	count, _ := seedTriggeredApp(t, m, "producer-app", cfg)
+
+	m.DeliverTopicFunctionTrigger(context.Background(), "serviceBusTrigger", "orders", "billing", []byte("x"))
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(count))
+}
+
+// TestDeliverTopicFunctionTriggerRecursionGuard proves a re-entrant delivery
+// already at MaxDepth is dropped without invoking the function.
+func TestDeliverTopicFunctionTriggerRecursionGuard(t *testing.T) {
+	m := newTestMock()
+	count, _ := seedTriggeredApp(t, m, "loop-app", topicTriggerConfig("loop-topic", "loop-sub"))
+
+	ctx := recursionguard.WithDepth(context.Background(), recursionguard.MaxDepth)
+	m.DeliverTopicFunctionTrigger(ctx, "serviceBusTrigger", "loop-topic", "loop-sub", []byte("x"))
 
 	assert.Equal(t, int32(0), atomic.LoadInt32(count), "delivery at MaxDepth must be dropped")
 }
