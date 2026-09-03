@@ -97,6 +97,16 @@ type sessionState struct {
 // FunctionTrigger is a function that gets called when a message is sent to a queue.
 type FunctionTrigger func(queueURL string, message driver.Message)
 
+// FunctionTriggerSink delivers a message enqueued to a queue to any Azure
+// Function bound to that queue by a trigger binding (queueTrigger for Queue
+// Storage, serviceBusTrigger for Service Bus). The Azure Functions provider
+// implements it. It is wired per Mock instance via SetFunctionTriggerSink so the
+// distinct Queue Storage and Service Bus instances each dispatch their own
+// binding type, mirroring how Event Grid delivery calls InvokeExternal.
+type FunctionTriggerSink interface {
+	DeliverFunctionTrigger(ctx context.Context, bindingType, queueName string, body []byte)
+}
+
 // Mock is an in-memory mock implementation of the Azure Service Bus service.
 type Mock struct {
 	queues     *memstore.Store[*queueData]
@@ -104,6 +114,11 @@ type Mock struct {
 	mu         sync.RWMutex
 	triggers   map[string]FunctionTrigger // queueURL -> trigger
 	monitoring mondriver.Monitoring
+	// funcSink and triggerBinding wire automatic Azure Function trigger delivery:
+	// on each enqueue, funcSink is asked to invoke any function whose function.json
+	// declares a triggerBinding-typed binding for the queue. Both are guarded by mu.
+	funcSink       FunctionTriggerSink
+	triggerBinding string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -156,6 +171,21 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 	defer m.mu.Unlock()
 
 	delete(m.triggers, queueURL)
+}
+
+// SetFunctionTriggerSink wires the Azure Functions provider as the destination
+// for this queue surface's automatic trigger deliveries. bindingType is the
+// function.json trigger type this surface fires — "queueTrigger" for Queue
+// Storage, "serviceBusTrigger" for Service Bus — so only functions bound with
+// the matching trigger are invoked. A nil sink disables trigger delivery (the
+// default). This is the cross-service seam, analogous to Event Grid's
+// SetFunctionInvoker.
+func (m *Mock) SetFunctionTriggerSink(sink FunctionTriggerSink, bindingType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.funcSink = sink
+	m.triggerBinding = bindingType
 }
 
 // DeliverExternal enqueues body into the queue or topic whose name matches the
@@ -317,49 +347,98 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 // SendMessage sends a message to the specified Service Bus queue.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
+func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "queue %q not found", input.QueueURL)
 	}
 
+	res, err := m.enqueueLocked(qd, &input)
+	if err != nil {
+		return nil, err
+	}
+
+	// A duplicate send is silently accepted but not re-enqueued, so it fires no
+	// trigger and emits no incoming-message metric.
+	if res.msg == nil {
+		return &driver.SendMessageOutput{MessageID: res.dupID}, nil
+	}
+
+	// Triggers run AFTER the queue lock is released: a function invoked by a
+	// trigger may re-enqueue to this same queue, which would deadlock on the
+	// non-reentrant qd.mu if fired while it is still held. The recursion guard
+	// threaded through ctx bounds any self-referential enqueue→invoke→enqueue
+	// chain (see dispatchFunctionTrigger / lambda.InvokeExternal).
+	m.fireTrigger(input.QueueURL, res.msg)
+	m.dispatchFunctionTrigger(ctx, res.queueName, res.msg)
+
+	m.emitMetric(res.queueName, map[string]float64{
+		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	})
+
+	return &driver.SendMessageOutput{
+		MessageID:  res.msg.ID,
+		ExpiresAt:  res.msg.ExpiresAt,
+		PopReceipt: res.msg.ReceiptHandle,
+	}, nil
+}
+
+// enqueueResult carries what SendMessage needs after the queue lock is released:
+// the stored message and the queue's name for trigger dispatch. A nil msg with a
+// non-empty dupID means the send was a silently-accepted duplicate that was not
+// re-enqueued (so it fires no trigger).
+type enqueueResult struct {
+	msg       *sbMessage
+	queueName string
+	dupID     string
+}
+
+// enqueueLocked validates and appends one message under the queue lock.
+func (m *Mock) enqueueLocked(qd *queueData, input *driver.SendMessageInput) (enqueueResult, error) {
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	if err := validateFIFORequirements(qd, &input); err != nil {
-		return nil, err
+	if err := validateFIFORequirements(qd, input); err != nil {
+		return enqueueResult{}, err
 	}
 
 	// A session-enabled entity requires every message to carry a SessionId (real
 	// Azure rejects a session-less send with InvalidOperation → 400).
 	sessionID := input.SystemProperties["SessionId"]
 	if qd.requiresSession && sessionID == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "SessionId is required for a session-enabled entity")
+		return enqueueResult{}, cerrors.New(cerrors.InvalidArgument, "SessionId is required for a session-enabled entity")
 	}
 
 	now := m.opts.Clock.Now()
 
 	// A repeat DeduplicationID (FIFO) or MessageId (Service Bus dup-detection)
 	// inside the window is silently accepted but not re-enqueued.
-	if existingID, found := findSendDuplicate(qd, &input, now); found {
-		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	if existingID, found := findSendDuplicate(qd, input, now); found {
+		return enqueueResult{queueName: qd.info.Name, dupID: existingID}, nil
 	}
 
-	msg := buildSendMessage(&input, sessionID, now, qd.delaySeconds)
+	msg := buildSendMessage(input, sessionID, now, qd.delaySeconds)
 	qd.messages = append(qd.messages, msg)
-	recordSendDedup(qd, &input, now)
+	recordSendDedup(qd, input, now)
 
-	m.fireTrigger(input.QueueURL, msg)
+	return enqueueResult{msg: msg, queueName: qd.info.Name}, nil
+}
 
-	m.emitMetric(qd.info.Name, map[string]float64{
-		"IncomingMessages": 1, "Size": float64(len(input.Body)),
-	})
+// dispatchFunctionTrigger forwards a just-enqueued message to the Azure Functions
+// provider so any function bound to this queue fires. It is a no-op when no sink
+// is wired (the default, and every non-Azure-Functions deployment). Called after
+// the queue lock is released; see SendMessage.
+func (m *Mock) dispatchFunctionTrigger(ctx context.Context, queueName string, msg *sbMessage) {
+	m.mu.RLock()
+	sink := m.funcSink
+	bindingType := m.triggerBinding
+	m.mu.RUnlock()
 
-	return &driver.SendMessageOutput{
-		MessageID:  msg.ID,
-		ExpiresAt:  msg.ExpiresAt,
-		PopReceipt: msg.ReceiptHandle,
-	}, nil
+	if sink == nil {
+		return
+	}
+
+	sink.DeliverFunctionTrigger(ctx, bindingType, queueName, []byte(msg.Body))
 }
 
 // findSendDuplicate reports an already-accepted message id when input is a FIFO
