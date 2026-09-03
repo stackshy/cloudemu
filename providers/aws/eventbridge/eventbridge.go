@@ -55,8 +55,15 @@ type SQSDeliverer interface {
 // LambdaInvoker asynchronously invokes a Lambda function target by ARN with the
 // event envelope. The Lambda mock satisfies this, enabling EventBridge -> Lambda
 // (ASYNC) delivery.
+//
+// FunctionExists is consulted separately from InvokeExternal because
+// InvokeExternal treats an unknown function as a no-op success for its other
+// callers (S3 notifications, DynamoDB Streams, SQS event-source mappings), so
+// it cannot itself distinguish "target deleted" (a real EventBridge dispatch
+// failure, eligible for the target's DLQ) from "handler ran fine".
 type LambdaInvoker interface {
 	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+	FunctionExists(ctx context.Context, functionARN string) bool
 }
 
 // SNSPublisher publishes the event envelope to an SNS topic target by ARN. The
@@ -600,11 +607,7 @@ func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 
 		return m.sqs.DeliverExternal(ctx, arn, body) == nil
 	case strings.Contains(arn, ":lambda:"):
-		if m.lambda == nil {
-			return true
-		}
-
-		return m.lambda.InvokeExternal(ctx, arn, []byte(body)) == nil
+		return m.dispatchLambda(ctx, arn, body)
 	case strings.Contains(arn, ":sns:"):
 		if m.sns == nil {
 			return true
@@ -620,6 +623,26 @@ func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 	default:
 		return true
 	}
+}
+
+// dispatchLambda dispatches a Lambda target, reporting success/failure. Unlike
+// the other target services, a stale Lambda target (its function deleted after
+// PutTargets) is checked explicitly with FunctionExists before invoking: a
+// nil m.lambda (backend not wired) reports success — an emulator-coverage
+// limitation, not a real failure — but a wired backend whose target function
+// is gone is a genuine dispatch failure, eligible for the target's DLQ, that
+// InvokeExternal's own no-op-for-unknown-function contract cannot surface
+// (that contract is deliberate for InvokeExternal's other callers).
+func (m *Mock) dispatchLambda(ctx context.Context, arn, body string) bool {
+	if m.lambda == nil {
+		return true
+	}
+
+	if !m.lambda.FunctionExists(ctx, arn) {
+		return false
+	}
+
+	return m.lambda.InvokeExternal(ctx, arn, []byte(body)) == nil
 }
 
 // deadLetterConfigJSON is the raw shape of a Target's DeadLetterConfig JSON

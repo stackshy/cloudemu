@@ -188,3 +188,70 @@ func TestSDKEventBridgeDeadLetterOnFailingLambdaTarget(t *testing.T) {
 
 	pollForMessage(t, c.sqs, dlqURL)
 }
+
+// TestSDKEventBridgeDeadLetterOnStaleLambdaTarget verifies a Lambda target
+// whose function is DELETED after PutTargets (not merely a raising handler)
+// still reaches the DLQ. Lambda's InvokeExternal treats an unknown function as
+// a no-op success for its OTHER callers (S3 notifications, DynamoDB Streams,
+// SQS event-source mappings), so EventBridge's dispatch must detect the
+// missing target itself rather than relying on InvokeExternal's error.
+func TestSDKEventBridgeDeadLetterOnStaleLambdaTarget(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	c := newDLQClients(t, cloud)
+	ctx := context.Background()
+
+	fnOut, err := c.lam.CreateFunction(ctx, &awslambda.CreateFunctionInput{
+		FunctionName: aws.String("eb-stale-fn"),
+		Runtime:      lambdatypes.RuntimeGo1x,
+		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
+		Handler:      aws.String("main"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("stub")},
+	})
+	if err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	dlqURL, dlqARN := dlqQueue(t, c.sqs, "eb-dlq")
+
+	if _, err := c.eb.PutRule(ctx, &awseb.PutRuleInput{
+		Name:         aws.String("r"),
+		EventPattern: aws.String(`{"source":["myapp"]}`),
+	}); err != nil {
+		t.Fatalf("PutRule: %v", err)
+	}
+
+	if _, err := c.eb.PutTargets(ctx, &awseb.PutTargetsInput{
+		Rule: aws.String("r"),
+		Targets: []ebtypes.Target{{
+			Id:               aws.String("1"),
+			Arn:              fnOut.FunctionArn,
+			DeadLetterConfig: &ebtypes.DeadLetterConfig{Arn: aws.String(dlqARN)},
+		}},
+	}); err != nil {
+		t.Fatalf("PutTargets: %v", err)
+	}
+
+	// The target function goes stale after PutTargets.
+	if _, err := c.lam.DeleteFunction(ctx, &awslambda.DeleteFunctionInput{
+		FunctionName: aws.String("eb-stale-fn"),
+	}); err != nil {
+		t.Fatalf("DeleteFunction: %v", err)
+	}
+
+	if _, err := c.eb.PutEvents(ctx, &awseb.PutEventsInput{Entries: []ebtypes.PutEventsRequestEntry{
+		{Source: aws.String("myapp"), DetailType: aws.String("t"), Detail: aws.String(`{"orderId":"42"}`)},
+	}}); err != nil {
+		t.Fatalf("PutEvents: %v", err)
+	}
+
+	body := pollForMessage(t, c.sqs, dlqURL)
+
+	var env map[string]any
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		t.Fatalf("DLQ body not JSON: %v (%s)", err, body)
+	}
+
+	if env["source"] != "myapp" {
+		t.Fatalf("unexpected DLQ envelope: %+v", env)
+	}
+}
