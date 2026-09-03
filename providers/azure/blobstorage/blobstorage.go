@@ -207,6 +207,11 @@ type Mock struct {
 	// blobEventSeq backs the monotonically increasing sequencer stamped on each
 	// emitted blob event (Event Grid's per-blob ordering token).
 	blobEventSeq atomic.Uint64
+	// functionSink, when wired, receives a just-written blob's content on every
+	// create/update so any Azure Function with a blobTrigger binding on the
+	// blob's container can be invoked. nil in library/typed use, where blob
+	// writes simply skip trigger delivery. See function_trigger.go.
+	functionSink BlobFunctionTriggerSink
 }
 
 // Compile-time check that Mock satisfies the optional BucketAttributes
@@ -488,6 +493,7 @@ func (m *Mock) putBlockBlobInternal(
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
 	m.emitBlobCreated(ctx, obj, bucket)
+	m.dispatchFunctionTrigger(ctx, obj, bucket)
 
 	info := objectInfo(obj)
 
@@ -809,6 +815,7 @@ func (m *Mock) copyBlobInternal(
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
 	m.emitBlobCreatedAPI(ctx, dstObj, dstBucket, blobEventAPICopyBlob)
+	m.dispatchFunctionTrigger(ctx, dstObj, dstBucket)
 
 	info := objectInfo(dstObj)
 

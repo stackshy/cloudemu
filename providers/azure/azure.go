@@ -240,6 +240,9 @@ func New(opts ...config.Option) *Provider {
 	p.QueueStorage.SetFunctionTriggerSink(p.Functions, "queueTrigger")
 	p.ServiceBus.SetFunctionTriggerSink(p.Functions, "serviceBusTrigger")
 	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
+	// A blob created/updated in a bound container invokes any function whose
+	// function.json declares a blobTrigger binding on that container.
+	p.BlobStorage.SetFunctionTriggerSink(p.Functions)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
