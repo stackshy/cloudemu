@@ -612,14 +612,72 @@ func (h *Handler) setBucketIAM(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
+	// A client that read the policy first (the normal read-modify-write flow)
+	// echoes back the etag it saw; a mismatch means someone else changed the
+	// policy in between, so the write is rejected like real GCS does.
+	currentEtag := h.currentBucketIAMEtag(r.Context(), name)
+	if policy.Etag != "" && policy.Etag != currentEtag {
+		writeError(w, http.StatusPreconditionFailed, "conditionNotMet",
+			"bucket "+name+"'s IAM policy was modified concurrently")
+		return
+	}
+
+	// Stamp the server-controlled fields (kind/resourceId/etag) onto the
+	// client's document without disturbing anything else it sent — bindings,
+	// their (currently unmodeled) conditions included — so it round-trips
+	// verbatim on the next getIamPolicy.
+	out, sErr := stampIAMPolicy(raw, name, nextIAMEtag(currentEtag))
+	if sErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid", sErr.Error())
+		return
+	}
+
 	if h.ext != nil {
-		if sErr := h.ext.SetBucketIAMPolicy(r.Context(), name, raw); sErr != nil {
-			writeErr(w, sErr)
+		if pErr := h.ext.SetBucketIAMPolicy(r.Context(), name, out); pErr != nil {
+			writeErr(w, pErr)
 			return
 		}
 	}
 
-	writeRawJSON(w, raw)
+	writeRawJSON(w, out)
+}
+
+// currentBucketIAMEtag returns the etag of the bucket's stored IAM policy, or
+// the GCS default etag when none has been set yet.
+func (h *Handler) currentBucketIAMEtag(ctx context.Context, name string) string {
+	if h.ext != nil {
+		if raw, err := h.ext.BucketIAMPolicy(ctx, name); err == nil {
+			var cur struct {
+				Etag string `json:"etag"`
+			}
+
+			if json.Unmarshal(raw, &cur) == nil && cur.Etag != "" {
+				return cur.Etag
+			}
+		}
+	}
+
+	return defaultIAMPolicy(name).Etag
+}
+
+// stampIAMPolicy overwrites kind/resourceId/etag on the client-supplied
+// policy document — real GCS always sets these itself, ignoring whatever the
+// client sent — while leaving every other field untouched.
+func stampIAMPolicy(raw []byte, bucket, etag string) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+
+	doc["kind"] = "storage#policy"
+	doc["resourceId"] = "projects/_/buckets/" + bucket
+	doc["etag"] = etag
+
+	if _, ok := doc["bindings"]; !ok {
+		doc["bindings"] = []iamPolicyBind{}
+	}
+
+	return json.Marshal(doc)
 }
 
 // testIAMPermissions serves /b/{bucket}/iam/testPermissions — the mock grants
@@ -666,7 +724,7 @@ func writeRawJSON(w http.ResponseWriter, raw []byte) {
 	w.WriteHeader(http.StatusOK)
 	// raw is an IAM policy document validated as JSON before storage and served
 	// as application/json, not HTML — no XSS surface.
-	_, _ = w.Write(raw) //nolint:gosec // validated JSON policy, served as application/json
+	_, _ = w.Write(raw)
 }
 
 // upload handles POST /upload/storage/v1/b/{bucket}/o, dispatching on
