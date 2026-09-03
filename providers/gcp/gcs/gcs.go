@@ -97,6 +97,13 @@ type bucketMeta struct {
 	metageneration int64
 	updated        string
 	iamPolicy      []byte
+	// ublaEnabled / ublaLockedTime / publicAccessPrevention hold the bucket's
+	// iamConfiguration (Uniform Bucket-Level Access + Public Access Prevention).
+	// ublaLockedTime is stamped when UBLA is enabled and cleared when disabled,
+	// mirroring the 90-day lock window real GCS reports.
+	ublaEnabled            bool
+	ublaLockedTime         string
+	publicAccessPrevention string
 	// gcsLifecycleRaw is the bucket's lifecycle configuration stored verbatim as
 	// GCS JSON ({"rule":[...]}), preserving every rule condition the wire layer
 	// received. It is the authoritative source for EvaluateLifecycle and
@@ -120,6 +127,9 @@ type Mock struct {
 	// notifGen is the source of unique, monotonically increasing notification
 	// config ids (numeric strings, as real GCS mints).
 	notifGen atomic.Int64
+	// hmacKeys holds project-scoped service-account HMAC keys keyed by access id
+	// (Projects.hmacKeys). Lazily created in New so the store is always non-nil.
+	hmacKeys *memstore.Store[*hmacKeyRecord]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -147,8 +157,9 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 // New creates a new GCS mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		buckets: memstore.New[*bucketMeta](),
-		opts:    opts,
+		buckets:  memstore.New[*bucketMeta](),
+		opts:     opts,
+		hmacKeys: memstore.New[*hmacKeyRecord](),
 	}
 }
 
