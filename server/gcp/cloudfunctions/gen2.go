@@ -221,6 +221,13 @@ func (h *Handler) serveV2Action(w http.ResponseWriter, r *http.Request, p v2Path
 		h.serveV2IamPolicy(w, r, p)
 	case actionTestIamPermissions:
 		h.serveV2TestIamPermissions(w, r, p)
+	case actionCall:
+		if p.name == "" {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown method: "+p.action)
+			return
+		}
+
+		h.serveV2Call(w, r, p)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown method: "+p.action)
 	}
@@ -233,7 +240,7 @@ func (h *Handler) serveV2Resource(w http.ResponseWriter, r *http.Request, p v2Pa
 	case http.MethodPatch:
 		h.patchV2(w, r, p)
 	case http.MethodDelete:
-		h.deleteV2(w, p)
+		h.deleteV2(w, r, p)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 	}
@@ -269,17 +276,30 @@ func (h *Handler) createV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	p.name = name
 	key := p.fullName()
 
+	fn := body
+	fn.revisionSeq = 1
+	computeGen2Outputs(&fn, p, true)
+
+	// Register the gen2 function in the shared serverless driver so :call and
+	// event delivery resolve it like gen1. The driver is the authority on name
+	// uniqueness across gen1 AND gen2, so a duplicate create is rejected here
+	// before anything lands in the gen2 map.
+	if err := h.registerGen2Driver(r.Context(), name, &fn); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	h.mu.Lock()
 	if _, exists := h.gen2[key]; exists {
 		h.mu.Unlock()
+		// The driver guards uniqueness, so this is unreachable in practice; roll
+		// back the driver registration to keep the two stores consistent.
+		_ = h.fn.DeleteFunction(r.Context(), name)
 		writeError(w, http.StatusConflict, "ALREADY_EXISTS", "function "+name+" already exists")
 
 		return
 	}
 
-	fn := body
-	fn.revisionSeq = 1
-	computeGen2Outputs(&fn, p, true)
 	h.gen2[key] = &fn
 	resp := cloneGen2(&fn)
 	h.mu.Unlock()
@@ -349,10 +369,17 @@ func (h *Handler) patchV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 
 	h.mu.Unlock()
 
+	// Keep the driver-backed function in sync so a later :call / event delivery
+	// runs the patched runtime, env and (if the patch carried new source) code.
+	if err := h.syncGen2Driver(r.Context(), p.name, updated); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	h.finishV2LRO(w, p, updated)
 }
 
-func (h *Handler) deleteV2(w http.ResponseWriter, p v2Path) {
+func (h *Handler) deleteV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	key := p.fullName()
 
 	h.mu.Lock()
@@ -369,6 +396,10 @@ func (h *Handler) deleteV2(w http.ResponseWriter, p v2Path) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
 		return
 	}
+
+	// Drop the driver-backed function too so the invoke path no longer resolves
+	// it. Best-effort: a missing driver entry is not an error.
+	_ = h.fn.DeleteFunction(r.Context(), p.name)
 
 	op := h.mintV2Operation(p, nil)
 	writeJSON(w, http.StatusOK, op)
