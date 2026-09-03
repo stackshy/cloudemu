@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -122,6 +123,103 @@ func TestUpdateSecretReturnsVersionID(t *testing.T) {
 	assert.Empty(t, verID2, "no value change must not create a version")
 }
 
+// TestRotateSecretConfiguresAndRotates verifies RotateSecret stores the
+// lambda ARN/rules, enables rotation, and (RotateImmediately=true) advances
+// the version and stamps LastRotatedDate/NextRotationDate.
+func TestRotateSecretConfiguresAndRotates(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	createTestSecret(t, m, "s", "v1")
+
+	rules := driver.SecretRotationRules{AutomaticallyAfterDays: 30}
+
+	ver, err := m.RotateSecret(ctx, "s", "arn:aws:lambda:us-east-1:123456789012:function:rotate", rules, true)
+	require.NoError(t, err)
+	assert.NotEmpty(t, ver.VersionID)
+
+	details, err := m.SecretRotationDetails(ctx, "s")
+	require.NoError(t, err)
+	assert.True(t, details.Enabled)
+	assert.Equal(t, "arn:aws:lambda:us-east-1:123456789012:function:rotate", details.LambdaARN)
+	assert.Equal(t, rules, details.Rules)
+	assert.NotEmpty(t, details.LastRotatedDate)
+	assert.NotEmpty(t, details.NextRotationDate)
+
+	cur, err := m.GetSecretValueStage(ctx, "s", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, ver.VersionID, cur.VersionID)
+}
+
+// TestRotateSecretImmediateFalseConfiguresOnly verifies RotateImmediately=false
+// enables rotation and stores the config without advancing the version.
+func TestRotateSecretImmediateFalseConfiguresOnly(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	createTestSecret(t, m, "s", "v1")
+
+	cur, err := m.GetSecretValueStage(ctx, "s", "", "")
+	require.NoError(t, err)
+
+	ver, err := m.RotateSecret(ctx, "s", "arn:aws:lambda:us-east-1:123456789012:function:rotate",
+		driver.SecretRotationRules{}, false)
+	require.NoError(t, err)
+	assert.Equal(t, cur.VersionID, ver.VersionID, "RotateImmediately=false must not advance the version")
+
+	details, err := m.SecretRotationDetails(ctx, "s")
+	require.NoError(t, err)
+	assert.True(t, details.Enabled)
+	assert.Empty(t, details.LastRotatedDate, "no rotation ran, so LastRotatedDate must stay unset")
+}
+
+// TestRotateSecretReusesConfiguredLambda verifies a second RotateSecret call
+// with no lambda ARN keeps the previously configured one.
+func TestRotateSecretReusesConfiguredLambda(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	createTestSecret(t, m, "s", "v1")
+
+	_, err := m.RotateSecret(ctx, "s", "arn:aws:lambda:us-east-1:123456789012:function:rotate",
+		driver.SecretRotationRules{}, true)
+	require.NoError(t, err)
+
+	_, err = m.RotateSecret(ctx, "s", "", driver.SecretRotationRules{}, true)
+	require.NoError(t, err)
+
+	details, err := m.SecretRotationDetails(ctx, "s")
+	require.NoError(t, err)
+	assert.Equal(t, "arn:aws:lambda:us-east-1:123456789012:function:rotate", details.LambdaARN)
+}
+
+// TestCancelRotateSecret verifies CancelRotateSecret disables rotation while
+// keeping the configured lambda ARN in place.
+func TestCancelRotateSecret(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	createTestSecret(t, m, "s", "v1")
+
+	_, err := m.RotateSecret(ctx, "s", "arn:aws:lambda:us-east-1:123456789012:function:rotate",
+		driver.SecretRotationRules{}, true)
+	require.NoError(t, err)
+
+	cur, err := m.GetSecretValueStage(ctx, "s", "", "")
+	require.NoError(t, err)
+
+	info, versionID, err := m.CancelRotateSecret(ctx, "s")
+	require.NoError(t, err)
+	assert.Equal(t, "s", info.Name)
+	assert.Equal(t, cur.VersionID, versionID)
+
+	details, err := m.SecretRotationDetails(ctx, "s")
+	require.NoError(t, err)
+	assert.False(t, details.Enabled)
+	assert.Equal(t, "arn:aws:lambda:us-east-1:123456789012:function:rotate", details.LambdaARN,
+		"cancel must not clear the configured lambda ARN")
+}
+
 // TestSnapshotRestoreStages verifies staging labels survive snapshot/restore.
 func TestSnapshotRestoreStages(t *testing.T) {
 	m := newTestMock()
@@ -148,4 +246,32 @@ func TestSnapshotRestoreStages(t *testing.T) {
 	cur, err := restored.GetSecretValueStage(ctx, "s", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", string(cur.Value))
+}
+
+// TestSnapshotRestoreRotationConfig verifies rotation configuration survives
+// snapshot/restore.
+func TestSnapshotRestoreRotationConfig(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	createTestSecret(t, m, "s", "v1")
+
+	rules := driver.SecretRotationRules{AutomaticallyAfterDays: 14}
+
+	_, err := m.RotateSecret(ctx, "s", "arn:aws:lambda:us-east-1:123456789012:function:rotate", rules, true)
+	require.NoError(t, err)
+
+	data, err := m.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	restored := newTestMock()
+	require.NoError(t, restored.Restore(ctx, data))
+
+	before, err := m.SecretRotationDetails(ctx, "s")
+	require.NoError(t, err)
+
+	after, err := restored.SecretRotationDetails(ctx, "s")
+	require.NoError(t, err)
+
+	assert.Equal(t, before, after)
 }
