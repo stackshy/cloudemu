@@ -34,7 +34,25 @@ type secretData struct {
 	// resourcePolicy is the JSON resource-based policy attached to the secret
 	// (PutResourcePolicy); empty when none is set.
 	resourcePolicy string
-	mu             sync.RWMutex
+	// rotationEnabled mirrors DescribeSecret's RotationEnabled: set true by
+	// RotateSecret, cleared by CancelRotateSecret. The configured
+	// rotationLambdaARN/rotationRules are left in place across a cancel, matching
+	// real Secrets Manager, so a later RotateSecret can re-enable rotation
+	// without re-supplying them.
+	rotationEnabled bool
+	// rotationLambdaARN is the Lambda function ARN configured via RotateSecret.
+	// The emulator does not invoke it (no rotation Lambda runtime); it is stored
+	// and echoed for DescribeSecret/ListSecrets parity.
+	rotationLambdaARN string
+	rotationRules     driver.SecretRotationRules
+	// rotationConfiguredAt is the time rotation was last (re)configured, the
+	// NextRotationDate baseline before any rotation has actually run.
+	rotationConfiguredAt time.Time
+	// lastRotatedDate is the time RotateSecret last actually advanced the
+	// version (zero when the secret has never been rotated, including when
+	// rotation was only configured with RotateImmediately=false).
+	lastRotatedDate time.Time
+	mu              sync.RWMutex
 }
 
 // DeleteSecret recovery-window bounds, matching the real service.

@@ -337,11 +337,21 @@ func (m *Mock) RestoreSecret(_ context.Context, name string) (*driver.SecretInfo
 	return &result, nil
 }
 
-// RotateSecret rotates a secret by staging a new current version. Real rotation
-// invokes a Lambda to generate the new value; with no Lambda, the emulator
-// carries the current value forward under a fresh version ID so callers see the
-// version advance and AWSPREVIOUS move as they would in production.
-func (m *Mock) RotateSecret(_ context.Context, name string) (*driver.SecretVersion, error) {
+// RotateSecret configures and (by default) runs a rotation. A non-empty
+// rotationLambdaARN or non-zero rules replaces the secret's stored
+// configuration (an empty/zero argument leaves the existing configuration
+// untouched, matching RotateSecret's "reuse the last configured value"
+// semantics); the call always leaves rotation enabled. With rotateImmediately
+// true (the real service's default), a new version is appended carrying the
+// current value forward — real rotation invokes a Lambda to generate the new
+// value; with no Lambda runtime, the emulator carries the value forward
+// unchanged so callers still see the version advance and AWSPREVIOUS move as
+// they would in production. With rotateImmediately false, only the
+// configuration is stored and the version set is untouched, mirroring a
+// schedule-only configure call.
+func (m *Mock) RotateSecret(
+	_ context.Context, name, rotationLambdaARN string, rules driver.SecretRotationRules, rotateImmediately bool,
+) (*driver.SecretVersion, error) {
 	sd, ok := m.secrets.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
@@ -355,29 +365,118 @@ func (m *Mock) RotateSecret(_ context.Context, name string) (*driver.SecretVersi
 			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
+	now := m.opts.Clock.Now().UTC()
+	sd.applyRotationConfig(rotationLambdaARN, rules, now)
+
 	curID, ok := sd.stages[stageCurrent]
 	if !ok {
 		return nil, errors.Newf(errors.FailedPrecondition, "secret %q has no current version to rotate", name)
 	}
 
 	cur, _ := sd.versionByID(curID)
+
+	if !rotateImmediately {
+		return copyVersion(cur), nil
+	}
+
 	data := make([]byte, len(cur.Value))
 	copy(data, cur.Value)
 
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	nowStr := now.Format(time.RFC3339)
 	versionID := idgen.UUID()
 	sd.versions = append(sd.versions, driver.SecretVersion{
 		VersionID: versionID,
 		Value:     data,
-		CreatedAt: now,
+		CreatedAt: nowStr,
 		Binary:    cur.Binary,
 	})
 	sd.promoteToCurrent(versionID)
-	sd.info.UpdatedAt = now
+	sd.info.UpdatedAt = nowStr
+	sd.lastRotatedDate = now
 
 	result, _ := sd.versionByID(versionID)
 
 	return copyVersion(result), nil
+}
+
+// applyRotationConfig stores the lambda ARN / schedule rules a RotateSecret
+// call configures and marks rotation enabled. An empty rotationLambdaARN or
+// zero-value rules leaves the corresponding existing configuration in place,
+// so a caller re-triggering rotation need not re-supply it. now becomes the
+// NextRotationDate baseline until an actual rotation runs.
+func (sd *secretData) applyRotationConfig(rotationLambdaARN string, rules driver.SecretRotationRules, now time.Time) {
+	if rotationLambdaARN != "" {
+		sd.rotationLambdaARN = rotationLambdaARN
+	}
+
+	if rules != (driver.SecretRotationRules{}) {
+		sd.rotationRules = rules
+	}
+
+	sd.rotationEnabled = true
+	sd.rotationConfiguredAt = now
+}
+
+// CancelRotateSecret turns off automatic rotation. It leaves any configured
+// rotationLambdaARN/rotationRules in place, matching real Secrets Manager,
+// so a later RotateSecret call can re-enable rotation without re-supplying
+// them. It returns the secret's metadata and its current version id, the
+// pair CancelRotateSecretOutput echoes.
+func (m *Mock) CancelRotateSecret(_ context.Context, name string) (*driver.SecretInfo, string, error) {
+	sd, ok := m.secrets.Get(name)
+	if !ok {
+		return nil, "", errors.Newf(errors.NotFound, "secret %q not found", name)
+	}
+
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	if !sd.deletedAt.IsZero() {
+		return nil, "", errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
+	}
+
+	sd.rotationEnabled = false
+
+	info := sd.info
+	versionID := sd.stages[stageCurrent]
+
+	return &info, versionID, nil
+}
+
+// SecretRotationDetails returns a secret's rotation configuration for
+// DescribeSecret/ListSecrets. NextRotationDate is derived from
+// AutomaticallyAfterDays and the more recent of LastRotatedDate or the time
+// rotation was configured; it is empty when AutomaticallyAfterDays is unset.
+func (m *Mock) SecretRotationDetails(_ context.Context, name string) (*driver.SecretRotationInfo, error) {
+	sd, ok := m.secrets.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	info := &driver.SecretRotationInfo{
+		Enabled:   sd.rotationEnabled,
+		LambdaARN: sd.rotationLambdaARN,
+		Rules:     sd.rotationRules,
+	}
+
+	if !sd.lastRotatedDate.IsZero() {
+		info.LastRotatedDate = sd.lastRotatedDate.Format(time.RFC3339)
+	}
+
+	if sd.rotationRules.AutomaticallyAfterDays > 0 && !sd.rotationConfiguredAt.IsZero() {
+		base := sd.rotationConfiguredAt
+		if !sd.lastRotatedDate.IsZero() {
+			base = sd.lastRotatedDate
+		}
+
+		info.NextRotationDate = base.AddDate(0, 0, int(sd.rotationRules.AutomaticallyAfterDays)).Format(time.RFC3339)
+	}
+
+	return info, nil
 }
 
 func copyVersion(v *driver.SecretVersion) *driver.SecretVersion {
