@@ -85,6 +85,16 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 | `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
 | `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
 
+### AzureSoftDeleteBlob
+
+AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `ListDeletedBlobs` | ListDeletedBlobs returns the soft-deleted blobs matching opts, so a List |
+| `SoftDeleteEnabled` | SoftDeleteEnabled reports whether soft delete is currently in effect for |
+| `UndeleteBlob` | UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete). |
+
 ### AzureVersionedBlob
 
 AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by

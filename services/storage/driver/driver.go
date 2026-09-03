@@ -333,6 +333,55 @@ type AzureVersionedBlob interface {
 	ListBlobVersions(ctx context.Context, container string, opts ListOptions) (*VersionListResult, error)
 }
 
+// DeletedBlob is one soft-deleted blob reported by ListDeletedBlobs (List Blobs
+// include=deleted). It carries the blob's info together with the soft-delete
+// bookkeeping the wire layer echoes: when it was deleted and how many retention
+// days remain before it is permanently purged.
+type DeletedBlob struct {
+	Info ObjectInfo
+	// DeletedTime is when the blob was soft-deleted (blob time format, UTC).
+	DeletedTime string
+	// RemainingRetentionDays is the whole days left in the retention window
+	// before the soft-deleted blob is permanently removed.
+	RemainingRetentionDays int
+}
+
+// DeletedBlobListResult is the result of a ListDeletedBlobs operation.
+type DeletedBlobListResult struct {
+	Blobs []DeletedBlob
+}
+
+// AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that models blob soft delete. When the account-level delete
+// retention policy is enabled (Set Blob Service Properties,
+// deleteRetentionPolicy.enabled/days) a Delete Blob retains the blob instead of
+// removing it: it disappears from a normal List but reappears under List Blobs
+// include=deleted with Deleted=true, a DeletedTime, and a RemainingRetentionDays
+// countdown, and Undelete Blob (PUT ?comp=undelete) restores it. After the
+// retention window elapses the blob is permanently gone.
+//
+// It is distinct from the S3 delete-marker model and from Azure blob versioning:
+// soft delete engages only when the account retention policy is on AND versioning
+// is off (with versioning enabled, retained versions are the recovery mechanism,
+// so a delete leaves the versions intact instead of soft-deleting the base blob).
+// S3/GCS don't implement it.
+//
+// Note: soft-deleted bytes are captured in memory at delete time; combining an
+// external StorageEngine with soft delete captures soft-deleted metadata only.
+type AzureSoftDeleteBlob interface {
+	// SoftDeleteEnabled reports whether soft delete is currently in effect for
+	// the data plane (the account retention policy is enabled and versioning off).
+	SoftDeleteEnabled(ctx context.Context) (bool, error)
+	// UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete).
+	// It is a no-op success when the blob is already active, and NotFound when no
+	// active or soft-deleted blob of that name exists.
+	UndeleteBlob(ctx context.Context, container, blob string) error
+	// ListDeletedBlobs returns the soft-deleted blobs matching opts, so a List
+	// Blobs include=deleted can render each with Deleted=true and its retention
+	// bookkeeping.
+	ListDeletedBlobs(ctx context.Context, container string, opts ListOptions) (*DeletedBlobListResult, error)
+}
+
 // BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 // the networking NetworkInterfaces capability): a provider whose buckets map to
 // a richer resource (Azure storage accounts) exposes their SKU/kind/access-tier

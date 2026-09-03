@@ -55,6 +55,9 @@ type blobXML struct {
 	// include=versions response; a plain listing leaves both empty.
 	VersionID        string `xml:"VersionId,omitempty"`
 	IsCurrentVersion *bool  `xml:"IsCurrentVersion,omitempty"`
+	// Deleted is emitted only for a soft-deleted blob in a List Blobs
+	// include=deleted response; a live blob leaves it nil.
+	Deleted *bool `xml:"Deleted,omitempty"`
 }
 
 type blobPropsXML struct {
@@ -64,6 +67,10 @@ type blobPropsXML struct {
 	ContentType   string `xml:"Content-Type"`
 	BlobType      string `xml:"BlobType"`
 	AccessTier    string `xml:"AccessTier,omitempty"`
+	// DeletedTime and RemainingRetentionDays are emitted only for a soft-deleted
+	// blob (List Blobs include=deleted); a live blob leaves both empty.
+	DeletedTime            string `xml:"DeletedTime,omitempty"`
+	RemainingRetentionDays *int32 `xml:"RemainingRetentionDays,omitempty"`
 }
 
 type blobPrefixXML struct {

@@ -58,6 +58,14 @@ type blobObject struct {
 	// AccessTier is the blob access tier (Hot/Cool/Cold/Archive), set by Set Blob
 	// Tier; empty when unset.
 	AccessTier string
+	// DeletedTime is when this blob was soft-deleted (blob time format, UTC),
+	// stamped when it moves into the container's soft-deleted store. Empty on a
+	// live blob.
+	DeletedTime string
+	// deletedRetentionDays is the account retention window (days) captured at
+	// soft-delete time, used to count down RemainingRetentionDays independent of a
+	// later policy change. Zero on a live blob.
+	deletedRetentionDays int
 	// Content* are additional system properties settable via Set Blob Properties.
 	ContentEncoding    string
 	ContentLanguage    string
@@ -134,6 +142,11 @@ type containerMeta struct {
 	// container level so a version survives a base-blob overwrite or delete,
 	// matching real Azure version lifetime.
 	versions *memstore.Store[*blobObject]
+	// softDeleted holds soft-deleted blobs keyed by blob name when the account
+	// delete-retention policy is enabled. A Delete Blob moves the live blob here
+	// (retaining its bytes) instead of removing it; Undelete Blob moves it back,
+	// and the retention window purges it lazily.
+	softDeleted *memstore.Store[*blobObject]
 	// mu guards snapshotSeq/versionSeq (and any future container-scoped counters).
 	mu          sync.Mutex
 	snapshotSeq int
@@ -326,14 +339,15 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	}
 
 	m.containers.Set(name, &containerMeta{
-		Name:       name,
-		Region:     m.opts.Region,
-		CreatedAt:  m.opts.Clock.Now().UTC().Format(blobTimeFormat),
-		objects:    memstore.New[*blobObject](),
-		multiparts: memstore.New[*blobMultipartUpload](),
-		staging:    memstore.New[*blockStaging](),
-		snapshots:  memstore.New[*blobObject](),
-		versions:   memstore.New[*blobObject](),
+		Name:        name,
+		Region:      m.opts.Region,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format(blobTimeFormat),
+		objects:     memstore.New[*blobObject](),
+		multiparts:  memstore.New[*blobMultipartUpload](),
+		staging:     memstore.New[*blockStaging](),
+		snapshots:   memstore.New[*blobObject](),
+		versions:    memstore.New[*blobObject](),
+		softDeleted: memstore.New[*blobObject](),
 	})
 
 	return nil
@@ -535,6 +549,18 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	obj, ok := ctr.objects.Get(key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
+	}
+
+	// When soft delete is in effect, a Delete Blob retains the blob (bytes and
+	// all) in the container's soft-deleted store rather than removing it, so
+	// Undelete can restore it within the retention window. The active byte purge
+	// below is skipped precisely because the bytes must survive.
+	if retentionDays, soft := m.softDeleteActive(); soft {
+		m.softDeleteObject(ctr, key, obj, retentionDays)
+		m.emitMetric(bucket, map[string]float64{"Transactions": 1})
+		m.emitBlobDeleted(ctx, obj, bucket)
+
+		return nil
 	}
 
 	ctr.objects.Delete(key)
