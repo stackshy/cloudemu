@@ -159,6 +159,12 @@ func (h *Handler) deleteRouteTable(w http.ResponseWriter, r *http.Request, rp az
 
 	// Real ARM refuses to delete a route table still associated with any subnet,
 	// answering 400 InUseRouteTableCannotBeDeleted; disassociate the subnet first.
+	//
+	// As with the NSG guard, the subnet reference scan and the route-table delete
+	// touch two independent memstores whose locks cannot span both, so the
+	// check-then-delete is not atomic. The gap mirrors real ARM's consistency
+	// window and closing it would need a cross-store lock the emulator does not
+	// model, so it is accepted here.
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeRouteTable, rp.ResourceName)
 
 	if refs := h.routeTableAssociatedSubnets(r.Context(), id); len(refs) > 0 {

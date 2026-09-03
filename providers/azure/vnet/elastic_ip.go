@@ -89,21 +89,22 @@ func (m *Mock) UpdateAzurePublicIP(_ context.Context, allocationID string, cfg d
 	}
 
 	found := m.eips.Update(allocationID, func(e *eipData) *eipData {
-		e.Tags = copyTags(cfg.Tags)
-		e.SKU = sku
-		e.AllocationMethod = allocMethod
-		e.IdleTimeoutMinutes = cfg.IdleTimeoutMinutes
-		e.DNSDomainNameLabel = cfg.DNSDomainNameLabel
+		cp := *e
+		cp.Tags = copyTags(cfg.Tags)
+		cp.SKU = sku
+		cp.AllocationMethod = allocMethod
+		cp.IdleTimeoutMinutes = cfg.IdleTimeoutMinutes
+		cp.DNSDomainNameLabel = cfg.DNSDomainNameLabel
 
-		e.Zones = append([]string(nil), cfg.Zones...)
+		cp.Zones = append([]string(nil), cfg.Zones...)
 
 		if cfg.DNSDomainNameLabel != "" {
-			e.DNSFQDN = cfg.DNSDomainNameLabel + "." + defaultFQDNRegion + ".cloudapp.azure.com"
+			cp.DNSFQDN = cfg.DNSDomainNameLabel + "." + defaultFQDNRegion + ".cloudapp.azure.com"
 		} else {
-			e.DNSFQDN = ""
+			cp.DNSFQDN = ""
 		}
 
-		return e
+		return &cp
 	})
 	if !found {
 		return cerrors.Newf(cerrors.NotFound, "public IP %q not found", allocationID)
@@ -112,26 +113,47 @@ func (m *Mock) UpdateAzurePublicIP(_ context.Context, allocationID string, cfg d
 	return nil
 }
 
-// ReleaseAddress releases a public IP address.
+// clearEIPAssociation returns a copy of e with its association and instance
+// binding cleared, so a public IP is freed copy-on-write instead of mutating
+// the shared pointer a reader may still hold. Clearing InstanceID as well as
+// AssociationID is safe for NAT-gateway bindings, which never set InstanceID.
+func clearEIPAssociation(e *eipData) *eipData {
+	cp := *e
+	cp.AssociationID = ""
+	cp.InstanceID = ""
+
+	return &cp
+}
+
+// ReleaseAddress releases a public IP address. The still-associated guard and
+// the delete run in one locked span via UpdateOrDelete, so the address cannot
+// be associated between the check and the delete (no check-then-act race).
 func (m *Mock) ReleaseAddress(
 	_ context.Context, allocationID string,
 ) error {
-	eip, ok := m.eips.Get(allocationID)
-	if !ok {
+	var associated bool
+
+	found := m.eips.UpdateOrDelete(allocationID, func(e *eipData) (*eipData, bool) {
+		if e.AssociationID != "" {
+			associated = true
+			return e, true // keep
+		}
+
+		return nil, false // delete
+	})
+	if !found {
 		return cerrors.Newf(
 			cerrors.NotFound,
 			"public IP %q not found", allocationID,
 		)
 	}
 
-	if eip.AssociationID != "" {
+	if associated {
 		return cerrors.Newf(
 			cerrors.FailedPrecondition,
 			"public IP %q is still associated", allocationID,
 		)
 	}
-
-	m.eips.Delete(allocationID)
 
 	return nil
 }
@@ -148,39 +170,62 @@ func (m *Mock) DescribeAddresses(
 func (m *Mock) AssociateAddress(
 	_ context.Context, allocationID string, in driver.AssociateAddressInput,
 ) (string, error) {
-	eip, ok := m.eips.Get(allocationID)
-	if !ok {
+	var (
+		conflict error
+		assocID  string
+	)
+
+	found := m.eips.Update(allocationID, func(e *eipData) *eipData {
+		if e.AssociationID != "" {
+			conflict = cerrors.Newf(
+				cerrors.FailedPrecondition,
+				"public IP %q is already associated", allocationID,
+			)
+
+			return e
+		}
+
+		assocID = idgen.GenerateID("ipassoc-")
+		cp := *e
+		cp.AssociationID = assocID
+		cp.InstanceID = in.InstanceID
+
+		return &cp
+	})
+	if !found {
 		return "", cerrors.Newf(
 			cerrors.NotFound,
 			"public IP %q not found", allocationID,
 		)
 	}
 
-	if eip.AssociationID != "" {
-		return "", cerrors.Newf(
-			cerrors.FailedPrecondition,
-			"public IP %q is already associated", allocationID,
-		)
+	if conflict != nil {
+		return "", conflict
 	}
-
-	assocID := idgen.GenerateID("ipassoc-")
-	eip.AssociationID = assocID
-	eip.InstanceID = in.InstanceID
 
 	return assocID, nil
 }
 
-// DisassociateAddress removes a public IP association.
+// DisassociateAddress removes a public IP association. The matching address is
+// freed copy-on-write, and the association id is re-checked under the store
+// lock so a concurrent release/re-allocation cannot be cleared by mistake.
 func (m *Mock) DisassociateAddress(
 	_ context.Context, associationID string,
 ) error {
-	for _, eip := range m.eips.All() {
-		if eip.AssociationID == associationID {
-			eip.AssociationID = ""
-			eip.InstanceID = ""
-
-			return nil
+	for id, eip := range m.eips.All() {
+		if eip.AssociationID != associationID {
+			continue
 		}
+
+		m.eips.Update(id, func(e *eipData) *eipData {
+			if e.AssociationID != associationID {
+				return e
+			}
+
+			return clearEIPAssociation(e)
+		})
+
+		return nil
 	}
 
 	return cerrors.Newf(

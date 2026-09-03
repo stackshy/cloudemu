@@ -1382,6 +1382,14 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 	// Real ARM refuses to delete an NSG still associated with any subnet or NIC,
 	// answering 400 InUseNetworkSecurityGroupCannotBeDeleted and naming the
 	// associated resources; the association must be dropped first.
+	//
+	// The reference scan reads the subnets/NICs stores and the delete writes the
+	// security-groups store — two independent memstores. Their per-store locks
+	// cannot span both, so this check-then-delete is not atomic; a subnet PUT
+	// that associates the NSG in the same instant may slip through. Real ARM has
+	// the same eventual-consistency window, and making it atomic would need a
+	// cross-store lock the emulator does not model, so the narrow gap is
+	// accepted here.
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNSG, rp.ResourceName)
 
 	if refs := append(h.nsgAssociatedSubnets(r.Context(), id), h.nsgAssociatedNICs(r.Context(), id)...); len(refs) > 0 {
@@ -1535,7 +1543,10 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	// A NIC's ipConfiguration reference doesn't go through
 	// AssociateAddress/eip.AssociationID (that's reserved for AWS-style
 	// instance/NAT-gateway attachment), so it needs its own in-use check here
-	// — the same scan the ipConfiguration back-reference already does.
+	// — the same scan the ipConfiguration back-reference already does. This scan
+	// reads the NICs store while ReleaseAddress deletes from the public-IP store,
+	// so it shares the same non-atomic, ARM-like consistency window documented on
+	// the NSG guard; the eip's own association guard (ReleaseAddress) is atomic.
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
 	if h.publicIPConfigurationRef(r.Context(), rp.Subscription, id) != nil {
