@@ -423,10 +423,14 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 	// or firewall (see vpc.Mock.DeleteVPC), so the guard is authoritative at the
 	// driver layer and protects every caller, not just the wire. Real GCP answers
 	// 400 resourceInUseByAnotherResource rather than the generic 409 conditionNotMet
-	// WriteCErr maps FailedPrecondition to, so translate that one case here.
+	// WriteCErr maps FailedPrecondition to, so translate that one case here — and
+	// re-derive the child's user-facing name so the message names the resource the
+	// caller typed, not the provider error's internal driver id.
 	if err := h.net.DeleteVPC(r.Context(), v.ID); err != nil {
 		if cerrors.IsFailedPrecondition(err) {
-			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource", err.Error())
+			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
+				h.networkInUseMessage(r.Context(), v.ID, rp.ResourceName))
+
 			return
 		}
 
@@ -1178,6 +1182,42 @@ func findSubnetByName(ctx context.Context, n netdriver.Networking, name, region 
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "subnetwork %s not found", name)
+}
+
+// networkInUseMessage renders the user-facing resourceInUseByAnotherResource
+// body for a network delete the provider rejected, naming the first referencing
+// child (subnetwork, then firewall) by the real resource name the caller typed
+// rather than the internal driver id the provider's error carries. The guard
+// itself lives in the provider (vpc.Mock.DeleteVPC); this only re-derives the
+// name for the message. If the child was removed between the reject and this
+// scan, it falls back to a generic phrasing.
+func (h *Handler) networkInUseMessage(ctx context.Context, vpcID, netName string) string {
+	usedBy := func(child string) string {
+		return "The network resource '" + netName + "' is already being used by '" + child + "'"
+	}
+
+	if subs, err := h.net.DescribeSubnets(ctx, nil); err == nil {
+		for i := range subs {
+			if subs[i].VPCID == vpcID {
+				return usedBy(tagOr(subs[i].Tags, subnetNameTag, subs[i].ID))
+			}
+		}
+	}
+
+	if fws, err := h.net.DescribeSecurityGroups(ctx, nil); err == nil {
+		for i := range fws {
+			if fws[i].VPCID == vpcID {
+				name := fws[i].Name
+				if name == "" {
+					name = tagOr(fws[i].Tags, firewallNameTag, fws[i].ID)
+				}
+
+				return usedBy(name)
+			}
+		}
+	}
+
+	return "The network resource '" + netName + "' is already being used by another resource"
 }
 
 // These mirror the tag keys the compute wire handler stamps on each instance

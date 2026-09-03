@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	gcpcompute "cloud.google.com/go/compute/apiv1"
@@ -135,8 +136,14 @@ func TestSDKNetworkDeleteInUse(t *testing.T) {
 		t.Fatalf("subnet Insert wait: %v", err)
 	}
 
-	if _, err := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-inuse"}); err == nil {
+	_, delErr := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-inuse"})
+	if delErr == nil {
 		t.Fatal("Delete of in-use network: want error, got nil")
+	}
+
+	// The message must name the real resources, not internal driver ids.
+	if msg := delErr.Error(); !strings.Contains(msg, "vpc-inuse") || !strings.Contains(msg, "sub-inuse") {
+		t.Errorf("in-use message %q must contain real names vpc-inuse and sub-inuse", msg)
 	}
 
 	// The subnet must still exist (delete rejected, not partially applied).
@@ -186,8 +193,15 @@ func TestSDKNetworkDeleteBlockedByFirewall(t *testing.T) {
 		t.Fatalf("firewall Insert wait: %v", err)
 	}
 
-	if _, err := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-fw"}); err == nil {
+	_, delErr := c.Delete(ctx, &computepb.DeleteNetworkRequest{Project: testProject, Network: "vpc-fw"})
+	if delErr == nil {
 		t.Fatal("Delete of network with firewall: want error, got nil")
+	}
+
+	// The message must name the real resources the caller typed, not the
+	// internal driver ids the provider error carries.
+	if msg := delErr.Error(); !strings.Contains(msg, "vpc-fw") || !strings.Contains(msg, "fw-block") {
+		t.Errorf("in-use message %q must contain real names vpc-fw and fw-block", msg)
 	}
 
 	// Remove the firewall, then the network deletes cleanly.
