@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -478,16 +479,75 @@ func TestDeleteInstanceUnlinksReplicas(t *testing.T) {
 		t.Errorf("master still lists a deleted replica: %v", got[0].ReadReplicaTargets)
 	}
 
-	// Deleting the master clears the source pointer on its surviving replica.
+	// A master with a live read replica cannot be deleted; real Cloud SQL requires
+	// the replicas be promoted or removed first rather than orphaning them.
 	mk("replica2", "master")
 
-	if err := m.DeleteInstance(ctx, "master"); err != nil {
-		t.Fatalf("DeleteInstance master: %v", err)
+	err := m.DeleteInstance(ctx, "master")
+	if err == nil {
+		t.Fatal("DeleteInstance master with a live replica: expected FailedPrecondition")
 	}
 
-	got, _ = m.DescribeInstances(ctx, []string{"replica2"})
-	if got[0].ReadReplicaSource != "" {
-		t.Errorf("replica still points at a deleted master: %q", got[0].ReadReplicaSource)
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("DeleteInstance master: got %v, want FailedPrecondition", err)
+	}
+
+	// Promoting the replica detaches it, after which the master deletes cleanly.
+	if err := m.PromoteReplica(ctx, "replica2"); err != nil {
+		t.Fatalf("PromoteReplica replica2: %v", err)
+	}
+
+	if err := m.DeleteInstance(ctx, "master"); err != nil {
+		t.Fatalf("DeleteInstance master after promote: %v", err)
+	}
+}
+
+func TestStopInstanceReplicaGuards(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	mk := func(id, master string) {
+		if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+			ID: id, Engine: "POSTGRES_15", MasterInstanceName: master,
+		}); err != nil {
+			t.Fatalf("CreateInstance %q: %v", id, err)
+		}
+	}
+
+	mk("primary", "")
+	mk("replica", "primary")
+
+	// A primary that still has a replica cannot be stopped.
+	if err := m.StopInstance(ctx, "primary"); err == nil {
+		t.Fatal("StopInstance on a primary with a replica: expected FailedPrecondition")
+	} else if !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("StopInstance primary: got %v, want FailedPrecondition", err)
+	}
+
+	// A read replica cannot be stopped on its own.
+	if err := m.StopInstance(ctx, "replica"); err == nil {
+		t.Fatal("StopInstance on a read replica: expected FailedPrecondition")
+	} else if !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("StopInstance replica: got %v, want FailedPrecondition", err)
+	}
+
+	// The primary is still RUNNABLE after the rejected stops.
+	got, _ := m.DescribeInstances(ctx, []string{"primary"})
+	if got[0].State != rdsdriver.StateAvailable {
+		t.Fatalf("primary state = %q, want %q", got[0].State, rdsdriver.StateAvailable)
+	}
+
+	// Promote the replica, then the primary stops and starts cleanly.
+	if err := m.PromoteReplica(ctx, "replica"); err != nil {
+		t.Fatalf("PromoteReplica: %v", err)
+	}
+
+	if err := m.StopInstance(ctx, "primary"); err != nil {
+		t.Fatalf("StopInstance primary after promote: %v", err)
+	}
+
+	if err := m.StartInstance(ctx, "primary"); err != nil {
+		t.Fatalf("StartInstance primary: %v", err)
 	}
 }
 
