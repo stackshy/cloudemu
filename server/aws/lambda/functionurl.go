@@ -13,10 +13,18 @@ import (
 // type-asserts for it rather than requiring every cloud to implement it.
 type functionURLManager interface {
 	CreateFunctionURLConfig(ctx context.Context, cfg sdrv.FunctionURLConfig) (*sdrv.FunctionURLConfig, error)
-	GetFunctionURLConfig(ctx context.Context, functionName string) (*sdrv.FunctionURLConfig, error)
+	GetFunctionURLConfig(ctx context.Context, functionName, qualifier string) (*sdrv.FunctionURLConfig, error)
 	UpdateFunctionURLConfig(ctx context.Context, cfg sdrv.FunctionURLConfig) (*sdrv.FunctionURLConfig, error)
-	DeleteFunctionURLConfig(ctx context.Context, functionName string) error
+	DeleteFunctionURLConfig(ctx context.Context, functionName, qualifier string) error
 	ListFunctionURLConfigs(ctx context.Context, functionName string) ([]sdrv.FunctionURLConfig, error)
+}
+
+// functionURLResolver is the AWS-specific surface behind an invoke made
+// through a generated Function URL's host, rather than the control-plane path
+// every other Lambda operation uses. Asserted the same way as
+// functionURLManager.
+type functionURLResolver interface {
+	ResolveFunctionURL(ctx context.Context, host string) (*sdrv.FunctionURLConfig, error)
 }
 
 // corsJSON is the AWS Cors shape shared by the Function URL request and response.
@@ -115,10 +123,11 @@ func (h *Handler) serveFunctionURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := parts[0]
+	qualifier := r.URL.Query().Get("Qualifier")
 
 	switch parts[1] {
 	case "url":
-		serveFunctionURLItem(w, r, mgr, name)
+		serveFunctionURLItem(w, r, mgr, name, qualifier)
 	case "urls":
 		listFunctionURLConfigs(w, r, mgr, name)
 	default:
@@ -126,15 +135,17 @@ func (h *Handler) serveFunctionURL(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// serveFunctionURLItem handles POST/GET/PUT/DELETE on .../{name}/url.
-func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, mgr functionURLManager, name string) {
+// serveFunctionURLItem handles POST/GET/PUT/DELETE on .../{name}/url. All four
+// operations accept the target qualifier ("" and "$LATEST" both mean the
+// unqualified $LATEST URL) as the Qualifier query parameter, not the body.
+func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, mgr functionURLManager, name, qualifier string) {
 	switch r.Method {
 	case http.MethodPost:
-		writeFunctionURL(w, r, mgr.CreateFunctionURLConfig, name, http.StatusCreated)
+		writeFunctionURL(w, r, mgr.CreateFunctionURLConfig, name, qualifier, http.StatusCreated)
 	case http.MethodPut:
-		writeFunctionURL(w, r, mgr.UpdateFunctionURLConfig, name, http.StatusOK)
+		writeFunctionURL(w, r, mgr.UpdateFunctionURLConfig, name, qualifier, http.StatusOK)
 	case http.MethodGet:
-		u, err := mgr.GetFunctionURLConfig(r.Context(), name)
+		u, err := mgr.GetFunctionURLConfig(r.Context(), name, qualifier)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -142,7 +153,7 @@ func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, mgr functionUR
 
 		writeJSON(w, http.StatusOK, toFunctionURLResponse(u))
 	case http.MethodDelete:
-		if err := mgr.DeleteFunctionURLConfig(r.Context(), name); err != nil {
+		if err := mgr.DeleteFunctionURLConfig(r.Context(), name, qualifier); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -158,7 +169,7 @@ func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, mgr functionUR
 func writeFunctionURL(
 	w http.ResponseWriter, r *http.Request,
 	fn func(context.Context, sdrv.FunctionURLConfig) (*sdrv.FunctionURLConfig, error),
-	name string, status int,
+	name, qualifier string, status int,
 ) {
 	var req functionURLRequest
 	if !decodeJSON(w, r, &req) {
@@ -167,6 +178,7 @@ func writeFunctionURL(
 
 	u, err := fn(r.Context(), sdrv.FunctionURLConfig{
 		FunctionName: name,
+		Qualifier:    qualifier,
 		AuthType:     req.AuthType,
 		InvokeMode:   req.InvokeMode,
 		Cors:         toCorsDriver(req.Cors),

@@ -41,8 +41,9 @@ type funcSnapshot struct {
 	Aliases      map[string]driver.Alias                          `json:"aliases,omitempty"`
 	Concurrency  *driver.ConcurrencyConfig                        `json:"concurrency,omitempty"`
 	Policies     map[string]map[string]driver.PermissionStatement `json:"policies,omitempty"`
-	URLConfig    *driver.FunctionURLConfig                        `json:"urlConfig,omitempty"`
-	AWSConfig    driver.AWSFunctionConfig                         `json:"awsConfig"`
+	// URLConfigs is the Function URL config per qualifier (see funcData.urlConfigs).
+	URLConfigs map[string]*driver.FunctionURLConfig `json:"urlConfigs,omitempty"`
+	AWSConfig  driver.AWSFunctionConfig             `json:"awsConfig"`
 	// EventInvokeConfigs is the async-invoke config per qualifier (retries,
 	// event age, OnSuccess/OnFailure destinations).
 	EventInvokeConfigs map[string]driver.EventInvokeConfig `json:"eventInvokeConfigs,omitempty"`
@@ -114,7 +115,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 func snapshotFunc(fd *funcData) *funcSnapshot {
 	fs := &funcSnapshot{
 		Info: fd.info, EngineBacked: fd.engineBacked, NextVersion: fd.nextVersion,
-		Concurrency: fd.concurrency, Policies: fd.policies, URLConfig: fd.urlConfig,
+		Concurrency: fd.concurrency, Policies: fd.policies, URLConfigs: fd.urlConfigs,
 		AWSConfig: fd.awsConfig, EventInvokeConfigs: fd.eventInvokeConfigs,
 		ProvisionedConcurrencyConfigs: fd.provisionedConcurrencyConfigs,
 	}
@@ -173,7 +174,7 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	fd := funcData{
 		info: fs.Info, engineBacked: fs.EngineBacked, nextVersion: fs.NextVersion,
 		aliases: memstore.New[*aliasData](), concurrency: fs.Concurrency,
-		policies: fs.Policies, urlConfig: fs.URLConfig, awsConfig: fs.AWSConfig,
+		policies: fs.Policies, urlConfigs: fs.URLConfigs, awsConfig: fs.AWSConfig,
 		eventInvokeConfigs:            fs.EventInvokeConfigs,
 		provisionedConcurrencyConfigs: fs.ProvisionedConcurrencyConfigs,
 	}

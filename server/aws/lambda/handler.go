@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -59,6 +60,30 @@ const layersPrefix = "/2018-10-31/layers"
 // function sub-resource (.../{name}/url and .../{name}/urls) but versioned under
 // 2021-10-31, so it needs its own Matches clause.
 const functionURLPrefix = "/2021-10-31/functions"
+
+// functionURLHostMarker identifies an inbound request as an invoke through a
+// generated Function URL rather than a control-plane call: real Lambda
+// Function URLs are addressed by a unique per-config host
+// (<url-id>.lambda-url.<region>.on.aws), not by path, so this routes on the
+// Host header instead of the URL path every other Lambda operation uses.
+const functionURLHostMarker = ".lambda-url."
+
+// isFunctionURLHost reports whether host (an incoming request's Host header,
+// optionally with a port) addresses a generated Function URL.
+func isFunctionURLHost(host string) bool {
+	return strings.Contains(requestHost(host), functionURLHostMarker)
+}
+
+// requestHost strips an optional port from an HTTP Host header and lower-cases
+// the remainder.
+func requestHost(host string) string {
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		h = host
+	}
+
+	return strings.ToLower(h)
+}
 
 // Function code-signing-config sub-resource (GetFunctionCodeSigningConfig et al).
 // Versioned under 2020-06-30 on the {name}/code-signing-config sub-resource, so
@@ -196,9 +221,11 @@ func New(fn sdrv.Serverless, opts ...Option) *Handler {
 }
 
 // Matches returns true for any URL under /2015-03-31/functions — that's the
-// Lambda control-plane prefix the SDK uses for every operation in our MVP.
+// Lambda control-plane prefix the SDK uses for every operation in our MVP —
+// plus a request addressed to a generated Function URL host.
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
+	return isFunctionURLHost(r.Host) ||
+		strings.HasPrefix(r.URL.Path, pathPrefix) ||
 		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
 		strings.HasPrefix(r.URL.Path, esmPrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
@@ -215,6 +242,11 @@ func (*Handler) Matches(r *http.Request) bool {
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isFunctionURLHost(r.Host) {
+		h.serveFunctionURLInvoke(w, r)
+		return
+	}
+
 	if h.routePrefixed(w, r) {
 		return
 	}
