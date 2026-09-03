@@ -81,6 +81,11 @@ func (m *Mock) CommitBlockList(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
+	// Immutable storage (WORM): overwriting a protected blob is blocked.
+	if err := m.enforceImmutable(ctr, blob); err != nil {
+		return nil, err
+	}
+
 	existing, _ := ctr.objects.Get(blob)
 
 	data, blockInfos, committedData, err := assembleBlocks(ctr, blob, blocks, existing)
@@ -363,6 +368,12 @@ func (m *Mock) CreateAppendBlob(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
+	// Immutable storage (WORM): re-creating an append blob over a protected key
+	// would replace its content with empty — block it. A fresh key passes.
+	if err := m.enforceImmutable(ctr, blob); err != nil {
+		return nil, err
+	}
+
 	if contentType == "" {
 		contentType = octetStream
 	}
@@ -397,6 +408,11 @@ func (m *Mock) AppendBlock(
 
 	obj.mu.Lock()
 	defer obj.mu.Unlock()
+
+	// Immutable storage (WORM): appending to a protected append blob is blocked.
+	if berr := immutabilityBlock(obj, m.opts.Clock.Now().UTC()); berr != nil {
+		return 0, 0, nil, berr
+	}
 
 	offset = obj.Size
 	obj.Data = append(obj.Data, data...)

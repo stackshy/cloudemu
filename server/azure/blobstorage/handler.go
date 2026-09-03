@@ -71,6 +71,11 @@ const (
 	compPage        = "page"
 	compPageList    = "pagelist"
 	compUndelete    = "undelete"
+	// compImmutabilityPolicies / compLegalHold select the blob-level immutable
+	// storage (WORM) sub-operations: Set/Delete Blob Immutability Policy
+	// (?comp=immutabilityPolicies) and Set Blob Legal Hold (?comp=legalhold).
+	compImmutabilityPolicies = "immutabilityPolicies"
+	compLegalHold            = "legalhold"
 	// compBlobs is the ?comp= value for Find Blobs by Tags (GET /?comp=blobs and
 	// GET /{container}?restype=container&comp=blobs).
 	compBlobs = "blobs"
@@ -263,6 +268,16 @@ func (h *Handler) putBlobComp(w http.ResponseWriter, r *http.Request, container,
 
 	if comp == compUndelete {
 		h.undeleteBlob(w, r, container, blob)
+		return
+	}
+
+	if comp == compImmutabilityPolicies {
+		h.setBlobImmutabilityPolicy(w, r, container, blob)
+		return
+	}
+
+	if comp == compLegalHold {
+		h.setBlobLegalHold(w, r, container, blob)
 		return
 	}
 
@@ -932,6 +947,7 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
+	h.writeImmutabilityHeaders(w, r, container, blob)
 	serveBlobContent(w, r, &obj.Info, obj.Data)
 }
 
@@ -1169,6 +1185,7 @@ func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, bl
 		return
 	}
 
+	h.writeImmutabilityHeaders(w, r, container, blob)
 	writeBlobHeaders(w, info, info.Size)
 	w.WriteHeader(http.StatusOK)
 }
@@ -1234,6 +1251,11 @@ func setIfNonEmpty(w http.ResponseWriter, key, v string) {
 }
 
 func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if r.URL.Query().Get("comp") == compImmutabilityPolicies {
+		h.deleteBlobImmutabilityPolicy(w, r, container, blob)
+		return
+	}
+
 	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
 		h.deleteBlobVersion(w, r, container, blob, versionID)
 		return

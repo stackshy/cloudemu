@@ -32,6 +32,12 @@ func (m *Mock) CreatePageBlob(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
+	// Immutable storage (WORM): re-creating a page blob over a protected key
+	// would replace its content with zero bytes — block it. A fresh key passes.
+	if err := m.enforceImmutable(ctr, blob); err != nil {
+		return nil, err
+	}
+
 	if size < 0 || size%pageSize != 0 {
 		return nil, &driver.BlobOpError{
 			Status: http.StatusBadRequest, Code: "InvalidHeaderValue",
@@ -81,6 +87,11 @@ func (m *Mock) PutPage(
 	obj.mu.Lock()
 	defer obj.mu.Unlock()
 
+	// Immutable storage (WORM): writing pages over a protected blob is blocked.
+	if berr := immutabilityBlock(obj, m.opts.Clock.Now().UTC()); berr != nil {
+		return nil, berr
+	}
+
 	if err := validatePageRange(start, end, obj.Size); err != nil {
 		return nil, err
 	}
@@ -111,6 +122,11 @@ func (m *Mock) ClearPage(_ context.Context, container, blob string, start, end i
 
 	obj.mu.Lock()
 	defer obj.mu.Unlock()
+
+	// Immutable storage (WORM): clearing pages of a protected blob is blocked.
+	if berr := immutabilityBlock(obj, m.opts.Clock.Now().UTC()); berr != nil {
+		return nil, berr
+	}
 
 	if err := validatePageRange(start, end, obj.Size); err != nil {
 		return nil, err
