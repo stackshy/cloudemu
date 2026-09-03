@@ -661,16 +661,20 @@ func (m *Mock) FailoverShard(_ context.Context, clusterName, shardName string) (
 	return &out, nil
 }
 
-// ListAllowedNodeTypeUpdates returns the scale-up/scale-down node types.
+// ListAllowedNodeTypeUpdates returns the scale-up/scale-down node types available
+// to the cluster, derived from its current node type's family.
 func (m *Mock) ListAllowedNodeTypeUpdates(_ context.Context, clusterName string) (scaleUp, scaleDown []string, err error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if !m.clusters.Has(clusterName) {
+	c, ok := m.clusters.Get(clusterName)
+	if !ok {
 		return nil, nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
 	}
 
-	return []string{"db.r7g.large", "db.r7g.xlarge"}, []string{"db.t4g.medium"}, nil
+	up, down := allowedNodeTypeUpdates(c.NodeType)
+
+	return up, down, nil
 }
 
 // splitHostPort splits a "host:port" endpoint into its parts.
