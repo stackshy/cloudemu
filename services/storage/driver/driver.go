@@ -1164,10 +1164,22 @@ type GCSExtensions interface {
 	// TouchBucket bumps the bucket's metageneration and updated timestamp,
 	// called after any bucket configuration change.
 	TouchBucket(ctx context.Context, bucket string) error
-	// SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM
-	// policy document verbatim (Buckets: setIamPolicy / getIamPolicy).
-	SetBucketIAMPolicy(ctx context.Context, bucket string, policyJSON []byte) error
+	// BucketIAMPolicy returns the bucket's IAM policy document verbatim
+	// (Buckets: getIamPolicy).
 	BucketIAMPolicy(ctx context.Context, bucket string) ([]byte, error)
+	// CompareAndSetBucketIAMPolicy atomically applies a setIamPolicy write
+	// (Buckets: setIamPolicy). When expectedEtag is non-empty it must match
+	// the bucket's current stored policy etag, or the write is rejected with
+	// *GCSPreconditionError (real GCS's 412 conditionNotMet); an empty
+	// expectedEtag is an unconditional write. The etag check and the write
+	// happen under a single lock, so concurrent setIamPolicy calls that all
+	// read the same etag can't all "win" — the lost update a separate
+	// BucketIAMPolicy-then-CompareAndSetBucketIAMPolicy pair would allow.
+	// policyJSON is the client's validated document (kind/resourceId already
+	// stamped by the caller, etag a placeholder); the implementation mints
+	// the real etag from the bucket's actual current state and returns the
+	// final stored document.
+	CompareAndSetBucketIAMPolicy(ctx context.Context, bucket, expectedEtag string, policyJSON []byte) ([]byte, error)
 
 	// CreateNotificationConfig registers a Pub/Sub notification config on a
 	// bucket (Notifications: insert), returning the stored config with its

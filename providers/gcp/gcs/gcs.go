@@ -1659,19 +1659,32 @@ func (m *Mock) TouchBucket(_ context.Context, bucket string) error {
 	return nil
 }
 
-// SetBucketIAMPolicy persists the bucket's IAM policy document verbatim.
-func (m *Mock) SetBucketIAMPolicy(_ context.Context, bucket string, policyJSON []byte) error {
+// CompareAndSetBucketIAMPolicy atomically checks expectedEtag against the
+// bucket's current stored IAM policy etag and, only on a match (or an empty
+// expectedEtag, an unconditional write), replaces the policy — see
+// driver.GCSExtensions for why the check and the write must share one lock.
+func (m *Mock) CompareAndSetBucketIAMPolicy(_ context.Context, bucket, expectedEtag string, policyJSON []byte) ([]byte, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
 	bkt.mu.Lock()
 	defer bkt.mu.Unlock()
 
-	bkt.iamPolicy = append([]byte(nil), policyJSON...)
+	currentEtag := bucketIAMPolicyEtag(bkt.iamPolicy)
+	if expectedEtag != "" && expectedEtag != currentEtag {
+		return nil, &driver.GCSPreconditionError{Message: "conditionNotMet: bucket IAM policy etag mismatch"}
+	}
 
-	return nil
+	stamped, err := withIAMEtag(policyJSON, nextIAMEtag(currentEtag))
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid IAM policy document: %v", err)
+	}
+
+	bkt.iamPolicy = stamped
+
+	return append([]byte(nil), bkt.iamPolicy...), nil
 }
 
 // BucketIAMPolicy returns the bucket's IAM policy document, or NotFound when

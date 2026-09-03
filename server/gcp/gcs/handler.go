@@ -612,14 +612,51 @@ func (h *Handler) setBucketIAM(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
-	if h.ext != nil {
-		if sErr := h.ext.SetBucketIAMPolicy(r.Context(), name, raw); sErr != nil {
-			writeErr(w, sErr)
-			return
-		}
+	// Stamp the server-controlled kind/resourceId now; the etag placeholder
+	// (the client's own, possibly stale, etag) is overwritten below by the
+	// backend with the real, atomically minted value.
+	prepared, sErr := stampIAMPolicy(raw, name, policy.Etag)
+	if sErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid", sErr.Error())
+		return
 	}
 
-	writeRawJSON(w, raw)
+	if h.ext == nil {
+		writeRawJSON(w, prepared)
+		return
+	}
+
+	// The etag precondition check and the write happen atomically in the
+	// backend (one lock spans read-compare-write), so concurrent setIamPolicy
+	// calls that all read the same etag can't all "win" the way a separate
+	// getIamPolicy-then-setIamPolicy pair here would allow (a lost update).
+	out, pErr := h.ext.CompareAndSetBucketIAMPolicy(r.Context(), name, policy.Etag, prepared)
+	if pErr != nil {
+		writePreconditionOrErr(w, pErr)
+		return
+	}
+
+	writeRawJSON(w, out)
+}
+
+// stampIAMPolicy overwrites kind/resourceId/etag on the client-supplied
+// policy document — real GCS always sets these itself, ignoring whatever the
+// client sent — while leaving every other field untouched.
+func stampIAMPolicy(raw []byte, bucket, etag string) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+
+	doc["kind"] = "storage#policy"
+	doc["resourceId"] = "projects/_/buckets/" + bucket
+	doc["etag"] = etag
+
+	if _, ok := doc["bindings"]; !ok {
+		doc["bindings"] = []iamPolicyBind{}
+	}
+
+	return json.Marshal(doc)
 }
 
 // testIAMPermissions serves /b/{bucket}/iam/testPermissions — the mock grants
@@ -666,7 +703,7 @@ func writeRawJSON(w http.ResponseWriter, raw []byte) {
 	w.WriteHeader(http.StatusOK)
 	// raw is an IAM policy document validated as JSON before storage and served
 	// as application/json, not HTML — no XSS surface.
-	_, _ = w.Write(raw) //nolint:gosec // validated JSON policy, served as application/json
+	_, _ = w.Write(raw)
 }
 
 // upload handles POST /upload/storage/v1/b/{bucket}/o, dispatching on
