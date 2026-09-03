@@ -130,6 +130,39 @@ type tagXML struct {
 	Value string `xml:"Value"`
 }
 
+// pageListXML is the body for GET /{container}/{blob}?comp=pagelist (Get Page
+// Ranges): the ordered, coalesced byte ranges of a page blob that hold data.
+type pageListXML struct {
+	XMLName    xml.Name       `xml:"PageList"`
+	PageRange  []pageRangeXML `xml:"PageRange"`
+	NextMarker string         `xml:"NextMarker,omitempty"`
+}
+
+type pageRangeXML struct {
+	Start int64 `xml:"Start"`
+	End   int64 `xml:"End"`
+}
+
+// filterBlobsXML is the body for a Find Blobs by Tags response (GET /?comp=blobs
+// and GET /{container}?restype=container&comp=blobs).
+type filterBlobsXML struct {
+	XMLName         xml.Name        `xml:"EnumerationResults"`
+	ServiceEndpoint string          `xml:"ServiceEndpoint,attr,omitempty"`
+	Where           string          `xml:"Where"`
+	Blobs           filterBlobsList `xml:"Blobs"`
+	NextMarker      string          `xml:"NextMarker"`
+}
+
+type filterBlobsList struct {
+	Blobs []filterBlobXML `xml:"Blob"`
+}
+
+type filterBlobXML struct {
+	Name          string      `xml:"Name"`
+	ContainerName string      `xml:"ContainerName"`
+	Tags          blobTagsXML `xml:"Tags"`
+}
+
 // signedIdentifiersXML is the request/response body for PUT and GET
 // /{container}?restype=container&comp=acl.
 type signedIdentifiersXML struct {

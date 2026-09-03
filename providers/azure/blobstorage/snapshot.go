@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
@@ -69,6 +70,7 @@ type blobObjectSnapshot struct {
 	CacheControl          string             `json:"cacheControl,omitempty"`
 	CommittedBlocks       []driver.BlockInfo `json:"committedBlocks,omitempty"`
 	AppendBlocks          int                `json:"appendBlocks,omitempty"`
+	Pages                 map[int64]bool     `json:"pages,omitempty"`
 	LeaseState            string             `json:"leaseState,omitempty"`
 	LeaseID               string             `json:"leaseId,omitempty"`
 	LeaseDurationSec      int32              `json:"leaseDurationSec,omitempty"`
@@ -168,6 +170,7 @@ func snapshotBlob(obj *blobObject, includeAssets bool) *blobObjectSnapshot {
 		DeletedTime: obj.DeletedTime, DeletedRetentionDays: obj.deletedRetentionDays,
 		ContentLanguage: obj.ContentLanguage, ContentDisposition: obj.ContentDisposition,
 		CacheControl: obj.CacheControl, CommittedBlocks: obj.CommittedBlocks, AppendBlocks: obj.appendBlocks,
+		Pages:      maps.Clone(obj.pages),
 		LeaseState: obj.leaseState, LeaseID: obj.leaseID, LeaseDurationSec: obj.leaseDurationSec,
 		LeaseExpiresAt: obj.leaseExpiresAt, LeaseBreakAt: obj.leaseBreakAt,
 		LeaseModTimeAtAcquire: obj.leaseModTimeAtAcquire,
@@ -257,6 +260,7 @@ func restoreBlob(os *blobObjectSnapshot) *blobObject {
 		DeletedTime: os.DeletedTime, deletedRetentionDays: os.DeletedRetentionDays,
 		ContentLanguage: os.ContentLanguage, ContentDisposition: os.ContentDisposition,
 		CacheControl: os.CacheControl, CommittedBlocks: os.CommittedBlocks, appendBlocks: os.AppendBlocks,
+		pages:      maps.Clone(os.Pages),
 		leaseState: os.LeaseState, leaseID: os.LeaseID, leaseDurationSec: os.LeaseDurationSec,
 		leaseExpiresAt: os.LeaseExpiresAt, leaseBreakAt: os.LeaseBreakAt,
 		leaseModTimeAtAcquire: os.LeaseModTimeAtAcquire,

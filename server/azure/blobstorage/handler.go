@@ -69,10 +69,13 @@ const (
 	compLease       = "lease"
 	compTags        = "tags"
 	compPage        = "page"
+	compPageList    = "pagelist"
 	compUndelete    = "undelete"
+	// compBlobs is the ?comp= value for Find Blobs by Tags (GET /?comp=blobs and
+	// GET /{container}?restype=container&comp=blobs).
+	compBlobs = "blobs"
 
-	// blobTypePageBlob is the Azure page-blob type; cloudemu does not implement
-	// page-blob range semantics, so a page-blob create/write fails closed.
+	// blobTypePageBlob is the Azure page-blob type.
 	blobTypePageBlob = "PageBlob"
 
 	// compACL is the ?comp= value for Set/Get Container ACL
@@ -115,6 +118,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case container == "" && q.Get("comp") == compList:
 		h.listContainers(w, r)
+	case container == "" && q.Get("comp") == compBlobs:
+		h.findBlobsByTags(w, r, "")
 	case container == "":
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "operation not supported on root")
 	case blob == "" && q.Get("restype") == "container":
@@ -164,6 +169,8 @@ func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container 
 		switch q.Get("comp") {
 		case compList:
 			h.listBlobs(w, r, container, q)
+		case compBlobs:
+			h.findBlobsByTags(w, r, container)
 		case compACL:
 			h.getContainerACL(w, r, container)
 		default:
@@ -186,6 +193,11 @@ func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob
 
 		if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && r.URL.Query().Get("comp") == compBlockList {
 			h.getBlockList(w, r, ext, container, blob)
+			return
+		}
+
+		if r.URL.Query().Get("comp") == compPageList {
+			h.getPageRanges(w, r, container, blob)
 			return
 		}
 
@@ -225,11 +237,15 @@ func (h *Handler) putBlobOp(w http.ResponseWriter, r *http.Request, container, b
 		return
 	}
 
-	// Page blobs are not implemented; fail closed rather than silently creating
-	// a block blob (which would misreport page-blob support and, on an existing
-	// blob, clobber it).
 	if strings.EqualFold(blobType, blobTypePageBlob) {
+		if page, ok := h.bucket.(storagedriver.AzurePageBlob); ok {
+			h.createPageBlob(w, r, page, container, blob)
+			return
+		}
+		// Fail closed rather than silently creating a block blob (which would
+		// misreport page-blob support and, on an existing blob, clobber it).
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "page blobs are not supported")
+
 		return
 	}
 
@@ -255,7 +271,13 @@ func (h *Handler) putBlobComp(w http.ResponseWriter, r *http.Request, container,
 	}
 
 	if comp == compPage {
+		if page, ok := h.bucket.(storagedriver.AzurePageBlob); ok {
+			h.putPage(w, r, page, container, blob)
+			return
+		}
+
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "page blobs are not supported")
+
 		return
 	}
 

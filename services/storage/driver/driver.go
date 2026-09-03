@@ -382,6 +382,69 @@ type AzureSoftDeleteBlob interface {
 	ListDeletedBlobs(ctx context.Context, container string, opts ListOptions) (*DeletedBlobListResult, error)
 }
 
+// PageRange is one contiguous [Start,End] byte span (inclusive) of a page blob
+// that currently holds written data, as reported by Get Page Ranges.
+type PageRange struct {
+	Start int64
+	End   int64
+}
+
+// AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type
+// assertion, that models page blobs — fixed-capacity blobs written in 512-byte
+// pages at arbitrary offsets (the backing type for Azure managed disks). A page
+// blob is created empty at a declared size (all pages read as zeros); Put Page
+// writes an aligned range, Clear Page zeroes one, and Get Page Ranges reports
+// the ranges that currently hold written data (adjacent written pages coalesced
+// into one range). All ranges are aligned to the 512-byte page boundary.
+//
+// It is distinct from block/append blobs: those grow by staging or appending
+// whole blocks, whereas a page blob is a random-access fixed-size byte array.
+// S3/GCS don't implement it.
+//
+// Note: page bytes are captured in memory; a page blob is not offloaded to an
+// external StorageEngine.
+type AzurePageBlob interface {
+	// CreatePageBlob creates an empty page blob of size bytes (a multiple of 512)
+	// with all pages zero-valued and no written ranges (Put Blob,
+	// x-ms-blob-type: PageBlob, x-ms-blob-content-length: size). props may be nil.
+	CreatePageBlob(
+		ctx context.Context, container, blob string, size int64, props *BlobProperties, metadata map[string]string,
+	) (*ObjectInfo, error)
+	// PutPage writes data over the inclusive byte range [start,end] of a page blob
+	// (Put Page, ?comp=page, x-ms-page-write: update). start and end must align to
+	// the 512-byte page boundary (start%512==0, (end+1)%512==0), lie within the
+	// blob, and len(data) must equal end-start+1.
+	PutPage(ctx context.Context, container, blob string, start, end int64, data []byte) (*ObjectInfo, error)
+	// ClearPage zeroes the inclusive byte range [start,end] of a page blob and
+	// drops it from the written ranges (Clear Page, ?comp=page,
+	// x-ms-page-write: clear). Same alignment/bounds rules as PutPage.
+	ClearPage(ctx context.Context, container, blob string, start, end int64) (*ObjectInfo, error)
+	// GetPageRanges returns the page blob's written ranges (Get Page Ranges,
+	// GET ?comp=pagelist), coalesced and ordered by Start, together with the
+	// blob's total size.
+	GetPageRanges(ctx context.Context, container, blob string) (ranges []PageRange, blobSize int64, err error)
+}
+
+// TaggedBlob is one blob returned by FindBlobsByTags: its container, name, and
+// the full index-tag set that matched the query.
+type TaggedBlob struct {
+	Container string
+	Name      string
+	Tags      map[string]string
+}
+
+// AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that searches blobs by their index tags (Find Blobs by Tags,
+// GET /?comp=blobs&where=… at the account level or
+// GET /{container}?restype=container&comp=blobs&where=… scoped to one
+// container). It returns every live blob whose tags satisfy all of the
+// equality conditions in match; an empty match matches every tagged blob.
+// container is "" for an account-wide search or a container name to scope it.
+// The tags themselves are the ones set via Set Blob Tags (PutObjectTagging).
+type AzureFindBlobsByTags interface {
+	FindBlobsByTags(ctx context.Context, container string, match map[string]string) ([]TaggedBlob, error)
+}
+
 // BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 // the networking NetworkInterfaces capability): a provider whose buckets map to
 // a richer resource (Azure storage accounts) exposes their SKU/kind/access-tier
