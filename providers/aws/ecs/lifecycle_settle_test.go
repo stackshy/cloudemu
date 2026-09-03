@@ -162,6 +162,55 @@ func TestStopTaskSettlesStoppingToStopped(t *testing.T) {
 	assert.Equal(t, statusStopped, described[0].LastStatus)
 }
 
+// TestRepeatedStopTaskDoesNotRestartSettleWindow verifies StopTask is
+// idempotent on an already-stopped task: once a task has settled to STOPPED, a
+// second StopTask call must not restart the stop-settle window — neither its
+// own response nor an immediate DescribeTasks may report the
+// DEPROVISIONING/STOPPING transient again for a terminal task.
+func TestRepeatedStopTaskDoesNotRestartSettleWindow(t *testing.T) {
+	m, fc := newSettleMock()
+	ctx := context.Background()
+
+	td, err := m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:                  "web",
+		RequiresCompatibilities: []string{launchFargate},
+		NetworkMode:             networkModeAwsvpc,
+		CPU:                     "256",
+		Memory:                  "512",
+		ContainerDefinitions:    []driver.ContainerDefinition{{Name: "app", Image: "nginx:latest"}},
+	})
+	require.NoError(t, err)
+
+	tasks, _, err := m.RunTask(ctx, driver.RunTaskInput{
+		TaskDefinition: td.ARN,
+		LaunchType:     launchFargate,
+		NetworkConfiguration: &driver.NetworkConfiguration{
+			AwsVpcConfiguration: &driver.AwsVpcConfiguration{Subnets: []string{"subnet-1"}},
+		},
+	})
+	require.NoError(t, err)
+	fc.Advance(settle.DefaultECSTaskStartSettle)
+
+	_, err = m.StopTask(ctx, "default", tasks[0].ARN, "first stop")
+	require.NoError(t, err)
+
+	fc.Advance(settle.DefaultECSTaskStopSettle)
+	described, _, err := m.DescribeTasks(ctx, "default", []string{tasks[0].ARN})
+	require.NoError(t, err)
+	require.Equal(t, statusStopped, described[0].LastStatus)
+
+	// A second StopTask on the already-stopped task must be a clean idempotent
+	// no-op: its own response reports STOPPED (not a fresh DEPROVISIONING), and
+	// an immediate DescribeTasks agrees — the task never "un-stops".
+	again, err := m.StopTask(ctx, "default", tasks[0].ARN, "second stop")
+	require.NoError(t, err)
+	assert.Equal(t, statusStopped, again.LastStatus)
+
+	described, _, err = m.DescribeTasks(ctx, "default", []string{tasks[0].ARN})
+	require.NoError(t, err)
+	assert.Equal(t, statusStopped, described[0].LastStatus)
+}
+
 // TestServiceReconciliationUnaffectedBySettle verifies a service's
 // running/pending counts reflect the tasks' already-final state immediately —
 // the settle transient is a read-time overlay on DescribeTasks/ListTasks only,

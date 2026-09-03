@@ -468,7 +468,10 @@ func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapp
 // StopTask marks a task STOPPED, releasing any container-instance capacity it
 // reserved back to the instance. Releasing is guarded by placeMu (shared with
 // placement) and skipped for an already-stopped task, so a repeated StopTask can
-// never double-credit an instance.
+// never double-credit an instance. The stop-settle window is guarded the same
+// way: a repeated StopTask on an already-stopped task must not restart it,
+// matching real ECS's idempotent StopTask (an already-stopped task is returned
+// as-is, never "un-stopping" back to a transient).
 func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*driver.Task, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
@@ -495,8 +498,16 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 		m.engineHandles.Delete(t.ARN)
 	}
 
+	// alreadyStopped is computed once from the task's stored (final) status,
+	// before this call's own mutation below, and gates both the capacity
+	// release and the settle-window start: a repeated StopTask on an
+	// already-stopped task must neither double-credit the instance nor restart
+	// the stop-settle window (which would make a terminal task report
+	// DEPROVISIONING/STOPPING again).
+	alreadyStopped := t.LastStatus == statusStopped
+
 	// Release reserved capacity exactly once, before flipping the task to STOPPED.
-	if t.LastStatus != statusStopped && t.ContainerInstanceARN != "" {
+	if !alreadyStopped && t.ContainerInstanceARN != "" {
 		if td, tdOK := m.resolveTaskDef(t.TaskDefinitionARN); tdOK {
 			cpu, memory := requiredResources(td)
 			m.release(t.ContainerInstanceARN, cpu, memory)
@@ -516,7 +527,10 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 	}
 
 	m.tasks.Set(updated.ARN, &updated)
-	m.beginStopSettle(&updated)
+
+	if !alreadyStopped {
+		m.beginStopSettle(&updated)
+	}
 
 	out := cloneTask(&updated)
 	m.overlayStatus(&out)
