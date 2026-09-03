@@ -197,11 +197,34 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	return &info, nil
 }
 
-// DeleteVPC deletes the virtual network with the given ID.
+// DeleteVPC deletes the virtual network with the given ID, cascade-deleting its
+// child subnets. Real Azure removes a VNet's subnets along with it (they are
+// child resources of the VNet), so a caller that reaches the driver directly —
+// the typed Go API or the in-process library — gets the same cascade the ARM
+// wire performs, rather than leaving globally-addressable subnet rows orphaned.
+//
+// The subnet scan reads the subnets store while the delete writes the vnets
+// store — two independent memstores whose per-store locks cannot span both, so a
+// subnet created against this vnet in the same instant may survive the cascade.
+// Real Azure has the same eventual-consistency window; the emulator does not
+// model a cross-store lock, so the narrow gap is accepted.
+//
+// The subnet-in-use-by-NIC guard is not enforced here: that association is an
+// ARM-only concept the cross-cloud driver does not represent (a NIC stores an
+// opaque ARM subnet id), so it stays in the wire layer where the ARM path is
+// resolvable.
 func (m *Mock) DeleteVPC(_ context.Context, id string) error {
-	if !m.vpcs.Delete(id) {
+	if !m.vpcs.Has(id) {
 		return cerrors.Newf(cerrors.NotFound, "vnet %q not found", id)
 	}
+
+	for sid, s := range m.subnets.All() {
+		if s.VPCID == id {
+			m.subnets.Delete(sid)
+		}
+	}
+
+	m.vpcs.Delete(id)
 
 	return nil
 }

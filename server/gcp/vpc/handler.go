@@ -419,21 +419,19 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	// Real GCP refuses to delete a network that still has subnetworks; the
-	// deletion would otherwise orphan them. Scan for live subnets on this
-	// network and reject with resourceInUseByAnotherResource.
-	if sub, scanErr := h.subnetOnNetwork(r.Context(), v.ID, rp.ResourceName); scanErr != nil {
-		gcprest.WriteCErr(w, scanErr)
-		return
-	} else if sub != "" {
-		gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
-			"The network resource '"+rp.ResourceName+"' is already being used by '"+sub+"'")
-
-		return
-	}
-
+	// The provider refuses to delete a network still referenced by a subnetwork
+	// or firewall (see vpc.Mock.DeleteVPC), so the guard is authoritative at the
+	// driver layer and protects every caller, not just the wire. Real GCP answers
+	// 400 resourceInUseByAnotherResource rather than the generic 409 conditionNotMet
+	// WriteCErr maps FailedPrecondition to, so translate that one case here.
 	if err := h.net.DeleteVPC(r.Context(), v.ID); err != nil {
+		if cerrors.IsFailedPrecondition(err) {
+			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource", err.Error())
+			return
+		}
+
 		gcprest.WriteCErr(w, err)
+
 		return
 	}
 
@@ -1180,24 +1178,6 @@ func findSubnetByName(ctx context.Context, n netdriver.Networking, name, region 
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "subnetwork %s not found", name)
-}
-
-// subnetOnNetwork returns the name of the first subnetwork attached to the
-// given network (by driver VPC ID or by the stored network-name tag), or "" if
-// none. It underpins the delete-in-use guard for networks.
-func (h *Handler) subnetOnNetwork(ctx context.Context, vpcID, netName string) (string, error) {
-	infos, err := h.net.DescribeSubnets(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-
-	for i := range infos {
-		if infos[i].VPCID == vpcID || tagOr(infos[i].Tags, subnetNetworkTag, "") == netName {
-			return tagOr(infos[i].Tags, subnetNameTag, infos[i].ID), nil
-		}
-	}
-
-	return "", nil
 }
 
 // These mirror the tag keys the compute wire handler stamps on each instance

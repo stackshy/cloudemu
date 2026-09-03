@@ -1399,3 +1399,38 @@ func TestTagMutation(t *testing.T) {
 		require.Error(t, m.RemoveSecurityGroupTags(ctx, "nsg-nope", []string{"k"}))
 	})
 }
+
+// TestDeleteVPCCascadesSubnets covers the provider-layer cascade: deleting a
+// virtual network removes its child subnets (as real Azure does), so a typed-API
+// or in-process-library caller does not leave orphaned, globally-addressable
+// subnet rows behind — the same behavior the ARM wire performs.
+func TestDeleteVPCCascadesSubnets(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	sub1, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+	sub2, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpc.ID, CIDRBlock: "10.0.2.0/24"})
+	require.NoError(t, err)
+
+	// A subnet on a different vnet must survive the cascade.
+	other, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "172.16.0.0/16"})
+	require.NoError(t, err)
+	otherSub, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: other.ID, CIDRBlock: "172.16.1.0/24"})
+	require.NoError(t, err)
+
+	require.NoError(t, m.DeleteVPC(ctx, vpc.ID))
+
+	got, err := m.DescribeSubnets(ctx, []string{sub1.ID, sub2.ID})
+	require.NoError(t, err)
+	assert.Empty(t, got, "child subnets should be cascade-deleted with the vnet")
+
+	survivors, err := m.DescribeSubnets(ctx, []string{otherSub.ID})
+	require.NoError(t, err)
+	assert.Len(t, survivors, 1, "another vnet's subnet must not be deleted")
+
+	require.Error(t, m.DeleteVPC(ctx, "vnet-missing"))
+}
