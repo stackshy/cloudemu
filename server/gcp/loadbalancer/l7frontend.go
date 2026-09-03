@@ -108,6 +108,11 @@ func (h *Handler) setProxyField(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
+	if err := h.validateProxySetRequest(r.Context(), rp, &req, list); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	err := store.UpdateGCPResource(r.Context(), rp.ResourceType, scopeKeyOf(rp), rp.ResourceName,
 		func(res *lbdriver.GCPResource) {
 			if res.Body == nil {

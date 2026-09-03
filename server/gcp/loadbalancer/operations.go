@@ -41,6 +41,11 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if err := h.validateBackendRefs(r.Context(), req.Backends); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	tags := backendServiceTags(&req)
 	tags[bsCreationTag] = time.Now().UTC().Format(time.RFC3339)
 	tags[bsNameTag] = req.Name
@@ -86,6 +91,11 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	if err := h.validateHealthCheckRefs(r.Context(), rp, req.HealthChecks); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	if err := h.validateBackendRefs(r.Context(), req.Backends); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -305,6 +315,11 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 	}
 
 	if _, err := h.findLBByName(r.Context(), rp, req.Name); conflictIfExists(w, err, "forwarding rule "+req.Name+" already exists") {
+		return
+	}
+
+	if err := h.validateForwardingRuleTarget(r.Context(), rp, req.Target); err != nil {
+		gcprest.WriteCErr(w, err)
 		return
 	}
 
