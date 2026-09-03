@@ -111,9 +111,11 @@ func TestSDKAzureLBCaseInsensitiveAddressing(t *testing.T) {
 	}
 }
 
-// TestSDKAzureLBUpdateTags proves PATCH LoadBalancers.UpdateTags merges the
-// supplied tags into the stored load balancer (keeping existing tags) and
-// returns 200 with the updated resource.
+// TestSDKAzureLBUpdateTags proves PATCH LoadBalancers.UpdateTags REPLACES the
+// stored tag collection wholesale — a tag present before the PATCH but absent
+// from its body is dropped, not kept — and returns 200 with the updated
+// resource. This matches every other Microsoft.Network UpdateTags handler in
+// this server (armnetwork's *Client.UpdateTags does not merge).
 func TestSDKAzureLBUpdateTags(t *testing.T) {
 	client := newLBClient(t)
 	ctx := context.Background()
@@ -138,16 +140,20 @@ func TestSDKAzureLBUpdateTags(t *testing.T) {
 	}
 
 	tags := updated.Tags
-	if tags["env"] == nil || *tags["env"] != "test" {
-		t.Fatalf("merged tags lost env: %v", tags)
+	if _, present := tags["env"]; present {
+		t.Fatalf("replaced tags kept env, want it dropped (not in the PATCH body): %v", tags)
 	}
 
 	if tags["team"] == nil || *tags["team"] != "platform" {
-		t.Fatalf("merged tags team = %v, want platform (overwritten)", tags["team"])
+		t.Fatalf("replaced tags team = %v, want platform", tags["team"])
 	}
 
 	if tags["cost"] == nil || *tags["cost"] != "42" {
-		t.Fatalf("merged tags missing cost: %v", tags)
+		t.Fatalf("replaced tags missing cost: %v", tags)
+	}
+
+	if len(tags) != 2 {
+		t.Fatalf("replaced tags = %v, want exactly {team, cost}", tags)
 	}
 }
 

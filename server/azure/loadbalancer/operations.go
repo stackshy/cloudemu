@@ -76,10 +76,14 @@ func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *az
 }
 
 // updateLoadBalancerTags handles PATCH .../loadBalancers/{name} —
-// LoadBalancers.UpdateTags. The body carries only a tags map; the tags are
-// MERGED into the stored load balancer (existing tags are kept, matching keys
-// overwritten) and every child is preserved. Returns 200 with the updated load
-// balancer, matching the SDK's synchronous UpdateTags.
+// LoadBalancers.UpdateTags. Real armnetwork UpdateTags REPLACES the tag
+// collection wholesale (it does not merge — an omitted existing key is
+// dropped), matching every other Microsoft.Network UpdateTags handler in this
+// server (see server/azure/vnet/network_updatetags.go); every child of the
+// load balancer is left untouched. A request body with the tags field
+// entirely omitted (nil map, as opposed to an explicit empty object) is a
+// no-op. Returns 200 with the updated load balancer, matching the SDK's
+// synchronous UpdateTags.
 func (h *Handler) updateLoadBalancerTags(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body loadBalancerJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -98,36 +102,18 @@ func (h *Handler) updateLoadBalancerTags(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	merged := *stored
-	merged.Tags = mergeTags(stored.Tags, stripInternalTags(body.Tags))
+	replaced := *stored
+	if body.Tags != nil {
+		replaced.Tags = stripInternalTags(body.Tags)
+	}
 
-	updated, err := az.CreateOrUpdateAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName, merged)
+	updated, err := az.CreateOrUpdateAzureLoadBalancer(r.Context(), rp.ResourceGroup, rp.ResourceName, replaced)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, updated, h.poolMembers(r.Context(), rp.Subscription)))
-}
-
-// mergeTags returns base with every key in overlay applied on top (overlay
-// wins on conflict). Neither input is mutated.
-func mergeTags(base, overlay map[string]string) map[string]string {
-	if len(base) == 0 && len(overlay) == 0 {
-		return nil
-	}
-
-	out := make(map[string]string, len(base)+len(overlay))
-
-	for k, v := range base {
-		out[k] = v
-	}
-
-	for k, v := range overlay {
-		out[k] = v
-	}
-
-	return out
 }
 
 // deleteLoadBalancer removes the load balancer from both the native store and
