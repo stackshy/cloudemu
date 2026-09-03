@@ -118,6 +118,26 @@ type SecretVersion struct {
 	Etag string
 }
 
+// SecretRotationRules is the AWS Secrets Manager RotateSecret rotation-schedule
+// configuration (RotationRules on the wire). AutomaticallyAfterDays of 0 means
+// unset.
+type SecretRotationRules struct {
+	AutomaticallyAfterDays int64
+	Duration               string
+	ScheduleExpression     string
+}
+
+// SecretRotationInfo is a secret's AWS Secrets Manager rotation configuration,
+// echoed by DescribeSecret/ListSecrets. LastRotatedDate and NextRotationDate
+// are RFC3339, empty when not applicable.
+type SecretRotationInfo struct {
+	Enabled          bool
+	LambdaARN        string
+	Rules            SecretRotationRules
+	LastRotatedDate  string
+	NextRotationDate string
+}
+
 // Secrets is the interface that secret management provider implementations must satisfy.
 type Secrets interface {
 	CreateSecret(ctx context.Context, config SecretConfig, value []byte) (*SecretInfo, error)

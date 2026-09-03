@@ -38,11 +38,15 @@ type secretStager interface {
 	SecretVersionStages(ctx context.Context, name string) (map[string][]string, error)
 	SecretDeletionDate(ctx context.Context, name string) (string, bool)
 	SecretMetadata(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+	SecretRotationDetails(ctx context.Context, name string) (*secretsdriver.SecretRotationInfo, error)
 	DeleteSecretWithOptions(
 		ctx context.Context, name string, recoveryWindow *int64, force bool,
 	) (*secretsdriver.SecretInfo, string, error)
 	RestoreSecret(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
-	RotateSecret(ctx context.Context, name string) (*secretsdriver.SecretVersion, error)
+	RotateSecret(
+		ctx context.Context, name, rotationLambdaARN string, rules secretsdriver.SecretRotationRules, rotateImmediately bool,
+	) (*secretsdriver.SecretVersion, error)
+	CancelRotateSecret(ctx context.Context, name string) (*secretsdriver.SecretInfo, string, error)
 	PutSecretValueStaged(
 		ctx context.Context, name string, value []byte, clientRequestToken string, versionStages []string,
 	) (*secretsdriver.SecretVersion, error)
@@ -86,6 +90,7 @@ func New(s secretsdriver.Secrets) *Handler {
 		"UpdateSecretVersionStage": h.updateSecretVersionStage,
 		"RestoreSecret":            h.restoreSecret,
 		"RotateSecret":             h.rotateSecret,
+		"CancelRotateSecret":       h.cancelRotateSecret,
 		"GetRandomPassword":        h.getRandomPassword,
 		"TagResource":              h.tagResource,
 		"UntagResource":            h.untagResource,
