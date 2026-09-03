@@ -63,6 +63,8 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"DeleteReplicationGroup":       {},
 	"CreateSnapshot":               {},
 	"DescribeSnapshots":            {},
+	"CopySnapshot":                 {},
+	"DeleteSnapshot":               {},
 }
 
 // sharedTagActions are the generic tag verbs ElastiCache shares with other
@@ -84,6 +86,8 @@ var sharedTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static 
 var sharedSnapshotActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
 	"CreateSnapshot":    {},
 	"DescribeSnapshots": {},
+	"CopySnapshot":      {},
+	"DeleteSnapshot":    {},
 }
 
 // scopeElastiCache is the SigV4 credential-scope service name for ElastiCache.
@@ -198,6 +202,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createSnapshot(w, r)
 	case "DescribeSnapshots":
 		h.describeSnapshots(w, r)
+	case "CopySnapshot":
+		h.copySnapshot(w, r)
+	case "DeleteSnapshot":
+		h.deleteSnapshot(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))

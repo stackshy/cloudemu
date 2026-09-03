@@ -153,6 +153,15 @@ type CacheConfig struct {
 	// RedisVersion is the requested Azure Redis engine version (`redisVersion`);
 	// empty defaults to the backend's default. Empty for non-Azure callers.
 	RedisVersion string
+
+	// SnapshotName restores the new cache cluster from an existing ElastiCache
+	// snapshot: the cluster's engine, engine version, node type, node count, and
+	// port are seeded from the snapshot for any field the request leaves unset.
+	// SnapshotArns names S3 RDB objects to seed a restore from an external backup;
+	// the in-memory backend accepts them but does not read S3 data. Both are
+	// AWS-only and left empty by other callers.
+	SnapshotName string
+	SnapshotArns []string
 }
 
 // ModifyCacheConfig carries the mutable fields of an AWS ElastiCache
@@ -267,6 +276,14 @@ type ReplicationGroupConfig struct {
 	// AutomaticFailoverEnabled requests automatic failover for the group,
 	// reflected as AutomaticFailover ("enabled"/"disabled") on Describe.
 	AutomaticFailoverEnabled bool
+
+	// SnapshotName restores the new replication group from an existing
+	// ElastiCache snapshot: the group's engine, engine version, node type, and
+	// node count are seeded from the snapshot for any field the request leaves
+	// unset. SnapshotArns names S3 RDB objects to seed from an external backup;
+	// accepted but not read. Both are AWS-only and left empty by other callers.
+	SnapshotName string
+	SnapshotArns []string
 }
 
 // DeleteReplicationGroupOptions carries the optional delete-time behaviors of
@@ -327,12 +344,34 @@ type SnapshotFilter struct {
 	ReplicationGroupID string
 }
 
+// CopySnapshotConfig describes a CopySnapshot request: SourceSnapshotName names
+// the existing snapshot to copy, TargetSnapshotName the new snapshot to create.
+// TargetBucket (an S3 export bucket) and KmsKeyID are accepted for wire fidelity;
+// the in-memory backend records neither S3 objects nor KMS keys.
+type CopySnapshotConfig struct {
+	SourceSnapshotName string
+	TargetSnapshotName string
+	TargetBucket       string
+	KmsKeyID           string
+	Tags               map[string]string
+}
+
 // Snapshots is an OPTIONAL capability, discovered by type assertion.
 // ElastiCache snapshots are an AWS concept (Redis/Valkey only); drivers for other
 // clouds do not model them and answering InvalidAction is the truthful response.
 type Snapshots interface {
 	CreateSnapshot(ctx context.Context, cfg SnapshotConfig) (*Snapshot, error)
 	DescribeSnapshots(ctx context.Context, filter SnapshotFilter) ([]Snapshot, error)
+
+	// CopySnapshot deep-copies an existing snapshot to a new name, so mutating
+	// either the source or the copy leaves the other untouched. A missing source
+	// reports SnapshotNotFoundFault; an existing target reports
+	// SnapshotAlreadyExistsFault.
+	CopySnapshot(ctx context.Context, cfg CopySnapshotConfig) (*Snapshot, error)
+
+	// DeleteSnapshot removes a snapshot and returns its last state (marked
+	// "deleting"). A missing snapshot reports SnapshotNotFoundFault.
+	DeleteSnapshot(ctx context.Context, name string) (*Snapshot, error)
 }
 
 // AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure

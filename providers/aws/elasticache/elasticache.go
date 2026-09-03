@@ -230,6 +230,13 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
 	}
 
+	// A restore (SnapshotName set) seeds the unset config fields from the
+	// snapshot before defaults are applied, so the new cluster reproduces the
+	// source's engine/version/node-type/count/port.
+	if err := m.seedCacheRestore(&cfg); err != nil {
+		return nil, err
+	}
+
 	engine := cfg.Engine
 	if engine == "" {
 		engine = defaultEngine
@@ -257,10 +264,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	endpoint := clusterEndpoint(cfg.Name, region, engine, resolvePort(engine, cfg.Port))
 
-	tags := make(map[string]string, len(cfg.Tags))
-	for k, v := range cfg.Tags {
-		tags[k] = v
-	}
+	tags := maps.Clone(cfg.Tags)
 
 	info := driver.CacheInfo{
 		Name:               cfg.Name,
