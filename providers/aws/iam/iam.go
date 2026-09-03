@@ -1317,9 +1317,10 @@ func (m *Mock) AccessKeyByID(_ context.Context, id string) (driver.AccessKeyAuth
 		return driver.AccessKeyAuth{}, false
 	}
 
-	var userARN string
+	var userARN, userID string
 	if u, found := m.users.Get(ak.UserName); found {
 		userARN = u.ARN
+		userID = u.ID
 	}
 
 	return driver.AccessKeyAuth{
@@ -1327,6 +1328,7 @@ func (m *Mock) AccessKeyByID(_ context.Context, id string) (driver.AccessKeyAuth
 		SecretAccessKey: ak.SecretAccessKey,
 		UserName:        ak.UserName,
 		UserARN:         userARN,
+		UserID:          userID,
 		AccountID:       m.opts.AccountID,
 	}, true
 }

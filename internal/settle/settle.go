@@ -43,6 +43,8 @@ const (
 	DefaultGKEClusterSettle   = 3 * time.Second // GKE cluster PROVISIONING->RUNNING
 	DefaultGKENodePoolSettle  = 2 * time.Second // GKE node pool PROVISIONING->RUNNING
 	DefaultGKEReconcileSettle = 1 * time.Second // GKE node pool RECONCILING->RUNNING (resize/mutate)
+	DefaultECSTaskStartSettle = 2 * time.Second // ECS task PROVISIONING/PENDING->RUNNING
+	DefaultECSTaskStopSettle  = 1 * time.Second // ECS task STOPPING/DEPROVISIONING->STOPPED
 )
 
 // Window is a read-time overlay describing a resource still settling into its

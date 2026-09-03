@@ -85,8 +85,22 @@ type aliasData struct {
 }
 
 type layerData struct {
-	versions *memstore.Store[*driver.LayerVersion]
-	nextVer  int
+	// mu guards nextVer (the monotonic version counter's read-modify-write) and
+	// permissions, the two pieces of layerData mutated in place after the entry
+	// is stored — versions is itself a memstore.Store and is safe on its own.
+	mu          sync.Mutex
+	versions    *memstore.Store[*driver.LayerVersion]
+	nextVer     int
+	permissions map[int]*layerVersionPolicy
+}
+
+// layerVersionPolicy is one layer version's resource-based policy: the set of
+// AddLayerVersionPermission statements keyed by StatementId, plus the revision
+// id that changes on every add/remove (AWS's optimistic-concurrency guard for
+// RevisionId-conditioned Add/RemoveLayerVersionPermission calls).
+type layerVersionPolicy struct {
+	statements map[string]driver.LayerPermissionStatement
+	revisionID string
 }
 
 type funcData struct {

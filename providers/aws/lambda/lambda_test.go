@@ -770,6 +770,104 @@ func TestDeleteLayerVersion(t *testing.T) {
 	})
 }
 
+// TestDeleteLayerVersionDoesNotRenumber pins that a deleted layer version's
+// number is never reused: the monotonic counter keeps incrementing regardless
+// of deletions, matching real Lambda.
+func TestDeleteLayerVersionDoesNotRenumber(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, _ = m.PublishLayerVersion(ctx, driver.LayerConfig{Name: "layer", Content: []byte("v1")})
+	v2, _ := m.PublishLayerVersion(ctx, driver.LayerConfig{Name: "layer", Content: []byte("v2")})
+	assertEqual(t, 2, v2.Version)
+
+	requireNoError(t, m.DeleteLayerVersion(ctx, "layer", 1))
+
+	versions, err := m.ListLayerVersions(ctx, "layer")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(versions))
+	assertEqual(t, 2, versions[0].Version)
+
+	v3, err := m.PublishLayerVersion(ctx, driver.LayerConfig{Name: "layer", Content: []byte("v3")})
+	requireNoError(t, err)
+	assertEqual(t, 3, v3.Version)
+}
+
+// TestPublishLayerVersionMetadata pins that CompatibleArchitectures and
+// LicenseInfo round-trip through PublishLayerVersion/GetLayerVersion.
+func TestPublishLayerVersionMetadata(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	published, err := m.PublishLayerVersion(ctx, driver.LayerConfig{
+		Name:                    "my-layer",
+		Content:                 []byte("v1"),
+		CompatibleRuntimes:      []string{"python3.9"},
+		CompatibleArchitectures: []string{"arm64"},
+		LicenseInfo:             "MIT",
+	})
+	requireNoError(t, err)
+	assertEqual(t, "MIT", published.LicenseInfo)
+	assertEqual(t, 1, len(published.CompatibleArchitectures))
+	assertEqual(t, "arm64", published.CompatibleArchitectures[0])
+
+	got, err := m.GetLayerVersion(ctx, "my-layer", 1)
+	requireNoError(t, err)
+	assertEqual(t, "MIT", got.LicenseInfo)
+	assertEqual(t, "arm64", got.CompatibleArchitectures[0])
+}
+
+// TestPublishLayerVersionConcurrentRaceFree hammers PublishLayerVersion for a
+// single new layer name from many goroutines. Before the SetIfAbsent +
+// per-layer mutex fix, two goroutines racing the first publish could both see
+// the layer as absent and independently create a *layerData, losing whichever
+// one wrote second and letting the version counter restart; concurrent
+// nextVer++ on the surviving layerData could also duplicate a version number.
+// Every published version must be unique and the count must match the number
+// of successful publishes. Must run clean under `go test -race`.
+func TestPublishLayerVersionConcurrentRaceFree(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const workers = 20
+
+	var wg sync.WaitGroup
+
+	versions := make([]int, workers)
+
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			lv, err := m.PublishLayerVersion(ctx, driver.LayerConfig{Name: "shared-layer", Content: []byte("v")})
+			if err != nil {
+				return
+			}
+
+			versions[i] = lv.Version
+		}(i)
+	}
+
+	wg.Wait()
+
+	seen := make(map[int]bool, workers)
+	for _, v := range versions {
+		if seen[v] {
+			t.Fatalf("duplicate published version %d", v)
+		}
+
+		seen[v] = true
+	}
+
+	assertEqual(t, workers, len(seen))
+
+	all, err := m.ListLayerVersions(ctx, "shared-layer")
+	requireNoError(t, err)
+	assertEqual(t, workers, len(all))
+}
+
 func TestListLayers(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

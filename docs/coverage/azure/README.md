@@ -7,7 +7,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | --- | --- | --- |
 | [ACR](./acr.md) | `containerregistry` | 15 |
 | [AI](./ai.md) | `azureai` | 92 |
-| [AKS](./aks.md) | — (provider-native) | 16 |
+| [AKS](./aks.md) | — (provider-native) | 18 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |
 | [ContainerApps](./containerapps.md) | — (provider-native) | 19 |

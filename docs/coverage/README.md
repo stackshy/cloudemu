@@ -11,7 +11,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | Service | AWS | Azure | GCP | OCI | Operations |
 | --- | --- | --- | --- | --- | --- |
 | `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
-| `aks` | — | [AKS](./azure/aks.md) | — | — | 16 |
+| `aks` | — | [AKS](./azure/aks.md) | — | — | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | — | — | — | 15 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
@@ -23,7 +23,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudasset` | — | — | [Cloudasset](./gcp/cloudasset.md) | — | 11 |
 | `cloudbilling` | — | — | [Cloudbilling](./gcp/cloudbilling.md) | — | 14 |
 | `cloudformation` | [CloudFormation](./aws/cloudformation.md) | — | — | — | 9 |
-| `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 16 |
+| `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 18 |
 | `cloudsql` | — | — | [CloudSQL](./gcp/cloudsql.md) | — | 21 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |

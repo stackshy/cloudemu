@@ -74,6 +74,47 @@ type CloudRun interface {
 
 	// DeleteRevision removes a single revision of a service.
 	DeleteRevision(ctx context.Context, name string) error
+
+	// Invoke executes the named service (bare id or fully qualified name)
+	// against req and returns its HTTP response. Cloud Run services run
+	// container images, which CloudEmu has no runtime for, so Invoke runs the
+	// Go handler registered via RegisterHandler when one is present; otherwise
+	// it returns a successful canned/echo stub response, mirroring how the
+	// Cloud Functions and Lambda mocks answer an Invoke with no registered
+	// handler.
+	Invoke(ctx context.Context, name string, req InvokeRequest) (*InvokeResponse, error)
+
+	// RegisterHandler plugs a Go handler in for the named service (bare id),
+	// standing in for its container image so Invoke actually runs code instead
+	// of returning the echo stub. Registering nil clears a previously
+	// registered handler.
+	RegisterHandler(name string, handler HandlerFunc)
+}
+
+// HandlerFunc is a Go handler standing in for a Cloud Run service's container
+// image. Cloud Run is HTTP request/response, not an event/payload contract
+// like Lambda or Cloud Functions, so the handler receives the inbound HTTP
+// request shape and returns the HTTP response shape directly.
+type HandlerFunc func(ctx context.Context, req InvokeRequest) (InvokeResponse, error)
+
+// InvokeRequest is the portable, transport-neutral shape of the HTTP request
+// delivered to a Cloud Run service. Headers uses canonical HTTP header casing
+// (as produced by Go's net/http.Header) since the wire handler builds it
+// directly from the inbound *http.Request.
+type InvokeRequest struct {
+	Method  string
+	Path    string
+	Query   string // raw query string, without the leading "?"
+	Headers map[string][]string
+	Body    []byte
+}
+
+// InvokeResponse is the HTTP response a Cloud Run service invocation returns.
+// A zero StatusCode is treated as 200 by the wire handler.
+type InvokeResponse struct {
+	StatusCode int
+	Headers    map[string][]string
+	Body       []byte
 }
 
 // JobConfig is the input to CreateJob / UpdateJob — the subset of the Cloud Run

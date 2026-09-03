@@ -9,8 +9,10 @@
 // delete), and resource policies (AddPermission / GetPolicy /
 // RemovePermission), and tagging (TagResource / UntagResource / ListTags at
 // the /2017-03-31/tags prefix). Reserved concurrency (Put/Get/Delete
-// FunctionConcurrency), layers (Publish/Get/List/Delete layer versions and
-// ListLayers), and event source mappings are also wired through.
+// FunctionConcurrency), layers (Publish/Get/List/Delete layer versions,
+// GetLayerVersionByArn, ListLayers, and layer-version resource policies via
+// Add/Get/RemoveLayerVersionPermission), and event source mappings are also
+// wired through.
 package lambda
 
 import (
@@ -160,6 +162,20 @@ type policyManager interface {
 	AddPermission(ctx context.Context, functionName, qualifier string, stmt sdrv.PermissionStatement) error
 	RemovePermission(ctx context.Context, functionName, qualifier, statementID string) error
 	GetPolicy(ctx context.Context, functionName, qualifier string) (string, error)
+}
+
+// layerPolicyManager is the AWS-specific layer-version resource-policy surface
+// (AddLayerVersionPermission / GetLayerVersionPolicy /
+// RemoveLayerVersionPermission). Like policyManager, it's not part of the
+// portable Serverless driver — layer version permissions are a Lambda concept —
+// so the handler type-asserts for it rather than requiring every cloud's
+// function provider to implement it.
+type layerPolicyManager interface {
+	AddLayerVersionPermission(
+		ctx context.Context, name string, version int, stmt sdrv.LayerPermissionStatement, revisionID string,
+	) (statementJSON, newRevisionID string, err error)
+	RemoveLayerVersionPermission(ctx context.Context, name string, version int, statementID, revisionID string) error
+	GetLayerVersionPolicy(ctx context.Context, name string, version int) (policy, revisionID string, err error)
 }
 
 // functionTagger is the AWS-specific Lambda tagging surface (not part of the
@@ -552,6 +568,11 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
+	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := sdrv.FunctionConfig{
 		Name:        name,
 		Runtime:     req.Runtime,
@@ -872,6 +893,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := sdrv.FunctionConfig{
 		Name:        req.FunctionName,
 		Runtime:     req.Runtime,
@@ -988,6 +1014,25 @@ func (h *Handler) publishConfiguration(
 	}
 
 	return toVersionConfiguration(info, ver, awsCfg), nil
+}
+
+// validateLayers checks that every layer version ARN a CreateFunction /
+// UpdateFunctionConfiguration request references actually exists, matching
+// real Lambda, which rejects an unknown or malformed layer version ARN with
+// InvalidParameterValueException instead of silently accepting it.
+func (h *Handler) validateLayers(ctx context.Context, arns []string) error {
+	for _, arn := range arns {
+		name, version, ok := parseLayerARN(arn)
+		if !ok {
+			return cerrors.Newf(cerrors.InvalidArgument, "Layer version %s is not a valid layer version ARN", arn)
+		}
+
+		if _, err := h.fn.GetLayerVersion(ctx, name, version); err != nil {
+			return cerrors.Newf(cerrors.InvalidArgument, "Layer version %s does not exist", arn)
+		}
+	}
+
+	return nil
 }
 
 // resolveLayers maps the requested layer ARNs to the echoed Layers list,
@@ -1505,6 +1550,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "ResourceConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", msg)
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailedException", msg)
 	case cerrors.IsThrottled(err):
 		writeThrottle(w, msg)
 	default:
