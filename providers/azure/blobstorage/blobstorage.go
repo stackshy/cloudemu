@@ -148,6 +148,12 @@ type containerMeta struct {
 	// and the retention window purges it lazily.
 	softDeleted *memstore.Store[*blobObject]
 	// mu guards snapshotSeq/versionSeq (and any future container-scoped counters).
+	// It ALSO serializes every objects↔softDeleted transition (soft delete and
+	// Undelete) so a blob is atomically moved between the two stores: without one
+	// lock spanning both writes, a racing Delete and Undelete on the same blob can
+	// interleave their independent per-store writes and leave the blob in NEITHER
+	// store (permanent data loss). Held only across the two-store mutation, never
+	// while emitting metrics/events.
 	mu          sync.Mutex
 	snapshotSeq int
 	versionSeq  int

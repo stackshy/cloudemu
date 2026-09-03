@@ -207,3 +207,75 @@ func TestSoftDeleteConcurrent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, live.Objects, n)
 }
+
+// blobInLive reports whether the blob is present in the live objects store.
+func blobInLive(t *testing.T, ctx context.Context, m *Mock, container, blob string) bool {
+	t.Helper()
+	_, err := m.HeadObject(ctx, container, blob)
+
+	return err == nil
+}
+
+// blobInDeleted reports whether the blob is present in the soft-deleted store.
+func blobInDeleted(t *testing.T, ctx context.Context, m *Mock, container, blob string) bool {
+	t.Helper()
+	del, err := m.ListDeletedBlobs(ctx, container, driver.ListOptions{})
+	require.NoError(t, err)
+
+	for i := range del.Blobs {
+		if del.Blobs[i].Info.Key == blob {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestSoftDeleteSameKeyConcurrentNoLoss hammers the SAME blob key with racing
+// Delete-then-Undelete and Undelete-then-Delete sequences. The objects↔softDeleted
+// transition must be atomic under ctr.mu, so after every round the blob lands in
+// EXACTLY ONE store — never dropped from both (permanent loss) and never absent.
+// Repeated many rounds to surface the interleaving a distinct-key race can't.
+func TestSoftDeleteSameKeyConcurrentNoLoss(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		rounds  = 50
+		workers = 8
+		iters   = 25
+	)
+
+	for r := range rounds {
+		m, _ := newMock()
+		enableSoftDelete(t, m, 7)
+		require.NoError(t, m.CreateBucket(ctx, "c1"))
+		require.NoError(t, m.PutObject(ctx, "c1", "k1", []byte("hello"), "text/plain", nil))
+
+		var wg sync.WaitGroup
+		for w := range workers {
+			wg.Add(1)
+
+			go func(worker int) {
+				defer wg.Done()
+
+				for range iters {
+					if worker%2 == 0 {
+						_ = m.DeleteObject(ctx, "c1", "k1")
+						_ = m.UndeleteBlob(ctx, "c1", "k1")
+					} else {
+						_ = m.UndeleteBlob(ctx, "c1", "k1")
+						_ = m.DeleteObject(ctx, "c1", "k1")
+					}
+				}
+			}(w)
+		}
+
+		wg.Wait()
+
+		inLive := blobInLive(t, ctx, m, "c1", "k1")
+		inDeleted := blobInDeleted(t, ctx, m, "c1", "k1")
+		require.Truef(t, inLive != inDeleted,
+			"round %d: blob must be in exactly one store, never lost/double (live=%v deleted=%v)",
+			r, inLive, inDeleted)
+	}
+}

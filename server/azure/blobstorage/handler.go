@@ -511,6 +511,15 @@ func appendLiveBlobs(dst []blobXML, objects []storagedriver.ObjectInfo, includeM
 // include=deleted response, each marked Deleted=true with its DeletedTime and
 // RemainingRetentionDays, and re-sorts the combined blob list by name so live
 // and soft-deleted blobs interleave as real Azure returns them.
+//
+// Limitation (deferred): the soft-deleted set is appended on top of the already
+// maxresults-bounded live page rather than folded into one merged, uniformly
+// paginated live+deleted stream. Real Azure paginates the combined stream and
+// carries the deleted tail forward in the continuation marker; here the marker
+// tracks only the live listing, so a page can exceed maxresults by the deleted
+// count and the deleted tail is not itself continued. This matches real behavior
+// for the common small-container case; full merged-stream pagination is future
+// work (it needs a marker scheme that encodes both stream positions).
 func (*Handler) appendDeletedBlobs(
 	r *http.Request, ext storagedriver.AzureSoftDeleteBlob, container, prefix string, out *listBlobsResult,
 ) error {

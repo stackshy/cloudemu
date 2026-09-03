@@ -39,10 +39,19 @@ func (m *Mock) SoftDeleteEnabled(_ context.Context) (bool, error) {
 // softDeleteObject moves a live blob into the container's soft-deleted store,
 // stamping the deletion time and the retention window so RemainingRetentionDays
 // can count down. The caller has already confirmed soft delete is active.
+//
+// The objects.Delete + softDeleted.Set pair runs under ctr.mu — the same lock
+// UndeleteBlob takes for the reverse move — so the blob is transferred between
+// the two stores atomically. Without it a racing Delete and Undelete on the same
+// blob could interleave their per-store writes and drop the blob from BOTH
+// stores (permanent loss).
 func (m *Mock) softDeleteObject(ctr *containerMeta, key string, obj *blobObject, retentionDays int) {
 	retained := cloneBlobObject(obj)
 	retained.DeletedTime = m.opts.Clock.Now().UTC().Format(blobTimeFormat)
 	retained.deletedRetentionDays = retentionDays
+
+	ctr.mu.Lock()
+	defer ctr.mu.Unlock()
 
 	ctr.objects.Delete(key)
 	ctr.softDeleted.Set(key, retained)
@@ -75,6 +84,14 @@ func (m *Mock) UndeleteBlob(_ context.Context, container, blob string) error {
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
+
+	// The whole read-check-move runs under ctr.mu — the same lock softDeleteObject
+	// takes — so the soft-deleted lookup and the softDeleted→objects transfer are
+	// one atomic critical section against a racing Delete on the same blob. The
+	// objects.Set precedes softDeleted.Delete so a concurrent reader sees the blob
+	// in both stores at worst, never in neither.
+	ctr.mu.Lock()
+	defer ctr.mu.Unlock()
 
 	retained, ok := ctr.softDeleted.Get(blob)
 	if !ok {
