@@ -69,19 +69,25 @@ func TestSDKEventarcMissingTypeFilter(t *testing.T) {
 	wantGoogleAPIError(t, err, 400, "type")
 }
 
-// TestSDKEventarcUnknownEventType: a "type" filter naming an event type
-// outside the catalog CloudEmu validates against is a 400 INVALID_ARGUMENT.
-func TestSDKEventarcUnknownEventType(t *testing.T) {
+// TestSDKEventarcUncatalogedEventTypeAccepted: Eventarc's event-type catalog
+// is open-ended — Firebase events, future Google-added types, and (for
+// channel/third-party triggers) arbitrary provider-defined strings with no
+// fixed Google list. A well-formed "type" filter naming a type CloudEmu
+// doesn't special-case must be accepted, not rejected as "unknown"; rejecting
+// it would false-reject real Terraform/SDK configs.
+func TestSDKEventarcUncatalogedEventTypeAccepted(t *testing.T) {
 	svc := newEventarcService(t)
 	ctx := context.Background()
 
 	trigger := &eventarc.Trigger{
-		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "not.a.real.event.type"}},
+		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "google.firebase.auth.user.v1.created"}},
 		Destination:  &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "svc"}},
 	}
 
-	_, err := svc.Projects.Locations.Triggers.Create(parent(), trigger).TriggerId("bad-type").Context(ctx).Do()
-	wantGoogleAPIError(t, err, 400, "not a known Eventarc event type")
+	if _, err := svc.Projects.Locations.Triggers.Create(parent(), trigger).
+		TriggerId("uncataloged-type").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create with an uncataloged-but-well-formed event type: %v", err)
+	}
 }
 
 // TestSDKEventarcAuditLogRequiresServiceAndMethod: an audit-log trigger
@@ -185,8 +191,10 @@ func TestSDKEventarcDestinationCloudFunctionNotFound(t *testing.T) {
 }
 
 // TestSDKEventarcPatchValidation: patching eventFilters or destination goes
-// through the same validation as Create, and a rejected patch leaves the
-// stored trigger unchanged.
+// through the same validation as Create — a well-formed but uncataloged
+// event type is accepted (and takes effect), while a patch routing to a
+// destination that doesn't exist is rejected and leaves the stored trigger
+// unchanged.
 func TestSDKEventarcPatchValidation(t *testing.T) {
 	svc, cloud := newFullEventarcService(t)
 	ctx := context.Background()
@@ -207,14 +215,25 @@ func TestSDKEventarcPatchValidation(t *testing.T) {
 
 	name := parent() + "/triggers/patch-validate"
 
-	// A patch with an unknown event type is rejected.
-	badFilters := &eventarc.Trigger{
-		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "nope"}},
+	// A patch naming a well-formed but uncataloged event type is accepted,
+	// not rejected as "unknown" — Eventarc's event-type space is open-ended.
+	uncataloged := &eventarc.Trigger{
+		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "example.provider.event.v1"}},
 	}
 
-	_, err := svc.Projects.Locations.Triggers.Patch(name, badFilters).
-		UpdateMask("eventFilters").Context(ctx).Do()
-	wantGoogleAPIError(t, err, 400, "")
+	if _, err := svc.Projects.Locations.Triggers.Patch(name, uncataloged).
+		UpdateMask("eventFilters").Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch(uncataloged type): %v", err)
+	}
+
+	afterFilters, err := svc.Projects.Locations.Triggers.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get (after eventFilters patch): %v", err)
+	}
+
+	if len(afterFilters.EventFilters) != 1 || afterFilters.EventFilters[0].Value != "example.provider.event.v1" {
+		t.Fatalf("eventFilters = %+v, want the uncataloged type to have taken effect", afterFilters.EventFilters)
+	}
 
 	// A patch routing to a nonexistent Cloud Run service is rejected.
 	badDest := &eventarc.Trigger{
@@ -225,14 +244,10 @@ func TestSDKEventarcPatchValidation(t *testing.T) {
 		UpdateMask("destination").Context(ctx).Do()
 	wantGoogleAPIError(t, err, 404, "")
 
-	// Both rejected patches left the trigger exactly as created.
+	// The rejected destination patch left the trigger's destination as created.
 	got, err := svc.Projects.Locations.Triggers.Get(name).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("Get: %v", err)
-	}
-
-	if len(got.EventFilters) != 1 || got.EventFilters[0].Value != "google.cloud.storage.object.v1.finalized" {
-		t.Fatalf("eventFilters = %+v, want the original storage-finalized filter unchanged", got.EventFilters)
 	}
 
 	if got.Destination == nil || got.Destination.CloudRun == nil || got.Destination.CloudRun.Service != "live" {

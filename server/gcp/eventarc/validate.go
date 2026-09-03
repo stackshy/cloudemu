@@ -2,7 +2,6 @@ package eventarc
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -10,38 +9,14 @@ import (
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
-// Known Eventarc direct/Pub/Sub event types this mock validates a trigger's
-// "type" eventFilter against. Real Eventarc's full catalog is served by
-// projects.locations.providers.list and is far larger (Firebase, BigQuery,
-// Cloud Composer, …); this is the commonly used subset — Pub/Sub, Cloud Audit
-// Logs, Cloud Storage, and Firestore — CloudEmu validates against.
-const (
-	eventTypePubsubMessagePublished = "google.cloud.pubsub.topic.v1.messagePublished"
-	eventTypeAuditLogWritten        = "google.cloud.audit.log.v1.written"
-	eventTypeStorageFinalized       = "google.cloud.storage.object.v1.finalized"
-	eventTypeStorageDeleted         = "google.cloud.storage.object.v1.deleted"
-	eventTypeStorageArchived        = "google.cloud.storage.object.v1.archived"
-	eventTypeStorageMetadataUpdated = "google.cloud.storage.object.v1.metadataUpdated"
-	eventTypeFirestoreCreated       = "google.cloud.firestore.document.v1.created"
-	eventTypeFirestoreUpdated       = "google.cloud.firestore.document.v1.updated"
-	eventTypeFirestoreDeleted       = "google.cloud.firestore.document.v1.deleted"
-	eventTypeFirestoreWritten       = "google.cloud.firestore.document.v1.written"
-)
-
-// knownEventTypes is the static lookup table validateEventFilters checks a
-// trigger's "type" filter value against.
-var knownEventTypes = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	eventTypePubsubMessagePublished: {},
-	eventTypeAuditLogWritten:        {},
-	eventTypeStorageFinalized:       {},
-	eventTypeStorageDeleted:         {},
-	eventTypeStorageArchived:        {},
-	eventTypeStorageMetadataUpdated: {},
-	eventTypeFirestoreCreated:       {},
-	eventTypeFirestoreUpdated:       {},
-	eventTypeFirestoreDeleted:       {},
-	eventTypeFirestoreWritten:       {},
-}
+// eventTypeAuditLogWritten is the one Eventarc direct-event type this mock
+// special-cases: a Cloud Audit Log trigger must additionally carry
+// "serviceName" and "methodName" filters pinning it to one API method. Real
+// Eventarc's event-type catalog is otherwise open-ended — Pub/Sub, Storage,
+// Firestore, Firebase, and (for channels) arbitrary third-party-provider
+// strings with no fixed Google list — so validateEventFilters does not gate
+// acceptance on the "type" value beyond requiring one be present.
+const eventTypeAuditLogWritten = "google.cloud.audit.log.v1.written"
 
 // eventFilter attribute names validateEventFilters looks for.
 const (
@@ -51,19 +26,19 @@ const (
 )
 
 // validateEventFilters checks a trigger's eventFilters against Eventarc's own
-// admission-time rules: a required "type" filter naming a known event type,
-// and — for the audit-log event type — required "serviceName" and
-// "methodName" filters pinning the trigger to one API method (real Eventarc
-// refuses to create an unscoped audit-log trigger). Returns "" when the
-// filters are valid, or the INVALID_ARGUMENT message otherwise.
+// admission-time rules: a required "type" filter (real Eventarc always
+// requires one), and — for the audit-log event type — required "serviceName"
+// and "methodName" filters pinning the trigger to one API method (real
+// Eventarc refuses to create an unscoped audit-log trigger). The "type"
+// value itself is not checked against a catalog: Eventarc's event-type space
+// is open-ended (Firebase events, future Google-added types, and arbitrary
+// third-party strings on a channel trigger), so rejecting an uncataloged but
+// well-formed type would false-reject valid real-world configs. Returns ""
+// when the filters are valid, or the INVALID_ARGUMENT message otherwise.
 func validateEventFilters(filters []eventFilterJSON) string {
 	typeValue, hasType := filterValue(filters, filterAttrType)
 	if !hasType {
 		return "eventFilters must include a non-empty 'type' filter"
-	}
-
-	if _, known := knownEventTypes[typeValue]; !known {
-		return fmt.Sprintf("eventFilters 'type' %q is not a known Eventarc event type", typeValue)
 	}
 
 	if typeValue != eventTypeAuditLogWritten {
