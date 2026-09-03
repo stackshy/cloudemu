@@ -25,6 +25,9 @@ func TestSDKGCPURLMapRoundTrip(t *testing.T) {
 
 	t.Cleanup(func() { _ = client.Close() })
 
+	bsClient := newBackendServicesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
+	insertBS(ctx, t, bsClient, "web-bs")
+
 	defaultSvc := "projects/" + testProject + "/global/backendServices/web-bs"
 
 	op, err := client.Insert(ctx, &computepb.InsertUrlMapRequest{
@@ -108,6 +111,10 @@ func TestSDKGCPURLMapUpdate(t *testing.T) {
 	}
 
 	t.Cleanup(func() { _ = client.Close() })
+
+	bsClient := newBackendServicesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
+	insertBS(ctx, t, bsClient, "bs-a")
+	insertBS(ctx, t, bsClient, "bs-b")
 
 	svcA := "projects/" + testProject + "/global/backendServices/bs-a"
 	svcB := "projects/" + testProject + "/global/backendServices/bs-b"

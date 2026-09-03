@@ -106,6 +106,11 @@ func (h *Handler) mutateGCPResource(w http.ResponseWriter, r *http.Request, rp g
 		return
 	}
 
+	if err := h.validateGCPResourceRefs(r.Context(), rp, body); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	err := store.UpdateGCPResource(r.Context(), rp.ResourceType, scopeKeyOf(rp), rp.ResourceName,
 		func(res *lbdriver.GCPResource) { applyBody(res, body, merge) })
 	if err != nil {
@@ -153,6 +158,11 @@ func (h *Handler) insertGCPResource(w http.ResponseWriter, r *http.Request, rp g
 	name, _ := body["name"].(string)
 	if name == "" {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "name required")
+		return
+	}
+
+	if err := h.validateGCPResourceRefs(r.Context(), rp, body); err != nil {
+		gcprest.WriteCErr(w, err)
 		return
 	}
 
