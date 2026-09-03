@@ -529,6 +529,9 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 // replaced by the target's Input (constant), InputPath (selected subtree), or
 // InputTransformer (templated) when one is configured — matching how real
 // EventBridge shapes each target's payload independently.
+//
+// A target whose dispatch fails is routed to its configured DeadLetterConfig
+// queue (see deliverToTarget), matching real EventBridge's DLQ behavior.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
 	// Decouple delivery from the caller's cancellation/deadline (real EventBridge
 	// delivery is asynchronous) while carrying forward the re-entrant delivery
@@ -538,41 +541,107 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, even
 
 	envelope := m.eventEnvelope(event)
 
+	busName := event.EventBus
+	if busName == "" {
+		busName = defaultBusName
+	}
+
 	for i := range matched {
 		reserved := m.reservedVars(&matched[i], event, envelope)
 
-		for _, t := range matched[i].Targets {
+		for j := range matched[i].Targets {
+			t := &matched[i].Targets[j]
 			if t.ARN == "" {
 				continue
 			}
 
-			m.dispatchTarget(dctx, t.ARN, targetBody(&t, envelope, reserved))
+			m.deliverToTarget(dctx, &matched[i], t, busName, envelope, reserved)
 		}
 	}
 }
 
+// deliverToTarget dispatches one target and, on failure, routes the original
+// event to the target's dead-letter queue when one is configured.
+func (m *Mock) deliverToTarget(
+	ctx context.Context, rule *driver.Rule, t *driver.Target, busName string, envelope []byte, reserved map[string]json.RawMessage,
+) {
+	if m.dispatchTarget(ctx, t.ARN, targetBody(t, envelope, reserved)) {
+		return
+	}
+
+	dims := map[string]string{"RuleName": rule.Name, "EventBusName": busName}
+	m.emitMetric("FailedInvocations", 1, dims)
+
+	dlqARN := deadLetterARN(t.DeadLetterConfig)
+	if dlqARN == "" || m.sqs == nil {
+		return
+	}
+
+	// The DLQ message body is the original event that failed to be delivered
+	// (matching real EventBridge, which puts the source event — not the
+	// target-specific transformed payload — on the dead-letter queue).
+	if m.sqs.DeliverExternal(ctx, dlqARN, string(envelope)) == nil {
+		m.emitMetric("InvocationsSentToDlq", 1, dims)
+	}
+}
+
 // dispatchTarget routes a rendered payload to a single target by the service in
-// its ARN. Unknown/unsupported target services are silently ignored (matching
-// EventBridge accepting the target but this emulator not modeling that sink).
-func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) {
+// its ARN, reporting whether dispatch succeeded. Unknown/unsupported target
+// services and a service whose deliverer was never wired report success
+// (matching EventBridge accepting the target but this emulator not modeling
+// that sink — an emulator limitation, not a real delivery failure eligible for
+// the target's DLQ).
+func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 	switch {
 	case strings.Contains(arn, ":sqs:"):
-		if m.sqs != nil {
-			_ = m.sqs.DeliverExternal(ctx, arn, body)
+		if m.sqs == nil {
+			return true
 		}
+
+		return m.sqs.DeliverExternal(ctx, arn, body) == nil
 	case strings.Contains(arn, ":lambda:"):
-		if m.lambda != nil {
-			_ = m.lambda.InvokeExternal(ctx, arn, []byte(body))
+		if m.lambda == nil {
+			return true
 		}
+
+		return m.lambda.InvokeExternal(ctx, arn, []byte(body)) == nil
 	case strings.Contains(arn, ":sns:"):
-		if m.sns != nil {
-			_ = m.sns.PublishExternal(ctx, arn, body)
+		if m.sns == nil {
+			return true
 		}
+
+		return m.sns.PublishExternal(ctx, arn, body) == nil
 	case strings.Contains(arn, ":states:"):
-		if m.sfn != nil {
-			_ = m.sfn.StartExternal(ctx, arn, body)
+		if m.sfn == nil {
+			return true
 		}
+
+		return m.sfn.StartExternal(ctx, arn, body) == nil
+	default:
+		return true
 	}
+}
+
+// deadLetterConfigJSON is the raw shape of a Target's DeadLetterConfig JSON
+// block (`{"Arn": "..."}`), matching the EventBridge PutTargets request/response
+// shape.
+type deadLetterConfigJSON struct {
+	Arn string `json:"Arn"`
+}
+
+// deadLetterARN extracts the DLQ ARN from a target's raw DeadLetterConfig JSON,
+// returning "" when the target has none configured or the JSON is malformed.
+func deadLetterARN(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	var cfg deadLetterConfigJSON
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return ""
+	}
+
+	return cfg.Arn
 }
 
 // reservedVars builds the predefined <aws.events.*> transformer variables for a
