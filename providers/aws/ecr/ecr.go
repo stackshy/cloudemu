@@ -466,7 +466,50 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 		return []string{}, nil
 	}
 
-	return evaluateRules(rd, m.opts.Clock.Now()), nil
+	results := previewRules(rd, rd.policy, m.opts.Clock.Now())
+	digests := make([]string, 0, len(results))
+
+	for _, res := range results {
+		digests = append(digests, res.Digest)
+	}
+
+	return digests, nil
+}
+
+// PreviewLifecyclePolicy evaluates a lifecycle policy against the
+// repository's current images and returns full per-image detail (digest,
+// tags, push time, and the priority of the rule that matched) — the data
+// ECR's GetLifecyclePolicyPreview needs. When override is non-nil it is
+// evaluated instead of (without replacing) the repository's stored policy,
+// matching StartLifecyclePolicyPreview's optional lifecyclePolicyText
+// override.
+//
+// AWS-specific: StartLifecyclePolicyPreview/GetLifecyclePolicyPreview have no
+// equivalent in Azure ACR or GCP Artifact Registry, so this is not part of the
+// shared ContainerRegistry driver interface — the ECR wire handler reaches it
+// via type assertion, the same pattern used for PutImageTagMutability and
+// PutImageScanningConfiguration above.
+func (m *Mock) PreviewLifecyclePolicy(
+	_ context.Context, repository string, override *driver.LifecyclePolicy,
+) ([]driver.LifecyclePreviewResult, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, "", apiErrf(excRepositoryNotFound, "repository %q not found", repository)
+	}
+
+	policy := rd.policy
+	if override != nil {
+		policy = override
+	}
+
+	if policy == nil {
+		return nil, "", apiErrf(excLifecyclePolicyNotFound, "no lifecycle policy for repository %q", repository)
+	}
+
+	return previewRules(rd, policy, m.opts.Clock.Now()), policy.Document, nil
 }
 
 // StartImageScan starts a vulnerability scan on an image in an ECR repository.
@@ -628,34 +671,49 @@ func generateScanResult(repository, digest string, now time.Time) *driver.ScanRe
 	}
 }
 
-// evaluateRules applies lifecycle rules sorted by priority and returns digests to expire.
-func evaluateRules(rd *repoData, now time.Time) []string {
-	rules := rd.policy.Rules
-	sorted := make([]driver.LifecycleRule, len(rules))
-	copy(sorted, rules)
+// previewRules evaluates policy's rules in priority order against rd's images
+// and returns full detail for every image an "expire" action would remove.
+// Once an image matches a rule it is excluded from the pool considered by
+// lower-priority rules, matching real ECR: each image is expired by at most
+// one rule — the one with the lowest rulePriority that matches it — so a
+// broad low-priority rule never re-claims an image a narrower high-priority
+// rule already spared or expired.
+func previewRules(rd *repoData, policy *driver.LifecyclePolicy, now time.Time) []driver.LifecyclePreviewResult {
+	rules := make([]driver.LifecycleRule, len(policy.Rules))
+	copy(rules, policy.Rules)
 
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Priority < sorted[j].Priority })
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Priority < rules[j].Priority })
 
-	expired := make(map[string]bool)
+	claimed := make(map[string]bool)
 
-	for idx := range sorted {
-		digests := evaluateSingleRule(rd, &sorted[idx], now)
-		for _, d := range digests {
-			expired[d] = true
+	var results []driver.LifecyclePreviewResult
+
+	for idx := range rules {
+		rule := &rules[idx]
+		for _, digest := range matchingDigestsForRule(rd, rule, claimed, now) {
+			claimed[digest] = true
+
+			img, ok := rd.images.Get(digest)
+			if !ok {
+				continue
+			}
+
+			results = append(results, driver.LifecyclePreviewResult{
+				Digest:              digest,
+				Tags:                append([]string(nil), img.detail.Tags...),
+				PushedAt:            img.detail.PushedAt,
+				AppliedRulePriority: rule.Priority,
+			})
 		}
 	}
 
-	result := make([]string, 0, len(expired))
-	for d := range expired {
-		result = append(result, d)
-	}
-
-	return result
+	return results
 }
 
-// evaluateSingleRule evaluates one lifecycle rule and returns matching digests.
-func evaluateSingleRule(rd *repoData, rule *driver.LifecycleRule, now time.Time) []string {
-	images := collectMatchingImages(rd, rule)
+// matchingDigestsForRule returns the digests a single rule would expire,
+// excluding any digest already claimed by a higher-priority rule.
+func matchingDigestsForRule(rd *repoData, rule *driver.LifecycleRule, claimed map[string]bool, now time.Time) []string {
+	images := collectMatchingImages(rd, rule, claimed)
 
 	sort.Slice(images, func(i, j int) bool { return images[i].detail.PushedAt < images[j].detail.PushedAt })
 
@@ -669,13 +727,18 @@ func evaluateSingleRule(rd *repoData, rule *driver.LifecycleRule, now time.Time)
 	}
 }
 
-// collectMatchingImages returns images matching the rule's tag status and pattern.
-func collectMatchingImages(rd *repoData, rule *driver.LifecycleRule) []*imageData {
+// collectMatchingImages returns images matching the rule's tag status and
+// pattern, excluding any digest already claimed by a higher-priority rule.
+func collectMatchingImages(rd *repoData, rule *driver.LifecycleRule, claimed map[string]bool) []*imageData {
 	all := rd.images.All()
 
 	var matched []*imageData
 
-	for _, img := range all {
+	for digest, img := range all {
+		if claimed[digest] {
+			continue
+		}
+
 		if matchesTagRule(img, rule) {
 			matched = append(matched, img)
 		}

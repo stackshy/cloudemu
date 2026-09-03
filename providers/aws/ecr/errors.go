@@ -13,6 +13,7 @@ const (
 	excImageNotFound            = "ImageNotFoundException"
 	excScanNotFound             = "ScanNotFoundException"
 	excRepositoryPolicyNotFound = "RepositoryPolicyNotFoundException"
+	excLifecyclePolicyNotFound  = "LifecyclePolicyNotFoundException"
 )
 
 // apiError pairs a canonical cloudemu error with the precise ECR exception name

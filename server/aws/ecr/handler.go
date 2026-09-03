@@ -12,6 +12,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -32,11 +33,20 @@ type authTokenProvider interface {
 // Handler serves ECR JSON-RPC requests against a ContainerRegistry driver.
 type Handler struct {
 	registry crdriver.ContainerRegistry
+
+	// previewMu guards previews, the Start/GetLifecyclePolicyPreview result
+	// cache. Real ECR splits that evaluation into an asynchronous Start call
+	// and a polled Get call; the emulator evaluates synchronously in Start and
+	// Get simply replays the cached result, keyed by repository name. This is
+	// wire-flow state (an artifact of the two-call protocol), not resource
+	// state, so it lives here rather than in the provider/persist layer.
+	previewMu sync.Mutex
+	previews  map[string]lifecyclePreviewCache
 }
 
 // New returns an ECR handler backed by reg.
 func New(reg crdriver.ContainerRegistry) *Handler {
-	return &Handler{registry: reg}
+	return &Handler{registry: reg, previews: make(map[string]lifecyclePreviewCache)}
 }
 
 // Matches returns true for ECR-shaped requests, identified by an X-Amz-Target
@@ -45,11 +55,24 @@ func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 }
 
-// ServeHTTP dispatches ECR operations based on X-Amz-Target.
-//
-//nolint:gocyclo // flat dispatch: one branch per ECR operation
+// ServeHTTP dispatches ECR operations based on X-Amz-Target. The dispatch is
+// split across route* methods, grouped by area (repositories, images, tags,
+// lifecycle policies, scanning), so the operation count can grow without
+// tripping the function-length lint limit.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix) {
+	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+
+	if h.routeRepositories(w, r, op) || h.routeImages(w, r, op) ||
+		h.routeTags(w, r, op) || h.routeLifecycle(w, r, op) || h.routeScanning(w, r, op) {
+		return
+	}
+
+	wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown ECR operation: "+op)
+}
+
+// routeRepositories dispatches repository-management operations.
+func (h *Handler) routeRepositories(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
 	case "CreateRepository":
 		h.createRepository(w, r)
 	case "DescribeRepositories":
@@ -60,6 +83,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.putImageTagMutability(w, r)
 	case "PutImageScanningConfiguration":
 		h.putImageScanningConfiguration(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeImages dispatches image push/list/describe/delete operations.
+func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
 	case "PutImage":
 		h.putImage(w, r)
 	case "ListImages":
@@ -70,8 +103,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.batchDeleteImage(w, r)
 	case "BatchGetImage":
 		h.batchGetImage(w, r)
-	case "GetAuthorizationToken":
-		h.getAuthorizationToken(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeTags dispatches resource tagging and repository-policy operations.
+func (h *Handler) routeTags(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
 	case "TagResource":
 		h.tagResource(w, r)
 	case "UntagResource":
@@ -84,21 +125,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getRepositoryPolicy(w, r)
 	case "DeleteRepositoryPolicy":
 		h.deleteRepositoryPolicy(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeLifecycle dispatches lifecycle-policy CRUD and preview operations.
+func (h *Handler) routeLifecycle(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
 	case "PutLifecyclePolicy":
 		h.putLifecyclePolicy(w, r)
 	case "GetLifecyclePolicy":
 		h.getLifecyclePolicy(w, r)
 	case "DeleteLifecyclePolicy":
 		h.deleteLifecyclePolicy(w, r)
+	case "StartLifecyclePolicyPreview":
+		h.startLifecyclePolicyPreview(w, r)
+	case "GetLifecyclePolicyPreview":
+		h.getLifecyclePolicyPreview(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeScanning dispatches image-scanning and registry-auth operations.
+func (h *Handler) routeScanning(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
+	case "GetAuthorizationToken":
+		h.getAuthorizationToken(w, r)
 	case "StartImageScan":
 		h.startImageScan(w, r)
 	case "DescribeImageScanFindings":
 		h.describeImageScanFindings(w, r)
 	default:
-		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"UnknownOperationException", "unknown ECR operation: "+op)
+		return false
 	}
+
+	return true
 }
 
 // getAuthorizationToken returns a docker-login credential. The response shape
