@@ -84,6 +84,11 @@ type blobObject struct {
 	mu sync.Mutex
 	// appendBlocks counts committed Append Block operations (append blobs only).
 	appendBlocks int
+	// pages tracks which 512-byte pages of a page blob currently hold written
+	// (non-cleared) data, keyed by zero-based page index. nil for non-page blobs.
+	// Get Page Ranges coalesces the set into contiguous byte ranges; Put Page adds
+	// indices and Clear Page removes them. Guarded by mu alongside Data.
+	pages map[int64]bool
 
 	// Lease Blob state. leaseState is one of leaseStateAvailable (""),
 	// leaseStateLeased, leaseStateBreaking, or leaseStateBroken; a "leased" or

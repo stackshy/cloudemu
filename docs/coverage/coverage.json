@@ -12531,6 +12531,37 @@
         ]
       },
       {
+        "name": "AzureFindBlobsByTags",
+        "doc": "AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "FindBlobsByTags"
+          }
+        ]
+      },
+      {
+        "name": "AzurePageBlob",
+        "doc": "AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type",
+        "operations": [
+          {
+            "name": "ClearPage",
+            "doc": "ClearPage zeroes the inclusive byte range [start,end] of a page blob and"
+          },
+          {
+            "name": "CreatePageBlob",
+            "doc": "CreatePageBlob creates an empty page blob of size bytes (a multiple of 512)"
+          },
+          {
+            "name": "GetPageRanges",
+            "doc": "GetPageRanges returns the page blob's written ranges (Get Page Ranges,"
+          },
+          {
+            "name": "PutPage",
+            "doc": "PutPage writes data over the inclusive byte range [start,end] of a page blob"
+          }
+        ]
+      },
+      {
         "name": "AzureSoftDeleteBlob",
         "doc": "AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by",
         "operations": [

@@ -139,10 +139,10 @@ func TestUnknownCompFailsClosed(t *testing.T) {
 	}
 }
 
-// TestPageBlobFailsClosed proves page-blob create and UploadPages fail closed
-// (page-blob range semantics are not implemented) rather than silently
-// corrupting a blob via the comp fall-through.
-func TestPageBlobFailsClosed(t *testing.T) {
+// TestPageBlobCreateSucceeds proves the page-blob create path is wired (page
+// blobs are now modeled) rather than failing closed. The full page-write and
+// Get Page Ranges lifecycle lives in blob_pageblob_test.go.
+func TestPageBlobCreateSucceeds(t *testing.T) {
 	e := newBlobEnv(t)
 	ctx := context.Background()
 
@@ -152,7 +152,7 @@ func TestPageBlobFailsClosed(t *testing.T) {
 	}
 
 	const pageSize = 512
-	if _, err := pc.Create(ctx, pageSize, nil); err == nil {
-		t.Fatal("page-blob Create should fail closed (page blobs unsupported), got success")
+	if _, err := pc.Create(ctx, pageSize, nil); err != nil {
+		t.Fatalf("page-blob Create: %v", err)
 	}
 }

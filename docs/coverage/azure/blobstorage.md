@@ -85,6 +85,25 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 | `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
 | `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
 
+### AzureFindBlobsByTags
+
+AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `FindBlobsByTags` |  |
+
+### AzurePageBlob
+
+AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type
+
+| Operation | Description |
+| --- | --- |
+| `ClearPage` | ClearPage zeroes the inclusive byte range [start,end] of a page blob and |
+| `CreatePageBlob` | CreatePageBlob creates an empty page blob of size bytes (a multiple of 512) |
+| `GetPageRanges` | GetPageRanges returns the page blob's written ranges (Get Page Ranges, |
+| `PutPage` | PutPage writes data over the inclusive byte range [start,end] of a page blob |
+
 ### AzureSoftDeleteBlob
 
 AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by

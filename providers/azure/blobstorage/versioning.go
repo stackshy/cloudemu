@@ -67,6 +67,7 @@ func cloneBlobObject(obj *blobObject) *blobObject {
 		ContentDisposition: obj.ContentDisposition, CacheControl: obj.CacheControl,
 		CommittedBlocks: append([]driver.BlockInfo(nil), obj.CommittedBlocks...),
 		appendBlocks:    obj.appendBlocks,
+		pages:           maps.Clone(obj.pages),
 	}
 }
 
