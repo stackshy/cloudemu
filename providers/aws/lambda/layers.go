@@ -15,21 +15,31 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
-// PublishLayerVersion publishes a new version of a layer.
+// PublishLayerVersion publishes a new version of a layer. Version numbers are
+// monotonically increasing per layer name and are never reused — even after
+// DeleteLayerVersion removes the highest version, the next publish continues
+// from where the counter left off.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PublishLayerVersion(ctx context.Context, cfg driver.LayerConfig) (*driver.LayerVersion, error) {
 	ld, ok := m.layers.Get(cfg.Name)
 	if !ok {
-		ld = &layerData{
-			versions: memstore.New[*driver.LayerVersion](),
-			nextVer:  initialVersion,
+		newLd := &layerData{versions: memstore.New[*driver.LayerVersion](), nextVer: initialVersion}
+		// Two concurrent first-publish calls for the same new layer name would
+		// otherwise both see !ok and race to Set, losing whichever layerData (and
+		// its independent version counter) writes second. SetIfAbsent makes the
+		// creation atomic; the loser re-fetches the winner's layerData.
+		if m.layers.SetIfAbsent(cfg.Name, newLd) {
+			ld = newLd
+		} else {
+			ld, _ = m.layers.Get(cfg.Name)
 		}
-		m.layers.Set(cfg.Name, ld)
 	}
 
+	ld.mu.Lock()
 	ver := ld.nextVer
 	ld.nextVer++
+	ld.mu.Unlock()
 
 	hash := sha256.Sum256(cfg.Content)
 	shaStr := fmt.Sprintf("%x", hash)
@@ -40,14 +50,16 @@ func (m *Mock) PublishLayerVersion(ctx context.Context, cfg driver.LayerConfig) 
 	)
 
 	lv := &driver.LayerVersion{
-		Name:               cfg.Name,
-		Version:            ver,
-		Description:        cfg.Description,
-		ContentSHA256:      shaStr,
-		ContentSize:        int64(len(cfg.Content)),
-		CompatibleRuntimes: cfg.CompatibleRuntimes,
-		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		ARN:                arn,
+		Name:                    cfg.Name,
+		Version:                 ver,
+		Description:             cfg.Description,
+		ContentSHA256:           shaStr,
+		ContentSize:             int64(len(cfg.Content)),
+		CompatibleRuntimes:      cfg.CompatibleRuntimes,
+		CompatibleArchitectures: cfg.CompatibleArchitectures,
+		LicenseInfo:             cfg.LicenseInfo,
+		CreatedAt:               m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		ARN:                     arn,
 	}
 
 	ld.versions.Set(strconv.Itoa(ver), lv)
@@ -109,6 +121,13 @@ func (m *Mock) DeleteLayerVersion(_ context.Context, name string, version int) e
 	}
 
 	ld.versions.Delete(verStr)
+
+	// Drop the deleted version's resource policy along with it — a future
+	// publish never reuses this version number, so the policy can never be
+	// referenced again.
+	ld.mu.Lock()
+	delete(ld.permissions, version)
+	ld.mu.Unlock()
 
 	return nil
 }

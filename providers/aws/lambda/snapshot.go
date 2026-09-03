@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
@@ -70,10 +72,19 @@ type versionSnapshot struct {
 }
 
 // layerSnapshot mirrors layerData; its version store holds a fully-exported
-// *driver.LayerVersion and round-trips through the generic helper.
+// *driver.LayerVersion and round-trips through the generic helper. Permissions
+// mirrors the layerVersionPolicy map, keyed by version number (as a string,
+// since JSON object keys must be strings).
 type layerSnapshot struct {
-	Versions json.RawMessage `json:"versions,omitempty"`
-	NextVer  int             `json:"nextVer,omitempty"`
+	Versions    json.RawMessage                        `json:"versions,omitempty"`
+	NextVer     int                                    `json:"nextVer,omitempty"`
+	Permissions map[string]*layerVersionPolicySnapshot `json:"permissions,omitempty"`
+}
+
+// layerVersionPolicySnapshot mirrors layerVersionPolicy.
+type layerVersionPolicySnapshot struct {
+	Statements map[string]driver.LayerPermissionStatement `json:"statements,omitempty"`
+	RevisionID string                                     `json:"revisionId,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -104,7 +115,9 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 				return nil, fmt.Errorf("lambda: snapshot layer versions: %w", err)
 			}
 
-			snap.Layers[name] = &layerSnapshot{Versions: vers, NextVer: ld.nextVer}
+			snap.Layers[name] = &layerSnapshot{
+				Versions: vers, NextVer: ld.nextVer, Permissions: snapshotLayerPermissions(ld),
+			}
 		}
 	}
 
@@ -116,6 +129,27 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap.Mappings = mappings
 
 	return json.Marshal(snap)
+}
+
+// snapshotLayerPermissions captures ld's per-version resource policies, keyed
+// by version number as a string.
+func snapshotLayerPermissions(ld *layerData) map[string]*layerVersionPolicySnapshot {
+	ld.mu.Lock()
+	defer ld.mu.Unlock()
+
+	if len(ld.permissions) == 0 {
+		return nil
+	}
+
+	out := make(map[string]*layerVersionPolicySnapshot, len(ld.permissions))
+	for ver, pol := range ld.permissions {
+		out[strconv.Itoa(ver)] = &layerVersionPolicySnapshot{
+			Statements: maps.Clone(pol.statements),
+			RevisionID: pol.revisionID,
+		}
+	}
+
+	return out
 }
 
 func snapshotFunc(fd *funcData) *funcSnapshot {
@@ -157,11 +191,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	for name, ls := range snap.Layers {
-		ld := &layerData{versions: memstore.New[*driver.LayerVersion](), nextVer: ls.NextVer}
-		if len(ls.Versions) > 0 {
-			if err := ld.versions.LoadSnapshot(ls.Versions); err != nil {
-				return fmt.Errorf("lambda: restore layer versions: %w", err)
-			}
+		ld, err := restoreLayerData(ls)
+		if err != nil {
+			return err
 		}
 
 		m.layers.Set(name, ld)
@@ -174,6 +206,37 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	return nil
+}
+
+// restoreLayerData rebuilds one layer's *layerData from its snapshot: the
+// version store, the monotonic version counter, and any per-version resource
+// policies (skipping a policy entry whose key isn't a valid version number —
+// snapshot JSON tampered with out of band, never produced by Snapshot itself).
+func restoreLayerData(ls *layerSnapshot) (*layerData, error) {
+	ld := &layerData{versions: memstore.New[*driver.LayerVersion](), nextVer: ls.NextVer}
+
+	if len(ls.Versions) > 0 {
+		if err := ld.versions.LoadSnapshot(ls.Versions); err != nil {
+			return nil, fmt.Errorf("lambda: restore layer versions: %w", err)
+		}
+	}
+
+	if len(ls.Permissions) == 0 {
+		return ld, nil
+	}
+
+	ld.permissions = make(map[int]*layerVersionPolicy, len(ls.Permissions))
+
+	for verStr, ps := range ls.Permissions {
+		ver, err := strconv.Atoi(verStr)
+		if err != nil {
+			continue
+		}
+
+		ld.permissions[ver] = &layerVersionPolicy{statements: ps.Statements, revisionID: ps.RevisionID}
+	}
+
+	return ld, nil
 }
 
 func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
