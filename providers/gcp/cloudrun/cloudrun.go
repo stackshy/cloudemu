@@ -53,7 +53,11 @@ type Mock struct {
 	// consults to tear down real containers; an absent entry means the job's
 	// executions were synthetic (no engine wired).
 	engineHandles *memstore.Store[[]string]
-	opts          *config.Options
+	// handlersMu guards handlers, a Go handler registered per service id
+	// standing in for its container image (see Invoke/RegisterHandler).
+	handlersMu sync.RWMutex
+	handlers   map[string]driver.HandlerFunc
+	opts       *config.Options
 }
 
 // New creates a Cloud Run mock with the given options. opts.ContainerEngine,
@@ -65,6 +69,7 @@ func New(opts *config.Options) *Mock {
 		services:      memstore.New[*driver.Service](),
 		revisions:     memstore.New[*driver.Revision](),
 		engineHandles: memstore.New[[]string](),
+		handlers:      make(map[string]driver.HandlerFunc),
 		opts:          opts,
 	}
 }
