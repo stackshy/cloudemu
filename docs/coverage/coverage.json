@@ -1890,6 +1890,10 @@
         "doc": "GetService returns a service by name (bare service id or a fully"
       },
       {
+        "name": "Invoke",
+        "doc": "Invoke executes the named service (bare id or fully qualified name)"
+      },
+      {
         "name": "ListExecutions",
         "doc": "ListExecutions returns every stored execution of the named job."
       },
@@ -1904,6 +1908,10 @@
       {
         "name": "ListServices",
         "doc": "ListServices returns every stored service."
+      },
+      {
+        "name": "RegisterHandler",
+        "doc": "RegisterHandler plugs a Go handler in for the named service (bare id),"
       },
       {
         "name": "RunJob",
