@@ -499,6 +499,14 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 			"Cloud SQL instance %q has deletion protection enabled", id)
 	}
 
+	// A primary with live read replicas cannot be deleted; real Cloud SQL rejects
+	// the delete until every replica is promoted or removed first, rather than
+	// silently orphaning them.
+	if reps := m.liveReplicas(&inst); len(reps) > 0 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q cannot be deleted because it has read replicas %v; delete or promote them first", id, reps)
+	}
+
 	// Tear down the real database backing the instance, if any.
 	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
 		return err
@@ -561,13 +569,57 @@ func (m *Mock) deleteChildren(instance string) {
 // StartInstance moves a stopped instance back to runnable. In Cloud SQL this
 // corresponds to setting settings.activationPolicy=ALWAYS.
 func (m *Mock) StartInstance(_ context.Context, id string) error {
-	return m.transitionInstance(id, rdsdriver.StateStopped, rdsdriver.StateAvailable, cpuMetricRunning, connRunning, "start")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.transitionInstanceLocked(id, rdsdriver.StateStopped, rdsdriver.StateAvailable, cpuMetricRunning, connRunning, "start")
 }
 
 // StopInstance moves a runnable instance to stopped. In Cloud SQL this
-// corresponds to setting settings.activationPolicy=NEVER.
+// corresponds to setting settings.activationPolicy=NEVER. Real Cloud SQL refuses
+// to stop an instance that is a read replica, or a primary that still has read
+// replicas — the guard and transition run under one lock so a replica cannot be
+// attached in the window between the check and the state change.
 func (m *Mock) StopInstance(_ context.Context, id string) error {
-	return m.transitionInstance(id, rdsdriver.StateAvailable, rdsdriver.StateStopped, cpuMetricStopped, 0, "stop")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	inst, ok := m.instances.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
+	}
+
+	if inst.ReadReplicaSource != "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q is a read replica and cannot be stopped; promote or delete it instead", id)
+	}
+
+	if reps := m.liveReplicas(&inst); len(reps) > 0 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q cannot be stopped because it has read replicas %v; delete them first", id, reps)
+	}
+
+	return m.transitionInstanceLocked(id, rdsdriver.StateAvailable, rdsdriver.StateStopped, cpuMetricStopped, 0, "stop")
+}
+
+// liveReplicas returns the ids of inst's read replicas that still exist in the
+// store. The caller holds the lock. ReadReplicaTargets is kept in sync by
+// linkReplica / unlinkReplicas / PromoteReplica, but filtering to rows that are
+// still present keeps the guard correct even if a stale id ever lingered.
+func (m *Mock) liveReplicas(inst *rdsdriver.Instance) []string {
+	if len(inst.ReadReplicaTargets) == 0 {
+		return nil
+	}
+
+	live := make([]string, 0, len(inst.ReadReplicaTargets))
+
+	for _, replicaID := range inst.ReadReplicaTargets {
+		if _, ok := m.instances.Get(replicaID); ok {
+			live = append(live, replicaID)
+		}
+	}
+
+	return live
 }
 
 // RebootInstance cycles an instance through rebooting. In Cloud SQL this
@@ -598,10 +650,9 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+// transitionInstanceLocked performs a guarded state transition (idempotent when
+// the instance is already in the target state). The caller holds the write lock.
+func (m *Mock) transitionInstanceLocked(id, from, to string, cpu, conns float64, verb string) error {
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
