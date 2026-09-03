@@ -183,6 +183,13 @@ func TestMetricAlertActionsWireActionGroup(t *testing.T) {
 
 	const actionGroupID = "/subscriptions/sub-1/resourceGroups/rg-1/providers/microsoft.insights/actionGroups/ag1"
 
+	const agURL = "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/actionGroups/ag1" + apiVer
+
+	agBody := `{"location":"global","properties":{"groupShortName":"ag1","enabled":true}}`
+	if code, _ := doJSON(t, ts, http.MethodPut, agURL, agBody); code != http.StatusCreated {
+		t.Fatalf("PUT actionGroup status = %d, want 201", code)
+	}
+
 	const url = "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/metricAlerts/cpu-notify" + apiVer
 
 	body := `{
