@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
@@ -111,8 +110,14 @@ func (h *Handler) registerGen2Driver(ctx context.Context, name string, fn *gen2F
 
 // syncGen2Driver reconciles the driver-backed function to a patched gen2
 // function so a later :call / event delivery runs the updated runtime, env and
-// (if the patch carried new source) code. It self-heals a missing driver entry
-// by creating it, so the driver never diverges from the gen2 map.
+// (if the patch carried new source) code. It deliberately does NOT recreate a
+// missing driver entry: createV2 always registers one, so a live gen2 function
+// always has a driver entry, and the only way UpdateFunction sees NotFound is a
+// delete that raced this patch (patchV2 releases h.mu before this call). In that
+// case the correct real-GCP response is a 404 — resurrecting the driver entry
+// here would leave a zombie with no h.gen2 map entry, permanently poisoning the
+// name (future create ALREADY_EXISTS; :call/GET 404). So the NotFound is
+// propagated unchanged for patchV2 to surface.
 func (h *Handler) syncGen2Driver(ctx context.Context, name string, fn *gen2Function) error {
 	cfg := gen2DriverConfig(name, fn)
 	if code := h.gen2SourceCode(fn); len(code) > 0 {
@@ -120,16 +125,9 @@ func (h *Handler) syncGen2Driver(ctx context.Context, name string, fn *gen2Funct
 		cfg.Framework = frameworkHTTP
 	}
 
-	if _, err := h.fn.UpdateFunction(ctx, name, cfg); err != nil {
-		if cerrors.IsNotFound(err) {
-			_, cerr := h.fn.CreateFunction(ctx, cfg)
-			return cerr
-		}
+	_, err := h.fn.UpdateFunction(ctx, name, cfg)
 
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // isGen2 reports whether the canonical resource name belongs to a gen2 function.

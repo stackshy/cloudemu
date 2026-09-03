@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	cloudfunctionsv1 "google.golang.org/api/cloudfunctions/v1"
@@ -172,5 +173,60 @@ func TestGen2InvokeMissingAndAfterDelete(t *testing.T) {
 
 	if _, status := callGen2(t, baseURL, "g2", "{}"); status != http.StatusNotFound {
 		t.Fatalf(":call after delete status = %d, want 404 (driver entry must be gone)", status)
+	}
+}
+
+// TestSDKGen2ConcurrentPatchDelete races a PATCH against a DELETE of the same
+// gen2 function. patchV2 releases h.mu before syncing the driver, so a delete can
+// remove the map+driver entry in the window; the sync must then propagate the
+// driver's NotFound (a 404 PATCH) rather than resurrect a zombie driver entry
+// with no gen2 map entry. Whatever the interleaving, once both complete the name
+// must be FULLY absent: a fresh create of the same name must SUCCEED (a lingering
+// zombie would make it fail ALREADY_EXISTS forever). Run under -race.
+func TestSDKGen2ConcurrentPatchDelete(t *testing.T) {
+	_, svc2, _ := gen2Fixture(t)
+	ctx := context.Background()
+
+	parent := "projects/demo/locations/us-central1"
+	name := parent + "/functions/g2"
+
+	const iterations = 25
+
+	for i := 0; i < iterations; i++ {
+		// Create must succeed every iteration — the previous iteration must have
+		// left no zombie driver entry poisoning the name.
+		if _, err := svc2.Projects.Locations.Functions.Create(parent, &cloudfunctions2.Function{
+			BuildConfig: &cloudfunctions2.BuildConfig{Runtime: "go121", EntryPoint: "Hello"},
+		}).FunctionId("g2").Context(ctx).Do(); err != nil {
+			t.Fatalf("iteration %d: Create must succeed (zombie left by prior race?): %v", i, err)
+		}
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		// Patch: may succeed or 404 depending on the interleaving — both are valid,
+		// so its error is not asserted.
+		go func() {
+			defer wg.Done()
+
+			_, _ = svc2.Projects.Locations.Functions.Patch(name, &cloudfunctions2.Function{
+				ServiceConfig: &cloudfunctions2.ServiceConfig{AvailableMemory: "1024M"},
+			}).UpdateMask("serviceConfig.availableMemory").Context(ctx).Do()
+		}()
+
+		// Delete always removes both the map and driver entries.
+		go func() {
+			defer wg.Done()
+
+			_, _ = svc2.Projects.Locations.Functions.Delete(name).Context(ctx).Do()
+		}()
+
+		wg.Wait()
+
+		// The function must be gone regardless of who won the race.
+		if _, err := svc2.Projects.Locations.Functions.Get(name).Context(ctx).Do(); err == nil {
+			t.Fatalf("iteration %d: Get after patch/delete race returned nil error, want NotFound", i)
+		}
 	}
 }
