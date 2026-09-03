@@ -1,6 +1,9 @@
 package gcs
 
-import "encoding/base64"
+import (
+	"encoding/base64"
+	"encoding/json"
+)
 
 const (
 	// iamEtagTag is the protobuf tag byte for field 1 (varint wire type) —
@@ -19,6 +22,35 @@ const (
 	// whose IAM policy was never explicitly set (etag "CAE=").
 	iamEtagInitialVersion = 1
 )
+
+// bucketIAMPolicyEtag returns the etag of a bucket's stored IAM policy
+// document, or the initial-version etag when the bucket has none (raw nil).
+func bucketIAMPolicyEtag(raw []byte) string {
+	if raw != nil {
+		var cur struct {
+			Etag string `json:"etag"`
+		}
+
+		if json.Unmarshal(raw, &cur) == nil && cur.Etag != "" {
+			return cur.Etag
+		}
+	}
+
+	return encodeIAMEtag(iamEtagInitialVersion)
+}
+
+// withIAMEtag returns raw with its top-level "etag" field overwritten,
+// leaving every other field (bindings, their conditions included) untouched.
+func withIAMEtag(raw []byte, etag string) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+
+	doc["etag"] = etag
+
+	return json.Marshal(doc)
+}
 
 // nextIAMEtag mints the etag that follows prevEtag, incrementing its encoded
 // version. A prevEtag that isn't in the expected format (e.g. one this

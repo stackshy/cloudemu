@@ -3,16 +3,29 @@
 // Real cloud.google.com/go/storage SDK journeys for bucket-level IAM
 // (Buckets: setIamPolicy/getIamPolicy) against the emulator's GCP HTTP
 // server: a fresh bucket reads back an empty-but-valid policy, a set policy
-// persists in the default in-memory backend and round-trips on get, and a
-// stale-etag set is rejected like real GCS's optimistic concurrency.
+// persists in the default in-memory backend and round-trips on get, a
+// stale-etag set is rejected like real GCS's optimistic concurrency, and N
+// concurrent setIamPolicy calls starting from the same etag can't all "win"
+// (the TOCTOU a separate get-then-set pair would allow).
 package gcs_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"cloud.google.com/go/iam"
+	"cloud.google.com/go/storage"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
+
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 // TestGCSBucketIAMPolicyRoundTrips proves setIamPolicy persists bindings in
@@ -162,4 +175,116 @@ func policyEtag(t *testing.T, policy *iam.Policy) string {
 	}
 
 	return string(policy.InternalProto.Etag)
+}
+
+// concurrentSetIAMWriters is how many goroutines race to setIamPolicy from
+// the same starting etag in TestGCSBucketIAMPolicyConcurrentSetIsAtomic.
+const concurrentSetIAMWriters = 10
+
+// TestGCSBucketIAMPolicyConcurrentSetIsAtomic proves the etag precondition
+// check and the write happen atomically: N goroutines all submit a
+// setIamPolicy built from the SAME starting etag (each with its own distinct
+// binding, replacing the whole policy). A separate read-etag-then-write pair
+// would let every one of them pass the check before any of them writes,
+// silently losing all but the last write applied; the atomic compare-and-set
+// must let exactly one of them win and every loser must see a 412.
+func TestGCSBucketIAMPolicyConcurrentSetIsAtomic(t *testing.T) {
+	ctx := context.Background()
+
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Storage: cloudP.GCS})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := storage.NewClient(ctx,
+		option.WithEndpoint(ts.URL+"/storage/v1/"),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(ts.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	client.SetRetry(storage.WithPolicy(storage.RetryNever))
+	t.Cleanup(func() { _ = client.Close() })
+
+	const bucketName = "iam-concurrent-bucket"
+
+	bkt := client.Bucket(bucketName)
+	if cErr := bkt.Create(ctx, e2eProject, nil); cErr != nil {
+		t.Fatalf("Create: %v", cErr)
+	}
+
+	initial, err := bkt.IAM().Policy(ctx)
+	if err != nil {
+		t.Fatalf("Policy (initial): %v", err)
+	}
+
+	etag0 := policyEtag(t, initial)
+	iamURL := ts.URL + "/storage/v1/b/" + bucketName + "/iam"
+
+	statuses := make([]int, concurrentSetIAMWriters)
+
+	var wg sync.WaitGroup
+
+	for i := range concurrentSetIAMWriters {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			member := fmt.Sprintf("user:writer-%d@example.com", i)
+			body := fmt.Sprintf(
+				`{"bindings":[{"role":"roles/storage.objectViewer","members":["%s"]}],"etag":%q}`,
+				member, etag0,
+			)
+
+			req, rErr := http.NewRequestWithContext(ctx, http.MethodPut, iamURL, strings.NewReader(body))
+			if rErr != nil {
+				t.Errorf("writer %d: NewRequest: %v", i, rErr)
+				return
+			}
+
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, dErr := ts.Client().Do(req)
+			if dErr != nil {
+				t.Errorf("writer %d: Do: %v", i, dErr)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			statuses[i] = resp.StatusCode
+		}(i)
+	}
+
+	wg.Wait()
+
+	successes := 0
+
+	for i, code := range statuses {
+		switch code {
+		case http.StatusOK:
+			successes++
+		case http.StatusPreconditionFailed:
+			// expected for every loser
+		default:
+			t.Errorf("writer %d: unexpected status %d", i, code)
+		}
+	}
+
+	if successes != 1 {
+		t.Fatalf("expected exactly 1 of %d concurrent setIamPolicy calls from the same etag to "+
+			"succeed, got %d — a lost update slipped through the TOCTOU window", concurrentSetIAMWriters, successes)
+	}
+
+	final, err := bkt.IAM().Policy(ctx)
+	if err != nil {
+		t.Fatalf("Policy (final): %v", err)
+	}
+
+	members := final.Members("roles/storage.objectViewer")
+	if len(members) != 1 {
+		t.Fatalf("expected exactly the single winning binding to persist, got %v", members)
+	}
 }

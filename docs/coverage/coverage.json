@@ -12686,7 +12686,12 @@
             "doc": "BucketAttrsGCS returns the bucket's GCS-specific attributes."
           },
           {
-            "name": "BucketIAMPolicy"
+            "name": "BucketIAMPolicy",
+            "doc": "BucketIAMPolicy returns the bucket's IAM policy document verbatim"
+          },
+          {
+            "name": "CompareAndSetBucketIAMPolicy",
+            "doc": "CompareAndSetBucketIAMPolicy atomically applies a setIamPolicy write"
           },
           {
             "name": "ComposeObjectGCS",
@@ -12731,10 +12736,6 @@
           {
             "name": "SetBucketAttrsGCS",
             "doc": "SetBucketAttrsGCS records the bucket's location and default storage class"
-          },
-          {
-            "name": "SetBucketIAMPolicy",
-            "doc": "SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM"
           },
           {
             "name": "TouchBucket",

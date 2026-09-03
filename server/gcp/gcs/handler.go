@@ -612,52 +612,31 @@ func (h *Handler) setBucketIAM(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
-	// A client that read the policy first (the normal read-modify-write flow)
-	// echoes back the etag it saw; a mismatch means someone else changed the
-	// policy in between, so the write is rejected like real GCS does.
-	currentEtag := h.currentBucketIAMEtag(r.Context(), name)
-	if policy.Etag != "" && policy.Etag != currentEtag {
-		writeError(w, http.StatusPreconditionFailed, "conditionNotMet",
-			"bucket "+name+"'s IAM policy was modified concurrently")
-		return
-	}
-
-	// Stamp the server-controlled fields (kind/resourceId/etag) onto the
-	// client's document without disturbing anything else it sent — bindings,
-	// their (currently unmodeled) conditions included — so it round-trips
-	// verbatim on the next getIamPolicy.
-	out, sErr := stampIAMPolicy(raw, name, nextIAMEtag(currentEtag))
+	// Stamp the server-controlled kind/resourceId now; the etag placeholder
+	// (the client's own, possibly stale, etag) is overwritten below by the
+	// backend with the real, atomically minted value.
+	prepared, sErr := stampIAMPolicy(raw, name, policy.Etag)
 	if sErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid", sErr.Error())
 		return
 	}
 
-	if h.ext != nil {
-		if pErr := h.ext.SetBucketIAMPolicy(r.Context(), name, out); pErr != nil {
-			writeErr(w, pErr)
-			return
-		}
+	if h.ext == nil {
+		writeRawJSON(w, prepared)
+		return
+	}
+
+	// The etag precondition check and the write happen atomically in the
+	// backend (one lock spans read-compare-write), so concurrent setIamPolicy
+	// calls that all read the same etag can't all "win" the way a separate
+	// getIamPolicy-then-setIamPolicy pair here would allow (a lost update).
+	out, pErr := h.ext.CompareAndSetBucketIAMPolicy(r.Context(), name, policy.Etag, prepared)
+	if pErr != nil {
+		writePreconditionOrErr(w, pErr)
+		return
 	}
 
 	writeRawJSON(w, out)
-}
-
-// currentBucketIAMEtag returns the etag of the bucket's stored IAM policy, or
-// the GCS default etag when none has been set yet.
-func (h *Handler) currentBucketIAMEtag(ctx context.Context, name string) string {
-	if h.ext != nil {
-		if raw, err := h.ext.BucketIAMPolicy(ctx, name); err == nil {
-			var cur struct {
-				Etag string `json:"etag"`
-			}
-
-			if json.Unmarshal(raw, &cur) == nil && cur.Etag != "" {
-				return cur.Etag
-			}
-		}
-	}
-
-	return defaultIAMPolicy(name).Etag
 }
 
 // stampIAMPolicy overwrites kind/resourceId/etag on the client-supplied

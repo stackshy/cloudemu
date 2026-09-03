@@ -54,7 +54,8 @@ GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
 | Operation | Description |
 | --- | --- |
 | `BucketAttrsGCS` | BucketAttrsGCS returns the bucket's GCS-specific attributes. |
-| `BucketIAMPolicy` |  |
+| `BucketIAMPolicy` | BucketIAMPolicy returns the bucket's IAM policy document verbatim |
+| `CompareAndSetBucketIAMPolicy` | CompareAndSetBucketIAMPolicy atomically applies a setIamPolicy write |
 | `ComposeObjectGCS` | ComposeObjectGCS concatenates the source objects' bytes (in order) into |
 | `CreateNotificationConfig` | CreateNotificationConfig registers a Pub/Sub notification config on a |
 | `DeleteNotificationConfig` | DeleteNotificationConfig removes a bucket's notification config by id |
@@ -66,7 +67,6 @@ GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
 | `ListObjectGenerations` | ListObjectGenerations returns every generation (current + archived) of the |
 | `PutObjectGCS` | PutObjectGCS writes an object honoring pre (a failed condition returns a |
 | `SetBucketAttrsGCS` | SetBucketAttrsGCS records the bucket's location and default storage class |
-| `SetBucketIAMPolicy` | SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM |
 | `TouchBucket` | TouchBucket bumps the bucket's metageneration and updated timestamp, |
 | `UpdateObjectGCS` | UpdateObjectGCS mutates an existing object's system properties and/or |
 
