@@ -122,11 +122,37 @@ type ConcurrencyConfig struct {
 	ReservedConcurrentExecutions int
 }
 
-// ProvisionedConcurrencyConfig configures provisioned concurrency.
+// ProvisionedConcurrencyConfig is a function's provisioned-concurrency
+// configuration (AWS Lambda PutProvisionedConcurrencyConfig), scoped to a
+// published version or alias via Qualifier ($LATEST/unqualified is rejected —
+// provisioned concurrency can only be attached to an immutable qualifier). It
+// has no Azure Functions or GCP Cloud Functions equivalent, so it is kept off
+// the portable Serverless interface and applied/read through an AWS-only
+// optional interface, the same way EventInvokeConfig is.
 type ProvisionedConcurrencyConfig struct {
 	FunctionName string
-	Qualifier    string // version or alias
-	Provisioned  int
+	// Qualifier is the published version number or alias name the config is
+	// attached to.
+	Qualifier string
+	// FunctionArn is the qualified function ARN echoed back in the response.
+	FunctionArn string
+	// RequestedProvisionedConcurrentExecutions is the amount requested by Put.
+	RequestedProvisionedConcurrentExecutions int
+	// AvailableProvisionedConcurrentExecutions is the amount currently usable.
+	// The emulator allocates synchronously, so it always equals Requested once
+	// Status is READY.
+	AvailableProvisionedConcurrentExecutions int
+	// AllocatedProvisionedConcurrentExecutions is the amount actually
+	// allocated. The emulator allocates synchronously, so it always equals
+	// Requested once Status is READY.
+	AllocatedProvisionedConcurrentExecutions int
+	// Status is the allocation status: "IN_PROGRESS", "READY" or "FAILED". The
+	// emulator has no real cold-start pool, so it settles to READY immediately.
+	Status string
+	// StatusReason explains a non-READY Status.
+	StatusReason string
+	// LastModified is the ISO 8601 timestamp of the last Put.
+	LastModified string
 }
 
 // VPCConfig is a function's networking configuration (AWS Lambda VpcConfig).

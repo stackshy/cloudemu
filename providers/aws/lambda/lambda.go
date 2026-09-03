@@ -109,6 +109,12 @@ type funcData struct {
 	// qualifier (normalized via policyKey: "" and "$LATEST" collapse to the
 	// unqualified function config), matching AWS's per-version/alias scoping.
 	eventInvokeConfigs map[string]driver.EventInvokeConfig
+	// provisionedConcurrencyConfigs holds the provisioned-concurrency config
+	// keyed by qualifier (a published version or alias name — unlike
+	// eventInvokeConfigs, $LATEST/unqualified is rejected outright rather than
+	// normalized, since real Lambda cannot attach provisioned concurrency to
+	// the mutable $LATEST code).
+	provisionedConcurrencyConfigs map[string]driver.ProvisionedConcurrencyConfig
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.

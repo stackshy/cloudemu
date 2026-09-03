@@ -46,6 +46,9 @@ type funcSnapshot struct {
 	// EventInvokeConfigs is the async-invoke config per qualifier (retries,
 	// event age, OnSuccess/OnFailure destinations).
 	EventInvokeConfigs map[string]driver.EventInvokeConfig `json:"eventInvokeConfigs,omitempty"`
+	// ProvisionedConcurrencyConfigs is the provisioned-concurrency config per
+	// qualifier (a published version or alias name).
+	ProvisionedConcurrencyConfigs map[string]driver.ProvisionedConcurrencyConfig `json:"provisionedConcurrencyConfigs,omitempty"`
 }
 
 // versionSnapshot mirrors versionData (all fields unexported). Config carries the
@@ -113,6 +116,7 @@ func snapshotFunc(fd *funcData) *funcSnapshot {
 		Info: fd.info, EngineBacked: fd.engineBacked, NextVersion: fd.nextVersion,
 		Concurrency: fd.concurrency, Policies: fd.policies, URLConfig: fd.urlConfig,
 		AWSConfig: fd.awsConfig, EventInvokeConfigs: fd.eventInvokeConfigs,
+		ProvisionedConcurrencyConfigs: fd.provisionedConcurrencyConfigs,
 	}
 
 	for _, v := range fd.versions {
@@ -170,7 +174,8 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 		info: fs.Info, engineBacked: fs.EngineBacked, nextVersion: fs.NextVersion,
 		aliases: memstore.New[*aliasData](), concurrency: fs.Concurrency,
 		policies: fs.Policies, urlConfig: fs.URLConfig, awsConfig: fs.AWSConfig,
-		eventInvokeConfigs: fs.EventInvokeConfigs,
+		eventInvokeConfigs:            fs.EventInvokeConfigs,
+		provisionedConcurrencyConfigs: fs.ProvisionedConcurrencyConfigs,
 	}
 
 	// Re-link the live handler if the host process has registered one for this

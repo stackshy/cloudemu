@@ -273,6 +273,8 @@ func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
 		h.serveFunctionURL(w, r)
 	case strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix):
 		h.serveEventInvokeConfig(w, r)
+	case isProvisionedConcurrencyPath(r.URL.Path):
+		h.serveProvisionedConcurrency(w, r)
 	case isCodeSigningPath(r.URL.Path):
 		h.serveFunctionCodeSigningConfig(w, r)
 	default:
