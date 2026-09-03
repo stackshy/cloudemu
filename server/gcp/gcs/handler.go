@@ -498,35 +498,51 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 }
 
 // applyBucketConfig applies the mutable configuration fields present in a
-// Buckets.patch/update body (versioning, labels, lifecycle, iamConfiguration),
-// each only when supplied. It returns the first error encountered.
+// Buckets.patch/update body (versioning, labels, lifecycle, iamConfiguration,
+// retentionPolicy), each only when supplied. It returns the first error
+// encountered. Each field is guarded by a small closure so adding another
+// configuration field does not raise the function's cyclomatic complexity.
 func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *bucketResource) error {
-	if body.Versioning != nil {
-		if err := h.bucket.SetBucketVersioning(ctx, name, body.Versioning.Enabled); err != nil {
-			return err
-		}
+	appliers := []func() error{
+		func() error {
+			if body.Versioning == nil {
+				return nil
+			}
+
+			return h.bucket.SetBucketVersioning(ctx, name, body.Versioning.Enabled)
+		},
+		func() error {
+			if body.Labels == nil {
+				return nil
+			}
+
+			return h.bucket.PutBucketTagging(ctx, name, body.Labels)
+		},
+		func() error {
+			if body.Lifecycle == nil {
+				return nil
+			}
+
+			return h.putLifecycle(ctx, name, body.Lifecycle)
+		},
+		func() error {
+			if body.IamConfiguration == nil {
+				return nil
+			}
+
+			return h.applyIAMConfig(ctx, name, body.IamConfiguration)
+		},
+		func() error {
+			if body.RetentionPolicy == nil {
+				return nil
+			}
+
+			return h.applyRetention(ctx, name, body.RetentionPolicy)
+		},
 	}
 
-	if body.Labels != nil {
-		if err := h.bucket.PutBucketTagging(ctx, name, body.Labels); err != nil {
-			return err
-		}
-	}
-
-	if body.Lifecycle != nil {
-		if err := h.putLifecycle(ctx, name, body.Lifecycle); err != nil {
-			return err
-		}
-	}
-
-	if body.IamConfiguration != nil {
-		if err := h.applyIAMConfig(ctx, name, body.IamConfiguration); err != nil {
-			return err
-		}
-	}
-
-	if body.RetentionPolicy != nil {
-		if err := h.applyRetention(ctx, name, body.RetentionPolicy); err != nil {
+	for _, apply := range appliers {
+		if err := apply(); err != nil {
 			return err
 		}
 	}
