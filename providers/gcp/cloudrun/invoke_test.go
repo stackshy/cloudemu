@@ -143,3 +143,38 @@ func TestRegisterHandlerNilClearsHandler(t *testing.T) {
 		t.Fatalf("statusCode = %d, want 200 (echo stub after clearing handler)", resp.StatusCode)
 	}
 }
+
+// TestDeleteServiceEvictsHandler covers a redeploy flow: RegisterHandler on a
+// service, DeleteService it, then CreateService again under the same id. The
+// new service must get the documented no-handler echo stub, not silently
+// inherit the deleted deployment's handler (handlers are keyed by bare
+// service id, independent of the services store DeleteService clears).
+func TestDeleteServiceEvictsHandler(t *testing.T) {
+	m := newMock(t, nil)
+	ctx := context.Background()
+
+	if _, err := m.CreateService(ctx, svcCfg()); err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+
+	m.RegisterHandler("web", func(context.Context, driver.InvokeRequest) (driver.InvokeResponse, error) {
+		return driver.InvokeResponse{StatusCode: 201, Body: []byte("stale handler")}, nil
+	})
+
+	if err := m.DeleteService(ctx, "web"); err != nil {
+		t.Fatalf("DeleteService: %v", err)
+	}
+
+	if _, err := m.CreateService(ctx, svcCfg()); err != nil {
+		t.Fatalf("CreateService (redeploy): %v", err)
+	}
+
+	resp, err := m.Invoke(ctx, "web", driver.InvokeRequest{})
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+
+	if resp.StatusCode != 200 || string(resp.Body) == "stale handler" {
+		t.Fatalf("resp = %+v, want the echo stub (200, greeting), not the stale handler's response", resp)
+	}
+}

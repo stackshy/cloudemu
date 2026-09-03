@@ -136,14 +136,18 @@ func applyUpdate(svc *driver.Service, cfg *driver.ServiceConfig) {
 	mergeServiceConfig(svc, cfg, newFieldMask(cfg.UpdateMask))
 }
 
-// DeleteService removes a service and all of its revisions.
+// DeleteService removes a service, all of its revisions, and any Go handler
+// registered for it (see RegisterHandler) — otherwise a redeployed service
+// reusing the same id would silently inherit the old deployment's handler
+// instead of the documented no-handler echo stub.
 func (m *Mock) DeleteService(_ context.Context, name string) error {
 	id := lastSegment(name)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if !m.services.Has(id) {
+		m.mu.Unlock()
+
 		return cerrors.Newf(cerrors.NotFound, "service %q not found", id)
 	}
 
@@ -154,6 +158,12 @@ func (m *Mock) DeleteService(_ context.Context, name string) error {
 			m.revisions.Delete(key)
 		}
 	}
+
+	m.mu.Unlock()
+
+	m.handlersMu.Lock()
+	delete(m.handlers, id)
+	m.handlersMu.Unlock()
 
 	return nil
 }
