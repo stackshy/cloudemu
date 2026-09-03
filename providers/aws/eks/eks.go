@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -89,6 +90,17 @@ type Mock struct {
 	k8sAPI *kubernetes.APIServer
 	// k8sUIDs maps cluster name → the UID we registered with k8sAPI.
 	k8sUIDs map[string]string
+
+	// clusterSettle overlays a transient CREATING/UPDATING window (keyed by
+	// cluster name) over a cluster's stored ACTIVE status, matching real EKS
+	// (CreateCluster / UpdateClusterVersion / UpdateClusterConfig -> transient
+	// -> ACTIVE). It is a no-op unless config.Options.AsyncSettle is set
+	// (SettleDuration returns 0 -> inactive window -> the historical
+	// synchronous behavior). The Set has its own lock.
+	clusterSettle *settle.Set
+	// nodegroupSettle is the nodegroup analog of clusterSettle, keyed by
+	// nodegroupKey(clusterName, nodegroupName).
+	nodegroupSettle *settle.Set
 }
 
 // New creates a new AWS EKS mock.
@@ -101,6 +113,8 @@ func New(opts *config.Options) *Mock {
 		updates:         memstore.New[eksdriver.ClusterUpdate](),
 		opts:            opts,
 		k8sUIDs:         make(map[string]string),
+		clusterSettle:   settle.NewSet(),
+		nodegroupSettle: settle.NewSet(),
 	}
 }
 
@@ -528,8 +542,17 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 
 	m.emitClusterMetrics(cfg.Name)
 
+	// Under AsyncSettle a fresh cluster reports CREATING until the window
+	// elapses, matching real EKS (CreateCluster -> CREATING -> ACTIVE). With
+	// the default (AsyncSettle off) SettleDuration is 0 -> inactive window ->
+	// ACTIVE immediately, so nothing changes for existing callers. The stored
+	// row keeps the terminal status; only the read-path copy is overlaid.
+	m.clusterSettle.Begin(cfg.Name, eksdriver.ClusterStatusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
+
 	out := cluster
 	m.withK8sEndpoint(&out)
+	m.overlayClusterStatus(&out)
 
 	return &out, nil
 }
@@ -563,6 +586,29 @@ func (m *Mock) withK8sEndpoint(c *eksdriver.Cluster) {
 	// with ServingTLSConfig, so a caller can validate what it dials.
 }
 
+// clusterStatusLocked returns c's current status, overlaid with any active
+// clusterSettle window (CREATING/UPDATING until it elapses, then the stored
+// terminal status). Caller must hold at least an RLock on m.mu.
+func (m *Mock) clusterStatusLocked(c *eksdriver.Cluster) string {
+	return m.clusterSettle.State(c.Name, m.opts.Clock.Now(), c.Status)
+}
+
+// overlayClusterStatus mutates c.Status in place to the settle-overlaid value.
+// Caller must hold at least an RLock on m.mu.
+func (m *Mock) overlayClusterStatus(c *eksdriver.Cluster) {
+	c.Status = m.clusterStatusLocked(c)
+}
+
+// nodegroupStatusLocked is the nodegroup analog of clusterStatusLocked.
+func (m *Mock) nodegroupStatusLocked(ng *eksdriver.Nodegroup) string {
+	return m.nodegroupSettle.State(nodegroupKey(ng.ClusterName, ng.NodegroupName), m.opts.Clock.Now(), ng.Status)
+}
+
+// overlayNodegroupStatus is the nodegroup analog of overlayClusterStatus.
+func (m *Mock) overlayNodegroupStatus(ng *eksdriver.Nodegroup) {
+	ng.Status = m.nodegroupStatusLocked(ng)
+}
+
 // DescribeCluster looks up a cluster by name.
 func (m *Mock) DescribeCluster(_ context.Context, name string) (*eksdriver.Cluster, error) {
 	m.mu.RLock()
@@ -575,6 +621,7 @@ func (m *Mock) DescribeCluster(_ context.Context, name string) (*eksdriver.Clust
 
 	out := c
 	m.withK8sEndpoint(&out)
+	m.overlayClusterStatus(&out)
 
 	return &out, nil
 }
@@ -603,6 +650,11 @@ func (m *Mock) UpdateClusterConfig(
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
 	}
 
+	if status := m.clusterStatusLocked(&c); status != eksdriver.ClusterStatusActive {
+		return nil, resourceInUseErrf(
+			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
+	}
+
 	if len(cfg.SubnetIDs) > 0 {
 		c.VPCConfig.SubnetIDs = copyStrings(cfg.SubnetIDs)
 	}
@@ -623,6 +675,9 @@ func (m *Mock) UpdateClusterConfig(
 	}
 
 	m.clusters.Set(name, c)
+
+	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
 
 	return m.recordUpdate(&eksdriver.ClusterUpdate{
 		ID:          newUpdateID(),
@@ -647,8 +702,16 @@ func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*e
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
 	}
 
+	if status := m.clusterStatusLocked(&c); status != eksdriver.ClusterStatusActive {
+		return nil, resourceInUseErrf(
+			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
+	}
+
 	c.Version = version
 	m.clusters.Set(name, c)
+
+	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
 
 	return m.recordUpdate(&eksdriver.ClusterUpdate{
 		ID:          newUpdateID(),
@@ -696,6 +759,7 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 	c.Status = eksdriver.ClusterStatusDeleting
 
 	m.clusters.Delete(name)
+	m.clusterSettle.Clear(name)
 
 	// Resolve the endpoint before deregistering: the response describes the
 	// cluster as it was, and reading afterwards yields the not-implemented
@@ -781,6 +845,11 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.ClusterName)
 	}
 
+	if status := m.clusterStatusLocked(&parent); status != eksdriver.ClusterStatusActive {
+		return nil, resourceInUseErrf(
+			"cluster %q is not ACTIVE (currently %s); cannot create a nodegroup", cfg.ClusterName, status)
+	}
+
 	key := nodegroupKey(cfg.ClusterName, cfg.NodegroupName)
 	if _, ok := m.nodegroups.Get(key); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists,
@@ -831,7 +900,15 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 
 	m.nodegroups.Set(key, ng)
 
+	// Under AsyncSettle a fresh nodegroup reports CREATING until the window
+	// elapses, matching real EKS. With the default (AsyncSettle off)
+	// SettleDuration is 0 -> inactive window -> ACTIVE immediately, so nothing
+	// changes for existing callers.
+	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusCreating, now,
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
+
 	out := ng
+	m.overlayNodegroupStatus(&out)
 
 	return &out, nil
 }
@@ -848,6 +925,7 @@ func (m *Mock) DescribeNodegroup(_ context.Context, clusterName, nodegroupName s
 	}
 
 	out := ng
+	m.overlayNodegroupStatus(&out)
 
 	return &out, nil
 }
@@ -893,6 +971,12 @@ func (m *Mock) UpdateNodegroupConfig(
 			"nodegroup %q not found in cluster %q", nodegroupName, clusterName)
 	}
 
+	if status := m.nodegroupStatusLocked(&ng); status != eksdriver.NodegroupStatusActive {
+		return nil, resourceInUseErrf(
+			"nodegroup %q already has a pending update (status %s); only one update is allowed at a time",
+			nodegroupName, status)
+	}
+
 	if upd.Scaling != nil {
 		if err := validateScaling(*upd.Scaling); err != nil {
 			return nil, err
@@ -906,6 +990,9 @@ func (m *Mock) UpdateNodegroupConfig(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+
+	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
 
 	return m.recordUpdate(&eksdriver.ClusterUpdate{
 		ID:            newUpdateID(),
@@ -932,6 +1019,12 @@ func (m *Mock) UpdateNodegroupVersion(
 			"nodegroup %q not found in cluster %q", nodegroupName, clusterName)
 	}
 
+	if status := m.nodegroupStatusLocked(&ng); status != eksdriver.NodegroupStatusActive {
+		return nil, resourceInUseErrf(
+			"nodegroup %q already has a pending update (status %s); only one update is allowed at a time",
+			nodegroupName, status)
+	}
+
 	if version != "" {
 		ng.Version = version
 	}
@@ -943,6 +1036,9 @@ func (m *Mock) UpdateNodegroupVersion(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+
+	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultClusterSettle))
 
 	return m.recordUpdate(&eksdriver.ClusterUpdate{
 		ID:            newUpdateID(),
@@ -970,6 +1066,7 @@ func (m *Mock) DeleteNodegroup(_ context.Context, clusterName, nodegroupName str
 	ng.Status = eksdriver.NodegroupStatusDeleting
 
 	m.nodegroups.Delete(key)
+	m.nodegroupSettle.Clear(key)
 
 	out := ng
 
