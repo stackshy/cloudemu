@@ -62,6 +62,15 @@ type gcsObject struct {
 	ContentDisposition string
 	ContentLanguage    string
 	StorageClass       string
+	// TemporaryHold / EventBasedHold are the object's WORM holds. While either is
+	// set the object cannot be deleted or overwritten regardless of retention.
+	TemporaryHold  bool
+	EventBasedHold bool
+	// RetentionRef is the RFC3339 instant from which the bucket retention period
+	// is measured for this object. It starts at Created and is reset to "now" when
+	// an eventBasedHold is released, restarting the retention clock. Empty falls
+	// back to Created.
+	RetentionRef string
 }
 
 type gcsMultipartUpload struct {
@@ -104,6 +113,14 @@ type bucketMeta struct {
 	ublaEnabled            bool
 	ublaLockedTime         string
 	publicAccessPrevention string
+	// retentionPeriod / retentionEffectiveTime / retentionLocked hold the bucket
+	// retention policy (WORM). A period > 0 means objects cannot be deleted or
+	// overwritten until (now - object.RetentionRef) >= period. retentionLocked
+	// makes the policy permanent: it can then only be increased, never shortened
+	// or removed.
+	retentionPeriod        int64
+	retentionEffectiveTime string
+	retentionLocked        bool
 	// gcsLifecycleRaw is the bucket's lifecycle configuration stored verbatim as
 	// GCS JSON ({"rule":[...]}), preserving every rule condition the wire layer
 	// received. It is the authoritative source for EvaluateLifecycle and
@@ -220,7 +237,8 @@ func toInfo(o *gcsObject, cloneMeta bool) driver.ObjectInfo {
 		MD5: o.MD5, CRC32C: o.CRC32C,
 		CacheControl: o.CacheControl, ContentEncoding: o.ContentEncoding,
 		ContentDisposition: o.ContentDisposition, ContentLanguage: o.ContentLanguage,
-		StorageClass: o.StorageClass,
+		StorageClass:  o.StorageClass,
+		TemporaryHold: o.TemporaryHold, EventBasedHold: o.EventBasedHold,
 	}
 }
 
@@ -306,6 +324,14 @@ func (m *Mock) putObject(
 		return nil, err
 	}
 
+	// An overwrite of a retained-or-held live object is blocked (WORM) — real GCS
+	// refuses to replace it until retention elapses and every hold is released.
+	if exists {
+		if err := objectImmutable(m, bkt, current); err != nil {
+			return nil, err
+		}
+	}
+
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
 
@@ -341,6 +367,7 @@ func (m *Mock) putObject(
 		ETag:               fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified:       now,
 		Created:            now,
+		RetentionRef:       now,
 		Metadata:           metaCopy,
 		Generation:         m.gen.Add(1),
 		Metageneration:     1,
@@ -359,6 +386,7 @@ func (m *Mock) putObject(
 	m.emitMetric(ctx, "network/received_bytes_count", float64(len(data)), dims)
 
 	info := toInfo(obj, true)
+	info.RetentionExpiration = retentionExpiration(bkt, obj)
 
 	return &info, nil
 }
@@ -526,6 +554,11 @@ func (m *Mock) deleteObject(ctx context.Context, bucket, key string, generation 
 		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
+	// A retained-or-held live object cannot be deleted (WORM).
+	if err := objectImmutable(m, bkt, current); err != nil {
+		return err
+	}
+
 	// Versioning-enabled live delete archives the current generation (it becomes
 	// noncurrent) — real GCS retains it, listable via versions=true.
 	if bkt.versioning {
@@ -559,6 +592,10 @@ func (m *Mock) deleteGeneration(
 	ctx context.Context, bkt *bucketMeta, bucket, key string, gen int64, current *gcsObject, liveExists bool,
 ) error {
 	if liveExists && current.Generation == gen {
+		if err := objectImmutable(m, bkt, current); err != nil {
+			return err
+		}
+
 		bkt.objects.Delete(key)
 		m.purgeIfGone(ctx, bkt, bucket, key)
 		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
@@ -572,6 +609,11 @@ func (m *Mock) deleteGeneration(
 	for i, v := range versions {
 		if v.Generation != gen {
 			continue
+		}
+
+		if err := m.immutableLocked(bkt, v); err != nil {
+			bkt.mu.Unlock()
+			return err
 		}
 
 		bkt.versions[key] = append(versions[:i], versions[i+1:]...)
@@ -631,7 +673,10 @@ func (m *Mock) GetObjectGCS(ctx context.Context, bucket, key string, generation 
 	m.emitMetric(ctx, "api/request_count", 1, dims)
 	m.emitMetric(ctx, "network/sent_bytes_count", float64(obj.Size), dims)
 
-	return &driver.Object{Info: toInfo(obj, true), Data: dataCopy}, nil
+	info := toInfo(obj, true)
+	info.RetentionExpiration = retentionExpiration(bkt, obj)
+
+	return &driver.Object{Info: info, Data: dataCopy}, nil
 }
 
 // HeadObjectGCS returns an object's info, selecting a specific generation when
@@ -648,6 +693,7 @@ func (m *Mock) HeadObjectGCS(_ context.Context, bucket, key string, generation *
 	}
 
 	info := toInfo(obj, true)
+	info.RetentionExpiration = retentionExpiration(bkt, obj)
 
 	return &info, nil
 }
@@ -816,6 +862,13 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		return cerrors.Newf(cerrors.NotFound, "destination bucket %q not found", dstBucket)
 	}
 
+	// Overwriting a retained-or-held destination object is blocked (WORM).
+	if dstCur, dstOK := dstBkt.objects.Get(dstKey); dstOK {
+		if err := objectImmutable(m, dstBkt, dstCur); err != nil {
+			return err
+		}
+	}
+
 	dataCopy := make([]byte, len(srcObj.Data))
 	copy(dataCopy, srcObj.Data)
 
@@ -844,7 +897,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 
 	dstBkt.objects.Set(dstKey, &gcsObject{
 		Key: dstKey, Data: stored, Size: srcObj.Size, ContentType: srcObj.ContentType,
-		ETag: srcObj.ETag, LastModified: copyNow, Created: copyNow,
+		ETag: srcObj.ETag, LastModified: copyNow, Created: copyNow, RetentionRef: copyNow,
 		Metadata: meta, Generation: m.gen.Add(1), Metageneration: 1,
 		MD5: srcObj.MD5, CRC32C: srcObj.CRC32C,
 		CacheControl: srcObj.CacheControl, ContentEncoding: srcObj.ContentEncoding,
@@ -1016,6 +1069,15 @@ func (m *Mock) CompleteMultipartUpload(
 	md5b64, crc32cb64 := checksums(data)
 
 	current, exists := bkt.objects.Get(key)
+
+	// Completing a multipart upload over a retained-or-held object is an
+	// overwrite, which WORM blocks.
+	if exists {
+		if err := objectImmutable(m, bkt, current); err != nil {
+			return err
+		}
+	}
+
 	archiveVersion(bkt, key, current, exists)
 
 	completeNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
@@ -1028,6 +1090,7 @@ func (m *Mock) CompleteMultipartUpload(
 		ETag:           fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified:   completeNow,
 		Created:        completeNow,
+		RetentionRef:   completeNow,
 		Metadata:       make(map[string]string),
 		Generation:     m.gen.Add(1),
 		Metageneration: 1,
@@ -1372,9 +1435,25 @@ func (m *Mock) UpdateObjectGCS(
 	applyStringUpdate(&next.ContentDisposition, upd.ContentDisposition)
 	applyStringUpdate(&next.ContentLanguage, upd.ContentLanguage)
 
+	if upd.TemporaryHold != nil {
+		next.TemporaryHold = *upd.TemporaryHold
+	}
+
+	// Releasing an event-based hold (true→false) restarts the retention clock:
+	// the object's retention reference resets to now, so the full retention period
+	// must elapse again before it can be deleted or overwritten.
+	if upd.EventBasedHold != nil {
+		if cur.EventBasedHold && !*upd.EventBasedHold {
+			next.RetentionRef = next.LastModified
+		}
+
+		next.EventBasedHold = *upd.EventBasedHold
+	}
+
 	bkt.objects.Set(key, &next)
 
 	info := toInfo(&next, true)
+	info.RetentionExpiration = retentionExpiration(bkt, &next)
 
 	return &info, nil
 }

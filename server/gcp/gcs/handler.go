@@ -105,6 +105,10 @@ type Handler struct {
 	// keys; nil makes the /projects/{p}/hmacKeys endpoints report not-implemented.
 	hmac hmacKeyStore
 
+	// retention is the optional capability persisting a bucket's retention policy
+	// (WORM); nil makes retentionPolicy absent and unsettable.
+	retention retentionStore
+
 	// publisher emits object-change events to Pub/Sub for matching bucket
 	// notification configs. Nil (the default) makes object events a no-op, so
 	// object writes/deletes still succeed without Pub/Sub wired.
@@ -139,6 +143,7 @@ func New(b storagedriver.Bucket) *Handler {
 	lifecycle, _ := b.(lifecycleRawStore)
 	iamCfg, _ := b.(iamConfigStore)
 	hmac, _ := b.(hmacKeyStore)
+	retention, _ := b.(retentionStore)
 
 	return &Handler{
 		bucket:    b,
@@ -146,6 +151,7 @@ func New(b storagedriver.Bucket) *Handler {
 		lifecycle: lifecycle,
 		iamCfg:    iamCfg,
 		hmac:      hmac,
+		retention: retention,
 		resumable: make(map[string]*resumableSession),
 	}
 }
@@ -260,6 +266,8 @@ func (h *Handler) serveBucketSubcollection(w http.ResponseWriter, r *http.Reques
 		h.bucketIAM(w, r, parts[1])
 	case subresNotificationConfigs:
 		h.notificationCollection(w, r, parts[1])
+	case "lockRetentionPolicy":
+		h.lockRetentionPolicy(w, r, parts[1])
 	default:
 		writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
 	}
@@ -339,6 +347,7 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = h.applyIAMConfig(r.Context(), body.Name, body.IamConfiguration)
+	_ = h.applyRetention(r.Context(), body.Name, body.RetentionPolicy)
 
 	writeJSON(w, http.StatusOK, h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339)))
 }
@@ -409,6 +418,10 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		res.Lifecycle = lc
 	}
 
+	if rp := h.retentionView(r.Context(), name); rp != nil {
+		res.RetentionPolicy = rp
+	}
+
 	return res
 }
 
@@ -469,7 +482,7 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 	}
 
 	if err := h.applyBucketConfig(r.Context(), name, &body); err != nil {
-		writeErr(w, err)
+		writePreconditionOrErr(w, err)
 		return
 	}
 
@@ -508,6 +521,12 @@ func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *buck
 
 	if body.IamConfiguration != nil {
 		if err := h.applyIAMConfig(ctx, name, body.IamConfiguration); err != nil {
+			return err
+		}
+	}
+
+	if body.RetentionPolicy != nil {
+		if err := h.applyRetention(ctx, name, body.RetentionPolicy); err != nil {
 			return err
 		}
 	}
@@ -1009,6 +1028,18 @@ func writePreconditionOrErr(w http.ResponseWriter, err error) {
 		return
 	}
 
+	var immErr *storagedriver.GCSImmutableError
+	if errors.As(err, &immErr) {
+		reason := immErr.Reason
+		if reason == "" {
+			reason = "retentionPolicyNotMet"
+		}
+
+		writeError(w, http.StatusForbidden, reason, immErr.Error())
+
+		return
+	}
+
 	writeErr(w, err)
 }
 
@@ -1221,6 +1252,8 @@ func (h *Handler) updateObject(w http.ResponseWriter, r *http.Request, bucket, k
 		ContentDisposition: body.ContentDisposition,
 		ContentLanguage:    body.ContentLanguage,
 		Metadata:           body.Metadata,
+		TemporaryHold:      body.TemporaryHold,
+		EventBasedHold:     body.EventBasedHold,
 	}, parsePrecondition(r.URL.Query()))
 	if err != nil {
 		writePreconditionOrErr(w, err)
@@ -1599,27 +1632,30 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 	}
 
 	return objectResource{
-		Kind:               "storage#object",
-		ID:                 bucket + "/" + info.Key + "/" + genStr,
-		Name:               info.Key,
-		Bucket:             bucket,
-		Generation:         genStr,
-		Metageneration:     strconv.FormatInt(metageneration, 10),
-		ContentType:        info.ContentType,
-		Size:               strconv.FormatInt(info.Size, 10),
-		MD5Hash:            info.MD5,
-		CRC32C:             info.CRC32C,
-		ETag:               info.ETag,
-		StorageClass:       storageClass,
-		CacheControl:       info.CacheControl,
-		ContentEncoding:    info.ContentEncoding,
-		ContentDisposition: info.ContentDisposition,
-		ContentLanguage:    info.ContentLanguage,
-		TimeCreated:        created,
-		Updated:            info.LastModified,
-		Metadata:           info.Metadata,
-		SelfLink:           selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
-		MediaLink:          selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key+"?alt=media"),
+		Kind:                    "storage#object",
+		ID:                      bucket + "/" + info.Key + "/" + genStr,
+		Name:                    info.Key,
+		Bucket:                  bucket,
+		Generation:              genStr,
+		Metageneration:          strconv.FormatInt(metageneration, 10),
+		ContentType:             info.ContentType,
+		Size:                    strconv.FormatInt(info.Size, 10),
+		MD5Hash:                 info.MD5,
+		CRC32C:                  info.CRC32C,
+		ETag:                    info.ETag,
+		StorageClass:            storageClass,
+		CacheControl:            info.CacheControl,
+		ContentEncoding:         info.ContentEncoding,
+		ContentDisposition:      info.ContentDisposition,
+		ContentLanguage:         info.ContentLanguage,
+		TimeCreated:             created,
+		Updated:                 info.LastModified,
+		Metadata:                info.Metadata,
+		TemporaryHold:           info.TemporaryHold,
+		EventBasedHold:          info.EventBasedHold,
+		RetentionExpirationTime: info.RetentionExpiration,
+		SelfLink:                selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
+		MediaLink:               selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key+"?alt=media"),
 	}
 }
 

@@ -445,6 +445,16 @@ type ObjectInfo struct {
 	// PutObject and echoed on GET/HEAD. Empty when unset; providers that don't
 	// model it leave it empty.
 	Expires string
+	// TemporaryHold / EventBasedHold report the GCS object WORM holds. While
+	// either is set the object cannot be deleted or overwritten. Zero for
+	// providers that don't model holds.
+	TemporaryHold  bool
+	EventBasedHold bool
+	// RetentionExpiration is the GCS retentionExpirationTime — the RFC3339 instant
+	// before which the object cannot be deleted or overwritten under the bucket's
+	// retention policy. Empty when the bucket has no retention policy (or an
+	// eventBasedHold is currently pinning the object).
+	RetentionExpiration string
 }
 
 // Object is an object with its data.
@@ -905,6 +915,26 @@ func (e *GCSPreconditionError) Error() string {
 	return e.Message
 }
 
+// GCSImmutableError signals a delete or overwrite blocked by a bucket retention
+// policy that has not yet elapsed or by an active object hold (temporaryHold /
+// eventBasedHold). Real GCS answers 403 Forbidden with a reason such as
+// "retentionPolicyNotMet"; providers return this typed error and the GCS handler
+// matches it with errors.As to emit the exact 403.
+type GCSImmutableError struct {
+	// Reason is the GCS error reason (e.g. "retentionPolicyNotMet").
+	Reason string
+	// Message is the human-readable explanation returned to the caller.
+	Message string
+}
+
+func (e *GCSImmutableError) Error() string {
+	if e.Message == "" {
+		return "object is immutable (retention policy or hold)"
+	}
+
+	return e.Message
+}
+
 // GCSObjectUpdate carries the mutable properties an Objects: patch/update sets.
 // A nil pointer field leaves that property unchanged; a nil Metadata map leaves
 // custom metadata unchanged, while a non-nil map is merged (a nil value deletes
@@ -916,6 +946,11 @@ type GCSObjectUpdate struct {
 	ContentDisposition *string
 	ContentLanguage    *string
 	Metadata           map[string]*string
+	// TemporaryHold / EventBasedHold set or clear the object's WORM holds
+	// (Objects: patch). A nil pointer leaves the hold unchanged. Releasing an
+	// eventBasedHold (true→false) resets the object's retention clock.
+	TemporaryHold  *bool
+	EventBasedHold *bool
 }
 
 // GCSObjectAttrs carries the object system properties settable at INSERT time
@@ -927,6 +962,17 @@ type GCSObjectAttrs struct {
 	ContentDisposition string
 	ContentLanguage    string
 	StorageClass       string
+}
+
+// GCSRetentionPolicy is a bucket retention policy (WORM). RetentionPeriod is in
+// seconds; objects cannot be deleted or overwritten until they are older than
+// it. EffectiveTime is when the policy took effect; IsLocked reports whether it
+// has been made permanent (it can then only be increased, never shortened or
+// removed).
+type GCSRetentionPolicy struct {
+	RetentionPeriod int64
+	EffectiveTime   string
+	IsLocked        bool
 }
 
 // GCSComposeSource names one source component of an Objects: compose request.
