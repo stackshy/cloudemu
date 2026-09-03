@@ -12683,6 +12683,177 @@
         ]
       },
       {
+        "name": "ObjectLockBucket",
+        "doc": "ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type",
+        "operations": [
+          {
+            "name": "AbortMultipartUpload"
+          },
+          {
+            "name": "CompleteMultipartUpload"
+          },
+          {
+            "name": "CopyObject"
+          },
+          {
+            "name": "CreateBucket"
+          },
+          {
+            "name": "CreateMultipartUpload",
+            "doc": "Multipart uploads"
+          },
+          {
+            "name": "DeleteBucket"
+          },
+          {
+            "name": "DeleteBucketPolicy"
+          },
+          {
+            "name": "DeleteBucketTagging"
+          },
+          {
+            "name": "DeleteCORSConfig"
+          },
+          {
+            "name": "DeleteObject"
+          },
+          {
+            "name": "DeleteObjectTagging"
+          },
+          {
+            "name": "DeleteObjectVersion",
+            "doc": "DeleteObjectVersion removes a specific version when versionID != \"\"."
+          },
+          {
+            "name": "DeleteObjectVersionWithBypass",
+            "doc": "DeleteObjectVersionWithBypass is DeleteObjectVersion with Object Lock"
+          },
+          {
+            "name": "EnableObjectLock",
+            "doc": "EnableObjectLock marks a bucket Object-Lock-enabled and turns on versioning"
+          },
+          {
+            "name": "EvaluateLifecycle"
+          },
+          {
+            "name": "GeneratePresignedURL",
+            "doc": "Presigned URLs"
+          },
+          {
+            "name": "GetBucketPolicy"
+          },
+          {
+            "name": "GetBucketTagging"
+          },
+          {
+            "name": "GetBucketVersioning"
+          },
+          {
+            "name": "GetCORSConfig"
+          },
+          {
+            "name": "GetEncryptionConfig"
+          },
+          {
+            "name": "GetLifecycleConfig"
+          },
+          {
+            "name": "GetObject"
+          },
+          {
+            "name": "GetObjectLegalHold",
+            "doc": "GetObjectLegalHold reports whether legal hold is ON for a version (current"
+          },
+          {
+            "name": "GetObjectRetention",
+            "doc": "GetObjectRetention returns the retention on a version (the current version"
+          },
+          {
+            "name": "GetObjectTagging"
+          },
+          {
+            "name": "GetObjectVersion",
+            "doc": "GetObjectVersion / HeadObjectVersion fetch a specific version by ID. A"
+          },
+          {
+            "name": "HeadObject"
+          },
+          {
+            "name": "HeadObjectVersion"
+          },
+          {
+            "name": "ListBuckets"
+          },
+          {
+            "name": "ListMultipartUploads"
+          },
+          {
+            "name": "ListObjectVersions",
+            "doc": "ListObjectVersions returns the full version history matching opts."
+          },
+          {
+            "name": "ListObjects"
+          },
+          {
+            "name": "ListParts",
+            "doc": "ListParts returns the parts buffered so far for an in-progress upload,"
+          },
+          {
+            "name": "ObjectLockEnabled",
+            "doc": "ObjectLockEnabled reports whether the bucket was created with Object Lock"
+          },
+          {
+            "name": "PutBucketPolicy",
+            "doc": "Bucket Policy"
+          },
+          {
+            "name": "PutBucketTagging",
+            "doc": "Bucket Tagging"
+          },
+          {
+            "name": "PutCORSConfig",
+            "doc": "CORS"
+          },
+          {
+            "name": "PutEncryptionConfig",
+            "doc": "Encryption"
+          },
+          {
+            "name": "PutLifecycleConfig",
+            "doc": "Lifecycle policies"
+          },
+          {
+            "name": "PutObject"
+          },
+          {
+            "name": "PutObjectLegalHold",
+            "doc": "PutObjectLegalHold sets legal hold ON/OFF for a version (current when"
+          },
+          {
+            "name": "PutObjectRetention",
+            "doc": "PutObjectRetention sets the retention on a version (current when"
+          },
+          {
+            "name": "PutObjectTagging",
+            "doc": "Object Tagging"
+          },
+          {
+            "name": "SetBucketVersioning",
+            "doc": "Versioning"
+          },
+          {
+            "name": "SetVersioningStatus",
+            "doc": "SetVersioningStatus sets the bucket's versioning status: \"Enabled\" or"
+          },
+          {
+            "name": "UploadPart"
+          },
+          {
+            "name": "VersioningStatus"
+          }
+        ]
+      },
+      {
         "name": "RawBucketConfig",
         "doc": "RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like",
         "operations": [

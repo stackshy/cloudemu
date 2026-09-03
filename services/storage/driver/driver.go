@@ -528,6 +528,73 @@ type VersionedBucket interface {
 	ListObjectVersions(ctx context.Context, bucket string, opts ListOptions) (*VersionListResult, error)
 }
 
+// Object-lock retention modes (S3 Object Lock). GOVERNANCE can be bypassed by a
+// principal holding s3:BypassGovernanceRetention; COMPLIANCE can be bypassed by
+// no one, not even the root account, until the retention period elapses.
+const (
+	ObjectLockGovernance = "GOVERNANCE"
+	ObjectLockCompliance = "COMPLIANCE"
+)
+
+// ObjectRetention is an S3 Object Lock retention setting on a single object
+// version: a Mode (GOVERNANCE or COMPLIANCE) and the UTC instant until which the
+// version is retained. A zero value (empty Mode, zero RetainUntilDate) means no
+// retention is configured.
+type ObjectRetention struct {
+	Mode            string
+	RetainUntilDate time.Time
+}
+
+// ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type
+// assertion, like VersionedBucket) that ENFORCES S3 Object Lock (WORM). Retention
+// (GOVERNANCE/COMPLIANCE + RetainUntilDate) and legal hold are recorded per
+// object version; while a version is protected — legal hold ON, or a retention
+// period that has not elapsed — its bytes cannot be permanently deleted or
+// overwritten. A GOVERNANCE retention (but not the version's legal hold) can be
+// lifted with s3:BypassGovernanceRetention; a COMPLIANCE retention cannot be
+// shortened, removed, or bypassed by anyone until it expires. Object Lock builds
+// on versioning, so it layers on VersionedBucket. Providers without it keep the
+// plain versioned behavior with no WORM protection.
+type ObjectLockBucket interface {
+	VersionedBucket
+
+	// ObjectLockEnabled reports whether the bucket was created with Object Lock
+	// enabled (x-amz-bucket-object-lock-enabled), so retention/legal hold may be
+	// configured on its objects.
+	ObjectLockEnabled(ctx context.Context, bucket string) (bool, error)
+	// EnableObjectLock marks a bucket Object-Lock-enabled and turns on versioning
+	// (Object Lock requires it). Idempotent.
+	EnableObjectLock(ctx context.Context, bucket string) error
+
+	// GetObjectRetention returns the retention on a version (the current version
+	// when versionID==""). A zero ObjectRetention means none is set.
+	GetObjectRetention(ctx context.Context, bucket, key, versionID string) (ObjectRetention, error)
+	// PutObjectRetention sets the retention on a version (current when
+	// versionID==""). First-setting or extending a retention is always allowed;
+	// shortening, removing, or downgrading an ACTIVE GOVERNANCE retention requires
+	// bypassGovernance, and an active COMPLIANCE retention can never be shortened,
+	// removed, or downgraded. A disallowed change returns a PermissionDenied error.
+	PutObjectRetention(
+		ctx context.Context, bucket, key, versionID string, ret ObjectRetention, bypassGovernance bool,
+	) error
+	// GetObjectLegalHold reports whether legal hold is ON for a version (current
+	// when versionID=="").
+	GetObjectLegalHold(ctx context.Context, bucket, key, versionID string) (bool, error)
+	// PutObjectLegalHold sets legal hold ON/OFF for a version (current when
+	// versionID==""). Always allowed.
+	PutObjectLegalHold(ctx context.Context, bucket, key, versionID string, on bool) error
+
+	// DeleteObjectVersionWithBypass is DeleteObjectVersion with Object Lock
+	// enforcement: a protected version cannot be permanently removed, and
+	// bypassGovernance lifts only a GOVERNANCE block (never COMPLIANCE, never a
+	// legal hold). A blocked delete returns a PermissionDenied error. A top-level
+	// delete (versionID=="") still records a delete marker without touching the
+	// protected versions beneath it.
+	DeleteObjectVersionWithBypass(
+		ctx context.Context, bucket, key, versionID string, bypassGovernance bool,
+	) (deletedVersionID string, deleteMarker bool, err error)
+}
+
 // RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
 // VersionedBucket) a storage provider implements to persist and echo back opaque
 // bucket-configuration sub-resource documents — policy (JSON), cors, encryption,
