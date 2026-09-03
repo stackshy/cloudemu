@@ -39,8 +39,22 @@ type lifecycleAction struct {
 	StorageClass string `json:"storageClass,omitempty"`
 }
 
+// lifecycleCondition carries the full set of GCS lifecycle rule conditions
+// (https://cloud.google.com/storage/docs/lifecycle#conditions). Age and the
+// day-count conditions are pointers so an explicit 0 round-trips distinctly
+// from an absent condition.
 type lifecycleCondition struct {
-	Age int `json:"age,omitempty"`
+	Age                     *int     `json:"age,omitempty"`
+	CreatedBefore           string   `json:"createdBefore,omitempty"`
+	CustomTimeBefore        string   `json:"customTimeBefore,omitempty"`
+	DaysSinceCustomTime     *int     `json:"daysSinceCustomTime,omitempty"`
+	DaysSinceNoncurrentTime *int     `json:"daysSinceNoncurrentTime,omitempty"`
+	NoncurrentTimeBefore    string   `json:"noncurrentTimeBefore,omitempty"`
+	IsLive                  *bool    `json:"isLive,omitempty"`
+	MatchesStorageClass     []string `json:"matchesStorageClass,omitempty"`
+	NumNewerVersions        *int     `json:"numNewerVersions,omitempty"`
+	MatchesPrefix           []string `json:"matchesPrefix,omitempty"`
+	MatchesSuffix           []string `json:"matchesSuffix,omitempty"`
 }
 
 type iamConfiguration struct {

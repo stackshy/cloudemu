@@ -89,13 +89,19 @@ type bucketMeta struct {
 	tags       map[string]string
 
 	// mu guards the GCS-specific mutable fields below (location/storageClass,
-	// metageneration/updated, iamPolicy, and the archived version history).
+	// metageneration/updated, iamPolicy, lifecycle, and the archived version
+	// history).
 	mu             sync.Mutex
 	location       string
 	storageClass   string
 	metageneration int64
 	updated        string
 	iamPolicy      []byte
+	// gcsLifecycleRaw is the bucket's lifecycle configuration stored verbatim as
+	// GCS JSON ({"rule":[...]}), preserving every rule condition the wire layer
+	// received. It is the authoritative source for EvaluateLifecycle and
+	// ApplyLifecycleGCS; lifecycle (the portable subset) mirrors its age rules.
+	gcsLifecycleRaw []byte
 	// versions holds archived (non-current) object generations keyed by object
 	// key, oldest-first, populated on overwrite when versioning is enabled.
 	versions map[string][]*gcsObject
@@ -872,91 +878,6 @@ func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRe
 	)
 
 	return &driver.PresignedURL{URL: url, Method: req.Method, ExpiresAt: expiresAt}, nil
-}
-
-func (m *Mock) PutLifecycleConfig(_ context.Context, bucket string, cfg driver.LifecycleConfig) error {
-	bkt, ok := m.buckets.Get(bucket)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
-	}
-
-	cfgCopy := driver.LifecycleConfig{Rules: make([]driver.LifecycleRule, len(cfg.Rules))}
-	copy(cfgCopy.Rules, cfg.Rules)
-	bkt.lifecycle = &cfgCopy
-
-	return nil
-}
-
-func (m *Mock) GetLifecycleConfig(_ context.Context, bucket string) (*driver.LifecycleConfig, error) {
-	bkt, ok := m.buckets.Get(bucket)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
-	}
-
-	if bkt.lifecycle == nil {
-		return nil, cerrors.Newf(cerrors.NotFound, "no lifecycle configuration for bucket %q", bucket)
-	}
-
-	return bkt.lifecycle, nil
-}
-
-func (m *Mock) EvaluateLifecycle(_ context.Context, bucket string) ([]string, error) {
-	bkt, ok := m.buckets.Get(bucket)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
-	}
-
-	if bkt.lifecycle == nil {
-		return nil, nil
-	}
-
-	now := m.opts.Clock.Now().UTC()
-	expired := collectExpiredGCSKeys(bkt, now)
-	sort.Strings(expired)
-
-	return expired, nil
-}
-
-func collectExpiredGCSKeys(bkt *bucketMeta, now time.Time) []string {
-	var result []string
-
-	for _, key := range bkt.objects.Keys() {
-		obj, objOk := bkt.objects.Get(key)
-		if !objOk {
-			continue
-		}
-
-		if gcsObjectExpired(obj, bkt.lifecycle, now) {
-			result = append(result, key)
-		}
-	}
-
-	return result
-}
-
-func gcsObjectExpired(obj *gcsObject, cfg *driver.LifecycleConfig, now time.Time) bool {
-	modified, err := time.Parse(gcsTimeFormat, obj.LastModified)
-	if err != nil {
-		return false
-	}
-
-	age := now.Sub(modified)
-
-	for _, rule := range cfg.Rules {
-		if !rule.Enabled {
-			continue
-		}
-
-		if rule.Prefix != "" && !strings.HasPrefix(obj.Key, rule.Prefix) {
-			continue
-		}
-
-		if rule.ExpirationDays > 0 && age >= time.Duration(rule.ExpirationDays)*gcsHoursPerDay*time.Hour {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (m *Mock) CreateMultipartUpload(
