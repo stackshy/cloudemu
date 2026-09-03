@@ -259,13 +259,39 @@ func (m *Mock) DescribeClusterParameterGroups(_ context.Context, names []string)
 	return out, nil
 }
 
-// DeleteClusterParameterGroup removes a redshift cluster parameter group.
+// DeleteClusterParameterGroup removes a redshift cluster parameter group. Real
+// Redshift refuses while any cluster still references the group
+// (InvalidClusterParameterGroupStateFault); deleting it out from under a live
+// cluster would strand that cluster's configuration. The in-use scan and the
+// delete run under one lock so a concurrent CreateCluster cannot slip a
+// referencing cluster in between them.
 func (m *Mock) DeleteClusterParameterGroup(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if user, ok := m.clusterParameterGroupInUseBy(name); ok {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"cluster parameter group %q is in use by cluster %q", name, user)
+	}
+
 	if !m.parameterGroups.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
 	}
 
 	return nil
+}
+
+// clusterParameterGroupInUseBy names a cluster still referencing the given
+// parameter group, if any. Callers must hold m.mu.
+func (m *Mock) clusterParameterGroupInUseBy(name string) (string, bool) {
+	clusters := m.clusters.All()
+	for id := range clusters {
+		if clusters[id].DBClusterParameterGroupName == name {
+			return id, true
+		}
+	}
+
+	return "", false
 }
 
 // CreateClusterSubnetGroup registers a redshift cluster subnet group.
@@ -313,13 +339,39 @@ func (m *Mock) DescribeClusterSubnetGroups(_ context.Context, names []string) ([
 	return out, nil
 }
 
-// DeleteClusterSubnetGroup removes a redshift cluster subnet group.
+// DeleteClusterSubnetGroup removes a redshift cluster subnet group. Real
+// Redshift refuses while any cluster is still placed in the group
+// (ClusterSubnetGroupInUseFault); deleting it out from under a live cluster
+// would strand that cluster in a group that no longer exists. The in-use scan
+// and the delete run under one lock so a concurrent CreateCluster cannot slip a
+// referencing cluster in between them.
 func (m *Mock) DeleteClusterSubnetGroup(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if user, ok := m.clusterSubnetGroupInUseBy(name); ok {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"cluster subnet group %q is in use by cluster %q", name, user)
+	}
+
 	if !m.subnetGroups.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
 	}
 
 	return nil
+}
+
+// clusterSubnetGroupInUseBy names a cluster still placed in the given subnet
+// group, if any. Callers must hold m.mu.
+func (m *Mock) clusterSubnetGroupInUseBy(name string) (string, bool) {
+	clusters := m.clusters.All()
+	for id := range clusters {
+		if clusters[id].SubnetGroupName == name {
+			return id, true
+		}
+	}
+
+	return "", false
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.
