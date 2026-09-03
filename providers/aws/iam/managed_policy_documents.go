@@ -44,7 +44,10 @@ const docReadOnlyAccess = `{
 	]
 }`
 
-// docEC2FullAccess is AmazonEC2FullAccess.
+// docEC2FullAccess is AmazonEC2FullAccess. elasticloadbalancing:*,
+// cloudwatch:*, and autoscaling:* are all real full companion grants in the
+// published policy (EC2 creates and monitors load balancers, alarms, and
+// scaling groups on the caller's behalf) — not an approximation.
 const docEC2FullAccess = `{
 	"Version": "2012-10-17",
 	"Statement": [
@@ -206,15 +209,20 @@ const docECRFullAccess = `{
 	]
 }`
 
-// docECSFullAccess approximates AmazonECS_FullAccess (the real policy also
-// lists specific elasticloadbalancing/ec2/cloudwatch read actions and a
-// scoped iam:PassRole; grouped by service wildcard here).
+// docECSFullAccess approximates AmazonECS_FullAccess. ecs:* and
+// elasticloadbalancing:* are both real full grants in the published
+// policy (ECS creates and manages load balancers on the caller's behalf),
+// not an approximation; ec2/cloudwatch reads are grouped by verb wildcard
+// here in place of the real policy's per-action list. iam:PassRole is the
+// real policy's plain (unconditioned) grant, needed so an ECS caller can
+// pass a task/execution role to the service.
 const docECSFullAccess = `{
 	"Version": "2012-10-17",
 	"Statement": [
 		{"Effect": "Allow", "Action": ["ecs:*", "elasticloadbalancing:*"], "Resource": "*"},
 		{"Effect": "Allow", "Action": ["ec2:Describe*", "cloudwatch:Get*", "cloudwatch:List*", "cloudwatch:Describe*"],
-			"Resource": "*"}
+			"Resource": "*"},
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": "*"}
 	]
 }`
 
@@ -296,13 +304,16 @@ const docS3ReadOnlyAccess = `{
 
 // docRDSFullAccess approximates AmazonRDSFullAccess (the real policy also
 // lists specific ec2/sns read actions individually; grouped by service
-// wildcard here).
+// wildcard here). logs access is scoped to the same read verbs as the
+// read-only sibling below — real AmazonRDSFullAccess does not grant
+// unrestricted CloudWatch Logs write/delete.
 const docRDSFullAccess = `{
 	"Version": "2012-10-17",
 	"Statement": [
 		{"Effect": "Allow", "Action": "rds:*", "Resource": "*"},
 		{"Effect": "Allow", "Action": ["cloudwatch:Get*", "cloudwatch:List*", "cloudwatch:Describe*",
-			"ec2:Describe*", "sns:ListSubscriptions", "sns:ListTopics", "sns:Publish", "logs:*"], "Resource": "*"}
+			"ec2:Describe*", "sns:ListSubscriptions", "sns:ListTopics", "sns:Publish",
+			"logs:Describe*", "logs:Get*"], "Resource": "*"}
 	]
 }`
 
@@ -316,13 +327,24 @@ const docRDSReadOnlyAccess = `{
 	]
 }`
 
-// docDynamoDBFullAccess approximates AmazonDynamoDBFullAccess (the real
-// policy also grants dax/application-autoscaling/datapipeline actions
-// individually; grouped by service wildcard here).
+// docDynamoDBFullAccess approximates AmazonDynamoDBFullAccess. dynamodb:*
+// and dax:* are both real full grants in the published policy, not an
+// approximation. application-autoscaling access is scoped to the real
+// policy's explicit scaling-management action list rather than a bare
+// application-autoscaling:* wildcard (the real policy does not grant that
+// service's full surface, only these specific actions for DynamoDB
+// auto-scaling); datapipeline actions are omitted since this emulator has
+// no Data Pipeline surface.
 const docDynamoDBFullAccess = `{
 	"Version": "2012-10-17",
 	"Statement": [
-		{"Effect": "Allow", "Action": ["dynamodb:*", "dax:*", "application-autoscaling:*"], "Resource": "*"},
+		{"Effect": "Allow", "Action": ["dynamodb:*", "dax:*"], "Resource": "*"},
+		{"Effect": "Allow", "Action": [
+			"application-autoscaling:DeleteScalingPolicy", "application-autoscaling:DeregisterScalableTarget",
+			"application-autoscaling:DescribeScalableTargets", "application-autoscaling:DescribeScalingActivities",
+			"application-autoscaling:DescribeScalingPolicies", "application-autoscaling:PutScalingPolicy",
+			"application-autoscaling:RegisterScalableTarget"
+		], "Resource": "*"},
 		{"Effect": "Allow", "Action": ["cloudwatch:Describe*", "cloudwatch:Get*", "cloudwatch:List*",
 			"cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms"], "Resource": "*"}
 	]
@@ -431,11 +453,17 @@ const docCloudWatchAgentServerPolicy = `{
 
 // docCloudWatchFullAccess approximates CloudWatchFullAccess (the real
 // policy also grants scoped oam:* cross-account-observability actions;
-// omitted since this emulator has no oam surface).
+// omitted since this emulator has no oam surface). sns access is scoped to
+// alarm-notification topic management — the same subset the
+// AutoScalingFullAccess/AmazonElastiCacheFullAccess companion grants use —
+// not the full sns:* surface (Publish/DeleteTopic/AddPermission on every
+// topic), which real CloudWatchFullAccess does not grant.
 const docCloudWatchFullAccess = `{
 	"Version": "2012-10-17",
 	"Statement": [
-		{"Effect": "Allow", "Action": ["cloudwatch:*", "logs:*", "sns:*"], "Resource": "*"},
+		{"Effect": "Allow", "Action": ["cloudwatch:*", "logs:*"], "Resource": "*"},
+		{"Effect": "Allow", "Action": ["sns:CreateTopic", "sns:ListTopics", "sns:Subscribe", "sns:Unsubscribe",
+			"sns:GetTopicAttributes", "sns:SetTopicAttributes", "sns:ListSubscriptionsByTopic"], "Resource": "*"},
 		{"Effect": "Allow", "Action": "iam:CreateServiceLinkedRole", "Resource": "*"}
 	]
 }`

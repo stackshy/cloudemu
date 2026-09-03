@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -157,13 +158,29 @@ func TestCheckPermissionHonorsManagedPolicyDocument(t *testing.T) {
 	}
 }
 
-// Every catalogued name must have a document — a catalog entry without one
-// would materialize as an empty-Statement policy again, silently
-// reintroducing the bug this change fixes.
+// Every catalogued name must have a document that actually parses — a
+// catalog entry without one would materialize as an empty-Statement policy
+// again, silently reintroducing the bug this change fixes, and a malformed
+// document would silently evaluate to no grants (evaluatePolicy discards an
+// unparseable doc rather than erroring).
 func TestEveryManagedPolicyHasADocument(t *testing.T) {
 	for name, doc := range awsManagedPolicyDocuments {
 		if doc == "" {
 			t.Errorf("%s: empty policy document", name)
+			continue
+		}
+
+		var parsed struct {
+			Statement []map[string]any
+		}
+
+		if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+			t.Errorf("%s: policy document does not parse as JSON: %v", name, err)
+			continue
+		}
+
+		if len(parsed.Statement) == 0 {
+			t.Errorf("%s: policy document has no statements", name)
 		}
 	}
 }
