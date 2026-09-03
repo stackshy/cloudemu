@@ -207,6 +207,32 @@ func TestSDKSQLControlPlaneLifecycle(t *testing.T) {
 	require.Error(t, err, "database must 404 after delete")
 }
 
+// TestSDKSQLDatabaseChildLinks pins that a SQL database resource always carries
+// its _colls/_users child links on PUT and GET — Cosmos'
+// SQLDatabaseGetPropertiesResource exposes them, so they must not be dropped
+// (the Mongo database resource, by contrast, has neither; see
+// TestSDKMongoDatabaseNoChildLinks).
+func TestSDKSQLDatabaseChildLinks(t *testing.T) {
+	ctx := context.Background()
+	env := newSQLEnv(t)
+	env.createAccount(t, "rg-1", "cosmos-links", "eastus")
+
+	created := env.putDatabase(t, "rg-1", "cosmos-links", "linked", nil)
+	require.NotNil(t, created.Properties)
+	require.NotNil(t, created.Properties.Resource)
+	require.NotNil(t, created.Properties.Resource.Colls)
+	assert.Equal(t, "colls/", *created.Properties.Resource.Colls)
+	require.NotNil(t, created.Properties.Resource.Users)
+	assert.Equal(t, "users/", *created.Properties.Resource.Users)
+
+	got, err := env.sql.GetSQLDatabase(ctx, "rg-1", "cosmos-links", "linked", nil)
+	require.NoError(t, err)
+	require.NotNil(t, got.Properties.Resource.Colls)
+	assert.Equal(t, "colls/", *got.Properties.Resource.Colls)
+	require.NotNil(t, got.Properties.Resource.Users)
+	assert.Equal(t, "users/", *got.Properties.Resource.Users)
+}
+
 // TestSDKSQLDatabaseSharedThroughput drives database-level shared throughput and
 // its migration to manual.
 func TestSDKSQLDatabaseSharedThroughput(t *testing.T) {

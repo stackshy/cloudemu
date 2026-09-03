@@ -27,49 +27,6 @@ type armCreateUpdateOptions struct {
 	AutoscaleSettings *armAutoscaleSettings `json:"autoscaleSettings,omitempty"`
 }
 
-// SQL database ---------------------------------------------------------------
-
-type armSQLDatabaseCreateParams struct {
-	Properties *armSQLDatabaseCreateProps `json:"properties"`
-	Location   string                     `json:"location,omitempty"`
-	Tags       map[string]string          `json:"tags,omitempty"`
-}
-
-type armSQLDatabaseCreateProps struct {
-	Resource *armSQLDatabaseResource `json:"resource"`
-	Options  *armCreateUpdateOptions `json:"options,omitempty"`
-}
-
-type armSQLDatabaseResource struct {
-	ID string `json:"id"`
-}
-
-type armSQLDatabaseGetResults struct {
-	ID         string                  `json:"id,omitempty"`
-	Name       string                  `json:"name,omitempty"`
-	Type       string                  `json:"type,omitempty"`
-	Location   string                  `json:"location,omitempty"`
-	Tags       map[string]string       `json:"tags,omitempty"`
-	Properties *armSQLDatabaseGetProps `json:"properties,omitempty"`
-}
-
-type armSQLDatabaseGetProps struct {
-	Resource *armSQLDatabaseGetResource `json:"resource,omitempty"`
-}
-
-type armSQLDatabaseGetResource struct {
-	ID    string `json:"id"`
-	RID   string `json:"_rid,omitempty"`
-	TS    int64  `json:"_ts,omitempty"`
-	ETag  string `json:"_etag,omitempty"`
-	Colls string `json:"_colls,omitempty"`
-	Users string `json:"_users,omitempty"`
-}
-
-type armSQLDatabaseList struct {
-	Value []armSQLDatabaseGetResults `json:"value"`
-}
-
 // SQL container --------------------------------------------------------------
 
 type armSQLContainerCreateParams struct {
@@ -115,10 +72,6 @@ type armSQLContainerGetResource struct {
 	RID             string           `json:"_rid,omitempty"`
 	TS              int64            `json:"_ts,omitempty"`
 	ETag            string           `json:"_etag,omitempty"`
-}
-
-type armSQLContainerList struct {
-	Value []armSQLContainerGetResults `json:"value"`
 }
 
 // Throughput -----------------------------------------------------------------

@@ -406,6 +406,13 @@ func New(d Drivers) http.Handler {
 		// the shared databaseAccounts path for the /sqlDatabases sub-tree; the
 		// account handler still serves the account-level path and its actions.
 		srv.Register(cosmosdb.NewARM(cosmosDataPlane))
+		// Cosmos Mongo-API ARM control plane (mongodbDatabases / collections /
+		// throughputSettings). Shares cosmosDataPlane's state like the SQL plane;
+		// its mongodbDatabases sub-tree is disjoint from sqlDatabases, so order
+		// relative to the SQL handler is unconstrained. Registered before
+		// cosmosaccount so it wins the first-match over the shared databaseAccounts
+		// path for the /mongodbDatabases sub-tree.
+		srv.Register(cosmosdb.NewMongoARM(cosmosDataPlane))
 		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
 		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
 		// management path — disjoint from the /dbs data plane above and from
