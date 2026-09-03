@@ -311,7 +311,7 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
+	wire.WriteJSON(w, map[string]any{"TableDescription": h.describeTableShape(full)})
 }
 
 // buildCreateConfig maps a decoded CreateTable request onto a driver
@@ -469,9 +469,46 @@ func (h *Handler) applyCreateTags(r *http.Request, w http.ResponseWriter, table 
 	return true
 }
 
+// tableStatusReader is the optional provider capability that reports a table's
+// and its GSIs' live lifecycle status (CREATING/UPDATING/ACTIVE). Discovered by
+// type assertion so it stays off the cross-cloud Database interface — only the
+// AWS mock implements it. A provider without it (or with async settling
+// disabled) reports ACTIVE, which is why tableDescription still defaults every
+// status to ACTIVE and this overlay only ever narrows it to a transient value.
+type tableStatusReader interface {
+	TableStatus(table string) string
+	GSIStatus(table, index string) string
+}
+
+// describeTable builds the TableDescription for a table, overlaying the live
+// table/GSI lifecycle status from the optional tableStatusReader capability onto
+// the ACTIVE default tableDescription emits. With async settling off (the
+// default) the accessors return ACTIVE, so the shape is byte-for-byte unchanged.
+func (h *Handler) describeTableShape(cfg *dbdriver.TableConfig) map[string]any {
+	td := tableDescription(cfg)
+
+	reader, ok := h.db.(tableStatusReader)
+	if !ok {
+		return td
+	}
+
+	td["TableStatus"] = reader.TableStatus(cfg.Name)
+
+	if gsis, ok := td["GlobalSecondaryIndexes"].([]map[string]any); ok {
+		for _, gsi := range gsis {
+			name, _ := gsi["IndexName"].(string)
+			gsi["IndexStatus"] = reader.GSIStatus(cfg.Name, name)
+		}
+	}
+
+	return td
+}
+
 // tableDescription builds the DynamoDB TableDescription wire shape that both
 // CreateTable and DescribeTable return, including the fields an IaC client reads
-// back (ARN, creation time, attribute definitions, billing mode).
+// back (ARN, creation time, attribute definitions, billing mode). It reports
+// every status as ACTIVE; describeTableShape overlays any transient
+// CREATING/UPDATING status from the provider.
 func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 	keySchema := []map[string]string{{"AttributeName": cfg.PartitionKey, "KeyType": keyTypeHash}}
 	if cfg.SortKey != "" {
@@ -643,7 +680,7 @@ func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"Table": tableDescription(cfg)})
+	wire.WriteJSON(w, map[string]any{"Table": h.describeTableShape(cfg)})
 }
 
 // describeContinuousBackups reports the table's point-in-time recovery state.
