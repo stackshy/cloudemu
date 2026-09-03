@@ -853,6 +853,59 @@ func TestDescribeResultsDoNotAliasStore(t *testing.T) {
 	}
 }
 
+func TestCreateDatabaseCopy(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+		Server: "srv", Name: "src", Collation: "SQL_Latin1_General_CP1_CI_AS",
+		SKUName: "S3", SKUTier: "Standard", SKUCapacity: 100,
+	}); err != nil {
+		t.Fatalf("CreateDatabase source: %v", err)
+	}
+
+	// Bare-name source reference on the same server; inherits unset properties.
+	copyDB, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+		Server: "srv", Name: "copy", CreateMode: "Copy", SourceDatabaseID: "src",
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabase copy: %v", err)
+	}
+
+	assertEqual(t, "SQL_Latin1_General_CP1_CI_AS", copyDB.Collation)
+	assertEqual(t, "S3", copyDB.SKUName)
+	assertEqual(t, "Standard", copyDB.SKUTier)
+	assertEqual(t, 100, copyDB.SKUCapacity)
+
+	// The copy is independent: deleting the source does not remove it.
+	if err := m.DeleteDatabase(ctx, "srv", "src"); err != nil {
+		t.Fatalf("DeleteDatabase source: %v", err)
+	}
+
+	if _, err := m.GetDatabase(ctx, "srv", "copy"); err != nil {
+		t.Fatalf("copy vanished after source delete: %v", err)
+	}
+
+	// Copy from a nonexistent source is NotFound.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+		Server: "srv", Name: "orphan", CreateMode: "Copy",
+		SourceDatabaseID: "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Sql/servers/srv/databases/ghost",
+	}); err == nil {
+		t.Error("copy from nonexistent source: expected NotFound")
+	}
+
+	// Copy without a source id is InvalidArgument.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+		Server: "srv", Name: "nosrc", CreateMode: "Copy",
+	}); err == nil {
+		t.Error("copy without sourceDatabaseId: expected InvalidArgument")
+	}
+}
+
 func TestCreateDatabaseValidatesElasticPool(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

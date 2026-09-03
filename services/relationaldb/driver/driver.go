@@ -561,6 +561,16 @@ type DatabaseConfig struct {
 	// bare pool name or a full ARM resource ID); empty for a standalone
 	// database. Set via properties.elasticPoolId on the ARM request body.
 	ElasticPoolID string
+	// CreateMode selects how the database is provisioned (Azure SQL
+	// properties.createMode). Empty / "Default" is a new empty database, while
+	// "Copy" and "PointInTimeRestore" provision a new, independent database
+	// seeded from an existing source database named by SourceDatabaseID. Other
+	// providers leave it empty.
+	CreateMode string
+	// SourceDatabaseID is the source a Copy / PointInTimeRestore create derives
+	// from: a full ARM database resource ID (".../servers/{s}/databases/{d}")
+	// or a bare database name on the same server. Ignored for a Default create.
+	SourceDatabaseID string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -804,6 +814,34 @@ func ElasticPoolName(id string) string {
 	}
 
 	return id
+}
+
+// SourceDatabaseRef extracts the source server and database name from an Azure
+// SQL sourceDatabaseId, a full ARM resource ID of the form
+// ".../servers/{server}/databases/{database}". Returns ok=false when id is not
+// a database resource ID (e.g. a bare database name), so a caller can fall back
+// to treating it as a same-server reference. Shared by the provider (which owns
+// the database store) and the wire server so both parse the id identically.
+func SourceDatabaseRef(id string) (server, database string, ok bool) {
+	const dbMarker = "/databases/"
+
+	const srvMarker = "/servers/"
+
+	di := strings.LastIndex(id, dbMarker)
+	si := strings.Index(id, srvMarker)
+
+	if di < 0 || si < 0 || si >= di {
+		return "", "", false
+	}
+
+	server = id[si+len(srvMarker) : di]
+	database = id[di+len(dbMarker):]
+
+	if server == "" || database == "" || strings.Contains(server, "/") || strings.Contains(database, "/") {
+		return "", "", false
+	}
+
+	return server, database, true
 }
 
 // FailoverGroupConfig describes a failover group to create (Azure SQL).

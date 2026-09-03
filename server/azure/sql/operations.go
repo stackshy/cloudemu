@@ -192,6 +192,8 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 	if body.Properties != nil {
 		cfg.Collation = body.Properties.Collation
 		cfg.ElasticPoolID = body.Properties.ElasticPoolID
+		cfg.CreateMode = body.Properties.CreateMode
+		cfg.SourceDatabaseID = body.Properties.SourceDatabaseID
 
 		if body.Properties.ZoneRedundant != nil {
 			cfg.ZoneRedundant = *body.Properties.ZoneRedundant
@@ -220,10 +222,11 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 	}
 
 	if cerrors.IsNotFound(err) {
-		// CreateDatabase raises NotFound for two distinct causes: a missing
-		// parent server, or (once the server exists) an elasticPoolId that
-		// doesn't resolve to a pool on it. Disambiguate by server existence.
-		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, err)
+		// CreateDatabase raises NotFound for three distinct causes: a missing
+		// parent server, a Copy/PointInTimeRestore sourceDatabaseId that doesn't
+		// resolve, or (once the server exists) an elasticPoolId that doesn't
+		// resolve to a pool on it. Disambiguate by server existence + copy mode.
+		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, &cfg, err)
 		return
 	}
 
@@ -239,9 +242,9 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 	}
 
 	if cerrors.IsNotFound(err) {
-		// Same disambiguation as above: replaceDatabase's own elastic-pool
-		// pre-check also raises NotFound.
-		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, err)
+		// replaceDatabase's only NotFound is its elastic-pool pre-check (the
+		// copy path never runs on the update half), so pass no cfg.
+		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, nil, err)
 		return
 	}
 
@@ -254,10 +257,19 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 // server whose referenced elastic pool doesn't exist (real Azure answers 400
 // TargetElasticPoolDoesNotExist — see
 // https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update).
-func (h *Handler) writeDatabaseNotFound(ctx context.Context, w http.ResponseWriter, server string, err error) {
+func (h *Handler) writeDatabaseNotFound(
+	ctx context.Context, w http.ResponseWriter, server string, cfg *rdsdriver.DatabaseConfig, err error,
+) {
 	clusters, dErr := h.db.DescribeClusters(ctx, []string{server})
 	if dErr != nil || len(clusters) == 0 {
 		azurearm.WriteParentNotFound(w, err)
+		return
+	}
+
+	// Server exists: a Copy/PointInTimeRestore whose sourceDatabaseId is set
+	// resolved the source before the pool check, so the NotFound is the source.
+	if cfg != nil && cfg.SourceDatabaseID != "" {
+		azurearm.WriteError(w, http.StatusNotFound, "SourceDatabaseNotFound", err.Error())
 		return
 	}
 

@@ -14,7 +14,20 @@ import (
 const (
 	dbStatusCreating = "Creating"
 	dbStatusScaling  = "Scaling"
+
+	// createModeCopy / createModePITR are the Azure SQL createMode values that
+	// provision a new database from an existing source database. Point-in-time
+	// restore is modeled as a copy of the source's current state: in-memory
+	// databases carry no row data, so there is no historical state to rewind to.
+	createModeCopy = "Copy"
+	createModePITR = "PointInTimeRestore"
 )
+
+// isSourceCopyMode reports whether a createMode provisions a database from an
+// existing source database (properties.sourceDatabaseId).
+func isSourceCopyMode(mode string) bool {
+	return mode == createModeCopy || mode == createModePITR
+}
 
 // dbKey is the storage key for a logical database: "server/name".
 func dbKey(server, name string) string { return server + "/" + name }
@@ -51,6 +64,15 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	key := dbKey(cfg.Server, cfg.Name)
 	if _, ok := m.databases.Get(key); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "database %q already exists on server %q", cfg.Name, cfg.Server)
+	}
+
+	// A Copy / PointInTimeRestore create seeds the new database from an existing
+	// source. Resolved before the elastic-pool check so a missing source is
+	// reported as its own NotFound rather than a pool error.
+	if isSourceCopyMode(cfg.CreateMode) {
+		if err := m.applyCopySource(&cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := m.requireElasticPool(cfg.Server, cfg.ElasticPoolID); err != nil {
@@ -101,6 +123,50 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	out := db
 
 	return &out, nil
+}
+
+// applyCopySource resolves the copy/restore source database named by
+// cfg.SourceDatabaseID and seeds cfg with the source's properties that the
+// request left unset (collation, charset, SKU). The result is an independent,
+// standalone database — the source's elastic-pool membership is not inherited.
+// The caller holds m.mu, so the source read is on the already-locked store.
+func (m *Mock) applyCopySource(cfg *rdsdriver.DatabaseConfig) error {
+	if cfg.SourceDatabaseID == "" {
+		return cerrors.Newf(cerrors.InvalidArgument, "createMode %q requires sourceDatabaseId", cfg.CreateMode)
+	}
+
+	srcServer, srcName, ok := rdsdriver.SourceDatabaseRef(cfg.SourceDatabaseID)
+	if !ok {
+		// A bare name refers to a database on the same server.
+		srcServer, srcName = cfg.Server, cfg.SourceDatabaseID
+	}
+
+	src, ok := m.databases.Get(dbKey(srcServer, srcName))
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "source database %q not found on server %q", srcName, srcServer)
+	}
+
+	if cfg.Collation == "" {
+		cfg.Collation = src.Collation
+	}
+
+	if cfg.Charset == "" {
+		cfg.Charset = src.Charset
+	}
+
+	if cfg.SKUName == "" {
+		cfg.SKUName = src.SKUName
+	}
+
+	if cfg.SKUTier == "" {
+		cfg.SKUTier = src.SKUTier
+	}
+
+	if cfg.SKUCapacity == 0 {
+		cfg.SKUCapacity = src.SKUCapacity
+	}
+
+	return nil
 }
 
 // UpdateDatabase applies a fully-merged desired state to an existing logical
