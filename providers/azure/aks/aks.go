@@ -38,6 +38,16 @@ const (
 	defaultPoolType      = "VirtualMachineScaleSets"
 	defaultNodeImage     = "AKSUbuntu-2204gen2containerd-202401.09.0"
 	poolPowerRunning     = "Running"
+	poolPowerStopped     = "Stopped"
+	// clusterPowerRunning / clusterPowerStopped are the ARM powerState.code
+	// values a managed cluster reports; provisioningStateSucceeded is the
+	// terminal provisioningState every mutating op settles to synchronously.
+	clusterPowerRunning        = "Running"
+	clusterPowerStopped        = "Stopped"
+	provisioningStateSucceeded = "Succeeded"
+	// agentPoolModeSystem is the AgentPool.Mode value AKS requires at least
+	// one pool to carry at all times; DeleteAgentPool enforces that rule.
+	agentPoolModeSystem = "System"
 	// Network-profile defaults the real AKS service synthesizes when a create
 	// omits properties.networkProfile entirely.
 	defaultNetworkPlugin   = "kubenet"
@@ -477,8 +487,13 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 //nolint:gocritic // input is a value-type mirror of the public CreateOrUpdate body.
 func resolveClusterFields(cluster *ManagedCluster, input ClusterInput, existing bool) {
 	cluster.Location = mergeStr(cluster.Location, input.Location, "", existing)
-	cluster.ProvisioningState = "Succeeded"
-	cluster.PowerState = "Running"
+	cluster.ProvisioningState = provisioningStateSucceeded
+	// A create starts Running; an update leaves whatever power state Start/Stop
+	// last set (real AKS keeps a stopped cluster stopped across most PUTs).
+	if !existing {
+		cluster.PowerState = clusterPowerRunning
+	}
+
 	cluster.Tier = mergeStr(cluster.Tier, input.Tier, "Free", existing)
 	cluster.KubernetesVersion = mergeStr(cluster.KubernetesVersion, input.KubernetesVersion, defaultK8sVersion, existing)
 	cluster.DNSPrefix = mergeStr(cluster.DNSPrefix, input.DNSPrefix, input.Name+"-dns", existing)
@@ -650,7 +665,7 @@ func buildAgentPool(rg, cluster, clusterVersion string, in AgentPoolInput, now t
 		OSType:                 defaultIfEmpty(in.OSType, "Linux"),
 		Mode:                   defaultIfEmpty(in.Mode, "User"),
 		OrchestratorVer:        defaultIfEmpty(in.OrchestratorVer, defaultIfEmpty(clusterVersion, defaultK8sVersion)),
-		ProvisioningState:      "Succeeded",
+		ProvisioningState:      provisioningStateSucceeded,
 		ScaleSetPriority:       defaultIfEmpty(in.ScaleSetPriority, "Regular"),
 		NodeLabels:             copyLabels(in.NodeLabels),
 		NodeTaints:             copyTaints(in.NodeTaints),
@@ -882,6 +897,66 @@ func (m *Mock) RotateClusterCertificates(_ context.Context, rg, name string) err
 	return nil
 }
 
+// StartCluster starts a stopped managed cluster
+// (Microsoft.ContainerService/.../start), restoring the control plane and
+// every agent pool's VMs to Running. Idempotent: starting an already-running
+// cluster succeeds and leaves it unchanged.
+func (m *Mock) StartCluster(_ context.Context, rg, name string) (*ManagedCluster, error) {
+	return m.setClusterPower(rg, name, clusterPowerRunning, poolPowerRunning)
+}
+
+// StopCluster stops a managed cluster (Microsoft.ContainerService/.../stop),
+// deallocating the control plane and every agent pool's VMs while preserving
+// cluster and workload state — real AKS does not bill a stopped cluster.
+// Idempotent: stopping an already-stopped cluster succeeds and leaves it
+// unchanged.
+func (m *Mock) StopCluster(_ context.Context, rg, name string) (*ManagedCluster, error) {
+	return m.setClusterPower(rg, name, clusterPowerStopped, poolPowerStopped)
+}
+
+// setClusterPower is the shared body for StartCluster/StopCluster: it sets
+// the cluster's powerState.code, settles provisioningState back to Succeeded,
+// and mirrors the transition onto every attached agent pool.
+func (m *Mock) setClusterPower(rg, name, clusterState, poolState string) (*ManagedCluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := clusterKey(rg, name)
+
+	cluster, ok := m.clusters.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "managed cluster %q not found in resource group %q", name, rg)
+	}
+
+	cluster.PowerState = clusterState
+	cluster.ProvisioningState = provisioningStateSucceeded
+	cluster.UpdatedAt = m.opts.Clock.Now().UTC()
+	m.clusters.Set(key, cluster)
+	m.setPoolsPowerState(rg, name, poolState)
+
+	out := cluster
+
+	return &out, nil
+}
+
+// setPoolsPowerState updates PowerState on every pool attached to a cluster,
+// mirroring the control plane's power transition down onto its agent pools.
+// Caller must hold m.mu (write).
+func (m *Mock) setPoolsPowerState(rg, cluster, state string) {
+	prefix := rg + "/" + cluster + "/"
+
+	for _, k := range m.pools.Keys() {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+
+		if p, ok := m.pools.Get(k); ok {
+			p.PowerState = state
+			m.pools.Set(k, p)
+		}
+	}
+}
+
 // CreateOrUpdateAgentPool creates or replaces an agent pool on a cluster.
 //
 //nolint:gocritic // in mirrors the public AgentPoolInput surface; pointer would invite caller mutation.
@@ -950,15 +1025,27 @@ func (m *Mock) GetAgentPool(_ context.Context, rg, cluster, pool string) (*Agent
 	return &out, nil
 }
 
-// DeleteAgentPool removes an agent pool.
+// DeleteAgentPool removes an agent pool. Deleting the last System-mode pool
+// on a cluster is rejected: real AKS requires every cluster to retain at
+// least one System pool so the control plane always has somewhere to
+// schedule its own components.
 func (m *Mock) DeleteAgentPool(_ context.Context, rg, cluster, pool string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := poolKey(rg, cluster, pool)
-	if !m.pools.Delete(key) {
+
+	ap, ok := m.pools.Get(key)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "agent pool %q not found on cluster %q", pool, cluster)
 	}
+
+	if strings.EqualFold(ap.Mode, agentPoolModeSystem) && m.systemPoolCount(rg, cluster) <= 1 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"agent pool %q is the last System-mode pool on cluster %q; AKS requires at least one", pool, cluster)
+	}
+
+	m.pools.Delete(key)
 
 	cKey := clusterKey(rg, cluster)
 	if c, ok := m.clusters.Get(cKey); ok {
@@ -967,6 +1054,17 @@ func (m *Mock) DeleteAgentPool(_ context.Context, rg, cluster, pool string) erro
 	}
 
 	return nil
+}
+
+// systemPoolCount returns how many System-mode pools are currently attached
+// to a cluster. Caller must hold m.mu.
+func (m *Mock) systemPoolCount(rg, cluster string) int {
+	all := m.pools.Filter(func(_ string, p AgentPool) bool {
+		return strings.EqualFold(p.ResourceGroup, rg) && strings.EqualFold(p.ClusterName, cluster) &&
+			strings.EqualFold(p.Mode, agentPoolModeSystem)
+	})
+
+	return len(all)
 }
 
 // ListAgentPools returns all pools attached to a cluster.
