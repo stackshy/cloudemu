@@ -135,3 +135,53 @@ func TestSDKDeleteGroupWithMember(t *testing.T) {
 		t.Fatalf("GetGroup after refused delete: %v", err)
 	}
 }
+
+// TestSDKDeletePolicyWithNonDefaultVersion locks in that DeletePolicy fails
+// with DeleteConflictException while a non-default version still exists,
+// matching API_DeletePolicy (the caller must delete every non-default version
+// with DeletePolicyVersion first; the default version is removed implicitly
+// by DeletePolicy itself).
+func TestSDKDeletePolicyWithNonDefaultVersion(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	policy, err := client.CreatePolicy(ctx, &iam.CreatePolicyInput{
+		PolicyName:     aws.String("versioned-pol"),
+		PolicyDocument: aws.String(samplePolicy),
+	})
+	if err != nil {
+		t.Fatalf("CreatePolicy: %v", err)
+	}
+
+	arn := aws.ToString(policy.Policy.Arn)
+
+	version, err := client.CreatePolicyVersion(ctx, &iam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String(arn),
+		PolicyDocument: aws.String(samplePolicy),
+	})
+	if err != nil {
+		t.Fatalf("CreatePolicyVersion: %v", err)
+	}
+
+	_, err = client.DeletePolicy(ctx, &iam.DeletePolicyInput{PolicyArn: aws.String(arn)})
+
+	var conflict *iamtypes.DeleteConflictException
+	if !errors.As(err, &conflict) {
+		t.Fatalf("DeletePolicy with non-default version: want DeleteConflictException, got %v", err)
+	}
+
+	// Policy must survive the refused delete.
+	if _, err := client.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String(arn)}); err != nil {
+		t.Fatalf("GetPolicy after refused delete: %v", err)
+	}
+
+	if _, err := client.DeletePolicyVersion(ctx, &iam.DeletePolicyVersionInput{
+		PolicyArn: aws.String(arn), VersionId: version.PolicyVersion.VersionId,
+	}); err != nil {
+		t.Fatalf("DeletePolicyVersion: %v", err)
+	}
+
+	if _, err := client.DeletePolicy(ctx, &iam.DeletePolicyInput{PolicyArn: aws.String(arn)}); err != nil {
+		t.Fatalf("DeletePolicy after removing non-default version: %v", err)
+	}
+}
