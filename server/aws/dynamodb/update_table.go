@@ -81,7 +81,7 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
+	wire.WriteJSON(w, map[string]any{"TableDescription": h.describeTableShape(full)})
 }
 
 func indexDeleteName(del *struct {

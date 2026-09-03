@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -65,6 +67,29 @@ type tableData struct {
 	pitrEnabled   bool
 }
 
+// DynamoDB table/GSI lifecycle states and their settle durations. A real table
+// reports CREATING on create and UPDATING on an UpdateTable before reaching
+// ACTIVE; a GSI reports CREATING while it back-fills. The overlay is a read-time
+// window (see internal/settle) gated behind config.Options.AsyncSettle: with the
+// default (off) SettleDuration returns 0, the window is inactive and every read
+// reports ACTIVE immediately — byte-for-byte the historical behavior.
+const (
+	statusActive   = "ACTIVE"
+	statusCreating = "CREATING"
+	statusUpdating = "UPDATING"
+
+	settleTableCreate = 2 * time.Second // table CREATING->ACTIVE
+	settleTableUpdate = 2 * time.Second // table UPDATING->ACTIVE (throughput/billing change)
+	settleGSICreate   = 2 * time.Second // GSI CREATING->ACTIVE
+)
+
+// gsiSettleKey is the key under which a table's GSI settle window is stored,
+// namespacing the index by its table so identically named indexes on different
+// tables never collide.
+func gsiSettleKey(table, index string) string {
+	return table + "\x00" + index
+}
+
 // Mock is an in-memory mock implementation of DynamoDB.
 type Mock struct {
 	mu            sync.RWMutex
@@ -72,6 +97,12 @@ type Mock struct {
 	opts          *config.Options
 	monitoring    mondriver.Monitoring
 	streamInvoker StreamEventInvoker
+	// tableSettle overlays a CREATING/UPDATING window onto a table's stored
+	// ACTIVE status; gsiSettle does the same for each GSI (keyed by
+	// gsiSettleKey). Both are self-locking and independent of m.mu, so read-path
+	// accessors need no provider lock. Inactive unless config.AsyncSettle is set.
+	tableSettle *settle.Set
+	gsiSettle   *settle.Set
 	// pendingStream buffers stream records captured under m.mu so their delivery
 	// runs after the lock is released (a mapped Lambda may write back into
 	// DynamoDB); guarded by m.mu.
@@ -133,6 +164,8 @@ func New(opts *config.Options) *Mock {
 		opts:          opts,
 		txIdempotency: make(map[string]txIdempotencyRecord),
 		backups:       make(map[string]*backupData),
+		tableSettle:   settle.NewSet(),
+		gsiSettle:     settle.NewSet(),
 	}
 }
 
@@ -364,6 +397,15 @@ func (m *Mock) CreateTable(ctx context.Context, cfg driver.TableConfig) error {
 	td.config = cfg
 	m.tables[cfg.Name] = td
 
+	now := m.opts.Clock.Now()
+	m.tableSettle.Begin(cfg.Name, statusCreating, now, m.opts.SettleDuration(settleTableCreate))
+
+	gsiDur := m.opts.SettleDuration(settleGSICreate)
+
+	for _, gsi := range cfg.GSIs {
+		m.gsiSettle.Begin(gsiSettleKey(cfg.Name, gsi.Name), statusCreating, now, gsiDur)
+	}
+
 	return nil
 }
 
@@ -411,8 +453,15 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.tables[name]; !exists {
+	td, exists := m.tables[name]
+	if !exists {
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", name)
+	}
+
+	m.tableSettle.Clear(name)
+
+	for _, gsi := range td.config.GSIs {
+		m.gsiSettle.Clear(gsiSettleKey(name, gsi.Name))
 	}
 
 	delete(m.tables, name)
@@ -1165,6 +1214,8 @@ func (m *Mock) UpdateThroughput(_ context.Context, table, billingMode string, rc
 		td.config.WriteCapacityUnits = wcu
 	}
 
+	m.tableSettle.Begin(table, statusUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settleTableUpdate))
+
 	return nil
 }
 
@@ -1525,11 +1576,15 @@ func (m *Mock) CreateIndex(_ context.Context, table string, cfg driver.GSIConfig
 
 	td.config.GSIs = append(td.config.GSIs, cfg)
 
+	now := m.opts.Clock.Now()
+	key := gsiSettleKey(table, cfg.Name)
+	m.gsiSettle.Begin(key, statusCreating, now, m.opts.SettleDuration(settleGSICreate))
+
 	return &driver.IndexInfo{
 		Name:         cfg.Name,
 		PartitionKey: cfg.PartitionKey,
 		SortKey:      cfg.SortKey,
-		Status:       "ACTIVE",
+		Status:       m.gsiSettle.State(key, now, statusActive),
 	}, nil
 }
 
@@ -1546,6 +1601,9 @@ func (m *Mock) DeleteIndex(_ context.Context, table, indexName string) error {
 	for i, gsi := range td.config.GSIs {
 		if gsi.Name == indexName {
 			td.config.GSIs = append(td.config.GSIs[:i], td.config.GSIs[i+1:]...)
+
+			m.gsiSettle.Clear(gsiSettleKey(table, indexName))
+
 			return nil
 		}
 	}
@@ -1569,12 +1627,28 @@ func (m *Mock) DescribeIndex(_ context.Context, table, indexName string) (*drive
 				Name:         gsi.Name,
 				PartitionKey: gsi.PartitionKey,
 				SortKey:      gsi.SortKey,
-				Status:       "ACTIVE",
+				Status:       m.gsiSettle.State(gsiSettleKey(table, indexName), m.opts.Clock.Now(), statusActive),
 			}, nil
 		}
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
+}
+
+// TableStatus reports a table's lifecycle status, overlaying any active
+// CREATING/UPDATING settle window onto the stored ACTIVE state. It is the
+// read-path accessor the DynamoDB wire handler calls (via an optional
+// capability interface) instead of hardcoding "ACTIVE"; absent a window (the
+// AsyncSettle-off default, or after the window elapses) it returns ACTIVE.
+func (m *Mock) TableStatus(table string) string {
+	return m.tableSettle.State(table, m.opts.Clock.Now(), statusActive)
+}
+
+// GSIStatus reports a Global Secondary Index's lifecycle status, overlaying any
+// active CREATING settle window onto the stored ACTIVE state. Companion to
+// TableStatus for the wire handler's GlobalSecondaryIndexes block.
+func (m *Mock) GSIStatus(table, index string) string {
+	return m.gsiSettle.State(gsiSettleKey(table, index), m.opts.Clock.Now(), statusActive)
 }
 
 // ListIndexes returns all Global Secondary Indexes for a table.
@@ -1587,13 +1661,15 @@ func (m *Mock) ListIndexes(_ context.Context, table string) ([]driver.IndexInfo,
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
+	now := m.opts.Clock.Now()
 	indexes := make([]driver.IndexInfo, 0, len(td.config.GSIs))
+
 	for _, gsi := range td.config.GSIs {
 		indexes = append(indexes, driver.IndexInfo{
 			Name:         gsi.Name,
 			PartitionKey: gsi.PartitionKey,
 			SortKey:      gsi.SortKey,
-			Status:       "ACTIVE",
+			Status:       m.gsiSettle.State(gsiSettleKey(table, gsi.Name), now, statusActive),
 		})
 	}
 
