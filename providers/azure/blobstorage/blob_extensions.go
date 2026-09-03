@@ -368,6 +368,12 @@ func (m *Mock) CreateAppendBlob(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
+	// Immutable storage (WORM): re-creating an append blob over a protected key
+	// would replace its content with empty — block it. A fresh key passes.
+	if err := m.enforceImmutable(ctr, blob); err != nil {
+		return nil, err
+	}
+
 	if contentType == "" {
 		contentType = octetStream
 	}

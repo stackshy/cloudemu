@@ -430,8 +430,8 @@ type AzureImmutableBlob interface {
 		ctx context.Context, container, blob string, policy BlobImmutabilityPolicy,
 	) (BlobImmutabilityPolicy, error)
 	// DeleteBlobImmutabilityPolicy removes the blob's immutability policy
-	// (allowed only while it is Unlocked; a Locked policy returns a
-	// FailedPrecondition error).
+	// (allowed only while it is Unlocked; a Locked policy returns a 409
+	// BlobImmutableDueToPolicy error).
 	DeleteBlobImmutabilityPolicy(ctx context.Context, container, blob string) error
 	// SetBlobLegalHold sets or clears the blob's legal hold.
 	SetBlobLegalHold(ctx context.Context, container, blob string, hold bool) error
