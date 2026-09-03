@@ -362,11 +362,16 @@ func classAndNameMatch(obj *gcsObject, c *gcsLifecycleCondition) bool {
 }
 
 // conditionIsEvaluable reports whether every condition present on the rule is
-// one the emulator can evaluate. customTime-based conditions have no backing
-// object state, so a rule carrying them is treated as non-matching rather than
-// silently ignoring the unmet guard.
+// one the emulator can evaluate. customTime and noncurrent-time conditions have
+// no backing object state (the emulator does not track an object's custom time
+// or the instant a version became noncurrent), so a rule carrying any of them is
+// treated as non-matching rather than silently ignoring the unmet guard — the
+// conservative choice that avoids deleting versions the condition has not
+// actually cleared. These fields still round-trip verbatim; only their
+// evaluation is suppressed.
 func conditionIsEvaluable(c *gcsLifecycleCondition) bool {
-	return c.DaysSinceCustomTime == nil && c.CustomTimeBefore == ""
+	return c.DaysSinceCustomTime == nil && c.CustomTimeBefore == "" &&
+		c.DaysSinceNoncurrentTime == nil && c.NoncurrentTimeBefore == ""
 }
 
 // ApplyLifecycleGCS performs the destructive lifecycle pass over noncurrent

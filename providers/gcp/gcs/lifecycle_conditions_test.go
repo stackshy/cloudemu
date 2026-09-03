@@ -246,6 +246,59 @@ func TestApplyLifecycleNumNewerVersions(t *testing.T) {
 	assert.Empty(t, deleted)
 }
 
+// TestApplyLifecycleNoncurrentTimeConservative guards against over-deletion:
+// the emulator has no backing state for when a version became noncurrent, so a
+// Delete rule keyed ONLY on daysSinceNoncurrentTime / noncurrentTimeBefore must
+// match NOTHING on the destructive pass (conservative), while still round-tripping
+// the condition verbatim.
+func TestApplyLifecycleNoncurrentTimeConservative(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		cond gcsLifecycleCondition
+	}{
+		{"daysSinceNoncurrentTime only", gcsLifecycleCondition{DaysSinceNoncurrentTime: intPtr(30)}},
+		{"noncurrentTimeBefore only", gcsLifecycleCondition{NoncurrentTimeBefore: "2026-01-01"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newMock(t)
+
+			const bucket = "e2e-lc-nct"
+			require.NoError(t, m.CreateBucket(ctx, bucket))
+			require.NoError(t, m.SetBucketVersioning(ctx, bucket, true))
+
+			// One archived (noncurrent) generation plus a live version.
+			require.NoError(t, m.PutObject(ctx, bucket, "obj", []byte("v1"), "text/plain", nil))
+			require.NoError(t, m.PutObject(ctx, bucket, "obj", []byte("v2"), "text/plain", nil))
+
+			bkt, ok := m.buckets.Get(bucket)
+			require.True(t, ok)
+			require.Len(t, bkt.versions["obj"], 1)
+
+			doc := marshalLifecycle(t, gcsLifecycleRule{
+				Action:    gcsLifecycleAction{Type: "Delete"},
+				Condition: tc.cond,
+			})
+			require.NoError(t, m.SetLifecycleGCS(ctx, bucket, doc))
+
+			// Destructive pass deletes nothing: no backing noncurrent-time state.
+			deleted, err := m.ApplyLifecycleGCS(ctx, bucket)
+			require.NoError(t, err)
+			assert.Empty(t, deleted, "noncurrent-time-only rule must not delete any version")
+			assert.Len(t, bkt.versions["obj"], 1, "noncurrent version must survive")
+
+			// The condition still round-trips verbatim.
+			got, present, err := m.GetLifecycleGCS(ctx, bucket)
+			require.NoError(t, err)
+			require.True(t, present)
+			assert.JSONEq(t, string(doc), string(got))
+		})
+	}
+}
+
 // TestApplyLifecycleNoConfig is a no-op when no verbatim config is set.
 func TestApplyLifecycleNoConfig(t *testing.T) {
 	ctx := context.Background()
