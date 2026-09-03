@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -41,6 +42,11 @@ func TestSnapshotRoundTripLambda(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("CreateEventSourceMapping: %v", err)
+	}
+
+	urlCfg, err := src.CreateFunctionURLConfig(ctx, driver.FunctionURLConfig{FunctionName: cfg.Name})
+	if err != nil {
+		t.Fatalf("CreateFunctionURLConfig: %v", err)
 	}
 
 	raw, err := src.Snapshot(ctx, true)
@@ -89,6 +95,61 @@ func TestSnapshotRoundTripLambda(t *testing.T) {
 	gotESM, err := dst.GetEventSourceMapping(ctx, esm.UUID)
 	if err != nil || gotESM.FunctionArn == "" {
 		t.Fatalf("restored esm = %+v, err %v", gotESM, err)
+	}
+
+	gotURLCfg, err := dst.GetFunctionURLConfig(ctx, cfg.Name, "")
+	if err != nil || gotURLCfg.FunctionURL != urlCfg.FunctionURL {
+		t.Fatalf("restored function url config = %+v, err %v, want FunctionURL %q", gotURLCfg, err, urlCfg.FunctionURL)
+	}
+}
+
+// TestSnapshotRestoreLegacyFunctionURLConfig proves Restore migrates a
+// snapshot taken before Function URLs gained qualifier scoping — which
+// serialized the config under the singular "urlConfig" key instead of today's
+// per-qualifier "urlConfigs" map — so an old on-disk snapshot's Function URL
+// config isn't silently dropped.
+func TestSnapshotRestoreLegacyFunctionURLConfig(t *testing.T) {
+	ctx := context.Background()
+
+	legacy := map[string]any{
+		"funcs": map[string]any{
+			"my-func": map[string]any{
+				"info": map[string]any{
+					"Name": "my-func",
+					"ARN":  "arn:aws:lambda:us-east-1:000000000000:function:my-func",
+				},
+				"awsConfig": map[string]any{},
+				"urlConfig": map[string]any{
+					"FunctionName": "my-func",
+					"Qualifier":    "",
+					"FunctionArn":  "arn:aws:lambda:us-east-1:000000000000:function:my-func",
+					"FunctionURL":  "https://legacyid123456.lambda-url.us-east-1.on.aws/",
+					"AuthType":     "NONE",
+					"InvokeMode":   "BUFFERED",
+					"CreationTime": "2025-01-01T00:00:00Z",
+					"LastModified": "2025-01-01T00:00:00Z",
+				},
+			},
+		},
+	}
+
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy snapshot: %v", err)
+	}
+
+	dst := newTestMock()
+	if err := dst.Restore(ctx, raw); err != nil {
+		t.Fatalf("restore legacy snapshot: %v", err)
+	}
+
+	got, err := dst.GetFunctionURLConfig(ctx, "my-func", "")
+	if err != nil {
+		t.Fatalf("GetFunctionURLConfig after restoring a legacy singular-urlConfig snapshot: %v", err)
+	}
+
+	if got.FunctionURL != "https://legacyid123456.lambda-url.us-east-1.on.aws/" {
+		t.Fatalf("restored FunctionURL = %q, want the legacy snapshot's URL", got.FunctionURL)
 	}
 }
 

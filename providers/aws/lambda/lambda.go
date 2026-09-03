@@ -100,8 +100,13 @@ type funcData struct {
 	// policies is the resource-based policy keyed by qualifier (normalized via
 	// policyKey: "" and "$LATEST" collapse to the unqualified function policy),
 	// then by statement id. AWS keeps a separate policy per version/alias.
-	policies  map[string]map[string]driver.PermissionStatement
-	urlConfig *driver.FunctionURLConfig // Lambda Function URL, nil until created
+	policies map[string]map[string]driver.PermissionStatement
+	// urlConfigs holds the Function URL config keyed by qualifier (normalized
+	// via policyKey: "" and "$LATEST" collapse to the unqualified $LATEST URL,
+	// an alias name is kept as-is), matching AWS's one-URL-per-(function,
+	// qualifier) scoping. Real Lambda rejects a numbered-version qualifier
+	// outright — see validateFunctionURLQualifier.
+	urlConfigs map[string]*driver.FunctionURLConfig
 	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
 	// TracingConfig) applied through the AWSConfigurable optional interface.
 	awsConfig driver.AWSFunctionConfig

@@ -41,8 +41,15 @@ type funcSnapshot struct {
 	Aliases      map[string]driver.Alias                          `json:"aliases,omitempty"`
 	Concurrency  *driver.ConcurrencyConfig                        `json:"concurrency,omitempty"`
 	Policies     map[string]map[string]driver.PermissionStatement `json:"policies,omitempty"`
-	URLConfig    *driver.FunctionURLConfig                        `json:"urlConfig,omitempty"`
-	AWSConfig    driver.AWSFunctionConfig                         `json:"awsConfig"`
+	// URLConfigs is the Function URL config per qualifier (see funcData.urlConfigs).
+	URLConfigs map[string]*driver.FunctionURLConfig `json:"urlConfigs,omitempty"`
+	// URLConfig is the legacy single-URL shape a snapshot taken before Function
+	// URLs gained qualifier scoping used ("urlConfig", singular). Never written
+	// (snapshotFunc only populates URLConfigs), but still read on restore so an
+	// old on-disk snapshot's Function URL config isn't silently dropped — see
+	// restoreFunc.
+	URLConfig *driver.FunctionURLConfig `json:"urlConfig,omitempty"`
+	AWSConfig driver.AWSFunctionConfig  `json:"awsConfig"`
 	// EventInvokeConfigs is the async-invoke config per qualifier (retries,
 	// event age, OnSuccess/OnFailure destinations).
 	EventInvokeConfigs map[string]driver.EventInvokeConfig `json:"eventInvokeConfigs,omitempty"`
@@ -114,7 +121,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 func snapshotFunc(fd *funcData) *funcSnapshot {
 	fs := &funcSnapshot{
 		Info: fd.info, EngineBacked: fd.engineBacked, NextVersion: fd.nextVersion,
-		Concurrency: fd.concurrency, Policies: fd.policies, URLConfig: fd.urlConfig,
+		Concurrency: fd.concurrency, Policies: fd.policies, URLConfigs: fd.urlConfigs,
 		AWSConfig: fd.awsConfig, EventInvokeConfigs: fd.eventInvokeConfigs,
 		ProvisionedConcurrencyConfigs: fd.provisionedConcurrencyConfigs,
 	}
@@ -173,7 +180,7 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	fd := funcData{
 		info: fs.Info, engineBacked: fs.EngineBacked, nextVersion: fs.NextVersion,
 		aliases: memstore.New[*aliasData](), concurrency: fs.Concurrency,
-		policies: fs.Policies, urlConfig: fs.URLConfig, awsConfig: fs.AWSConfig,
+		policies: fs.Policies, urlConfigs: legacyURLConfigs(fs), awsConfig: fs.AWSConfig,
 		eventInvokeConfigs:            fs.EventInvokeConfigs,
 		provisionedConcurrencyConfigs: fs.ProvisionedConcurrencyConfigs,
 	}
@@ -196,4 +203,17 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	}
 
 	return fd
+}
+
+// legacyURLConfigs returns fs.URLConfigs, migrating a pre-qualifier-scoping
+// snapshot's legacy singular "urlConfig" field (fs.URLConfig) into the new
+// per-qualifier map when the snapshot predates it — otherwise a Function URL
+// config in an old on-disk snapshot would silently vanish on restore, since
+// the new map field simply isn't present in that JSON.
+func legacyURLConfigs(fs *funcSnapshot) map[string]*driver.FunctionURLConfig {
+	if len(fs.URLConfigs) > 0 || fs.URLConfig == nil {
+		return fs.URLConfigs
+	}
+
+	return map[string]*driver.FunctionURLConfig{policyKey(fs.URLConfig.Qualifier): fs.URLConfig}
 }
