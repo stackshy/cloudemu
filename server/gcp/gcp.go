@@ -414,6 +414,14 @@ func New(d Drivers) *server.Server {
 			gcsHandler.SetPublisher(pubsubHandler)
 		}
 
+		// GCS -> Cloud Functions: an object finalize/delete also invokes any gen2
+		// function whose storage eventTrigger is bound directly to the bucket —
+		// the Eventarc-backed delivery a real gen2 storage trigger uses, separate
+		// from (and requiring no) notificationConfig/topic.
+		if cfHandler != nil {
+			gcsHandler.SetFunctionInvoker(cfHandler)
+		}
+
 		srv.Register(gcsHandler)
 	}
 

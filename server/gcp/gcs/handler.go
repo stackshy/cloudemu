@@ -114,6 +114,14 @@ type Handler struct {
 	// object writes/deletes still succeed without Pub/Sub wired.
 	publisher TopicPublisher
 
+	// functionInvoker delivers an object-change event directly to every gen2
+	// Cloud Function whose Cloud Storage eventTrigger is bound to the bucket —
+	// the Eventarc-backed delivery a real gen2 storage trigger uses, independent
+	// of the legacy notificationConfig -> Pub/Sub -> function chain publisher
+	// drives above. Nil (the default) makes gen2 storage-trigger delivery a
+	// no-op, so object writes/deletes still succeed without it wired.
+	functionInvoker FunctionInvoker
+
 	// resumable holds in-progress resumable-upload sessions keyed by upload id.
 	// A session buffers the object's bytes as Content-Range chunks arrive over
 	// successive requests, committed through the normal object-write path on the
@@ -214,6 +222,8 @@ func isVersionToken(seg string) bool {
 
 // ServeHTTP routes the request based on URL path shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(withDeliveryDepth(r))
+
 	if strings.HasPrefix(r.URL.Path, uploadAPIPrefix) {
 		h.upload(w, r)
 		return
