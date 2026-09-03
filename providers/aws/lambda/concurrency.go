@@ -7,11 +7,24 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
-// PutFunctionConcurrency sets reserved concurrency for a function.
+// PutFunctionConcurrency sets reserved concurrency for a function. Real Lambda
+// blocks lowering reserved concurrency below the sum of provisioned
+// concurrency already configured across the function's versions/aliases (see
+// DeleteFunctionConcurrency for the same guard on full removal), since
+// provisioned concurrency is carved out of the reserved budget.
 func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+	}
+
+	if provisioned := sumProvisionedConcurrency(&fd); cfg.ReservedConcurrentExecutions < provisioned {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"ReservedConcurrentExecutions %d is less than the provisioned concurrency (%d) already "+
+				"configured for function %s", cfg.ReservedConcurrentExecutions, provisioned, cfg.FunctionName)
 	}
 
 	fd.concurrency = &driver.ConcurrencyConfig{
@@ -39,11 +52,23 @@ func (m *Mock) GetFunctionConcurrency(_ context.Context, functionName string) (*
 	return &result, nil
 }
 
-// DeleteFunctionConcurrency removes the concurrency configuration for a function.
+// DeleteFunctionConcurrency removes the concurrency configuration for a
+// function. Real Lambda blocks removing reserved concurrency entirely while
+// any provisioned concurrency is still configured on the function (the same
+// invariant PutFunctionConcurrency enforces for lowering it).
 func (m *Mock) DeleteFunctionConcurrency(_ context.Context, functionName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+	}
+
+	if provisioned := sumProvisionedConcurrency(&fd); provisioned > 0 {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"cannot remove reserved concurrency for function %s: %d provisioned concurrency is still configured",
+			functionName, provisioned)
 	}
 
 	fd.concurrency = nil

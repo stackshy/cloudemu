@@ -91,3 +91,47 @@ func TestSnapshotRoundTripLambda(t *testing.T) {
 		t.Fatalf("restored esm = %+v, err %v", gotESM, err)
 	}
 }
+
+// TestSnapshotRoundTripProvisionedConcurrency proves a snapshot/restore
+// round-trip preserves a function's per-qualifier provisioned-concurrency
+// config.
+func TestSnapshotRoundTripProvisionedConcurrency(t *testing.T) {
+	ctx := context.Background()
+	src := newTestMock()
+
+	if _, err := src.CreateFunction(ctx, defaultFuncConfig()); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	ver, err := src.PublishVersion(ctx, "my-func", "v1")
+	if err != nil {
+		t.Fatalf("PublishVersion: %v", err)
+	}
+
+	if _, err := src.PutFunctionProvisionedConcurrencyConfig(ctx, driver.ProvisionedConcurrencyConfig{
+		FunctionName:                             "my-func",
+		Qualifier:                                ver.Version,
+		RequestedProvisionedConcurrentExecutions: 4,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	raw, err := src.Snapshot(ctx, true)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	dst := newTestMock()
+	if err := dst.Restore(ctx, raw); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	got, err := dst.GetFunctionProvisionedConcurrencyConfig(ctx, "my-func", ver.Version)
+	if err != nil {
+		t.Fatalf("restored Get: %v", err)
+	}
+
+	if got.RequestedProvisionedConcurrentExecutions != 4 {
+		t.Fatalf("restored requested = %d, want 4", got.RequestedProvisionedConcurrentExecutions)
+	}
+}
