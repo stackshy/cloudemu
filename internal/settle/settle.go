@@ -39,6 +39,10 @@ const (
 	DefaultCloudSQLSettle    = 3 * time.Second // Cloud SQL PENDING_CREATE->RUNNABLE
 	DefaultAzureDBSettle     = 3 * time.Second // Azure SQL/flex Creating->Succeeded/Ready
 	DefaultKeyspacesSettle   = 2 * time.Second // Keyspaces table CREATING->ACTIVE
+
+	DefaultGKEClusterSettle   = 3 * time.Second // GKE cluster PROVISIONING->RUNNING
+	DefaultGKENodePoolSettle  = 2 * time.Second // GKE node pool PROVISIONING->RUNNING
+	DefaultGKEReconcileSettle = 1 * time.Second // GKE node pool RECONCILING->RUNNING (resize/mutate)
 )
 
 // Window is a read-time overlay describing a resource still settling into its
