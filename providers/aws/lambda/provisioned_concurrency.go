@@ -20,11 +20,16 @@ const minProvisionedConcurrentExecutions = 1
 
 // PutFunctionProvisionedConcurrencyConfig sets (replacing any existing) the
 // provisioned-concurrency configuration for a published version or alias
-// qualifier. Real Lambda rejects an unqualified/$LATEST target — provisioned
-// concurrency can only attach to an immutable qualifier, because $LATEST's
-// code can change underneath it — and rejects a requested amount that exceeds
-// the function's reserved concurrency (when reserved concurrency is
-// configured), since provisioned concurrency is carved out of that budget.
+// qualifier. Real Lambda rejects a target that resolves to $LATEST —
+// provisioned concurrency can only attach to an immutable qualifier, because
+// $LATEST's code can change underneath it — whether that's the literal
+// unqualified/"$LATEST" qualifier or an alias whose own FunctionVersion is
+// $LATEST (a valid CreateAlias target). It also rejects a weighted alias
+// (RoutingConfig.AdditionalVersionWeights set), since provisioned concurrency
+// cannot attach to a target split across versions, and rejects a requested
+// amount that exceeds the function's reserved concurrency (when reserved
+// concurrency is configured), since provisioned concurrency is carved out of
+// that budget.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutFunctionProvisionedConcurrencyConfig(
@@ -36,11 +41,6 @@ func (m *Mock) PutFunctionProvisionedConcurrencyConfig(
 			cfg.RequestedProvisionedConcurrentExecutions, minProvisionedConcurrentExecutions)
 	}
 
-	if cfg.Qualifier == "" || cfg.Qualifier == latestVersion {
-		return nil, cerrors.New(cerrors.InvalidArgument,
-			"ProvisionedConcurrencyConfig cannot be applied to $LATEST; specify a published version or alias")
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -49,8 +49,20 @@ func (m *Mock) PutFunctionProvisionedConcurrencyConfig(
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
 	}
 
-	if _, err := m.resolveQualifier(&fd, cfg.Qualifier, nil); err != nil {
+	resolved, err := m.resolveQualifier(&fd, cfg.Qualifier, nil)
+	if err != nil {
 		return nil, err
+	}
+
+	if resolved == latestVersion {
+		return nil, cerrors.New(cerrors.InvalidArgument,
+			"ProvisionedConcurrencyConfig cannot be applied to $LATEST or an alias pointing at $LATEST; "+
+				"specify a published version or an alias that targets one")
+	}
+
+	if aliasHasWeightedRouting(&fd, cfg.Qualifier) {
+		return nil, cerrors.New(cerrors.InvalidArgument,
+			"ProvisionedConcurrencyConfig cannot be applied to a weighted alias")
 	}
 
 	if fd.concurrency != nil && cfg.RequestedProvisionedConcurrentExecutions > fd.concurrency.ReservedConcurrentExecutions {
@@ -169,4 +181,37 @@ func setProvisionedConcurrencyConfig(fd *funcData, cfg driver.ProvisionedConcurr
 
 	next[cfg.Qualifier] = cfg
 	fd.provisionedConcurrencyConfigs = next
+}
+
+// aliasHasWeightedRouting reports whether qualifier names an alias with a
+// weighted RoutingConfig (AdditionalVersionWeights set) — provisioned
+// concurrency cannot attach to a target split across versions. A qualifier
+// that names a version (not an alias) or an unweighted alias returns false.
+// ad is a shared pointer held in the aliases store, so its alias field is read
+// under ad.mu, the same guard UpdateAlias/GetAlias/ListAliases use.
+func aliasHasWeightedRouting(fd *funcData, qualifier string) bool {
+	ad, ok := fd.aliases.Get(qualifier)
+	if !ok {
+		return false
+	}
+
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
+	return ad.alias.RoutingConfig != nil && len(ad.alias.RoutingConfig.AdditionalVersionWeights) > 0
+}
+
+// sumProvisionedConcurrency totals the RequestedProvisionedConcurrentExecutions
+// across every qualifier's provisioned-concurrency config on fd. Reserved
+// concurrency can never be set (or fully removed) below this total, since
+// provisioned concurrency is carved out of the reserved budget — see
+// PutFunctionConcurrency and DeleteFunctionConcurrency.
+func sumProvisionedConcurrency(fd *funcData) int {
+	var total int
+
+	for _, cfg := range fd.provisionedConcurrencyConfigs {
+		total += cfg.RequestedProvisionedConcurrentExecutions
+	}
+
+	return total
 }

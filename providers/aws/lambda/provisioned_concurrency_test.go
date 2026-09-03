@@ -163,6 +163,126 @@ func TestProvisionedConcurrencyBoundByReserved(t *testing.T) {
 	}
 }
 
+// TestProvisionedConcurrencyRejectsAliasPointingAtLatest covers the case an
+// unqualified/$LATEST literal check alone misses: an alias whose own
+// FunctionVersion is $LATEST (a valid CreateAlias target) still resolves to
+// $LATEST via resolveQualifier, so PutFunctionProvisionedConcurrencyConfig
+// must reject it exactly like the literal qualifier would.
+func TestProvisionedConcurrencyRejectsAliasPointingAtLatest(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateFunction(ctx, defaultFuncConfig()); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	if _, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "dev", FunctionVersion: latestVersion,
+	}); err != nil {
+		t.Fatalf("CreateAlias: %v", err)
+	}
+
+	if _, err := m.PutFunctionProvisionedConcurrencyConfig(ctx, driver.ProvisionedConcurrencyConfig{
+		FunctionName:                             "my-func",
+		Qualifier:                                "dev",
+		RequestedProvisionedConcurrentExecutions: 1,
+	}); err == nil {
+		t.Fatal("alias pointing at $LATEST: want InvalidArgument")
+	}
+}
+
+// TestProvisionedConcurrencyRejectsWeightedAlias covers the AWS constraint
+// that provisioned concurrency cannot attach to a weighted alias, since its
+// traffic is split across multiple versions rather than one fixed target.
+func TestProvisionedConcurrencyRejectsWeightedAlias(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	ver := createPublishedFunc(t, m)
+
+	ver2, err := m.PublishVersion(ctx, "my-func", "")
+	if err != nil {
+		t.Fatalf("PublishVersion: %v", err)
+	}
+
+	if _, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func", Name: "canary", FunctionVersion: ver.Version,
+		RoutingConfig: &driver.AliasRoutingConfig{AdditionalVersionWeights: map[string]float64{ver2.Version: 0.1}},
+	}); err != nil {
+		t.Fatalf("CreateAlias: %v", err)
+	}
+
+	if _, err := m.PutFunctionProvisionedConcurrencyConfig(ctx, driver.ProvisionedConcurrencyConfig{
+		FunctionName:                             "my-func",
+		Qualifier:                                "canary",
+		RequestedProvisionedConcurrentExecutions: 1,
+	}); err == nil {
+		t.Fatal("weighted alias: want InvalidArgument")
+	}
+}
+
+// TestReservedConcurrencyBlockedBelowProvisioned covers the AWS invariant
+// PutFunctionConcurrency/DeleteFunctionConcurrency must preserve once
+// provisioned concurrency exists: reserved concurrency can never be lowered
+// below, or removed while exceeding, the sum of provisioned concurrency
+// already carved out of it.
+func TestReservedConcurrencyBlockedBelowProvisioned(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	ver := createPublishedFunc(t, m)
+
+	if err := m.PutFunctionConcurrency(ctx, driver.ConcurrencyConfig{
+		FunctionName:                 "my-func",
+		ReservedConcurrentExecutions: 5,
+	}); err != nil {
+		t.Fatalf("PutFunctionConcurrency(5): %v", err)
+	}
+
+	if _, err := m.PutFunctionProvisionedConcurrencyConfig(ctx, driver.ProvisionedConcurrencyConfig{
+		FunctionName:                             "my-func",
+		Qualifier:                                ver.Version,
+		RequestedProvisionedConcurrentExecutions: 5,
+	}); err != nil {
+		t.Fatalf("Put provisioned=5: %v", err)
+	}
+
+	// Lowering reserved below the provisioned total (5) is rejected.
+	if err := m.PutFunctionConcurrency(ctx, driver.ConcurrencyConfig{
+		FunctionName:                 "my-func",
+		ReservedConcurrentExecutions: 1,
+	}); err == nil {
+		t.Fatal("lower reserved below provisioned: want InvalidArgument")
+	}
+
+	// Removing reserved entirely while provisioned concurrency exists is
+	// rejected.
+	if err := m.DeleteFunctionConcurrency(ctx, "my-func"); err == nil {
+		t.Fatal("remove reserved with provisioned still configured: want InvalidArgument")
+	}
+
+	// Reserved concurrency is unchanged after both rejected attempts.
+	got, err := m.GetFunctionConcurrency(ctx, "my-func")
+	if err != nil || got.ReservedConcurrentExecutions != 5 {
+		t.Fatalf("reserved concurrency = %+v, err %v, want unchanged at 5", got, err)
+	}
+
+	// Once the provisioned config is removed, lowering (or removing) reserved
+	// concurrency is allowed again.
+	if err := m.DeleteFunctionProvisionedConcurrencyConfig(ctx, "my-func", ver.Version); err != nil {
+		t.Fatalf("Delete provisioned: %v", err)
+	}
+
+	if err := m.PutFunctionConcurrency(ctx, driver.ConcurrencyConfig{
+		FunctionName:                 "my-func",
+		ReservedConcurrentExecutions: 1,
+	}); err != nil {
+		t.Fatalf("lower reserved after provisioned removed: %v", err)
+	}
+
+	if err := m.DeleteFunctionConcurrency(ctx, "my-func"); err != nil {
+		t.Fatalf("remove reserved after provisioned removed: %v", err)
+	}
+}
+
 func TestProvisionedConcurrencyUnknownFunction(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
