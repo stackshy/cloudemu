@@ -80,7 +80,12 @@ func collectRefs(v any, fields map[string]bool, out *[]namedRef) {
 
 // validateURLMapServiceRefs rejects a url-map body whose defaultService, or any
 // nested pathMatchers[].defaultService / pathRules[].service, names a backend
-// service that does not exist in the same scope.
+// service that does not exist in the same scope. The same fields can also
+// legitimately name a backendBuckets/{name} self-link (standard CDN/static-
+// content routing, e.g. google_compute_backend_bucket.self_link) — backend
+// buckets have no driver model here, so any ref that doesn't resolve to the
+// backendServices collection is left unvalidated rather than falsely rejected,
+// mirroring targetCollectionFor's allowlist for forwarding-rule targets.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.ResourcePath, body map[string]any) error {
@@ -89,6 +94,10 @@ func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.Reso
 	collectRefs(body, map[string]bool{"service": true, "defaultService": true}, &refs)
 
 	for _, ref := range refs {
+		if !isBackendServiceRef(ref.value) {
+			continue
+		}
+
 		if _, err := h.findTGByName(ctx, rp, backendServiceName(ref.value)); err != nil {
 			if cerrors.IsNotFound(err) {
 				return invalidRefErr(ref.field, ref.value, "backend service")
@@ -99,6 +108,15 @@ func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.Reso
 	}
 
 	return nil
+}
+
+// isBackendServiceRef reports whether ref names the backendServices
+// collection — either a bare name (no path separators, the common case for a
+// same-scope reference) or a self-link/relative path containing
+// "/backendServices/". Anything else (e.g. a backendBuckets self-link) is left
+// unvalidated.
+func isBackendServiceRef(ref string) bool {
+	return !strings.Contains(ref, "/") || strings.Contains(ref, "/backendServices/")
 }
 
 // validateProxyRefs rejects a target-proxy body whose urlMap, or (https proxies

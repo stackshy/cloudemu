@@ -207,16 +207,25 @@ func (h *Handler) instanceGroupMembers(ctx context.Context, group string) []stri
 // parseGroupRef splits an instance-group reference into (collection, scope,
 // name). A ".../zones/{z}/instanceGroups/{n}" reference maps to the zonal
 // instanceGroups collection scoped by zone; ".../regions/{r}/instanceGroups/{n}"
-// to regionInstanceGroups scoped by region. Any other shape returns "".
+// to regionInstanceGroups scoped by region. The segment immediately before the
+// name must literally be "instanceGroups" — a NEG self-link
+// (".../zones/{z}/networkEndpointGroups/{n}", the standard backends[].group for
+// Cloud Run/Functions behind an HTTPS LB) also carries a zones/regions scope
+// segment but must NOT be misclassified as an instance group. Any other shape
+// returns "".
 func parseGroupRef(ref string) (collection, scope, name string) {
 	parts := strings.Split(ref, "/")
 
-	for i := 0; i+1 < len(parts); i++ {
+	for i := 0; i+3 < len(parts); i++ {
+		if parts[i+2] != "instanceGroups" {
+			continue
+		}
+
 		switch parts[i] {
 		case gcprest.ScopeZones:
-			return resourceInstanceGroups, parts[i+1], lastPathSegment(ref)
+			return resourceInstanceGroups, parts[i+1], parts[i+3]
 		case gcprest.ScopeRegions:
-			return resourceRegionInstanceGroups, parts[i+1], lastPathSegment(ref)
+			return resourceRegionInstanceGroups, parts[i+1], parts[i+3]
 		}
 	}
 

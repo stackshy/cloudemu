@@ -587,3 +587,167 @@ func TestSDKGCPBackendServiceInvalidBalancingMode(t *testing.T) {
 
 	assertInvalidArgument(t, err)
 }
+
+// TestSDKGCPURLMapBackendBucketRefNotRejected guards against a false-reject: a
+// url-map's defaultService may legitimately name a backendBuckets/{name}
+// self-link (standard CDN/static-content routing, e.g.
+// google_compute_backend_bucket.self_link). Backend buckets have no driver
+// model here, so the reference must be left unvalidated rather than rejected
+// as a dangling backend-service reference.
+func TestSDKGCPURLMapBackendBucketRefNotRejected(t *testing.T) {
+	ts := newGCPLBServer(t)
+	ctx := context.Background()
+
+	um, err := gcpcompute.NewUrlMapsRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewUrlMapsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = um.Close() })
+
+	bucketRef := "projects/" + testProject + "/global/backendBuckets/static-assets"
+
+	insOp, err := um.Insert(ctx, &computepb.InsertUrlMapRequest{
+		Project: testProject,
+		UrlMapResource: &computepb.UrlMap{
+			Name:           ptrStr("bucket-map"),
+			DefaultService: ptrStr(bucketRef),
+		},
+	})
+	if err != nil {
+		t.Fatalf("UrlMap Insert with a backendBucket defaultService: %v", err)
+	}
+
+	if err := insOp.Wait(ctx); err != nil {
+		t.Fatalf("UrlMap Insert wait: %v", err)
+	}
+
+	got, err := um.Get(ctx, &computepb.GetUrlMapRequest{Project: testProject, UrlMap: "bucket-map"})
+	if err != nil {
+		t.Fatalf("UrlMap Get: %v", err)
+	}
+
+	if got.GetDefaultService() != bucketRef {
+		t.Errorf("defaultService = %q, want %q", got.GetDefaultService(), bucketRef)
+	}
+}
+
+// TestSDKGCPBackendServiceNEGRefNotRejected guards against a false-reject: a
+// backend service's backends[].group may legitimately name a network endpoint
+// group self-link (".../zones/{z}/networkEndpointGroups/{n}"), the standard
+// backend for Cloud Run/Functions behind an HTTPS load balancer. NEGs have no
+// driver model here, so the reference must be left unvalidated rather than
+// misclassified as a dangling instance-group reference.
+func TestSDKGCPBackendServiceNEGRefNotRejected(t *testing.T) {
+	ts := newGCPLBServer(t)
+	ctx := context.Background()
+
+	bs := newBackendServicesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
+
+	negRef := "projects/" + testProject + "/zones/" + testZone + "/networkEndpointGroups/cr-neg"
+
+	insOp, err := bs.Insert(ctx, &computepb.InsertBackendServiceRequest{
+		Project: testProject,
+		BackendServiceResource: &computepb.BackendService{
+			Name:     ptrStr("bs-neg"),
+			Protocol: ptrStr("HTTP"),
+			Backends: []*computepb.Backend{{Group: ptrStr(negRef), BalancingMode: ptrStr("RATE")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BackendService Insert with a NEG group: %v", err)
+	}
+
+	if err := insOp.Wait(ctx); err != nil {
+		t.Fatalf("BackendService Insert wait: %v", err)
+	}
+
+	got, err := bs.Get(ctx, &computepb.GetBackendServiceRequest{Project: testProject, BackendService: "bs-neg"})
+	if err != nil {
+		t.Fatalf("BackendService Get: %v", err)
+	}
+
+	if len(got.GetBackends()) != 1 || got.GetBackends()[0].GetGroup() != negRef {
+		t.Errorf("backends = %v, want one referencing %q", got.GetBackends(), negRef)
+	}
+}
+
+// TestSDKGCPTargetHTTPSProxyDanglingSslCertRef covers B2(c): a target HTTPS
+// proxy whose sslCertificates[] names a missing certificate is rejected, both
+// on insert and via setSslCertificates; once the certificate exists, both
+// succeed.
+func TestSDKGCPTargetHTTPSProxyDanglingSslCertRef(t *testing.T) {
+	ts := newGCPLBServer(t)
+	ctx := context.Background()
+
+	proxy, err := gcpcompute.NewTargetHttpsProxiesRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewTargetHttpsProxiesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = proxy.Close() })
+
+	ghostCert := "projects/" + testProject + "/global/sslCertificates/ghost-cert"
+
+	insOp, err := proxy.Insert(ctx, &computepb.InsertTargetHttpsProxyRequest{
+		Project: testProject,
+		TargetHttpsProxyResource: &computepb.TargetHttpsProxy{
+			Name:            ptrStr("https-proxy-dangling"),
+			SslCertificates: []string{ghostCert},
+		},
+	})
+	if err == nil {
+		err = insOp.Wait(ctx)
+	}
+
+	assertInvalidArgument(t, err)
+
+	waitOp(ctx, t, "targetHttpsProxy Insert", func() (*gcpcompute.Operation, error) {
+		return proxy.Insert(ctx, &computepb.InsertTargetHttpsProxyRequest{
+			Project:                  testProject,
+			TargetHttpsProxyResource: &computepb.TargetHttpsProxy{Name: ptrStr("https-proxy-empty")},
+		})
+	})
+
+	setOp, err := proxy.SetSslCertificates(ctx, &computepb.SetSslCertificatesTargetHttpsProxyRequest{
+		Project:          testProject,
+		TargetHttpsProxy: "https-proxy-empty",
+		TargetHttpsProxiesSetSslCertificatesRequestResource: &computepb.TargetHttpsProxiesSetSslCertificatesRequest{
+			SslCertificates: []string{ghostCert},
+		},
+	})
+	if err == nil {
+		err = setOp.Wait(ctx)
+	}
+
+	assertInvalidArgument(t, err)
+
+	certClient, err := gcpcompute.NewSslCertificatesRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewSslCertificatesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = certClient.Close() })
+
+	waitOp(ctx, t, "sslCertificate Insert", func() (*gcpcompute.Operation, error) {
+		return certClient.Insert(ctx, &computepb.InsertSslCertificateRequest{
+			Project: testProject,
+			SslCertificateResource: &computepb.SslCertificate{
+				Name:        ptrStr("real-cert"),
+				Certificate: ptrStr("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"),
+			},
+		})
+	})
+
+	realCert := "projects/" + testProject + "/global/sslCertificates/real-cert"
+
+	waitOp(ctx, t, "targetHttpsProxy SetSslCertificates with a real cert", func() (*gcpcompute.Operation, error) {
+		return proxy.SetSslCertificates(ctx, &computepb.SetSslCertificatesTargetHttpsProxyRequest{
+			Project:          testProject,
+			TargetHttpsProxy: "https-proxy-empty",
+			TargetHttpsProxiesSetSslCertificatesRequestResource: &computepb.TargetHttpsProxiesSetSslCertificatesRequest{
+				SslCertificates: []string{realCert},
+			},
+		})
+	})
+}
