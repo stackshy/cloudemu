@@ -3,12 +3,14 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	azureiam "github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -232,6 +234,23 @@ func (h *Handler) deleteRoleDefinition(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
+	// Referential integrity: real Azure rejects deleting a role definition
+	// that active role assignments still reference (RoleDefinitionHasAssignments),
+	// rather than leaving those assignments dangling.
+	inUse, err := h.iam.RoleAssignmentsForRoleDefinition(r.Context(), id)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	if len(inUse) > 0 {
+		msg := fmt.Sprintf("the role definition %s cannot be deleted because %d role assignment(s) still reference it",
+			id, len(inUse))
+		writeARMError(w, http.StatusConflict, "RoleDefinitionHasAssignments", msg)
+
+		return
+	}
+
 	priorScope := role.Path
 
 	priorProps, perr := decodeRoleProperties(role.AssumeRolePolicyDoc)
@@ -264,11 +283,11 @@ func (h *Handler) serveRoleAssignments(w http.ResponseWriter, r *http.Request, s
 		h.createRoleAssignment(w, r, scope, id)
 	case http.MethodGet:
 		if id == "" {
-			h.listRoleAssignments(w, scope)
+			h.listRoleAssignments(w, r, scope)
 			return
 		}
 
-		h.getRoleAssignment(w, scope, id)
+		h.getRoleAssignment(w, r, scope, id)
 	case http.MethodDelete:
 		if id == "" {
 			writeARMError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
@@ -276,7 +295,7 @@ func (h *Handler) serveRoleAssignments(w http.ResponseWriter, r *http.Request, s
 			return
 		}
 
-		h.deleteRoleAssignment(w, scope, id)
+		h.deleteRoleAssignment(w, r, scope, id)
 	default:
 		writeARMError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
 			"unsupported verb on roleAssignments: "+r.Method)
@@ -320,64 +339,153 @@ func (h *Handler) createRoleAssignment(
 
 	// Re-creating the same assignment GUID, or creating a different GUID for an
 	// already-assigned (principal, role, scope) triple, both conflict in real
-	// Azure with 409 RoleAssignmentExists.
-	if _, exists := h.assignments.get(id); exists {
-		writeARMError(w, http.StatusConflict, "RoleAssignmentExists",
-			"a role assignment with id "+id+" already exists")
+	// Azure with 409 RoleAssignmentExists. CreateRoleAssignment enforces both
+	// invariants atomically under the store's lock.
+	info, err := h.iam.CreateRoleAssignment(r.Context(), azureiam.RoleAssignmentConfig{
+		ID:               id,
+		RoleDefinitionID: props.RoleDefinitionID,
+		PrincipalID:      props.PrincipalID,
+		PrincipalType:    props.PrincipalType,
+		Scope:            props.Scope,
+		Description:      props.Description,
+	})
+	if err != nil {
+		if cerrors.IsAlreadyExists(err) {
+			writeARMError(w, http.StatusConflict, "RoleAssignmentExists", err.Error())
+			return
+		}
+
+		writeCErr(w, err)
+
 		return
 	}
 
-	if h.assignments.existsTriple(props.PrincipalID, props.RoleDefinitionID, props.Scope) {
-		writeARMError(w, http.StatusConflict, "RoleAssignmentExists",
-			"the role assignment already exists for this principal, role and scope")
-		return
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	props.CreatedOn = now
-	props.UpdatedOn = now
-
-	env := roleAssignmentEnvelope{
-		ID:         scope + providerSegmentCanonical + roleAssignmentsCanonical + "/" + id,
-		Name:       id,
-		Type:       typeRoleAssignment,
-		Properties: props,
-	}
-
-	stored := h.assignments.put(&env)
-	writeARMJSON(w, http.StatusCreated, stored)
+	writeARMJSON(w, http.StatusCreated, buildRoleAssignmentEnvelope(scope, info))
 }
 
-func (h *Handler) getRoleAssignment(w http.ResponseWriter, scope, id string) {
-	env, ok := h.assignments.get(id)
-	if !ok {
+func (h *Handler) getRoleAssignment(w http.ResponseWriter, r *http.Request, scope, id string) {
+	info, err := h.iam.GetRoleAssignment(r.Context(), id)
+	if err != nil {
 		writeARMError(w, http.StatusNotFound, "RoleAssignmentNotFound",
 			"role assignment "+id+" not found")
 		return
 	}
 	// Rewrite the ID with the requested scope so the SDK round-trips the
 	// caller's path back unchanged.
-	env.ID = scope + providerSegmentCanonical + roleAssignmentsCanonical + "/" + id
-
-	writeARMJSON(w, http.StatusOK, env)
+	writeARMJSON(w, http.StatusOK, buildRoleAssignmentEnvelope(scope, info))
 }
 
-func (h *Handler) listRoleAssignments(w http.ResponseWriter, scope string) {
-	items := h.assignments.listAtScope(scope)
-	writeARMJSON(w, http.StatusOK, roleAssignmentList{Value: items})
+// listRoleAssignments answers GET at collection scope, honoring the real
+// Azure $filter subset cloudemu supports:
+//
+//   - no filter (or $filter=atScope()): assignments at the queried scope and
+//     its ancestors (permissions inherit downward, so this is the default
+//     real Azure ListForScope narrowing).
+//   - $filter=principalId eq '{guid}': every assignment for that principal,
+//     at, above, or below the queried scope — real Azure widens the match to
+//     the whole scope subtree for a principal-scoped query, so scope
+//     narrowing is skipped unless combined with atScope().
+//   - $filter=atScope() and principalId eq '{guid}': both applied together.
+func (h *Handler) listRoleAssignments(w http.ResponseWriter, r *http.Request, scope string) {
+	filter := parseRoleAssignmentFilter(r.URL.Query().Get("$filter"))
+
+	items, err := h.iam.ListRoleAssignments(r.Context())
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	out := roleAssignmentList{Value: make([]roleAssignmentEnvelope, 0, len(items))}
+
+	for i := range items {
+		info := &items[i]
+
+		if filter.principalID != "" && info.PrincipalID != filter.principalID {
+			continue
+		}
+
+		if narrowByScope := filter.principalID == "" || filter.atScope; narrowByScope &&
+			!scopeAssignmentMatches(scope, info.Scope) {
+			continue
+		}
+
+		out.Value = append(out.Value, buildRoleAssignmentEnvelope(info.Scope, info))
+	}
+
+	writeARMJSON(w, http.StatusOK, out)
 }
 
-func (h *Handler) deleteRoleAssignment(w http.ResponseWriter, scope, id string) {
-	env, ok := h.assignments.delete(id)
-	if !ok {
+func (h *Handler) deleteRoleAssignment(w http.ResponseWriter, r *http.Request, scope, id string) {
+	info, err := h.iam.DeleteRoleAssignment(r.Context(), id)
+	if err != nil {
 		writeARMError(w, http.StatusNotFound, "RoleAssignmentNotFound",
 			"role assignment "+id+" not found")
 		return
 	}
 
-	env.ID = scope + providerSegmentCanonical + roleAssignmentsCanonical + "/" + id
+	writeARMJSON(w, http.StatusOK, buildRoleAssignmentEnvelope(scope, info))
+}
 
-	writeARMJSON(w, http.StatusOK, env)
+// buildRoleAssignmentEnvelope returns the ARM JSON envelope for a single role
+// assignment, rooted at the given scope (the caller's request scope for
+// create/get/delete, or the assignment's own stored scope when listing).
+func buildRoleAssignmentEnvelope(scope string, info *azureiam.RoleAssignmentInfo) roleAssignmentEnvelope {
+	return roleAssignmentEnvelope{
+		ID:   scope + providerSegmentCanonical + roleAssignmentsCanonical + "/" + info.ID,
+		Name: info.ID,
+		Type: typeRoleAssignment,
+		Properties: roleAssignmentProperties{
+			RoleDefinitionID: info.RoleDefinitionID,
+			PrincipalID:      info.PrincipalID,
+			PrincipalType:    info.PrincipalType,
+			Scope:            info.Scope,
+			Description:      info.Description,
+			CreatedOn:        info.CreatedOn,
+			UpdatedOn:        info.UpdatedOn,
+		},
+	}
+}
+
+// roleAssignmentFilter is the parsed subset of a roleAssignments $filter
+// query cloudemu recognizes: atScope() and/or principalId eq '{guid}'. Real
+// Azure's $filter grammar is broader (assignedTo(), roleDefinitionId eq, and
+// OData combinators); this covers the two forms real IaC/SDK callers use most.
+type roleAssignmentFilter struct {
+	atScope     bool
+	principalID string
+}
+
+func parseRoleAssignmentFilter(raw string) roleAssignmentFilter {
+	var filter roleAssignmentFilter
+
+	for _, clause := range strings.Split(raw, " and ") {
+		clause = strings.TrimSpace(clause)
+
+		switch {
+		case strings.EqualFold(clause, "atScope()"):
+			filter.atScope = true
+		case strings.HasPrefix(strings.ToLower(clause), "principalid eq "):
+			filter.principalID = trimODataString(clause[len("principalId eq "):])
+		}
+	}
+
+	return filter
+}
+
+// trimODataString strips the single or double quotes an OData string literal
+// ('...' or "...") is wrapped in.
+func trimODataString(s string) string {
+	return strings.Trim(strings.TrimSpace(s), `'"`)
+}
+
+// scopeAssignmentMatches reports whether a stored assignment's scope is
+// visible from a query scope. Real Azure RoleAssignments.ListForScope returns
+// assignments AT the queried scope and at all ANCESTOR scopes (permissions
+// inherit downward) — never at descendant scopes. An empty or root ("/")
+// query returns everything.
+func scopeAssignmentMatches(query, stored string) bool {
+	return query == "" || query == "/" ||
+		stored == query || strings.HasPrefix(query, stored+"/")
 }
 
 // --- helpers ---

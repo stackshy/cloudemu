@@ -7,6 +7,7 @@
 package azure
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -645,8 +646,23 @@ func New(d Drivers) http.Handler {
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
 	// at any scope — distinct from every other ARM provider name, so
 	// registration order is unconstrained.
+	//
+	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
+	// than iam.Driver) so the docs/coverage generator's registration check
+	// — which recognizes only services/<name>/driver package types — still
+	// links this field to the "iam" service. The handler additionally needs
+	// the Azure-only RoleAssignment surface (see iam.Driver): every real
+	// driver behind this field is *azureiam.Mock (providers/azure/iam),
+	// which implements it, so the assertion below always succeeds in
+	// practice; it fails fast at server construction, not at request time,
+	// if a future caller ever wires in some other iamdriver.IAM.
 	if d.IAM != nil {
-		srv.Register(iam.New(d.IAM))
+		drv, ok := d.IAM.(iam.Driver)
+		if !ok {
+			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
+		}
+
+		srv.Register(iam.New(drv))
 	}
 
 	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and

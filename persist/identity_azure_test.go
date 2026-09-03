@@ -7,8 +7,10 @@ import (
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/persist"
+	azureiam "github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -127,5 +129,78 @@ func TestIdentityPreservedAcrossRestoreAzure(t *testing.T) {
 	}
 	if string(sv.Value) != "s3cr3t" {
 		t.Fatalf("restored secret value = %q, want s3cr3t", sv.Value)
+	}
+}
+
+// TestRoleAssignmentsSurviveRestoreAzure confirms an Azure RBAC role
+// assignment (Microsoft.Authorization/roleAssignments) — a wire-model concept
+// with no AWS-shaped driver.IAM equivalent — round-trips through a full
+// Export→JSON→Restore into a fresh provider under the SAME assignment id, and
+// that a role definition it references is still blocked from deletion after
+// restore, exactly as before the snapshot.
+func TestRoleAssignmentsSurviveRestoreAzure(t *testing.T) {
+	ctx := context.Background()
+
+	src := cloudemu.NewAzure()
+
+	const roleDefID = "roledef-restore-test"
+
+	if _, err := src.IAM.CreateRole(ctx, iamdriver.RoleConfig{Name: roleDefID}); err != nil {
+		t.Fatalf("create role definition: %v", err)
+	}
+
+	const (
+		assignmentID = "assignment-restore-test"
+		principalID  = "principal-restore-test"
+		scope        = "/subscriptions/11111111-1111-1111-1111-111111111111"
+	)
+
+	if _, err := src.IAM.CreateRoleAssignment(ctx, azureiam.RoleAssignmentConfig{
+		ID:               assignmentID,
+		RoleDefinitionID: roleDefID,
+		PrincipalID:      principalID,
+		PrincipalType:    "User",
+		Scope:            scope,
+	}); err != nil {
+		t.Fatalf("create role assignment: %v", err)
+	}
+
+	snap, err := persist.ExportAll(ctx, map[string]persist.Services{"azure": src.SnapshotServices()}, persist.Options{})
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+
+	var got persist.Snapshot
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+
+	dst := cloudemu.NewAzure()
+	if err := persist.RestoreAll(ctx, &got, map[string]persist.Services{"azure": dst.SnapshotServices()}); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+
+	restored, err := dst.IAM.GetRoleAssignment(ctx, assignmentID)
+	if err != nil {
+		t.Fatalf("get restored role assignment: %v", err)
+	}
+
+	if restored.PrincipalID != principalID || restored.RoleDefinitionID != roleDefID || restored.Scope != scope {
+		t.Fatalf("restored assignment = %+v, want principalId=%s roleDefinitionId=%s scope=%s",
+			restored, principalID, roleDefID, scope)
+	}
+
+	inUse, err := dst.IAM.RoleAssignmentsForRoleDefinition(ctx, roleDefID)
+	if err != nil {
+		t.Fatalf("reverse lookup after restore: %v", err)
+	}
+
+	if len(inUse) != 1 || inUse[0].ID != assignmentID {
+		t.Fatalf("restored reverse lookup = %+v, want the one restored assignment", inUse)
 	}
 }
