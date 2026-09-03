@@ -2,6 +2,7 @@ package cosmosdb
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -78,6 +79,39 @@ func TestUpdateItemDispatchesCosmosFunctionTrigger(t *testing.T) {
 	assert.Equal(t, "orders-db", calls[1].database)
 	assert.Equal(t, "orders", calls[1].container)
 	assert.JSONEq(t, `[{"id":"1","status":"shipped"}]`, calls[1].body)
+}
+
+func TestBatchPutItemsDispatchesCosmosFunctionTrigger(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	sink := &fakeCosmosSink{}
+	m.SetFunctionTriggerSink(sink)
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "acct/orders-db/orders", PartitionKey: "id"}))
+
+	items := []map[string]any{
+		{"id": "1", "status": "new"},
+		{"id": "2", "status": "new"},
+		{"id": "3", "status": "new"},
+	}
+	require.NoError(t, m.BatchPutItems(ctx, "acct/orders-db/orders", items))
+
+	calls := sink.snapshot()
+	require.Len(t, calls, len(items), "BatchPutItems should dispatch once per item")
+
+	gotIDs := make([]string, len(calls))
+
+	for i, call := range calls {
+		assert.Equal(t, "orders-db", call.database)
+		assert.Equal(t, "orders", call.container)
+
+		var docs []map[string]any
+		require.NoError(t, json.Unmarshal([]byte(call.body), &docs))
+		require.Len(t, docs, 1, "each dispatch should carry a single-element array")
+		gotIDs[i], _ = docs[0]["id"].(string)
+	}
+
+	assert.ElementsMatch(t, []string{"1", "2", "3"}, gotIDs)
 }
 
 func TestDeleteItemDoesNotDispatchCosmosFunctionTrigger(t *testing.T) {

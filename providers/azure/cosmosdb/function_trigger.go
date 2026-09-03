@@ -40,11 +40,11 @@ func (m *Mock) SetFunctionTriggerSink(sink CosmosFunctionTriggerSink) {
 // (server/azure/cosmosdb's qualify) has no (database, container) pair to
 // address.
 //
-// Called with no store lock held — PutItem/UpdateItem snapshot item and
-// release m.mu before calling this — so a function invoked by the trigger may
-// itself write back into Cosmos DB without deadlocking. item must already be
-// a snapshot the caller owns exclusively; this method does not clone it
-// again.
+// Called with no store lock held — PutItem/UpdateItem/BatchPutItems snapshot
+// item(s) and release m.mu before calling this — so a function invoked by
+// the trigger may itself write back into Cosmos DB without deadlocking. item
+// must already be a snapshot the caller owns exclusively; this method does
+// not clone it again.
 //
 // Real Cosmos change feed delivers a BATCH of changed documents per lease
 // checkpoint; this emulator delivers one document per write, wrapped in a

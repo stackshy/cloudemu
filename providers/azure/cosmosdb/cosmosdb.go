@@ -484,7 +484,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 }
 
 // BatchPutItems stores multiple items in a container.
-func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
+func (m *Mock) BatchPutItems(ctx context.Context, table string, items []map[string]any) error {
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -493,15 +493,22 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
 	}
 
+	triggers := make([]map[string]any, 0, len(items))
+
 	for _, item := range items {
 		key := itemKey(td.config, item)
 		oldItem, hadOld := td.items.Get(key)
 		item = maps.Clone(item)
 		td.items.Set(key, item)
 		m.recordStreamEvent(td, oldItem, item, hadOld)
+		triggers = append(triggers, maps.Clone(item))
 	}
 
 	m.mu.Unlock()
+
+	for _, trigger := range triggers {
+		m.dispatchFunctionTrigger(ctx, table, trigger)
+	}
 
 	return nil
 }
