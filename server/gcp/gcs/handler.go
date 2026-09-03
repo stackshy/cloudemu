@@ -88,6 +88,11 @@ type Handler struct {
 	// object patch, versioned listing, and bucket location/IAM/metageneration.
 	ext storagedriver.GCSExtensions
 
+	// lifecycle is the optional capability that persists a bucket's lifecycle
+	// configuration verbatim (every rule condition), nil when the backing driver
+	// only supports the age-only portable driver.LifecycleConfig.
+	lifecycle lifecycleRawStore
+
 	// publisher emits object-change events to Pub/Sub for matching bucket
 	// notification configs. Nil (the default) makes object events a no-op, so
 	// object writes/deletes still succeed without Pub/Sub wired.
@@ -119,8 +124,9 @@ type resumableSession struct {
 // New returns a GCS handler backed by b.
 func New(b storagedriver.Bucket) *Handler {
 	ext, _ := b.(storagedriver.GCSExtensions)
+	lifecycle, _ := b.(lifecycleRawStore)
 
-	return &Handler{bucket: b, ext: ext, resumable: make(map[string]*resumableSession)}
+	return &Handler{bucket: b, ext: ext, lifecycle: lifecycle, resumable: make(map[string]*resumableSession)}
 }
 
 // Matches returns true for /storage/v1/, /upload/storage/v1/, and direct
@@ -289,7 +295,7 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.Lifecycle != nil {
-		_ = h.bucket.PutLifecycleConfig(r.Context(), body.Name, toLifecycleConfig(body.Lifecycle))
+		_ = h.putLifecycle(r.Context(), body.Name, body.Lifecycle)
 	}
 
 	writeJSON(w, http.StatusOK, h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339)))
@@ -357,8 +363,8 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		res.Labels = labels
 	}
 
-	if cfg, err := h.bucket.GetLifecycleConfig(r.Context(), name); err == nil && cfg != nil && len(cfg.Rules) > 0 {
-		res.Lifecycle = fromLifecycleConfig(cfg)
+	if lc := h.lifecycleView(r.Context(), name); lc != nil {
+		res.Lifecycle = lc
 	}
 
 	return res
@@ -411,53 +417,6 @@ func locationType(location string) string {
 	}
 }
 
-// toLifecycleConfig converts the GCS lifecycle JSON into the driver's rule set.
-// Delete → object expiration; SetStorageClass → a class transition.
-func toLifecycleConfig(lc *bucketLifecycle) storagedriver.LifecycleConfig {
-	cfg := storagedriver.LifecycleConfig{Rules: make([]storagedriver.LifecycleRule, 0, len(lc.Rule))}
-
-	for i, r := range lc.Rule {
-		rule := storagedriver.LifecycleRule{
-			ID:      strconv.Itoa(i),
-			Enabled: true,
-		}
-
-		switch r.Action.Type {
-		case "Delete":
-			rule.ExpirationDays = r.Condition.Age
-		case "SetStorageClass":
-			rule.TransitionDays = r.Condition.Age
-			rule.TransitionStorageClass = r.Action.StorageClass
-		}
-
-		cfg.Rules = append(cfg.Rules, rule)
-	}
-
-	return cfg
-}
-
-// fromLifecycleConfig renders the driver's lifecycle rules back into GCS JSON.
-func fromLifecycleConfig(cfg *storagedriver.LifecycleConfig) *bucketLifecycle {
-	lc := &bucketLifecycle{Rule: make([]lifecycleRule, 0, len(cfg.Rules))}
-
-	for _, rule := range cfg.Rules {
-		switch {
-		case rule.TransitionStorageClass != "":
-			lc.Rule = append(lc.Rule, lifecycleRule{
-				Action:    lifecycleAction{Type: "SetStorageClass", StorageClass: rule.TransitionStorageClass},
-				Condition: lifecycleCondition{Age: rule.TransitionDays},
-			})
-		case rule.ExpirationDays > 0:
-			lc.Rule = append(lc.Rule, lifecycleRule{
-				Action:    lifecycleAction{Type: "Delete"},
-				Condition: lifecycleCondition{Age: rule.ExpirationDays},
-			})
-		}
-	}
-
-	return lc
-}
-
 // patchBucket applies a bucket configuration update (versioning + labels),
 // which real clients set via Buckets.Patch/Update. Without this the driver's
 // versioning/label capabilities are unreachable over the wire.
@@ -482,7 +441,7 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 	}
 
 	if body.Lifecycle != nil {
-		if err := h.bucket.PutLifecycleConfig(r.Context(), name, toLifecycleConfig(body.Lifecycle)); err != nil {
+		if err := h.putLifecycle(r.Context(), name, body.Lifecycle); err != nil {
 			writeErr(w, err)
 			return
 		}
