@@ -109,6 +109,12 @@
         "name": "RotateClusterCertificates"
       },
       {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
         "name": "UpdateClusterTags"
       }
     ],

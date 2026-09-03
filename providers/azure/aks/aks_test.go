@@ -144,6 +144,103 @@ func TestAgentPoolLifecycle(t *testing.T) {
 	}
 }
 
+// TestClusterStartStop exercises the power-state lifecycle: stopping a
+// running cluster deallocates every agent pool alongside the control plane,
+// and starting it again restores both. Both actions are idempotent.
+func TestClusterStartStop(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateOrUpdateCluster(ctx, ClusterInput{
+		ResourceGroup: "rg-1",
+		Name:          "k8s-1",
+		Location:      "eastus",
+		AgentPools: []AgentPoolInput{
+			{Name: "system", Count: int32Ptr(2), Mode: "System"},
+		},
+	})
+	requireNoError(t, err)
+
+	stopped, err := m.StopCluster(ctx, "rg-1", "k8s-1")
+	requireNoError(t, err)
+	assertEqual(t, "Stopped", stopped.PowerState)
+	assertEqual(t, "Succeeded", stopped.ProvisioningState)
+
+	pool, err := m.GetAgentPool(ctx, "rg-1", "k8s-1", "system")
+	requireNoError(t, err)
+	assertEqual(t, "Stopped", pool.PowerState)
+
+	// Idempotent: stopping an already-stopped cluster still succeeds.
+	stopped, err = m.StopCluster(ctx, "rg-1", "k8s-1")
+	requireNoError(t, err)
+	assertEqual(t, "Stopped", stopped.PowerState)
+
+	started, err := m.StartCluster(ctx, "rg-1", "k8s-1")
+	requireNoError(t, err)
+	assertEqual(t, "Running", started.PowerState)
+
+	pool, err = m.GetAgentPool(ctx, "rg-1", "k8s-1", "system")
+	requireNoError(t, err)
+	assertEqual(t, "Running", pool.PowerState)
+
+	// Idempotent: starting an already-running cluster still succeeds.
+	started, err = m.StartCluster(ctx, "rg-1", "k8s-1")
+	requireNoError(t, err)
+	assertEqual(t, "Running", started.PowerState)
+}
+
+func TestClusterStartStopRequiresCluster(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.StartCluster(ctx, "rg-1", "ghost"); err == nil {
+		t.Fatal("expected NotFound starting a missing cluster")
+	}
+
+	if _, err := m.StopCluster(ctx, "rg-1", "ghost"); err == nil {
+		t.Fatal("expected NotFound stopping a missing cluster")
+	}
+}
+
+// TestDeleteAgentPoolRejectsLastSystemPool asserts AKS's invariant that every
+// cluster retains at least one System-mode pool: deleting the sole System
+// pool is rejected, but deleting a User pool — or a System pool when another
+// System pool remains — succeeds.
+func TestDeleteAgentPoolRejectsLastSystemPool(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateOrUpdateCluster(ctx, ClusterInput{
+		ResourceGroup: "rg-1",
+		Name:          "k8s-1",
+		AgentPools: []AgentPoolInput{
+			{Name: "system", Count: int32Ptr(2), Mode: "System"},
+			{Name: "userpool", Count: int32Ptr(3), Mode: "User"},
+		},
+	})
+	requireNoError(t, err)
+
+	// Deleting the User pool is unaffected.
+	requireNoError(t, m.DeleteAgentPool(ctx, "rg-1", "k8s-1", "userpool"))
+
+	// Deleting the last System pool is rejected.
+	if err := m.DeleteAgentPool(ctx, "rg-1", "k8s-1", "system"); err == nil {
+		t.Fatal("expected error deleting the last System-mode pool")
+	}
+
+	if _, err := m.GetAgentPool(ctx, "rg-1", "k8s-1", "system"); err != nil {
+		t.Fatalf("system pool should still exist after rejected delete: %v", err)
+	}
+
+	// A second System pool makes either one deletable.
+	_, err = m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-1", AgentPoolInput{
+		Name: "system2", Count: int32Ptr(1), Mode: "System",
+	})
+	requireNoError(t, err)
+
+	requireNoError(t, m.DeleteAgentPool(ctx, "rg-1", "k8s-1", "system"))
+}
+
 func TestAgentPoolRequiresCluster(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

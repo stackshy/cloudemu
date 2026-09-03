@@ -11,7 +11,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | Service | AWS | Azure | GCP | OCI | Operations |
 | --- | --- | --- | --- | --- | --- |
 | `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
-| `aks` | — | [AKS](./azure/aks.md) | — | — | 16 |
+| `aks` | — | [AKS](./azure/aks.md) | — | — | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | — | — | — | 15 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
