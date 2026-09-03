@@ -6884,10 +6884,16 @@
         "doc": "GCPLogging is an optional interface implemented by the GCP logging backend for",
         "operations": [
           {
+            "name": "CreateBucket"
+          },
+          {
             "name": "CreateLogMetric"
           },
           {
             "name": "CreateSink"
+          },
+          {
+            "name": "DeleteBucket"
           },
           {
             "name": "DeleteLogMetric"
@@ -6896,16 +6902,25 @@
             "name": "DeleteSink"
           },
           {
+            "name": "GetBucket"
+          },
+          {
             "name": "GetLogMetric"
           },
           {
             "name": "GetSink"
           },
           {
+            "name": "ListBuckets"
+          },
+          {
             "name": "ListLogMetrics"
           },
           {
             "name": "ListSinks"
+          },
+          {
+            "name": "UpdateBucket"
           },
           {
             "name": "UpdateLogMetric"

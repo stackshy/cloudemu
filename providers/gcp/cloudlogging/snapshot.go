@@ -14,15 +14,17 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // cloudloggingSnapshot is the full serialized state of the GCP Cloud Logging
 // mock: every log group (with its streams, metric filters, and subscription
-// filters), plus the GCP-native export sinks and log-based metrics. The stored
-// *logGroup/*logStream have unexported layouts, so they are promoted to exported
-// snapshot forms; sinks and metrics hold fully-exported driver values and
-// round-trip through the generic memstore helper. The wired *config.Options and
-// monitoring backend are intentionally not serialized.
+// filters), plus the GCP-native export sinks, log-based metrics, and buckets.
+// The stored *logGroup/*logStream have unexported layouts, so they are
+// promoted to exported snapshot forms; sinks, metrics, and buckets hold
+// fully-exported driver values and round-trip through the generic memstore
+// helper. The wired *config.Options and monitoring backend are intentionally
+// not serialized.
 type cloudloggingSnapshot struct {
 	Groups  map[string]*logGroupSnapshot `json:"groups,omitempty"`
 	Sinks   json.RawMessage              `json:"sinks,omitempty"`
 	Metrics json.RawMessage              `json:"metrics,omitempty"`
+	Buckets json.RawMessage              `json:"buckets,omitempty"`
 }
 
 // logGroupSnapshot mirrors logGroup, promoting its nested stream store and the
@@ -61,6 +63,10 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 
 	if err := dumpInto(&snap.Metrics, m.metrics.Snapshot); err != nil {
+		return nil, err
+	}
+
+	if err := dumpInto(&snap.Buckets, m.buckets.Snapshot); err != nil {
 		return nil, err
 	}
 
@@ -122,7 +128,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
-	return loadInto(snap.Metrics, m.metrics.LoadSnapshot)
+	if err := loadInto(snap.Metrics, m.metrics.LoadSnapshot); err != nil {
+		return err
+	}
+
+	return loadInto(snap.Buckets, m.buckets.LoadSnapshot)
 }
 
 func restoreGroup(gs *logGroupSnapshot) (*logGroup, error) {
