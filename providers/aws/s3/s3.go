@@ -39,7 +39,47 @@ var (
 	_ driver.ObjectCopier      = (*Mock)(nil)
 	_ driver.RegionalBucket    = (*Mock)(nil)
 	_ driver.SystemPropsBucket = (*Mock)(nil)
+	_ driver.ObjectLockBucket  = (*Mock)(nil)
 )
+
+// objectLock is the S3 Object Lock state carried by a single object version: a
+// retention mode (GOVERNANCE/COMPLIANCE, empty when none) with its RetainUntil
+// instant, and an independent legal-hold flag. The zero value is unprotected.
+type objectLock struct {
+	retentionMode string
+	retainUntil   time.Time
+	legalHold     bool
+}
+
+// protectsOverwrite reports whether the version's lock forbids destroying its
+// bytes in place (a suspended/unversioned overwrite or a permanent delete before
+// bypass is considered): legal hold ON, or a retention period not yet elapsed.
+func (l objectLock) protectsOverwrite(now time.Time) bool {
+	if l.legalHold {
+		return true
+	}
+
+	return l.retentionMode != "" && now.Before(l.retainUntil)
+}
+
+// blocksDelete reports whether the version's lock forbids a permanent delete.
+// Legal hold and an active COMPLIANCE retention always block; an active
+// GOVERNANCE retention blocks unless bypassGovernance is set.
+func (l objectLock) blocksDelete(now time.Time, bypassGovernance bool) bool {
+	if l.legalHold {
+		return true
+	}
+
+	if l.retentionMode == "" || !now.Before(l.retainUntil) {
+		return false
+	}
+
+	if l.retentionMode == driver.ObjectLockGovernance && bypassGovernance {
+		return false
+	}
+
+	return true
+}
 
 type s3Object struct {
 	Key string
@@ -60,6 +100,9 @@ type s3Object struct {
 	// Content-Encoding, Content-Disposition, Content-Language, Expires) and the
 	// object's storage class, recorded on PutObject and echoed back on read.
 	SystemProps driver.ObjectSystemProps
+	// lock is the object's S3 Object Lock state (retention + legal hold) for the
+	// current version; mirrors the latest version's lock on a versioned bucket.
+	lock objectLock
 }
 
 // s3Version is one entry in a key's version history (a stored object or a
@@ -74,6 +117,8 @@ type s3Version struct {
 	metadata     map[string]string
 	deleteMarker bool
 	storageClass string
+	// lock is the version's S3 Object Lock state (retention + legal hold).
+	lock objectLock
 }
 
 type multipartUpload struct {
@@ -97,6 +142,10 @@ type bucketMeta struct {
 	objects    *memstore.Store[*s3Object]
 	lifecycle  *driver.LifecycleConfig
 	multiparts *memstore.Store[*multipartUpload]
+	// objectLockEnabled records whether the bucket was created with S3 Object
+	// Lock enabled (x-amz-bucket-object-lock-enabled), which also forces
+	// versioning on. Guarded by versionsMu (set alongside versionStatus).
+	objectLockEnabled bool
 	// versionStatus is "" (never configured), "Enabled", or "Suspended".
 	// versionsMu guards versionStatus and the versions history map; versions
 	// maps a key to its ordered (oldest-first) version chain.
@@ -377,7 +426,9 @@ func (m *Mock) PutObjectWithSystemProps(
 		obj.SystemProps = *props
 	}
 
-	m.storeObject(bkt, key, obj)
+	if err := m.storeObject(bkt, key, obj); err != nil {
+		return err
+	}
 
 	return m.afterPut(ctx, bkt, bucket, key, obj, data, contentType, metadata)
 }
@@ -472,11 +523,11 @@ func newVersionID() string { return idgen.GenerateID("") }
 
 // storeObject records key's current object under versionsMu (see
 // storeObjectLocked for the versioning behavior).
-func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
+func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) error {
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
 
-	m.storeObjectLocked(bkt, key, obj)
+	return m.storeObjectLocked(bkt, key, obj)
 }
 
 // storeObjectConditional evaluates an If-None-Match / If-Match precondition
@@ -490,16 +541,20 @@ func (m *Mock) storeObjectConditional(bkt *bucketMeta, key string, obj *s3Object
 		return err
 	}
 
-	m.storeObjectLocked(bkt, key, obj)
-
-	return nil
+	return m.storeObjectLocked(bkt, key, obj)
 }
 
 // storeObjectLocked records key's current object; the caller must hold
 // versionsMu. On a versioned bucket it also appends/overwrites the version
 // history (stamping obj.VersionID). Enabled appends a fresh version; Suspended
 // overwrites the reusable "null" version; an unversioned bucket keeps no history.
-func (m *Mock) storeObjectLocked(bkt *bucketMeta, key string, obj *s3Object) {
+//
+// Object Lock: on a Suspended/unversioned bucket a write replaces the current
+// object's bytes in place, so if that object is protected (legal hold or an
+// unexpired retention) the overwrite is refused. On an Enabled bucket every
+// write is a fresh version and the protected version is preserved, so no check
+// is needed.
+func (m *Mock) storeObjectLocked(bkt *bucketMeta, key string, obj *s3Object) error {
 	// When an engine holds the bytes, the version record keeps only metadata +
 	// size; its bytes live in the engine under the version id (dropData).
 	dropData := m.opts.StorageEngine != nil
@@ -509,11 +564,43 @@ func (m *Mock) storeObjectLocked(bkt *bucketMeta, key string, obj *s3Object) {
 		obj.VersionID = newVersionID()
 		bkt.appendVersion(key, versionFromObject(obj, dropData))
 	case versioningSuspended:
+		if err := m.checkOverwriteLocked(bkt, key); err != nil {
+			return err
+		}
+
 		obj.VersionID = nullVersionID
 		bkt.replaceNullVersion(key, versionFromObject(obj, dropData))
+	default:
+		if err := m.checkOverwriteLocked(bkt, key); err != nil {
+			return err
+		}
 	}
 
 	bkt.objects.Set(key, obj)
+
+	return nil
+}
+
+// checkOverwriteLocked refuses an in-place overwrite that would destroy a
+// protected current object's bytes. Callers hold versionsMu.
+func (m *Mock) checkOverwriteLocked(bkt *bucketMeta, key string) error {
+	cur, ok := bkt.objects.Get(key)
+	if !ok {
+		return nil
+	}
+
+	if cur.lock.protectsOverwrite(m.opts.Clock.Now()) {
+		return objectLockDeniedError()
+	}
+
+	return nil
+}
+
+// objectLockDeniedError is the error a protected-object delete/overwrite returns;
+// the S3 wire layer renders it as 403 AccessDenied.
+func objectLockDeniedError() error {
+	return cerrors.New(cerrors.PermissionDenied,
+		"Access Denied because object protected by object lock.")
 }
 
 // evalPutPrecondition reports whether a conditional PutObject may proceed. It
@@ -561,6 +648,7 @@ func versionFromObject(obj *s3Object, dropData bool) *s3Version {
 		lastModified: obj.LastModified,
 		metadata:     obj.Metadata,
 		storageClass: obj.SystemProps.StorageClass,
+		lock:         obj.lock,
 	}
 }
 
@@ -879,7 +967,10 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata: meta, Tags: maps.Clone(srcObj.Tags), SystemProps: srcObj.SystemProps,
 	}
-	m.storeObject(dstBkt, dstKey, dstObj)
+
+	if err := m.storeObject(dstBkt, dstKey, dstObj); err != nil {
+		return err
+	}
 
 	if m.opts.StorageEngine != nil {
 		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
@@ -973,7 +1064,10 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 		ETag: src.etag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata: maps.Clone(metadata), Tags: maps.Clone(tags), SystemProps: copyDstSystemProps(req, src),
 	}
-	m.storeObject(dstBkt, req.DstKey, dstObj)
+
+	if err := m.storeObject(dstBkt, req.DstKey, dstObj); err != nil {
+		return nil, err
+	}
 
 	if err := m.engineStore(ctx, req.DstBucket, req.DstKey, dstObj.VersionID, contentType, dataCopy, metadata); err != nil {
 		return nil, err
@@ -1377,7 +1471,10 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 		Metadata:     make(map[string]string),
 		Tags:         maps.Clone(mp.tags),
 	}
-	m.storeObject(bkt, key, obj)
+
+	if err := m.storeObject(bkt, key, obj); err != nil {
+		return err
+	}
 
 	// Only the assembled object goes to the engine; the individual parts stay in
 	// memory until the upload completes.
@@ -1575,8 +1672,25 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 
 // DeleteObjectVersion removes a specific version, or (versionID == "") performs
 // a top-level delete (delete marker on Enabled). Returns the affected version
-// id and whether it was/created a delete marker.
+// id and whether it was/created a delete marker. Object Lock protection is
+// enforced: a protected version cannot be permanently removed (a top-level
+// delete still records a delete marker, leaving protected versions intact).
 func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID string) (deletedID string, deleteMarker bool, err error) {
+	return m.deleteObjectVersion(ctx, bucket, key, versionID, false)
+}
+
+// DeleteObjectVersionWithBypass implements driver.ObjectLockBucket: like
+// DeleteObjectVersion, but bypassGovernance lifts a GOVERNANCE retention block
+// (never COMPLIANCE, never a legal hold).
+func (m *Mock) DeleteObjectVersionWithBypass(
+	ctx context.Context, bucket, key, versionID string, bypassGovernance bool,
+) (deletedID string, deleteMarker bool, err error) {
+	return m.deleteObjectVersion(ctx, bucket, key, versionID, bypassGovernance)
+}
+
+func (m *Mock) deleteObjectVersion(
+	ctx context.Context, bucket, key, versionID string, bypassGovernance bool,
+) (deletedID string, deleteMarker bool, err error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return "", false, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -1616,6 +1730,11 @@ func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID s
 		return "", false, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
 	}
 
+	// Object Lock: a protected version cannot be permanently removed.
+	if removed.lock.blocksDelete(m.opts.Clock.Now(), bypassGovernance) {
+		return "", false, objectLockDeniedError()
+	}
+
 	bkt.versions[key] = append(chain[:idx], chain[idx+1:]...)
 	if len(bkt.versions[key]) == 0 {
 		delete(bkt.versions, key)
@@ -1631,6 +1750,190 @@ func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID s
 	m.notifyObjectRemoved(ctx, bkt, bucket, key, versionID, false)
 
 	return versionID, removed.deleteMarker, nil
+}
+
+// ObjectLockEnabled implements driver.ObjectLockBucket: reports whether the
+// bucket was created with Object Lock enabled.
+func (m *Mock) ObjectLockEnabled(_ context.Context, bucket string) (bool, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return false, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	return bkt.objectLockEnabled, nil
+}
+
+// EnableObjectLock implements driver.ObjectLockBucket: marks the bucket
+// Object-Lock-enabled and turns versioning on (Object Lock requires it).
+func (m *Mock) EnableObjectLock(_ context.Context, bucket string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	bkt.objectLockEnabled = true
+	bkt.versionStatus = versioningEnabled
+
+	return nil
+}
+
+// currentVersionLocked returns key's current (latest non-delete-marker) version,
+// or nil when the newest version is a delete marker or no history exists.
+// Callers hold versionsMu.
+func currentVersionLocked(bkt *bucketMeta, key string) *s3Version {
+	chain := bkt.versions[key]
+	if len(chain) == 0 {
+		return nil
+	}
+
+	latest := chain[len(chain)-1]
+	if latest.deleteMarker {
+		return nil
+	}
+
+	return latest
+}
+
+// lockTargetLocked resolves the lock state of the version a retention/legal-hold
+// op addresses (the current version when versionID==""), returning a pointer to
+// mutate and whether the target lives in the version history (so the caller can
+// refresh the current object). Callers hold versionsMu.
+func lockTargetLocked(bkt *bucketMeta, key, versionID string) (lock *objectLock, inHistory bool, err error) {
+	if versionID != "" {
+		if v := findVersion(bkt, key, versionID); v != nil && !v.deleteMarker {
+			return &v.lock, true, nil
+		}
+
+		return nil, false, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	if v := currentVersionLocked(bkt, key); v != nil {
+		return &v.lock, true, nil
+	}
+
+	if obj, ok := bkt.objects.Get(key); ok {
+		return &obj.lock, false, nil
+	}
+
+	return nil, false, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bkt.Name)
+}
+
+// GetObjectRetention implements driver.ObjectLockBucket.
+func (m *Mock) GetObjectRetention(_ context.Context, bucket, key, versionID string) (driver.ObjectRetention, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return driver.ObjectRetention{}, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	lock, _, err := lockTargetLocked(bkt, key, versionID)
+	if err != nil {
+		return driver.ObjectRetention{}, err
+	}
+
+	return driver.ObjectRetention{Mode: lock.retentionMode, RetainUntilDate: lock.retainUntil}, nil
+}
+
+// PutObjectRetention implements driver.ObjectLockBucket. First-setting or
+// extending a retention is always allowed; shortening, removing, or downgrading
+// an active GOVERNANCE retention requires bypassGovernance, and an active
+// COMPLIANCE retention can never be shortened, removed, or downgraded.
+func (m *Mock) PutObjectRetention(
+	_ context.Context, bucket, key, versionID string, ret driver.ObjectRetention, bypassGovernance bool,
+) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	lock, inHistory, err := lockTargetLocked(bkt, key, versionID)
+	if err != nil {
+		return err
+	}
+
+	existing := driver.ObjectRetention{Mode: lock.retentionMode, RetainUntilDate: lock.retainUntil}
+	if !retentionChangeAllowed(existing, ret, m.opts.Clock.Now(), bypassGovernance) {
+		return objectLockDeniedError()
+	}
+
+	lock.retentionMode = ret.Mode
+	lock.retainUntil = ret.RetainUntilDate
+
+	if inHistory {
+		m.recomputeCurrentLocked(bkt, key)
+	}
+
+	return nil
+}
+
+// retentionChangeAllowed applies the S3 Object Lock retention-modification rules.
+func retentionChangeAllowed(existing, next driver.ObjectRetention, now time.Time, bypassGovernance bool) bool {
+	// No active retention (unset or already elapsed): any change is allowed.
+	if existing.Mode == "" || !now.Before(existing.RetainUntilDate) {
+		return true
+	}
+
+	// Extending in the same mode is always allowed.
+	if next.Mode == existing.Mode && !next.RetainUntilDate.Before(existing.RetainUntilDate) {
+		return true
+	}
+
+	// Any shorten/remove/downgrade of an active retention: COMPLIANCE never,
+	// GOVERNANCE only with bypass.
+	return existing.Mode == driver.ObjectLockGovernance && bypassGovernance
+}
+
+// GetObjectLegalHold implements driver.ObjectLockBucket.
+func (m *Mock) GetObjectLegalHold(_ context.Context, bucket, key, versionID string) (bool, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return false, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	lock, _, err := lockTargetLocked(bkt, key, versionID)
+	if err != nil {
+		return false, err
+	}
+
+	return lock.legalHold, nil
+}
+
+// PutObjectLegalHold implements driver.ObjectLockBucket.
+func (m *Mock) PutObjectLegalHold(_ context.Context, bucket, key, versionID string, on bool) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	lock, inHistory, err := lockTargetLocked(bkt, key, versionID)
+	if err != nil {
+		return err
+	}
+
+	lock.legalHold = on
+
+	if inHistory {
+		m.recomputeCurrentLocked(bkt, key)
+	}
+
+	return nil
 }
 
 // ListObjectVersions returns the full version history matching opts, newest
@@ -1745,7 +2048,7 @@ func objectFromVersion(key string, v *s3Version) *s3Object {
 	return &s3Object{
 		Key: key, Data: v.data, Size: v.size, ContentType: v.contentType,
 		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
-		VersionID: v.versionID,
+		VersionID: v.versionID, lock: v.lock,
 	}
 }
 
