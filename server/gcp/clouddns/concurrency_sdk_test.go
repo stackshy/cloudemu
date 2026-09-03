@@ -3,6 +3,7 @@ package clouddns_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,13 +13,14 @@ import (
 )
 
 // TestSDKChangesCreateConcurrentSameAdditionExactlyOneWins locks
-// changes.create's atomicity under concurrency: two callers racing to add the
-// SAME name+type record set to the same zone must not both succeed (Cloud
-// DNS rejects the loser with alreadyExists), and the zone must end up with
-// exactly one record set at that name+type — never zero (lost) and never
-// duplicated. Before the fix, createChange validated the whole batch and only
-// then applied it with no lock spanning the two steps, so two concurrent
-// requests could both pass validation against the same pre-change state.
+// changes.create's atomicity for the SAME name+type record set: two callers
+// racing to add it must not both succeed (Cloud DNS rejects the loser with
+// alreadyExists), and the zone must end up with exactly one record set —
+// never zero (lost) and never duplicated. Note this same-key case is actually
+// guaranteed by CreateRecord's atomic SetIfAbsent (providers/gcp/clouddns)
+// regardless of applyMu, since both additions land on the same store key; see
+// TestSDKChangesCreateConcurrentCNAMEExclusivityAcrossKeys below for the
+// cross-key case that only applyMu protects.
 func TestSDKChangesCreateConcurrentSameAdditionExactlyOneWins(t *testing.T) {
 	svc := newDNSService(t)
 	ctx := context.Background()
@@ -84,15 +86,15 @@ func TestSDKChangesCreateConcurrentSameAdditionExactlyOneWins(t *testing.T) {
 	}
 }
 
-// TestSDKDeleteZoneConcurrentWithChangesCreateNeverLosesRecord locks the
-// applyMu lock added to serialize managedZones.delete's empty-check-then-
-// delete span against changes.create: a concurrent changes.create adding a
-// record must not be able to land in the window between delete's check and
-// its call to the driver — every outcome must be consistent (either the
-// added record survives because delete saw it and refused with
-// containerNotEmpty, or delete won the race and the add then targets a
-// deleted zone), never a zone deleted while a record the check should have
-// seen silently disappears without a trace.
+// TestSDKDeleteZoneConcurrentWithChangesCreateNeverLosesRecord exercises
+// managedZones.delete racing a changes.create on the same zone: every outcome
+// must be consistent (either the added record survives because delete saw it
+// and refused with containerNotEmpty, or delete won the race and the add then
+// targets a deleted zone), never a zone deleted while a record the check
+// should have seen silently disappears without a trace. This scenario is
+// covered by applyMu but does not reliably falsify on its own if applyMu is
+// removed — see TestSDKChangesCreateConcurrentCNAMEExclusivityAcrossKeys for
+// the test that does.
 func TestSDKDeleteZoneConcurrentWithChangesCreateNeverLosesRecord(t *testing.T) {
 	svc := newDNSService(t)
 	ctx := context.Background()
@@ -157,6 +159,77 @@ func TestSDKDeleteZoneConcurrentWithChangesCreateNeverLosesRecord(t *testing.T) 
 
 		if len(rrsets.Rrsets) != 1 {
 			t.Fatalf("addition reported success but rrset count = %d, want 1", len(rrsets.Rrsets))
+		}
+	}
+}
+
+// TestSDKChangesCreateConcurrentCNAMEExclusivityAcrossKeys is the test that
+// actually falsifies on a reverted applyMu. A CNAME addition and an A
+// addition for the SAME name land on different dns driver store keys
+// (recordKey folds in the record type), so CreateRecord's per-key
+// SetIfAbsent — which is what protects the same-key case above — cannot see
+// or prevent this collision. Cloud DNS forbids a name from carrying both a
+// CNAME and any other record type; checkCNAME enforces that by reading the
+// zone's current records before a batch applies. Without applyMu serializing
+// changes.create's validate-then-apply span, two concurrent batches (one
+// adding the CNAME, one adding the A) can each read the pre-change state —
+// neither sees the other's not-yet-applied addition — conclude there's no
+// conflict, and both apply, leaving the zone with both. With applyMu in
+// place, the second batch to run always observes the first's already-applied
+// record and is rejected.
+func TestSDKChangesCreateConcurrentCNAMEExclusivityAcrossKeys(t *testing.T) {
+	svc := newDNSService(t)
+	ctx := context.Background()
+
+	if _, err := svc.ManagedZones.Create(testProject, &dns.ManagedZone{
+		Name: "cname-exclusivity", DnsName: "cname-exclusivity.example.com.",
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("ManagedZones.Create: %v", err)
+	}
+
+	const trials = 100
+
+	var wg sync.WaitGroup
+
+	for i := range trials {
+		name := fmt.Sprintf("race%d.cname-exclusivity.example.com.", i)
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = svc.Changes.Create(testProject, "cname-exclusivity", &dns.Change{
+				Additions: []*dns.ResourceRecordSet{
+					{Name: name, Type: "CNAME", Ttl: 300, Rrdatas: []string{"target.example.com."}},
+				},
+			}).Context(ctx).Do()
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = svc.Changes.Create(testProject, "cname-exclusivity", &dns.Change{
+				Additions: []*dns.ResourceRecordSet{
+					{Name: name, Type: "A", Ttl: 300, Rrdatas: []string{"192.0.2.1"}},
+				},
+			}).Context(ctx).Do()
+		}()
+	}
+
+	wg.Wait()
+
+	for i := range trials {
+		name := fmt.Sprintf("race%d.cname-exclusivity.example.com.", i)
+
+		rrsets, err := svc.ResourceRecordSets.List(testProject, "cname-exclusivity").Name(name).Context(ctx).Do()
+		if err != nil {
+			t.Fatalf("ResourceRecordSets.List(%s): %v", name, err)
+		}
+
+		if len(rrsets.Rrsets) > 1 {
+			t.Fatalf("name %s has %d record sets, want at most 1 (CNAME exclusivity violated): %+v",
+				name, len(rrsets.Rrsets), rrsets.Rrsets)
 		}
 	}
 }
