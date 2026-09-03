@@ -583,6 +583,18 @@ func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload [
 	return nil
 }
 
+// FunctionExists reports whether functionARN resolves to a live function. It
+// lets a cross-service caller (EventBridge's DLQ routing) distinguish a target
+// that is genuinely gone from one InvokeExternal merely no-ops for by design —
+// InvokeExternal itself must keep silently no-op'ing an unknown function for
+// its other callers (S3 notifications, DynamoDB Streams, SQS event-source
+// mappings), which rely on a stale target never failing them.
+func (m *Mock) FunctionExists(_ context.Context, functionARN string) bool {
+	_, ok := m.funcs.Get(functionNameFromARN(functionARN))
+
+	return ok
+}
+
 // functionNameFromARN extracts the function name from a Lambda ARN
 // (arn:aws:lambda:region:account:function:name[:qualifier]); a bare name is
 // returned unchanged.
