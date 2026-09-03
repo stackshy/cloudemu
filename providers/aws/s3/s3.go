@@ -603,6 +603,13 @@ func objectLockDeniedError() error {
 		"Access Denied because object protected by object lock.")
 }
 
+// objectLockMissingError is returned by a retention/legal-hold write on a bucket
+// that was not created with Object Lock enabled; the wire layer renders it as
+// 400 InvalidRequest.
+func objectLockMissingError() error {
+	return cerrors.New(cerrors.FailedPrecondition, "Bucket is missing Object Lock Configuration")
+}
+
 // evalPutPrecondition reports whether a conditional PutObject may proceed. It
 // runs under versionsMu, reading the current object (a delete marker leaves no
 // current object, so the key reads as absent). If-None-Match: "*" requires the
@@ -715,8 +722,12 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	}
 
 	bkt.versionsMu.Lock()
-	vid, deleteMarker, existed := m.deleteTopLevelLocked(bkt, key)
+	vid, deleteMarker, existed, err := m.deleteTopLevelLocked(bkt, key, false)
 	bkt.versionsMu.Unlock()
+
+	if err != nil {
+		return err
+	}
 
 	// On an unversioned bucket, deleting a missing key is NotFound (the wire
 	// handler maps that to an idempotent 204). A versioned bucket always records
@@ -745,12 +756,18 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 // deleteTopLevelLocked applies a top-level (no versionId) delete. On Enabled it
-// appends a delete marker; on Suspended it overwrites the null version with a
-// null delete marker; unversioned removes the current object. Returns the
-// affected version id, whether a delete marker was created, and whether
-// anything existed to delete (always true when a marker is recorded). Callers
-// hold versionsMu.
-func (m *Mock) deleteTopLevelLocked(bkt *bucketMeta, key string) (versionID string, deleteMarker, existed bool) {
+// appends a delete marker (leaving every existing version — including protected
+// ones — intact, so no lock check applies); on Suspended it overwrites the null
+// version with a null delete marker; unversioned removes the current object.
+// The Suspended and unversioned branches DESTROY the current object's bytes, so
+// they honor Object Lock: a protected current object cannot be removed (bypass
+// lifts only a GOVERNANCE retention). Returns the affected version id, whether a
+// delete marker was created, whether anything existed to delete (always true
+// when a marker is recorded), and an Object-Lock denial error. Callers hold
+// versionsMu.
+func (m *Mock) deleteTopLevelLocked(
+	bkt *bucketMeta, key string, bypassGovernance bool,
+) (versionID string, deleteMarker, existed bool, err error) {
 	now := m.opts.Clock.Now().UTC().Format(s3TimeFormat)
 
 	switch bkt.versionStatus {
@@ -758,18 +775,46 @@ func (m *Mock) deleteTopLevelLocked(bkt *bucketMeta, key string) (versionID stri
 		vid := newVersionID()
 		bkt.appendVersion(key, &s3Version{versionID: vid, deleteMarker: true, lastModified: now})
 		bkt.objects.Delete(key)
-		return vid, true, true
+
+		return vid, true, true, nil
 	case versioningSuspended:
+		if err := m.checkTopLevelDeleteLocked(bkt, key, bypassGovernance); err != nil {
+			return "", false, false, err
+		}
+
 		bkt.replaceNullVersion(key, &s3Version{versionID: nullVersionID, deleteMarker: true, lastModified: now})
 		bkt.objects.Delete(key)
-		return nullVersionID, true, true
+
+		return nullVersionID, true, true, nil
 	default:
 		if !bkt.objects.Has(key) {
-			return "", false, false
+			return "", false, false, nil
 		}
+
+		if err := m.checkTopLevelDeleteLocked(bkt, key, bypassGovernance); err != nil {
+			return "", false, false, err
+		}
+
 		bkt.objects.Delete(key)
-		return "", false, true
+
+		return "", false, true, nil
 	}
+}
+
+// checkTopLevelDeleteLocked refuses a top-level delete that would destroy a
+// protected current object's bytes (Suspended null version / unversioned
+// object). Callers hold versionsMu.
+func (m *Mock) checkTopLevelDeleteLocked(bkt *bucketMeta, key string, bypassGovernance bool) error {
+	cur, ok := bkt.objects.Get(key)
+	if !ok {
+		return nil
+	}
+
+	if cur.lock.blocksDelete(m.opts.Clock.Now(), bypassGovernance) {
+		return objectLockDeniedError()
+	}
+
+	return nil
 }
 
 func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.ObjectInfo, error) {
@@ -1433,26 +1478,10 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
 	}
 
-	mp.mu.Lock()
-	for _, p := range parts {
-		stored, exists := mp.parts[p.PartNumber]
-		if !exists {
-			mp.mu.Unlock()
-			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
-		}
-
-		// Real S3 validates each supplied part ETag against the stored part and
-		// rejects a mismatch with InvalidPart. An empty client ETag skips the
-		// check (some callers omit it); a non-empty one must match the stored
-		// part's MD5, case-insensitively.
-		if p.ETag != "" && !strings.EqualFold(strings.Trim(p.ETag, `"`), md5Hex(stored)) {
-			mp.mu.Unlock()
-			return cerrors.Newf(cerrors.InvalidArgument, "part %d ETag does not match the uploaded part in upload %q", p.PartNumber, uploadID)
-		}
+	ordered, err := validateAndOrderParts(mp, parts, uploadID)
+	if err != nil {
+		return err
 	}
-
-	ordered := orderedPartData(mp.parts, parts)
-	mp.mu.Unlock()
 
 	var data []byte
 	for _, p := range ordered {
@@ -1496,6 +1525,33 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 	m.notifyObjectCreated(ctx, bkt, bucket, key, int64(len(data)), obj.ETag, obj.VersionID)
 
 	return nil
+}
+
+// validateAndOrderParts checks every requested part exists and (when the caller
+// supplied an ETag) matches the stored part, then returns the parts' bytes in
+// ascending PartNumber order. It holds mp.mu for the duration so a concurrent
+// UploadPart cannot race the validation.
+func validateAndOrderParts(mp *multipartUpload, parts []driver.UploadPart, uploadID string) ([][]byte, error) {
+	mp.mu.Lock()
+	defer mp.mu.Unlock()
+
+	for _, p := range parts {
+		stored, exists := mp.parts[p.PartNumber]
+		if !exists {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
+		}
+
+		// Real S3 validates each supplied part ETag against the stored part and
+		// rejects a mismatch with InvalidPart. An empty client ETag skips the
+		// check (some callers omit it); a non-empty one must match the stored
+		// part's MD5, case-insensitively.
+		if p.ETag != "" && !strings.EqualFold(strings.Trim(p.ETag, `"`), md5Hex(stored)) {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"part %d ETag does not match the uploaded part in upload %q", p.PartNumber, uploadID)
+		}
+	}
+
+	return orderedPartData(mp.parts, parts), nil
 }
 
 // orderedPartData returns each requested part's bytes in ascending PartNumber
@@ -1588,8 +1644,16 @@ func (m *Mock) SetVersioningStatus(_ context.Context, bucket, status string) err
 	}
 
 	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	// Object Lock requires versioning to stay Enabled; real S3 rejects a suspend
+	// on a lock-enabled bucket with InvalidBucketState.
+	if bkt.objectLockEnabled && status == versioningSuspended {
+		return cerrors.New(cerrors.FailedPrecondition,
+			"An Object Lock configuration is present on this bucket, so the versioning state cannot be changed.")
+	}
+
 	bkt.versionStatus = status
-	bkt.versionsMu.Unlock()
 
 	return nil
 }
@@ -1700,7 +1764,11 @@ func (m *Mock) deleteObjectVersion(
 	defer bkt.versionsMu.Unlock()
 
 	if versionID == "" {
-		vid, marker, existed := m.deleteTopLevelLocked(bkt, key)
+		vid, marker, existed, err := m.deleteTopLevelLocked(bkt, key, bypassGovernance)
+		if err != nil {
+			return "", false, err
+		}
+
 		if !existed {
 			// Unversioned bucket, key never existed: a no-op idempotent delete,
 			// matching real S3 — nothing was removed, so no event fires.
@@ -1857,6 +1925,10 @@ func (m *Mock) PutObjectRetention(
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
 
+	if !bkt.objectLockEnabled {
+		return objectLockMissingError()
+	}
+
 	lock, inHistory, err := lockTargetLocked(bkt, key, versionID)
 	if err != nil {
 		return err
@@ -1921,6 +1993,10 @@ func (m *Mock) PutObjectLegalHold(_ context.Context, bucket, key, versionID stri
 
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
+
+	if !bkt.objectLockEnabled {
+		return objectLockMissingError()
+	}
 
 	lock, inHistory, err := lockTargetLocked(bkt, key, versionID)
 	if err != nil {

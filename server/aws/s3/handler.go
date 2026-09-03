@@ -580,40 +580,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 }
 
 func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	q := r.URL.Query()
-
-	switch {
-	case q.Has("attributes"):
-		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
-		// falls through to getObject and the SDK decodes an object body as the
-		// attributes response, reading zero-valued attributes.
-		h.getObjectAttributes(w, r, bucket, key)
-		return
-	case q.Has("tagging"):
-		h.objectTaggingOp(w, r, bucket, key)
-		return
-	case q.Has("retention"):
-		h.objectRetentionOp(w, r, bucket, key)
-		return
-	case q.Has("legal-hold"):
-		h.objectLegalHoldOp(w, r, bucket, key)
-		return
-	case q.Has("uploads"):
-		// POST /{bucket}/{key}?uploads => CreateMultipartUpload. Any other method
-		// is rejected rather than falling through to a plain object PUT/GET/DELETE.
-		if r.Method == http.MethodPost {
-			h.createMultipartUpload(w, r, bucket, key)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
-		return
-	case q.Has("uploadId"):
-		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
-		return
-	case q.Has("acl"):
-		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
-		// through to putObject and overwrite the object with the ACL body.
-		h.aclOp(w, r)
+	if h.objectSubresourceOp(w, r, bucket, key) {
 		return
 	}
 
@@ -633,6 +600,46 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// objectSubresourceOp dispatches the object-level sub-resource operations
+// selected by a query key (?attributes, ?tagging, ?retention, ?legal-hold,
+// ?uploads, ?uploadId, ?acl). It returns true when it handled the request; false
+// lets objectOp fall through to the plain method switch (GET/PUT/HEAD/DELETE).
+func (h *Handler) objectSubresourceOp(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+	q := r.URL.Query()
+
+	switch {
+	case q.Has("attributes"):
+		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
+		// falls through to getObject and the SDK decodes an object body as the
+		// attributes response, reading zero-valued attributes.
+		h.getObjectAttributes(w, r, bucket, key)
+	case q.Has("tagging"):
+		h.objectTaggingOp(w, r, bucket, key)
+	case q.Has("retention"):
+		h.objectRetentionOp(w, r, bucket, key)
+	case q.Has("legal-hold"):
+		h.objectLegalHoldOp(w, r, bucket, key)
+	case q.Has("uploads"):
+		// POST /{bucket}/{key}?uploads => CreateMultipartUpload. Any other method
+		// is rejected rather than falling through to a plain object PUT/GET/DELETE.
+		if r.Method == http.MethodPost {
+			h.createMultipartUpload(w, r, bucket, key)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
+		}
+	case q.Has("uploadId"):
+		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
+	case q.Has("acl"):
+		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
+		// through to putObject and overwrite the object with the ACL body.
+		h.aclOp(w, r)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -2145,8 +2152,17 @@ func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, bu
 	} else {
 		err = h.bucket.SetBucketVersioning(r.Context(), bucket, body.Status == "Enabled")
 	}
+
 	if err != nil {
+		// Suspending versioning on an Object-Lock-enabled bucket is rejected by
+		// real S3 with 409 InvalidBucketState.
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusConflict, "InvalidBucketState", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 

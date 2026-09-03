@@ -3,7 +3,6 @@ package s3_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	smithy "github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
@@ -67,17 +65,11 @@ func mustCreateObjectLockBucket(t *testing.T, client *awss3.Client, bucket strin
 }
 
 // assertAccessDenied asserts the SDK error is an S3 AccessDenied (403).
+// assertAPICode is defined in copy_sdk_test.go (same package).
 func assertAccessDenied(t *testing.T, err error) {
 	t.Helper()
 
-	if err == nil {
-		t.Fatal("expected AccessDenied error, got nil")
-	}
-
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "AccessDenied" {
-		t.Fatalf("expected AccessDenied, got %v", err)
-	}
+	assertAPICode(t, err, "AccessDenied")
 }
 
 // TestSDKObjectLockComplianceBlocksDelete drives the real aws-sdk-go-v2 flow: a
@@ -261,4 +253,50 @@ func TestSDKObjectLockTopLevelDeleteMarker(t *testing.T) {
 	if !found {
 		t.Fatal("locked version missing after top-level delete")
 	}
+}
+
+// TestSDKObjectLockSuspendRejected verifies versioning cannot be suspended on an
+// Object-Lock-enabled bucket (real S3: 409 InvalidBucketState).
+func TestSDKObjectLockSuspendRejected(t *testing.T) {
+	client, _ := newLockSDKClient(t)
+	ctx := context.Background()
+
+	mustCreateObjectLockBucket(t, client, "nosuspend")
+
+	_, err := client.PutBucketVersioning(ctx, &awss3.PutBucketVersioningInput{
+		Bucket:                  aws.String("nosuspend"),
+		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusSuspended},
+	})
+	assertAPICode(t, err, "InvalidBucketState")
+}
+
+// TestSDKObjectLockRetentionRequiresLockBucket verifies retention cannot be set
+// on a bucket that was not created with Object Lock enabled (real S3: 400
+// InvalidRequest).
+func TestSDKObjectLockRetentionRequiresLockBucket(t *testing.T) {
+	client, _ := newLockSDKClient(t)
+	ctx := context.Background()
+
+	mustCreateBucket(t, client, "plainbucket")
+
+	if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("plainbucket"), Key: aws.String("k"), Body: bytes.NewReader([]byte("v1")),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	_, err := client.PutObjectRetention(ctx, &awss3.PutObjectRetentionInput{
+		Bucket: aws.String("plainbucket"), Key: aws.String("k"),
+		Retention: &types.ObjectLockRetention{
+			Mode:            types.ObjectLockRetentionModeCompliance,
+			RetainUntilDate: aws.Time(lockEpoch().Add(time.Hour)),
+		},
+	})
+	assertAPICode(t, err, "InvalidRequest")
+
+	_, err = client.PutObjectLegalHold(ctx, &awss3.PutObjectLegalHoldInput{
+		Bucket: aws.String("plainbucket"), Key: aws.String("k"),
+		LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOn},
+	})
+	assertAPICode(t, err, "InvalidRequest")
 }

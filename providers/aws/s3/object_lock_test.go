@@ -116,21 +116,46 @@ func TestObjectLockLegalHoldBlocksDelete(t *testing.T) {
 	requireNoError(t, err)
 }
 
+// setObjectLockForTest stamps lock state directly on a stored object and its
+// current version. Real S3 only allows Object Lock on a versioning-enabled
+// (object-lock-enabled) bucket, so this white-box helper is the only way to
+// construct a locked object on an unversioned/suspended bucket — the exact state
+// the in-place-overwrite and top-level-delete WORM guards defend against (e.g.
+// after a snapshot/restore of a crafted state).
+func setObjectLockForTest(t *testing.T, m *Mock, bucket, key string, l objectLock) {
+	t.Helper()
+
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		t.Fatalf("bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	if obj, has := bkt.objects.Get(key); has {
+		obj.lock = l
+	}
+
+	if v := currentVersionLocked(bkt, key); v != nil {
+		v.lock = l
+	}
+}
+
 // TestObjectLockOverwriteBlocked covers overwrite protection: on a bucket where a
-// write replaces the current object's bytes in place (suspended versioning), a
-// protected object cannot be overwritten.
+// write replaces the current object's bytes in place (unversioned), a protected
+// object cannot be overwritten.
 func TestObjectLockOverwriteBlocked(t *testing.T) {
 	m, fc := newLockMock()
 	ctx := context.Background()
 
 	requireNoError(t, m.CreateBucket(ctx, "b"))
-	requireNoError(t, m.SetVersioningStatus(ctx, "b", "Suspended"))
 	requireNoError(t, m.PutObject(ctx, "b", "k", []byte("v1"), "", nil))
 
-	requireNoError(t, m.PutObjectRetention(ctx, "b", "k", "",
-		driver.ObjectRetention{Mode: driver.ObjectLockCompliance, RetainUntilDate: fc.Now().Add(time.Hour)}, false))
+	setObjectLockForTest(t, m, "b", "k",
+		objectLock{retentionMode: driver.ObjectLockCompliance, retainUntil: fc.Now().Add(time.Hour)})
 
-	// Overwriting the protected null version in place is refused.
+	// Overwriting the protected object in place is refused.
 	assertPermissionDenied(t, m.PutObject(ctx, "b", "k", []byte("v2"), "", nil))
 
 	// The original bytes survive.
@@ -141,6 +166,101 @@ func TestObjectLockOverwriteBlocked(t *testing.T) {
 	// After the retention elapses, overwrite is permitted again.
 	fc.Advance(2 * time.Hour)
 	requireNoError(t, m.PutObject(ctx, "b", "k", []byte("v2"), "", nil))
+}
+
+// TestObjectLockTopLevelDeleteBlockedUnversioned covers the WORM guard on a
+// top-level (no versionId) delete of an in-place object: it must not destroy a
+// COMPLIANCE-locked or legal-held object's bytes. (Defense-in-depth — real S3
+// cannot reach this state, so the lock is crafted white-box.)
+func TestObjectLockTopLevelDeleteBlockedUnversioned(t *testing.T) {
+	m, fc := newLockMock()
+	ctx := context.Background()
+
+	requireNoError(t, m.CreateBucket(ctx, "b"))
+
+	// COMPLIANCE retention: top-level delete blocked, even with governance bypass.
+	requireNoError(t, m.PutObject(ctx, "b", "comp", []byte("v1"), "", nil))
+	setObjectLockForTest(t, m, "b", "comp",
+		objectLock{retentionMode: driver.ObjectLockCompliance, retainUntil: fc.Now().Add(time.Hour)})
+
+	assertPermissionDenied(t, m.DeleteObject(ctx, "b", "comp"))
+	_, _, err := m.DeleteObjectVersionWithBypass(ctx, "b", "comp", "", true)
+	assertPermissionDenied(t, err)
+
+	got, err := m.GetObject(ctx, "b", "comp")
+	requireNoError(t, err)
+	assertEqual(t, "v1", string(got.Data))
+
+	// Legal hold: top-level delete blocked, cannot be bypassed.
+	requireNoError(t, m.PutObject(ctx, "b", "lh", []byte("v1"), "", nil))
+	setObjectLockForTest(t, m, "b", "lh", objectLock{legalHold: true})
+
+	assertPermissionDenied(t, m.DeleteObject(ctx, "b", "lh"))
+	_, _, err = m.DeleteObjectVersionWithBypass(ctx, "b", "lh", "", true)
+	assertPermissionDenied(t, err)
+
+	// After the COMPLIANCE retention elapses, the delete is permitted.
+	fc.Advance(2 * time.Hour)
+	requireNoError(t, m.DeleteObject(ctx, "b", "comp"))
+}
+
+// TestObjectLockTopLevelDeleteBlockedSuspended covers the WORM guard on a
+// top-level delete against the versioning-suspended null-version branch.
+func TestObjectLockTopLevelDeleteBlockedSuspended(t *testing.T) {
+	m, fc := newLockMock()
+	ctx := context.Background()
+
+	requireNoError(t, m.CreateBucket(ctx, "b"))
+	requireNoError(t, m.SetVersioningStatus(ctx, "b", "Suspended"))
+	requireNoError(t, m.PutObject(ctx, "b", "k", []byte("v1"), "", nil))
+
+	setObjectLockForTest(t, m, "b", "k",
+		objectLock{retentionMode: driver.ObjectLockCompliance, retainUntil: fc.Now().Add(time.Hour)})
+
+	// Top-level delete would replace the null version with a null delete marker,
+	// destroying the protected bytes — it must be refused.
+	assertPermissionDenied(t, m.DeleteObject(ctx, "b", "k"))
+
+	got, err := m.GetObject(ctx, "b", "k")
+	requireNoError(t, err)
+	assertEqual(t, "v1", string(got.Data))
+}
+
+// TestObjectLockSuspendRejected covers that versioning cannot be suspended on an
+// Object-Lock-enabled bucket.
+func TestObjectLockSuspendRejected(t *testing.T) {
+	m, _ := newLockMock()
+	ctx := context.Background()
+
+	requireNoError(t, m.CreateBucket(ctx, "b"))
+	requireNoError(t, m.EnableObjectLock(ctx, "b"))
+
+	if err := m.SetVersioningStatus(ctx, "b", "Suspended"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("SetVersioningStatus Suspended = %v, want FailedPrecondition", err)
+	}
+
+	// Re-enabling is fine.
+	requireNoError(t, m.SetVersioningStatus(ctx, "b", "Enabled"))
+}
+
+// TestObjectLockRetentionRequiresLockBucket covers that retention/legal hold can
+// only be set on an Object-Lock-enabled bucket.
+func TestObjectLockRetentionRequiresLockBucket(t *testing.T) {
+	m, fc := newLockMock()
+	ctx := context.Background()
+
+	requireNoError(t, m.CreateBucket(ctx, "plain"))
+	requireNoError(t, m.PutObject(ctx, "plain", "k", []byte("v1"), "", nil))
+
+	err := m.PutObjectRetention(ctx, "plain", "k", "",
+		driver.ObjectRetention{Mode: driver.ObjectLockCompliance, RetainUntilDate: fc.Now().Add(time.Hour)}, false)
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("PutObjectRetention on non-lock bucket = %v, want FailedPrecondition", err)
+	}
+
+	if err := m.PutObjectLegalHold(ctx, "plain", "k", "", true); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("PutObjectLegalHold on non-lock bucket = %v, want FailedPrecondition", err)
+	}
 }
 
 // TestObjectLockEnabledOverwriteMakesNewVersion covers that on an object-lock

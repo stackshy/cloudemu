@@ -7,9 +7,23 @@ import (
 	"strings"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
+
+// writeObjectLockErr maps a retention/legal-hold driver error: a bucket that was
+// not created with Object Lock enabled surfaces as 400 InvalidRequest (real S3);
+// everything else (a WORM protection denial → 403 AccessDenied, missing
+// bucket/key → NoSuchBucket/NoSuchKey) follows the standard mapping.
+func writeObjectLockErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) {
+		writeError(w, http.StatusBadRequest, "InvalidRequest", cerrors.Message(err))
+		return
+	}
+
+	writeErr(w, err)
+}
 
 // Object Lock request/response headers and status values.
 const (
@@ -103,7 +117,7 @@ func (h *Handler) putObjectRetention(w http.ResponseWriter, r *http.Request, buc
 
 	versionID := r.URL.Query().Get("versionId")
 	if err := h.objectLock.PutObjectRetention(r.Context(), bucket, key, versionID, ret, bypassGovernance(r)); err != nil {
-		writeErr(w, err)
+		writeObjectLockErr(w, err)
 		return
 	}
 
@@ -171,7 +185,7 @@ func (h *Handler) putObjectLegalHold(w http.ResponseWriter, r *http.Request, buc
 	on := strings.EqualFold(doc.Status, legalHoldOn)
 
 	if err := h.objectLock.PutObjectLegalHold(r.Context(), bucket, key, versionID, on); err != nil {
-		writeErr(w, err)
+		writeObjectLockErr(w, err)
 		return
 	}
 
@@ -222,14 +236,14 @@ func (h *Handler) applyPutObjectLock(w http.ResponseWriter, r *http.Request, buc
 		}
 
 		if err := h.objectLock.PutObjectRetention(r.Context(), bucket, key, versionID, ret, bypassGovernance(r)); err != nil {
-			writeErr(w, err)
+			writeObjectLockErr(w, err)
 			return false
 		}
 	}
 
 	if lh := r.Header.Get(hdrObjectLockLegalHold); lh != "" {
 		if err := h.objectLock.PutObjectLegalHold(r.Context(), bucket, key, versionID, strings.EqualFold(lh, legalHoldOn)); err != nil {
-			writeErr(w, err)
+			writeObjectLockErr(w, err)
 			return false
 		}
 	}
