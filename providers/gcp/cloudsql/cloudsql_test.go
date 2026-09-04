@@ -696,6 +696,49 @@ func TestDescribeInstancesResultDoesNotAliasStore(t *testing.T) {
 	}
 }
 
+// TestDescribeSnapshotsOrderIsDeterministic guards against DescribeSnapshots
+// iterating the raw memstore map (random Go iteration order) instead of a
+// sorted view. Backup runs are inserted in a non-lexicographic order so a
+// stray return to map iteration would surface intermittently rather than
+// deterministically, but the correct behavior — sorted by id — must hold on
+// every call.
+func TestDescribeSnapshotsOrderIsDeterministic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "src", Engine: "POSTGRES_15"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	for _, id := range []string{"snap-c", "snap-a", "snap-d", "snap-b"} {
+		if _, err := m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{ID: id, InstanceID: "src"}); err != nil {
+			t.Fatalf("CreateSnapshot %q: %v", id, err)
+		}
+	}
+
+	want := []string{"snap-a", "snap-b", "snap-c", "snap-d"}
+
+	for attempt := 0; attempt < 5; attempt++ {
+		snaps, err := m.DescribeSnapshots(ctx, nil, "src")
+		requireNoError(t, err)
+
+		if len(snaps) != len(want) {
+			t.Fatalf("attempt %d: got %d snapshots, want %d", attempt, len(snaps), len(want))
+		}
+
+		for i, snap := range snaps {
+			if snap.ID != want[i] {
+				got := make([]string, len(snaps))
+				for j, s := range snaps {
+					got[j] = s.ID
+				}
+
+				t.Fatalf("attempt %d: snapshot order = %v, want %v", attempt, got, want)
+			}
+		}
+	}
+}
+
 func TestChildNameRejectsSlash(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

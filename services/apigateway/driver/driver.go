@@ -169,16 +169,31 @@ type APIGateway interface {
 	CreateResource(ctx context.Context, restAPIID, parentID, pathPart string) (*Resource, error)
 	GetResources(ctx context.Context, restAPIID string) ([]Resource, error)
 	GetResource(ctx context.Context, restAPIID, resourceID string) (*Resource, error)
+	// DeleteResource removes a resource and its whole descendant subtree, as
+	// real API Gateway does. Deleting the API's root resource is rejected.
+	DeleteResource(ctx context.Context, restAPIID, resourceID string) error
 
 	PutMethod(ctx context.Context, restAPIID, resourceID, httpMethod string, in PutMethodInput) (*Method, error)
 	GetMethod(ctx context.Context, restAPIID, resourceID, httpMethod string) (*Method, error)
+	DeleteMethod(ctx context.Context, restAPIID, resourceID, httpMethod string) error
 
 	PutIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string, in PutIntegrationInput) (*Integration, error)
 	GetIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string) (*Integration, error)
+	DeleteIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string) error
 
 	CreateDeployment(ctx context.Context, restAPIID string, in CreateDeploymentInput) (*Deployment, error)
+	GetDeployments(ctx context.Context, restAPIID string) ([]Deployment, error)
+	GetDeployment(ctx context.Context, restAPIID, deploymentID string) (*Deployment, error)
+	// DeleteDeployment removes a deployment. It fails with a FailedPrecondition
+	// error when a stage still points at it, matching real API Gateway (a
+	// deployment referenced by a stage must have that stage moved or deleted
+	// first).
+	DeleteDeployment(ctx context.Context, restAPIID, deploymentID string) error
+
 	CreateStage(ctx context.Context, restAPIID string, in CreateStageInput) (*Stage, error)
+	GetStages(ctx context.Context, restAPIID string) ([]Stage, error)
 	GetStage(ctx context.Context, restAPIID, stageName string) (*Stage, error)
+	DeleteStage(ctx context.Context, restAPIID, stageName string) error
 
 	// InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's
 	// resource tree ({proxy+} greedy paths and {param} placeholders supported)

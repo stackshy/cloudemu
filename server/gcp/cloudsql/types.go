@@ -141,6 +141,12 @@ type operation struct {
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
+// operationsList is the Cloud SQL Admin operations.list response envelope.
+type operationsList struct {
+	Kind  string      `json:"kind,omitempty"`
+	Items []operation `json:"items,omitempty"`
+}
+
 // doneOperationWithTarget builds a DONE operation that carries the full record
 // a real Cloud SQL operation exposes: the affected resource (targetId /
 // targetLink), the acting user, insert/start/end timestamps, and its own
@@ -328,6 +334,9 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	// cerrors.Message strips the internal code-name prefix (e.g. "NotFound: ")
+	// that Error() prepends — real Cloud SQL never leaks its error taxonomy into
+	// the wire message, only the human-readable text.
 	msg := cerrors.Message(err)
 
 	switch {

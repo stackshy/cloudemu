@@ -367,3 +367,132 @@ func TestCreateResourceRejectsSecondVariableSibling(t *testing.T) {
 		t.Fatalf("CreateResource(pets) alongside {id}: %v", err)
 	}
 }
+
+// TestDeleteMethodAndIntegration proves DeleteIntegration clears just the
+// integration (the method survives), and a subsequent DeleteMethod removes the
+// method entirely — the lifecycle a Terraform destroy of
+// aws_api_gateway_integration then aws_api_gateway_method drives.
+func TestDeleteMethodAndIntegration(t *testing.T) {
+	m := newMock(t)
+	apiID, _, resID := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	if err := m.DeleteIntegration(ctx(), apiID, resID, "GET"); err != nil {
+		t.Fatalf("DeleteIntegration: %v", err)
+	}
+
+	if _, err := m.GetIntegration(ctx(), apiID, resID, "GET"); !errors.IsNotFound(err) {
+		t.Fatalf("GetIntegration after delete: %v, want NotFound", err)
+	}
+
+	if _, err := m.GetMethod(ctx(), apiID, resID, "GET"); err != nil {
+		t.Fatalf("GetMethod should still exist after DeleteIntegration: %v", err)
+	}
+
+	if err := m.DeleteMethod(ctx(), apiID, resID, "GET"); err != nil {
+		t.Fatalf("DeleteMethod: %v", err)
+	}
+
+	if _, err := m.GetMethod(ctx(), apiID, resID, "GET"); !errors.IsNotFound(err) {
+		t.Fatalf("GetMethod after delete: %v, want NotFound", err)
+	}
+}
+
+// TestDeleteIntegrationMissingIsNotFound proves deleting a nonexistent
+// integration is a NotFound (real API Gateway returns NotFoundException).
+func TestDeleteIntegrationMissingIsNotFound(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+	res, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "pets")
+
+	if _, err := m.PutMethod(ctx(), api.ID, res.ID, "GET", driver.PutMethodInput{}); err != nil {
+		t.Fatalf("PutMethod: %v", err)
+	}
+
+	if err := m.DeleteIntegration(ctx(), api.ID, res.ID, "GET"); !errors.IsNotFound(err) {
+		t.Fatalf("DeleteIntegration with no integration: %v, want NotFound", err)
+	}
+}
+
+// TestDeleteResourceCascadesToChildren proves deleting a resource removes its
+// whole descendant subtree, matching real API Gateway.
+func TestDeleteResourceCascadesToChildren(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+
+	parent, err := m.CreateResource(ctx(), api.ID, api.RootResourceID, "orders")
+	if err != nil {
+		t.Fatalf("CreateResource(orders): %v", err)
+	}
+
+	child, err := m.CreateResource(ctx(), api.ID, parent.ID, "{id}")
+	if err != nil {
+		t.Fatalf("CreateResource({id}): %v", err)
+	}
+
+	if err := m.DeleteResource(ctx(), api.ID, parent.ID); err != nil {
+		t.Fatalf("DeleteResource: %v", err)
+	}
+
+	if _, err := m.GetResource(ctx(), api.ID, parent.ID); !errors.IsNotFound(err) {
+		t.Fatalf("GetResource(parent) after delete: %v, want NotFound", err)
+	}
+
+	if _, err := m.GetResource(ctx(), api.ID, child.ID); !errors.IsNotFound(err) {
+		t.Fatalf("GetResource(child) after parent delete: %v, want NotFound", err)
+	}
+}
+
+// TestDeleteResourceRejectsRoot proves the API's root resource cannot be
+// deleted, matching real API Gateway's "Cannot remove the root resource"
+// BadRequestException.
+func TestDeleteResourceRejectsRoot(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+
+	if err := m.DeleteResource(ctx(), api.ID, api.RootResourceID); !errors.IsInvalidArgument(err) {
+		t.Fatalf("DeleteResource(root): %v, want InvalidArgument", err)
+	}
+}
+
+// TestDeploymentAndStageLifecycle exercises GetDeployment(s), GetStages,
+// DeleteStage and DeleteDeployment end to end, including the guard that a
+// deployment referenced by a stage cannot be deleted.
+func TestDeploymentAndStageLifecycle(t *testing.T) {
+	m := newMock(t)
+	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	deps, err := m.GetDeployments(ctx(), apiID)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("GetDeployments = %+v, %v; want 1 deployment", deps, err)
+	}
+
+	dep, err := m.GetDeployment(ctx(), apiID, deps[0].ID)
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+
+	stages, err := m.GetStages(ctx(), apiID)
+	if err != nil || len(stages) != 1 || stages[0].StageName != "prod" {
+		t.Fatalf("GetStages = %+v, %v; want [prod]", stages, err)
+	}
+
+	if err := m.DeleteDeployment(ctx(), apiID, dep.ID); !errors.IsFailedPrecondition(err) {
+		t.Fatalf("DeleteDeployment while stage active: %v, want FailedPrecondition", err)
+	}
+
+	if err := m.DeleteStage(ctx(), apiID, "prod"); err != nil {
+		t.Fatalf("DeleteStage: %v", err)
+	}
+
+	if _, err := m.GetStage(ctx(), apiID, "prod"); !errors.IsNotFound(err) {
+		t.Fatalf("GetStage after delete: %v, want NotFound", err)
+	}
+
+	if err := m.DeleteDeployment(ctx(), apiID, dep.ID); err != nil {
+		t.Fatalf("DeleteDeployment after stage removed: %v", err)
+	}
+
+	if _, err := m.GetDeployment(ctx(), apiID, dep.ID); !errors.IsNotFound(err) {
+		t.Fatalf("GetDeployment after delete: %v, want NotFound", err)
+	}
+}

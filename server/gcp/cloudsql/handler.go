@@ -31,6 +31,8 @@ package cloudsql
 
 import (
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -67,12 +69,20 @@ func isSubResource(seg string) bool {
 type Handler struct {
 	db rdsdriver.RelationalDB
 
-	// mu guards ops. Mutating endpoints complete inline (status=DONE) and record
-	// the resulting Operation here so a later Operations.Get returns the real
-	// CREATE/UPDATE/DELETE record — pointing at the affected resource — rather
-	// than a synthetic stand-in.
+	// mu guards ops and opSeq. Mutating endpoints complete inline (status=DONE)
+	// and record the resulting Operation here so a later Operations.Get returns
+	// the real CREATE/UPDATE/DELETE record — pointing at the affected resource —
+	// rather than a synthetic stand-in.
 	mu  sync.RWMutex
 	ops map[string]operation
+	// opSeq makes every recorded operation name unique. Several call sites build
+	// their base name from a fixed action tag or an instance/resource id (e.g.
+	// "patch-{instance}", or the globally-shared "insert-db"/"clone"/"promote"),
+	// so two calls of the same kind — even against different instances — would
+	// otherwise collide on the same map key and silently overwrite each other's
+	// Operation record. Real Cloud SQL always hands back a distinct operation
+	// name per call.
+	opSeq int64
 }
 
 // New returns a Cloud SQL handler backed by db.
@@ -84,14 +94,16 @@ func New(db rdsdriver.RelationalDB) *Handler {
 }
 
 // buildOp builds the DONE operation for a finished mutation and records it
-// keyed by name, so a later Operations.Get serves the same record. It returns
+// under a unique name, so a later Operations.Get serves this exact record
+// instead of whatever the next same-kind call overwrote it with. It returns
 // the operation for callers that embed it in a larger response (e.g.
 // sslCerts.insert).
 func (h *Handler) buildOp(project, name, opType, resourceType, target string) operation {
-	op := doneOperationWithTarget(project, name, opType, resourceType, target)
-
 	h.mu.Lock()
-	h.ops[name] = op
+	h.opSeq++
+	uniqueName := name + "-" + strconv.FormatInt(h.opSeq, 10)
+	op := doneOperationWithTarget(project, uniqueName, opType, resourceType, target)
+	h.ops[uniqueName] = op
 	h.mu.Unlock()
 
 	return op
@@ -329,7 +341,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlP
 	}
 
 	if p.name == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "operation name required")
+		h.listOperations(w, r, p)
 		return
 	}
 
@@ -345,6 +357,69 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlP
 	}
 
 	writeJSON(w, http.StatusOK, op)
+}
+
+// listOperations serves GET /v1/projects/{p}/operations — the operations.list
+// verb. Real Cloud SQL scopes the collection to the project and, when an
+// "instance" query parameter is given, to that instance's operations only,
+// returned in reverse-chronological order.
+func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+	instance := r.URL.Query().Get("instance")
+
+	h.mu.RLock()
+	ops := make([]operation, 0, len(h.ops))
+
+	//nolint:gocritic // map values are sized for accuracy; copy is unavoidable when materializing the result slice.
+	for _, op := range h.ops {
+		ops = append(ops, op)
+	}
+
+	h.mu.RUnlock()
+
+	out := make([]operation, 0, len(ops))
+
+	for i := range ops {
+		op := &ops[i]
+
+		if op.TargetProject != p.project {
+			continue
+		}
+
+		if instance != "" && operationInstance(op) != instance {
+			continue
+		}
+
+		out = append(out, *op)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].InsertTime != out[j].InsertTime {
+			return out[i].InsertTime > out[j].InsertTime
+		}
+
+		return out[i].Name > out[j].Name
+	})
+
+	writeJSON(w, http.StatusOK, operationsList{Kind: "sql#operationsList", Items: out})
+}
+
+// operationInstance extracts the instance name an operation's targetLink
+// refers to — e.g. ".../instances/foo" or ".../instances/foo/backupRuns/123"
+// both yield "foo" — or "" when the operation doesn't target an
+// instance-scoped resource.
+func operationInstance(op *operation) string {
+	prefix := selfLinkBase + op.TargetProject + "/instances/"
+
+	if !strings.HasPrefix(op.TargetLink, prefix) {
+		return ""
+	}
+
+	rest := strings.TrimPrefix(op.TargetLink, prefix)
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i]
+	}
+
+	return rest
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter) {
