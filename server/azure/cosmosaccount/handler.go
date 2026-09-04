@@ -52,6 +52,12 @@ type attrBackend interface {
 	// returns only accounts and never the data-plane SQL containers that share
 	// this driver.
 	AccountTables() []string
+	// UpdateTableAttributes atomically applies fn to a table's stored
+	// attributes, backing PATCH (partial update — only the submitted fields
+	// change) without a racy read-then-write pair.
+	UpdateTableAttributes(
+		ctx context.Context, table string, fn func(dbdriver.AccountAttributes) dbdriver.AccountAttributes,
+	) (dbdriver.AccountAttributes, error)
 }
 
 // AccountPurger tears down a deleted account's full footprint in one step: its
@@ -124,6 +130,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createOrUpdate(w, r, &rp)
 	case http.MethodGet:
 		h.get(w, r, &rp)
+	case http.MethodPatch:
+		h.update(w, r, &rp)
 	case http.MethodDelete:
 		h.deleteAccount(w, r, &rp)
 	default:
@@ -236,6 +244,87 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), requestBaseURL(r), rp))
+}
+
+// update serves PATCH .../databaseAccounts/{name} (DatabaseAccountsClient.
+// BeginUpdate), a non-destructive partial update: only the fields present in
+// the request body change — tags (full replace, matching how every other PATCH
+// handler in this codebase treats tags), consistencyPolicy, locations,
+// capabilities, and enableMultipleWriteLocations — everything else, including
+// kind (which real Azure's DatabaseAccountUpdateParameters has no field for;
+// it is immutable after creation), is preserved. The mutation runs through
+// attrBackend's atomic UpdateTableAttributes rather than a read-then-write
+// pair, so a concurrent PATCH never loses an update.
+//
+// Update is a long-running operation in real Azure; the emulator completes it
+// synchronously by returning 200 with the resource body inline so the SDK's
+// LRO poller terminates on the first response.
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if _, err := h.db.DescribeTable(r.Context(), rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	var body armAccountUpdate
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if h.attrs != nil {
+		if _, err := h.attrs.UpdateTableAttributes(r.Context(), rp.ResourceName, func(
+			cur dbdriver.AccountAttributes,
+		) dbdriver.AccountAttributes {
+			applyAccountUpdate(&cur, &body)
+
+			return cur
+		}); err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), requestBaseURL(r), rp))
+}
+
+// applyAccountUpdate merges the fields present on a PATCH body onto cur in
+// place, leaving every field the request omitted untouched. Slice/pointer
+// fields use a nil check (not a length/zero check) to tell "omitted" apart
+// from "present but empty", so e.g. an explicit empty capabilities array can
+// still clear the account's capabilities.
+func applyAccountUpdate(cur *dbdriver.AccountAttributes, body *armAccountUpdate) {
+	if body.Tags != nil {
+		cur.Tags = body.Tags
+	}
+
+	if body.Location != "" {
+		cur.Location = body.Location
+	}
+
+	if body.Properties == nil {
+		return
+	}
+
+	p := body.Properties
+
+	if p.Capabilities != nil {
+		cur.Capabilities = capabilityNames(p.Capabilities)
+	}
+
+	if p.Locations != nil {
+		cur.Locations = toAccountLocations(p.Locations)
+	}
+
+	if p.EnableMultipleWriteLocations != nil {
+		cur.EnableMultipleWriteLocations = *p.EnableMultipleWriteLocations
+	}
+
+	if p.ConsistencyPolicy != nil {
+		cur.ConsistencyPolicy = dbdriver.ConsistencyPolicy{
+			DefaultConsistencyLevel: p.ConsistencyPolicy.DefaultConsistencyLevel,
+			MaxIntervalInSeconds:    p.ConsistencyPolicy.MaxIntervalInSeconds,
+			MaxStalenessPrefix:      p.ConsistencyPolicy.MaxStalenessPrefix,
+		}
+	}
 }
 
 // list serves the collection paths: GET .../databaseAccounts (subscription) and
