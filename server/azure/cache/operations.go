@@ -4,16 +4,24 @@ import (
 	"net/http"
 	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// createOrUpdateCache handles PUT — Redis.BeginCreate. The LRO completes inline:
-// returning 201/200 with the resource body terminates the SDK's poller on the
-// first response. Create when absent, otherwise apply the request's mutable
-// fields (SKU, tags) via UpdateCache — ARM PUT semantics, so the caller's
-// changes are never silently discarded.
+// createOrUpdateCache handles PUT — Redis.BeginCreate — and PATCH — Redis.Update.
+// The LRO completes inline: returning 201/200 with the resource body terminates
+// the SDK's poller on the first response.
+//
+// A cache found by name is only treated as "this request's resource" when its
+// recorded scope matches the request path's subscription+resourceGroup — Redis
+// cache names are globally unique (they get a public DNS hostname), so a name
+// that already exists under a DIFFERENT resource group is not this scope's
+// cache. PATCH never creates: real Azure's Update requires the cache to
+// already exist here, so a missing or wrong-scope name is a 404. PUT keeps
+// upsert semantics; a wrong-scope name falls through to CreateCache, whose
+// existing AlreadyExists check already answers "name taken" (409 Conflict).
 func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body redisJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -24,32 +32,40 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	cfg := cachedriver.CacheConfig{
-		Name:     rp.ResourceName,
-		Engine:   "redis",
-		Location: body.Location,
-		NodeType: nodeTypeFromBody(&body),
-		Tags:     body.Tags,
-		Scope:    scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	reqScope := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+
+	existing, err := h.cache.GetCache(r.Context(), rp.ResourceName)
+
+	switch {
+	case err == nil && existing.Scope.Matches(reqScope):
+		h.updateExistingCache(w, r, rp, &body)
+	case r.Method == http.MethodPatch:
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"cache "+rp.ResourceName+" not found in resource group "+rp.ResourceGroup)
+	default:
+		h.createNewCache(w, r, rp, &body)
 	}
-	applySKUAndClustering(&cfg, &body)
-	applyRedisProperties(&cfg, &body)
+}
 
-	if _, err := h.cache.GetCache(r.Context(), rp.ResourceName); err == nil {
-		info, uerr := h.cache.UpdateCache(r.Context(), cfg)
-		if uerr != nil {
-			azurearm.WriteCErr(w, uerr)
-			return
-		}
-
-		resp := toRedisJSON(rp, info)
-		attachAccessKeys(&resp, info)
-		azurearm.WriteJSON(w, http.StatusOK, resp)
-
+// updateExistingCache applies body's mutable fields to a cache already
+// confirmed to exist in the request's resource-group scope.
+func (h *Handler) updateExistingCache(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, body *redisJSON) {
+	info, err := h.cache.UpdateCache(r.Context(), cacheConfigFromBody(rp, body))
+	if err != nil {
+		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	info, err := h.cache.CreateCache(r.Context(), cfg)
+	resp := toRedisJSON(rp, info)
+	attachAccessKeys(&resp, info)
+	azurearm.WriteJSON(w, http.StatusOK, resp)
+}
+
+// createNewCache provisions a cache under the request's resource-group scope.
+// If the name is already taken (globally, by another scope), CreateCache's own
+// AlreadyExists check fires and maps to 409 Conflict.
+func (h *Handler) createNewCache(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, body *redisJSON) {
+	info, err := h.cache.CreateCache(r.Context(), cacheConfigFromBody(rp, body))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -58,6 +74,22 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 	resp := toRedisJSON(rp, info)
 	attachAccessKeys(&resp, info)
 	azurearm.WriteJSON(w, http.StatusCreated, resp)
+}
+
+// cacheConfigFromBody builds the driver config shared by create and update.
+func cacheConfigFromBody(rp *azurearm.ResourcePath, body *redisJSON) cachedriver.CacheConfig {
+	cfg := cachedriver.CacheConfig{
+		Name:     rp.ResourceName,
+		Engine:   "redis",
+		Location: body.Location,
+		NodeType: nodeTypeFromBody(body),
+		Tags:     body.Tags,
+		Scope:    scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
+	applySKUAndClustering(&cfg, body)
+	applyRedisProperties(&cfg, body)
+
+	return cfg
 }
 
 // attachAccessKeys adds the cache's access keys to a Create/Update response.
@@ -256,15 +288,43 @@ func (h *Handler) cacheInScope(w http.ResponseWriter, r *http.Request, rp *azure
 	return true
 }
 
-// deleteCache handles DELETE — Redis.BeginDelete. Returning 200 with an empty
-// body completes the SDK's poller on the first response.
+// deleteCache handles DELETE — Redis.BeginDelete. Returning 200/204 completes
+// the SDK's poller on the first response.
+//
+// A cache found by name but recorded under a DIFFERENT resource group than the
+// request path is, from this scope's perspective, not here: real ARM resource
+// IDs are scoped by subscription+resourceGroup, so a DELETE naming the wrong
+// group must not touch the resource that actually lives elsewhere — it is a
+// no-op success, exactly like deleting a name that never existed.
 func (h *Handler) deleteCache(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.cache.DeleteCache(r.Context(), rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
+	info, err := h.cache.GetCache(r.Context(), rp.ResourceName)
+	if err != nil {
+		writeDeleteStatus(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if !info.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	writeDeleteStatus(w, h.cache.DeleteCache(r.Context(), rp.ResourceName))
+}
+
+// writeDeleteStatus maps a delete result to the ARM idempotent-DELETE
+// contract: success is 200, "already gone" (NotFound) is 204 No Content
+// rather than an error — the same convention every other Azure handler in
+// this codebase follows (acr, aks, containerapps, cosmosaccount, cosmosdb,
+// databricks, dns, eventgrid, eventhub, kusto, loganalytics, managedidentity).
+func writeDeleteStatus(w http.ResponseWriter, err error) {
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusOK)
+	case cerrors.IsNotFound(err):
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		azurearm.WriteCErr(w, err)
+	}
 }
 
 // listCaches handles GET on the collection — Redis.ListByResourceGroup /
