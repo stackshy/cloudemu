@@ -32,6 +32,11 @@ type EventBusInfo struct {
 	// and surfaced on DescribeEventBus. Empty when the bus has no policy, and for
 	// Azure and GCP.
 	Policy string
+	// Description is the caller-supplied free-text description of the event
+	// bus (EventBridge CreateEventBus's Description, echoed back on
+	// DescribeEventBus/ListEventBuses). Empty when none was set, and for
+	// Azure and GCP.
+	Description string
 }
 
 // PermissionCondition is an optional condition on an EventBridge event-bus
@@ -74,6 +79,9 @@ type EventBusConfig struct {
 	// public network (Azure Event Grid: "Enabled", "Disabled"). Empty for AWS
 	// and GCP, and for an Azure caller accepting the default.
 	PublicNetworkAccess string
+	// Description is the caller-supplied free-text description of the event
+	// bus (EventBridge CreateEventBus's Description). Empty for Azure and GCP.
+	Description string
 }
 
 // Rule defines an event routing rule with filtering.
