@@ -70,6 +70,40 @@ func TestReplicationGroupMembersDescribable(t *testing.T) {
 	assert.Equal(t, []string{"aaa-standalone"}, names)
 }
 
+// TestCreateCacheRejectsMemberIDCollision guards that a create whose id collides
+// with an existing replication-group member node ("<groupId>-001", …) is rejected
+// with AlreadyExists — real ElastiCache returns CacheClusterAlreadyExists. Without
+// the guard the standalone cluster and the synthesized member share an id and both
+// surface through DescribeCacheClusters (a duplicate).
+func TestCreateCacheRejectsMemberIDCollision(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{
+		ID: "rg-test", Engine: "redis", NodeType: "cache.t3.micro", NumCacheNodes: 3,
+	})
+	require.NoError(t, err)
+
+	_, err = m.CreateCache(ctx, driver.CacheConfig{Name: "rg-test-001"})
+	require.Error(t, err, "create colliding with a member id must be rejected")
+	assert.True(t, errors.IsAlreadyExists(err))
+
+	// The member is still described exactly once (no duplicate leaked in).
+	list, err := m.ListCaches(ctx, scope.Scope{})
+	require.NoError(t, err)
+	count := 0
+	for i := range list {
+		if list[i].Name == "rg-test-001" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "rg-test-001 should appear exactly once")
+
+	// A genuinely new, non-colliding id still creates successfully.
+	_, err = m.CreateCache(ctx, driver.CacheConfig{Name: "totally-new"})
+	require.NoError(t, err)
+}
+
 // TestReplicationGroupMemberCountFollowsModify checks that rescaling a group
 // changes which member clusters are describable.
 func TestReplicationGroupMemberCountFollowsModify(t *testing.T) {

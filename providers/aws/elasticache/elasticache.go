@@ -282,6 +282,14 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
 	}
 
+	// A replication group's member nodes ("<groupId>-001", …) are describable as
+	// single-node cache clusters without being backed by m.caches, so guard the
+	// same id space here — real ElastiCache rejects a create colliding with a
+	// member id with CacheClusterAlreadyExists.
+	if _, member := m.lookupMember(cfg.Name); member {
+		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
+	}
+
 	// A restore (SnapshotName set) seeds the unset config fields from the
 	// snapshot before defaults are applied, so the new cluster reproduces the
 	// source's engine/version/node-type/count/port.
