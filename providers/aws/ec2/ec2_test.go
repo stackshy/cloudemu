@@ -1922,6 +1922,18 @@ func TestRequestSpotInstances(t *testing.T) {
 		assertError(t, err, true)
 	})
 
+	t.Run("count exceeds maximum", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		_, err := m.RequestSpotInstances(ctx, driver.SpotRequestConfig{
+			InstanceConfig: defaultConfig(),
+			MaxPrice:       0.05,
+			Count:          maxSpotInstances + 1,
+		})
+		assertError(t, err, true)
+	})
+
 	t.Run("zero max price", func(t *testing.T) {
 		m := newTestMock()
 		ctx := context.Background()

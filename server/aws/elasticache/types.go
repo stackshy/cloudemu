@@ -265,9 +265,11 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 
 	// Defensive clamp to the real ElastiCache ceiling (Memcached tops out at 40
 	// nodes; Redis reports 1). The stored count is validated on create, but bound
-	// it here too — in a single min() the node allocation below reads directly —
-	// so a tainted value can never size an unbounded node allocation.
-	numNodes = min(numNodes, maxCacheNodesPerCluster)
+	// it here too — with an explicit comparison immediately before the node
+	// allocation below — so a tainted value can never size an unbounded allocation.
+	if numNodes > maxCacheNodesPerCluster {
+		numNodes = maxCacheNodesPerCluster
+	}
 
 	out := cacheClusterXML{
 		CacheClusterID:       info.Name,
