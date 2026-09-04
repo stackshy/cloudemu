@@ -179,3 +179,22 @@ func TestSDKSQSSendMessageTooLong(t *testing.T) {
 		t.Fatalf("oversize SendMessage: error code = %q, want InvalidParameterValue", code)
 	}
 }
+
+// GetQueueUrl for a missing queue carries the "awsQueryCompatible" legacy
+// Query-protocol error code in the X-Amzn-Query-Error header, which
+// aws-sdk-go-v2 uses to resolve ErrorCode() -- pinning it here guards against
+// a regression to the AwsJson1_0 shape name ("QueueDoesNotExist") that
+// TestSDKSQSDeleteQueue separately checks via the typed exception.
+func TestSDKSQSGetQueueUrlNotFoundErrorCode(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	_, err := client.GetQueueUrl(ctx, &awssqs.GetQueueUrlInput{
+		QueueName: aws.String("does-not-exist"),
+	})
+
+	const wantCode = "AWS.SimpleQueueService.NonExistentQueue"
+	if code := apiErrorCode(t, err); code != wantCode {
+		t.Fatalf("GetQueueUrl on missing queue: error code = %q, want %s", code, wantCode)
+	}
+}
