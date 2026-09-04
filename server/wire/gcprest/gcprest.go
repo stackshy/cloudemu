@@ -216,13 +216,94 @@ type errorDetail struct {
 	Reason  string `json:"reason"`
 }
 
-// WriteError writes a GCP-style JSON error response.
+// google.rpc.Code enum NAMEs used by the mapping below. Kept as named
+// constants because they are referenced from both canonicalStatus (as the
+// mapped result) and isCanonicalCode (as the already-canonical passthrough set).
+const (
+	codeInvalidArgument    = "INVALID_ARGUMENT"
+	codeNotFound           = "NOT_FOUND"
+	codeAlreadyExists      = "ALREADY_EXISTS"
+	codeFailedPrecondition = "FAILED_PRECONDITION"
+	codePermissionDenied   = "PERMISSION_DENIED"
+	codeResourceExhausted  = "RESOURCE_EXHAUSTED"
+	codeUnimplemented      = "UNIMPLEMENTED"
+	codeUnavailable        = "UNAVAILABLE"
+	codeInternal           = "INTERNAL"
+)
+
+// canonicalStatus maps a Google JSON-API error `reason` (the camelCase token
+// carried in errors[].reason, e.g. "notFound") to the canonical
+// google.rpc.Code enum NAME real GCP returns in the top-level `status` field
+// (all-caps SNAKE_CASE, e.g. "NOT_FOUND"). See
+// https://cloud.google.com/apis/design/errors and the google.rpc.Code enum.
+// Reasons without a canonical code (e.g. HTTP 405 "methodNotAllowed", which has
+// no google.rpc.Code) return "" so the omitempty `status` field is dropped —
+// matching real GCP, which omits `status` for those responses.
+func canonicalStatus(reason string) string {
+	// Some callers (e.g. eventarc, fcm, vertexai) already pass a canonical
+	// google.rpc.Code NAME as the reason. Return it unchanged so a canonical
+	// input is never silently dropped by the camelCase mapping below.
+	if isCanonicalCode(reason) {
+		return reason
+	}
+
+	return camelReasonToCode(reason)
+}
+
+// camelReasonToCode maps a camelCase JSON-API reason token to its canonical
+// google.rpc.Code NAME, or "" when the reason has no canonical code.
+func camelReasonToCode(reason string) string {
+	switch reason {
+	case "notFound":
+		return codeNotFound
+	case "alreadyExists":
+		return codeAlreadyExists
+	case "invalid", "invalidArgument", "badRequest", "required":
+		return codeInvalidArgument
+	case "conditionNotMet", "failedPrecondition", "resourceInUseByAnotherResource",
+		"containerNotEmpty", "cnameResourceRecordSetConflict":
+		return codeFailedPrecondition
+	case "forbidden":
+		return codePermissionDenied
+	case "rateLimitExceeded":
+		return codeResourceExhausted
+	case "notImplemented":
+		return codeUnimplemented
+	case "backendError":
+		return codeUnavailable
+	case "internalError":
+		return codeInternal
+	default:
+		return ""
+	}
+}
+
+// isCanonicalCode reports whether s is already one of the google.rpc.Code enum
+// NAMEs (all-caps SNAKE_CASE). The set is explicit so a typo'd or garbage
+// reason cannot pass through as if it were canonical. See
+// https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto.
+func isCanonicalCode(s string) bool {
+	switch s {
+	//nolint:misspell // google.rpc.Code enum name is CANCELLED (two Ls)
+	case "OK", "CANCELLED", "UNKNOWN", codeInvalidArgument, "DEADLINE_EXCEEDED",
+		codeNotFound, codeAlreadyExists, codePermissionDenied, codeResourceExhausted,
+		codeFailedPrecondition, "ABORTED", "OUT_OF_RANGE", codeUnimplemented,
+		codeInternal, codeUnavailable, "DATA_LOSS", "UNAUTHENTICATED":
+		return true
+	default:
+		return false
+	}
+}
+
+// WriteError writes a GCP-style JSON error response. reason is the Google
+// JSON-API camelCase token surfaced in errors[].reason; the top-level `status`
+// field carries the canonical google.rpc.Code NAME derived from it.
 func WriteError(w http.ResponseWriter, status int, reason, msg string) {
 	WriteJSON(w, status, errorEnvelope{
 		Error: errorBody{
 			Code:    status,
 			Message: msg,
-			Status:  reason,
+			Status:  canonicalStatus(reason),
 			Errors:  []errorDetail{{Message: msg, Reason: reason}},
 		},
 	})
