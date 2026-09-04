@@ -522,6 +522,14 @@ func TestRequestSpotInstances(t *testing.T) {
 			},
 			wantErr: true, errMsg: "max price must be greater than 0",
 		},
+		{
+			name: "count exceeds maximum",
+			cfg: driver.SpotRequestConfig{
+				InstanceConfig: driver.InstanceConfig{ImageID: "img-1", InstanceType: "t2"},
+				MaxPrice:       0.5, Count: maxSpotInstances + 1,
+			},
+			wantErr: true, errMsg: "exceeds the maximum",
+		},
 	}
 
 	for _, tt := range tests {
