@@ -168,7 +168,7 @@ func aggregateExecution(exec *driver.Execution, tasks []driver.Task, succeeded i
 	exec.LogURI = logURI(exec)
 
 	if exec.FailedCount == 0 {
-		exec.Conditions = []driver.Condition{{Type: condCompleted, State: stateSucceeded, Reason: "Completed"}}
+		exec.Conditions = []driver.Condition{{Type: condCompleted, State: stateSucceeded}}
 
 		return
 	}
@@ -247,7 +247,7 @@ func (m *Mock) failureMessage(
 func markSucceeded(exec *driver.Execution, cstats []driver.ContainerStatus) {
 	exec.Tasks = buildTasks(exec.TaskCount, taskSucceeded, 0, cstats)
 	exec.SucceededCount = exec.TaskCount
-	exec.Conditions = []driver.Condition{{Type: condCompleted, State: stateSucceeded, Reason: "Completed"}}
+	exec.Conditions = []driver.Condition{{Type: condCompleted, State: stateSucceeded}}
 	exec.LogURI = logURI(exec)
 }
 

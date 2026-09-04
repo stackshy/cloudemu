@@ -224,13 +224,27 @@ func (h *Handler) listServices(w http.ResponseWriter, r *http.Request, p *crPath
 	writeJSON(w, http.StatusOK, listServicesResponse{Services: items, NextPageToken: next})
 }
 
+// deleteService inlines the deleted service in the LRO response — real Cloud
+// Run's Services.Delete returns the removed Service, and the GAPIC
+// DeleteServiceOperation.Wait unmarshals the operation response into a Service,
+// erroring on an empty payload.
 func (h *Handler) deleteService(w http.ResponseWriter, r *http.Request, p *crPath) {
+	svc, err := h.cr.GetService(r.Context(), p.name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.cr.DeleteService(r.Context(), p.name); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{Name: opName(p, "delete-"+p.name), Done: true})
+	writeJSON(w, http.StatusOK, operation{
+		Name:     opName(p, "delete-"+p.name),
+		Done:     true,
+		Response: asResponse(toServiceResource(svc, p), serviceTypeURL),
+	})
 }
 
 func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -252,13 +266,26 @@ func (h *Handler) getRevision(w http.ResponseWriter, r *http.Request, p *crPath)
 	writeJSON(w, http.StatusOK, toRevisionResource(rev, p))
 }
 
+// deleteRevision inlines the deleted revision in the LRO response, matching
+// real Cloud Run's Revisions.Delete (whose operation resolves to the removed
+// Revision, as the GAPIC DeleteRevisionOperation.Wait expects).
 func (h *Handler) deleteRevision(w http.ResponseWriter, r *http.Request, p *crPath) {
+	rev, err := h.cr.GetRevision(r.Context(), p.subName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.cr.DeleteRevision(r.Context(), p.subName); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{Name: opName(p, "delete-rev-"+p.subName), Done: true})
+	writeJSON(w, http.StatusOK, operation{
+		Name:     opName(p, "delete-rev-"+p.subName),
+		Done:     true,
+		Response: asResponse(toRevisionResource(rev, p), revisionTypeURL),
+	})
 }
 
 // serviceConfigFromWire maps a wire Service body onto a driver.ServiceConfig.

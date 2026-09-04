@@ -424,7 +424,7 @@ func (m *Mock) materializeRevision(svc *driver.Service, now time.Time) *driver.R
 		ExecutionEnvironment: svc.ExecutionEnvironment,
 		VPCAccess:            cloneVPCAccess(svc.VPCAccess),
 		Scaling:              cloneScaling(svc.Scaling),
-		Conditions:           []driver.Condition{{Type: condReady, State: stateSucceeded, Reason: "Ready"}},
+		Conditions:           []driver.Condition{{Type: condReady, State: stateSucceeded}},
 		Etag:                 newEtag(now, svc.Generation),
 	}
 
@@ -461,8 +461,8 @@ func reconcileStatus(svc *driver.Service, now time.Time, region string) {
 	}
 
 	svc.TrafficStatuses = trafficStatuses(svc)
-	svc.TerminalCondition = &driver.Condition{Type: condReady, State: stateSucceeded, Reason: "Ready"}
-	svc.Conditions = []driver.Condition{{Type: condReady, State: stateSucceeded, Reason: "Ready"}}
+	svc.TerminalCondition = &driver.Condition{Type: condReady, State: stateSucceeded}
+	svc.Conditions = []driver.Condition{{Type: condReady, State: stateSucceeded}}
 }
 
 // regionOrDefault falls back to a canonical region when the path carried none.

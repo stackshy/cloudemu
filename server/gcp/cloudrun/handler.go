@@ -41,6 +41,7 @@ package cloudrun
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,6 +69,7 @@ const (
 	jobTypeURL         = "type.googleapis.com/google.cloud.run.v2.Job"
 	execTypeURL        = "type.googleapis.com/google.cloud.run.v2.Execution"
 	serviceTypeURL     = "type.googleapis.com/google.cloud.run.v2.Service"
+	revisionTypeURL    = "type.googleapis.com/google.cloud.run.v2.Revision"
 	defaultPageSize    = 100
 )
 
@@ -245,13 +247,26 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, p *crPath) {
 	writeJSON(w, http.StatusOK, listJobsResponse{Jobs: items, NextPageToken: next})
 }
 
+// deleteJob inlines the deleted job in the LRO response, matching real Cloud
+// Run's Jobs.Delete (whose operation resolves to the removed Job, as the GAPIC
+// DeleteJobOperation.Wait expects).
 func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, p *crPath) {
+	job, err := h.cr.GetJob(r.Context(), p.name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.cr.DeleteJob(r.Context(), p.name); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{Name: opName(p, "delete-"+p.name), Done: true})
+	writeJSON(w, http.StatusOK, operation{
+		Name:     opName(p, "delete-"+p.name),
+		Done:     true,
+		Response: asResponse(toJobResource(job, p), jobTypeURL),
+	})
 }
 
 func (h *Handler) run(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -521,7 +536,18 @@ func asResponse(v any, typeURL string) map[string]any {
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
+		return false
+	}
+
+	// The GAPIC v2 REST client sends enum fields as integers (protojson
+	// UseEnumNumbers); rewrite them to their canonical names so the body decodes
+	// the same way a string-based client's (Terraform, gcloud) does.
+	raw = normalizeEnumNumbers(raw)
+
+	if err := json.Unmarshal(raw, v); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
 		return false
 	}
