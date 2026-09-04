@@ -1699,6 +1699,7 @@ func findPublicIPByName(ctx context.Context, n netdriver.Networking, rg, name st
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) vnetResponse(ctx context.Context, info *netdriver.VPCInfo, rp azurearm.ResourcePath) vnetResponse {
 	location, prefixes := h.vnetLocationPrefixes(ctx, info)
+	resourceGUID := h.vnetResourceGUID(ctx, info)
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeVNet, rp.ResourceName)
 
@@ -1712,6 +1713,7 @@ func (h *Handler) vnetResponse(ctx context.Context, info *netdriver.VPCInfo, rp 
 		Properties: vnetResponseProps{
 			ProvisioningState: "Succeeded",
 			AddressSpace:      &addressSpace{AddressPrefixes: prefixes},
+			ResourceGUID:      resourceGUID,
 		},
 	}
 
@@ -1758,6 +1760,23 @@ func (h *Handler) vnetLocationPrefixes(ctx context.Context, info *netdriver.VPCI
 	return location, prefixes
 }
 
+// vnetResourceGUID returns the persisted properties.resourceGuid ARM reports
+// for a virtual network, or "" when no Azure metadata is stored for it (e.g.
+// the networking driver doesn't implement the optional metadata capability).
+func (h *Handler) vnetResourceGUID(ctx context.Context, info *netdriver.VPCInfo) string {
+	meta, ok := h.azureMeta()
+	if !ok {
+		return ""
+	}
+
+	md, found := meta.GetAzureVNetMetadata(ctx, info.ID)
+	if !found {
+		return ""
+	}
+
+	return md.ResourceGUID
+}
+
 //nolint:gocritic // rp is a request-scoped value
 func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subnetResponse {
 	name := tagOr(info.Tags, armSubnetTag, rp.SubResourceName)
@@ -1799,6 +1818,8 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 
 	var rules []securityRule
 
+	var resourceGUID string
+
 	if meta, ok := h.azureMeta(); ok {
 		if md, found := meta.GetAzureNSGMetadata(ctx, info.ID); found {
 			if md.Location != "" {
@@ -1806,6 +1827,7 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 			}
 
 			rules = fromAzureNSGRules(id, md.SecurityRules)
+			resourceGUID = md.ResourceGUID
 		}
 	}
 
@@ -1822,6 +1844,7 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 			DefaultSecurityRules: defaultSecurityRules(id),
 			Subnets:              h.nsgAssociatedSubnets(ctx, id),
 			NetworkInterfaces:    h.nsgAssociatedNICs(ctx, id),
+			ResourceGUID:         resourceGUID,
 		},
 	}
 }
@@ -1952,6 +1975,7 @@ func (h *Handler) toPublicIPResponse(
 			PublicIPAllocationMethod: info.AllocationMethod,
 			IPAddress:                info.PublicIP,
 			IdleTimeoutInMinutes:     info.IdleTimeoutMinutes,
+			ResourceGUID:             info.ResourceGUID,
 		},
 	}
 
